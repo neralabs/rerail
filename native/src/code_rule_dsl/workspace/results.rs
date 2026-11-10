@@ -130,6 +130,10 @@ pub(super) fn profile_result(
             "astMatchNanoseconds": metrics.ast_match_nanoseconds,
             "serializationNanoseconds": serialization.as_nanos() as u64,
             "astMatcherCalls": metrics.ast_matcher_calls,
+            "pythonAstParses": metrics.python_ast_parses,
+            "pythonAstModuleWalks": metrics.python_ast_module_walks,
+            "syntaxLoads": metrics.syntax_loads,
+            "relationalMaterializations": metrics.relational_materializations,
             "storageRetries": metrics.storage_retries,
             "storageRetryWaitNanoseconds": metrics.storage_retry_wait_nanoseconds,
             "storageUnpublishedFiles": metrics.storage_unpublished_files,
@@ -254,7 +258,12 @@ pub(super) fn evicted_file_states(
     // A store read that fails reports each file's clauses as unavailable, as `api.rs` does for a
     // resident file: the stored results remain, so a later read answers them (O22).
     let results = (!injected)
-        .then(|| storage.store.local_check_results_by_key(&keys, catalog).ok())
+        .then(|| {
+            storage
+                .store
+                .local_check_results_by_key(&keys, catalog)
+                .ok()
+        })
         .flatten();
     let mut candidate_sets = CandidateSets::new();
     evicted

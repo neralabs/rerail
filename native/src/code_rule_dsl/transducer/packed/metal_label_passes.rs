@@ -23,6 +23,7 @@ use super::*;
 use super::super::metal_batch_abi::MetalEvaluation;
 use metal::{Buffer, CommandBuffer};
 use std::collections::HashMap;
+use crate::code_rule_dsl::residency::slabs::ResidentParts as _;
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
 
 /// A pass writes the label `target` (an index, not a class); labels it reads are its classes.
@@ -530,6 +531,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) interpreted: bool,
     /// The plan's root records (`Plan::roots`); empty without roots.
     pub(in crate::code_rule_dsl) records: RootsFound,
+    /// The command buffers' seconds on the GPU (`GPUStartTime` to `GPUEndTime`), summed.
+    pub(in crate::code_rule_dsl) device: f64,
 }
 
 #[repr(C)]
@@ -1468,7 +1471,7 @@ impl Runner<'_> {
         commit_checked(&self.command)?;
         wait_checked(&self.command)?;
         crate::code_rule_dsl::prof::count("gpu.commits", 1);
-        if crate::code_rule_dsl::prof::on() {
+        {
             // The command buffer's time on the GPU (`GPUStartTime` to `GPUEndTime`).
             unsafe extern "C" {
                 fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
@@ -1481,6 +1484,7 @@ impl Runner<'_> {
                 (send(object, sel_registerName(c"GPUStartTime".as_ptr())), send(object, sel_registerName(c"GPUEndTime".as_ptr())))
             };
             crate::code_rule_dsl::prof::count("gpu.device_us", ((end - start) * 1e6) as usize);
+            self.outcome.device += (end - start).max(0.0);
         }
         self.outcome.command_buffers += 1;
         self.retained.clear();

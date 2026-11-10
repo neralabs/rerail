@@ -636,6 +636,15 @@ impl LoweredMatcher {
     }
 }
 
+/// How a wave's batch ran ([`LoweredWave::roots_batch`]): on Metal or the CPU, its command buffers and their seconds on
+/// the GPU.
+#[derive(Clone, Copy, Debug, Default)]
+pub(in crate::code_rule_dsl) struct WaveRun {
+    pub(in crate::code_rule_dsl) metal: bool,
+    pub(in crate::code_rule_dsl) command_buffers: usize,
+    pub(in crate::code_rule_dsl) device: f64,
+}
+
 /// A wave's lowered clauses evaluated together (06 S4): each clause's labels shifted past the
 /// clauses' before it, so one set of label bitsets per tape holds them all and every pass and
 /// root program reads its own. The roots then run as one batch of programs (`demand(batch)`'s
@@ -991,6 +1000,67 @@ impl LoweredWave {
     /// labels are its own and read only by its walks, so they are computed only on those tapes
     /// (empty elsewhere).
     pub(in crate::code_rule_dsl) fn labelled(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<Vec<TapeDoc>, Error> {
+        Ok(self.labelled_sets(tapes, active)?.into_iter().map(|(view, _)| view).collect())
+    }
+
+    /// Every clause's matches of the batch (per clause, per tape: the matched roots, tape preorder ids), the whole
+    /// wave as one run: its labels' passes once, then each clause's root program from its starts. On Metal, every
+    /// pass and root program in one command buffer (`roots_metal`, the batch halved where it outgrows a workspace or
+    /// the launch bound); on the CPU, the passes by level (`labelled`) and the roots on the interpreter.
+    /// `active` (per clause, per tape) is where a clause runs: a tape its gates exclude has no matches.
+    pub(in crate::code_rule_dsl) fn roots_batch(&self, backend: Backend, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
+        #[cfg(target_os = "macos")]
+        if let Backend::MetalInterpreter = backend {
+            let roots: Vec<Vec<Vec<u32>>> = (0..self.clauses.len())
+                .map(|c| tapes.iter().enumerate().map(|(t, tape)| if active[c][t] { (0..tape.transducer_len() as u32).filter(|&n| self.starts(c, tape, n)).collect() } else { Vec::new() }).collect())
+                .collect();
+            return self.roots_metal_split(tapes, &roots);
+        }
+        let _ = backend;
+        let views = self.labelled_sets(tapes, active)?;
+        let found = self
+            .clauses
+            .iter()
+            .enumerate()
+            .map(|(c, clause)| {
+                let entry = Entry::of(&clause.program);
+                views
+                    .iter()
+                    .enumerate()
+                    .map(|(t, (view, sets))| {
+                        if !active[c][t] {
+                            return Ok(BTreeSet::new());
+                        }
+                        let outputs = clause.program.execute_roots(view, domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node)))?;
+                        Ok(outputs.into_iter().map(|output| output.start).collect())
+                    })
+                    .collect::<Result<Vec<_>, Error>>()
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok((found, WaveRun::default()))
+    }
+
+    /// [`roots_metal`](Self::roots_metal), each half of the batch on its own where the whole outgrows a workspace or
+    /// the launch bound (a file's labels read only that file).
+    #[cfg(target_os = "macos")]
+    fn roots_metal_split(&self, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
+        match self.roots_metal(tapes, roots) {
+            Err(Error::BackendCapacity | Error::BackendLaunchLimit) if tapes.len() > 1 => {
+                let half = tapes.len() / 2;
+                let part = |range: std::ops::Range<usize>| roots.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
+                let (mut left, a) = self.roots_metal_split(&tapes[..half], &part(0..half))?;
+                let (right, b) = self.roots_metal_split(&tapes[half..], &part(half..tapes.len()))?;
+                for (l, r) in left.iter_mut().zip(right) {
+                    l.extend(r);
+                }
+                Ok((left, WaveRun { metal: true, command_buffers: a.command_buffers + b.command_buffers, device: a.device + b.device }))
+            }
+            found => found.map(|(found, outcome)| (found, WaveRun { metal: true, command_buffers: outcome.command_buffers, device: outcome.device })),
+        }
+    }
+
+    /// [`labelled`](Self::labelled)'s views, each with its label sets.
+    fn labelled_sets(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<Vec<(TapeDoc, Arc<Vec<Vec<u64>>>)>, Error> {
         let active = &self.spread(active);
         let clauses = self.clauses.iter().collect::<Vec<_>>();
         let (steps, _) = levels(&clauses, |clause, id| Ok((clause, id)))?;
@@ -1046,7 +1116,7 @@ impl LoweredWave {
                 return Err(Error::WorkLimit);
             }
         }
-        Ok(tapes.iter().zip(sets).map(|(tape, sets)| tape.with_labels(sets)).collect())
+        Ok(tapes.iter().zip(sets).map(|(tape, sets)| (tape.with_labels(Arc::clone(&sets)), sets)).collect())
     }
 
     /// Whether clause `clause`'s root program starts at `node` of `tape`: its root's kinds.

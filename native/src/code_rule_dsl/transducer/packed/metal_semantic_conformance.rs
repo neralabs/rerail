@@ -1139,9 +1139,8 @@ mod retained_grid_runtime {
             programs . push (Program :: compile_tree_sitter_query_pattern (& format ! ("((assignment left: (identifier) @left right: (identifier) @right) (#{predicate} @left @right))") , & language) . unwrap ()) ;
         }
         let mut unequal = programs[0].clone();
-        unequal
-            .words
-            .insert(unequal.words.len() - 2, word(CAPTURE, 0, 0));
+        let at = unequal.words.len() - 2;
+        unequal.words.insert(at, word(CAPTURE, 0, 0));
         programs.push(unequal);
         for (right, negated) in [(0, false), (2, true)] {
             programs.push(

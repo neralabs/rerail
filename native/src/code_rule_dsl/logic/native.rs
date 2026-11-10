@@ -38,13 +38,17 @@ pub(in crate::code_rule_dsl) mod match_all;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
 pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, text_batch, keep_inputs, register_symbols};
+/// A connection identity for the state a run leaves with it.
+pub(in crate::code_rule_dsl) use setfix::scope as setfix_scope;
+pub(in crate::code_rule_dsl) use setfix::symbol_text;
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
     pub(in crate::code_rule_dsl) use super::setfix::lab;
     pub(in crate::code_rule_dsl) use super::setfix::spec;
     #[cfg(target_os = "macos")]
     pub(in crate::code_rule_dsl) use super::setfix::{DeviceReport, device_report};
-    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, cat_symbols, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows};
+    pub(in crate::code_rule_dsl) use super::setfix::probed;
+    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, cat_symbols, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};

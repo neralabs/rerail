@@ -1,0 +1,139 @@
+{
+  "passed": false,
+  "failures": [
+    "Whole-job executions exceed 100: 115.",
+    "The job still publishes intermediate rule relations to SQL tables.",
+    "Dead native dependencies still export the shared candidate relation."
+  ],
+  "executions": 115,
+  "relational_executions": 73,
+  "chunks": 73,
+  "vm_steps": 6822096,
+  "evaluation_vm_steps": 6636203,
+  "sql_bytes": [
+    16465
+  ],
+  "publication": [
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE async_path_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE p1_async_mode_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q0_async_http(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q0_async_http_verb(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q1_async_runs(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE q3_async_api_target(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 28
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO async_path_target VALUES (?)",
+      "vmSteps": 13
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO p1_async_mode_target VALUES (?)",
+      "vmSteps": 13
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q0_async_http VALUES (?), (?)",
+      "vmSteps": 30
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q0_async_http_verb VALUES (?), (?), (?), (?), (?), (?), (?), (?), (?), (?)",
+      "vmSteps": 118
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q1_async_runs VALUES (?), (?), (?)",
+      "vmSteps": 41
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "cross/views and tables",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "INSERT OR IGNORE INTO q3_async_api_target VALUES (?), (?), (?)",
+      "vmSteps": 41
+    }
+  ],
+  "wave": []
+}

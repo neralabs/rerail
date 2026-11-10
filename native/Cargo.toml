@@ -64,6 +64,9 @@ cranelift-codegen = "=0.125.4"
 # Tier 1 of the transducer's parsers, a crate of its own so that a change to it rebuilds little.
 rerail-compiler = { path = "crates/compiler" }
 rerail-rr-syntax = { path = "crates/rr_syntax" }
+# The .rr parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
+rerail-rr-parser = { path = "crates/rr_parser" }
+rerail-prof = { path = "crates/prof" }
 cranelift-frontend = "=0.125.4"
 cranelift-module = "=0.125.4"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
@@ -152,10 +155,17 @@ sha2 = { version = "0.10", features = ["asm"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1.6"
 metal = "0.33.0"
+# The Metal runtime, the slab residency's arena and the block programs' backend.
+rerail-metal = { path = "crates/metal" }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# Per-thread buffer ledgers for the engine's tests (`rerail_metal::test_pool`).
+rerail-metal = { path = "crates/metal", features = ["test-hooks"] }
 
 [dev-dependencies]
 # Tier 1's test hooks (the relocations' recording) for the engine's tests.
 rerail-compiler = { path = "crates/compiler", features = ["test-hooks"] }
+# The parsers' tests, and every executor of a block program (`regex_block`'s tests).
 rerail-parser-tests = { path = "crates/parser_tests" }
 # The test-only dialects' grammars: `builtin-parser` without tree-sitter-python,
 # tree-sitter-typescript and tree-sitter-javascript, which Rerail vendors.

@@ -144,6 +144,59 @@ unsafe impl<'a> VTab<'a> for Table {
             }
             Some(col)
         });
+        if let Some(scope) = self.shared.source.scope_column() {
+            let path = info.constraints().enumerate().find(|(i, c)| {
+                c.is_usable()
+                    && c.column() == scope as i32
+                    && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
+                    && info.collation(*i).is_ok_and(|v| v == "BINARY")
+            });
+            if let Some((path, _)) = path {
+                let primary = info
+                    .constraints()
+                    .enumerate()
+                    .filter(|(i, c)| {
+                        c.is_usable()
+                            && c.column() >= 0
+                            && c.column() != scope as i32
+                            && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
+                            && self.shared.source.indexed(c.column() as usize)
+                            && info.collation(*i).is_ok_and(|v| v == "BINARY")
+                    })
+                    .min_by_key(|(i, c)| {
+                        self.shared.source.scoped_estimate(
+                            c.column() as usize,
+                            info.is_in_constraint(*i).unwrap_or(false),
+                            info.is_in_constraint(path).unwrap_or(false),
+                        )
+                    });
+                // Retain the existing equality anchor when it is available.
+                // File pushdown must not introduce a new range-cost heuristic.
+                if let Some((primary, c)) = primary {
+                    let col = c.column() as usize;
+                    let batch = info.is_in_constraint(primary)?;
+                    let path_batch = info.is_in_constraint(path)?;
+                    if batch {
+                        info.set_in_constraint(primary, true)?;
+                    }
+                    if path_batch {
+                        info.set_in_constraint(path, true)?;
+                    }
+                    info.constraint_usage(primary).set_argv_index(1);
+                    info.constraint_usage(path).set_argv_index(2);
+                    let estimate = self.shared.source.scoped_estimate(col, batch, path_batch);
+                    info.set_idx_num(
+                        (1 << 21)
+                            | (((col + 1) as i32) << 2)
+                            | i32::from(batch)
+                            | (i32::from(path_batch) << 1),
+                    );
+                    info.set_estimated_rows(estimate as i64);
+                    info.set_estimated_cost(estimate.max(1) as f64);
+                    return Ok(true);
+                }
+            }
+        }
         if let Some(col) = range
             && selected.as_ref().is_none_or(|(_, _, cost)| *cost > 32)
         {
@@ -188,14 +241,35 @@ unsafe impl<'a> VTab<'a> for Table {
             }
             if let Some((i, inclusive)) = upper {
                 info.constraint_usage(i).set_argv_index(arg);
+                arg += 1;
                 flags |= 2;
                 if inclusive {
                     flags |= 8;
                 }
             }
+            let mut estimated_rows = 32;
+            if let Some(scope) = self.shared.source.scope_column()
+                && let Some((i, _)) = info.constraints().enumerate().find(|(i, c)| {
+                    c.is_usable()
+                        && c.column() == scope as i32
+                        && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
+                        && info.collation(*i).is_ok_and(|v| v == "BINARY")
+                })
+            {
+                let batch = info.is_in_constraint(i)?;
+                if batch {
+                    info.set_in_constraint(i, true)?;
+                }
+                info.constraint_usage(i).set_argv_index(arg);
+                flags |= 1 << 22;
+                if batch {
+                    flags |= 1 << 23;
+                    estimated_rows *= 256;
+                }
+            }
             info.set_idx_num(flags);
-            info.set_estimated_rows(32);
-            info.set_estimated_cost(32.0);
+            info.set_estimated_rows(estimated_rows);
+            info.set_estimated_cost(estimated_rows as f64);
             return Ok(true);
         }
         if let Some((i, col, matches)) = selected {
@@ -265,7 +339,28 @@ unsafe impl VTabCursor for Cursor {
         self.position = 0;
         self.selected = None;
         self.range = 0..self.shared.source.len();
-        if index & (1 << 20) != 0 {
+        if index & (1 << 21) != 0 {
+            let column = ((index & ((1 << 20) - 1)) >> 2) - 1;
+            let values_for = |arg: usize, batch: bool| -> Result<Vec<Value>> {
+                if batch {
+                    self.shared.stats.batches.fetch_add(1, Ordering::Relaxed);
+                    let mut iter = args.in_values(arg)?;
+                    let mut values = Vec::new();
+                    while let Some(v) = iter.next()? {
+                        values.push(Value::try_from(v).map_err(|e| failure(&e.to_string()))?);
+                    }
+                    Ok(values)
+                } else {
+                    Ok(vec![args.get::<Value>(arg)?])
+                }
+            };
+            let values = values_for(0, index & 1 != 0)?;
+            let paths = values_for(1, index & 2 != 0)?;
+            self.selected = self
+                .shared
+                .source
+                .lookup_scoped(column as usize, &values, &paths)?;
+        } else if index & (1 << 20) != 0 {
             let column = ((index & ((1 << 20) - 1)) >> 4) - 1;
             let mut arg = 0;
             let lower = if index & 1 != 0 {
@@ -276,15 +371,34 @@ unsafe impl VTabCursor for Cursor {
                 None
             };
             let upper = if index & 2 != 0 {
-                Some((args.get::<Value>(arg)?, index & 8 != 0))
+                let value = args.get::<Value>(arg)?;
+                arg += 1;
+                Some((value, index & 8 != 0))
             } else {
                 None
             };
-            self.selected = self.shared.source.range_lookup(
-                column as usize,
-                lower.as_ref().map(|(v, b)| (v, *b)),
-                upper.as_ref().map(|(v, b)| (v, *b)),
-            )?;
+            let lower = lower.as_ref().map(|(v, b)| (v, *b));
+            let upper = upper.as_ref().map(|(v, b)| (v, *b));
+            self.selected = if index & (1 << 22) != 0 {
+                let paths = if index & (1 << 23) != 0 {
+                    self.shared.stats.batches.fetch_add(1, Ordering::Relaxed);
+                    let mut iter = args.in_values(arg)?;
+                    let mut paths = Vec::new();
+                    while let Some(v) = iter.next()? {
+                        paths.push(Value::try_from(v).map_err(|e| failure(&e.to_string()))?);
+                    }
+                    paths
+                } else {
+                    vec![args.get::<Value>(arg)?]
+                };
+                self.shared
+                    .source
+                    .range_lookup_scoped(column as usize, lower, upper, &paths)?
+            } else {
+                self.shared
+                    .source
+                    .range_lookup(column as usize, lower, upper)?
+            };
         } else if index != 0 {
             let batch = index % 2 == 1;
             let column = (index / 2 - 1) as usize;

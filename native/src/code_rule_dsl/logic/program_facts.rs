@@ -77,6 +77,8 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("native_balanced_rows", &["p:sym", "rel:sym", "input:sym", "limits:sym"]),
         ("native_match", &["p:sym", "rel:sym", "input:sym", "pattern:sym", "positions:int"]),
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
+        ("native_python_candidates", &["p:sym", "rel:sym", "input:sym", "targets:sym", "context:sym", "member:sym"]),
+        ("native_python", &["p:sym", "rel:sym", "kind:sym", "input:sym", "targets:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
         // `ast_patterns`: the AST patterns the program matches (`n ~ `…``), each by its text.
@@ -96,6 +98,8 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("answer", &["p:sym", "req:sym", "i:int", "by:sym"]),
         // `qualifiers`: `.decl r(…) inline` and its kin (decision 0099).
         ("qualifier", &["p:sym", "rel:sym", "word:sym"]),
+        // `tapes`: the columns declared `tape` (decision 0103 §3).
+        ("tape_column", &["p:sym", "rel:sym", "i:int"]),
     ];
     SCHEMA
         .iter()
@@ -229,6 +233,11 @@ impl Writer<'_> {
                 self.row("qualifier", vec![s(rel), s(w)]);
             }
         }
+        for (rel, cols) in &prog.tapes {
+            for i in cols {
+                self.row("tape_column", vec![s(rel), n(*i)]);
+            }
+        }
         for (rel, l) in &prog.lattice {
             self.row("lattice", vec![s(rel), n(l.keys), s(&l.ty)]);
             if let Some(f) = &l.merge {
@@ -318,6 +327,8 @@ impl Writer<'_> {
                         self.row("native_group", vec![s(rel), n(i), s(group)]);
                     }
                 }
+                Native::PythonCandidates {input,targets,context,member} => self.row("native_python_candidates",vec![s(rel),s(input),s(targets),s(context),s(member)]),
+                Native::Python {kind,input,targets} => self.row("native_python",vec![s(rel),s(kind),s(input),s(targets.as_deref().unwrap_or(""))]),
                 Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
             }
         }
@@ -532,6 +543,9 @@ impl<'a> Reader<'a> {
         for row in self.get("qualifier") {
             prog.qualifiers.entry(text(&row[0])?).or_default().insert(text(&row[1])?);
         }
+        for row in self.get("tape_column") {
+            prog.tapes.entry(text(&row[0])?).or_default().insert(int(&row[1])? as usize);
+        }
         let merges = self.by_id_text("lattice_merge")?;
         let widens = self.by_id_text("lattice_widen")?;
         for row in self.get("lattice") {
@@ -624,6 +638,13 @@ impl<'a> Reader<'a> {
         }
         for row in self.get("native_bfs") {
             prog.natives.insert(text(&row[0])?, Native::BfsWalk { edge: text(&row[1])?, roots: text(&row[2])? });
+        }
+        for row in self.get("native_python_candidates") {
+            prog.natives.insert(text(&row[0])?,Native::PythonCandidates{input:text(&row[1])?,targets:text(&row[2])?,context:text(&row[3])?,member:text(&row[4])?});
+        }
+        for row in self.get("native_python") {
+            let targets=text(&row[3])?;
+            prog.natives.insert(text(&row[0])?,Native::Python{kind:text(&row[1])?,input:text(&row[2])?,targets:(!targets.is_empty()).then_some(targets)});
         }
         for row in self.get("native_components") {
             prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });

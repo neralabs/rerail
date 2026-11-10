@@ -317,7 +317,7 @@ annotated_meta(s, a) :- typing_subscript(s, "Annotated"), tsub(s, _, i, a), i > 
 .decl type_ctx(n: node)
 type_ctx(t) :- type_root(t).
 // A string in a type context is a forward reference; its parsed tree is a type too (`x: "list[int]"`).
-type_ctx(r) :- type_ctx(s), parsed(s, "annotation", r).
+type_ctx(r) :- type_ctx(s), str_node(s), parsed(s, "annotation", r).
 type_ctx(c) :- type_ctx(p), child(p, c, _), !type_stop(p, c).
 // type_stop(p, c): below p, child c leaves the type context: Literal's arguments, Annotated's metadata.
 .decl type_stop(p: node, c: node)
@@ -471,7 +471,6 @@ typevar_name(e, x) :- kind(e, "identifier"), text(e, x), within(e, o), kind(o, "
 // lit_key(m, k): a Literal member compared as Ruff's ComparableExpr does: by kind and value, so "a" and 'a' are
 // one member, and True and 1 are two. Other members compare by tree, so `{1, 3}` and `{1,3}` are one.
 .decl lit_key(m: node, k: symbol)
-lit_key(m, cat(t, ":", v)) :- literal_leaf(_, m), kind(m, t), value(m, v).
 lit_key(m, @tree_digest(m)) :- literal_leaf(_, m), !value(m, _).
 // alias_name(n, x): n declares the type alias x: the statement `x: TypeAlias = …` (n is the assignment), or
 // `type x = …` (n is the name).

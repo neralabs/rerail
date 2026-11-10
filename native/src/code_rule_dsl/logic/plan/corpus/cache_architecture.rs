@@ -3,9 +3,9 @@
 //! tests that were made before the decision. A table or a call that is not on its list fails, so a new cache cannot
 //! be made outside the form. An entry is removed when its cache moves to the two rules; none may be added.
 //!
-//! It also holds the form to rules only: the cache's two rules are rewritten into ordinary rules (`front::caches`,
-//! and a session's maintenance, `corpus::maintain`), and nothing else in the engine knows a relation is a cache. No
-//! store, table, hook or lookup of a cache's own.
+//! It also holds the form to rules only: a cache's two rules are ordinary rules, evaluated, kept and maintained as
+//! every rule is. Only the lint of `.cache` (`front::caches`) knows a relation is a cache. No store, table, hook,
+//! lookup or rewrite of a cache's own.
 
 use std::path::{Path, PathBuf};
 
@@ -39,7 +39,7 @@ const NOT_CACHES: &[&str] = &[
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
-    "x", "rows", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
+    "x", "rows", "keys", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 
 /// The relations' own storage between runs: every relation's rows as frames (notes/t33, K1). A cache's rows are
@@ -124,17 +124,9 @@ fn no_cache_tests_its_own_freshness_but_those_not_yet_moved() {
     }
 }
 
-/// The only files that may know a relation is a cache: the rewrite of its two rules into ordinary rules, the program
-/// front that calls it, the session's maintenance rewrite and its cut, and the place a corpus run applies the rewrite
-/// to its parts. Each turns the cache into rules; none stores, looks up or binds a cache's rows.
-const KNOWS_CACHES: &[&str] = &[
-    "code_rule_dsl/logic/front/caches.rs",
-    "code_rule_dsl/logic/front.rs",
-    "code_rule_dsl/logic/plan/corpus/maintain.rs",
-    "code_rule_dsl/logic/plan/corpus/supports.rs",
-    "code_rule_dsl/logic/plan/corpus/retain.rs",
-    "code_rule_dsl/logic/plan/corpus.rs",
-];
+/// The only files that may know a relation is a cache: the lint of `.cache` and the program front that calls it.
+/// Nothing that evaluates, keeps or maintains a relation asks whether it is a cache.
+const KNOWS_CACHES: &[&str] = &["code_rule_dsl/logic/front/caches.rs", "code_rule_dsl/logic/front.rs"];
 
 /// A cache's own store, hook or lookup: names no engine code may have (decision 0103: cached facts are just facts).
 const CACHE_MACHINERY: &[&str] = &["CacheStore", "cache_hits", "queue_cache_rows", "keep_cache_rows", "CachePut", "hold_kept"];

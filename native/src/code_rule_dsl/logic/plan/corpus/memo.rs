@@ -218,6 +218,9 @@ pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<S
 pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(SourceId, String, i64, Entry)>) {
     off();
     let set = plan(program);
+    if crate::code_rule_dsl::logic::profile::on() {
+        tally(entries.iter().map(|e| &e.3));
+    }
     let held: Vec<(SourceId, String, std::sync::Arc<Entry>)> = entries.into_iter().map(|(source, path, key, entry)| (source, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
     let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
     let keys = held.iter().map(|(source, path, e)| (queued(*source, path, program), Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>))).collect();
@@ -237,6 +240,27 @@ impl Entry {
     fn bytes(&self) -> usize {
         self.rows.iter().map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.lines.iter().map(|(r, (c, l))| r.len() + c.len() * 8 + l.iter().map(|t| t.len() + 24).sum::<usize>()).sum::<usize>()
     }
+}
+
+/// What the run's memo entries held, by relation (rows, values), and the documents' nodes: counted when profiling,
+/// so the profile names what makes the memo large (t31 A2). Read and cleared by `sizes`.
+static SIZES: std::sync::Mutex<(u64, BTreeMap<String, (u64, u64)>)> = std::sync::Mutex::new((0, BTreeMap::new()));
+
+fn tally<'a>(entries: impl Iterator<Item = &'a Entry>) {
+    let mut sizes = SIZES.lock().expect("the memo's sizes");
+    for entry in entries {
+        sizes.0 += entry.nodes;
+        for (rel, (width, values)) in &entry.rows {
+            let at = sizes.1.entry(rel.clone()).or_default();
+            at.0 += (values.len() / (*width).max(1)) as u64;
+            at.1 += values.len() as u64;
+        }
+    }
+}
+
+/// The nodes of the documents remembered, and each relation's (rows, values) over their entries, since the last call.
+pub(super) fn sizes() -> (u64, BTreeMap<String, (u64, u64)>) {
+    std::mem::take(&mut *SIZES.lock().expect("the memo's sizes"))
 }
 
 /// Where a run's memo is: the tape cache's store (decision 0052), or a session's memory (`session::Session`), whose

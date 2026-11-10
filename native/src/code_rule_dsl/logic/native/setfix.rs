@@ -38,6 +38,8 @@
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
 mod scalars;
 mod liveness;
+/// The index-cost spike: column orders as sorted runs of row ids (`RERAIL_INDEX_SPIKE`).
+mod ordered;
 pub(in crate::code_rule_dsl) mod rowcode;
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rusqlite::ffi;
@@ -200,6 +202,14 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Decode a composed output through the shared atom arena, without a SQL query per row.
+pub(in crate::code_rule_dsl) fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
+    let symbols=symbols(conn)?;
+    let s=symbols.read().unwrap();
+    if atom<0 || atom as usize>=s.len(){return Err(err(format!("no symbol {atom}")))}
+    Ok(s.name(atom).to_owned())
+}
+
 /// Appends the symbols pending in `conn`'s database if a flush is due (decision 0049 §4.2): a run's end.
 pub fn flush_symbols(conn: &Connection) -> Result<()> {
     crate::content_store::atoms::Atoms::for_connection(conn).flush_if_due(conn).map_err(|e| err(e.to_string()))
@@ -215,6 +225,36 @@ fn hash_vals(vals: impl Iterator<Item = i64>) -> u64 {
 }
 
 const NIL: u32 = u32::MAX;
+
+/// `RERAIL_INDEX_REPORT` (the index-cost spike): every probe of a relation, by its name and the key columns it binds
+/// (`+delta` for a probe of the delta alone), and the planner's reads of its per-column indexes (`[stats]`,
+/// `[postings]`, `[lead]`). Measurement only: nothing reads it but the report.
+pub(crate) mod probed {
+    use std::collections::HashMap;
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static PROBES: std::sync::Mutex<Option<HashMap<(String, Vec<usize>), u64>>> = std::sync::Mutex::new(None);
+    #[inline]
+    pub(crate) fn on() -> bool {
+        *ON.get_or_init(|| std::env::var_os("RERAIL_INDEX_REPORT").is_some())
+    }
+    #[inline]
+    pub(crate) fn note(rel: &str, cols: impl Iterator<Item = usize>) {
+        if on() {
+            add(rel, cols.collect());
+        }
+    }
+    #[cold]
+    fn add(rel: &str, mut cols: Vec<usize>) {
+        cols.sort_unstable();
+        cols.dedup();
+        let mut p = PROBES.lock().unwrap_or_else(|e| e.into_inner());
+        *p.get_or_insert_with(HashMap::new).entry((rel.to_owned(), cols)).or_insert(0) += 1;
+    }
+    /// The probes since the last `take`.
+    pub(crate) fn take() -> HashMap<(String, Vec<usize>), u64> {
+        PROBES.lock().unwrap_or_else(|e| e.into_inner()).take().unwrap_or_default()
+    }
+}
 
 /// Whether row `id` is dead in bitset `dead` (a relation started from a kept one, its deleted rows marked, not
 /// removed: decision 0090 step 4). Empty: none is.
@@ -1346,6 +1386,7 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
     let store = comp.store.read().unwrap();
     let syms = store.syms.read().unwrap();
     Ok(store.rels.iter().map(|r| {
+        probed::note(&format!("{} [stats]", r.table), std::iter::empty());
         let cols = &r.idx[..r.k];
         let mut line = std::iter::once(r.n).chain(cols.iter().map(|ix| ix.table.len()))
             .chain(cols.iter().map(|ix| ix.table.iter().map(|p| p.len as usize * p.len as usize).sum::<usize>()))
@@ -1508,6 +1549,7 @@ pub fn live(conn: &Connection, name: &str) -> Result<Vec<Live>> {
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
     Ok(store.rels.iter().map(|r| {
+        probed::note(&format!("{} [stats]", r.table), std::iter::empty());
         let cols = &r.idx[..r.k];
         let freq = cols.iter().enumerate().filter(|(_, ix)| ix.table.len() <= FREQ_NDV)
             .map(|(c, ix)| (c, ix.table.iter().map(|p| (r.row(p.head as usize)[c], i64::from(p.len))).collect())).collect();
@@ -1648,6 +1690,7 @@ unsafe impl VTabCursor for RelCursor {
             arg += 1;
             match key { Some(k) => keys.push((col, k)), None => return Ok(()) }
         }
+        if probed::on() && !keys.is_empty() { probed::note(&format!("{}{}", r.table, if self.delta { "+delta" } else { "" }), keys.iter().map(|&(c, _)| c)); }
         let Some((cands, _)) = keys.iter().map(|&(c, k)| r.postings(c, &[k], self.delta)).min_by_key(|&(_, n)| n) else { return Ok(()) };
         let ids = &mut self.ids;
         cands.any(|id| { if !r.dead(id) && keys.iter().all(|&(c, k)| r.row(id as usize)[c] == k) { ids.push(id) } false });
@@ -1962,6 +2005,18 @@ pub fn hold_as(conn: &Connection, table: &str, rel: Arc<InRel>) {
     DERIVED.lock().unwrap().insert((scope(conn), table.to_owned()), rel);
 }
 
+/// A native fact operator's completed set. No rows are published until a SQL consumer materializes it.
+/// Unlike `adopt`, this is a result of the current run, not an input scheduled for the next one.
+pub fn retain(conn: &Connection, table: &str, mut rows: Vec<Vec<i64>>, types: Vec<u8>) -> Result<()> {
+    if rows.iter().any(|r| r.len() != types.len()) { return Err(err(format!("{table}: native result width differs from its declaration"))); }
+    rows.sort_unstable();
+    rows.dedup();
+    let mut rel = InRel::flat(&rows, types);
+    Arc::get_mut(&mut rel).unwrap().stored = 0;
+    DERIVED.lock().unwrap().insert((scope(conn), table.to_owned()), rel);
+    Ok(())
+}
+
 /// Holds `table` in `conn`'s run as a relation with no rows, as a component that derived none would leave it: for a
 /// stratum with nothing to run, which opens no component.
 pub fn hold_empty(conn: &Connection, table: &str, types: Vec<u8>) {
@@ -2023,6 +2078,110 @@ impl InRel {
     }
     /// What it holds in memory, by part: its values, its rows' levels, and its dedup set, dead bits and hash
     /// indexes (each by capacity, the bytes allocated).
+    /// The index-cost spike (`RERAIL_INDEX_SPIKE`): its probed key-column sets `shapes` answered by column orders
+    /// (`ordered`) and by today's per-column chains, timed on keys of its own rows (every `stride`th), with the
+    /// counts checked equal; and its dedup test by the set and by the order holding every column. A line, and the
+    /// orders' bytes; `None` for a view.
+    pub fn index_spike(&self, name: &str, shapes: &[Vec<usize>], counts: &[u64]) -> Option<(String, usize, f64, f64, f64)> {
+        if self.view.is_some() || self.k == 0 || self.n == 0 {
+            return None;
+        }
+        let (k, n, rows) = (self.k, self.n, &self.rows);
+        let t = Instant::now();
+        let cover = ordered::cover(shapes, k);
+        let orders: Vec<ordered::Ordered> = cover.iter().map(|o| ordered::Ordered::build(rows, k, n, |id| is_dead(&self.dead, id), o.clone(), false)).collect();
+        let build_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let hashed: Vec<ordered::Ordered> = cover.iter().map(|o| ordered::Ordered::build(rows, k, n, |id| is_dead(&self.dead, id), o.clone(), true)).collect();
+        let hashed_ms = t.elapsed().as_secs_f64() * 1e3;
+        let bytes: usize = orders.iter().map(ordered::Ordered::bytes).sum();
+        let now = self.set.capacity() * 5 + self.chains.iter().map(|ix| ix.next.capacity() * 4 + ix.table.capacity() * (std::mem::size_of::<Post>() + 1)).sum::<usize>();
+        let live: Vec<u32> = (0..n as u32).filter(|&id| !is_dead(&self.dead, id)).collect();
+        let stride = (live.len() / 4096).max(1);
+        let sample: Vec<u32> = live.iter().step_by(stride).copied().collect();
+        let mut parts = Vec::new();
+        let (mut w_now, mut w_new, mut w_hash) = (0.0f64, 0.0f64, 0.0f64);
+        let mut checks = shapes.to_vec();
+        checks.push((0..k).collect());
+        for (si, shape) in checks.iter().enumerate() {
+            let dedup = si == shapes.len();
+            let Some((oi, len)) = orders.iter().enumerate().find_map(|(i, o)| o.prefix(shape).map(|l| (i, l))) else { continue };
+            let o = &orders[oi];
+            // The new: the order's range on the key in the order's column order.
+            let time = |o: &ordered::Ordered| -> (f64, usize) {
+                let (mut ns, mut got) = (f64::MAX, 0usize);
+                for _ in 0..3 {
+                    let t = Instant::now();
+                    got = 0;
+                    let mut key = vec![0i64; len];
+                    for &id in &sample {
+                        let r = self.row(id as usize);
+                        for (j, &c) in o.order[..len].iter().enumerate() { key[j] = r[c]; }
+                        got += std::hint::black_box(o.range(rows, k, &key)).len();
+                    }
+                    ns = ns.min(t.elapsed().as_nanos() as f64 / sample.len() as f64);
+                }
+                (ns, got)
+            };
+            let (new_ns, got_new) = time(o);
+            let (hash_ns, got_hash) = time(&hashed[oi]);
+            // Today's: the dedup set for the whole row; else a chain on exactly the key's columns, or the shortest
+            // single-column chain, walked and filtered on the key.
+            let (mut now_ns, mut got_now) = (f64::MAX, 0usize);
+            for _ in 0..3 {
+            let t = Instant::now();
+            got_now = 0;
+            for &id in &sample {
+                let r = self.row(id as usize);
+                if dedup {
+                    got_now += usize::from(self.set.find(hash_vals(r.iter().copied()), |&x| !is_dead(&self.dead, x) && self.row(x as usize) == r).is_some());
+                    continue;
+                }
+                let exact = self.chains.iter().find(|ix| ix.cols == *shape);
+                let pick = exact.map(|ix| (ix, ix.get(rows, k, &shape.iter().map(|&c| r[c]).collect::<Vec<_>>()))).or_else(|| {
+                    shape.iter().filter_map(|&c| self.chains.iter().find(|ix| ix.cols == [c])).map(|ix| (ix, ix.get(rows, k, &[r[ix.cols[0]]]))).min_by_key(|(_, p)| p.map_or(0, |p| p.len))
+                });
+                let Some((ix, Some(p))) = pick else { continue };
+                let mut at = p.head;
+                while at != NIL {
+                    let x = self.row(at as usize);
+                    if !is_dead(&self.dead, at) && shape.iter().all(|&c| x[c] == r[c]) { got_now += 1; }
+                    at = ix.next[at as usize];
+                }
+            }
+            now_ns = now_ns.min(t.elapsed().as_nanos() as f64 / sample.len() as f64);
+            }
+            let same = got_now == got_new && got_now == got_hash;
+            let w = counts.get(si).copied().unwrap_or(0) as f64;
+            (w_now, w_new, w_hash) = (w_now + w * now_ns, w_new + w * new_ns, w_hash + w * hash_ns);
+            parts.push(format!("{}{shape:?}: {now_ns:.0} ns now, {new_ns:.0} fenced, {hash_ns:.0} hashed{}", if dedup { "dedup " } else { "" }, if same { String::new() } else { format!(" (COUNTS DIFFER: {got_now} vs {got_new} vs {got_hash})") }));
+        }
+        Some((
+            format!(
+                "  SPIKE {name}: {} rows, k {k}; {} orders {:?}, {:.2} MB ({:.1} B/row) vs sets and chains {:.2} MB ({:.1} B/row); built in {build_ms:.1} ms fenced, {hashed_ms:.1} ms hashed; {}",
+                live.len(),
+                orders.len(),
+                orders.iter().map(|o| o.order.clone()).collect::<Vec<_>>(),
+                bytes as f64 / 1e6,
+                bytes as f64 / live.len().max(1) as f64,
+                now as f64 / 1e6,
+                now as f64 / live.len().max(1) as f64,
+                parts.join("; ")
+            ),
+            bytes,
+            w_now,
+            w_new,
+            w_hash,
+        ))
+    }
+    /// For the index-cost spike (`RERAIL_INDEX_REPORT`): its columns, its dedup set's bytes, and each kept chain
+    /// index's columns, keys and bytes; then the lazily built key indexes' columns and bytes.
+    pub fn index_detail(&self) -> (usize, usize, Vec<(Vec<usize>, usize, usize)>, Vec<(Vec<usize>, usize)>) {
+        let set = self.set.capacity() * (4 + 1) + self.dead.capacity() * 8;
+        let chains = self.chains.iter().map(|ix| (ix.cols.clone(), ix.table.len(), ix.next.capacity() * 4 + ix.table.capacity() * (std::mem::size_of::<Post>() + 1))).collect();
+        let csr = self.idx.lock().map(|m| m.values().map(|c| (c.cols.clone(), c.ids.capacity() * 4 + c.table.capacity() * (12 + 1))).collect()).unwrap_or_default();
+        (self.k, set, chains, csr)
+    }
     pub fn held_bytes(&self) -> (usize, usize, usize) {
         let values = self.rows.capacity() * 8;
         let levels = self.level.capacity() * 4;
@@ -2229,6 +2388,7 @@ impl InRel {
         if self.view.is_some() || c >= self.k {
             return false;
         }
+        probed::note(&format!("{} [postings]", self.name.get().map_or("?", String::as_str)), std::iter::once(c));
         let Some(ix) = self.chains.iter().find(|ix| ix.cols == [c]).filter(|ix| ix.next.len() >= self.n) else { return false };
         let (k, data) = (self.k, &self.rows);
         let mut firsts: Vec<i64> = Vec::new();
@@ -3194,6 +3354,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)]) -> (Rows<'a>, Cands<'a>) {
             match src {
                 Src::In(rel, ix) => {
+                    if !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
                     if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
                     else if let Some(i) = ix.chain {
                         let index = &rel.chains[i];
@@ -3207,6 +3368,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 }
                 Src::FullMulti(r, cols) => {
                     let rel = &store.rels[*r];
+                    probed::note(&rel.table, cols.iter().copied());
                     let ix = rel.idx.iter().position(|ix| &ix.cols == cols).expect("composite index");
                     (Rows::Comp(rel), rel.postings(ix, key, false).0)
                 }
@@ -3216,6 +3378,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     if keys.is_empty() {
                         (Rows::Comp(rel), if delta { Cands::Range(rel.lo as u32, rel.hi as u32) } else { Cands::Range(0, rel.n as u32) })
                     } else {
+                        if probed::on() { probed::note(&if delta { format!("{}+delta", rel.table) } else { rel.table.clone() }, keys.iter().map(|&(c, _)| c)); }
                         let best = keys.iter().zip(key).map(|(&(c, _), &v)| rel.postings(c, &[v], delta)).min_by_key(|&(_, n)| n);
                         (Rows::Comp(rel), best.map_or(Cands::Slice(&[]), |b| b.0))
                     }

@@ -8,7 +8,8 @@
 //! file, a comment holding a quote) goes to tree-sitter-json.
 
 pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_stream::{Columns, NO_PARENT};
-use super::{bitlex_compile, native_cpu_stream, native_ir, rir};
+use rerail_compiler::bitlex_masks as bitlex_compile;
+use rerail_compiler::{native_cpu_stream, native_ir, rir_asm as rir};
 
 /// The grammar: the ladder's JSONC step.
 const GRAMMAR: &str = include_str!("../../../../crates/compiler/bitlex_ladder/15-jsonc.bitlex");
@@ -48,7 +49,7 @@ fn compile() -> Result<Compiled, String> {
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
     let program = rir::assemble(&compiled.text())?;
-    let native = native_ir::lower(&program).map_err(|e| format!("lowers: {e:?}"))?;
+    let native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
     Ok(Compiled { parser })
 }

@@ -144,6 +144,19 @@ fn check(sources: Vec<String>) -> Run {
     );
     let compiled = native_policy();
     let native = native_run(&compiled, &sources);
+    // Optional export lets the production .rr compiler consume the same edge
+    // fixtures and expected raw keys, rather than just a negative corpus.
+    if let Ok(directory) = std::env::var("RERAIL_ASYNC_EXPORT_FIXTURES") {
+        use sha2::{Digest, Sha256};
+        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&sources).unwrap()));
+        let root = std::path::Path::new(&directory).join(&digest[..12]);
+        std::fs::create_dir_all(&root).unwrap();
+        for (doc, source) in sources.iter().enumerate() {
+            std::fs::write(root.join(format!("doc{doc}.py")), source).unwrap();
+        }
+        let expected: Vec<_> = native.iter().map(|(code,doc,line)| (code,format!("doc{doc}.py"),line)).collect();
+        std::fs::write(root.join("expected.json"), serde_json::to_vec_pretty(&expected).unwrap()).unwrap();
+    }
     let tapes = parsed(&sources);
     let paths: Vec<_> = (0..sources.len())
         .map(|doc| format!("doc{doc}.py"))
@@ -372,7 +385,7 @@ fn failed_document_does_not_publish_provisional_findings() {
     );
 }
 
-fn collect_paths(root: &std::path::Path, paths: &mut Vec<std::path::PathBuf>) {
+pub(super) fn collect_paths(root: &std::path::Path, paths: &mut Vec<std::path::PathBuf>) {
     for entry in std::fs::read_dir(root).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
@@ -447,7 +460,11 @@ fn complete_async_family_corpus_profile() {
     let native = native_policy();
     let compile_cpu = cpu_ns() - compile;
     let native_compile_wall_ns = phase_wall.elapsed().as_nanos() as u64;
-    let indexed = Native::new(&parsed, &native, &paths, &modules);
+    // Retain the historical corpus-indexed oracle for an apples-to-apples
+    // comparison, and measure today's per-file native oracle separately.
+    let indexed = super::s_native_oracle::Native::new(&parsed, &native, &paths, &modules);
+    let current_native = Native::new(&parsed, &native, &paths, &modules);
+    let admission = super::compiler_admission::probe();
     let compile = cpu_ns();
     let phase_wall = Instant::now();
     let generated = generated_shape::queries();
@@ -486,6 +503,8 @@ fn complete_async_family_corpus_profile() {
                 (candidate(&reference_queries), baseline(), generated)
             }
         };
+        let current = current_native.run();
+        assert_eq!(current.keys, oracle.keys, "current/historical native parity");
         assert_eq!(
             keys(&generated_run),
             keys(&run),
@@ -524,20 +543,26 @@ fn complete_async_family_corpus_profile() {
         );
         assert!(run.metrics.sql_executions <= 100, "hard execution budget");
         runs.push(json!({"iteration":iteration,
-            "reference_job_cpu_ns":run.metrics.execution_ns+run.metrics.preparation_ns+parse_cpu+indexed.index_ns,
-            "reference_job_wall_ns":run.metrics.wall_ns+parse_wall_ns+indexed.index_wall_ns,
+            "current_native_execution_cpu_ns":current.cpu_ns,
+            "current_native_execution_wall_ns":current.wall_ns,
+            "current_native_selection_cpu_ns":current.prepare_ns,
+            "current_native_roots_matched":current.roots_matched,
+            "current_native_job_cpu_ns":current.cpu_ns+parse_cpu+if iteration==0 {compile_cpu} else {0},
+            "current_native_job_wall_ns":current.wall_ns+parse_wall_ns+if iteration==0 {native_compile_wall_ns} else {0},
+            "reference_job_cpu_ns":run.metrics.execution_ns+run.metrics.preparation_ns+parse_cpu,
+            "reference_job_wall_ns":run.metrics.wall_ns+parse_wall_ns,
             "native_job_cpu_ns":oracle.cpu_ns+oracle.compile_ns+parse_cpu+indexed.index_ns+if iteration==0 { compile_cpu } else { 0 },
             "native_job_wall_ns":oracle.wall_ns+parse_wall_ns+indexed.index_wall_ns+if iteration==0 { native_compile_wall_ns } else { 0 },
             "execution_cpu_ratio":run.metrics.execution_ns as f64/oracle.cpu_ns as f64,
             "generated_to_reference_cpu_ratio":generated_run.metrics.execution_ns as f64/run.metrics.execution_ns as f64,
-            "generated_job_cpu_ns":generated_run.metrics.execution_ns+generated_run.metrics.preparation_ns+parse_cpu+indexed.index_ns+if iteration==0 { generated_compile_cpu } else { 0 },
-            "generated_job_wall_ns":generated_run.metrics.wall_ns+parse_wall_ns+indexed.index_wall_ns+if iteration==0 { generated_compile_wall_ns } else { 0 },
+            "generated_job_cpu_ns":generated_run.metrics.execution_ns+generated_run.metrics.preparation_ns+parse_cpu+if iteration==0 { generated_compile_cpu } else { 0 },
+            "generated_job_wall_ns":generated_run.metrics.wall_ns+parse_wall_ns+if iteration==0 { generated_compile_wall_ns } else { 0 },
             "generated":generated_run.metrics,
             "reference":run.metrics,"findings":run.findings.keys.len(),
             "native_execution_cpu_ns":oracle.cpu_ns,"native_execution_wall_ns":oracle.wall_ns,
             "native_selection_cpu_ns":oracle.prepare_ns,"native_sql_compile_ns":oracle.compile_ns,
             "native_roots_matched":oracle.roots_matched,
-            "native_frontier_cached":iteration>0,
+            "native_repeat_iteration":iteration,
             "native_match_cpu_ns":oracle.cpu_ns.saturating_sub(oracle.prepare_ns),
             "reference_to_native_match_ratio":run.metrics.execution_ns as f64/oracle.cpu_ns.saturating_sub(oracle.prepare_ns) as f64}));
     }
@@ -563,7 +588,8 @@ fn complete_async_family_corpus_profile() {
         "generated_compiler_qualified": false,
         "production_cutover": false
     });
-    let report = json!({"gates":gates,"scope":"complete four-rule async family; raw finding keys, no suppressions/payloads; indexed native shares scope/memo across clauses; job totals sum measured phases, reusing common parse+tape and mandatory index construction; initial program compilation is charged to iteration0; source loading/suppression/payloads excluded; native candidate frontier is fresh only in iteration0, cached thereafter; compare match CPU separately",
+    let report = json!({"generic_compiler_admission":admission,"gates":gates,"scope":"complete four-rule async family; raw finding keys, no suppressions/payloads; indexed native shares scope/memo across clauses; job totals sum measured phases, reusing common parse+tape; only corpus-indexed native is charged its index construction; initial program compilation is charged to iteration0; source loading/suppression/payloads excluded; candidate selection is measured on every iteration; repetition does not imply a cache hit; compare match CPU separately",
+        "baseline_notes":"native_* is the retained corpus-indexed oracle, matching the historical measurement boundary; current_native_* is the current per-file native oracle, including its index construction. generated is the specialized two-statement reference compiler, not the generic integration compiler. Neither job total includes source loading, suppression, or payloads.",
         "corpus":root,"files":sources.len(),"source_bytes":sources.iter().map(String::len).sum::<usize>(),
         "parse_tape_cpu_ns":parse_cpu,"parse_tape_wall_ns":parse_wall_ns,
         "index_construction_cpu_ns":indexed.index_ns,"index_construction_wall_ns":indexed.index_wall_ns,
@@ -575,4 +601,71 @@ fn complete_async_family_corpus_profile() {
     if let Ok(path) = std::env::var("RERAIL_SHARED_REPORT") {
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     }
+}
+
+#[test]
+#[ignore = "requires RERAIL_SHARED_CORPUS; producer boundary comparison"]
+fn complete_async_family_producer_profile() {
+    use crate::code_rule_dsl::{
+        facts::{core, producers::python::families},
+        language::tape_tag,
+        lines::{LineTable, Terminators},
+    };
+    use std::sync::Arc;
+    let root = std::env::var("RERAIL_SHARED_CORPUS").expect("RERAIL_SHARED_CORPUS");
+    let mut paths = Vec::new();
+    collect_paths(std::path::Path::new(&root), &mut paths);
+    paths.sort();
+    let grammar = families::Grammar::new(tape_tag(GrammarDialect::Python).unwrap(), &GrammarDialect::Python.kinds());
+    let (mut parse_ns, mut core_ns, mut nodes, mut bytes) = (0u64, 0u64, 0usize, 0usize);
+    let mut runs = [(0u64, 0u64); 3];
+    let (mut calls, mut async_calls, mut arguments) = (0usize, 0usize, 0usize);
+    for path in &paths {
+        let source = std::fs::read_to_string(path).unwrap();
+        bytes += source.len();
+        let started = cpu_ns();
+        let tape = parsed(std::slice::from_ref(&source));
+        parse_ns += cpu_ns() - started;
+        let started = cpu_ns();
+        let facts = core::from_tape(tape[0].root().get_doc(), Arc::new(LineTable::new(&source, Terminators::of(GrammarDialect::Python)))).unwrap();
+        core_ns += cpu_ns() - started;
+        nodes += facts.kind.len();
+        let roots = [(0, tape[0].root())];
+        for (iteration, times) in runs.iter_mut().enumerate() {
+            let posting = || {
+                let start = cpu_ns();
+                let rows = families::rows(&grammar, &facts);
+                (rows, cpu_ns()-start)
+            };
+            let reference = || {
+                let start = cpu_ns();
+                let rows = call_batch::collect(&roots, ContextKind::AsyncFunction, |_, _| {}, |_, _| {});
+                (rows, cpu_ns()-start)
+            };
+            let ((post, pn), (reference, rn)) = if iteration % 2 == 0 {
+                (posting(), reference())
+            } else {
+                let r = reference();
+                (posting(), r)
+            };
+            times.0 += pn;
+            times.1 += rn;
+            let actual: BTreeSet<_> = post.context.iter().filter(|r| r[2] == 2).map(|r| r[0]).collect();
+            let expected: BTreeSet<_> = reference.calls.iter().map(|c| c.call.node_id as u32).collect();
+            assert_eq!(actual, expected, "async call demand differs: {}", path.display());
+            if iteration == 0 {
+                calls += post.call.len();
+                arguments += post.arg.len();
+                async_calls += actual.len();
+            }
+        }
+    }
+    let report = json!({"files":paths.len(),"source_bytes":bytes,"nodes":nodes,
+        "parse_tape_cpu_ns":parse_ns,"core_construction_cpu_ns":core_ns,
+        "all_calls":calls,"async_calls":async_calls,"eager_argument_rows":arguments,
+        "runs":runs.map(|(p,r)| json!({"postings_all_families_cpu_ns":p,"reference_async_structure_cpu_ns":r})),
+        "scope":"Producer-only microbenchmark, not end-to-end execution. Postings builds every call family and arguments; reference builds only async-context call structure. Core construction is separate; production may reuse it. Every async call ID agrees per document. Per-document CPU clocks and output destruction excluded from producer timers."});
+    let path = std::env::var("RERAIL_PRODUCER_REPORT").expect("RERAIL_PRODUCER_REPORT");
+    std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    eprintln!("{report}");
 }

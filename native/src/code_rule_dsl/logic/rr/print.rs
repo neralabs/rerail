@@ -142,6 +142,11 @@ fn native_rule(head: &Atom, native: &Native, kindsets: &BTreeSet<&String>) -> Re
             };
             format!("{} :- {call}.", atom(head, kindsets)?)
         }
+        Native::PythonCandidates {input,targets,context,member} => format!("{} :- python_candidates({}, {}, {}, {}, {}).",atom(head,kindsets)?,terms(&head.args)?,relation(input),relation(targets),quote(context),quote(member)),
+        Native::Python {kind,input,targets} => {
+            let tail=targets.as_ref().map(|t|format!(", {}",relation(t))).unwrap_or_default();
+            format!("{} :- python_{}({}, {}{}).",atom(head,kindsets)?,kind,terms(&head.args)?,relation(input),tail)
+        }
         Native::Components { edge, own } => {
             format!("{} :- components({}, {}, {}).", atom(head, kindsets)?, terms(&head.args)?, relation(edge), relation(own))
         }
@@ -209,6 +214,7 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
                 }
                 // `core.rr`'s `docof` over nodes and spans stays an input (`lower::projections`).
                 _ if i == 0 && name == "docof" && prog.inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
+                _ if prog.tapes.get(name).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
             }
         }

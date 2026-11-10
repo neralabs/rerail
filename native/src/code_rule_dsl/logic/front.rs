@@ -364,6 +364,9 @@ pub(in crate::code_rule_dsl) struct Program {
     /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
     /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
     pub(in crate::code_rule_dsl) qualifiers: BTreeMap<String, BTreeSet<String>>,
+    /// The columns declared `tape` (decision 0103 §3), by relation: stored as `sym`, checked before lowering
+    /// (`rr::tape_type`) and printed back as `tape`.
+    pub(in crate::code_rule_dsl) tapes: BTreeMap<String, BTreeSet<usize>>,
     /// A session's maintained strata, each with the rules that derive it again instead (decision 0090 §4,
     /// `maintain::rewrite`): the run chooses per stratum, once its input deltas are known (`plan::run`).
     pub(in crate::code_rule_dsl) again: Vec<Again>,
@@ -485,6 +488,9 @@ pub(in crate::code_rule_dsl) enum Native {
     /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
     /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
     Components { edge: String, own: String },
+    Python { kind: String, input: String, targets: Option<String> },
+    /// Conservative call candidates over demanded documents; exact semantic operators remain separate.
+    PythonCandidates { input: String, targets: String, context: String, member: String },
 }
 
 impl Native {
@@ -500,6 +506,8 @@ impl Native {
                 if let Some(roots) = roots { *roots = rename(roots); }
             }
             Native::MatchAll { input, .. } => *input = rename(input),
+            Native::PythonCandidates {input,targets,..} => { *input=rename(input); *targets=rename(targets); },
+            Native::Python {input,targets,..} => { *input=rename(input); if let Some(t)=targets {*t=rename(t);} },
             Native::Components { edge, own } => {
                 *edge = rename(edge);
                 *own = rename(own);
@@ -514,6 +522,8 @@ impl Native {
             Native::BfsWalk { edge, roots } => vec![edge.as_str(), roots.as_str()],
             Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
             Native::MatchAll { input, .. } => vec![input.as_str()],
+            Native::PythonCandidates {input,targets,..} => vec![input.as_str(),targets.as_str()],
+            Native::Python {input,targets,..} => std::iter::once(input.as_str()).chain(targets.as_deref()).collect(),
             Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],
         }
     }
@@ -1301,6 +1311,9 @@ pub(in crate::code_rule_dsl) fn prune(mut prog: Program) -> Program {
         }
     }
     prog.rules.retain(|r| need.contains(&r.head.rel));
+    // Native metadata owns real dependency edges. A dead producer must not keep its demands
+    // alive in the file-local split or cause them to be exported across every chunk.
+    prog.natives.retain(|rel, _| need.contains(rel));
     prog
 }
 

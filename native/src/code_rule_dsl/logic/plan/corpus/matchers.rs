@@ -147,7 +147,7 @@ static LOWERED: std::sync::LazyLock<Mutex<HashMap<(String, String), Lowered>>> =
 
 /// Each relation's matcher lowered for the transducer, over the program's first `.policy` (its utils). A matcher that
 /// does not lower fails the run, naming it.
-pub(in crate::code_rule_dsl) fn compiled(matchers: &[(String, String)], policies: &[serde_json::Value]) -> Result<Vec<Matcher>, String> {
+pub(in crate::code_rule_dsl) fn compiled(matchers: &[(String, String)], policies: &[serde_json::Value]) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
     let base = policies.first();
     let base_text = base.map(|b| b.to_string()).unwrap_or_default();
     let _span = crate::code_rule_dsl::logic::profile::span(|| "ast matchers lowered".into());
@@ -164,7 +164,8 @@ pub(in crate::code_rule_dsl) fn compiled(matchers: &[(String, String)], policies
             let (lowered, gates) = got.map_err(|why| format!("{rel}: the matcher {text} does not lower: {why}"))?;
             Ok(Matcher { rel: rel.clone(), lowered, gates })
         })
-        .collect()
+        .collect::<Result<Vec<_>, String>>()
+        .and_then(crate::code_rule_dsl::facts::vtab::syntax::Matchers::new)
 }
 
 #[cfg(test)]

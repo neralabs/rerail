@@ -24,7 +24,7 @@ impl Walker<'_> {
         self.p.children(n).collect()
     }
     fn decorators(&self, n: u32) -> Vec<u32> {
-        let parent = self.p.parent[n as usize];
+        let parent = self.p.parent(n as usize);
         if parent == NONE || self.kind(parent) != "decorated_definition" {
             return Vec::new();
         }

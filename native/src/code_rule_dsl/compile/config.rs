@@ -467,9 +467,19 @@ impl Options {
                     other => escape(other)?,
                 };
             }
+            Some("sql") => {
+                let escape = |value: &Value| -> Result<Value> {
+                    let hex = text(value, path)?.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+                    Ok(Value::String(format!("CAST(X'{hex}' AS TEXT)")))
+                };
+                value = match &value {
+                    Value::Array(items) => Value::Array(items.iter().map(escape).collect::<Result<_>>()?),
+                    other => escape(other)?,
+                };
+            }
             Some(other) => {
                 return Err(invalid(format!(
-                    "{path}/escape: unknown escape `{other}`; expected regex"
+                    "{path}/escape: unknown escape `{other}`; expected regex or sql"
                 )));
             }
         }
@@ -771,6 +781,18 @@ mod tests {
             clause_ids(unused(json!({ "varsIgnorePattern": "^_" })), source),
             ["vars a", "args p", "vars c"]
         );
+    }
+
+    #[test]
+    fn configured_sql_values_are_utf8_text_expressions() {
+        let source = json!({
+            "clauses": [{"id": "values", "define": {"options": {
+                "names": {"type": "array", "items": "string", "default": ["O'Neil.py:build", "x\u{0000}y", "é"]}
+            }}}],
+            "query": {"$option": "names", "escape": "sql", "map": " UNION ALL SELECT {} AS name", "join": "", "template": "SELECT '' AS name WHERE 0{}"}
+        });
+        let (resolved, _) = super::resolve(&source).unwrap();
+        assert_eq!(resolved["query"], "SELECT '' AS name WHERE 0 UNION ALL SELECT CAST(X'4f274e65696c2e70793a6275696c64' AS TEXT) AS name UNION ALL SELECT CAST(X'780079' AS TEXT) AS name UNION ALL SELECT CAST(X'c3a9' AS TEXT) AS name");
     }
 
     #[test]

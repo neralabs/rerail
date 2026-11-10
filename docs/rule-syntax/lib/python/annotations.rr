@@ -155,7 +155,7 @@ annt_form(e, "invalid") :- annt_bare(e, s), (kind(s, "string") ; kind(s, "concat
 // annt_quoted(s, r): string s holds the type expression r. annt_parses(s): r is not itself a string (Ruff
 // refuses a quoted string inside a quoted annotation).
 .decl annt_quoted(s: node, r: node)
-annt_quoted(s, r) :- (kind(s, "string") ; kind(s, "concatenated_string")), parsed(s, "annotation", r0),
+annt_quoted(s, r) :- annt_bare(_, s), str_node(s), parsed(s, "annotation", r0),
     unparen(r0, r1), (kind(r1, "type"), child(r1, r, 0) ; !kind(r1, "type"), r = r1).
 .decl annt_parses(s: node)
 annt_parses(s) :- annt_quoted(s, r), !kind(r, "string"), !kind(r, "concatenated_string").

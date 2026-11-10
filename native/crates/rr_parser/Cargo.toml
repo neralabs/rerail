@@ -1,0 +1,22 @@
+[package]
+name = "rerail-rr-parser"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The .rr parser: its Bitlex grammar compiled to tier 1 and tier 2, the engine's tape, on the CPU and on Metal."
+
+[dependencies]
+rerail-compiler = { path = "../compiler" }
+rerail-rr-syntax = { path = "../rr_syntax" }
+bitlex = { path = "../../../tools/bitlex", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rerail-metal = { path = "../metal" }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+rerail-metal = { path = "../metal", features = ["test-hooks"] }
+
+[dev-dependencies]
+rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
+# The measurements' CPU clocks (`tests`).
+libc = "0.2.189"
