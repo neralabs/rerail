@@ -1,0 +1,23 @@
+// Native configuration and CLI protocol. Inputs retain each caller-supplied row and its position.
+.violation BypassConfig(at: span, key: symbol, value: symbol) code "NGB_CONFIG" "configuration"
+BypassConfig(@place("",0),"allowed",p) :- option("entryPoint","_configuration"), bypass_allowed(p).
+BypassConfig(@place("",0),"method",p) :- option("entryPoint","_configuration"), bypass_public_name(p).
+BypassConfig(@place("",0),"sql",p) :- option("entryPoint","_configuration"), bypass_sql_target(p).
+BypassConfig(@place("",0),"description","Ensure all ServerPlan bypass mechanisms are removed") :- option("entryPoint","_configuration").
+BypassConfig(@place("",0),"check_help","Exit with error code if violations found") :- option("entryPoint","_configuration").
+.decl bypass_cli_count(b: number, m: number)
+bypass_cli_count(b,m) :- option("entryPoint","_cli_report"), b = count : { option_item("bypassRows",_,_) }, m = count : { option_item("methodRows",_,_) }.
+.violation BypassOutput(at: span, phase: number, ordinal: number, stdout: symbol, stderr: symbol) code "NGB_OUTPUT" "CLI output"
+BypassOutput(@place("",0),0,0,"OK: No ServerPlan bypass mechanisms found\n","") :- bypass_cli_count(0,0).
+BypassOutput(@place("",0),0,0,"======================================================================\nSERVERPLAN BYPASS VIOLATIONS\n======================================================================\n\n","") :- bypass_cli_count(b,m), b+m > 0.
+BypassOutput(@place("",0),1,0,cat("Bypass references (",to_string(b),"):\n"),"") :- bypass_cli_count(b,_), b > 0.
+BypassOutput(@place("",0),1,i+1,cat(v,"\n"),"") :- bypass_cli_count(_,_), option_item("bypassRows",i,v).
+BypassOutput(@place("",0),1,b+1,"\n","") :- bypass_cli_count(b,_), b > 0.
+BypassOutput(@place("",0),2,0,cat("Forbidden public methods (",to_string(m),"):\n"),"") :- bypass_cli_count(_,m), m > 0.
+BypassOutput(@place("",0),2,i+1,cat(v,"\n"),"") :- bypass_cli_count(_,_), option_item("methodRows",i,v).
+BypassOutput(@place("",0),2,m+1,"\n","") :- bypass_cli_count(_,m), m > 0.
+BypassOutput(@place("",0),3,0,"FIX: All grammar execution must go through ServerPlan.\n     Use txn.plan() or conn.plan() instead.\n======================================================================\n","") :- bypass_cli_count(b,m), b+m > 0.
+.violation BypassExit(at: span, value: number) code "NGB_EXIT" "CLI status"
+BypassExit(@place("",0),0) :- bypass_cli_count(0,0).
+BypassExit(@place("",0),0) :- bypass_cli_count(b,m), b+m > 0, option("checkMode","0").
+BypassExit(@place("",0),1) :- bypass_cli_count(b,m), b+m > 0, option("checkMode","1").

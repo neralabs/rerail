@@ -91,6 +91,7 @@ class Suite:
         self.collected = []
         self.semantic_fallbacks = []
         self.host_protocol_calls = []
+        self.configuration_bindings = {}
         self.item = None
         self.inputs = {}
         raw = baseline.read_bytes()
@@ -573,6 +574,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check=='no_blanket_grammar_bypass':
+                from blanket_bypass_port import install
+                install(self,module)
             if check=='plan_scope_ownership':
                 from plan_ownership_port import install
                 install(self,module)
@@ -621,7 +625,7 @@ class Suite:
                 return
             check, name, passive = originals[frame.f_code]
             host = {'no_source_inspection': {'cli_main'}, 'hasattr_async': {'cli_main', '_default_directories'},
-                    'no_blanket_grammar_bypass': {'cli_main'}, 'admin_async_purity': {'cli_main'},
+                    'admin_async_purity': {'cli_main'},
                     'async_executor': {'cli_main'}, 'dynamic_module_loading': {'cli_main'}, 'classvar_check': {'cli_main'},
                     'type_safety_patterns': {'cli_main'},
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},

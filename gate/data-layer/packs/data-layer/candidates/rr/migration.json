@@ -1373,10 +1373,22 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
-      "sha256": "f1a0bcd726c819e73740b6c48b4803d4aff24dfea6b8ced19706e4c9c3f5d024",
+      "sha256": "b44fcc557114ba503462646a872f424e28a64e67d60c1cf292eadab2c6df2165",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_blanket_grammar_bypass.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "f1a0bcd726c819e73740b6c48b4803d4aff24dfea6b8ced19706e4c9c3f5d024",
+          "after": "edc33856746f02df79a8e7e4adacede85504e25590641b943ef6230f8ecf1cc2",
+          "reason": "Bind all configuration constants and move CLI decisions and complete output into native rules"
+        },
+        {
+          "before": "edc33856746f02df79a8e7e4adacede85504e25590641b943ef6230f8ecf1cc2",
+          "after": "b44fcc557114ba503462646a872f424e28a64e67d60c1cf292eadab2c6df2165",
+          "reason": "Preserve broad public API scopes and native CLI library while filtering production roots in logic"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr",
@@ -2411,6 +2423,12 @@
           "reason": "Exact JSON signature casts and decimal ceilings for the seven remaining ratchet boundary failures"
         }
       ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/blanket-bypass-cli.rr",
+      "sha256": "526a949b2f904822f49b73edf42b6c2d7653e5761d6e5ae8b0da17b235b331d4",
+      "importedSha256": "526a949b2f904822f49b73edf42b6c2d7653e5761d6e5ae8b0da17b235b331d4",
+      "origin": "authored"
     }
   ],
   "rules": [
@@ -2484,7 +2502,7 @@
       "legacySha256": "700460f3a9868afe3abd8254af2b39324ee22cc13ba4132867b8870a2d4d96da",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
-      "ruleSha256": "f1a0bcd726c819e73740b6c48b4803d4aff24dfea6b8ced19706e4c9c3f5d024"
+      "ruleSha256": "b44fcc557114ba503462646a872f424e28a64e67d60c1cf292eadab2c6df2165"
     },
     {
       "check": "serverplan_grammar_surface",
