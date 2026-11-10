@@ -25,17 +25,18 @@ a rule, written for Rerail or ported, and a port's way from candidate to shipped
 
 ## The gate
 
-`npm run test:conformance` (`conformance/languages/cli.ts --check`) is the one gate a ported rule passes to ship. It
-sits on top of the [pack validation contract](../docs/pack-format.md#the-validation-contract) and reads only pinned
+`npm run test:conformance` (`conformance/languages/cli.ts --check`) is the gate that compares a ported rule with its
+upstream tool. It sits on top of the [pack validation contract](../docs/pack-format.md#the-validation-contract),
+whose check 1 reads each shipped document alone ([Document checks](#document-checks)), and reads only pinned
 data: the test data (`test-data.lock`) and the samples (`samples.lock`), with any `publish/` laid over them. It never
 runs upstream. It descends from the V1 validation gates maintainers ran by hand before Rerail, adapted to rerail's
 layout.
 
-It first scores every pack's fixtures and samples, then judges every rule of each gated tool-pack (one with a
-`packs/<id>/upstream/<tool>/gates.yaml`), shipped (`packs/<id>/rules/`) or candidate (`packs/<id>/candidates/`), and
-each pack's own rules ([Own rules](#own-rules)). A shipped rule that fails a blocking check fails the job; a candidate
-is only reported, and one that passes everything is "ready to promote". A rule's verdict is the first blocking gate it
-fails, in the order below, but every check runs, so the report shows every failure. Besides the rules, `--check` fails
+It first scores every pack's fixtures and samples, then judges every port of each gated tool-pack (one with a
+`packs/<id>/upstream/<tool>/gates.yaml`), shipped (`packs/<id>/rules/`) or candidate (`packs/<id>/candidates/`). A
+shipped port that fails a blocking check fails the job; a candidate is only reported, and one that passes everything
+is "ready to promote": it matches its upstream tool. Whether it loads and is compact is checked when the promotion
+moves it into `rules/` ([Document checks](#document-checks)). Every check runs, so the report shows every failure. Besides the rules, `--check` fails
 on a pack's own scoring errors: an unexplained false positive, miss, missed label or finding on a clean sample, an
 engine failure, a stale divergence, or a test data or samples error.
 
@@ -56,7 +57,7 @@ the same evaluations over a worker process per core and per 5 GiB of memory. Wha
 
 | Blocks the job | Reported only |
 | --- | --- |
-| a shipped rule of a gated tool-pack that fails a blocking check (`loads`, `compact`, `conformance`) or whose tool-pack fails a tool-pack check; a pack's own rule that fails `loads` or `compact` | every candidate's checks, and which candidates are ready to promote |
+| a shipped port of a gated tool-pack that fails the blocking check (`conformance`) or whose tool-pack fails a tool-pack check | every candidate's checks, and which candidates are ready to promote |
 | a pack's scoring errors, above | `upstream-status`, and a shipped rule whose `pack.json` `on` disagrees with it |
 | a not-gated or pending list that grows against the base | a report on a labelled sample's unlabelled line, and engine failures on samples' context files |
 
@@ -75,12 +76,41 @@ compares the pull request's whole diff with its base, so once it matched, every 
 `npm run check:ci-paths` fails when the runner imports a file the filter misses; a file read at runtime rather than
 imported needs adding to the filter by hand (`scripts/check/check-ci-paths.mjs`).
 
+### Document checks
+
+Two checks read a rule document alone, with no upstream tool to compare: `loads` (the document compiles and loads on
+this commit's engine) and `compact` (it has no written-out repetition). The conformance check runs neither. Pack
+validation's check 1 (`conformance/pack-validation.ts`, run by `npm test`) is their only caller, and it loops over
+the documents `pack.json` ships, so a rule is checked whatever proves it: a port, an own rule, or one no
+`conformance.json` names. A failure fails the unit tests, as `<rule>: <document> fails loads (<check>): …`, and is not
+in the pull request comment.
+
+| Check | Checks | Data |
+| --- | --- | --- |
+| `loads` | `json` (no repeated keys), `schema`, `deterministic`, `engine-compile`, `identity`, `bundled-load` (the document alone), `current-contract` (`rerail.policy/v1`, one `mode`, no severity, no `llm` clause), `in-scope` (below) | the document, the engine, `gates.yaml` or `pack.json` |
+| `compact` | `size`; a document over 15 KiB fails `no-combinatorial-expansion` or `no-written-out-repetition` when it lists cases instead of expressing the logic | the document |
+
+`in-scope` asks the rule's scope to cover the files it must apply to:
+
+- **A port of a gated tool** (its tool has a `gates.yaml`): every file type in `gates.yaml`'s `upstream.lints`, or in
+  `rerail.in_scope` when the pack narrows it, or in the port's own `lints` in `conformance.json`.
+- **Any other rule** (an own rule, a rule no `conformance.json` names, a port of a tool not gated yet): its
+  `pack.json` examples' paths, the files its proof says it catches and passes. The pack's file types would ask more
+  than an own rule claims (one written for JSX alone), and the rule's scope checked against itself would ask nothing.
+- A rule with neither has nothing declared to apply to, and `in-scope` is left out; check 2 asks it for a proof.
+
+Check 1 also loads the pack's shipped documents together through rerail's bundled-rule loader, once the rest of the
+check has nothing to say.
+
+A conversation rule has no clauses to compile or measure: check 1 parses it and asks the engine to accept its
+patterns instead. A document the engine refuses as `language-not-supported` is not supported yet, not a failure:
+`compact` and `loads`'s checks before the compile still hold for it. A candidate takes neither check until it ships,
+so a candidate that is too large or does not load fails in the pull request that promotes it.
+
 ### Per-rule checks
 
 | Gate | Checks | Data |
 | --- | --- | --- |
-| `loads` (blocks) | `json` (no repeated keys), `schema`, `deterministic`, `engine-compile`, `identity`, `bundled-load` (the document alone), `current-contract` (`rerail.policy/v1`, one `mode`, no severity, no `llm` clause), `in-scope` (the scope covers every file type in `gates.yaml`'s `upstream.lints`, or in `rerail.in_scope` when the pack narrows it, or in the port's own `lints` in `conformance.json`; an own rule's covers its `pack.json` examples' paths) | the document, the engine, `gates.yaml` (an own rule: `pack.json`) |
-| `compact` (blocks) | `size`; a document over 15 KiB fails `no-combinatorial-expansion` or `no-written-out-repetition` when it lists cases instead of expressing the logic | the document |
 | `conformance` (blocks) | `scored`; `no-unexplained-false-positives`, `no-unexplained-misses`, `catches-something` (a true positive, or examples in `pack.json`), `engine-reads-fixtures` | the fixtures: upstream's cases and Rerail's probes, after `divergences.json` |
 | | `holds-under-rename`: no unexplained FP or FN, and no engine failure (a parse-induced `source-incomplete` is only reported), on the rename variants (units with `source.units[key].renamedFrom`, under `fixtures/renamed/`), scored apart from the originals. It reports, without failing, the variants the renaming took every finding of the rule from (`renamedAway`); when the renaming took every finding and none survives, the check fails: nothing shows the rule matches the construct rather than the cases' names (the renamer keeps literals and every two names' order, so a rule that reads a literal or an order keeps its findings), unless `gates.yaml` gives the rule a `rename_exempt` reason. "n/a" when no variant covers the rule, and for a tool-pack without variants, whose detail names the held-out evidence left: its judged samples, or none | the rename variants in the test data |
 | | `samples-catch-labelled`, `samples-silent-on-clean`, `engine-reads-samples` ([How samples are judged](#how-samples-are-judged)) | the samples labelled for the rule |
@@ -122,9 +152,8 @@ a rule has neither, add a clean real-code sample for it.
 
 ### Tool-pack checks
 
-Before any rule, each gated tool-pack must pass `bundled-load` (the pack's shipped rules load together through
-rerail's bundled-rule loader), `declared-pins` (`conformance.json`'s `tools[].version` equals `gates.yaml`'s
-`upstream.version`), `declared-lints` (every file type a port names in its `conformance.json` `lints` is one of
+Before any rule, each gated tool-pack must pass `declared-pins` (`conformance.json`'s `tools[].version` equals
+`gates.yaml`'s `upstream.version`), `declared-lints` (every file type a port names in its `conformance.json` `lints` is one of
 `gates.yaml`'s `upstream.lints`, narrowed by `rerail.in_scope`) and `conformance-runs` (the pack's conformance check ran
 without errors). When one fails, every rule of the tool-pack fails with it.
 
@@ -179,17 +208,20 @@ divergence only for a disagreement you have checked; otherwise fix the rule.
 
 The `conformance-report` job keeps one sticky comment on a same-repository pull request, starting with
 `<!-- rerail-conformance -->`, edited in place on every run (`conformance/languages/comment.ts`). It leads with the
-verdict (every shipped rule passes, or the number of blocking failures, and how many candidates are ready to promote)
+verdict (every shipped port passes, or the number of blocking failures, and how many candidates are ready to promote)
 and the commit it judged, links the job summary, and has these sections:
 
-- a table per tool-pack: shipped rules passing, candidates ready to promote;
-- **Shipped rules**: each blocking failure with the gate it stopped at, the check and why. Fix the rule, or move it to
+- a table per tool-pack: shipped ports passing, candidates ready to promote;
+- **Shipped ports**: each blocking failure with the gate it stopped at, the check and why. Fix the rule, or move it to
   `candidates/`;
-- **Ready to promote**: each candidate that passes every check, with its upstream rule and whether `upstream-status`
-  starts it on or off;
+- **Ready to promote**: each candidate that matches its upstream tool, with its upstream rule and whether
+  `upstream-status` starts it on or off;
 - **On or off**: shipped rules whose `pack.json` `on` disagrees with `upstream-status`;
 - **Candidates**: per tool-pack, how many candidates stop first at each gate, then each candidate's first failure,
   grouped by gate.
+
+The comment covers what the conformance check judges. It has no `loads` or `compact` column: a shipped document that
+fails either fails the unit test job ([Document checks](#document-checks)), and a pack's own rules have no row.
 
 GitHub caps a comment's length, so the comment drops detail, longest lists first, until it fits; the job summary and
 the `conformance-summary` artifact always have everything.
@@ -198,10 +230,12 @@ the `conformance-summary` artifact always have everything.
 
 A port starts as a candidate: its document at `candidates/rules/<id>.json` (named for its final id), its port entry in
 `conformance.json` with `policy` naming that document, and no entry in `pack.json`. Candidates are scored and judged by
-every check, reported in the comment, never block and never ship. To get one to "ready to promote", work through the
-first gate it stops at (the comment's **Candidates** section): fix the rule, add the evidence a check asks for (a clean
-real-code sample for `stays-silent`, say), or declare a checked divergence. Passing every check is necessary, not
-sufficient: a reviewer still decides.
+every check of the conformance check, reported in the comment, never block and never ship. To get one to "ready to
+promote", work through the first gate it stops at (the comment's **Candidates** section): fix the rule, add the
+evidence a check asks for (a clean real-code sample for `stays-silent`, say), or declare a checked divergence. "Ready
+to promote" means only that the candidate matches its upstream tool. `loads` and `compact` run on it once it is in
+`rules/`, so a candidate that is too large or does not load fails the promotion pull request's unit tests. Matching
+is necessary, not sufficient: a reviewer still decides.
 
 To promote a candidate, in one pull request:
 
@@ -237,13 +271,10 @@ tests prove them instead. The frozen list must not name a private pack's rules: 
 
 A published pack's own rules (`own` in its `conformance.json`, as the React pack's practice rules) are written for
 Rerail with no upstream tool. They are neither reported as unmapped by the tool-pack run nor asked for on the frozen
-list (a listed one is reported stale). The gate judges each once per pack, as the tool-pack `<pack>/own`, on the two
-gates that read a document alone: `loads` and `compact`. `upstream-status` and `conformance` compare a port with its
-upstream tool, which an own rule has none of. With no tool-pack to name the file types it must apply to, `loads`'s
-`in-scope` check asks the rule to apply to its `pack.json` examples' paths, the files its proof says it catches and
-passes: the pack's file types would ask more than an own rule claims (one written for JSX alone), and the rule's
-scope checked against itself would ask nothing. A shipped own rule that fails either gate fails the job.
+list (a listed one is reported stale), and the conformance check gives them no verdict: `upstream-status` and
+`conformance` compare a port with its upstream tool, which an own rule has none of. `loads` and `compact` reach them
+as they reach every shipped document, in pack validation's check 1 ([Document checks](#document-checks)).
 
-Their `pack.json` examples and their cases prove them otherwise. The pack validation's check 2 fails an `own` id the
+Their `pack.json` examples and their cases prove them. The pack validation's check 2 fails an `own` id the
 pack does not ship, and one whose document sets `violation.suppress`: every port carries it, so it marks a port moved
 into `own` to skip the gates that compare it with its upstream.

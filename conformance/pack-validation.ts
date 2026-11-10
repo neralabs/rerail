@@ -3,7 +3,8 @@
  * `packs/<id>/` directory. Test support, not runtime: test/engine/catalog/packs.test.ts calls it for every pack, and it reuses the
  * conformance runner for ported rules, so it lives beside that runner and stays out of the published core.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isDeepStrictEqual } from "node:util";
 import { basename, dirname, join, matchesGlob, posix, relative, resolve, sep } from "node:path";
 import { z } from "zod";
@@ -12,7 +13,6 @@ import {
   languageNotSupportedOf,
   codeRuleSchema,
   parseJsonWithoutDuplicateKeys,
-  loadNativeBinding,
   type NativeCompiledCodeRuleDsl,
   rulePackFileSchema,
   rulePackPackageName,
@@ -30,6 +30,10 @@ import {
 } from "../src/engine/index.js";
 import { resolveModelPath } from "../src/runtime/index.js";
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
+import { compactGate } from "./languages/checks/compact.js";
+import { loadEngine, nativeCompiled, type Engine } from "./languages/checks/engine.js";
+import { loadAsBundled, loadsGate } from "./languages/checks/loads.js";
+import { GATES_MANIFEST, lintedPaths, parseGatesManifest, type GatesManifest } from "./languages/manifest.js";
 import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, PUBLISH_DIRECTORY, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
@@ -261,9 +265,9 @@ function idFailures(directory: string): string[] {
 }
 
 /**
- * A code-rule document compiled as the catalog would take it: valid `rerail.policy/v1`, then compiled by the engine
- * against core's capabilities. `language-not-supported` is not a failure: the rule is stored inactive until core reads
- * its language.
+ * A candidate's code-rule document compiled as the catalog would take it: valid `rerail.policy/v1`, then compiled by
+ * the engine against core's capabilities. `language-not-supported` is not a failure: the rule is stored inactive until
+ * core reads its language. A shipped document is compiled by `loads` instead (`shippedCodeRule`).
  */
 function compileCodeRule(text: string): Compiled {
   let document: unknown;
@@ -275,13 +279,50 @@ function compileCodeRule(text: string): Compiled {
   const valid = codeRuleSchema.safeParse(document);
   if (!valid.success) return { kind: "failed", message: `is not a valid code rule (rerail.policy/v1): ${z.prettifyError(valid.error)}` };
   try {
-    const compiled = loadNativeBinding().CodeRuleDslRuntime.compile(text, "json", capabilitiesJson());
-    const codes = new Set(documentSchema.parse(document).clauses.flatMap(clause => (clause.violation === undefined ? [] : [clause.violation.code])));
-    return { kind: "compiled", compiled, codes };
+    const compiled = nativeCompiled(documentEngine().compile(text));
+    return { kind: "compiled", compiled, codes: violationCodes(document) };
   } catch (error) {
     const notSupported = languageNotSupportedOf(message(error));
     return notSupported === undefined ? { kind: "failed", message: `does not compile: ${message(error)}` } : { kind: "not-supported-yet", reason: notSupported.reason };
   }
+}
+
+/** The violation codes a code-rule document's clauses carry. */
+const violationCodes = (document: unknown): Set<string> =>
+  new Set(documentSchema.parse(document).clauses.flatMap(clause => (clause.violation === undefined ? [] : [clause.violation.code])));
+
+let engine: Engine | undefined;
+/** This checkout's engine, the one `loads` judges every document on (conformance/languages/checks/engine.ts). */
+const documentEngine = (): Engine => (engine ??= loadEngine());
+
+/** Why a rule with no gated upstream tool must apply to its pack.json examples' paths. */
+const EXAMPLE_OUT_OF_SCOPE = "pack.json gives the rule an example there: widen the rule's scope, or move the example into it";
+
+/** What `loads`'s in-scope check asks of one shipped rule: the paths it must apply to, and why; null when nothing declares one. */
+interface InScope {
+  linted: readonly string[] | null;
+  outOfScope?: string;
+}
+
+/**
+ * A shipped code-rule document through `loads` and `compact` (conformance/languages/checks/), the only place either
+ * runs: every failing check, and the document as checks 3 and 4 read it, compiled once, by `loads`. A document the
+ * engine refuses as `language-not-supported` is not supported yet, not a failure: `loads`'s checks before the compile
+ * and `compact` still hold for it, and the ones that need the compiled rule wait until core reads its language.
+ */
+function shippedCodeRule(packId: string, file: string, text: string, scratch: string, inScope: InScope): { result: Compiled; failures: string[] } {
+  const loads = loadsGate(documentEngine(), { file: posix.basename(file), path: file, text, bytes: Buffer.byteLength(text) }, packId, scratch, inScope.linted, inScope.outOfScope);
+  const refused = loads.compiled === undefined ? loads.checks.find(check => check.id === "engine-compile" && !check.ok) : undefined;
+  const notSupported = refused === undefined ? undefined : languageNotSupportedOf(refused.detail);
+  const parsed = loads.resolved ?? loads.document;
+  const failures = [
+    ...loads.checks.filter(check => !check.ok && (notSupported === undefined || check !== refused)).map(check => `fails loads (${check.id}): ${check.detail}`),
+    // A document that is not JSON has failed `loads` at `json`, and has nothing for `compact` to measure.
+    ...(parsed === undefined ? [] : compactGate(Buffer.byteLength(text), parsed).checks.filter(check => !check.ok).map(check => `fails compact (${check.id}): ${check.detail}`)),
+  ];
+  if (notSupported !== undefined) return { result: { kind: "not-supported-yet", reason: notSupported.reason }, failures };
+  if (loads.compiled === undefined || loads.resolved === undefined) return { result: { kind: "failed", message: failures[0] ?? "does not load" }, failures };
+  return { result: { kind: "compiled", compiled: nativeCompiled(loads.compiled), codes: violationCodes(loads.document) }, failures };
 }
 
 /** Whether a document's text is shaped as a conversation rule: a JSON object with a `match` and no `format`. */
@@ -753,9 +794,25 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     if (rule !== undefined) ruleFailures.set(rule, [...(ruleFailures.get(rule) ?? []), text]);
   };
 
+  // The ported rules, by the document they port: the pack's conformance.json, the conformance runner's pack
+  // (conformance/languages/pack.ts). Check 1 reads each port's file types from it; one that does not load is check 4's
+  // failure.
+  const conformancePath = join(directory, CONFORMANCE_FILE);
+  let loaded: LoadedPack | undefined;
+  if (existsSync(conformancePath)) {
+    try {
+      loaded = loadPack(directory);
+    } catch (error) {
+      fail("ports", `${CONFORMANCE_FILE}: ${message(error).replace(`${directory}${sep}`, "")}`);
+    }
+  }
+  const portByDocument = new Map((loaded?.pack.rules ?? []).map(port => [port.policy.replace(/^\.\//u, ""), port]));
+
   // Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document is named for its id, exists,
-  // carries the listed id and compiles against core's capabilities (a conversation rule: parses, and the engine accepts
-  // its patterns); candidates and ports follow the same id rule.
+  // carries the listed id and passes `loads` and `compact` on this checkout's engine (a conversation rule: parses, and
+  // the engine accepts its patterns), and the pack's shipped documents load together; candidates and ports follow the
+  // same id rule. The loop is over pack.json's documents, so a rule is checked whatever proves it: a port, an own rule,
+  // or one no conformance.json names.
   let pack: RulePackFile | undefined;
   /** pack.json as JSON, before the schema: check 7 reads its `match` even when another field fails check 1. */
   let packJson: unknown;
@@ -786,36 +843,76 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     for (const file of filesUnder(directory, join(directory, "rules"))) {
       if (!byDocument.has(file)) fail("rules", `${file} is not listed in pack.json`);
     }
-    for (const rule of pack.rules) {
-      if (basename(rule.document, ".json") !== rule.id) fail("rules", `${rule.id}: its document is ${rule.document}; name it rules/${rule.id}.json`, rule.id);
-      const path = join(directory, rule.document);
-      if (!existsSync(path)) {
-        fail("rules", `${rule.id}: ${rule.document} does not exist`, rule.id);
-        continue;
+    // What `loads`'s in-scope check asks of a rule. A port of a gated tool (one with a gates.yaml) applies to every file
+    // type the tool lints, as gates.yaml and the port's own `lints` declare them. Any other rule (an own rule, one no
+    // conformance.json names, a port of a tool not gated yet) applies to its pack.json examples' paths, the files its
+    // proof says it catches and passes. A rule with neither has nothing declared to apply to: check 2 asks it for a proof.
+    const manifests = new Map<string, GatesManifest | undefined>();
+    const gatesOf = (tool: string): GatesManifest | undefined => {
+      if (manifests.has(tool)) return manifests.get(tool);
+      const label = posix.join("upstream", tool, GATES_MANIFEST);
+      let manifest: GatesManifest | undefined;
+      if (existsSync(join(directory, label))) {
+        try {
+          manifest = parseGatesManifest(readFileSync(join(directory, label), "utf8"), label);
+        } catch (error) {
+          fail("rules", message(error));
+        }
       }
-      const text = readFileSync(path, "utf8");
-      const documentId = documentIdOf(text);
-      if (documentId !== undefined && documentId !== rule.id) fail("rules", `${rule.id}: ${rule.document} has id ${documentId}`, rule.id);
-      const result = compileRuleDocument(text);
-      compiled.set(rule.id, result);
-      if (result.kind === "failed") fail("rules", `${rule.id}: ${rule.document} ${result.message}`, rule.id);
+      manifests.set(tool, manifest);
+      return manifest;
+    };
+    const inScopeOf = (rule: RulePackFile["rules"][number]): InScope => {
+      const port = portByDocument.get(rule.document);
+      const manifest = port === undefined ? undefined : gatesOf(port.upstream.tool);
+      if (manifest !== undefined) return { linted: lintedPaths(manifest, port!.lints) };
+      const paths = [...new Set([rule.examples?.caught.path, rule.examples?.passes.path].filter(path => path !== undefined))];
+      return paths.length === 0 ? { linted: null } : { linted: paths, outOfScope: EXAMPLE_OUT_OF_SCOPE };
+    };
+    const scratch = mkdtempSync(join(tmpdir(), "rerail-pack-validation-"));
+    try {
+      for (const rule of pack.rules) {
+        if (basename(rule.document, ".json") !== rule.id) fail("rules", `${rule.id}: its document is ${rule.document}; name it rules/${rule.id}.json`, rule.id);
+        const path = join(directory, rule.document);
+        if (!existsSync(path)) {
+          fail("rules", `${rule.id}: ${rule.document} does not exist`, rule.id);
+          continue;
+        }
+        const text = readFileSync(path, "utf8");
+        const documentId = documentIdOf(text);
+        if (documentId !== undefined && documentId !== rule.id) fail("rules", `${rule.id}: ${rule.document} has id ${documentId}`, rule.id);
+        if (isConversationDocument(text)) {
+          // `loads` and `compact` read a code rule: a conversation rule has no clauses to compile or measure.
+          const result = compileRuleDocument(text);
+          compiled.set(rule.id, result);
+          if (result.kind === "failed") fail("rules", `${rule.id}: ${rule.document} ${result.message}`, rule.id);
+          continue;
+        }
+        const { result, failures } = shippedCodeRule(id, rule.document, text, scratch, inScopeOf(rule));
+        compiled.set(rule.id, result);
+        for (const failure of failures) fail("rules", `${rule.id}: ${rule.document} ${failure}`, rule.id);
+      }
+      // The shipped documents together, as rerail loads the pack: a conflict between them (a duplicate id) fails here,
+      // where each rule's own `loads` reads one document. It runs once check 1 has nothing else to say: a document that
+      // fails alone, or one pack.json does not list, has its own failure, which loading it with the rest would repeat.
+      const shipped = filesUnder(directory, join(directory, "rules")).filter(file => file.endsWith(".json") && file.split("/").length === 2);
+      if (checks.rules.length === 0 && shipped.length > 0) {
+        try {
+          const together = loadAsBundled(documentEngine(), scratch, id, shipped.map(file => {
+            const text = readFileSync(join(directory, file), "utf8");
+            return { file: posix.basename(file), path: file, text, bytes: Buffer.byteLength(text) };
+          }));
+          if (together.ids.length !== shipped.length) fail("rules", `rules/: rerail's bundled-rule loader returned ${together.ids.length} rule(s) for the pack's ${shipped.length} shipped document(s)`);
+        } catch (error) {
+          fail("rules", `rules/: the pack's shipped rules do not load together through rerail's bundled-rule loader: ${message(error)}`);
+        }
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
     }
   }
 
   for (const failure of idFailures(directory)) fail("rules", failure);
-
-  // The ported rules, by the document they port: the pack's conformance.json, the conformance runner's pack
-  // (conformance/languages/pack.ts).
-  const conformancePath = join(directory, CONFORMANCE_FILE);
-  let loaded: LoadedPack | undefined;
-  if (existsSync(conformancePath)) {
-    try {
-      loaded = loadPack(directory);
-    } catch (error) {
-      fail("ports", `${CONFORMANCE_FILE}: ${message(error).replace(`${directory}${sep}`, "")}`);
-    }
-  }
-  const portByDocument = new Map((loaded?.pack.rules ?? []).map(port => [port.policy.replace(/^\.\//u, ""), port]));
 
   // Check 2: proof. Every rule has examples or a port entry.
   // Check 3: examples. A caught example produces a violation of the rule (fires it, for a conversation rule), a passes

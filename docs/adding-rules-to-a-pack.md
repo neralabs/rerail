@@ -91,7 +91,7 @@ A rule with no upstream needs no test data; its examples are the proof.
 1. Write `packs/<id>/rules/<rule>.json` ([writing-rules.md](writing-rules.md),
    [text criteria](pack-format.md#description), check 8).
 2. List it in `pack.json` with a caught and a passing example in the rule's scope (check 3).
-3. In a pack with a `conformance.json`, add its id to `own` there, so the gates know it has no upstream and judge it on `loads` and `compact` alone
+3. In a pack with a `conformance.json`, add its id to `own` there, so the conformance check knows it has no upstream and does not report it as unmapped
    ([conformance.json](pack-format.md#conformancejson)). Where a generator writes `conformance.json`, add it to the
    generator's input instead (React: `OWN` in `scripts/generate/packs/react-specs.mjs`).
 4. Add its section under `## Rule details` in `packs/<id>/README.md` (check 5).
@@ -287,6 +287,15 @@ npm run conformance:languages -- --pack <id> --rule <rule> --samples   # the sam
 
 Fix the pack's scoring errors first: no rule passes on a pack that does not score.
 
+The comment does not show `loads` or `compact`. Pack validation's check 1 runs them on every shipped document, port
+or own rule, so a failure is in the unit tests (`npx vitest run test/engine/catalog/packs.test.ts`), and a candidate
+meets them in the pull request that promotes it:
+
+| Check 1 failure | What to do |
+| --- | --- |
+| `fails loads (in-scope)` | Widen scope to every file type the tool lints, or declare the port's own types if it covers fewer by design. An own rule: widen scope to its examples' paths, or move the examples into it |
+| `fails compact (…)` | Over 15 KiB means the document lists cases: match their shared construct |
+
 <details>
 <summary>What to do per failing check</summary>
 
@@ -295,8 +304,6 @@ promotable list.
 
 | Check | When it fails |
 | --- | --- |
-| `loads`, `in-scope` | Widen scope to every file type the tool lints, or declare the port's own types if it covers fewer by design |
-| `compact` | Over 15 KiB means the document lists cases: match their shared construct |
 | `no-unexplained-false-positives`, `no-unexplained-misses` | Fix the rule. Declare a divergence only after checking the tool's answer on that line, with evidence ([Divergences](../conformance/README.md#divergences)) |
 | `catches-something` | Add a true positive: a tool test, or an authored case the tool confirms. A candidate's example pair counts only once shipped |
 | `holds-under-rename` | Match the construct, not names. If renaming removes every finding, it fails unless the manifest gives a `rename_exempt` reason (the findings are the renamed names) |

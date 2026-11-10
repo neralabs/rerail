@@ -10,6 +10,7 @@ import {
   codeRuleSchema,
   loadPackRuleDocuments,
   loadNativeBinding,
+  type NativeCompiledCodeRuleDsl,
   parseJsonWithoutDuplicateKeys,
   stableJsonText,
 } from "../../../src/engine/index.js";
@@ -56,6 +57,18 @@ function findDuplicateJsonKeys(text: string): { pointer: string; key: string }[]
   }
 }
 
+const natives = new WeakMap<CompiledPolicy, NativeCompiledCodeRuleDsl>();
+
+/**
+ * The native compiled rule behind a policy `loadEngine`'s engine compiled. Pack validation evaluates a rule's examples
+ * on it, so the compile `loads` made is the only one a shipped document gets.
+ */
+export function nativeCompiled(policy: CompiledPolicy): NativeCompiledCodeRuleDsl {
+  const native = natives.get(policy);
+  if (native === undefined) throw new Error("the policy was not compiled by loadEngine's engine");
+  return native;
+}
+
 /** This checkout's engine, the one `loads` judges every rule on. */
 export function loadEngine(): Engine {
   const runtime = loadNativeBinding().CodeRuleDslRuntime;
@@ -64,7 +77,9 @@ export function loadEngine(): Engine {
     rerail: { findDuplicateJsonKeys, codeRuleSchema, stableJsonText, loadPackRuleDocuments },
     compile(text) {
       const compiled = runtime.compile(text, "json", capabilities);
-      return { canonicalJson: compiled.canonicalJson(), inScope: (path) => compiled.inScope(path) };
+      const policy: CompiledPolicy = { canonicalJson: compiled.canonicalJson(), inScope: (path) => compiled.inScope(path) };
+      natives.set(policy, compiled);
+      return policy;
     },
   };
 }

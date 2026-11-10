@@ -200,6 +200,127 @@ describe("validatePack", () => {
     expect(validation.rules).toEqual([]);
   });
 
+  describe("check 1 runs loads and compact on every shipped document", () => {
+    /** examplelint as a gated tool: a gates.yaml declaring the file types it lints, which a port must apply to. */
+    const gated = (directory: string, lints = '[".py"]'): void =>
+      writeFileSync(
+        join(directory, "upstream", "examplelint", "gates.yaml"),
+        [
+          "adapter: bandit",
+          "rerail:",
+          "  pack: valid",
+          "  project: examplelint",
+          "upstream:",
+          "  name: example/examplelint",
+          "  repository: https://github.com/example/examplelint",
+          `  commit: ${"a".repeat(40)}`,
+          "  version: 1.0.0",
+          "  license: MIT",
+          "  recommended_configs: [default]",
+          "  runtime: examplelint-1.0.0",
+          `  lints: ${lints}`,
+          "popularity:",
+          "  observed_on: 2026-10-06",
+          "  evidence: [a fake upstream]",
+          "rules:",
+          "  EX101:",
+          "    deprecated: null",
+          "    recommended: { config: default, options: [] }",
+          "",
+        ].join("\n"),
+      );
+    const editRule = (directory: string, id: string, edit: (document: Record<string, unknown>) => unknown): void => editJson(join(directory, "rules", `${id}.json`), edit);
+    /** The document with the scope narrowed to `.pyi` files, which neither the tool's `.py` nor the examples' `src/a.py` is. */
+    const stubsOnly = (document: Record<string, unknown>): unknown => ({ ...document, scope: { include: ["**/*.pyi"], exclude: [] } });
+    /** The document over 15 KiB, its one clause a product written out case by case beside `kind`. */
+    const writtenOut =
+      (kind: string) =>
+      (document: Record<string, unknown>): unknown => {
+        const cells = ["print", "open", "input", "eval", "exec"].flatMap(callee =>
+          ["append", "extend", "insert", "remove", "update", "setdefault"].flatMap(method =>
+            ["class_definition", "function_definition", "lambda", "for_statement", "with_statement"].map(enclosing => ({
+              kind: "call",
+              regex: `^${callee}\\(.*\\)\\.${method}\\b`,
+              inside: { kind: enclosing, stopBy: "end" },
+            })),
+          ),
+        );
+        const [clause] = z.array(z.looseObject({ forbid: z.unknown() })).parse(document.clauses);
+        return { ...document, clauses: [{ ...clause, forbid: { ast: { language: "python", rule: { any: [{ kind }, ...cells] } } } }] };
+      };
+    const own = (directory: string): void => editJson(join(directory, "conformance.json"), conformance => ({ ...conformance, own: ["pass-statement"] }));
+    const rulesOf = async (change: (directory: string) => void): Promise<string[]> => (await validatePack(changed("valid", change), { fixtures: false })).checks.rules;
+
+    it("fails a port that fails loads: its scope leaves out a file type gates.yaml says the tool lints", async () => {
+      const rules = await rulesOf(directory => {
+        gated(directory);
+        editRule(directory, "assert-used", stubsOnly);
+      });
+      expect(rules).toEqual([expect.stringMatching(/^assert-used: rules\/assert-used\.json fails loads \(in-scope\): does not apply to src\/example\.py: gates\.yaml declares upstream lints that file type/u)]);
+    });
+
+    it("asks a port for the file types it declares in conformance.json, where gates.yaml lists more", async () => {
+      const narrowed = (lints?: string[]) => (directory: string) => {
+        gated(directory, '[".py", ".pyi"]');
+        editRule(directory, "assert-used", document => ({ ...document, scope: { include: ["**/*.py"], exclude: [] } }));
+        if (lints !== undefined) editAssertUsedPort(directory, port => ({ ...port, lints }));
+      };
+      expect(await rulesOf(narrowed())).toEqual([expect.stringContaining("fails loads (in-scope): does not apply to src/example.pyi")]);
+      expect(await rulesOf(narrowed([".py"]))).toEqual([]);
+    });
+
+    it("fails a port that fails compact", async () => {
+      const rules = await rulesOf(directory => {
+        gated(directory);
+        editRule(directory, "assert-used", writtenOut("assert_statement"));
+      });
+      expect(rules).toEqual([expect.stringMatching(/^assert-used: rules\/assert-used\.json fails compact \(no-combinatorial-expansion\): /u)]);
+    });
+
+    it("fails an own rule that fails loads: its scope leaves out a file its pack.json examples are in", async () => {
+      const rules = await rulesOf(directory => {
+        own(directory);
+        editRule(directory, "pass-statement", stubsOnly);
+      });
+      expect(rules).toEqual([expect.stringMatching(/^pass-statement: rules\/pass-statement\.json fails loads \(in-scope\): does not apply to src\/a\.py: pack\.json gives the rule an example there/u)]);
+    });
+
+    it("fails an own rule that fails compact", async () => {
+      const rules = await rulesOf(directory => {
+        own(directory);
+        editRule(directory, "pass-statement", writtenOut("pass_statement"));
+      });
+      expect(rules).toEqual([expect.stringMatching(/^pass-statement: rules\/pass-statement\.json fails compact \(no-combinatorial-expansion\): /u)]);
+    });
+
+    it("checks a document no conformance.json entry names, as a port or as an own rule", async () => {
+      // pass-statement ships with examples alone: conformance.json maps it to no upstream rule and does not list it in own.
+      expect(await rulesOf(directory => editRule(directory, "pass-statement", writtenOut("pass_statement")))).toEqual([
+        expect.stringMatching(/^pass-statement: rules\/pass-statement\.json fails compact \(no-combinatorial-expansion\): /u),
+      ]);
+      expect(await rulesOf(directory => editRule(directory, "pass-statement", stubsOnly))).toEqual([
+        expect.stringMatching(/^pass-statement: rules\/pass-statement\.json fails loads \(in-scope\): does not apply to src\/a\.py: /u),
+      ]);
+    });
+
+    it("checks the documents of a pack with no conformance.json at all", async () => {
+      const validation = await validatePack(
+        changed("valid", directory => {
+          rmSync(join(directory, "conformance.json"));
+          editRule(directory, "pass-statement", writtenOut("pass_statement"));
+        }),
+        { fixtures: false },
+      );
+      expect(validation.checks.rules).toEqual([expect.stringMatching(/^pass-statement: rules\/pass-statement\.json fails compact \(no-combinatorial-expansion\): /u)]);
+      expect(validation.rules.find(rule => rule.id === "pass-statement")).toMatchObject({ status: "failed" });
+    });
+
+    it("fails a gates.yaml it cannot read, once", async () => {
+      const rules = await rulesOf(directory => writeFileSync(join(directory, "upstream", "examplelint", "gates.yaml"), "adapter: bandit\n"));
+      expect(rules).toEqual([expect.stringMatching(/^upstream\/examplelint\/gates\.yaml: /u)]);
+    });
+  });
+
   const cases: [string, (directory: string) => void, Partial<Record<PackCheckName, string[]>>][] = [
     [
       "a rule file pack.json does not list",

@@ -36,7 +36,7 @@ The pack follows the [pack structure and validation contract](../../docs/pack-fo
 | Path | What |
 |---|---|
 | `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and the 51 rules it ships, with an example each rule catches and one it lets pass; the practice rules are in the group `React practice` |
-| `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare and the capabilities it exercises; the pinned tools; and, as `own`, the practice rules, which the gates judge on `loads` and `compact` alone. Written by `scripts/generate/packs/react-policies.mjs` |
+| `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare and the capabilities it exercises; the pinned tools; and, as `own`, the practice rules, which have no upstream for the conformance check to compare them with. Written by `scripts/generate/packs/react-policies.mjs` |
 | `upstream/<tool>/` | For each plugin: the plugin's copied tests (`tests/`), the cases extracted from them (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), the generator (`generate.mjs`, sharing `upstream/common.mjs` and `scripts/pack-data/eslint-expected.mjs`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); `UPSTREAM.md` lists the fixtures Rerail wrote beside them (`common.mjs` `AUTHORED`): files of other JSX libraries, which the plugins report and the ports skip, and React files whose JSX goes through Emotion, which both report |
 | `upstream/react-practice/` | The practice rules' cases, one `<id>.cases.json` per rule, written by Rerail and listed in its `UPSTREAM.md`: pack test data in their own archive, pinned by `test-data.lock` and fetched by `npm run fixtures:pull`, with no upstream tool or generator |
 | `divergences.json` | Where the ports and the expected findings disagree by design: the plugins' findings on the authored files of other JSX libraries, and sample lines under an `oxlint-disable` comment (or an `eslint-disable` naming another plugin's same-named rule), which silence the port as they silence Oxlint and not ESLint |
@@ -75,7 +75,7 @@ rule's details below list what it misses.
 
 Each rule is proven three ways: by its `pack.json` examples; by its cases in `upstream/react-practice/<id>.cases.json`, run by
 `test/cli/react-practice-rules.test.ts`; and by a run on 30 open-source React apps at pinned commits, whose matches
-were read and judged real or not. `conformance.json` lists them as `own`, so the conformance gate judges them on `loads` and `compact` alone, with no upstream to compare.
+were read and judged real or not. `conformance.json` lists them as `own`: they have no upstream for the conformance check to compare them with, and the pack validation checks that each loads and is compact, as it does every shipped rule.
 
 | Rule | Mode | Catches | Matches (repos) on 30 apps | Precision of read matches |
 |---|---|---|---|---|

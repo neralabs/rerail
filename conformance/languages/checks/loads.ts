@@ -79,15 +79,17 @@ export function loadAsBundled(engine: Engine, scratch: string, packId: string, r
  * loads: the shipped bytes parse, pass rerail's own schema, compile on this checkout's engine both as written and in
  * the stable form the rule catalog compiles, load through rerail's bundled-rule loader, and apply to every path of
  * `linted`, which must name one: for a port, an example path of every file type upstream lints (gates.yaml's
- * `upstream.lints`, narrowed by `rerail.in_scope` and by the port's own `lints` in conformance.json); for an own rule,
- * its pack.json examples' paths. `outOfScope` says why a path the rule does not apply to is one it must.
+ * `upstream.lints`, narrowed by `rerail.in_scope` and by the port's own `lints` in conformance.json); for a rule with
+ * no gated upstream tool, its pack.json examples' paths. `outOfScope` says why a path the rule does not apply to is
+ * one it must. A null `linted` leaves in-scope out: nothing declares a file the rule must apply to (pack validation's
+ * check 1 says when).
  */
 export function loadsGate(
   engine: Engine,
   rule: RuleDocument,
   packId: string,
   scratch: string,
-  linted: readonly string[],
+  linted: readonly string[] | null,
   outOfScope = "gates.yaml declares upstream lints that file type (upstream.lints); widen the rule's scope, or narrow the tool-pack with rerail.in_scope or the port with its lints in conformance.json",
 ): LoadsResult {
   const checks: Check[] = [];
@@ -141,11 +143,13 @@ export function loadsGate(
     checks.push({ id: "bundled-load", ok: false, detail: message(error) });
   }
 
-  const missed = linted.filter((path) => !compiled.inScope(path));
-  checks.push({
-    id: "in-scope",
-    ok: linted.length > 0 && missed.length === 0,
-    detail: linted.length === 0 ? "names no file it must apply to" : missed.length === 0 ? `applies to ${linted.join(", ")}` : `does not apply to ${missed.join(", ")}: ${outOfScope}`,
-  });
+  if (linted !== null) {
+    const missed = linted.filter((path) => !compiled.inScope(path));
+    checks.push({
+      id: "in-scope",
+      ok: linted.length > 0 && missed.length === 0,
+      detail: linted.length === 0 ? "names no file it must apply to" : missed.length === 0 ? `applies to ${linted.join(", ")}` : `does not apply to ${missed.join(", ")}: ${outOfScope}`,
+    });
+  }
   return { checks, compiled, document, ...(schema.success ? { resolved: schema.data as Record<string, unknown> } : {}) };
 }

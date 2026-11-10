@@ -28,12 +28,13 @@ const USAGE = `Language-pack rule conformance (T4).
   --rule <id>           score one rule (repeatable); prints every FP, FN and reviewed finding
   --write               write .rerail/reports/<pack>-t4-rules-<date>.json (gitignored)
   --date <YYYY-MM-DD>   report date (default today, UTC)
-  --check               CI gate: the fixtures and samples of every pack (or --pack), then every rule of each gated
-                        tool-pack (gates.yaml) through loads, compact and the conformance checks (stays-silent and
-                        holds-under-rename among them), and the not-gated list; exit 1 on any unexplained FP/FN,
-                        missed label or finding on a clean sample, engine failure, stale divergence, test data or
-                        samples error, shipped port with no fixture TP and no pack.json examples, or shipped rule of a
-                        gated tool-pack that fails a check. Spread over worker processes (shards.ts)
+  --check               CI gate: the fixtures and samples of every pack (or --pack), then every port of each gated
+                        tool-pack (gates.yaml) through the conformance checks (stays-silent and holds-under-rename
+                        among them), and the not-gated list; exit 1 on any unexplained FP/FN, missed label or finding
+                        on a clean sample, engine failure, stale divergence, test data or samples error, shipped port
+                        with no fixture TP and no pack.json examples, or shipped port of a gated tool-pack that fails
+                        a check. Whether a document loads and is compact is pack validation's check 1 (npm test), not
+                        this check's. Spread over worker processes (shards.ts)
   --base <sha>          with --check: the commit the not-gated and pending lists may only shrink against
   --out <dir>           with --check: write summary.json, summary.md, gates.json and the pull request comment
                         (comment.md) there

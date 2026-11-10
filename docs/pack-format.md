@@ -276,10 +276,10 @@ It records:
   capabilities it exercises;
 - `suppressionExemptions`: ports, by `id`, whose documents need not carry their tool's suppression comment yet, each
   with a `reason` (check 4);
-- `own`: the ids of the pack's own rules, written for Rerail with no upstream tool. The conformance gate judges each
-  once, on `loads` and `compact` alone, the gates that read the document by itself; `upstream-status` and
-  `conformance` need an upstream tool to compare with. Lacking a tool-pack's file types, `loads`'s in-scope check asks
-  the rule to apply to its `pack.json` examples' paths. The tool-pack run does not report them as unmapped and the
+- `own`: the ids of the pack's own rules, written for Rerail with no upstream tool. The conformance check gives them
+  no verdict: `upstream-status` and `conformance` need an upstream tool to compare with. Check 1 runs `loads` and
+  `compact` on them as on every shipped document; lacking a tool-pack's file types, `loads`'s in-scope check asks the
+  rule to apply to its `pack.json` examples' paths. The tool-pack run does not report them as unmapped and the
   not-gated check does not ask for them on the frozen list. Each must ship in `pack.json` with examples, which are
   their proof, must set no `violation.suppress` (check 2), and must have no port entry.
 
@@ -293,7 +293,7 @@ reported; its scores never fail a check. A port may also set:
   matching fixtures, the tests its upstream configuration ran on. So a tool whose tests run each rule with several
   option sets is scored with one document per option set, each on its own tests.
 - **`lints`**: the file types the port covers, when fewer than its tool-pack's (`gates.yaml`'s `upstream.lints`).
-  `loads`'s in-scope check then asks for those alone, as for complexity's one port per language.
+  `loads`'s in-scope check (check 1) then asks for those alone, as for complexity's one port per language.
 
 </details>
 
@@ -599,7 +599,7 @@ To see every false positive and false negative of one ported rule:
 
 | # | Check | Fails when |
 |---|---|---|
-| 1 | Rules | A rule document or candidate is unlisted, missing, misnamed or doesn't compile (a conversation rule: doesn't parse, or has a pattern the engine refuses); an id breaks the [id rule](#packjson) |
+| 1 | Rules | A rule document or candidate is unlisted, missing or misnamed; a shipped document fails `loads` (it doesn't compile and load on this engine, or its scope leaves out a file it must apply to) or `compact` (a conversation rule: doesn't parse, or has a pattern the engine refuses); an id breaks the [id rule](#packjson) |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json`; an id in `own` isn't a rule `pack.json` ships, or its document sets `violation.suppress` |
 | 3 | Examples | An example isn't caught, or doesn't pass, as it says (a conversation rule: doesn't fire, or fires) |
 | 4 | Ports | A shipped port disagrees with its expected findings outside `divergences.json`; suppression data is missing or stale |
@@ -645,11 +645,21 @@ conformance check (`npm run test:conformance`), not here.
 1. **Rules.** `pack.json` must parse (`rulePackFileSchema`) and its `id` must be the directory name.
    - Every file in `rules/` is listed in `pack.json`, and every listed `document` exists. Each rule's `id` is lowercase
      letters, digits and dashes; its `document` is `rules/<id>.json` and carries the same `id`.
-   - Each document is a valid code rule (`rerail.policy/v1`, the host's schema) and compiles in the engine with core's
-     `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it; or a valid conversation rule (a JSON
-     object with a `match` and no `format`, `parseConversationRule`) whose every pattern the engine accepts
-     (`engineRegexIssues`).
-   - Candidates need not compile. Every rule document under `candidates/` (each JSON file in a `rules/` directory
+   - Each document is a code rule that passes `loads` and `compact`, or a valid conversation rule (a JSON object with
+     a `match` and no `format`, `parseConversationRule`) whose every pattern the engine accepts (`engineRegexIssues`).
+     - `loads`: valid JSON with no repeated keys, a valid code rule (`rerail.policy/v1`, the host's schema) written
+       for the current contract, with no `llm` clause; it compiles in the engine with core's
+       `native/src/code_rule_dsl/capabilities.json`, as written and as the catalog compiles it, keeps its `id`, and
+       loads through the bundled-rule loader; and its scope covers the files it must apply to (`in-scope`). A port
+       of a tool with a `gates.yaml` must apply to every file type the tool lints (`upstream.lints`, narrowed by
+       `rerail.in_scope` and the port's `lints`); any other rule to its `pack.json` examples' paths.
+     - `compact`: a document over 15 KiB does not list cases where it could express the logic.
+     - These two checks run here and nowhere else: check 1 loops over the documents `pack.json` ships, so a port, an
+       own rule and a rule no `conformance.json` names are all checked. The conformance check runs neither
+       ([Document checks](../conformance/README.md#document-checks)). A document the engine refuses as
+       `language-not-supported` is not supported yet, not a failure.
+     - The pack's shipped documents also load together through the bundled-rule loader.
+   - Candidates need not compile, and take neither `loads` nor `compact` until they ship. Every rule document under `candidates/` (each JSON file in a `rules/` directory
      there, and any file there whose `format` names a policy, an older `<name>.policy/v<n>` included) must be
      `rerail.policy/v1` or a conversation rule, sit in a `rules/` directory and be named `<id>.json`
      (`candidates/rules/<id>.json`, `candidates/probes/rules/<id>.json`).

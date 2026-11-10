@@ -1,7 +1,7 @@
 /**
- * The folded gate (conformance/languages/gates.ts): every rule of a gated tool-pack through loads, compact and the
- * conformance checks, judged on the pack's conformance report and gates.yaml's declared facts; a pack's own rules
- * through loads and compact alone; and the summary and sticky comment built from them.
+ * The gate (conformance/languages/gates.ts): every port of a gated tool-pack through the conformance checks, judged on
+ * the pack's conformance report and gates.yaml's declared facts, and the summary and sticky comment built from them.
+ * It runs neither `loads` nor `compact`: pack validation's check 1 does (test/engine/catalog/packs.test.ts).
  */
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,8 +9,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { COMMENT_MARKER, renderComment } from "../../conformance/languages/comment.js";
-import { loadEngine } from "../../conformance/languages/checks/engine.js";
-import { judgeOwnRules, judgeToolPack } from "../../conformance/languages/gates.js";
+import { BLOCKING_GATES, judgeToolPack } from "../../conformance/languages/gates.js";
 import { fixturesDirectory, fixturesExpectedPath, loadPack } from "../../conformance/languages/pack.js";
 import { reportFailures, runPack } from "../../conformance/languages/runner.js";
 import { summarize, ungatedRow } from "../../conformance/languages/summary.js";
@@ -63,7 +62,7 @@ const setUnits = (units: Record<string, { rules: string[] }>): void => {
 async function judge() {
   const loaded = loadPack(pack);
   const report = await runPack(loaded, { fixtures: true, samples: false, date: "2026-01-01" });
-  const verdict = judgeToolPack(root, loadEngine(), loaded, report, "examplelint");
+  const verdict = judgeToolPack(root, loaded, report, "examplelint");
   return { report, verdict, summary: summarize([{ pack: "valid", failures: reportFailures(report) }], [verdict], UNGATED) };
 }
 
@@ -79,7 +78,7 @@ describe("a gated tool-pack's rules", () => {
     setUnits({ "asserts.py": { rules: ["EX101"] }, "clean.py": { rules: ["EX101"] } });
     const after = await judge();
     expect(after.verdict.rules[0]).toMatchObject({ pass: true, stoppedAt: null, failure: null, defaultOn: true, on: true });
-    expect(after.verdict.checks.map(check => [check.id, check.ok])).toEqual([["bundled-load", true], ["declared-pins", true], ["declared-lints", true], ["conformance-runs", true]]);
+    expect(after.verdict.checks.map(check => [check.id, check.ok])).toEqual([["declared-pins", true], ["declared-lints", true], ["conformance-runs", true]]);
   });
 
   it("report a shipped document with no conformance.json entry as blocking, once", async () => {
@@ -90,14 +89,15 @@ describe("a gated tool-pack's rules", () => {
     ]);
   });
 
-  it("leave a pack's own rule (conformance.json own) out of the unmapped documents and the tool-pack's rules, and still load it with the rest", async () => {
+  it("leave a pack's own rule (conformance.json own) out of the unmapped documents and the tool-pack's rules, and give it no verdict", async () => {
     const path = join(pack, "conformance.json");
     writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), own: ["pass-statement"] }));
     const { verdict, summary } = await judge();
     expect(verdict.unmapped).toEqual([]);
     expect(verdict.rules.map(rule => rule.id)).toEqual(["assert-used"]);
     expect(summary.blocking.filter(row => row.stoppedAt === "Mapping")).toEqual([]);
-    expect(verdict.checks[0]).toMatchObject({ id: "bundled-load", ok: true, detail: expect.stringContaining("all 2 shipped document(s)") });
+    expect(summary.toolPacks.map(entry => entry.toolPack)).toEqual(["valid/examplelint"]);
+    expect(summary.shipped.rules).toBe(1);
   });
 
   it("take on or off from gates.yaml's declared facts, and list a shipped rule whose pack.json on disagrees", async () => {
@@ -115,20 +115,38 @@ describe("a gated tool-pack's rules", () => {
     expect(verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "tool-pack", failure: { check: "declared-pins" } });
   });
 
-  it("ask a port to apply to the file types it declares, and fail every rule when one declares a type the tool does not lint", async () => {
+  it("run neither loads nor compact: a port whose document fails both still passes here", async () => {
     setUnits({ "clean.py": { rules: ["EX101"] } });
+    // gates.yaml says the tool lints .pyi files the port's scope leaves out (loads, in-scope), and the document writes
+    // a product out case by case (compact): pack validation's check 1 fails it on both, and this gate reads neither.
     writeFileSync(join(pack, "upstream", "examplelint", "gates.yaml"), GATES("{ config: default, options: [] }").replace('lints: [".py"]', 'lints: [".py", ".pyi"]'));
+    const cells = ["print", "open", "input", "eval", "exec"].flatMap(callee =>
+      ["append", "extend", "insert", "remove", "update", "setdefault"].flatMap(method =>
+        ["class_definition", "function_definition", "lambda", "for_statement", "with_statement"].map(enclosing => ({ kind: "call", regex: `^${callee}\\(.*\\)\\.${method}\\b`, inside: { kind: enclosing, stopBy: "end" } })),
+      ),
+    );
     const document = join(pack, "rules", "assert-used.json");
-    writeFileSync(document, JSON.stringify({ ...JSON.parse(readFileSync(document, "utf8")), scope: { include: ["**/*.py"], exclude: [] } }));
-    const portLints = (lints: string[]): void => {
-      const path = join(pack, "conformance.json");
-      const conformance = JSON.parse(readFileSync(path, "utf8")) as { rules: Record<string, unknown>[] };
-      writeFileSync(path, JSON.stringify({ ...conformance, rules: conformance.rules.map(rule => ({ ...rule, lints })) }));
-    };
-    expect((await judge()).verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "loads", failure: { check: "in-scope" } });
-    portLints([".py"]);
-    expect((await judge()).verdict.rules[0]).toMatchObject({ pass: true });
-    portLints([".py", ".rb"]);
+    writeFileSync(document, JSON.stringify({
+      ...(JSON.parse(readFileSync(document, "utf8")) as Record<string, unknown>),
+      scope: { include: ["**/*.py"], exclude: [] },
+      clauses: [{ id: "assert-used", forbid: { ast: { language: "python", rule: { any: [{ kind: "assert_statement" }, ...cells] } } }, violation: { anchor: "witness.span", code: "EX101", message: "Replace this assert statement with an explicit check." } }],
+    }));
+    const { verdict, summary } = await judge();
+    expect(BLOCKING_GATES.map(gate => gate.id)).toEqual(["conformance"]);
+    expect(Object.keys(verdict.rules[0]!.gates)).toEqual(["upstream-status", "conformance"]);
+    expect(verdict.checks.map(check => check.id)).not.toContain("bundled-load");
+    expect(Object.keys(summary.candidateFunnel["valid/examplelint"]!)).toEqual(["Passes the conformance checks", "Tool-pack checks", "passes every gate"]);
+    // No gate column or failure row of either: the comment only says where they are checked.
+    expect(renderComment(summary)).not.toMatch(/Compiles and loads|Compact \(|in-scope|current-contract/u);
+    expect(verdict.rules[0]).toMatchObject({ id: "assert-used", pass: true, stoppedAt: null });
+    expect(summary.blocking.filter(row => row.rule === "assert-used")).toEqual([]);
+  });
+
+  it("fail every rule when a port declares a file type the tool does not lint", async () => {
+    setUnits({ "clean.py": { rules: ["EX101"] } });
+    const path = join(pack, "conformance.json");
+    const conformance = JSON.parse(readFileSync(path, "utf8")) as { rules: Record<string, unknown>[] };
+    writeFileSync(path, JSON.stringify({ ...conformance, rules: conformance.rules.map(rule => ({ ...rule, lints: [".py", ".rb"] })) }));
     expect((await judge()).verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "tool-pack", failure: { check: "declared-lints", why: expect.stringContaining("assert-used .rb") } });
   });
 
@@ -150,59 +168,6 @@ describe("a gated tool-pack's rules", () => {
   });
 });
 
-describe("a pack's own rules (conformance.json own)", () => {
-  beforeEach(() => {
-    const path = join(pack, "conformance.json");
-    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), own: ["pass-statement"] }));
-  });
-
-  const editPassStatement = (edit: (document: Record<string, unknown>) => Record<string, unknown>): void => {
-    const path = join(pack, "rules", "pass-statement.json");
-    writeFileSync(path, JSON.stringify(edit(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>), null, 2));
-  };
-
-  const judgeOwn = () => {
-    const verdict = judgeOwnRules(root, loadEngine(), loadPack(pack));
-    return { verdict, summary: summarize([], [verdict], UNGATED) };
-  };
-
-  it("pass on loads and compact alone, judged apart from the tool-packs", () => {
-    const { verdict, summary } = judgeOwn();
-    expect(verdict).toMatchObject({ pack: "valid", tool: null, toolPack: "valid/own", checks: [], unmapped: [] });
-    expect(verdict.rules).toEqual([
-      expect.objectContaining({ id: "pass-statement", file: "packs/valid/rules/pass-statement.json", location: "shipped", upstreamRule: null, pass: true, stoppedAt: null, failure: null, on: true }),
-    ]);
-    expect(Object.keys(verdict.rules[0]!.gates)).toEqual(["loads", "compact"]);
-    expect(summary).toMatchObject({ pass: true, shipped: { rules: 1, pass: 1 }, onOff: [] });
-  });
-
-  it("fail loads when the rule's scope leaves out a file its pack.json examples are in", () => {
-    editPassStatement(document => ({ ...document, scope: { include: ["**/*.pyi"], exclude: [] } }));
-    const { verdict, summary } = judgeOwn();
-    expect(verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "loads", failure: { check: "in-scope" } });
-    expect(summary.blocking).toEqual([expect.objectContaining({ pack: "valid/own", rule: "pass-statement", check: "in-scope" })]);
-  });
-
-  it("fail compact when the rule writes a product out case by case", () => {
-    const cells = ["print", "open", "input", "eval", "exec"].flatMap(callee =>
-      ["append", "extend", "insert", "remove", "update", "setdefault"].flatMap(method =>
-        ["class_definition", "function_definition", "lambda", "for_statement", "with_statement"].map(enclosing => ({
-          kind: "call",
-          regex: `^${callee}\\(.*\\)\\.${method}\\b`,
-          inside: { kind: enclosing, stopBy: "end" },
-        })),
-      ),
-    );
-    editPassStatement(document => ({
-      ...document,
-      clauses: [{ id: "pass-statement", forbid: { ast: { language: "python", rule: { any: [{ kind: "pass_statement" }, ...cells] } } }, violation: { anchor: "witness.span", code: "PASS", message: "Remove this pass statement." } }],
-    }));
-    const { verdict, summary } = judgeOwn();
-    expect(verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "compact", failure: { check: "no-combinatorial-expansion" } });
-    expect(summary.blocking).toEqual([expect.objectContaining({ pack: "valid/own", rule: "pass-statement", check: "no-combinatorial-expansion" })]);
-  });
-});
-
 describe("the conformance report's errors", () => {
   it("fail only the tool-pack whose fixtures or samples they name; an error naming no tool fails every tool-pack", async () => {
     setUnits({ "clean.py": { rules: ["EX101"] } });
@@ -211,7 +176,7 @@ describe("the conformance report's errors", () => {
     writeFileSync(path, JSON.stringify({ ...conformance, tools: [...conformance.tools, { name: "otherlint", version: "1.0.0" }] }));
     const loaded = loadPack(pack);
     const report = await runPack(loaded, { fixtures: true, samples: false, date: "2026-01-01" });
-    const runs = (errors: string[]) => judgeToolPack(root, loadEngine(), loaded, { ...report, errors }, "examplelint").checks.find(check => check.id === "conformance-runs");
+    const runs = (errors: string[]) => judgeToolPack(root, loaded, { ...report, errors }, "examplelint").checks.find(check => check.id === "conformance-runs");
     expect(runs(["samples otherlint: x-app-py-000000000000/app.py.labels.json: not JSON"])).toMatchObject({ ok: true });
     expect(runs(["fixtures otherlint: notes.txt is not a python source by the host's routing"])).toMatchObject({ ok: true });
     expect(runs(["samples examplelint: x-app-py-000000000000/app.py.labels.json: not JSON"])).toMatchObject({ ok: false });

@@ -612,6 +612,7 @@ jobs:
       # The pack validation's check 4 leaves scoring the fixtures to the conformance check (the conformance and tools jobs
       # below), which scores the same fixtures through the same runner and fails on the same failures, so they are scored
       # once (test/engine/catalog/packs.test.ts). The pack publish gate (release-packs.yml) still scores them itself.
+      # Its check 1 is the one place `loads` and `compact` run, on every shipped rule document.
       - name: Unit tests
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
@@ -853,10 +854,11 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/conformance-results
 
-      # Offline: every pack's report from the shards' results, then every rule of each gated tool-pack through loads,
-      # compact and the conformance checks, spread over worker processes. A shipped rule that fails, fails the job;
-      # candidates are only reported. The fixtures scored here are the pack validation's check 4 too, which the unit tests
-      # leave to this job. The summary and the pull request comment go to the conformance-summary artifact.
+      # Offline: every pack's report from the shards' results, then every port of each gated tool-pack through the
+      # conformance checks, spread over worker processes. A shipped port that fails, fails the job; candidates are only
+      # reported. The fixtures scored here are the pack validation's check 4 too, which the unit tests leave to this job;
+      # whether a document loads and is compact is the pack validation's check 1, which the unit tests run. The summary
+      # and the pull request comment go to the conformance-summary artifact.
       - name: Conformance
         if: needs.changes.outputs.conformance != 'false'
         env:

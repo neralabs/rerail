@@ -1,7 +1,7 @@
 /**
  * The conformance check's summary over every pack: the blocking failures (the pack reports' failures, and each shipped
- * rule of a gated tool-pack, or own rule of a pack, that fails a gate), the candidates ready to promote, and the shipped
- * rules whose pack.json `on` disagrees with upstream-status. Written as summary.{json,md} and the pull request comment
+ * port of a gated tool-pack that fails a gate), the candidates ready to promote, and the shipped rules whose pack.json
+ * `on` disagrees with upstream-status. It says nothing of `loads` or `compact`: pack validation's check 1 runs them. Written as summary.{json,md} and the pull request comment
  * (comment.ts).
  */
 import { appendFileSync } from "node:fs";
@@ -35,7 +35,7 @@ export interface PackFailures {
 
 export interface Summary {
   format: typeof SUMMARY_FORMAT;
-  /** The rules of gated tool-packs and the packs' own rules, shipped and candidate. */
+  /** The ports of gated tool-packs, shipped and candidate. */
   shipped: { rules: number; pass: number };
   candidates: { rules: number; pass: number };
   blocking: BlockingRow[];
@@ -44,7 +44,10 @@ export interface Summary {
   candidateRows: (BlockingRow & { toolPack: string })[];
   /** Candidates with no conformance.json entry: no gate judged them, so they are neither ready nor stopped at a gate. */
   unmappedCandidates: { pack: string; file: string }[];
-  /** Candidates that pass every gate: the signal to promote them into rules/ (a reviewer still decides). */
+  /**
+   * Candidates that pass every gate here, so match their upstream tool: the signal to promote them into rules/ (a
+   * reviewer still decides). Whether one loads and is compact is checked when it ships (pack validation, check 1).
+   */
   promotable: { toolPack: string; rule: string; upstreamRule: string; startsOn: boolean; startReason: string }[];
   onOff: { pack: string; rule: string; packJson: boolean; upstreamStatus: boolean; reason: string }[];
   toolPacks: { toolPack: string; shipped: string; candidates: string; failedGate: Record<string, number>; checks: { id: string; ok: boolean; detail: string }[] }[];
@@ -113,7 +116,7 @@ export function summarize(packs: readonly PackFailures[], toolPacks: readonly To
       ["passes every gate", candidates.filter((rule) => rule.pass).length] as const,
     ]);
     for (const rule of candidates) {
-      if (rule.pass && rule.upstreamRule !== null) promotable.push({ toolPack: verdict.toolPack, rule: rule.id, upstreamRule: rule.upstreamRule, startsOn: rule.defaultOn, startReason: rule.defaultOnReason });
+      if (rule.pass) promotable.push({ toolPack: verdict.toolPack, rule: rule.id, upstreamRule: rule.upstreamRule, startsOn: rule.defaultOn, startReason: rule.defaultOnReason });
       candidateRows.push({ toolPack: verdict.toolPack, ...(rule.pass ? { pack: verdict.pack, rule: rule.id, stoppedAt: "passes", check: "-", why: "-" } : failureRow(verdict.toolPack, rule)) });
     }
   }
@@ -131,9 +134,8 @@ export function summarize(packs: readonly PackFailures[], toolPacks: readonly To
     candidateRows,
     unmappedCandidates: unmappedCandidates.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
     promotable,
-    // An own rule has no upstream-status to disagree with.
     onOff: toolPacks.flatMap((verdict) => verdict.rules.flatMap((rule) =>
-      rule.upstreamRule !== null && rule.location === "shipped" && rule.on !== null && rule.on !== rule.defaultOn
+      rule.location === "shipped" && rule.on !== null && rule.on !== rule.defaultOn
         ? [{ pack: verdict.toolPack, rule: rule.id, packJson: rule.on, upstreamStatus: rule.defaultOn, reason: rule.defaultOnReason }]
         : [])),
     toolPacks: toolPacks.map((verdict) => {
@@ -161,7 +163,7 @@ export function renderSummary(summary: Summary): string {
   const lines = [
     "# Conformance",
     "",
-    `**${summary.blocking.length} blocking failure(s); ${summary.shipped.pass} of ${summary.shipped.rules} shipped rules of gated tool-packs pass; ${summary.promotable.length} candidate(s) ready to promote (of ${summary.candidates.rules}).**`,
+    `**${summary.blocking.length} blocking failure(s); ${summary.shipped.pass} of ${summary.shipped.rules} shipped ports of gated tool-packs pass; ${summary.promotable.length} candidate(s) ready to promote (of ${summary.candidates.rules}).**`,
     "",
     "## Blocking failures",
     "",
@@ -170,9 +172,9 @@ export function renderSummary(summary: Summary): string {
     "## Ready to promote",
     "",
     ...(summary.promotable.length === 0
-      ? ["No candidate passes every gate yet."]
+      ? ["No candidate matches its upstream tool yet."]
       : [
-          `${summary.promotable.length} candidate(s) pass every gate: the signal to promote them into \`rules/\` and \`pack.json\`. Passing the gates is necessary, not sufficient; a reviewer still decides. "Starts" is what upstream-status sets for pack.json \`on\`.`,
+          `${summary.promotable.length} candidate(s) match their upstream tool: the signal to promote them into \`rules/\` and \`pack.json\`. Matching is necessary, not sufficient: a promoted rule must still load and be compact (pack validation's check 1, in the unit tests), and a reviewer still decides. "Starts" is what upstream-status sets for pack.json \`on\`.`,
           "",
           ...table(["Tool-pack", "Rule", "Upstream rule", "Starts", "Why"], summary.promotable.map((row) => [row.toolPack, row.rule, row.upstreamRule, row.startsOn ? "on" : "off", row.startReason])),
         ]),

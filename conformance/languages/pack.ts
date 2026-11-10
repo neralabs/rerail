@@ -104,9 +104,10 @@ export const packSchema = z
     tools: z.array(toolSchema),
     rules: z.array(ruleSchema),
     /**
-     * The pack's own rules: written for Rerail, with no upstream tool, so the gates judge them on `loads` and `compact`
-     * alone (gates.ts, `judgeOwnRules`). Each must ship in pack.json with examples, which are their proof, and set no
-     * `violation.suppress` (pack validation, check 2).
+     * The pack's own rules: written for Rerail, with no upstream tool, so no gate of the conformance check judges them
+     * and none reports them as unmapped (gates.ts). Each must ship in pack.json with examples, which are their proof,
+     * and set no `violation.suppress` (pack validation, check 2); check 1 runs `loads` and `compact` on them as on
+     * every shipped document.
      */
     own: z.array(z.string().regex(RULE_PACK_RULE_ID, "rule ids are lowercase kebab-case")).default([]),
     /** Expected-findings directory, relative to the pack directory; default `upstream/` beside conformance.json. */

@@ -1,6 +1,8 @@
 /**
  * The one sticky pull request comment the conformance job keeps up to date: the shipped failures, the candidates
- * ready to promote and the default-on mismatches, rendered from the summary. CI edits the comment that starts with
+ * ready to promote and the default-on mismatches, rendered from the summary. It covers what the conformance check
+ * judges, a port against its upstream tool; a document that does not load or is not compact fails the unit tests
+ * (pack validation's check 1), and is not listed here. CI edits the comment that starts with
  * COMMENT_MARKER, or posts it when there is none.
  *
  * A comment is limited to 65,536 characters, and a pack may hold hundreds of candidates, so the comment leads with
@@ -57,7 +59,7 @@ function byGate(rows: (BlockingRow & { toolPack: string })[], limit: number): st
 function render(summary: Summary, context: CommentContext, rowLimit: number, blockerLimit: number, listLimit = 30): string {
   const blocking = summary.blocking.length;
   const ready = summary.promotable.length;
-  const verdict = `${summary.pass ? "✅ every shipped rule passes" : `❌ ${blocking} blocking failure${blocking === 1 ? "" : "s"}`}${ready === 0 ? "" : ` · 🟢 ${ready} candidate${ready === 1 ? "" : "s"} ready to promote`}`;
+  const verdict = `${summary.pass ? "✅ every shipped port passes" : `❌ ${blocking} blocking failure${blocking === 1 ? "" : "s"}`}${ready === 0 ? "" : ` · 🟢 ${ready} candidate${ready === 1 ? "" : "s"} ready to promote`}`;
   const commit = context.commit === undefined || context.commit === "" ? "" : ` at \`${context.commit.slice(0, 10)}\``;
   const run = context.runUrl === undefined || context.runUrl === "" ? "" : ` · [job summary](${context.runUrl})`;
   const candidatesByPack = new Map<string, (BlockingRow & { toolPack: string })[]>();
@@ -70,17 +72,17 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
     COMMENT_MARKER,
     `## Conformance: ${verdict}`,
     "",
-    `Shipped rules (\`rules/\`) must pass every check; candidates (\`candidates/\`) are only reported${commit}${run}.`,
+    `Shipped ports (\`rules/\`) must match their upstream tool; candidates (\`candidates/\`) are only reported${commit}${run}. Whether a rule loads and is compact is checked in the unit tests, not here.`,
     "",
     ...table(
-      ["Tool-pack", "Shipped rules passing", "Candidates ready to promote"],
+      ["Tool-pack", "Shipped ports passing", "Candidates ready to promote"],
       [
         ...summary.toolPacks.map((entry) => [entry.toolPack, entry.shipped, entry.candidates]),
         ["**All gated**", `**${summary.shipped.pass}/${summary.shipped.rules}**`, `**${summary.candidates.pass}/${summary.candidates.rules}**`],
       ],
     ),
     "",
-    "### Shipped rules",
+    "### Shipped ports",
     "",
     ...(blocking === 0
       ? ["Nothing blocks.", ""]
@@ -94,9 +96,9 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
     "### Ready to promote",
     "",
     ...(ready === 0
-      ? ["No candidate passes every check yet.", ""]
+      ? ["No candidate matches its upstream tool yet.", ""]
       : [
-          `${ready} candidate${ready === 1 ? " passes" : "s pass"} every check: the signal to promote ${ready === 1 ? "it" : "them"} into \`rules/\` and \`pack.json\`. Passing is necessary, not sufficient; a reviewer still decides. *Starts* is what upstream-status sets for \`on\`.`,
+          `${ready} candidate${ready === 1 ? " matches its" : "s match their"} upstream tool: the signal to promote ${ready === 1 ? "it" : "them"} into \`rules/\` and \`pack.json\`. Matching is necessary, not sufficient: a promoted rule must still load and be compact (checked in the unit tests), and a reviewer still decides. *Starts* is what upstream-status sets for \`on\`.`,
           "",
           ...table(["Tool-pack", "Rule", "Upstream rule", "Starts"], summary.promotable.slice(0, listLimit).map(promoteRow)),
           "",
