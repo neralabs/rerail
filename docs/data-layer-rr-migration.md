@@ -10,8 +10,10 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
-Build and develop the engine in this repository root. Final `ec3cfe1b7` is merged and its optimized root CLI is registered.
-Its focused checks pass: 131 engine tests, 45 accelerator checks, 245 tooling tests, and all nine original Surface cases through both APIs.
+Build and develop the engine in this repository root. Final `ec3cfe1b7` is merged.
+The registered root CLI is `74bdcc6367bdc37c…`, with cached native Python exception fields.
+This cohort passes 29 syntax unit tests, complete composition source contracts, and full `hasattr_async` admission.
+The earlier root cohort passed 131 engine tests, 45 accelerator checks, 245 tooling tests, and nine original Surface cases through both APIs.
 Surface's complete admission receipts remain bound to Final `04173bf00`; older nine-reporter receipts retain their stated cohorts.
 The latest complete first-ten validation remains bound to Final `93cadec37`.
 The merged `d024fa208` cohort has a registered optimized CLI and focused engine, production-root, and CLI checks.
@@ -2730,3 +2732,20 @@ Five original composition source tests and seven shared MCP tests also pass thro
 The complete shared module still fails its application behavior probe; the receipt preserves that failure.
 All 29 syntax unit tests and 343 migration tooling tests pass.
 This closes the recorded syntax gap, without admitting composition or changing the nine accepted ports.
+
+### 2026-11-10 — Async capability rule passes full admission
+
+`hasattr_async` now passes the fixed original-test inventory gate on root CLI `74bdcc6367bdc37c…`.
+Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-hasattr-complete-finalec3.json.gz) validates 705 native executions.
+All 145 original cases pass through both APIs, including 17 finding-positive original cases and 38 complete recorded linter calls.
+The suite retains 34 explicit assertion translations per API. No original assertion is skipped or delegated.
+All 110 supplemental cases per API, 44 production cases, 16 supplied-fact cases, 14 persistent steps, and ten controls pass.
+
+The CLI selects and scans whole file batches. Distinct occurrence keys preserve duplicate and overlapping roots.
+Explicit-directory runs make three native calls; default discovery adds one directory-selection call.
+The receipt validator enforces those counts. Caller-provided callbacks retain their observable protocol.
+Native rows also supply extractor metadata and complete fact DTOs.
+The new single-rule production runner refreshes the selected rule's corpus without executing unrelated kernels.
+
+All 357 migration tooling tests pass. The inventory is ten accepted ports, 85 drafts, and five absent translations.
+The composition application probe and the rest of the 100-port migration remain open.

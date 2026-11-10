@@ -1,0 +1,2197 @@
+{
+  "format": "rerail.recorded-original-admission/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "mode": "snapshot",
+  "exitCode": 0,
+  "engineSha256": "74bdcc6367bdc37cd788ae59b417a1d6fb19e6dfd8455de9f85e40ea17c674f2",
+  "policySha256": {
+    "hasattr_async": "972c1406ab45993556d95c8bf77d8eb53fcca21573b8d845fa27e87727873288"
+  },
+  "cases": {
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_matches[if hasattr(txn, \"select_one_async\"):]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_matches[if  hasattr ( self.conn , 'begin_async' ):]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_does_not_match_non_async[hasattr(txn, \"_some_async_helper\")]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_none_pattern_matches_only_with_none_default": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_flags_hasattr": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_flags_both_on_same_line": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_skips_allowed_pattern_lines": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_line_numbers_are_1_indexed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_select_one_direct_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[upsert_many_raw_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[update_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[delete_all_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[getattr\\\\(scheme, ['\\\\\"]resolve_context_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[keyset_paginate_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_execute_windowed_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[fetchall_raw_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_non_allowed_line_is_not_allowed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true[impl/sqlite/tests/test_foo.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true[l1000_schema/tests/something.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true[impl/__pycache__/x.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_false[l2000_connection/session.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_contains_known_capability_checks": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_includes_all_backends": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_is_list_of_str": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_is_list_of_str": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_all_exclude_patterns_are_valid_regex": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_handles_single_and_double_quotes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_does_not_match_non_async_suffix": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_requires_none_default_case_sensitive": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_rejects_non_async_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_empty_string": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_no_false_positive_on_substring": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_handles_nested_tests_dir": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_handles_windows_style_separators": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_unicode_decode_error_handled": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_indented_comment_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_allowed_pattern_for_helper_function_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_no_issues_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_ignores_tests_directories": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_aggregates_across_multiple_files": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_all_under_api_or_impl": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_no_duplicates": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_is_list_of_strings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_contains_tests_and_pycache": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_is_list_of_strings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_all_compile_as_regex": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_is_compiled_regex": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_on_own_script": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_clean_path_not_excluded": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_graph_scheme_resolve_context_async": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_nonexistent_returns_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_getattr_without_none_not_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_captures_method_name_in_issue": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_multiple_patterns_same_line": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_output_shows_relative_paths": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_help_exits_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_module_docstring_present": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_is_compiled": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_nonempty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_trailing_slash": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_is_list": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_include_tests_and_pycache": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_nonempty_extra": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_all_compile": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true_for_test_file_in_tests_dir": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true_for_self": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_returns_bool": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_false_for_unrelated_async": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_empty_returns_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_line_numbers_one_indexed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_skips_allowed_lines": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_decode_error_returns_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_returns_int": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_matches[hasattr(obj, 'insert_async')]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_does_not_match_non_async[hasattr(txn, \"select_one\")]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_captures_method_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_captures_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_flags_getattr": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_skips_comment_lines": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_returns_empty_for_unreadable_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_has_sql_template_support_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[insert_many_raw_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[upsert_many_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[delete_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[delete_many_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[getattr\\\\(graph_scheme, ['\\\\\"]resolve_context_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_execute_aggregate_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_execute_grammar_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_update_fts_polyfill_index_async]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_helper_function_name_is_allowed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true[conform/l2000/tests/test_bar.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true[scripts/lint_hasattr_async.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_false[impl/sqlite/connection.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_false[impl/common/l7300_sql_versioned_transactions/write.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_contains_tests_and_self": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_includes_api_and_common": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_is_list_of_str": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_all_allowed_patterns_are_valid_regex": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_rejects_missing_quotes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_captures_underscored_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_does_not_match_method_with_leading_quote": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_allows_extra_spaces_before_none": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_requires_async_suffix": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_matches_via_middle_of_line": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_with_multiple_allowed_tokens": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_returns_false_for_production_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_empty_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_multiple_issues_distinct_lines": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_trailing_comment_with_pattern_still_flags": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_allowed_pattern_via_direct_async": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_reports_issues_returns_one": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_missing_directory_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_all_end_with_slash": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_is_list": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_covers_all_backends": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_all_compile_as_regex": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_excludes_own_script": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_nonempty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_is_compiled_regex": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_path_inside_tests_dir": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_pycache": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_helper_name_match": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_update_async_fragment": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_hasattr_in_comment_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_getattr_with_other_default_not_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_captures_getattr_method_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_exits_zero_with_allowed_pattern_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_sorts_output_by_path": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_message_lines_printed_on_error": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_is_compiled": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_is_list_type": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_are_strings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_includes_core_backends": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_all_compile": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_is_list": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_all_strings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_returns_bool": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true_for_pycache_dir": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_false_for_normal_source": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_matches_helper_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_missing_file_returns_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_reports_both_forms": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_skips_hash_comments": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_returns_list": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_hasattr_async.py::test_main_skips_missing_directory": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "collected": [
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_matches[if hasattr(txn, \"select_one_async\"):]",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_matches[hasattr(obj, 'insert_async')]",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_matches[if  hasattr ( self.conn , 'begin_async' ):]",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_does_not_match_non_async[hasattr(txn, \"select_one\")]",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_does_not_match_non_async[hasattr(txn, \"_some_async_helper\")]",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_regex_captures_method_name",
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_none_pattern_matches_only_with_none_default",
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_captures_name",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_flags_hasattr",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_flags_getattr",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_flags_both_on_same_line",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_skips_comment_lines",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_skips_allowed_pattern_lines",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_returns_empty_for_unreadable_file",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_line_numbers_are_1_indexed",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_has_sql_template_support_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_select_one_direct_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[insert_many_raw_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[upsert_many_raw_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[upsert_many_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[update_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[delete_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[delete_all_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[delete_many_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[getattr\\\\(scheme, ['\\\\\"]resolve_context_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[getattr\\\\(graph_scheme, ['\\\\\"]resolve_context_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[keyset_paginate_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_execute_aggregate_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_execute_windowed_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_execute_grammar_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[fetchall_raw_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_every_allowed_async_pattern_makes_line_allowed[_update_fts_polyfill_index_async]",
+    "scripts/tests/test_lint_hasattr_async.py::test_non_allowed_line_is_not_allowed",
+    "scripts/tests/test_lint_hasattr_async.py::test_helper_function_name_is_allowed",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true[impl/sqlite/tests/test_foo.py]",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true[conform/l2000/tests/test_bar.py]",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true[l1000_schema/tests/something.py]",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true[scripts/lint_hasattr_async.py]",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true[impl/__pycache__/x.py]",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_false[impl/sqlite/connection.py]",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_false[l2000_connection/session.py]",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_false[impl/common/l7300_sql_versioned_transactions/write.py]",
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_contains_known_capability_checks",
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_contains_tests_and_self",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_includes_all_backends",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_includes_api_and_common",
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_is_list_of_str",
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_is_list_of_str",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_is_list_of_str",
+    "scripts/tests/test_lint_hasattr_async.py::test_all_allowed_patterns_are_valid_regex",
+    "scripts/tests/test_lint_hasattr_async.py::test_all_exclude_patterns_are_valid_regex",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_rejects_missing_quotes",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_handles_single_and_double_quotes",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_captures_underscored_name",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_does_not_match_non_async_suffix",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_does_not_match_method_with_leading_quote",
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_requires_none_default_case_sensitive",
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_allows_extra_spaces_before_none",
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_rejects_non_async_name",
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_requires_async_suffix",
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_empty_string",
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_matches_via_middle_of_line",
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_no_false_positive_on_substring",
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_with_multiple_allowed_tokens",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_handles_nested_tests_dir",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_returns_false_for_production_file",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_handles_windows_style_separators",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_empty_file",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_unicode_decode_error_handled",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_multiple_issues_distinct_lines",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_indented_comment_skipped",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_trailing_comment_with_pattern_still_flags",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_allowed_pattern_for_helper_function_skipped",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_allowed_pattern_via_direct_async",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_no_issues_returns_zero",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_reports_issues_returns_one",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_ignores_tests_directories",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_missing_directory_skipped",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_aggregates_across_multiple_files",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_all_end_with_slash",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_all_under_api_or_impl",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_is_list",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_no_duplicates",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_covers_all_backends",
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_is_list_of_strings",
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_all_compile_as_regex",
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_contains_tests_and_pycache",
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_excludes_own_script",
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_is_list_of_strings",
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_nonempty",
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_all_compile_as_regex",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_is_compiled_regex",
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_is_compiled_regex",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_path_inside_tests_dir",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_on_own_script",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_pycache",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_clean_path_not_excluded",
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_helper_name_match",
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_graph_scheme_resolve_context_async",
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_update_async_fragment",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_nonexistent_returns_empty",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_hasattr_in_comment_skipped",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_getattr_without_none_not_flagged",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_getattr_with_other_default_not_flagged",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_captures_method_name_in_issue",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_captures_getattr_method_name",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_multiple_patterns_same_line",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_exits_zero_with_allowed_pattern_file",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_output_shows_relative_paths",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_sorts_output_by_path",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_help_exits_zero",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_message_lines_printed_on_error",
+    "scripts/tests/test_lint_hasattr_async.py::test_module_docstring_present",
+    "scripts/tests/test_lint_hasattr_async.py::test_hasattr_pattern_is_compiled",
+    "scripts/tests/test_lint_hasattr_async.py::test_getattr_pattern_is_compiled",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_is_list_type",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_nonempty",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_are_strings",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_trailing_slash",
+    "scripts/tests/test_lint_hasattr_async.py::test_directories_to_check_includes_core_backends",
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_is_list",
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_all_compile",
+    "scripts/tests/test_lint_hasattr_async.py::test_exclude_patterns_include_tests_and_pycache",
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_is_list",
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_nonempty_extra",
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_all_strings",
+    "scripts/tests/test_lint_hasattr_async.py::test_allowed_patterns_all_compile",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_returns_bool",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true_for_test_file_in_tests_dir",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true_for_pycache_dir",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_true_for_self",
+    "scripts/tests/test_lint_hasattr_async.py::test_should_exclude_false_for_normal_source",
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_returns_bool",
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_matches_helper_name",
+    "scripts/tests/test_lint_hasattr_async.py::test_is_allowed_line_false_for_unrelated_async",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_missing_file_returns_empty",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_empty_returns_empty",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_reports_both_forms",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_line_numbers_one_indexed",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_skips_hash_comments",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_skips_allowed_lines",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_returns_list",
+    "scripts/tests/test_lint_hasattr_async.py::test_check_file_decode_error_returns_empty",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_skips_missing_directory",
+    "scripts/tests/test_lint_hasattr_async.py::test_main_returns_int"
+  ],
+  "semanticFallbacks": [],
+  "missingResults": [],
+  "retainedCaseIds": [],
+  "checkpoint": {
+    "path": "gate/data-layer/fixtures/host/data-layer-port/rr-hasattr-complete-finalec3.json.gz",
+    "sha256": "ca39eb28023c74943ca6c3d5ebdfc996539d0a2a5dca01d089aadf1d8d25909f"
+  }
+}

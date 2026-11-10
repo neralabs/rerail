@@ -10,6 +10,13 @@ from validate_supplied_facts_checkpoint import require, equal
 
 MODES = {'snapshot', 'workspace'}
 SPECS = {
+    'rerail.hasattr-admission/v1': dict(check='hasattr_async',public=110,original=145,originalObservations=38,
+        positive=17,production=44,parts=4,originalParts=2,productionParts=2,publicPrefix='accepted',
+        prefix='accepted-',label='hasattr-finalec3',
+        pairs={'hasattr-family':(1,0),'getattr-family':(1,0),'allowed-line':(0,1),'comment-line':(0,1),
+               'excluded-path':(1,0),'batch-selection':(1,2),'native-facts':(2,1)},
+        cliControl='cli-rendering',extraControls=['extractor-metadata'],
+        scope='Recorded raw scanner, first-match ordering, helpers, metadata, native extractor DTOs, batched CLI, reporter, production and persistent updates.'),
     'rerail.permission-admission/v1': dict(check='permission_error',public=116,original=5,positive=2,production=18,
         parts=2,prefix='final-',label='permission-finalec3',
         pairs={'detector':(1,0),'content-trigger':(0,1),'explicit-test-scope':(0,1),'duplicate-inputs':(1,2)},
@@ -70,7 +77,11 @@ def validate_original_observations(owned,observations):
             'Original observations omitted or repeated')
     for row in observations:
         source=wanted[(row['test'],row['entry'],row['ordinal'])]
-        require(row['status']=='passed' and equal(row['expected'],source['findings']) and equal(row['actual'],source['findings']),
+        if 'findings' in source:findings=source['findings']
+        else:
+            require(source.get('sourceResult')==[] and source.get('files')==[], 'Normalized source findings missing')
+            findings=[]
+        require(row['status']=='passed' and equal(row['expected'],findings) and equal(row['actual'],findings),
                 'Original complete finding differs')
         require(equal(row['actualSourceResult'],source['sourceResult']), 'Original DTO fields differ')
 
@@ -136,13 +147,16 @@ def validate(value):
             wanted = expected[identity]; seen[mode].append(identity)
             require(row['passed'] and equal(row['input'],wanted['input']) and equal(row['expected'],wanted['expected'])
                     and equal(row['actual'],wanted['expected']), 'Public result, streams or callbacks differ')
+            if check=='hasattr_async' and row['input']['kind']=='cli':
+                expected_calls=0 if row['input'].get('arg') else 4 if row['input']['group']=='default' else 3
+                require(len(row['native'])==expected_calls,'CLI batch execution count differs')
             for native in row['native']: execution(native)
     for mode in MODES: require(Counter(seen[mode])==Counter(expected.keys()), 'Public cases omitted or repeated')
 
     originals = value['originalSuites']; require(set(originals)==MODES, 'Original APIs omitted')
     owned = [r for r in sources['original']['events'] if r['check']==check]
     require(len(owned)==spec.get('originalObservations',spec['original']) and
-            len({r['test'] for r in owned if r['findings']})==spec['positive'], 'Original positive corpus differs')
+            len({r['test'] for r in owned if r.get('findings')})==spec['positive'], 'Original positive corpus differs')
     for mode, suite in originals.items():
         report(suite)
         require(suite['mode']==mode and suite['exitCode']==0 and suite['oracle'] is False, 'Original API failed')
@@ -223,6 +237,11 @@ def validate(value):
             require((len(selected(a)),len(selected(b)))==spec['pairs'][row['name']], 'Behavior control failed for another reason')
         elif row['name']=='cli-rendering':
             require(any(r['code']=='TEXT_CLI_OUTPUT' for r in a) and not any(r['code']=='TEXT_CLI_OUTPUT' for r in b), 'CLI control failed for another reason')
+        elif row['name']=='extractor-metadata':
+            def metadata(rows):return json.loads(next(r['parameters']['value'] for r in rows if r['code']=='ASYNC_CONFIG'))
+            original,changed=metadata(a),metadata(b)
+            require(original['implementation_version']=='hasattr-async-v3' and
+                    changed==dict(original,implementation_version='broken-version'), 'Extractor metadata control differs')
         elif row['name']=='collector-order':
             def lines(rows):return [r['line'] for r in sorted(rows,key=lambda r:(r['parameters']['collector_order0'],r['parameters']['collector_order1']))]
             require(lines(a)==[2,5,4] and lines(b)==[2,4,5], 'Collector-order control failed for another reason')
@@ -290,7 +309,7 @@ def pack(work,format):
             public=source(work/'source-final.json'), original=source(work/spec['originalSource'] if spec.get('originalSource') else ROOT/'.rerail/rr-batch1-final93/source.json'),
             production=source(ROOT/'.rerail/rr-first-ten-production/source-locked.json'),
             supplied=source(ROOT/'.rerail/rr-supplied-facts-final957/expanded-source.json')),
-        publicReports=[read_json(work/f'final-{mode}-{part}.json') for mode in sorted(MODES) for part in range(spec['parts'])],
+        publicReports=[read_json(work/f'{spec.get("publicPrefix","final")}-{mode}-{part}.json') for mode in sorted(MODES) for part in range(spec['parts'])],
         originalSuites={mode:original(mode) for mode in MODES},
         production=production, updates=read_json(work/f'{prefix}updates.json'),
         supplied=read_json(work/f'{prefix}supplied-facts.json'), reporterControl=read_json(work/f'{prefix}reporter-control.json'),

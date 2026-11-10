@@ -2916,9 +2916,57 @@
       "batch": 1,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-hasattr-async.json",
       "legacySha256": "ca10f10fb53277ead5302d5b08e70696bd89d0c454ea8c328006c9148a461208",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
-      "ruleSha256": "972c1406ab45993556d95c8bf77d8eb53fcca21573b8d845fa27e87727873288"
+      "ruleSha256": "972c1406ab45993556d95c8bf77d8eb53fcca21573b8d845fa27e87727873288",
+      "evidence": {
+        "assertions": 145,
+        "positives": 17,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "972c1406ab45993556d95c8bf77d8eb53fcca21573b8d845fa27e87727873288",
+        "engineCommit": "8e70be75afeaa201ede6abf4a6fbd8ef3d19a065",
+        "corpusSha256": "bcad762b671876cc8167a85938139c59a3cf41ec464d3f520bbde860812667ce",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "74bdcc6367bdc37cd788ae59b417a1d6fb19e6dfd8455de9f85e40ea17c674f2",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-hasattr-finalec3-native-snapshot.json",
+            "sha256": "aced1543b6d0bbfd86b4cdac3a6be12bbc67f8588ccecff4372ee4f0e4eb1b12"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-hasattr-finalec3-native-workspace.json",
+            "sha256": "2558db0f3ded2ef08b52623fe37d6ea8846fda5e8031de0337a0d8d79b5f506c"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-hasattr-complete-finalec3.json.gz",
+            "sha256": "ca39eb28023c74943ca6c3d5ebdfc996539d0a2a5dca01d089aadf1d8d25909f"
+          }
+        ],
+        "supplemental": {
+          "publicCasesPerAPI": 110,
+          "originalCasesPerAPI": 145,
+          "originalFindingPositiveCases": 17,
+          "productionCases": 44,
+          "suppliedFactCases": 16,
+          "persistentSteps": 14,
+          "controls": 10,
+          "nativeExecutions": 705,
+          "fullMigrationAcceptance": false
+        },
+        "scope": "All original assertions through both APIs. Recorded raw scanner, first-match ordering, helpers, metadata, native extractor DTOs, batched CLI, reporter, production and persistent updates."
+      },
+      "migrationProgress": {
+        "status": "full-contract-passed",
+        "verifiedNativeExecutions": 705
+      }
     },
     {
       "check": "no_source_inspection",
@@ -4237,7 +4285,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
-    "status": "Native syntax exception source committed; replacement CLI acceptance artifact pending.",
+    "status": "Root CLI 74bdcc6367bdc37c registered from committed sources on Final ec3cfe1b7. Its cohort passes 29 syntax unit tests, the 486-execution composition progress receipt, and the 705-execution complete hasattr_async admission. Historical receipts retain their stated source, harness and engine cohorts.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [

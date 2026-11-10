@@ -20,6 +20,11 @@ class HasattrAdmissionTests(unittest.TestCase):
             'originalCasesPerAPI','originalFindingPositiveCases','publicCasesPerAPI','productionCases',
             'suppliedFactCases','persistentSteps','controls','nativeExecutions']))
 
+    def test_fixed_original_inventory_gate_accepts_the_rule(self):
+        from migration import MANIFEST,read_json,require_complete
+        entry=next(r for r in read_json(ROOT/MANIFEST)['rules'] if r['check']=='hasattr_async')
+        require_complete([entry])
+
     def test_missing_original_assertion_is_rejected(self):
         value=copy.deepcopy(self.value);value['originalSuites']['snapshot']['cases'].popitem()
         with self.assertRaisesRegex(ValueError,'Original assertions omitted'):validate(value)

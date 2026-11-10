@@ -10713,3 +10713,41 @@ The older receipt still records its actual syntax failure; the validator does no
 Composition remains a draft. The application behavior probe and the other unaccepted ports remain open.
 The inventory is still nine accepted ports, 86 drafts, and five absent translations.
 No full-repository cold benchmark ran. No Linear tickets were created.
+# Async capability rule admission and batched CLI, 2026-11-10
+
+Continued the first-batch migration with `hasattr_async` on the registered root CLI `74bdcc6367bdc37c…`.
+The initial refresh rejected an obsolete baseline because it lacked lossless return values.
+The complete original recording supplied the required values. No comparison was removed to accept the obsolete baseline.
+
+The CLI previously called native path filtering and scanning for each file.
+It now submits one candidate batch, reads the selected files, and submits one source batch.
+Each file occurrence has a distinct document key. Repeated roots therefore preserve duplicate findings.
+An ordinary explicit-directory CLI invocation makes three native calls: selection, scanning, and rendering.
+Default discovery adds one directory-selection call. Caller-supplied callbacks retain their original observable order.
+The admission validator rejects a receipt that adds per-file queries to these batch cases.
+
+The native rule also supplies complete extractor metadata and JSON fact DTOs.
+The host constructs the passive extractor object and decodes fact rows.
+A new source-recorded corpus covers 110 cases per API, including first-match order, comments, Unicode, line separators,
+allowed patterns, path exclusions, non-Python filenames, explicit test files, duplicate roots, exact CLI streams, metadata, and facts.
+
+The TDD ladder exposed a retained read-error record with an exact empty return value and no normalized findings field.
+The native test now performs an empty execution and compares that exact recorded return value.
+Admission accepts this case only when both the recorded source result and its input file list are empty.
+A regression rejects using a nonempty source result to fill an absent normalized field.
+
+All 145 original cases pass through each API, with 38 complete recorded linter calls and 17 finding-positive original cases.
+The native suite retains 34 explicit assertion translations per API, including native regex searches and reviewed source-skip replacements.
+No original assertion is skipped, retained, or delegated to a Python linter function.
+All 110 supplemental cases, 44 production cases, 16 supplied-fact cases, 14 persistent steps, and 10 controls pass.
+The controls disable both finding families, allowed-line handling, comment handling, exclusions, batch selection,
+native facts, extractor metadata, CLI rendering, and the supplied-fact reporter.
+
+The `rr-hasattr-complete-finalec3.json.gz` receipt validates 705 native executions.
+The fixed original-test inventory gate admits the rule. The manifest now records ten accepted ports, 85 drafts, and five absent translations.
+All 357 migration tooling tests pass. The latest fetched Final branch remains `ec3cfe1b7` and is already merged.
+Only affected rule kernels ran. No full-repository cold benchmark or new Linear ticket was created.
+
+Next: refresh the remaining first-batch drafts, including `no_blanket_grammar_bypass`.
+The composition application-probe boundary remains unresolved. Its separate 486-execution receipt preserves that failure.
+The complete 100-port migration remains open.
