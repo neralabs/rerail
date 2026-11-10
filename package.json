@@ -89,7 +89,7 @@
     "build:docs-site": "node --import tsx scripts/build/docs-site.mjs",
     "ensure:sqlite": "node scripts/build/ensure-sqlite.mjs",
     "build:native": "node scripts/build/require-cargo.mjs && node scripts/build/require-lfs.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
-    "build:ts": "tsc -p tsconfig.build.json && esbuild src/presentation/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/presentation/session-presentation.js && esbuild src/runtime/start-state-reader.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/runtime/start-state-reader.js",
+    "build:ts": "tsc -p tsconfig.build.json && esbuild src/presentation/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/presentation/session-presentation.js && esbuild src/runtime/start-state-reader.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/runtime/start-state-reader.js && esbuild src/cli/cli.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/cli/cli.js",
     "build:omp": "esbuild src/hosts/omp/default-extension.ts --bundle --platform=node --target=node24 --format=esm --external:better-sqlite3 --outfile=dist/hosts/omp/default-extension.js",
     "build:test-host": "esbuild integration/support/omp-host-extension.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
     "build:events": "esbuild src/harness/event-stream.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/harness/event-stream.js",
