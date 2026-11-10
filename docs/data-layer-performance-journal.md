@@ -11338,3 +11338,19 @@ No full-repository cold benchmark ran. No Linear ticket was created.
 The final tooling run passes 396 tests and 165 subtests in 10.16 seconds.
 The migration manifest also records seven standard-library files changed by the integration merge.
 Each file is byte-identical to Final ca24. The inventory verification passes after recording that upstream provenance.
+
+### Dynamic-loading interface refresh and update controls, 2026-11-10
+
+The [ca24 checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-dynamic-finalca24-progress.json.gz) preserves 1,750 native executions and all consumed program and harness bytes.
+Each API passes 115 dedicated original tests, 116 scanner cases, 30 discovery cases, 49 CLI cases, 46 plugin cases, and 35 signing cases.
+The checkpoint also retains the 17 production cases per API from the preceding production acceptance.
+
+Each API passes 19 persistent-workspace steps across three sequences. These exercise additions, removals, symlink changes, scope changes, and repeated identical inputs.
+The harness preserves untouched fixture timestamps and checks exact production contracts and default findings after each step.
+Nine removal controls per API prove that all five detector patterns and four exclusions affect the recorded results.
+The exclusions cover TYPE_CHECKING, docstrings, fast-substring gating, and the allowlist.
+
+The source oracle passes all 191 framework and receipt-auditor assertions. Native framework collection exposes an import-time metadata guard failure.
+Both shared MCP modules must run separately: their duplicate ARC-009 ownership marks prevent combined collection upstream.
+These are outstanding acceptance tasks, not excluded assertions. Two hundred shared original cases remain open.
+Dynamic loading remains a draft; global admission remains 12 of 100 ports.
