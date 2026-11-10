@@ -9,7 +9,7 @@ import { isSteerRule, type AdapterDelivery, type RerailHost, type SteerRule } fr
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { processState } from "../engine/process-liveness.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
-import { nameTaken } from "../engine/file-replace.js";
+import { heldOnWindows, nameTaken } from "../engine/file-replace.js";
 import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
 import { scrubSecrets } from "../engine/secret-scrub.js";
 import { makeLedgerFolder, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
@@ -208,7 +208,11 @@ interface LockOwner {
   token: string;
 }
 
-async function reclaimDeadOwner(path: string): Promise<boolean> {
+/**
+ * Removes the lock file at `path` when its owner is dead; true when the next try may take the lock. On Windows a lock
+ * file another hook is already removing refuses this removal (EPERM, EACCES, EBUSY): false then, so the hook waits.
+ */
+async function reclaimDeadOwner(path: string, platform: NodeJS.Platform): Promise<boolean> {
   let serializedOwner: string;
   let owner: LockOwner;
   try {
@@ -226,6 +230,7 @@ async function reclaimDeadOwner(path: string): Promise<boolean> {
     return true;
   } catch (error) {
     if (errno(error, "ENOENT")) return true;
+    if (heldOnWindows(error, platform)) return false;
     throw error;
   }
 }
@@ -242,7 +247,7 @@ async function acquireLock(path: string, serializedOwner: string, label: string,
     } catch (error) {
       // Another hook holds the lock, or on Windows is still deleting its lock file: either way, wait.
       if (!nameTaken(error, platform)) throw error;
-      if (errno(error, "EEXIST") && await reclaimDeadOwner(path)) continue;
+      if (errno(error, "EEXIST") && await reclaimDeadOwner(path, platform)) continue;
       if (Date.now() >= deadline) throw new Error(`Timed out waiting for session lock: ${label}`);
       await delay(10);
     }
