@@ -1,7 +1,10 @@
+import * as fs from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("node:fs", { spy: true });
 import { PI_FIX_CHILD_TOOLS, PiFixReader, STDERR_TAIL_CHARS, piFixInvocation, runPiFix, type PiFixRun } from "../../../src/hosts/pi/pi-fix-tool.js";
 
 /** `stdout` read as a child streams it: in small chunks that split lines. */
@@ -43,6 +46,19 @@ describe("rerail_fix", () => {
       args: ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", "read,edit,write,grep,find,ls", expect.stringContaining("Fix it.")],
     });
     expect(piFixInvocation("Fix it.", {}, "/opt/pi/bin/pi", undefined).command).toBe("/opt/pi/bin/pi");
+  });
+
+  it("starts a Bun-compiled pi.exe on Windows without its virtual entry, which Bun reports as existing", () => {
+    const entry = "B:/~BUN/root/pi.exe";
+    vi.mocked(fs.existsSync).mockImplementation(path => path === entry);
+    try {
+      expect(piFixInvocation("Fix it.", {}, "C:\\pi\\pi.exe", entry)).toEqual({
+        command: "C:\\pi\\pi.exe",
+        args: ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", "read,edit,write,grep,find,ls", expect.stringContaining("Fix it.")],
+      });
+    } finally {
+      vi.mocked(fs.existsSync).mockRestore();
+    }
   });
 
   it("on Windows runs only a pi.exe found through PATH, never the bare name the repository could answer", async () => {
