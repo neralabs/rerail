@@ -1845,6 +1845,8 @@ pub(super) struct TapeDoc {
     /// the fold kept, and the node API recognizes the other tokens from the source on demand
     /// (`tokens::TokenGrammar::sequence`). `None`: the records hold every node.
     tokens: Option<Arc<tokens::TokenGrammar>>,
+    /// Where `tokens` is set: the last records' children as recognized (`PartsCache`).
+    parts_cache: Arc<PartsCache>,
 }
 
 #[derive(Clone)]
@@ -2076,6 +2078,7 @@ impl TapeDoc {
             let mut doc = Self::restore_tree(source, grammar, &plain, lines, budget)?;
             doc.image = Arc::new(image.clone());
             doc.tokens = Some(automata);
+            doc.parts_cache = Arc::default();
             return Ok(doc);
         }
         if image.widths[0] & NAMED_ONLY != 0 {
@@ -2258,6 +2261,7 @@ impl TapeDoc {
             digest: Arc::default(),
             named_only: false,
             tokens: None,
+            parts_cache: Arc::default(),
         })
     }
 
@@ -2721,10 +2725,41 @@ pub(super) struct TapeNode<'a> {
     source: &'a str,
     /// Set where the records leave tokens out (`TapeDoc::tokens`).
     tokens: Option<&'a tokens::TokenGrammar>,
+    parts: &'a PartsCache,
     /// The record: this node's, or a token's parent's.
     index: u32,
     /// A token the records leave out, recognized from the source (RER-131 option B).
     token: Option<Tok>,
+}
+
+/// A named-only document's last records' children, as recognized (RER-131): a walk to a neighbour
+/// (`prev`, `next`, a leaf's descent) asks one parent again at every step, and recognizing its
+/// tokens each time made layout tests six times as costly as on the full tree. Shared by the
+/// document's clones; at most `PARTS_CACHED` records, the oldest replaced.
+#[derive(Default)]
+pub(super) struct PartsCache(parking_lot::Mutex<rustc_hash::FxHashMap<u32, Arc<Recognized>>>);
+const PARTS_CACHED: usize = 4096;
+
+/// A record's parts as recognized: in source order, and its stored children's places among them
+/// (by record, ascending).
+pub(super) struct Recognized {
+    items: Vec<tokens::Item>,
+    children: Vec<(u32, u32)>,
+}
+
+impl PartsCache {
+    fn get(&self, record: u32) -> Option<Arc<Recognized>> {
+        self.0.lock().get(&record).cloned()
+    }
+    fn put(&self, record: u32, parts: Recognized) -> Arc<Recognized> {
+        let parts = Arc::new(parts);
+        let mut cached = self.0.lock();
+        if cached.len() == PARTS_CACHED {
+            cached.clear();
+        }
+        cached.insert(record, Arc::clone(&parts));
+        parts
+    }
 }
 
 /// A recognized token: its position among its parent's children, kind, field and span.
@@ -2801,63 +2836,88 @@ impl<'a> TapeNode<'a> {
         if self.token.is_some() {
             return Vec::new();
         }
+        match self.recognized() {
+            Some(parts) => parts.items.to_vec(),
+            None => self.records().map(|child| tokens::Item::Child(child.index)).collect(),
+        }
+    }
+    /// A record's children with its recognized tokens, from the document's cache; `None` where
+    /// the record does not recognize (its stored children are all its children).
+    fn recognized(&self) -> Option<Arc<Recognized>> {
+        let grammar = self.tokens.filter(|_| self.recognizes())?;
+        if let Some(parts) = self.parts.get(self.index) {
+            return Some(parts);
+        }
         let kids: Vec<u32> = self.records().map(|child| child.index).collect();
-        let Some(grammar) = self.tokens.filter(|_| self.recognizes()) else {
-            return kids.into_iter().map(tokens::Item::Child).collect();
-        };
         let described: Vec<_> = kids.iter().map(|&kid| self.describe(kid)).collect();
         let mut items = Vec::with_capacity(kids.len() * 2);
         // The fold kept every token it could not rebuild this same way, so this cannot fail on a
         // tape restore accepted; a failure reads the stored children alone.
         if grammar.sequence(&self.describe(self.index), self.rec().tokens_kept(), &described, self.source.as_bytes(), &mut items).is_err() {
-            return kids.into_iter().map(tokens::Item::Child).collect();
-        }
-        for item in &mut items {
-            if let tokens::Item::Child(position) = item {
-                *position = kids[*position as usize];
+            items = kids.iter().map(|&kid| tokens::Item::Child(kid)).collect();
+        } else {
+            for item in &mut items {
+                if let tokens::Item::Child(position) = item {
+                    *position = kids[*position as usize];
+                }
             }
         }
-        items
+        let children = items
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, item)| match item {
+                tokens::Item::Child(record) => Some((*record, slot as u32)),
+                tokens::Item::Token { .. } => None,
+            })
+            .collect();
+        Some(self.parts.put(self.index, Recognized { items, children }))
+    }
+    /// The part at `slot` of this record's children.
+    fn part(&self, slot: usize, item: tokens::Item) -> Self {
+        match item {
+            tokens::Item::Child(index) => self.at(index),
+            tokens::Item::Token { kind, field, start, end } => Self {
+                token: Some(Tok { slot: slot as u32, kind, field, start, end }),
+                ..self.at(self.index)
+            },
+        }
     }
     /// This node's children in source order, recognized tokens included.
     fn parts(&self) -> Vec<Self> {
-        self.items()
-            .into_iter()
-            .enumerate()
-            .map(|(slot, item)| match item {
-                tokens::Item::Child(index) => self.at(index),
-                tokens::Item::Token { kind, field, start, end } => Self {
-                    token: Some(Tok { slot: slot as u32, kind, field, start, end }),
-                    ..self.at(self.index)
-                },
-            })
-            .collect()
+        self.items().into_iter().enumerate().map(|(slot, item)| self.part(slot, item)).collect()
     }
-    /// This node's parent, and its siblings with tokens (`Some` where the parent recognizes).
-    fn siblings(&self) -> Option<(Self, Vec<Self>, usize)> {
+    /// The part `step` places from this one among its parent's (`Some(None)` past either end);
+    /// `None` where the parent does not recognize.
+    fn beside(&self, step: isize) -> Option<Option<Self>> {
         let parent = self.parent()?;
-        if !parent.recognizes() {
-            return None;
-        }
-        let parts = parent.parts();
-        let position = parts.iter().position(|part| part.same(self))?;
-        Some((parent, parts, position))
-    }
-    fn same(&self, other: &Self) -> bool {
-        self.index == other.index && self.token.map(|t| t.slot) == other.token.map(|t| t.slot)
+        let parts = parent.recognized()?;
+        let slot = match self.token {
+            Some(token) => token.slot as usize,
+            // Stored children are in preorder, so their records increase along the parts.
+            None => {
+                let at = parts.children.binary_search_by_key(&self.index, |&(record, _)| record).ok()?;
+                parts.children[at].1 as usize
+            }
+        };
+        let Some(next) = slot.checked_add_signed(step) else { return Some(None) };
+        Some(parts.items.get(next).map(|&item| parent.part(next, item)))
     }
     /// The structurally adjacent sibling, for traversal; `SgNode::next` follows Tree-sitter.
     pub(super) fn next_sibling(&self) -> Option<Self> {
-        if self.token.is_some() || self.parent().is_some_and(|parent| parent.recognizes()) {
-            let (_, parts, position) = self.siblings()?;
-            return parts.get(position + 1).copied();
+        if let Some(beside) = self.beside(1) {
+            return beside;
+        }
+        if self.token.is_some() {
+            return None;
         }
         (self.rec().next != NONE).then(|| self.at(self.rec().next))
     }
     fn prev_sibling(&self) -> Option<Self> {
-        if self.token.is_some() || self.parent().is_some_and(|parent| parent.recognizes()) {
-            let (_, parts, position) = self.siblings()?;
-            return position.checked_sub(1).map(|at| parts[at]);
+        if let Some(beside) = self.beside(-1) {
+            return beside;
+        }
+        if self.token.is_some() {
+            return None;
         }
         (self.rec().prev != NONE).then(|| self.at(self.rec().prev))
     }
@@ -3123,6 +3183,7 @@ impl Doc for TapeDoc {
             kind_overrides: &self.kind_overrides,
             source: &self.source,
             tokens: self.tokens.as_deref(),
+            parts: &self.parts_cache,
             index: 0,
             token: None,
         }
