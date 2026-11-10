@@ -568,7 +568,11 @@ fn survivors(r: &Rule, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -
 /// empty and takes small batches from its first row, so the plan for a delta that is its whole relation (one that
 /// scans the other relations first) is never the right one for it.
 fn small_batches(rel: &str) -> bool {
-    ["__del", "__cand", "__chk", "__gone", "__held", "__lost", "__ins", "__redo"].iter().any(|s| rel.ends_with(s))
+    // `RERAIL_SMALL_WHOLE=dred`: DRed's and counting's relations take whole plans again, as before, to compare.
+    static DRED_WHOLE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_SMALL_WHOLE").is_ok_and(|v| v == "dred"));
+    let dred = ["__del", "__lost", "__ins", "__redo"];
+    let levels = ["__cand", "__chk", "__gone", "__held"];
+    levels.iter().any(|s| rel.ends_with(s)) || (!*DRED_WHOLE && dred.iter().any(|s| rel.ends_with(s)))
 }
 
 /// A levels stratum's relations of `h`, when `scc` has all five (`native::setfix::Levels`): cand, chk, held, gone,
