@@ -30,6 +30,7 @@ const BUDGET: usize = 4000;
 /// The request of a load, and the relation of what was loaded.
 pub(super) const LOAD: &str = "load";
 pub(super) const LOADED: &str = "loaded";
+pub(super) const LOADED_DOC: &str = "loaded_doc";
 
 /// Whether the program reads the file system or loads documents.
 pub(super) fn wanted(prog: &front::Program) -> bool {
@@ -39,13 +40,24 @@ pub(super) fn wanted(prog: &front::Program) -> bool {
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
 /// (`corpus::loading`): a directory's entries, a file's lines and a load's `loaded` row.
 pub(super) fn answers(prog: &front::Program) -> BTreeMap<String, Vec<String>> {
-    WORLD
+    let mut out: BTreeMap<_,_> = WORLD
         .iter()
         .map(|(rel, req)| (*req, *rel))
         .chain([(LOAD, LOADED)])
         .filter(|(req, _)| prog.rules.iter().any(|x| x.head.rel == *req))
         .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
-        .collect()
+        .collect();
+    // Publish identity rows only when a consumer reads them. The canonical
+    // `loaded` contract remains unchanged for existing programs.
+    let identities=prog.outputs.iter().any(|r|r==LOADED_DOC) || prog.rules.iter()
+        .flat_map(|r|&r.body).filter_map(|l|l.atom()).any(|a|a.rel==LOADED_DOC);
+    if identities && let Some(rows)=out.get_mut(LOAD) { rows.push(LOADED_DOC.to_owned()); }
+    out
+}
+
+pub(super) struct CorpusPaths {
+    pub(super) known: BTreeSet<String>,
+    pub(super) documents: BTreeMap<String, Vec<i64>>,
 }
 
 /// A loaded document: its path as the rule gave it, and the module it is.
@@ -194,13 +206,15 @@ impl World {
     /// its canonical path: the same file is one document, and its key and memo entries are the same in every
     /// workspace.
     /// The corpus's documents as canonical paths, as `load` compares them, with their given names too.
-    pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = &'a String>) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        for p in paths {
+    pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = (i64,&'a String)>, identities: bool) -> CorpusPaths {
+        let mut out = CorpusPaths {known:BTreeSet::new(),documents:BTreeMap::new()};
+        for (d,p) in paths {
             if let Ok(c) = std::fs::canonicalize(self.root.join(p)) {
-                out.insert(c.to_string_lossy().into_owned());
+                let canonical=c.to_string_lossy().into_owned();
+                if identities { out.documents.entry(canonical.clone()).or_default().push(d); }
+                out.known.insert(canonical);
             }
-            out.insert(p.clone());
+            out.known.insert(p.clone());
         }
         out
     }
@@ -389,8 +403,9 @@ mod tests {
         assert_eq!(second.document.module, "second");
         assert_eq!(world.loads.len(), 1);
         let mut existing = World::new(&root, &front::parse("").unwrap());
-        let corpus = existing.canonical_corpus([&"a.py".to_owned()]);
-        assert!(!existing.load("a.py","corpus-alias","python","python",&corpus).unwrap().fresh);
+        let corpus = existing.canonical_corpus([(7,&"a.py".to_owned())],true);
+        assert!(!existing.load("a.py","corpus-alias","python","python",&corpus.known).unwrap().fresh);
+        assert_eq!(corpus.documents[&first.document.path],vec![7]);
         assert!(existing.loads.is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }

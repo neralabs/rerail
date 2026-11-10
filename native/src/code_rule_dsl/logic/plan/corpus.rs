@@ -3320,7 +3320,10 @@ fn run_observed(
     if let (Some((load, reads)), Some(docs_tx)) = (&loading, &docs_out) {
         let _loading = crate::code_rule_dsl::logic::profile::span(|| "requests answered inside the fixpoint".into());
         let mut world = world::World::new(root, &prog);
-        let corpus: BTreeSet<String> = world.canonical_corpus(docs.iter().map(|(_, p)| p));
+        let loaded_identity=load.answers.get(world::LOAD).is_some_and(|rows|rows.iter().any(|r|r==world::LOADED_DOC));
+        // Canonicalisation was already required to suppress duplicate loads.
+        // Keep document keys from that same pass when an identity consumer asks.
+        let mut corpus=world.canonical_corpus(docs.iter().map(|(d,p)|(*d,p)),loaded_identity);
         let mut all_paths: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
         let per_file: Vec<String> = load.answers.get(world::LOAD).into_iter().flatten().filter(|r| split.exports.contains(r)).cloned().collect();
         let world_rels: Vec<(String, usize)> = load.answers.values().flatten().filter(|r| !split.exports.contains(r)).filter_map(|r| load.decls.get(r).map(|d| (r.clone(), d.len()))).collect();
@@ -3444,7 +3447,7 @@ fn run_observed(
             // last run's, kept.
             for row in rows.iter().filter(|_| !no_loads) {
                 let (asked, module, grammar) = (text(row[0])?, text(row[1])?, text(row[2])?);
-                if let Some(answer) = world.load(&asked, &module, &grammar, label, &corpus) {
+                if let Some(answer) = world.load(&asked, &module, &grammar, label, &corpus.known) {
                     loaded_rows.push(vec![0, row[1], row[2]]);
                     answered_paths.push(answer.document.path.clone());
                     if answer.fresh { fresh.push(answer.document); }
@@ -3453,8 +3456,14 @@ fn run_observed(
             for (row, path) in loaded_rows.iter_mut().zip(atoms(&answered_paths.iter().map(String::as_str).collect::<Vec<_>>())?) {
                 row[0] = path;
             }
-            let mut out = vec![(world::LOADED.to_owned(), loaded_rows)];
+            let identity_rows=|documents:&BTreeMap<String,Vec<i64>>| -> Vec<Vec<i64>> {
+                loaded_rows.iter().zip(&answered_paths).flat_map(|(row,path)|
+                    documents.get(path).into_iter().flatten().map(move |d|vec![row[0],row[1],row[2],*d])).collect()
+            };
+            let mut out = Vec::new();
             if fresh.is_empty() {
+                if loaded_identity { out.push((world::LOADED_DOC.to_owned(),identity_rows(&corpus.documents))); }
+                out.push((world::LOADED.to_owned(),loaded_rows));
                 out.extend(per_file.iter().map(|r| (r.clone(), Vec::new())));
                 return Ok(out);
             }
@@ -3462,6 +3471,11 @@ fn run_observed(
             all_paths.extend(fresh.iter().map(|d| d.path.clone()));
             let keys = memo::doc_keys(&all_paths);
             let keys = &keys[keys.len() - fresh.len()..];
+            if loaded_identity {
+                for (d,file) in keys.iter().zip(&fresh) { corpus.documents.entry(file.path.clone()).or_default().push(*d); }
+                out.push((world::LOADED_DOC.to_owned(),identity_rows(&corpus.documents)));
+            }
+            out.push((world::LOADED.to_owned(),loaded_rows));
             let ranges = keys.iter().map(|d| vec![SqlValue::Integer(*d), SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect();
             super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
             loaded_docs.extend(keys.iter().copied().zip(fresh.iter().map(|d| d.path.clone())));
