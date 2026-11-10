@@ -3670,10 +3670,9 @@
         "scannerPositivesPerAPI": 203,
         "originalTestsPerAPI": 49,
         "remaining": [
-          "supplied-fact reporting",
           "CLI contracts",
           "persistent updates",
-          "behavior-removal controls",
+          "scanner behavior-removal controls",
           "full original inventory and admission"
         ],
         "checkpoints": [
@@ -3688,9 +3687,17 @@
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-alignment-final72-progress.json.gz",
             "sha256": "b5eb4c23e7324873e62901bbf3c51dd9a71c330aa0984df6fd13d10e9861d065"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-supplied-final72-progress.json.gz",
+            "sha256": "bc10d8a7b8a39bd3dfc233c9f08e4aec8d52a1cf4631e91d581cbbbf34a60c67"
           }
         ],
-        "findingProjectionCasesPerAPI": 47
+        "findingProjectionCasesPerAPI": 47,
+        "suppliedFactCasesPerAPI": 191,
+        "suppliedFactPositiveCasesPerAPI": 147,
+        "suppliedFactErrorCasesPerAPI": 32,
+        "suppliedFactControls": 4
       }
     },
     {

@@ -2944,3 +2944,33 @@ No full-repository cold benchmark ran.
 
 Dispatch remains a draft. Supplied-fact reporting, CLI contracts, persistent updates, behavior-removal controls,
 and final admission remain open. No additional rule was admitted. The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+
+### Dispatch supplied-fact reporter, 2026-11-10
+
+Implemented native supplied-fact reporting and the `_findings` compatibility adapter.
+The source oracle contains 191 cases. These include 147 finding-positive cases and 32 error cases.
+Every case passes through both APIs. Each API uses two native requests for the complete corpus.
+One request checks the reporter. The other feeds the real `_findings` adapter from a native batch.
+Original semantic Python functions remain blocked during native execution.
+
+The contract compares complete Finding and StructuredViolation values, stable ordering, duplicates, output streams, and error arguments.
+It covers missing and foreign extractors, malformed containers, omitted fields, Unicode integer syntax, fractional values, and unbounded lines.
+It also covers digit-limit failures, non-finite floats, nested representations, path errors, late boundaries, and signature short circuits.
+The generator emits literal namespace and field selectors. Selectors share one decoded document and skip unrelated fact families.
+
+The input boundary now accepts typed primitive envelopes for native string and integer projections.
+Float bits preserve NaN, infinities, and negative zero. The encoder performs no reporter coercion or filtering.
+The native input suite passes all 23 tests. The new test first failed because the projection was unavailable.
+The pre-port policy also produced no case rows for the complete 191-case corpus.
+Four successful mutation controls detect reversed error precedence, wrong line selection, missing late-boundary filtering, and lost duplicates.
+The tooling suite passes 375 tests.
+
+[The supplied-fact receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-supplied-final72-progress.json.gz)
+retains source observations, full native reports, consumed programs, harness bytes, build provenance, controls, and red/green logs.
+The unit red and green builds took 76.627 and 71.367 seconds elapsed. The optimized build took 130.150 seconds.
+These measurements describe compilation. No full-repository cold benchmark ran.
+
+Dispatch remains a draft. CLI contracts, persistent updates, scanner controls, and final admission remain open.
+The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+The local Final branch advanced to rollup `87396ebb3` during this cohort. Preserve these results before merging that rollup.
+Broader scanner and repository regression testing must run on the new merged engine.
