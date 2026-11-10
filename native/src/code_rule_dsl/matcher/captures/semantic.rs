@@ -40,13 +40,6 @@ pub(super) fn collect_binds(
         }
         // A reaching call binds its chain, for messages.
         Semantic::Calls(test) => names.extend(test.chain.iter().cloned()),
-        // `as` binds the token the test found; `where` binds at it.
-        Semantic::Tokens(test) => {
-            names.extend(test.capture.iter().cloned());
-            if let Some(rule) = &test.rule {
-                super::collect_binds(rule, summaries, names);
-            }
-        }
         Semantic::Resolves(_)
         | Semantic::Value(_)
         | Semantic::Layout(_)
@@ -102,13 +95,6 @@ pub(super) fn reads(
         | Semantic::Capture(_)
         | Semantic::FilePath(_)
         | Semantic::ImportTarget(_) => Names::new(),
-        Semantic::Tokens(test) => {
-            let mut names = Names::new();
-            if let Some(rule) = &test.rule {
-                rule_reads(rule, &mut names);
-            }
-            names
-        }
     }
 }
 
@@ -156,7 +142,6 @@ pub(super) fn collect_mentions(
         }
         Semantic::Calls(test) => names.extend(test.chain.iter().cloned()),
         Semantic::Layout(layout) => names.extend(layout.reads().map(str::to_owned)),
-        Semantic::Tokens(test) => names.extend(test.capture.iter().cloned()),
         Semantic::Resolves(_)
         | Semantic::Value(_)
         | Semantic::FilePath(_)
@@ -173,14 +158,6 @@ pub(super) fn collect_in(
     framed: bool,
 ) {
     match semantic {
-        Semantic::Tokens(test) => {
-            if let Some(name) = &test.capture {
-                merge_capture(variables, name, Capture::Single);
-            }
-            if let Some(rule) = &test.rule {
-                super::collect_in(rule, variables, summaries, framed);
-            }
-        }
         Semantic::Resolves(_)
         | Semantic::Layout(_)
         | Semantic::FilePath(_)

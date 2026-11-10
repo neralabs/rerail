@@ -1,7 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use ast_grep_core::AstGrep;
-use ast_grep_core::matcher::Pattern;
 use ast_grep_core::tree_sitter::StrDoc;
 
 #[test]
@@ -10,7 +9,7 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     let (_, tape, image, grammar) = fixture(source, GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
     assert_eq!(&bytes[..8], b"TMPTAP9N");
-    assert_eq!(TAPE_FORMAT_VERSION, 13);
+    assert_eq!(TAPE_FORMAT_VERSION, 14);
 
     let memberships = tape.transducer_supertypes().collect::<Vec<_>>();
     assert!(!memberships.is_empty());
@@ -120,6 +119,25 @@ fn scala_contextual_aliases_preserve_native_node_identity() {
     }
 }
 
+/// The nodes of tree-sitter's tree a tape holds, in preorder: the tokens the grammar implies left
+/// out (`stored_children_for_test`).
+fn stored<'r>(native: &'r AstGrep<StrDoc<GrammarDialect>>) -> Vec<ast_grep_core::Node<'r, StrDoc<GrammarDialect>>> {
+    let kept = kept(native);
+    native.root().dfs().filter(|node| kept.contains(&node.get_inner_node().id())).collect()
+}
+
+/// The ids of the tree-sitter nodes a tape holds (`stored`).
+fn kept(native: &AstGrep<StrDoc<GrammarDialect>>) -> std::collections::HashSet<usize> {
+    let lang = *native.root().get_doc().get_lang();
+    let mut kept = std::collections::HashSet::new();
+    let mut stack = vec![native.root().get_doc().tree.root_node()];
+    while let Some(node) = stack.pop() {
+        kept.insert(node.id());
+        stack.extend(stored_children_for_test(lang, node).into_iter().map(|(child, _)| child));
+    }
+    kept
+}
+
 fn fixture(
     source: &str,
     lang: GrammarDialect,
@@ -155,7 +173,7 @@ fn known_field_edges_match_native_first_child_without_larger_records() {
         let (native, tape, _, grammar) = fixture(source, lang);
         let native = AstGrep::doc(native);
         let restored = AstGrep::doc(tape);
-        for (left, right) in native.root().dfs().zip(restored.root().dfs()) {
+        for (left, right) in stored(&native).into_iter().zip(restored.root().dfs()) {
             for field in 0..=grammar.kinds.field_count() as u16 {
                 let expected = left
                     .parent()
@@ -174,8 +192,10 @@ fn known_field_edges_match_native_first_child_without_larger_records() {
 
 type MatchResult = (Range<usize>, Vec<(String, Vec<Range<usize>>)>);
 
-fn matches<D: Doc>(doc: D, pattern: &str, lang: GrammarDialect) -> Vec<MatchResult> {
-    let matcher = Pattern::try_new(pattern, lang).unwrap();
+/// `pattern`'s matches over `doc`: a tape's pattern over a tape, the unfiltered one over tree-sitter's
+/// tree (`test_support::pattern_for`).
+fn matches<D: Doc + 'static>(doc: D, pattern: &str, lang: GrammarDialect) -> Vec<MatchResult> {
+    let matcher = crate::code_rule_dsl::test_support::pattern_for::<D>(pattern, lang);
     let root = AstGrep::doc(doc);
     root.root()
         .find_all(&matcher)
@@ -236,10 +256,10 @@ fn persisted_image_round_trips_without_parsing() {
     // `_member_name_here`, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape
     // format (7: one document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes;
     // 11: columns at 16 bytes, decision 0032; 12: named-only, no source digest, RER-131; 13: the
-    // version alone, recognition bounded alike on host and device) changes the bytes.
+    // version alone; 14: the tokens the grammar implies never written, RER-131) changes the bytes.
     assert_eq!(
         digest,
-        "01bca843b71d034e436bfd3bbaab18ed972ee7afd5d4193b4530f3e6d9d36b54"
+        "8130b6d232a1f27b2793af26815049ae4701c911bb90037246c3f09b90d271c1"
     );
 }
 
@@ -497,7 +517,7 @@ fn valid_native_root_ranges_survive_taping() {
             let (native, tape, _, _) = fixture(source, lang);
             let left = AstGrep::doc(native);
             let right = AstGrep::doc(tape);
-            let native_nodes = left.root().dfs().collect::<Vec<_>>();
+            let native_nodes = stored(&left);
             let tape_nodes = right.root().dfs().collect::<Vec<_>>();
             assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?} {source:?}");
             for (a, b) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -575,7 +595,7 @@ fn positions_count_only_line_feeds_in_every_dialect() {
         // compares those against the Forte tree and the view.
         if lang != GrammarDialect::Blade {
             let native = AstGrep::doc(StrDoc::new(source, lang));
-            let native_nodes = native.root().dfs().collect::<Vec<_>>();
+            let native_nodes = stored(&native);
             let tape_nodes = restored.root().dfs().collect::<Vec<_>>();
             assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?}");
             for (a, b) in native_nodes.iter().zip(&tape_nodes) {
@@ -606,35 +626,42 @@ fn direct_field_ids_and_navigation_match_native() {
         let (native, tape, _, grammar) = fixture(source, lang);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape);
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        // Tree-sitter's navigation over the nodes the tape holds.
+        let ids = kept(&left);
+        let held = |node: &ast_grep_core::Node<'_, StrDoc<GrammarDialect>>| ids.contains(&node.get_inner_node().id());
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len());
         for (a, b) in native_nodes.iter().zip(tape_nodes.iter()) {
             assert_eq!(
-                a.next_all().map(|node| node.range()).collect::<Vec<_>>(),
+                a.next_all().filter(held).map(|node| node.range()).collect::<Vec<_>>(),
                 b.next_all().map(|node| node.range()).collect::<Vec<_>>(),
                 "{lang:?} next_all {:?}",
                 a.range()
             );
             assert_eq!(
-                a.prev_all().map(|node| node.range()).collect::<Vec<_>>(),
+                a.prev_all().filter(held).map(|node| node.range()).collect::<Vec<_>>(),
                 b.prev_all().map(|node| node.range()).collect::<Vec<_>>(),
                 "{lang:?} prev_all {:?}",
                 a.range()
             );
             assert_eq!(
-                a.next().map(|node| node.range()),
-                b.next().map(|node| node.range())
+                std::iter::successors(a.next(), |node| node.next()).find(held).map(|node| node.range()),
+                b.next().map(|node| node.range()),
+                "{lang:?} next {:?}",
+                a.range()
             );
             assert_eq!(
-                a.prev().map(|node| node.range()),
-                b.prev().map(|node| node.range())
+                std::iter::successors(a.prev(), |node| node.prev()).find(held).map(|node| node.range()),
+                b.prev().map(|node| node.range()),
+                "{lang:?} prev {:?}",
+                a.range()
             );
         }
-        for (a, b) in left
-            .root()
-            .get_inner_node()
-            .dfs()
+        let held = |node: &tree_sitter::Node<'_>| ids.contains(&node.id());
+        for (a, b) in native_nodes
+            .iter()
+            .map(|node| node.get_inner_node().clone())
             .zip(right.root().get_inner_node().dfs())
         {
             for id in [
@@ -646,6 +673,7 @@ fn direct_field_ids_and_navigation_match_native() {
             ] {
                 assert_eq!(
                     a.field_children(id)
+                        .filter(held)
                         .map(|node| node.byte_range())
                         .collect::<Vec<_>>(),
                     b.field_children(id)
@@ -656,7 +684,7 @@ fn direct_field_ids_and_navigation_match_native() {
                 );
                 if let Some(id) = id {
                     assert_eq!(
-                        a.child_by_field_id(id).map(|node| node.byte_range()),
+                        a.field_children(Some(id)).find(held).map(|node| node.byte_range()),
                         b.child_by_field_id(id).map(|node| node.range()),
                         "{lang:?} field {id:?} {:?}",
                         a.byte_range()
@@ -701,7 +729,7 @@ fn representative_alias_fields_and_flags_match_native() {
         let (native, tape, _, grammar) = fixture(source, lang);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape);
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?}");
         for (a, b) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -779,7 +807,9 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
         let (native, tape, _, _) = fixture(source, lang);
         let native_root = AstGrep::doc(native);
         let tape_root = AstGrep::doc(tape.clone());
-        let native_nodes = native_root.root().dfs().collect::<Vec<_>>();
+        let ids = kept(&native_root);
+        let held = |node: &ast_grep_core::Node<'_, StrDoc<GrammarDialect>>| ids.contains(&node.get_inner_node().id());
+        let native_nodes = stored(&native_root);
         let tape_nodes = tape_root.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len());
         for (left, right) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -809,6 +839,7 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
             );
             assert_eq!(
                 left.children()
+                    .filter(held)
                     .map(|child| child.kind().into_owned())
                     .collect::<Vec<_>>(),
                 right
@@ -827,11 +858,12 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
             );
             for field in ["function", "arguments", "name", "body", "left", "right"] {
                 assert_eq!(
-                    left.field(field).map(|child| child.range()),
+                    left.field_children(field).find(held).map(|child| child.range()),
                     right.field(field).map(|child| child.range())
                 );
                 assert_eq!(
                     left.field_children(field)
+                        .filter(held)
                         .map(|child| child.range())
                         .collect::<Vec<_>>(),
                     right
@@ -938,7 +970,9 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
         assert_eq!(!image.missing_nodes().is_empty(), missing, "{source}");
         let native_root = AstGrep::doc(native);
         let tape_root = AstGrep::doc(tape.clone());
-        let native_nodes = native_root.root().dfs().collect::<Vec<_>>();
+        let ids = kept(&native_root);
+        let held = |node: &ast_grep_core::Node<'_, StrDoc<GrammarDialect>>| ids.contains(&node.get_inner_node().id());
+        let native_nodes = stored(&native_root);
         let tape_nodes = tape_root.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len());
         for (left, right) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -951,7 +985,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
                     left.is_error(),
                     left.is_missing(),
                     left.range(),
-                    left.children().len(),
+                    left.children().filter(held).count(),
                 ),
                 (
                     right.kind(),
@@ -961,7 +995,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
                     right.is_error(),
                     right.is_missing(),
                     right.range(),
-                    right.children().len(),
+                    right.children().count(),
                 )
             );
         }
@@ -984,10 +1018,12 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
                 );
             }
         }
+        // The statement: `debugger` alone is natively its keyword, a token the grammar implies, which
+        // no tape stores (RER-131).
         let pattern = if lang == GrammarDialect::Python {
             "x = $A"
         } else {
-            "debugger"
+            "debugger;"
         };
         assert_eq!(
             matches(StrDoc::new(source, lang), pattern, lang),
@@ -1043,11 +1079,12 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
         "encode must poll before the final source digest"
     );
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    // A named-only image is restored as stored: a record per stored node (RER-131).
+    // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
+    let nodes = native.tree.root_node().descendant_count();
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
     assert_eq!(doc.data.len(), doc.image.node_count());
     assert_eq!(image.primary.node_count(), doc.data.len());
-    assert!(doc.data.len() < native.tree.root_node().descendant_count());
+    assert!(doc.data.len() < nodes);
 }
 
 #[test]
@@ -1093,7 +1130,7 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
         let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(
             native_nodes.len(),
@@ -1138,7 +1175,7 @@ fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
         let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(
             native_nodes.len(),
@@ -1158,16 +1195,9 @@ fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
                 (b.kind_id(), b.range(), b.text(), b.start_pos(), b.end_pos()),
                 "comment length {length} node {index}"
             );
-            // The image holds records only (named nodes and kept tokens): a recognized token has
-            // no column of its own.
-            let inner = b.get_inner_node();
-            if inner.token.is_some() {
-                continue;
-            }
-            let record = inner.index as usize;
-            assert_eq!(image.start_at(record) as usize, a.range().start, "comment length {length} node {index}");
+            assert_eq!(image.start_at(index) as usize, a.range().start, "comment length {length} node {index}");
             if a.is_extra() {
-                assert_eq!(image.tail_at(record) as usize, a.range().len(), "comment length {length}");
+                assert_eq!(image.tail_at(index) as usize, a.range().len(), "comment length {length}");
                 saw_comment = true;
             }
         }
@@ -1482,9 +1512,8 @@ fn a_php_template_tapes_its_php_view() {
             &super::super::php_view::view(source),
             GrammarDialect::Php,
         ));
-        let native = view
-            .root()
-            .dfs()
+        let native = stored(&view)
+            .into_iter()
             .map(|node| (node.kind_id(), node.range()))
             .collect::<Vec<_>>();
         let taped = root

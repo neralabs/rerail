@@ -81,30 +81,9 @@ pub(crate) struct Facts {
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
     /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
     pub python_syntax: std::sync::OnceLock<Result<Option<(u32, String)>, String>>,
-    /// What recognizes the tokens the records leave out (a named-only tree, RER-131), from these
-    /// columns and the source, when a reader asks (`parts`): none are stored. `None` where the records
-    /// hold every token.
-    pub tokens: Option<Arc<crate::code_rule_dsl::tape::RecordTokens>>,
 }
 
-/// A token the records leave out, recognized: its kind atom, field, span, and slot among its parent's children.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TokenRow {
-    pub kind: u32,
-    pub field: u16,
-    pub start: u32,
-    pub end: u32,
-    pub slot: u32,
-}
-
-/// One child in source order ([`Facts::parts`]): a record, or a token the records leave out.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Part {
-    Node(u32),
-    Token(TokenRow),
-}
-
-/// An anonymous child, whether the records hold it or not ([`Facts::tokens`]).
+/// An anonymous child: a token the tape stores ([`Facts::tokens`]).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Token {
     pub kind: u32,
@@ -254,7 +233,6 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
         class_nodes: Vec::new(),
         syntax_errors: !doc.syntax_error_ranges().is_empty(),
         python_syntax: Default::default(),
-        tokens: doc.record_tokens().map(Arc::new),
     };
     for id in 0..n as u32 {
         f.kind.push(kind_atom(tag, doc.transducer_kind(id)));
@@ -304,7 +282,6 @@ pub(crate) fn text(source: Arc<String>) -> Facts {
         class_nodes: Vec::new(),
         syntax_errors: false,
         python_syntax: Default::default(),
-        tokens: None,
     };
     index(&mut f);
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
@@ -341,7 +318,6 @@ pub(crate) fn from_subtree(tag: u8, tree: &crate::code_rule_dsl::literal::SubTre
         class_nodes: Vec::new(),
         syntax_errors: false,
         python_syntax: Default::default(),
-        tokens: None,
     };
     for node in tree.preorder() {
         f.kind.push(kind_atom(tag, node.kind));
@@ -437,47 +413,17 @@ impl Facts {
         let b = self.child_offsets[id as usize + 1] as usize;
         &self.children[a..b]
     }
-    /// `id`'s children with the tokens the records leave out, recognized from the source; `None` where
-    /// its records are all its children.
-    fn recognized(&self, id: u32) -> Option<Vec<crate::code_rule_dsl::tape::tokens::Item>> {
-        let tokens = self.tokens.as_ref()?;
-        let columns = |c: u32| {
-            let (c, flags) = (c as usize, self.flags[c as usize]);
-            ((self.start[c]), self.end[c], (self.kind[c] % KIND_STRIDE) as u16, self.field[c], flags & 8 != 0, flags & 2 != 0)
-        };
-        tokens.items(id, self.children(id), columns, self.source.as_bytes())
-    }
-    /// Whether `id` has no children at all, tokens included.
+    /// Whether `id` has no children.
     pub fn is_leaf(&self, id: u32) -> bool {
         self.children(id).is_empty()
-            && self.recognized(id).is_none_or(|items| !items.iter().any(|item| matches!(item, crate::code_rule_dsl::tape::tokens::Item::Token { .. })))
     }
-    /// `id`'s children in source order: its records, and the tokens they leave out.
-    pub fn parts(&self, id: u32) -> Vec<Part> {
-        let Some(items) = self.recognized(id) else {
-            return self.children(id).iter().map(|&c| Part::Node(c)).collect();
-        };
-        let tag = kind_tag(self.kind[id as usize]);
-        items
-            .into_iter()
-            .enumerate()
-            .map(|(slot, item)| match item {
-                crate::code_rule_dsl::tape::tokens::Item::Child(c) => Part::Node(c),
-                crate::code_rule_dsl::tape::tokens::Item::Token { kind, field, start, end } => {
-                    Part::Token(TokenRow { kind: kind_atom(tag, kind), field, start, end, slot: slot as u32 })
-                }
-            })
-            .collect()
-    }
-    /// `id`'s anonymous children in source order, whether the records hold them or not.
+    /// `id`'s anonymous children in source order: the tokens the tape stores (the grammar's implied
+    /// ones are not, RER-131).
     pub fn tokens(&self, id: u32) -> Vec<Token> {
-        self.parts(id)
-            .into_iter()
-            .filter_map(|part| match part {
-                Part::Node(c) if !self.named(c) => Some(Token { kind: self.kind[c as usize], field: self.field[c as usize], start: self.start[c as usize], end: self.end[c as usize] }),
-                Part::Node(_) => None,
-                Part::Token(t) => Some(Token { kind: t.kind, field: t.field, start: t.start, end: t.end }),
-            })
+        self.children(id)
+            .iter()
+            .filter(|&&c| !self.named(c))
+            .map(|&c| Token { kind: self.kind[c as usize], field: self.field[c as usize], start: self.start[c as usize], end: self.end[c as usize] })
             .collect()
     }
     /// A token's text.
@@ -509,7 +455,6 @@ impl Facts {
             + self.child_offsets.len() * 4
             + self.kind_nodes.len() * 4
             + self.class_nodes.len() * 4
-            + self.tokens.as_ref().map_or(0, |tokens| tokens.bytes())
     }
 }
 
@@ -532,11 +477,6 @@ pub(crate) fn digest(f: &Facts) -> [u8; 32] {
     }
     hash.update(&f.flags);
     update_le(&mut hash, &f.field);
-    // What recognizes the tokens the records leave out: with the records and the source, a named-only tree's
-    // facts digest its tokens too (a full tree's digest is as before: it has none).
-    if let Some(tokens) = &f.tokens {
-        tokens.digest_into(&mut hash);
-    }
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes as u64);
     hash.update([u8::from(f.syntax_errors)]);
     hash.finalize().into()

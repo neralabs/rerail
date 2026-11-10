@@ -148,24 +148,11 @@ impl Fact {
         file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
         starts: impl Iterator<Item = u32>,
         siblings: &super::nth_child::SiblingPositions,
-        tokens: &super::tokens::TapeTokens,
     ) -> FactFound {
-        if let Some(bits) = self.nth_bits(file.root().get_doc(), siblings) {
-            return FactFound::Nodes(Arc::unwrap_or_clone(bits));
+        match self.nth_bits(file.root().get_doc(), siblings) {
+            Some(bits) => FactFound::Nodes(Arc::unwrap_or_clone(bits)),
+            None => FactFound::Rows(self.rows(file, starts)),
         }
-        // A `tokens` test: the tape's token index answers where it can (`TapeTokens`), the
-        // producer at the rest.
-        if let AstMatcher::Semantic(super::Semantic::Tokens(test)) = &self.producer {
-            let len = file.root().get_doc().transducer_len();
-            let (held, asked) = tokens.split(test, test.is_plain() && self.slots.is_empty(), file.root(), len, starts);
-            crate::code_rule_dsl::prof::count("tokens.held", held.len());
-            crate::code_rule_dsl::prof::count("tokens.asked", asked.len());
-            let mut rows = held.into_iter().map(|node| (node, Vec::new())).collect::<Vec<_>>();
-            rows.extend(self.rows(file, asked.into_iter()));
-            rows.sort_unstable_by_key(|row| row.0);
-            return FactFound::Rows(rows);
-        }
-        FactFound::Rows(self.rows(file, starts))
     }
 
     /// The rows of `file`: every node the producer matches, with its slots' targets. The predicate's
@@ -379,30 +366,6 @@ struct Lowering {
     facts: usize,
     /// The kinds an `all`'s `kind` conjuncts allow, while its `nthChild` conjunct is lowered.
     conjunct_kinds: Option<BTreeSet<u16>>,
-    /// The kinds every node the tree being lowered is tested at has: an enclosing `all`'s `kind`
-    /// conjuncts, while the lowering stays on that node (`all`, `any`, `not`, a utility). A
-    /// `tokens` fact's producer starts only there; a walk, a pattern's constraint or a fact's slot
-    /// tests another node, which drops them.
-    node_kinds: Option<BTreeSet<u16>>,
-}
-
-/// The kinds `all`'s `kind` conjuncts allow (`None`: any).
-fn conjunct_kinds(matchers: &[AstMatcher]) -> Option<BTreeSet<u16>> {
-    matchers
-        .iter()
-        .filter_map(|m| match m {
-            AstMatcher::Kind(kind) => kind.potential_kinds().map(|ks| ks.iter().filter_map(|k| u16::try_from(k).ok()).collect::<BTreeSet<u16>>()),
-            _ => None,
-        })
-        .reduce(|a, b| a.intersection(&b).copied().collect())
-}
-
-/// Both bounds on a node's kinds (`None`: any).
-fn narrowed(left: Option<BTreeSet<u16>>, right: Option<&BTreeSet<u16>>) -> Option<BTreeSet<u16>> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(left.intersection(right).copied().collect()),
-        (left, right) => left.or_else(|| right.cloned()),
-    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -415,17 +378,6 @@ enum Step {
 impl Lowering {
     /// `shares`: whether the tree reads the caller's environment (a stop rule's does not).
     fn tree(&mut self, matcher: &AstMatcher, shares: bool) -> Result<MatchTree, Unsupported> {
-        let same_node = matches!(matcher, AstMatcher::All(_) | AstMatcher::Any(_) | AstMatcher::Not(_) | AstMatcher::Util(_) | AstMatcher::Semantic(_));
-        let outer = if same_node { self.node_kinds.clone() } else { self.node_kinds.take() };
-        if let AstMatcher::All(matchers) = matcher {
-            self.node_kinds = narrowed(conjunct_kinds(matchers), self.node_kinds.as_ref());
-        }
-        let tree = self.tree_here(matcher, shares);
-        self.node_kinds = outer;
-        tree
-    }
-
-    fn tree_here(&mut self, matcher: &AstMatcher, shares: bool) -> Result<MatchTree, Unsupported> {
         Ok(match matcher {
             AstMatcher::Pattern(pattern) => {
                 self.bind(pattern, shares)?;
@@ -447,7 +399,13 @@ impl Lowering {
             AstMatcher::All(matchers) => {
                 // An `nthChild` beside a `kind` holds only at nodes of that kind: its fact's
                 // producer starts only there (not at every node).
-                let kinds = conjunct_kinds(matchers);
+                let kinds = matchers
+                    .iter()
+                    .filter_map(|m| match m {
+                        AstMatcher::Kind(kind) => kind.potential_kinds().map(|ks| ks.iter().filter_map(|k| u16::try_from(k).ok()).collect::<BTreeSet<u16>>()),
+                        _ => None,
+                    })
+                    .reduce(|a, b| a.intersection(&b).copied().collect());
                 let trees = matchers
                     .iter()
                     .map(|matcher| {
@@ -556,8 +514,6 @@ impl Lowering {
             Semantic::Resolves(resolves) => !super::semantic::flow(resolves.language),
             // A label's view has no host path to read.
             Semantic::FilePath(_) => return Err(Unsupported(name)),
-            // A node's tokens are always known: the test never leaves a verdict open.
-            Semantic::Tokens(_) => true,
             Semantic::Value(_) | Semantic::Layout(_) | Semantic::Arguments(_) => false,
             Semantic::Binding(test) => {
                 if test.occurrence.is_some() {
@@ -582,15 +538,8 @@ impl Lowering {
         if !two_valued && self.three_valued && self.path.contains(&Step::Not) {
             return Err(Unsupported("unknown fact under not"));
         }
-        // A slot is tested at another node.
-        let here = self.node_kinds.take();
-        let slots = rules.iter().map(|rule| self.tree(rule, shares)).collect::<Result<Vec<_>, _>>();
-        self.node_kinds = here;
-        let slots = slots?;
-        let kinds = match &producer {
-            super::Semantic::Tokens(_) => narrowed(candidate_kinds(&producer), self.node_kinds.as_ref()),
-            _ => candidate_kinds(&producer),
-        };
+        let slots = rules.iter().map(|rule| self.tree(rule, shares)).collect::<Result<Vec<_>, _>>()?;
+        let kinds = candidate_kinds(&producer);
         let (digest, dialect) = &self.source;
         let key = format!("{}|{dialect:?}|{}", digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>(), self.facts);
         self.facts += 1;
@@ -611,7 +560,6 @@ fn candidate_kinds(semantic: &super::Semantic) -> Option<BTreeSet<u16>> {
         Semantic::Binding(test) => Some(union(&[&test.reference_kinds, &test.paren_kinds])),
         Semantic::Binds(test) => Some(test.name_kinds.clone()),
         Semantic::Arguments(arguments) => Some(arguments.call_kinds.clone()),
-        Semantic::Tokens(test) => test.kinds.clone(),
         _ => None,
     }
 }
@@ -631,7 +579,6 @@ fn semantic_name(semantic: &super::Semantic) -> &'static str {
         Semantic::Capture(_) => "capture",
         Semantic::FormatArgs(_) => "formatArgs",
         Semantic::Layout(_) => "layout",
-        Semantic::Tokens(_) => "tokens",
         Semantic::FilePath(_) => "file path",
         Semantic::Calls(_) => "calls",
         Semantic::ImportTarget(_) => "importTarget",

@@ -74,11 +74,9 @@ fn matched<D: Doc>(node: Node<'_, D>, matcher: &AstMatcher) -> Option<Found> {
     })
 }
 
-/// The full walk: a rule's roots are named nodes (RER-131).
 fn actual<D: Doc>(root: &AstGrep<D>, matcher: &AstMatcher) -> Vec<Found> {
     root.root()
         .dfs()
-        .filter(Node::is_named)
         .filter_map(|node| matched(node, matcher))
         .collect()
 }
@@ -153,9 +151,7 @@ fn compare_matchers(
     let tree_nodes = tape.transducer_len();
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
-    // Tree-sitter's tree has every token; the tape's records are its named nodes and kept tokens.
-    let native_nodes = native.root().dfs().count();
-    assert!(tree_nodes < native_nodes);
+    assert_eq!(native.root().dfs().count(), tree_nodes);
     for &(rule, matcher) in matchers {
         let plan = AnchorPlan::compile(matcher);
         let expected = actual(&native, matcher);
@@ -164,8 +160,12 @@ fn compare_matchers(
         let (tape_found, _, tape_visited, tape_complete, _) =
             selected(&tape, matcher, &plan, usize::MAX, || false);
         assert!(native_complete && tape_complete, "{language:?} {rule}");
-        assert_eq!(native_visited, native_nodes, "charge anonymous nodes too");
-        assert_eq!(tape_visited, tree_nodes, "a named-only tape charges its records");
+        assert_eq!(
+            native_visited,
+            tree_nodes,
+            "charge anonymous nodes too"
+        );
+        assert_eq!(tape_visited, native_visited);
         assert_eq!(
             native_found, expected,
             "native selection {language:?} {rule}"
@@ -732,19 +732,17 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
             selected(&native, &matcher, &plan, max_nodes, || false);
         assert!(found.is_empty() && !complete && all);
         assert_eq!(visited, max_nodes + 1);
-        // Anonymous leaves are visited, not roots (RER-131).
-        assert!(roots <= max_nodes);
+        assert_eq!(roots, max_nodes);
         let (found, roots, visited, complete, all) =
             selected(&tape, &matcher, &plan, max_nodes, || false);
         assert!(found.is_empty() && !complete && all);
         assert_eq!(visited, max_nodes + 1);
-        // Anonymous leaves are visited, not roots (RER-131).
-        assert!(roots <= max_nodes);
+        assert_eq!(roots, max_nodes);
     }
     let (found, _, visited, complete, all) =
         selected(&native, &matcher, &plan, usize::MAX, || false);
     assert!(found.is_empty() && complete && !all);
-    assert_eq!(visited, native.root().dfs().count());
+    assert_eq!(visited, tree_nodes);
     let (found, _, visited, complete, all) = selected(&tape, &matcher, &plan, usize::MAX, || false);
     assert!(found.is_empty() && complete && !all);
     assert_eq!(visited, tree_nodes);
@@ -784,17 +782,15 @@ where
             };
             let matcher = sibling_matcher(rule.clone(), *root.root().get_doc().get_lang());
             let plan = AnchorPlan::compile(&matcher);
-            // A bare regex relation reads tokens too (`tokens`, RER-131), which the index cannot
-            // evaluate: such a plan is sound, not exact. An exact one selects nothing else.
+            assert!(plan.exact, "{rule}");
             let index = FileAnchorIndex::build(root, &[&plan], usize::MAX, || false);
             let selection = index.select(&plan);
             let mut matched = Vec::new();
             for ordinal in 0..index.len() {
                 let found = matcher.match_node(index.node(ordinal)).is_some();
-                assert!(!found || selection.contains(ordinal), "{source:?} {rule} node {ordinal} {:?}", index.node(ordinal).range());
                 assert_eq!(
-                    selection.contains(ordinal) || !plan.exact,
-                    found || !plan.exact,
+                    selection.contains(ordinal),
+                    found,
                     "{source:?} {rule} node {ordinal} {:?}",
                     index.node(ordinal).range()
                 );
@@ -935,9 +931,7 @@ fn zero_width_end_sibling_selection_is_linear_in_the_run() {
         let matcher = sibling_matcher(rule.clone(), GrammarDialect::TypeScript);
         let plan = AnchorPlan::compile(&matcher);
         let index = FileAnchorIndex::build(&native, &[&plan], usize::MAX, || false);
-        // The MISSING `}` is zero-width but anonymous: not an entry (rules range over named
-        // nodes, RER-131), so the run's siblings keep their ordinals.
-        assert!(!index.walked_siblings, "the MISSING `}}` is not an entry");
+        assert!(index.walked_siblings, "the MISSING `}}` is zero-width");
         reset_walks();
         index.select(&plan);
         let walked = walks(Walk::AnchorSibling);
@@ -1339,15 +1333,13 @@ fn relation_selections_spend_units_on_the_related_nodes_only() {
     use crate::code_rule_dsl::budget::MatchBudget;
     use std::sync::atomic::AtomicBool;
     let rules = [
-        // Relations reach named nodes (RER-131): `this`, `b<n>` and the `1` stand where the
-        // `=`, `===` and `==` tokens did.
         json!({ "kind": "variable_declarator", "has": {
-            "stopBy": "neighbor", "kind": "identifier", "precedes": { "stopBy": "end", "kind": "this" },
+            "stopBy": "neighbor", "kind": "identifier", "precedes": { "stopBy": "end", "regex": "^=$" },
         } }),
         json!({ "kind": "binary_expression", "has": {
-            "stopBy": "neighbor", "regex": "^b[0-9]+$", "follows": { "stopBy": "end", "not": { "kind": "comment" } },
+            "stopBy": "neighbor", "regex": "^===$", "follows": { "stopBy": "end", "not": { "kind": "comment" } },
         } }),
-        json!({ "kind": "number", "inside": { "stopBy": "neighbor", "kind": "binary_expression" } }),
+        json!({ "regex": "^==$", "inside": { "stopBy": "neighbor", "kind": "binary_expression" } }),
         json!({ "kind": "variable_declarator", "has": {
             "stopBy": "neighbor", "any": [{ "kind": "identifier" }, { "kind": "number" }],
         } }),

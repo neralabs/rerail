@@ -79,8 +79,7 @@ impl StoreTapes {
                 grammar
             }
         };
-        // A named-only image is read as stored: documents are restored named-only (RER-131), so
-        // its records' preorder is the node ids rows hold.
+        // Its records' preorder is the node ids rows hold.
         let image = TapeImage::from_bytes(&bytes, &grammar).map_err(invalid)?;
         let parents = std::env::var_os("RERAIL_TREE_DESCENT").is_none().then(|| parents(&image));
         let image = Arc::new(Held { image, parents });

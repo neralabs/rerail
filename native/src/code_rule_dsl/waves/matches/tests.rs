@@ -337,8 +337,8 @@ fn the_wave_is_one_evaluation_on_metal() {
     let (clauses, grammars) = clauses();
     let wave = Wave::new(&clauses, ExecutionBackend::MetalBackground).unwrap();
     let tapes = paths.iter().map(|path| Families::stored(&store, WS, path).unwrap().unwrap()).collect::<Vec<_>>();
+    let candidates = wave.candidates(&store, &tapes).unwrap();
     let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
-    let candidates = wave.candidates(&store, &tapes, &docs).unwrap();
     let started = std::time::Instant::now();
     let (found, outcome) = wave.lowered().roots_metal(&docs, &candidates).unwrap();
     let elapsed = started.elapsed();

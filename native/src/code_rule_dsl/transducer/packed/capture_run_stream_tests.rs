@@ -1,4 +1,4 @@
-use super::super::capture_run_tests::{self, tape};
+use super::super::{capture_run_entry_tests::tape, capture_run_tests};
 use super::*;
 
 fn slow_initial_zero_path(mut program: Program) -> Program {

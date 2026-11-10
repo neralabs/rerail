@@ -2,10 +2,9 @@
 //! keywords, operators) between them (RER-131).
 //!
 //! Readers of trees use these instead of filtering `children()` by `is_named()` themselves, or
-//! comparing an anonymous child's `kind()`. Stored tapes are named-only and restored whole today,
-//! so every function here reads the tree's children; a later format can keep tokens out of the
-//! in-memory tree, and then only this module changes: tokens become values recognized from the
-//! source, as `tape::tokens` already rebuilds them.
+//! comparing an anonymous child's `kind()`. Every function here reads the tree's children. A tape
+//! holds the named nodes and the tokens the grammar does not imply (`tape::tokens`); an implied
+//! token is in no tape, and no reader asks for one.
 //!
 //! - **Named children:** [`Tree::named`] (all), [`Tree::named_code`] (not comments),
 //!   [`Tree::first_named`], [`Tree::last_named`], [`Tree::first_code`].
@@ -38,10 +37,6 @@ pub(crate) struct Token<'r, D: Doc> {
 }
 
 impl<'r, D: Doc> Token<'r, D> {
-    /// The token as a node: what a capture of it binds.
-    pub(crate) fn node(&self) -> &Node<'r, D> {
-        &self.node
-    }
     /// The token's kind: its text in the grammar (`"+"`, `"async"`, `","`).
     pub(crate) fn kind(&self) -> Cow<'_, str> {
         self.node.kind()
@@ -188,7 +183,8 @@ mod tests {
     use ast_grep_core::tree_sitter::StrDoc;
     use std::sync::Arc;
 
-    /// Every query answers the same on tree-sitter's tree and on a restored named-only tape.
+    /// The named queries answer as on tree-sitter's tree; the tokens a tape holds are tree-sitter's,
+    /// the implied ones left out (RER-131).
     #[test]
     fn shape_queries_agree_on_native_trees_and_restored_tapes() {
         for (lang, source) in [
@@ -200,31 +196,36 @@ mod tests {
             let native = StrDoc::new(source, lang);
             let grammar = Grammar::new(lang).unwrap();
             let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-            assert!(image.primary.is_named_only(), "{lang:?}");
             let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
             let (native, tape) = (AstGrep::doc(native), AstGrep::doc(tape));
-            assert_eq!(shape(tape.root()), shape(native.root()), "{lang:?}");
+            assert_eq!(named(tape.root()), named(native.root()), "{lang:?}");
+            let (stored, all) = (tokens(tape.root()), tokens(native.root()));
+            assert!(stored.len() < all.len(), "{lang:?}");
+            assert!(stored.iter().all(|token| all.contains(token)), "{lang:?}: {stored:?}");
         }
     }
 
-    fn shape<D: Doc>(root: Node<'_, D>) -> Vec<String> {
-                root.dfs()
-                    .map(|node| {
-                        let tokens: Vec<_> = node.tokens().map(|t| format!("{}@{:?}", t.kind(), t.range())).collect();
-                        let named: Vec<_> = node.named().map(|n| n.range()).collect();
-                        let code: Vec<_> = node.named_code().map(|n| n.range()).collect();
-                        let parts: Vec<_> = node.parts().map(|p| format!("{}{}@{:?}", if p.named().is_some() { "n:" } else { "t:" }, p.kind(), p.range())).collect();
-                        let commas: Vec<_> = node.named().map(|child| node.count_tokens_before(&child, ",")).collect();
-                        format!(
-                            "{} {:?} {tokens:?} {named:?} {code:?} {parts:?} {commas:?} {:?} {:?} {:?} {}",
-                            node.kind(),
-                            node.range(),
-                            node.operator(),
-                            node.token_before().map(|t| t.kind().into_owned()),
-                            node.token_after().map(|t| t.kind().into_owned()),
-                            node.count_tokens(","),
-                        )
-                    })
-                    .collect()
+    /// Each named node's named children, as each query reads them.
+    fn named<D: Doc>(root: Node<'_, D>) -> Vec<String> {
+        root.dfs()
+            .filter(|node| node.is_named())
+            .map(|node| {
+                let named: Vec<_> = node.named().map(|n| n.range()).collect();
+                let code: Vec<_> = node.named_code().map(|n| n.range()).collect();
+                let first = node.first_named().map(|n| n.range());
+                let last = node.last_named().map(|n| n.range());
+                format!("{} {:?} {named:?} {code:?} {first:?} {last:?}", node.kind(), node.range())
+            })
+            .collect()
+    }
+
+    /// Every token, under its parent.
+    fn tokens<D: Doc>(root: Node<'_, D>) -> Vec<String> {
+        root.dfs()
+            .flat_map(|node| {
+                let parent = node.kind().into_owned();
+                node.tokens().map(|t| format!("{parent}: {}@{:?}", t.kind(), t.range())).collect::<Vec<_>>()
+            })
+            .collect()
     }
 }

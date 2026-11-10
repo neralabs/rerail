@@ -947,16 +947,6 @@ fn execute_navigation_sql(
     matches: &[(usize, &[i64])],
     edges: &[(i64, i64, i64, i64, bool)],
 ) -> Vec<i64> {
-    execute_navigation_sql_with_gates(plan, matches, &[], edges)
-}
-
-/// `execute_navigation_sql`, with gate facts (`fact_kind` 0, verdict 1) of fact producers at nodes.
-fn execute_navigation_sql_with_gates(
-    plan: &SqlCatalogPlan,
-    matches: &[(usize, &[i64])],
-    gates: &[(usize, &[i64])],
-    edges: &[(i64, i64, i64, i64, bool)],
-) -> Vec<i64> {
     let connection = Connection::open_in_memory().expect("in-memory SQLite");
     connection
         .execute_batch(
@@ -995,19 +985,6 @@ fn execute_navigation_sql_with_gates(
                     params![*producer as i64, match_index as i64, node],
                 )
                 .expect("terminal match");
-        }
-    }
-    for (producer, nodes) in gates {
-        for node in *nodes {
-            connection
-                .execute(
-                    "INSERT INTO rerail_matches(
-                        batch, row_kind, producer_id, file_index, task_index, match_index,
-                        node, fact_kind, verdict, complete
-                     ) VALUES (1, 6, ?1, 0, 0, 0, ?2, 0, 1, 1)",
-                    params![*producer as i64, node],
-                )
-                .expect("gate fact");
         }
     }
     let navigation = plan
@@ -1109,16 +1086,11 @@ fn utility_neighbor_navigation_executes_in_one_physical_region() {
             .iter()
             .position(|terminal| terminal.kind() == TerminalKind::Kind)
             .unwrap();
-        // A neighbour is also no token beside the source (RER-131): a gate the sources pass.
-        let beside = plan.terminals().iter().position(|terminal| terminal.kind() == TerminalKind::Fact);
-        assert_eq!(beside.is_some(), matches!(relation, "precedes" | "follows"), "{relation}");
-        let gates: Vec<(usize, &[i64])> = beside.map(|beside| (beside, sources.as_slice())).into_iter().collect();
 
         assert_eq!(
-            execute_navigation_sql_with_gates(
+            execute_navigation_sql(
                 &plan,
                 &[(universe, &sources), (identifier, &targets)],
-                &gates,
                 &edges
             ),
             expected,

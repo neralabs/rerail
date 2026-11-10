@@ -113,8 +113,6 @@ impl Label {
 /// The nodes a pass starts from: those whose kind the rule needs, or a label's (a walk's start).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Domain {
-    /// Every named node: a rule ranges over named nodes, and reads tokens only through the token
-    /// tests (`hasToken`, `tokenBefore`, `tokenAfter`) and patterns (RER-131).
     All,
     Kinds(Vec<u16>),
     Label(u16),
@@ -134,8 +132,7 @@ enum Tally {
 }
 
 /// Where a clause's passes run. On Metal every pass is a kernel in one command buffer
-/// (`roots_metal`), patterns included (over a named-only document, on the tokens `token_parts`
-/// recognizes); no pass is evaluated on the host (`metal_host_guard_tests`).
+/// (`roots_metal`); pattern leaves are matched on the host first, as `demand`'s pattern producers.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::code_rule_dsl) enum Backend {
     Cpu,
@@ -200,17 +197,11 @@ fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::match
                 let source = Arc::as_ptr(tape.document_source()) as usize;
                 // The tape's sibling positions and `nthChild` answers, shared by its facts.
                 let siblings = crate::code_rule_dsl::matcher::SiblingPositions::default();
-                // Its tokens, recognized once for its `tokens` facts.
-                let tokens = crate::code_rule_dsl::matcher::tokens::TapeTokens::default();
                 distinct
                     .iter()
                     .map(|fact| {
                         let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
-                        ((Arc::as_ptr(fact) as usize, source), {
-                            let found = || fact.found(&file, domain(&starts, tape, &[]), &siblings, &tokens);
-                            // `RERAIL_PROF`: each fact's CPU by name.
-                            if crate::code_rule_dsl::prof::on() { crate::code_rule_dsl::prof::time(&format!("fact.{}{}", fact.name, if fact.kinds.is_some() { "" } else { ".anywhere" }), found) } else { found() }
-                        })
+                        ((Arc::as_ptr(fact) as usize, source), fact.found(&file, domain(&starts, tape, &[]), &siblings))
                     })
                     .collect::<Vec<_>>()
             })
@@ -1061,8 +1052,7 @@ impl LoweredWave {
     /// Whether clause `clause`'s root program starts at `node` of `tape`: its root's kinds.
     pub(in crate::code_rule_dsl) fn starts(&self, clause: usize, tape: &TapeDoc, node: u32) -> bool {
         match &self.clauses[clause].domain {
-            Domain::All => tape.transducer_is_named(node),
-            Domain::Label(_) => true,
+            Domain::All | Domain::Label(_) => true,
             Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
         }
     }
@@ -1266,9 +1256,8 @@ fn metal<'a>(
         let starts = bound.unwrap_or_else(|| starts.clone());
         let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone());
         Arc::clone(shared.entry(key).or_insert_with(|| {
-            // Every named node: the grammar's named kinds (a node's kind says whether it is named).
             let kinds = match starts {
-                Domain::All => Some(named_kinds(tapes)),
+                Domain::All => None,
                 Domain::Kinds(kinds) => Some(kinds),
                 Domain::Label(_) => unreachable!("a label domain is bounded by its kinds"),
             };
@@ -1276,8 +1265,7 @@ fn metal<'a>(
         }))
     };
     let index = |label: u16| u32::from(label - LABEL_BASE);
-    // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`). The
-    // one host evaluation left on the Metal path (`metal_host_guard_tests::REMAINING`), to port.
+    // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`).
     let facts = fact_rows(clauses.iter().flat_map(|clause| clause.labels.facts()), tapes);
     let mut slots = 0_u32;
     let mut patterns = Vec::new();
@@ -1945,7 +1933,7 @@ fn formulas(
             let walk = Micro::of(program)?;
             // The starts: the domain's nodes.
             let starts = match domain {
-                Domain::All => Set::Flags { mode: NAMED, arg: 0 },
+                Domain::All => Set::All,
                 Domain::Kinds(kinds) => Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect()),
                 Domain::Label(label) => Set::Class(*label),
             };
@@ -1975,7 +1963,7 @@ fn formulas(
                             let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(set);
                             if *CHECK {
                                 let starts = (0..view.transducer_len() as u32).filter(|&node| match domain {
-                                    Domain::All => view.transducer_is_named(node),
+                                    Domain::All => true,
                                     Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),
                                     Domain::Label(label) => has(&sets[tape], *label, node),
                                 });
@@ -2120,20 +2108,14 @@ fn sweep_with(
                 Label::Empty => None,
                 _ => Some(None),
             };
-            // Every named node (`Domain::All`): no pass at an anonymous one.
-            let named = matches!(clause.labels.def(id), Label::Roots(_, Domain::All) | Label::Targets(_, Domain::All));
-            (kinds, entry, named)
+            (kinds, entry)
         })
         .collect::<Vec<_>>();
     let mut entries: Vec<(u32, u32)> = Vec::new();
     for node in 0..len {
         let kind = tape.transducer_kind(node);
-        let is_named = tape.transducer_is_named(node);
-        for (pass, (kinds, entry, named)) in starts.iter().enumerate() {
+        for (pass, (kinds, entry)) in starts.iter().enumerate() {
             let Some(kinds) = kinds else { continue };
-            if *named && !is_named {
-                continue;
-            }
             if kinds.is_some_and(|kinds| kinds.binary_search(&kind).is_err()) {
                 continue;
             }
@@ -2392,15 +2374,10 @@ fn walked(label: &Label, walk: &Micro, program: &Program, tape: &TapeDoc, sets: 
 /// The nodes of `tape` in `domain`, in preorder.
 fn domain<'a>(domain: &'a Domain, tape: &'a TapeDoc, sets: &'a [Vec<u64>]) -> impl Iterator<Item = u32> + 'a {
     (0..tape.transducer_len() as u32).filter(move |&node| match domain {
-        Domain::All => tape.transducer_is_named(node),
+        Domain::All => true,
         Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
         Domain::Label(label) => has(sets, *label, node),
     })
-}
-
-/// The named kinds of `tapes`' grammar, ERROR included, ascending: `Domain::All` as kinds.
-fn named_kinds(tapes: &[TapeDoc]) -> Vec<u16> {
-    tapes.first().map(TapeDoc::named_kinds).unwrap_or_default()
 }
 
 /// One program's words, with the clause's labels it adds to.
@@ -2435,8 +2412,6 @@ impl<'a> Builder<'a> {
     }
 
     fn push(&mut self, opcode: u8, mode: u8, operand: u16) -> usize {
-        // A relation walks named nodes (RER-131): tokens are read by the token tests.
-        let mode = if matches!(opcode, CHILD | DESCEND | NEXT | FOLLOWING) && mode == 0 { NAMED } else { mode };
         self.words.push(word(opcode, mode, operand));
         self.words.len() - 1
     }

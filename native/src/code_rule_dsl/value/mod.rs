@@ -170,9 +170,6 @@ impl NodeRef {
         // SAFETY: `D` is `TapeDoc` (checked above).
         let from: &Node<'r, TapeDoc> = unsafe { &*std::ptr::from_ref(from).cast() };
         let tape = from.get_doc();
-        if from.get_inner_node().is_token() {
-            return None;
-        }
         let first = from.node_id() as u32;
         let (start, end) = (self.start as usize, self.end as usize);
         let (mut low, mut high) = (first, tape.transducer_descendants(first).end);
@@ -192,28 +189,7 @@ impl NodeRef {
                     && tape.transducer_kind(ordinal) == self.kind
             })
         else {
-            if !tape.is_named_only_in_memory() {
-                return Some(None);
-            }
-            // A token the records leave out (RER-131) is a part of the deepest record covering
-            // its range: one starting where it starts, or else the last record starting before it
-            // or one of its ancestors.
-            // Records of one start come outermost first, so the deepest is the last that covers.
-            let starting = (low..subtree_end)
-                .take_while(|&ordinal| tape.transducer_span(ordinal).start == start)
-                .filter(|&ordinal| tape.transducer_span(ordinal).end >= end)
-                .last();
-            let mut record = low.checked_sub(1).filter(|&at| at >= first).unwrap_or(first);
-            while record != first && tape.transducer_span(record).end < end {
-                record = tape.transducer_parent(record)?;
-            }
-            let record = starting.unwrap_or(record);
-            let record = std::mem::ManuallyDrop::new(from.root().adopt(tape.node(record)));
-            // SAFETY: `D` is `TapeDoc` (checked above); the original is not dropped.
-            let record = unsafe { std::mem::transmute_copy::<Node<'r, TapeDoc>, Node<'r, D>>(&*record) };
-            return Some(record.children().find(|child| {
-                child.range() == (start..end) && child.kind_id() == self.kind
-            }));
+            return Some(None);
         };
         let found = std::mem::ManuallyDrop::new(from.root().adopt(tape.node(found)));
         // SAFETY: `D` is `TapeDoc` (checked above); the original is not dropped.

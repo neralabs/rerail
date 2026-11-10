@@ -1,32 +1,28 @@
-//! Named-only tapes (RER-131): which anonymous tokens a node's kind and named children imply.
+//! Named-only tapes (RER-131): which anonymous tokens the tape stores.
 //!
 //! A tree-sitter node's visible children follow its rule in `grammar.json`. For each visible kind
 //! this module builds the rule's automaton over the children (named children labelled by kind and
 //! field, anonymous tokens by kind and field; hidden rules inlined) and determinizes it. Between
-//! two named children, and after the last, the tokens are a *gap*. A gap's tokens are
-//! **recognized** from the source between its named neighbours: a bounded search over the
-//! automaton's token moves from the gap's state (longest text first, then a fixed order), each
-//! token the next text that is not white space, ending exactly where the next named child starts
-//! (or the node ends) in a state that takes that child (or accepts).
+//! two named children, and after the last, the tokens are a *gap*.
 //!
-//! [`fold`] drops a gap's tokens when recognition rebuilds exactly them (kinds, fields, spans);
-//! otherwise it keeps them, and [`unfold`] only recognizes gaps with no kept tokens. So `unfold(fold(t)) == t` holds by
-//! construction, whatever the grammar; a node the automaton cannot walk (an ERROR, a contextual
-//! alias, a grammar the corpus disagrees with) keeps all of its tokens and is flagged.
-//! Nothing here is chosen by hand: a new grammar version is a new automaton, never a
-//! reclassification.
+//! A gap's tokens are **implied** where they are the only shortest token word from the gap's
+//! state to its next named child (or to the end): the kind and the named children say what they
+//! are. The tape's writer leaves implied tokens out as it walks tree-sitter's tree
+//! ([`TokenGrammar::stored_children`]); every other token is stored, a leaf under its parent, as
+//! tree-sitter has it. So `f(a, b)` stores none of its punctuation, `f(a, b,)` stores its trailing
+//! `,` and `)`, and `a + b` stores its `+` (as short as `-`).
+//!
+//! Nothing reads an implied token: no reader rebuilds one, from the source or the grammar. A node
+//! the automaton cannot walk (an ERROR, a contextual alias, a grammar the tree disagrees with)
+//! keeps all of its tokens. Nothing here is chosen by hand: a new grammar version is a new
+//! automaton, never a reclassification.
 
-use super::Pending;
-pub(in crate::code_rule_dsl) use device::{DeviceTokens, HiddenText, NO_SYM};
-
-#[path = "tokens_device.rs"]
-mod device;
 use crate::code_rule_dsl::language::GrammarDialect;
-use std::sync::{Arc, LazyLock, Mutex};
 use rustc_hash::FxHashMap;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
-use tree_sitter::Language;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::{Arc, LazyLock, Mutex};
+use tree_sitter::{Language, Node as TsNode};
 
 /// An interned name (a kind or a field; 0 is "no field").
 type Sym = u32;
@@ -39,15 +35,20 @@ struct Label {
     field: Sym,
 }
 
-/// One kind's determinized automaton and its gap defaults.
+/// One kind's determinized automaton and its implied gaps.
 struct Automaton {
     /// Per state: its moves, by label.
     moves: Vec<FxHashMap<Label, u32>>,
     accepting: Vec<bool>,
-    /// Per state: its token moves in recognition order (longest text first, then by label).
-    tokens: Vec<Vec<(Label, u32)>>,
-    /// The fields any of its tokens fill, sorted: where `child_by_field_id` must read tokens.
-    token_fields: Vec<Sym>,
+    implied: Implied,
+}
+
+/// Per state, the implied token word to each named child (and to the end) it reaches through
+/// tokens alone: the only shortest one.
+#[derive(Default)]
+struct Implied {
+    to: FxHashMap<(u32, Label), Box<[Label]>>,
+    end: Vec<Option<Box<[Label]>>>,
 }
 
 /// Every visible kind's automaton for one grammar.
@@ -55,55 +56,9 @@ pub(in crate::code_rule_dsl) struct TokenGrammar {
     names: FxHashMap<String, Sym>,
     texts: Vec<String>,
     kinds: FxHashMap<Sym, Automaton>,
-    /// Per tree-sitter kind id: its name's symbol (`None` if the grammar never names it).
-    kind_sym: Vec<Option<Sym>>,
+    /// Per tree-sitter field id: its symbol (0 where the grammar has none).
     field_sym: Vec<Sym>,
-    /// Per token symbol: the tree-sitter id a token of that name has.
-    token_id: FxHashMap<Sym, u16>,
-    /// Per field symbol: its tree-sitter field id.
-    field_id: FxHashMap<Sym, u16>,
-    /// Hidden text recognition can read (see `Builder::hidden_edge`).
-    hidden_text: FxHashMap<Sym, HiddenText>,
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
-    language: Language,
-    /// The tables Metal recognizes tokens from (`device`), built on first use.
-    device: std::sync::OnceLock<Arc<DeviceTokens>>,
-}
-
-/// What [`fold`] kept and left out.
-#[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct FoldStats {
-    pub(in crate::code_rule_dsl) nodes: usize,
-    pub(in crate::code_rule_dsl) named: usize,
-    pub(in crate::code_rule_dsl) tokens: usize,
-    pub(in crate::code_rule_dsl) implied: usize,
-    pub(in crate::code_rule_dsl) kept_not_default: usize,
-    pub(in crate::code_rule_dsl) kept_unrecoverable: usize,
-    pub(in crate::code_rule_dsl) kept_flagged: usize,
-    pub(in crate::code_rule_dsl) flagged_nodes: usize,
-    /// Flagged nodes by kind name (why the automaton could not walk them).
-    pub(in crate::code_rule_dsl) flagged_kinds: BTreeMap<String, usize>,
-    /// Gaps kept because they are not the default, by parent kind and word.
-    pub(in crate::code_rule_dsl) not_default: BTreeMap<String, usize>,
-}
-
-impl FoldStats {
-    pub(in crate::code_rule_dsl) fn add(&mut self, other: &Self) {
-        self.nodes += other.nodes;
-        self.named += other.named;
-        self.tokens += other.tokens;
-        self.implied += other.implied;
-        self.kept_not_default += other.kept_not_default;
-        self.kept_unrecoverable += other.kept_unrecoverable;
-        self.kept_flagged += other.kept_flagged;
-        self.flagged_nodes += other.flagged_nodes;
-        for (kind, count) in &other.flagged_kinds {
-            *self.flagged_kinds.entry(kind.clone()).or_default() += count;
-        }
-        for (gap, count) in &other.not_default {
-            *self.not_default.entry(gap.clone()).or_default() += count;
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -130,56 +85,6 @@ struct Builder<'g> {
     names: FxHashMap<String, Sym>,
     texts: Vec<String>,
     recursive: bool,
-    /// Hidden text (a pattern or hidden token that makes no node), by its label's symbol.
-    hidden_text: FxHashMap<Sym, HiddenText>,
-}
-
-/// A token rule as a regex (Rust dialect), anchored at the start; `None` where it has a part this
-/// does not translate.
-fn token_regex(rule: &Value, rules: &serde_json::Map<String, Value>, depth: usize) -> Option<String> {
-    if depth > 16 {
-        return None;
-    }
-    let rule = unwrap_prec(rule);
-    let members = |sep: &str| -> Option<String> {
-        let parts = rule["members"].as_array()?.iter().map(|m| token_regex(m, rules, depth + 1)).collect::<Option<Vec<_>>>()?;
-        Some(format!("(?:{})", parts.join(sep)))
-    };
-    Some(match rule["type"].as_str()? {
-        "STRING" => regex::escape(rule["value"].as_str()?),
-        "PATTERN" => {
-            let value = rule["value"].as_str()?;
-            // JavaScript's `\uXXXX` and `\u{X}` are Rust's `\x{X}`.
-            let mut out = String::with_capacity(value.len());
-            let mut chars = value.chars().peekable();
-            while let Some(c) = chars.next() {
-                if c == '\\' && chars.peek() == Some(&'u') {
-                    chars.next();
-                    if chars.peek() == Some(&'{') {
-                        out.push_str("\\x");
-                    } else {
-                        let hex: String = (0..4).filter_map(|_| chars.next()).collect();
-                        out.push_str(&format!("\\x{{{hex}}}"));
-                    }
-                } else if c == '\\' {
-                    out.push(c);
-                    out.extend(chars.next());
-                } else {
-                    out.push(c);
-                }
-            }
-            let flags = rule["flags"].as_str().unwrap_or("");
-            format!("(?{}:{out})", if flags.contains('i') { "i" } else { "" })
-        }
-        "SEQ" => members("")?,
-        "CHOICE" => members("|")?,
-        "BLANK" => String::new(),
-        "REPEAT" => format!("(?:{})*", token_regex(&rule["content"], rules, depth + 1)?),
-        "REPEAT1" => format!("(?:{})+", token_regex(&rule["content"], rules, depth + 1)?),
-        "TOKEN" | "IMMEDIATE_TOKEN" | "FIELD" | "ALIAS" | "RESERVED" => token_regex(&rule["content"], rules, depth + 1)?,
-        "SYMBOL" => token_regex(rules.get(rule["name"].as_str()?)?, rules, depth + 1)?,
-        _ => return None,
-    })
 }
 
 const PREC: [&str; 4] = ["PREC", "PREC_LEFT", "PREC_RIGHT", "PREC_DYNAMIC"];
@@ -202,45 +107,22 @@ impl<'g> Builder<'g> {
         sym
     }
 
-    /// A rule that is one token: a lexical variable (named if visible, else no node).
+    /// A rule that is one token: a lexical variable (named if visible, else no node). A string
+    /// under a precedence is not one: tree-sitter makes it a node with the string its anonymous
+    /// child (Python's `pass_statement`).
     fn is_token_rule(&self, name: &str) -> bool {
         match self.rules.get(name) {
             None => true,
-            Some(rule) => matches!(
-                unwrap_prec(rule)["type"].as_str(),
-                Some("STRING" | "PATTERN" | "TOKEN" | "IMMEDIATE_TOKEN")
-            ),
+            Some(rule) => matches!(rule["type"].as_str(), Some("STRING" | "PATTERN" | "TOKEN" | "IMMEDIATE_TOKEN")),
         }
-    }
-
-    /// Beside the epsilon edge of hidden text (no node), an edge recognition can take to read
-    /// that text from the source.
-    fn hidden_edge(&mut self, rule: &Value, nfa: &mut Nfa, from: u32, to: u32) {
-        let Some(pattern) = token_regex(rule, self.rules, 0) else { return };
-        let key = format!("\u{0}hidden:{pattern}");
-        let known = self.names.contains_key(&key);
-        let name = self.sym(&key);
-        if !known {
-            match HiddenText::new(&pattern) {
-                Some(text) => {
-                    self.hidden_text.insert(name, text);
-                }
-                None => return,
-            }
-        } else if !self.hidden_text.contains_key(&name) {
-            return;
-        }
-        nfa.edge(from, Some(Label { token: true, name, field: 0 }), to);
     }
 
     fn build(&mut self, rule: &Value, nfa: &mut Nfa, from: u32, to: u32, field: Sym, stack: &mut Vec<String>) {
         let kind = rule["type"].as_str().unwrap_or("");
         match kind {
             "BLANK" => nfa.edge(from, None, to),
-            "PATTERN" => {
-                nfa.edge(from, None, to);
-                self.hidden_edge(rule, nfa, from, to);
-            }
+            // Hidden text: no node.
+            "PATTERN" => nfa.edge(from, None, to),
             "STRING" => {
                 let name = self.sym(rule["value"].as_str().unwrap_or(""));
                 nfa.edge(from, Some(Label { token: true, name, field }), to);
@@ -253,7 +135,6 @@ impl<'g> Builder<'g> {
                 } else {
                     // An auxiliary token: hidden, no node.
                     nfa.edge(from, None, to);
-                    self.hidden_edge(rule, nfa, from, to);
                 }
             }
             "SEQ" => {
@@ -304,9 +185,6 @@ impl<'g> Builder<'g> {
                     stack.pop();
                 } else if hidden {
                     nfa.edge(from, None, to);
-                    if let Some(rule) = self.rules.get(name) {
-                        self.hidden_edge(rule, nfa, from, to);
-                    }
                 } else {
                     let name = self.sym(name);
                     nfa.edge(from, Some(Label { token: false, name, field }), to);
@@ -395,7 +273,7 @@ impl TokenGrammar {
             grammar[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned).or_else(|| v["name"].as_str().map(str::to_owned))).collect()
         };
         let hidden: BTreeSet<String> = listed("supertypes").into_iter().chain(listed("inline")).collect();
-        let mut builder = Builder { rules, hidden, names: FxHashMap::default(), texts: Vec::new(), recursive: false, hidden_text: FxHashMap::default() };
+        let mut builder = Builder { rules, hidden, names: FxHashMap::default(), texts: Vec::new(), recursive: false };
         builder.sym("");
         // Each visible kind's productions: its own rule, and the rules aliased to its name.
         let mut productions: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
@@ -450,185 +328,168 @@ impl TokenGrammar {
                 unsupported.insert(name.clone());
                 continue;
             };
-            let texts = &builder.texts;
-            let hidden_text = &builder.hidden_text;
-            let tokens = moves
-                .iter()
-                .map(|out| {
-                    let mut tokens: Vec<(Label, u32)> = out.iter().filter(|(l, _)| l.token).map(|(l, &t)| (*l, t)).collect();
-                    tokens.sort_by_key(|&(label, _)| {
-                        // Hidden text last: it is read only where no token spells the source.
-                        let length = if hidden_text.contains_key(&label.name) { 0 } else { texts[label.name as usize].len() };
-                        (std::cmp::Reverse(length), label)
-                    });
-                    tokens
-                })
-                .collect();
-            let mut token_fields: Vec<Sym> = moves.iter().flat_map(|out| out.keys().filter(|l| l.token && l.field != 0).map(|l| l.field)).collect();
-            token_fields.sort_unstable();
-            token_fields.dedup();
+            let implied = implied(&moves, &accepting);
             let sym = builder.sym(name);
-            kinds.insert(sym, Automaton { moves, accepting, tokens, token_fields });
+            kinds.insert(sym, Automaton { moves, accepting, implied });
         }
-        let Builder { names, texts, hidden_text, .. } = builder;
-        let kind_sym = (0..language.node_kind_count() as u16)
-            .map(|id| language.node_kind_for_id(id).and_then(|name| names.get(name).copied()))
-            .collect();
+        let Builder { names, texts, .. } = builder;
         let field_sym = (0..=language.field_count() as u16)
             .map(|id| language.field_name_for_id(id).and_then(|name| names.get(name).copied()).unwrap_or(0))
             .collect();
-        let token_id = names
-            .iter()
-            .filter_map(|(name, &sym)| {
-                let id = language.id_for_node_kind(name, false);
-                (id != 0).then_some((sym, id))
-            })
-            .collect();
-        let field_id = (1..=language.field_count() as u16)
-            .filter_map(|id| language.field_name_for_id(id).and_then(|name| names.get(name).map(|&sym| (sym, id))))
-            .collect();
-        Ok(Self { names, texts, kinds, kind_sym, field_sym, token_id, field_id, hidden_text, unsupported, language: language.clone(), device: std::sync::OnceLock::new() })
+        Ok(Self { names, texts, kinds, field_sym, unsupported })
     }
 
     pub(in crate::code_rule_dsl) fn kind_count(&self) -> usize {
         self.kinds.len()
     }
 
+    #[cfg(test)]
     fn text(&self, sym: Sym) -> &str {
         &self.texts[sym as usize]
     }
-}
 
-// ---------------------------------------------------------------------------------------------
-// A node's children with its tokens: what unfold writes, and what the in-memory token view
-// (`TapeDoc`, RER-131 option B) serves on demand.
-
-/// A node or one of its stored children, as the token view reads it.
-#[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct Child<'s> {
-    pub(in crate::code_rule_dsl) start: u32,
-    pub(in crate::code_rule_dsl) end: u32,
-    /// Its tree-sitter kind id (ignored for an ERROR node).
-    pub(in crate::code_rule_dsl) kind: u16,
-    pub(in crate::code_rule_dsl) field: u16,
-    pub(in crate::code_rule_dsl) alias: Option<&'s (String, bool)>,
-    pub(in crate::code_rule_dsl) error: bool,
-    pub(in crate::code_rule_dsl) extra: bool,
-}
-
-/// One child in source order: a stored child (its position among the stored children) or a
-/// token recognized from the source.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum Item {
-    Child(u32),
-    Token { kind: u16, field: u16, start: u32, end: u32 },
-}
-
-impl TokenGrammar {
-    fn child_name(&self, child: &Child<'_>) -> Option<Sym> {
-        if child.error {
+    /// Which of `node`'s children the tape stores, in order: `false` for an implied token (see the
+    /// module). `None` where it stores them all: a node with no automaton, or one whose children
+    /// the automaton cannot walk. A MISSING child walks the automaton as the child it stands for
+    /// and is always stored: it is a syntax error.
+    pub(in crate::code_rule_dsl) fn stored_children(&self, node: TsNode<'_>) -> Option<Vec<bool>> {
+        if node.is_error() || !node.is_named() || node.child_count() == 0 {
             return None;
         }
-        match child.alias {
-            Some((alias, _)) => self.names.get(alias).copied(),
-            None => self.kind_sym.get(usize::from(child.kind)).copied().flatten(),
-        }
-    }
-    fn child_named(&self, child: &Child<'_>) -> bool {
-        match child.alias {
-            Some((_, named)) => *named,
-            None => child.error || self.language.node_kind_is_named(child.kind),
-        }
-    }
-    fn child_field(&self, child: &Child<'_>) -> Sym {
-        self.field_sym.get(usize::from(child.field)).copied().unwrap_or(0)
-    }
-    fn automaton(&self, node: &Child<'_>, tokens_kept: bool) -> Option<&Automaton> {
-        if tokens_kept || !self.child_named(node) {
+        let automaton = self.kinds.get(self.names.get(node.kind())?)?;
+        let mut cursor = node.walk();
+        if !cursor.goto_first_child() {
             return None;
         }
-        self.kinds.get(&self.child_name(node)?)
-    }
-
-    /// Whether `node`'s recognized tokens can fill `field`: where a field lookup must read them.
-    pub(in crate::code_rule_dsl) fn has_token_field(&self, node: &Child<'_>, tokens_kept: bool, field: u16) -> bool {
-        let sym = self.field_sym.get(usize::from(field)).copied().unwrap_or(0);
-        sym != 0 && self.automaton(node, tokens_kept).is_some_and(|automaton| automaton.token_fields.binary_search(&sym).is_ok())
-    }
-
-    /// Whether `node` has tokens the stored tree leaves out: whether reading its children needs
-    /// [`Self::sequence`].
-    pub(in crate::code_rule_dsl) fn recognizes(&self, node: &Child<'_>, tokens_kept: bool) -> bool {
-        self.automaton(node, tokens_kept).is_some()
-    }
-
-    /// `node`'s children in source order into `out`: its stored children (`kids`, in order) and
-    /// the tokens recognized from `source` between them, as [`unfold`] restores them.
-    pub(in crate::code_rule_dsl) fn sequence(
-        &self,
-        node: &Child<'_>,
-        tokens_kept: bool,
-        kids: &[Child<'_>],
-        source: &[u8],
-        out: &mut Vec<Item>,
-    ) -> Result<(), String> {
-        out.clear();
-        let Some(automaton) = self.automaton(node, tokens_kept) else {
-            out.extend((0..kids.len() as u32).map(Item::Child));
-            return Ok(());
-        };
-        let token = |label: Label, start: u32, length: u32| -> Result<Item, String> {
-            let kind = *self.token_id.get(&label.name).ok_or("a recognized token with no kind id")?;
-            let field = self.field_id.get(&label.field).copied().unwrap_or(0);
-            Ok(Item::Token { kind, field, start, end: start + length })
-        };
+        let mut stored = Vec::with_capacity(node.child_count() as usize);
+        let mut gap: Vec<(usize, Label)> = Vec::new();
+        let mut missing = Vec::new();
         let mut state = 0u32;
-        let mut stored: Vec<Label> = Vec::new();
-        let mut at = node.start as usize;
-        let advance = |state: &mut u32, word: &[Label]| -> Result<(), String> {
-            for label in word {
-                *state = *automaton.moves[*state as usize].get(label).ok_or("a kept token the automaton refuses")?;
-            }
-            Ok(())
-        };
-        for (position, child) in kids.iter().enumerate() {
-            if child.extra {
-                out.push(Item::Child(position as u32));
-                at = child.end as usize;
-                continue;
-            }
-            if !self.child_named(child) {
-                let name = self.child_name(child).ok_or("a kept token outside the grammar")?;
-                stored.push(Label { token: true, name, field: self.child_field(child) });
-                out.push(Item::Child(position as u32));
-                at = child.end as usize;
-                continue;
-            }
-            let name = self.child_name(child).ok_or("a named child outside the grammar")?;
-            let label = Label { token: false, name, field: self.child_field(child) };
-            if stored.is_empty() {
-                // A gap recognition cannot read is empty (`fold` made sure of it).
-                let (spans, to) = recognize(self, automaton, source, state, at, child.start as usize, Some(label)).unwrap_or((Vec::new(), state));
-                for (l, start, length) in spans {
-                    out.push(token(l, start, length)?);
+        loop {
+            let child = cursor.node();
+            let position = stored.len();
+            stored.push(true);
+            if !child.is_extra() {
+                if child.is_error() {
+                    return None;
                 }
-                state = to;
-            } else {
-                advance(&mut state, &stored)?;
-                stored.clear();
+                if child.is_missing() {
+                    missing.push(position);
+                }
+                let name = *self.names.get(child.kind())?;
+                let field = cursor.field_id().map_or(0, |id| self.field_sym.get(usize::from(id.get())).copied().unwrap_or(0));
+                if child.is_named() {
+                    state = gap_end(automaton, state, &gap, Some(Label { token: false, name, field }), &mut stored)?;
+                    gap.clear();
+                } else {
+                    if child.child_count() > 0 {
+                        return None;
+                    }
+                    gap.push((position, Label { token: true, name, field }));
+                }
             }
-            state = *automaton.moves[state as usize].get(&label).ok_or("a named child the automaton refuses")?;
-            out.push(Item::Child(position as u32));
-            at = child.end as usize;
-        }
-        if stored.is_empty() {
-            let (spans, _) = recognize(self, automaton, source, state, at, node.end as usize, None).unwrap_or_default();
-            for (l, start, length) in spans {
-                out.push(token(l, start, length)?);
+            if !cursor.goto_next_sibling() {
+                break;
             }
         }
-        Ok(())
+        gap_end(automaton, state, &gap, None, &mut stored)?;
+        for position in missing {
+            stored[position] = true;
+        }
+        Some(stored)
     }
+}
+
+/// Closes a gap from `state` before `next` (a named child; `None` at the end): marks its tokens
+/// not stored where they are the implied word. The state after `next`; `None` where the automaton
+/// refuses the gap or `next`.
+fn gap_end(automaton: &Automaton, state: u32, gap: &[(usize, Label)], next: Option<Label>, stored: &mut [bool]) -> Option<u32> {
+    let mut at = state;
+    for (_, label) in gap {
+        at = *automaton.moves[at as usize].get(label)?;
+    }
+    let after = match next {
+        Some(label) => *automaton.moves[at as usize].get(&label)?,
+        None if automaton.accepting[at as usize] => at,
+        None => return None,
+    };
+    let implied = match next {
+        Some(label) => automaton.implied.to.get(&(state, label)),
+        None => automaton.implied.end[state as usize].as_ref(),
+    };
+    if implied.is_some_and(|word| word.len() == gap.len() && word.iter().zip(gap).all(|(a, (_, b))| a == b)) {
+        for &(position, _) in gap {
+            stored[position] = false;
+        }
+    }
+    Some(after)
+}
+
+/// Each state's implied words ([`Implied`]): a breadth-first walk over its token moves, counting
+/// the shortest words to each state (a word reaches one state: the automaton is deterministic).
+fn implied(moves: &[FxHashMap<Label, u32>], accepting: &[bool]) -> Implied {
+    let mut implied = Implied { to: FxHashMap::default(), end: vec![None; moves.len()] };
+    for from in 0..moves.len() as u32 {
+        // Per state reached: its distance, its count of shortest words (at most 2), the move it was reached by.
+        let mut seen: FxHashMap<u32, (u32, u8, Option<(u32, Label)>)> = FxHashMap::default();
+        seen.insert(from, (0, 1, None));
+        let mut order = vec![from];
+        let mut queue = VecDeque::from([from]);
+        while let Some(state) = queue.pop_front() {
+            let (distance, count, _) = seen[&state];
+            for (label, &to) in &moves[state as usize] {
+                if !label.token {
+                    continue;
+                }
+                match seen.get_mut(&to) {
+                    None => {
+                        seen.insert(to, (distance + 1, count, Some((state, *label))));
+                        order.push(to);
+                        queue.push_back(to);
+                    }
+                    Some(entry) if entry.0 == distance + 1 => entry.1 = entry.1.saturating_add(count).min(2),
+                    Some(_) => {}
+                }
+            }
+        }
+        let word = |mut state: u32| -> Box<[Label]> {
+            let mut word = Vec::new();
+            while let Some((before, label)) = seen[&state].2 {
+                word.push(label);
+                state = before;
+            }
+            word.reverse();
+            word.into()
+        };
+        // Per target (a named label, or the end): the shortest distance, its words, the state.
+        let mut best: FxHashMap<Option<Label>, (u32, u8, u32)> = FxHashMap::default();
+        for &state in &order {
+            let (distance, count, _) = seen[&state];
+            let targets = moves[state as usize].keys().filter(|label| !label.token).map(|label| Some(*label));
+            let targets = targets.chain(accepting[state as usize].then_some(None));
+            for target in targets {
+                match best.get_mut(&target) {
+                    None => {
+                        best.insert(target, (distance, count, state));
+                    }
+                    Some(entry) if entry.0 == distance => entry.1 = entry.1.saturating_add(count).min(2),
+                    Some(_) => {}
+                }
+            }
+        }
+        for (target, (_, count, state)) in best {
+            if count != 1 {
+                continue;
+            }
+            match target {
+                Some(label) => {
+                    implied.to.insert((from, label), word(state));
+                }
+                None => implied.end[from as usize] = Some(word(state)),
+            }
+        }
+    }
+    implied
 }
 
 /// The `grammar.json` a dialect's parser was generated from, built into the engine (the vendored
@@ -664,400 +525,4 @@ impl TokenGrammar {
             .or_insert_with(|| grammar_json(lang).and_then(|json| Self::from_json(json, language).ok()).map(Arc::new))
             .clone()
     }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Folding and unfolding a tree.
-
-/// What fold and unfold read of a node.
-struct View<'a> {
-    grammar: &'a TokenGrammar,
-    language: &'a Language,
-}
-
-impl View<'_> {
-    fn name(&self, node: &Pending) -> Option<Sym> {
-        if node.error {
-            return None;
-        }
-        match &node.kind_alias {
-            Some((alias, _)) => self.grammar.names.get(alias).copied(),
-            None => self.grammar.kind_sym.get(usize::from(node.kf & 1023)).copied().flatten(),
-        }
-    }
-    fn named(&self, node: &Pending) -> bool {
-        match &node.kind_alias {
-            Some((_, named)) => *named,
-            None => node.error || self.language.node_kind_is_named(node.kf & 1023),
-        }
-    }
-    fn field(&self, node: &Pending) -> Sym {
-        self.grammar.field_sym.get(usize::from(node.kf >> 10)).copied().unwrap_or(0)
-    }
-}
-
-/// The source's white space as tree-sitter's extras read it (`/\s/`, ASCII): a mask with the
-/// high bit of each white-space byte of `word`.
-fn white_space(word: u64) -> u64 {
-    const LOW: u64 = 0x0101_0101_0101_0101;
-    const HIGH: u64 = 0x8080_8080_8080_8080;
-    let eq = |byte: u8| {
-        let x = word ^ (LOW * u64::from(byte));
-        !(((x & !HIGH).wrapping_add(!HIGH)) | x) & HIGH
-    };
-    eq(b' ') | eq(b'\t') | eq(b'\n') | eq(b'\r') | eq(0x0b) | eq(0x0c)
-}
-
-/// The first byte at or after `at` (before `end`) that is not white space, 8 bytes at a time.
-fn skip_white(source: &[u8], mut at: usize, end: usize) -> usize {
-    while at < end {
-        let take = (end - at).min(8);
-        let mut bytes = [b'x'; 8];
-        bytes[..take].copy_from_slice(&source[at..at + take]);
-        let other = !white_space(u64::from_le_bytes(bytes)) & 0x8080_8080_8080_8080;
-        if other != 0 {
-            return (at + (other.trailing_zeros() / 8) as usize).min(end);
-        }
-        at += take;
-    }
-    end
-}
-
-/// Search steps per gap: recognition gives up (and `fold` keeps the gap) past this, the same way
-/// on both sides.
-pub(in crate::code_rule_dsl) const RECOGNIZE_STEPS: u32 = 4096;
-/// The search's depth (a token or hidden text a level): a branch that would go deeper fails, on
-/// the host as on the device, whose search keeps this many frames (`token_parts`). A gap of more
-/// tokens than this is one recognition cannot read, so `fold` keeps it.
-pub(in crate::code_rule_dsl) const RECOGNIZE_DEPTH: u32 = 64;
-
-/// Whether `source[at..]` spells `text`: exactly, or (keywords of case-insensitive grammars, such
-/// as PHP's and SQL's) ignoring ASCII case.
-fn spells(source: &[u8], at: usize, text: &[u8]) -> bool {
-    let got = &source[at..at + text.len()];
-    got == text || got.eq_ignore_ascii_case(text)
-}
-
-/// The tokens of a gap from `state`, recognized in `source[at..limit]`: the first word, in
-/// recognition order, whose tokens spell the source (white space between them) up to `limit`,
-/// and after which the automaton takes `next` (or, at the end, accepts). `None` if there is none
-/// within [`RECOGNIZE_STEPS`].
-fn recognize(
-    grammar: &TokenGrammar,
-    automaton: &Automaton,
-    source: &[u8],
-    state: u32,
-    at: usize,
-    limit: usize,
-    next: Option<Label>,
-) -> Option<(Vec<(Label, u32, u32)>, u32)> {
-    fn walk(
-        grammar: &TokenGrammar,
-        automaton: &Automaton,
-        source: &[u8],
-        state: u32,
-        at: usize,
-        limit: usize,
-        next: Option<Label>,
-        out: &mut Vec<(Label, u32, u32)>,
-        steps: &mut u32,
-        depth: u32,
-    ) -> Option<u32> {
-        if *steps == 0 || depth == RECOGNIZE_DEPTH {
-            return None;
-        }
-        *steps -= 1;
-        let at = skip_white(source, at, limit);
-        if at == limit {
-            let fits = match next {
-                Some(label) => automaton.moves[state as usize].contains_key(&label),
-                None => automaton.accepting[state as usize],
-            };
-            return fits.then_some(state);
-        }
-        for &(label, to) in &automaton.tokens[state as usize] {
-            if let Some(hidden) = grammar.hidden_text.get(&label.name) {
-                // Hidden text: read, but no token of its own.
-                if let Some(found) = hidden.find(&source[at..limit])
-                    && found > 0
-                    && let Some(end) = walk(grammar, automaton, source, to, at + found, limit, next, out, steps, depth + 1)
-                {
-                    return Some(end);
-                }
-                continue;
-            }
-            let text = grammar.text(label.name).as_bytes();
-            if text.is_empty() || at + text.len() > limit || !spells(source, at, text) {
-                continue;
-            }
-            out.push((label, at as u32, text.len() as u32));
-            if let Some(end) = walk(grammar, automaton, source, to, at + text.len(), limit, next, out, steps, depth + 1) {
-                return Some(end);
-            }
-            out.pop();
-        }
-        None
-    }
-    let mut out = Vec::new();
-    let mut steps = RECOGNIZE_STEPS;
-    walk(grammar, automaton, source, state, at, limit, next, &mut out, &mut steps, 0).map(|end| (out, end))
-}
-
-fn children_of(nodes: &[Pending]) -> Vec<Vec<u32>> {
-    let mut children = vec![Vec::new(); nodes.len()];
-    for (index, node) in nodes.iter().enumerate() {
-        if let Some(parent) = node.parent {
-            children[parent as usize].push(index as u32);
-        }
-    }
-    children
-}
-
-/// The named-only tree of `nodes` (preorder, parents set, sizes unset): the nodes kept, each with
-/// `tokens_kept` set where its tokens are all kept, and the supertype memberships renumbered.
-pub(in crate::code_rule_dsl) fn fold(
-    nodes: &[Pending],
-    supertypes: &[(u32, u16)],
-    grammar: &TokenGrammar,
-    language: &Language,
-    source: &str,
-) -> (Vec<Pending>, Vec<(u32, u16)>, FoldStats) {
-    let view = View { grammar, language };
-    let source = source.as_bytes();
-    let children = children_of(nodes);
-    let has_class: FxHashMap<u32, ()> = supertypes.iter().map(|&(at, _)| (at, ())).collect();
-    let mut keep = vec![true; nodes.len()];
-    let mut flagged = vec![false; nodes.len()];
-    let mut stats = FoldStats { nodes: nodes.len(), ..FoldStats::default() };
-    for (index, node) in nodes.iter().enumerate() {
-        if view.named(node) {
-            stats.named += 1;
-        } else {
-            stats.tokens += 1;
-        }
-        if !view.named(node) {
-            continue;
-        }
-        let tokens_of = |c: &[u32]| c.iter().filter(|&&c| !view.named(&nodes[c as usize])).count();
-        let automaton = view.name(node).and_then(|sym| grammar.kinds.get(&sym));
-        let Some(automaton) = automaton else {
-            let kept = tokens_of(&children[index]);
-            if kept > 0 {
-                flagged[index] = true;
-                stats.flagged_nodes += 1;
-                stats.kept_flagged += kept;
-                let name = node.kind_alias.as_ref().map(|a| a.0.clone()).or_else(|| language.node_kind_for_id(node.kf & 1023).map(str::to_owned)).unwrap_or_default();
-                *stats.flagged_kinds.entry(name).or_default() += 1;
-            }
-            continue;
-        };
-        // Walk the children; a gap's fate is decided at its named child, or at the end.
-        let mut drops: Vec<u32> = Vec::new();
-        let mut not_default: Vec<String> = Vec::new();
-        let mut ok = true;
-        let mut state = 0u32;
-        let mut gap: Vec<u32> = Vec::new();
-        let mut gap_extra = false;
-        let mut at = node.start as usize;
-        let mut gap_start = at;
-        let end = (node.start + node.length) as usize;
-        let close = |gap: &mut Vec<u32>, gap_extra: bool, gap_start: usize, state: &mut u32, next: Option<Label>, limit: usize, drops: &mut Vec<u32>, not_default: &mut Vec<String>| -> bool {
-            let mut word = Vec::with_capacity(gap.len());
-            for &t in gap.iter() {
-                let token = &nodes[t as usize];
-                let Some(name) = view.name(token) else { return false };
-                word.push(Label { token: true, name, field: view.field(token) });
-            }
-            let mut s = *state;
-            for label in &word {
-                match automaton.moves[s as usize].get(label) {
-                    Some(&to) => s = to,
-                    None => return false,
-                }
-            }
-            let fits = match next {
-                Some(label) => automaton.moves[s as usize].contains_key(&label),
-                None => automaton.accepting[s as usize],
-            };
-            if !fits {
-                return false;
-            }
-            let from = *state;
-            *state = match next {
-                Some(label) => automaton.moves[s as usize][&label],
-                None => s,
-            };
-            if gap.is_empty() {
-                // The decoder reads a gap it cannot recognize as empty; one it recognizes as
-                // tokens would be wrong here, so the node keeps its (no) tokens.
-                return recognize(grammar, automaton, source, from, gap_start, limit, next).is_none_or(|(spans, _)| spans.is_empty());
-            }
-            // Can the decoder recognize exactly these tokens from the source?
-            let plain = !gap_extra
-                && gap.iter().all(|&t| {
-                    let token = &nodes[t as usize];
-                    !token.extra && !token.missing && token.kind_alias.is_none() && !has_class.contains_key(&t) && children[t as usize].is_empty()
-                });
-            let exact = plain
-                && recognize(grammar, automaton, source, from, gap_start, limit, next).is_some_and(|(spans, _)| {
-                    spans.len() == gap.len()
-                        && spans.iter().zip(gap.iter()).zip(&word).all(|((&(label, start, length), &t), actual)| {
-                            let token = &nodes[t as usize];
-                            label == *actual && token.start == start && token.length == length && grammar.token_id.get(&label.name) == Some(&(token.kf & 1023))
-                        })
-                });
-            if !exact {
-                not_default.push(word.iter().map(|l| grammar.text(l.name)).collect::<Vec<_>>().join(" "));
-                return true;
-            }
-            drops.extend(gap.iter().copied());
-            true
-        };
-        for &c in &children[index] {
-            let child = &nodes[c as usize];
-            if child.extra {
-                gap_extra = true;
-                at = (child.start + child.length) as usize;
-                continue;
-            }
-            if !view.named(child) {
-                if gap.is_empty() {
-                    gap_start = at;
-                }
-                gap.push(c);
-                at = (child.start + child.length) as usize;
-                continue;
-            }
-            let Some(name) = view.name(child) else {
-                ok = false;
-                break;
-            };
-            if gap.is_empty() {
-                gap_start = at;
-            }
-            let label = Label { token: false, name, field: view.field(child) };
-            if !close(&mut gap, gap_extra, gap_start, &mut state, Some(label), child.start as usize, &mut drops, &mut not_default) {
-                ok = false;
-                break;
-            }
-            gap.clear();
-            gap_extra = false;
-            at = (child.start + child.length) as usize;
-            gap_start = at;
-        }
-        if ok {
-            if gap.is_empty() {
-                gap_start = at;
-            }
-            ok = close(&mut gap, gap_extra, gap_start, &mut state, None, end, &mut drops, &mut not_default);
-        }
-        if !ok {
-            // The decoder runs this kind's automaton, so a node it cannot walk is always flagged.
-            let kept = tokens_of(&children[index]);
-            flagged[index] = true;
-            stats.flagged_nodes += 1;
-            stats.kept_flagged += kept;
-            let name = view.name(node).map(|s| grammar.text(s).to_owned()).unwrap_or_default();
-            *stats.flagged_kinds.entry(name).or_default() += 1;
-            continue;
-        }
-        stats.implied += drops.len();
-        let parent = view.name(node).map(|s| grammar.text(s).to_owned()).unwrap_or_default();
-        for word in not_default {
-            stats.kept_not_default += word.split(' ').count();
-            *stats.not_default.entry(format!("{parent} [{word}]")).or_default() += 1;
-        }
-        for d in drops {
-            keep[d as usize] = false;
-        }
-    }
-    // Renumber the kept nodes. A dropped token is a leaf, so a kept node's parent is kept.
-    let mut new_index = vec![u32::MAX; nodes.len()];
-    let mut out = Vec::with_capacity(nodes.len());
-    for (index, node) in nodes.iter().enumerate() {
-        if !keep[index] {
-            continue;
-        }
-        new_index[index] = out.len() as u32;
-        let mut kept = node.clone();
-        kept.parent = node.parent.map(|p| new_index[p as usize]);
-        kept.size = 1;
-        kept.tokens_kept = flagged[index];
-        out.push(kept);
-    }
-    let classes = supertypes.iter().filter(|&&(at, _)| keep[at as usize]).map(|&(at, class)| (new_index[at as usize], class)).collect();
-    (out, classes, stats)
-}
-
-/// The full tree of a named-only tree `nodes` (preorder, parents set): every default gap's tokens
-/// rebuilt from `source`. Sizes are unset; supertype memberships renumbered. Tests only: it
-/// proves `fold` loses nothing; documents are never unfolded (t30 §1).
-#[cfg(test)]
-pub(in crate::code_rule_dsl) fn unfold(
-    nodes: &[Pending],
-    supertypes: &[(u32, u16)],
-    grammar: &TokenGrammar,
-    _language: &Language,
-    source: &str,
-) -> Result<(Vec<Pending>, Vec<(u32, u16)>), String> {
-    enum Work {
-        Node(u32, Option<u32>),
-        Token(u16, u16, u32, u32, u32),
-    }
-    let bytes = source.as_bytes();
-    let children = children_of(nodes);
-    fn describe(node: &Pending) -> Child<'_> {
-        Child {
-        start: node.start,
-        end: node.start + node.length,
-        kind: node.kf & 1023,
-        field: node.kf >> 10,
-        alias: node.kind_alias.as_ref(),
-        error: node.error,
-        extra: node.extra,
-        }
-    }
-    let mut out: Vec<Pending> = Vec::with_capacity(nodes.len() * 2);
-    let mut new_index = vec![u32::MAX; nodes.len()];
-    let mut stack = vec![Work::Node(0, None)];
-    let mut items = Vec::new();
-    let mut kids_of = Vec::new();
-    while let Some(work) = stack.pop() {
-        let (index, parent) = match work {
-            Work::Token(kind, field, start, length, parent) => {
-                out.push(Pending {
-                    kf: kind | (field << 10),
-                    parent: Some(parent),
-                    start,
-                    length,
-                    size: 1,
-                    extra: false,
-                    error: false,
-                    missing: false,
-                    kind_alias: None,
-                    tokens_kept: false,
-                });
-                continue;
-            }
-            Work::Node(index, parent) => (index, parent),
-        };
-        let node = &nodes[index as usize];
-        let here = out.len() as u32;
-        new_index[index as usize] = here;
-        let mut copy = node.clone();
-        copy.parent = parent;
-        copy.size = 1;
-        copy.tokens_kept = false;
-        out.push(copy);
-        let kids = &children[index as usize];
-        kids_of.clear();
-        kids_of.extend(kids.iter().map(|&c| describe(&nodes[c as usize])));
-        grammar.sequence(&describe(node), node.tokens_kept, &kids_of, bytes, &mut items)?;
-        stack.extend(items.iter().rev().map(|item| match *item {
-            Item::Child(position) => Work::Node(kids[position as usize], Some(here)),
-            Item::Token { kind, field, start, end } => Work::Token(kind, field, start, end - start, here),
-        }));
-    }
-    let classes = supertypes.iter().map(|&(at, class)| (new_index[at as usize], class)).collect();
-    Ok((out, classes))
 }

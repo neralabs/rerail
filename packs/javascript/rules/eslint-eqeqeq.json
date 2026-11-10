@@ -267,30 +267,23 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "kind": "binary_expression",
-            "all": [
-              {
-                "$option": "null",
-                "cases": {
-                  "ignore": [
-                    {
-                      "not": {
-                        "matches": "null-check"
-                      }
-                    }
-                  ],
-                  "never": [
-                    {
-                      "not": {
-                        "matches": "null-check"
-                      }
-                    }
-                  ]
-                },
-                "default": {
-                  "$option": "option",
+            "regex": "^(?:==|!=)$",
+            "pattern": "$$OP",
+            "inside": {
+              "kind": "binary_expression",
+              "stopBy": "neighbor",
+              "all": [
+                {
+                  "$option": "null",
                   "cases": {
-                    "allow-null": [
+                    "ignore": [
+                      {
+                        "not": {
+                          "matches": "null-check"
+                        }
+                      }
+                    ],
+                    "never": [
                       {
                         "not": {
                           "matches": "null-check"
@@ -298,17 +291,25 @@
                       }
                     ]
                   },
-                  "default": []
+                  "default": {
+                    "$option": "option",
+                    "cases": {
+                      "allow-null": [
+                        {
+                          "not": {
+                            "matches": "null-check"
+                          }
+                        }
+                      ]
+                    },
+                    "default": []
+                  },
+                  "spread": true
                 },
-                "spread": true
-              },
-              {
-                "matches": "fixable"
-              }
-            ],
-            "tokens": {
-              "has": "^(?:==|!=)$",
-              "as": "OP"
+                {
+                  "matches": "fixable"
+                }
+              ]
             }
           },
           "when": {
@@ -325,13 +326,10 @@
         }
       },
       "violation": {
-        "anchor": "capture.OP",
+        "anchor": "witness.span",
         "code": "eqeqeq",
         "message": "Expected '$OP=' and instead saw '$OP'.",
-        "fix": {
-          "template": "$OP=",
-          "range": "capture.OP"
-        },
+        "fix": "$OP=",
         "suppress": {
           "eslint": {
             "rules": [
@@ -357,37 +355,23 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "kind": "binary_expression",
-            "all": [
-              {
-                "$option": "null",
-                "cases": {
-                  "ignore": [
-                    {
-                      "not": {
-                        "matches": "null-check"
-                      }
-                    }
-                  ],
-                  "never": [
-                    {
-                      "not": {
-                        "matches": "null-check"
-                      }
-                    }
-                  ]
-                },
-                "default": {
-                  "$option": "option",
+            "regex": "^(?:==|!=)$",
+            "pattern": "$$OP",
+            "inside": {
+              "kind": "binary_expression",
+              "stopBy": "neighbor",
+              "all": [
+                {
+                  "$option": "null",
                   "cases": {
-                    "allow-null": [
+                    "ignore": [
                       {
                         "not": {
                           "matches": "null-check"
                         }
                       }
                     ],
-                    "smart": [
+                    "never": [
                       {
                         "not": {
                           "matches": "null-check"
@@ -395,25 +379,40 @@
                       }
                     ]
                   },
-                  "default": []
+                  "default": {
+                    "$option": "option",
+                    "cases": {
+                      "allow-null": [
+                        {
+                          "not": {
+                            "matches": "null-check"
+                          }
+                        }
+                      ],
+                      "smart": [
+                        {
+                          "not": {
+                            "matches": "null-check"
+                          }
+                        }
+                      ]
+                    },
+                    "default": []
+                  },
+                  "spread": true
                 },
-                "spread": true
-              },
-              {
-                "not": {
-                  "matches": "fixable"
+                {
+                  "not": {
+                    "matches": "fixable"
+                  }
                 }
-              }
-            ],
-            "tokens": {
-              "has": "^(?:==|!=)$",
-              "as": "OP"
+              ]
             }
           }
         }
       },
       "violation": {
-        "anchor": "capture.OP",
+        "anchor": "witness.span",
         "code": "eqeqeq",
         "message": "Expected '$OP=' and instead saw '$OP'.",
         "suppress": {
@@ -441,10 +440,10 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "matches": "r2",
-            "tokens": {
-              "has": "^===$",
-              "as": "TOKEN"
+            "regex": "^===$",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "r2"
             }
           },
           "when": {
@@ -455,13 +454,10 @@
         }
       },
       "violation": {
-        "anchor": "capture.TOKEN",
+        "anchor": "witness.span",
         "code": "eqeqeq",
         "message": "Expected '==' and instead saw '==='.",
-        "fix": {
-          "template": "==",
-          "range": "capture.TOKEN"
-        },
+        "fix": "==",
         "suppress": {
           "eslint": {
             "rules": [
@@ -487,10 +483,10 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "matches": "r1",
-            "tokens": {
-              "has": "^===$",
-              "as": "TOKEN"
+            "regex": "^===$",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "r1"
             }
           },
           "when": {
@@ -501,7 +497,7 @@
         }
       },
       "violation": {
-        "anchor": "capture.TOKEN",
+        "anchor": "witness.span",
         "code": "eqeqeq",
         "message": "Expected '==' and instead saw '==='.",
         "suppress": {
@@ -529,10 +525,10 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "matches": "r2",
-            "tokens": {
-              "has": "^!==$",
-              "as": "TOKEN"
+            "regex": "^!==$",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "r2"
             }
           },
           "when": {
@@ -543,13 +539,10 @@
         }
       },
       "violation": {
-        "anchor": "capture.TOKEN",
+        "anchor": "witness.span",
         "code": "eqeqeq",
         "message": "Expected '!=' and instead saw '!=='.",
-        "fix": {
-          "template": "!=",
-          "range": "capture.TOKEN"
-        },
+        "fix": "!=",
         "suppress": {
           "eslint": {
             "rules": [
@@ -575,10 +568,10 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "matches": "r1",
-            "tokens": {
-              "has": "^!==$",
-              "as": "TOKEN"
+            "regex": "^!==$",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "r1"
             }
           },
           "when": {
@@ -589,7 +582,7 @@
         }
       },
       "violation": {
-        "anchor": "capture.TOKEN",
+        "anchor": "witness.span",
         "code": "eqeqeq",
         "message": "Expected '!=' and instead saw '!=='.",
         "suppress": {

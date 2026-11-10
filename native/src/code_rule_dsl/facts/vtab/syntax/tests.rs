@@ -325,7 +325,8 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
 }
 
 /// `core.rr`'s base relations over a Python file (decision 0046): comments are nodes and children, `text` is every
-/// node's, `op` every anonymous token's, literals decode, and the source-text, token and place relations agree.
+/// node's, `op` every stored token's (a token the grammar implies is in no tape, RER-131), literals decode, and
+/// the source-text, token and place relations agree.
 #[test]
 fn core_rr_relations_hold_what_core_rr_says() {
     let src = "# top\nimport os.path as p\ndef f(a, b):  # tail\n    \"\"\"d\\x41\"\"\"\n    x = a not in b\n    g(*a, f\"v{a}w\", 0xff)\n    return x\n";
@@ -338,9 +339,9 @@ fn core_rr_relations_hold_what_core_rr_says() {
     has("next_sibling", "comment'# top' import_statement'import os.path as p'");
     has("op", "comparison_operator'a not in b' not in");
     has("op_at", "comparison_operator'a not in b' 0 not in");
-    has("op", "function_definition def");
-    has("op", "argument_list'(*a, f\"v{a}w\", 0xff)' ,");
-    lacks("op_at", "argument_list'(*a, f\"v{a}w\", 0xff)' 0 ,");
+    // `def`, the parentheses and the separators are implied.
+    lacks("op", "function_definition def");
+    lacks("op", "argument_list'(*a, f\"v{a}w\", 0xff)' ,");
     has("str", "string'\"\"\"d\\x41\"\"\"' dA");
     has("value", "string'\"\"\"d\\x41\"\"\"' dA");
     has("strprefix", "string'f\"v{a}w\"' f");
@@ -360,10 +361,10 @@ fn core_rr_relations_hold_what_core_rr_says() {
     has("end_line", "block 7");
     has("visit_index", "module 0");
     has("ast_depth", "module 0");
-    has("first_token", "function_definition 'def'");
+    lacks("first_token", "function_definition 'def'");
     has("last_token", "return_statement'return x' identifier'x'");
-    has("token_after", "identifier'f' '('");
-    has("token_before", "identifier'f' 'def'");
+    lacks("token_after", "identifier'f' '('");
+    lacks("token_before", "identifier'f' 'def'");
 }
 
 /// The shape follows the program: one that includes `core.rr` reads `core.rr`'s, one that declares its base
@@ -641,80 +642,6 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
     }
 }
 
-/// Facts read off a named-only document (RER-131 option B: tokens recognized, not in the records) project as the full
-/// document's do: every relation of both shapes, row for row.
-#[test]
-fn named_only_documents_project_as_full_ones() {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
-    use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
-    let mut inputs: Vec<(String, String, String)> = corpus().into_iter().map(|(path, source)| (path, "python".to_owned(), source)).collect();
-    inputs.extend([
-        ("a.ts", "typescript", "export async function f(a: number, b?: string): Promise<void> { for (const x of [1, 2]) { if (a !== 1 && !b) return; } }\n"),
-        ("b.js", "javascript", "const g = async (a, ...r) => { let x = a ?? 0; x += 2; return typeof x === 'number' ? x : -x; };\n"),
-        ("c.rs", "rust", "pub async fn f(x: &mut Vec<u8>) -> Option<u8> { if let Some(y) = x.pop() { return Some(y + 1); } None }\n"),
-        ("d.php", "php", "<?php\nfunction f($a, $b = [1, 2]) { return $a ?? $b; }\nclass C { public static function g(): int { return 1 + 2; } }\n"),
-        ("e.sql", "sql", "SELECT a, `b` FROM t WHERE a = 1 AND b IN (1, 2) ORDER BY a DESC;\n"),
-    ].map(|(p, l, s)| (p.to_owned(), l.to_owned(), s.to_owned())));
-    let (mut full_docs, mut named_docs) = (Vec::new(), Vec::new());
-    for (key, (path, label, source)) in inputs.iter().enumerate() {
-        let lang = dialect_by_label(label).unwrap();
-        let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
-        let grammar = Grammar::new(lang).unwrap();
-        let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        assert!(image.primary.is_named_only(), "{path}");
-        let source = Arc::new(source.clone());
-        let lines = || Arc::new(LineTable::new(&source, Terminators::of(lang)));
-        let every = TapeImage::every_node_for_test(native.tree.root_node(), &grammar, &source).unwrap();
-        let full = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &every, &|| false).unwrap();
-        let named = TapeDoc::restore(Arc::clone(&source), grammar, &image.primary, &|| false).unwrap();
-        assert!(named.transducer_len() < full.transducer_len(), "{path}: the records leave tokens out");
-        for (doc, out) in [(full, &mut full_docs), (named, &mut named_docs)] {
-            let facts = Arc::new(core::from_tape(&doc, lines()).unwrap());
-            out.push(Document { key: key as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.clone(), facts, guest: None, module: None, tape: None });
-        }
-    }
-    let store = ContentStore::open(&temp("named-only")).unwrap();
-    for projection in [Projection::core(), Projection { shape: Shape::T, ..Projection::core() }] {
-        let rows = |docs: &Vec<Document>| -> Vec<(&'static str, Vec<Vec<i64>>)> {
-            let docs_by_key: HashMap<u32, Arc<Facts>> = docs.iter().map(|d| (d.key, Arc::clone(&d.facts))).collect();
-            let docs = docs.iter().map(|d| Document { facts: Arc::clone(&d.facts), path: d.path.clone(), core: d.core.clone(), guest: None, module: None, tape: None, ..*d }).collect();
-            shaped(&store, docs, &projection)
-                .unwrap()
-                .into_iter()
-                .map(|(name, source)| {
-                    let mut rows: Vec<Vec<i64>> = (0..source.len()).map(|r| (0..source.columns().len()).map(|c| source.value(r, c)).collect()).collect();
-                    if name == "core_node" {
-                        // (document, record, id): a record index is the document's own (named-only records number
-                        // fewer), so it is compared by the record's span.
-                        for row in &mut rows {
-                            let facts = &docs_by_key[&(row[0] as u32)];
-                            let record = row[1] as usize;
-                            row[1] = i64::from(facts.start[record]) << 32 | i64::from(facts.end[record]);
-                        }
-                    }
-                    rows.sort();
-                    (name, rows)
-                })
-                .collect()
-        };
-        let (want, got) = (rows(&full_docs), rows(&named_docs));
-        assert_eq!(want.len(), got.len());
-        for ((name, want), (other, got)) in want.iter().zip(&got) {
-            assert_eq!(name, other);
-            // A document's facts by their digest: different records, so a different name, by design.
-            if *name == "tape_of" {
-                continue;
-            }
-            let missing: Vec<_> = want.iter().filter(|r| !got.contains(r)).take(5).collect();
-            let extra: Vec<_> = got.iter().filter(|r| !want.contains(r)).take(5).collect();
-            assert!(missing.is_empty() && extra.is_empty(), "{:?} {name}: {} rows / {} named-only; missing {missing:?}, extra {extra:?}", projection.shape, want.len(), got.len());
-        }
-    }
-}
-
-/// Node ids per definition (`DefIds`) stay below `SPAN`, the bit `Extra`'s span ids carry: with the most units a
-/// document may have, every slot (and the positions' `SPANS`) with its largest index is under bit 31, so no node's id
-/// equals a span's. One unit more is `Unnumbered::Units`, and the document keeps preorder ids.
 #[test]
 fn definition_slots_stay_below_the_span_bit() {
     let keys: Vec<String> = std::iter::once(String::new()).chain((1..SPANS).map(|i| format!(".f{i}#0"))).collect();

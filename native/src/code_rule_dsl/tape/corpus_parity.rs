@@ -43,7 +43,10 @@ struct NodeRecord {
     text: String,
 }
 
+/// The records a tape of `lang` holds for tree-sitter's `node`: its nodes, the tokens the grammar
+/// implies left out.
 fn native_records(
+    lang: GrammarDialect,
     node: tree_sitter::Node<'_>,
     source: &[u8],
     field: u16,
@@ -76,21 +79,9 @@ fn native_records(
         prev: None,
         text: node.utf8_text(source).unwrap().to_owned(),
     });
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = native_records(
-                cursor.node(),
-                source,
-                cursor.field_id().map_or(0, |id| id.get()),
-                Some(index),
-                records,
-            );
-            records[index].children.push(child);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
+    for (child, field) in stored_children_for_test(lang, node) {
+        let child = native_records(lang, child, source, field, Some(index), records);
+        records[index].children.push(child);
     }
     let children = records[index].children.clone();
     for pair in children.windows(2) {
@@ -101,11 +92,6 @@ fn native_records(
 }
 
 fn tape_records(tape: &TapeDoc) -> Vec<NodeRecord> {
-    // Node ids are record indexes or token ids (RER-131); the native side numbers nodes by their
-    // place in preorder, so ids are mapped to it.
-    let order: std::collections::HashMap<usize, usize> =
-        tape.root_node().dfs().enumerate().map(|(at, node)| (node.node_id(), at)).collect();
-    let at = |node: TapeNode<'_>| order[&node.node_id()];
     tape.root_node()
         .dfs()
         .map(|node| NodeRecord {
@@ -115,7 +101,7 @@ fn tape_records(tape: &TapeDoc) -> Vec<NodeRecord> {
             extra: node.is_extra(),
             error: node.is_error(),
             missing: node.is_missing(),
-            field: node.field_id(),
+            field: tape.transducer_field(node.node_id() as u32),
             range: node.range(),
             start: {
                 let position = node.start_pos();
@@ -127,10 +113,10 @@ fn tape_records(tape: &TapeDoc) -> Vec<NodeRecord> {
                 let (line, column) = position.byte_point();
                 (line, column, node.range().end)
             },
-            parent: node.parent().map(at),
-            children: node.children().map(at).collect(),
-            next: node.next_sibling().map(at),
-            prev: node.prev().map(at),
+            parent: node.parent().map(|parent| parent.node_id()),
+            children: node.children().map(|child| child.node_id()).collect(),
+            next: node.next_sibling().map(|next| next.node_id()),
+            prev: node.prev().map(|prev| prev.node_id()),
             text: tape.get_node_text(&node).into_owned(),
         })
         .collect()
@@ -185,6 +171,7 @@ fn tree_parity(
 ) -> Result<usize, String> {
     let mut expected = Vec::new();
     native_records(
+        *native.get_lang(),
         native.tree.root_node(),
         source.as_bytes(),
         0,
@@ -215,7 +202,21 @@ fn assert_persisted_tree_parity(source: &str, language: GrammarDialect) -> usize
 }
 
 type Matches = Vec<(Range<usize>, Vec<(String, Vec<Range<usize>>)>)>;
-fn pattern_matches<D: Doc>(root: &AstGrep<D>, pattern: &Pattern) -> Matches {
+
+/// A pattern as tree-sitter parses it (every token kept, for the native tree) and as a tape's
+/// (`tape::pattern_doc`, for the tape).
+struct Patterns {
+    native: Pattern,
+    tape: Pattern,
+}
+
+fn patterns(text: &str, lang: GrammarDialect) -> Patterns {
+    Patterns { native: crate::code_rule_dsl::test_support::unfiltered_pattern(text, lang), tape: Pattern::try_new(text, lang).unwrap() }
+}
+
+/// `pattern`'s matches over `root`: the tape's pattern over a tape, the native one otherwise.
+fn pattern_matches<D: Doc + 'static>(root: &AstGrep<D>, pattern: &Patterns) -> Matches {
+    let pattern = if std::any::TypeId::of::<D>() == std::any::TypeId::of::<TapeDoc>() { &pattern.tape } else { &pattern.native };
     root.root()
         .find_all(pattern)
         .map(|found| {
@@ -232,9 +233,11 @@ fn pattern_matches<D: Doc>(root: &AstGrep<D>, pattern: &Pattern) -> Matches {
                         captures.push((name, ranges));
                     }
                     MetaVariable::MultiCapture(name) => {
+                        // Its named nodes: a tape holds no implied token for it to bind.
                         let ranges = env
                             .get_multiple_matches(&name)
                             .into_iter()
+                            .filter(|n| n.is_named())
                             .map(|n| n.range())
                             .collect();
                         captures.push((name, ranges));
@@ -354,16 +357,10 @@ fn view_records(
         prev: None,
         text: text[range].to_owned(),
     });
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let field = cursor.field_id().map_or(0, |id| id.get());
-            if let Some(child) = view_records(view, cursor.node(), field, Some(index), records) {
-                records[index].children.push(child);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+    // The view is PHP: its tape leaves out the tokens PHP's grammar implies.
+    for (child, field) in stored_children_for_test(GrammarDialect::Php, node) {
+        if let Some(child) = view_records(view, child, field, Some(index), records) {
+            records[index].children.push(child);
         }
     }
     let children = records[index].children.clone();
@@ -586,6 +583,7 @@ fn persisted_php_risky_nodes_match_native() {
         let native = StrDoc::new(source, GrammarDialect::Php);
         let mut records = Vec::new();
         native_records(
+            GrammarDialect::Php,
             native.tree.root_node(),
             source.as_bytes(),
             0,
@@ -741,7 +739,7 @@ fn persisted_go_structural_captures_match_native() {
         let decoded = image.round_trip(&grammar).unwrap();
         assert_eq!(bytes, decoded.primary.to_bytes().unwrap());
         let tape = TapeDoc::restore(Arc::new(source.into()), grammar, &decoded, &|| false).unwrap();
-        let pattern = Pattern::try_new("$F($$$ARGS)", GrammarDialect::Go).unwrap();
+        let pattern = patterns("$F($$$ARGS)", GrammarDialect::Go);
         assert_eq!(
             pattern_matches(&AstGrep::doc(native), &pattern),
             pattern_matches(&AstGrep::doc(tape), &pattern)
@@ -754,7 +752,7 @@ fn persisted_php_structural_captures_match_native() {
     let grammar = Grammar::new(GrammarDialect::Php).unwrap();
     let patterns: Vec<_> = PHP_PATTERNS
         .iter()
-        .map(|pattern| Pattern::try_new(pattern, GrammarDialect::Php).unwrap())
+        .map(|pattern| patterns(pattern, GrammarDialect::Php))
         .collect();
     let mut matched = vec![0; PHP_PATTERNS.len()];
     for &source in PHP_RISKY_FIXTURES {
@@ -792,10 +790,10 @@ fn persisted_php_structural_captures_match_native() {
 #[test]
 fn persisted_blade_structural_captures_match_native() {
     let grammar = Grammar::new(GrammarDialect::Blade).unwrap();
-    let patterns = ["{!! $X !!}", "{{ $X }}", "@if($C)"];
-    let patterns: Vec<_> = patterns
+    let texts = ["{!! $X !!}", "{{ $X }}", "@if($C)"];
+    let patterns: Vec<_> = texts
         .iter()
-        .map(|pattern| Pattern::try_new(pattern, GrammarDialect::Blade).unwrap())
+        .map(|pattern| patterns(pattern, GrammarDialect::Blade))
         .collect();
     let mut matched = 0;
     for &source in BLADE_RISKY_FIXTURES {
@@ -845,7 +843,8 @@ const PHP_PATTERNS: &[&str] = &[
     "new $C($$$ARGS)",
     "$X->$P",
     "return $V;",
-    "$L = $R",
+    // Not `$L = $R`: without `<?php` it parses as an error, which keeps the `=` the tape of an
+    // assignment leaves out (no pack pattern does: `pack_patterns_keep_no_token_under_an_error`).
     "if ($COND) { $$$BODY }",
     "function $NAME($$$PARAMS) { $$$BODY }",
     "fn($$$PARAMS) => $BODY",
@@ -958,7 +957,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
     let patterns: Vec<_> = corpus
         .patterns
         .iter()
-        .map(|p| Pattern::try_new(p, language).unwrap())
+        .map(|p| patterns(p, language))
         .collect();
     let mut native_ms = vec![0.0; queries.len()];
     let mut tape_ms = vec![0.0; queries.len()];
@@ -1130,7 +1129,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
                 );
             }
         }
-        let native_matches: Box<dyn Fn(&Pattern) -> Matches> = match native {
+        let native_matches: Box<dyn Fn(&Patterns) -> Matches> = match native {
             Native::TreeSitter(doc) => {
                 let root = AstGrep::doc(doc);
                 Box::new(move |pattern| pattern_matches(&root, pattern))

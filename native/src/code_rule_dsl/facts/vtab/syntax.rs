@@ -538,13 +538,6 @@ impl Dialect {
     pub(super) fn atom_name(&self, atom: u32) -> &'static str {
         self.catalog.kind_name(crate::code_rule_dsl::facts::core::kind_code(atom)).unwrap_or("")
     }
-    /// A child's name, record or token.
-    fn part_name(&self, f: &Facts, part: &crate::code_rule_dsl::facts::core::Part) -> &'static str {
-        match part {
-            crate::code_rule_dsl::facts::core::Part::Node(c) => self.name(f, *c),
-            crate::code_rule_dsl::facts::core::Part::Token(t) => self.atom_name(t.kind),
-        }
-    }
     /// The child of `id` in field `field`.
     fn field_child(&self, f: &Facts, id: u32, field: &str) -> Option<u32> {
         let field = self.catalog.field_id(field)?;
@@ -1585,11 +1578,6 @@ impl NodeRows {
     /// Document `p`'s rows (`dialect` its grammar's kinds; `core`: in `core.rr`'s shape).
     fn document(&mut self, p: &Projected, dialect: &Dialect, core: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
-        // A node's children with the tokens a named-only document's records leave out (RER-131).
-        let part_field = |part: &crate::code_rule_dsl::facts::core::Part| match part {
-            crate::code_rule_dsl::facts::core::Part::Node(c) => f.field[*c as usize],
-            crate::code_rule_dsl::facts::core::Part::Token(t) => t.field,
-        };
         for (local, &id) in p.core.iter().enumerate() {
             let n = p.global(local as u32);
             match dialect.class(f, id) {
@@ -1621,13 +1609,13 @@ impl NodeRows {
                 }
                 Class::Operator => {
                     let operator = dialect.operator.filter(|&o| o != 0);
-                    if let Some(o) = f.parts(id).iter().find(|part| operator == Some(part_field(part))) {
-                        self.op.push([n, string(dialect.part_name(f, o)) as i64]);
+                    if let Some(&o) = f.children(id).iter().find(|&&c| operator == Some(f.field[c as usize])) {
+                        self.op.push([n, string(dialect.name(f, o)) as i64]);
                     }
                 }
                 // `async def`: the keyword is an anonymous child, recorded as the definition's modifier.
                 // `async for`, `async with` likewise.
-                Class::FunctionDefinition | Class::AsyncStatement if f.parts(id).first().is_some_and(|k| dialect.part_name(f, k) == "async") => {
+                Class::FunctionDefinition | Class::AsyncStatement if f.children(id).first().is_some_and(|&k| dialect.name(f, k) == "async") => {
                     self.op.push([n, string("async") as i64]);
                 }
                 Class::FunctionItem

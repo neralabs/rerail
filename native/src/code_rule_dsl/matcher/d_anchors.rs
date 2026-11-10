@@ -62,15 +62,13 @@ impl<'tree> AnchorCursor<'tree> for tree_sitter::TreeCursor<'tree> {
 pub(in crate::code_rule_dsl) struct TapeCursor<'tree>(crate::code_rule_dsl::tape::TapeNode<'tree>);
 
 #[cfg(test)]
-// The tape's records only: rules root at named nodes, and a named-only tape's tokens are not
-// records (RER-131), so the index never recognizes them.
 impl<'tree> AnchorCursor<'tree> for TapeCursor<'tree> {
     type Node = crate::code_rule_dsl::tape::TapeNode<'tree>;
     fn current(&self) -> Self::Node {
         self.0
     }
     fn first_child(&mut self) -> bool {
-        if let Some(child) = self.0.first_record() {
+        if let Some(child) = self.0.child(0) {
             self.0 = child;
             true
         } else {
@@ -78,7 +76,7 @@ impl<'tree> AnchorCursor<'tree> for TapeCursor<'tree> {
         }
     }
     fn next_sibling(&mut self) -> bool {
-        if let Some(next) = self.0.next_record() {
+        if let Some(next) = self.0.next_sibling() {
             self.0 = next;
             true
         } else {
@@ -125,7 +123,7 @@ impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
         TapeCursor(self)
     }
     fn child_count(self) -> usize {
-        self.record_count()
+        self.children().len()
     }
 }
 
@@ -756,80 +754,64 @@ where
                 return index;
             }
             let kind = node.kind_id();
-            // An anonymous leaf is not a root: rules range over named nodes (RER-131), and a
-            // named-only tape keeps few tokens as records. It is walked and charged; no entry.
-            let mut close = true;
-            if !node.is_named() && AnchorNode::child_count(node) == 0 {
-                // Its field is seen: a later named child holding it is not the first.
-                if let Some((_, _, seen_fields)) = last_children.last_mut()
-                    && let Some(bit) = 1_u64.checked_shl(u32::from(cursor.field_id()))
-                {
-                    *seen_fields |= bit;
-                }
-                close = false;
-            } else {
-                let ordinal = index.entries.len();
-                let previous = last_children.last().and_then(|(last, _, _)| *last);
-                index.walked_siblings |= node.range().is_empty()
-                    || previous.is_some_and(|previous| {
-                        index.entries[previous.get() - 1].node.range().end > node.range().start
-                    });
-                index.entries.push(Entry {
-                    node,
-                    kind,
-                    parent: ancestors.last().copied(),
-                    previous,
-                    subtree_end: ordinal + 1,
+            let ordinal = index.entries.len();
+            let previous = last_children.last().and_then(|(last, _, _)| *last);
+            index.walked_siblings |= node.range().is_empty()
+                || previous.is_some_and(|previous| {
+                    index.entries[previous.get() - 1].node.range().end > node.range().start
                 });
-                if kind_utils::is_error_kind(kind) {
-                    index.errors.push(ordinal);
-                } else {
-                    if usize::from(kind) >= index.kinds.len() {
-                        index.kinds.resize_with(usize::from(kind) + 1, Vec::new);
-                    }
-                    index.kinds[usize::from(kind)].push(ordinal);
+            index.entries.push(Entry {
+                node,
+                kind,
+                parent: ancestors.last().copied(),
+                previous,
+                subtree_end: ordinal + 1,
+            });
+            if kind_utils::is_error_kind(kind) {
+                index.errors.push(ordinal);
+            } else {
+                if usize::from(kind) >= index.kinds.len() {
+                    index.kinds.resize_with(usize::from(kind) + 1, Vec::new);
                 }
-                let current = NonZeroUsize::new(ordinal + 1).expect("inserted node");
-                if let Some((last_child, _, seen_fields)) = last_children.last_mut() {
-                    *last_child = Some(current);
-                    let field = cursor.field_id();
-                    if let Some(posting) = index.fields.get_mut(&field) {
-                        // Rec6 grammars have at most 63 fields. Keep the cursor oracle sound for
-                        // wider native grammars too, without a field-width assumption there.
-                        let first = if let Some(bit) = 1_u64.checked_shl(u32::from(field)) {
-                            let first = *seen_fields & bit == 0;
-                            *seen_fields |= bit;
-                            first
-                        } else {
-                            let parent = index.entries[ordinal].parent.expect("child has parent");
-                            index.entries[parent.get() - 1]
-                                .node
-                                .child_by_field_id(field)
-                                .is_some_and(|first| first.node_id() == node.node_id())
-                        };
-                        if field != 0 && first {
-                            posting.push(ordinal);
-                        }
+                index.kinds[usize::from(kind)].push(ordinal);
+            }
+            let current = NonZeroUsize::new(ordinal + 1).expect("inserted node");
+            if let Some((last_child, _, seen_fields)) = last_children.last_mut() {
+                *last_child = Some(current);
+                let field = cursor.field_id();
+                if let Some(posting) = index.fields.get_mut(&field) {
+                    // Rec6 grammars have at most 63 fields. Keep the cursor oracle sound for
+                    // wider native grammars too, without a field-width assumption there.
+                    let first = if let Some(bit) = 1_u64.checked_shl(u32::from(field)) {
+                        let first = *seen_fields & bit == 0;
+                        *seen_fields |= bit;
+                        first
+                    } else {
+                        let parent = index.entries[ordinal].parent.expect("child has parent");
+                        index.entries[parent.get() - 1]
+                            .node
+                            .child_by_field_id(field)
+                            .is_some_and(|first| first.node_id() == node.node_id())
+                    };
+                    if field != 0 && first {
+                        posting.push(ordinal);
                     }
-                }
-                ancestors.push(current);
-                last_children.push((None, 0, 0));
-                if cursor.first_child() {
-                    last_children.last_mut().expect("current frame").1 = node.child_count() - 1;
-                    continue;
                 }
             }
+            ancestors.push(current);
+            last_children.push((None, 0, 0));
+            if cursor.first_child() {
+                last_children.last_mut().expect("current frame").1 = node.child_count() - 1;
+                continue;
+            }
             loop {
-                if close {
-                    let closed = ancestors.pop().expect("current node is open");
-                    last_children.pop();
-                    index.entries[closed.get() - 1].subtree_end = index.entries.len();
-                    closed_nodes += 1;
-                    if closed_nodes & 255 == 0 && budget_exhausted() {
-                        return index;
-                    }
+                let closed = ancestors.pop().expect("current node is open");
+                last_children.pop();
+                index.entries[closed.get() - 1].subtree_end = index.entries.len();
+                closed_nodes += 1;
+                if closed_nodes & 255 == 0 && budget_exhausted() {
+                    return index;
                 }
-                close = true;
                 if ancestors.is_empty() {
                     break 'preorder;
                 }

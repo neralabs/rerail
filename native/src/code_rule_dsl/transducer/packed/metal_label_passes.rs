@@ -15,12 +15,6 @@
 
 #[path = "metal_label_patterns.rs"]
 mod patterns;
-#[cfg(test)]
-#[path = "metal_token_parts_tests.rs"]
-mod token_parts_tests;
-#[cfg(test)]
-#[path = "metal_host_guard_tests.rs"]
-mod host_guard_tests;
 
 use super::super::PackedPattern;
 use super::super::metal_batch_abi::MetalSupertype;
@@ -707,15 +701,10 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 /// The device's tape view (decision 0032), which the label and pattern kernels read.
 const TAPE_VIEW: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"));
 /// The label kernels over the tape view.
-const SOURCE: &str = concat!(
-    "#include <metal_stdlib>\nusing namespace metal;\n",
-    include_str!("metal_tape.metal"),
-    include_str!("metal_label_passes.metal"),
-    include_str!("metal_token_parts.metal")
-);
+const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"), include_str!("metal_label_passes.metal"));
 /// Where a label kernel binds the batch's four slabs (`Slabs`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
-const KERNELS: [&str; 13] = [
+const KERNELS: [&str; 12] = [
     "label_sink",
     "label_settle",
     "label_round",
@@ -728,14 +717,7 @@ const KERNELS: [&str; 13] = [
     "root_records_8",
     "root_records_32",
     "label_group_64",
-    "token_parts",
 ];
-/// `token_parts` in `KERNELS`.
-const TOKEN_PARTS: usize = 12;
-/// `token_parts`' pool: threads striding over the batch's nodes, each with `TOKEN_DEPTH` frames
-/// of three words in device memory.
-const TOKEN_POOL: usize = 4096;
-const TOKEN_DEPTH: usize = crate::code_rule_dsl::tape::tokens::RECOGNIZE_DEPTH as usize;
 /// The fused group kernels in `KERNELS` (`Runner::group`): 8, 32 and 64 frames a walk.
 const GROUP_KERNELS: [usize; 3] = [7, 8, 11];
 /// The frames of each fused group kernel (`GROUP_KERNELS`).
@@ -834,109 +816,6 @@ fn pipelines() -> Result<Vec<ComputePipelineState>, Error> {
         .collect::<Result<Vec<_>, _>>()?;
     *cached = Some(pipelines.clone());
     Ok(pipelines)
-}
-
-/// `token_parts`' buffers for a batch (`Runner::token_parts`): the grammars' tables, each
-/// document's place in them, the wanted kinds, the outputs and the search's stacks.
-struct TokenParts {
-    /// Per node (first, count), zeroed: a record of no recognized token keeps (0, 0).
-    index: MappedBuffer,
-    tokens: MappedBuffer,
-    /// tables, places, wanted, the bump counter, the stacks.
-    inputs: Vec<MappedBuffer>,
-    shape: Shape,
-}
-
-impl TokenParts {
-    /// `None` where no document of `views` is named-only.
-    fn new(
-        device: &Device,
-        files: &[TapeDoc],
-        views: &[crate::code_rule_dsl::residency::slabs::DocView],
-        kinds: &[u16],
-        every: bool,
-        nodes: usize,
-    ) -> Result<Option<Self>, Error> {
-        let named_only = |view: &crate::code_rule_dsl::residency::slabs::DocView| view.widths & 8192 != 0;
-        if !views.iter().any(named_only) {
-            return Ok(None);
-        }
-        // Each grammar's tables once, and each document's place in them.
-        let mut tables = Vec::<u32>::new();
-        let mut placed = Vec::<(usize, u32)>::new();
-        let mut at = Vec::with_capacity(views.len());
-        for (file, view) in files.iter().zip(views) {
-            let Some(device_tokens) = file.device_tokens().filter(|_| named_only(view)) else {
-                at.push(u32::MAX);
-                continue;
-            };
-            let key = Arc::as_ptr(&device_tokens) as usize;
-            let offset = match placed.iter().find(|(known, _)| *known == key) {
-                Some(&(_, offset)) => offset,
-                None => {
-                    let offset = u32::try_from(tables.len()).map_err(|_| Error::BackendCapacity)?;
-                    tables.extend_from_slice(&device_tokens.words);
-                    placed.push((key, offset));
-                    offset
-                }
-            };
-            at.push(offset);
-        }
-        // A document's tokens are disjoint spans of its source, a byte or more each.
-        let capacity = views.iter().filter(|view| named_only(view)).map(|view| view.source_len as usize).sum::<usize>().max(1);
-        let mut wanted = vec![0_u32; 65536 / 32];
-        for &kind in kinds {
-            wanted[usize::from(kind) / 32] |= 1 << (kind % 32);
-        }
-        let threads = nodes.clamp(1, TOKEN_POOL);
-        let shape = Shape {
-            node_count: nodes as u32,
-            file_count: views.len() as u32,
-            result_arena: u32::try_from(capacity).map_err(|_| Error::BackendCapacity)?,
-            item_count: threads as u32,
-            steps: u32::from(every),
-            ..Shape::default()
-        };
-        let upload = |words: &[u32]| if words.is_empty() { MappedBuffer::zeroed::<u32>(device, 1) } else { MappedBuffer::from_slice(device, words) };
-        Ok(Some(Self {
-            index: MappedBuffer::zeroed::<[u32; 2]>(device, nodes.max(1))?,
-            tokens: MappedBuffer::untouched::<u32>(device, capacity)?,
-            inputs: vec![
-                upload(&tables)?,
-                upload(&at)?,
-                upload(&wanted)?,
-                MappedBuffer::zeroed::<u32>(device, 1)?,
-                MappedBuffer::untouched::<u32>(device, threads * TOKEN_DEPTH * 3)?,
-            ],
-            shape,
-        }))
-    }
-
-    /// The kernel's buffers, in its order, over the batch's `docs` and the run's `flags`.
-    fn buffers<'b>(&'b self, docs: &'b Buffer, flags: &'b Buffer) -> [(&'b Buffer, u64); 9] {
-        let [tables, at, wanted, bump, stacks] = [0, 1, 2, 3, 4].map(|i| &self.inputs[i].buffer);
-        [(docs, 0), (tables, 0), (at, 0), (&self.index.buffer, 0), (&self.tokens.buffer, 0), (bump, 0), (stacks, 0), (wanted, 0), (flags, 0)]
-    }
-}
-
-/// The kinds whose children `patterns` read (an `Internal` node's), and whether any kind is (an
-/// `Internal` of any kind): the records `token_parts` recognizes tokens of.
-fn pattern_kinds(patterns: &[&PackedPattern]) -> (Vec<u16>, bool) {
-    fn walk(pattern: &PackedPattern, kinds: &mut Vec<u16>, every: &mut bool) {
-        if let PackedPattern::Internal { kind, children } = pattern {
-            if *kind == u16::MAX {
-                *every = true;
-            } else {
-                kinds.push(*kind);
-            }
-            children.iter().for_each(|child| walk(child, kinds, every));
-        }
-    }
-    let (mut kinds, mut every) = (Vec::new(), false);
-    patterns.iter().for_each(|pattern| walk(pattern, &mut kinds, &mut every));
-    kinds.sort_unstable();
-    kinds.dedup();
-    (kinds, every)
 }
 
 /// The plan's pattern kernels, one per `patterns::GROUP` of its patterns (a fact-only plan's
@@ -1086,9 +965,6 @@ struct Runner<'a> {
     outcome: Outcome,
     /// The plan's root walks, encoded after its passes (`records`).
     roots: Option<RootsEncoded>,
-    /// A named-only batch's recognized tokens (`token_parts`): per node (first, count), and the
-    /// tokens; the pattern kernel reads them as parts.
-    token_parts: Option<(MappedBuffer, MappedBuffer)>,
 }
 
 #[cfg(test)]
@@ -1126,9 +1002,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         .filter(|(recursive, _)| !recursive)
         .flat_map(|(_, levels)| levels)
         .map(launches)
-        .sum::<usize>()
-        // A named-only batch's tokens (`token_parts`), once before the passes.
-        + usize::from(!plan.patterns.is_empty() && files.iter().any(TapeDoc::is_named_only_in_memory));
+        .sum::<usize>();
     // A group of micro walks runs to its fixpoint in one dispatch (`Runner::group`), which needs
     // no pattern pass; whether its walks fuse is known only once sized, so a plan counts it as
     // fused, and the evaluation's ledger refuses the submission of one that did not.
@@ -1381,7 +1255,6 @@ fn encode(
             ..Outcome::default()
         },
         roots: None,
-        token_parts: None,
     };
     mark("buffers");
     if crate::code_rule_dsl::prof::on() {
@@ -1396,7 +1269,6 @@ fn encode(
     crate::code_rule_dsl::prof::release();
     mark("sized");
     let _encode = crate::code_rule_dsl::prof::Stage::start("gpu.encode");
-    runner.token_parts(plan)?;
     for (group, ((recursive, levels), &rounds)) in plan.steps.iter().zip(rounds).enumerate() {
         if !recursive {
             for level in levels {
@@ -1706,26 +1578,6 @@ impl Runner<'_> {
         self.encoded = true;
         self.outcome.dispatches += 1;
         self.split(label);
-    }
-
-    /// A named-only batch's tokens, recognized on the device before any pass (`token_parts`): for
-    /// each record of a kind a pattern reads children of, the tokens its records leave out. Only
-    /// where a pattern reads children and a document is named-only.
-    fn token_parts(&mut self, plan: &Plan<'_>) -> Result<(), Error> {
-        let (kinds, every) = pattern_kinds(&plan.patterns);
-        if kinds.is_empty() && !every {
-            return Ok(());
-        }
-        let Some(parts) = TokenParts::new(self.device, self.files, &self.tapes.table.views, &kinds, every, self.nodes)? else {
-            return Ok(());
-        };
-        let (docs, flags) = (self.tapes.docs.buffer.clone(), self.flags.buffer.clone());
-        let shape = Shape { words: self.words as u32, ..parts.shape };
-        self.kernel(TOKEN_PARTS, &parts.buffers(&docs, &flags), shape, parts.shape.item_count as usize);
-        let TokenParts { index, tokens, inputs, .. } = parts;
-        self.retained.extend(inputs);
-        self.token_parts = Some((index, tokens));
-        Ok(())
     }
 
     /// A recursive group's end after `rounds` rounds (`label_round`).
@@ -2164,11 +2016,6 @@ impl Runner<'_> {
             let (items, constraints) = (self.upload(matches)?, self.upload(&constraints)?);
             let docs = self.tapes.docs.buffer.clone();
             let segs = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
-            // Read only for a named-only document's records (`c_tokens`); else any buffer.
-            let (token_index, tokens) = self.token_parts.as_ref().map_or_else(
-                || (self.flags.buffer.clone(), self.flags.buffer.clone()),
-                |(index, tokens)| (index.buffer.clone(), tokens.buffer.clone()),
-            );
             let shape = Shape {
                 item_count: pattern_threads,
                 task_count,
@@ -2184,8 +2031,6 @@ impl Runner<'_> {
                     (&items, 0),
                     (&constraints, 0),
                     (&segs, 0),
-                    (&token_index, 0),
-                    (&tokens, 0),
                 ],
                 shape,
             )?;

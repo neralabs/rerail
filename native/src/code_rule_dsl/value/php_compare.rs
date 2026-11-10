@@ -132,7 +132,8 @@ fn keyed<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
         "class_constant_access_expression" => {
             member_key(node, node.named_code().nth(1), Role::StringOnly)
         }
-        "array_element_initializer" if node.has_token("=>") => match node.named_code().next() {
+        // `key => value`: two children (the grammar implies the `=>`, which no tape stores).
+        "array_element_initializer" if node.named_code().count() == 2 => match node.named_code().next() {
             Some(key) => Keyed::Computed(key, Role::ArrayKey),
             None => Keyed::Nameless,
         },
@@ -187,7 +188,7 @@ fn key_node<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
             "class_constant_access_expression" => parent.named_code()
                 .nth(1)
                 .is_some_and(|name| name.range() == node.range()),
-            "array_element_initializer" if parent.has_token("=>") => parent.named_code()
+            "array_element_initializer" if parent.named_code().count() == 2 => parent.named_code()
                 .next()
                 .is_some_and(|key| key.range() == node.range()),
             "subscript_expression" => parent.named_code()

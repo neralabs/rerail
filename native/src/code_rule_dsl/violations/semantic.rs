@@ -33,12 +33,6 @@ pub(super) fn ast_captures<'a>(
                 super::ast_captures(rule, utils, summaries, names);
             }
         }
-        Semantic::Tokens(test) => {
-            names.extend(test.capture.as_deref());
-            if let Some(rule) = &test.rule {
-                super::ast_captures(rule, utils, summaries, names);
-            }
-        }
         Semantic::Resolves(_)
         | Semantic::Value(_)
         | Semantic::Layout(_)
@@ -81,7 +75,6 @@ pub(super) fn parse_exports<'a>(
             bound.insert(name.as_str());
         }
         Semantic::Calls(test) => bound.extend(test.chain.as_deref()),
-        Semantic::Tokens(test) => bound.extend(test.capture.as_deref()),
         Semantic::Resolves(_)
         | Semantic::Value(_)
         | Semantic::Layout(_)

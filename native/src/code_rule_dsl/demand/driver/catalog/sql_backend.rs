@@ -113,8 +113,6 @@ pub(in crate::code_rule_dsl) enum SemanticFactSource {
     Arguments(crate::code_rule_dsl::matcher::Arguments),
     FormatArgs(crate::code_rule_dsl::matcher::FormatArgs),
     Layout(crate::code_rule_dsl::matcher::Layout),
-    /// A plain `tokens` test (no `as`, no `where`): a gate at each node, as `Layout` is.
-    Tokens(crate::code_rule_dsl::matcher::TokenTest),
     Calls(crate::code_rule_dsl::calls::CallsTest),
 }
 
@@ -139,7 +137,7 @@ impl SemanticFactSource {
                     })
             }
             Self::FormatArgs(test) => test.unused.is_some() || test.missing.is_some(),
-            Self::Resolves(_) | Self::Arguments(_) | Self::Layout(_) | Self::Tokens(_) | Self::Calls(_) => false,
+            Self::Resolves(_) | Self::Arguments(_) | Self::Layout(_) | Self::Calls(_) => false,
         }
     }
 }
@@ -1499,7 +1497,7 @@ impl PackedDemand {
                                                         .adopt(root.get_doc().node(node));
                                                     let mut remaining = root
                                                         .get_doc()
-                                                        .tree_nodes_bound()
+                                                        .transducer_len()
                                                         .saturating_add(1);
                                                     let mut spend = || {
                                                         let available = remaining > 0;
@@ -1724,7 +1722,7 @@ impl PackedDemand {
                                         let node =
                                             structure_document.adopt(root.get_doc().node(node));
                                         let mut remaining =
-                                            root.get_doc().tree_nodes_bound().saturating_add(1);
+                                            root.get_doc().transducer_len().saturating_add(1);
                                         let mut spend = || {
                                             let available = remaining > 0;
                                             remaining = remaining.saturating_sub(1);

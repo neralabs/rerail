@@ -335,8 +335,21 @@ fn outside_parentheses<'t, D: Doc>(node: &Node<'t, D>) -> Option<(Node<'t, D>, N
 }
 
 /// The `,` tokens among `list`'s children before its child `element`.
+/// The commas before `element` in `list`: those a tape stores (a hole's, a leading one's), and the
+/// one between two elements that none separates, which the grammar implies (RER-131).
 fn commas_before<'r, D: Doc>(list: &Node<'r, D>, element: &Node<'r, D>) -> Option<usize> {
-    Some(list.count_tokens_before(element, ","))
+    let start = element.range().start;
+    let (mut commas, mut after_element) = (0, false);
+    for child in list.children().take_while(|child| child.range().end <= start) {
+        if child.kind() == "," {
+            commas += 1;
+            after_element = false;
+        } else if child.is_named() && !super::util::is_comment_kind(&child.kind()) {
+            commas += usize::from(after_element);
+            after_element = true;
+        }
+    }
+    Some(commas + usize::from(after_element))
 }
 
 /// The node inside any parentheses: ESTree has none.

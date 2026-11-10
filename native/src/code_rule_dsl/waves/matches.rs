@@ -609,7 +609,7 @@ mod tests;
 /// is the dialect the store's tag names. Leases are not kept: the label run takes its own.
 fn prepare(store: &ContentStore, docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> StoreResult<()> {
     use crate::code_rule_dsl::{language, residency::slabs, tape::Grammar};
-    // The stored bytes are read in place, named-only ones too (RER-131).
+    // The stored bytes are read in place.
     let digests = docs.iter().map(|doc| doc.resident_key().map_err(StoreError::Invalid)).collect::<StoreResult<Vec<_>>>()?;
     let grammar = |id: i64| Grammar::new(u8::try_from(id).ok().and_then(language::from_tape_tag).ok_or("unknown grammar")?);
     slabs::admit(store, &digests, &grammar).map(drop).map_err(invalid)

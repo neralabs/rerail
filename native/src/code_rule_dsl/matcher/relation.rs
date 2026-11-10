@@ -112,10 +112,6 @@ impl Search {
     ) -> ControlFlow<Option<Node<'t, D>>> {
         #[cfg(test)]
         CANDIDATES_TESTED.set(CANDIDATES_TESTED.get() + 1);
-        // A relation reaches named nodes only: tokens are read by `tokens` and patterns (RER-131).
-        if !candidate.is_named() {
-            return ControlFlow::Continue(());
-        }
         if let Some(filter) = &self.filter
             && filter.kinds.binary_search(&candidate.kind_id()).is_err()
         {
@@ -277,13 +273,10 @@ impl StopBy {
                 .find(|| None, || listed.into_iter(), related, env)
                 .is_some();
         }
-        // A walk reaches named nodes (RER-131): a neighbour is the sibling right beside the node,
-        // as ast-grep's `next`, and none where that is a token (its text is a `tokens` test,
-        // `compile::ast_rule`); the root has none. Past a neighbour, the walk passes over tokens.
         if forward {
-            self.reaches(node, || node.next().filter(Node::is_named), || node.next_all().filter(Node::is_named), related, env)
+            self.reaches(node, || node.next(), || node.next_all(), related, env)
         } else {
-            self.reaches(node, || node.prev().filter(Node::is_named), || node.prev_all().filter(Node::is_named), related, env)
+            self.reaches(node, || node.prev(), || node.prev_all(), related, env)
         }
     }
 }
@@ -342,7 +335,7 @@ pub(super) fn descend_until<'tree, D: Doc>(
     open: &Cell<bool>,
     three: bool,
 ) -> ControlFlow<()> {
-    let level = |node: &Node<'tree, D>| node.children().filter(Node::is_named).collect::<Vec<_>>().into_iter();
+    let level = |node: &Node<'tree, D>| node.children().collect::<Vec<_>>().into_iter();
     let mut stack = vec![level(node)];
     while let Some(children) = stack.last_mut() {
         let Some(child) = children.next() else {

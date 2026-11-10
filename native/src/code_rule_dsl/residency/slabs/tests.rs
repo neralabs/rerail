@@ -34,9 +34,9 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
     let mut digests = Vec::new();
     let mut tapes = Vec::new();
     for (source, lang) in SOURCES {
-        // A tree-sitter tape is stored named-only (RER-131), and the device reads it in place.
+        // The device reads the stored image in place.
         let (tape, stored) = document(source, lang);
-        assert!(resident::layout(&stored).is_ok(), "a named-only image reads in place");
+        assert!(resident::layout(&stored).is_ok(), "a stored image is read in place");
         let bytes = tape.resident_parts().unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
         store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();

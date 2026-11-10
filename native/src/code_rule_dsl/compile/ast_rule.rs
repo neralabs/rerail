@@ -46,7 +46,6 @@ const AST_RULE_KEYS: &[&str] = &[
     "capture",
     "formatArgs",
     "layout",
-    "tokens",
     "filePath",
     "calls",
     "embedded",
@@ -78,7 +77,6 @@ const AST_RULE_KEYS: &[&str] = &[
     "capture",
     "formatArgs",
     "layout",
-    "tokens",
     "filePath",
     "calls",
     "embedded",
@@ -622,11 +620,7 @@ pub(crate) fn compile_ast_rule(
     for (key, constructor) in AST_RELATIONS {
         if let Some(relation) = rule.get(key) {
             let relation_path = format!("{path}/{key}");
-            let tokens = match reached_tokens(key, relation, rule.get("kind").and_then(Value::as_str), language) {
-                Some(tokens) => Some(tokens),
-                None => reached_tokens_where(key, relation, rule.get("kind").and_then(Value::as_str), language, &relation_path, gaps, utils)?,
-            };
-            let term =
+            terms.push(
                 match compile_relation(relation, language, &relation_path, gaps, utils)? {
                     (AstMatcher::Never, _, _) => AstMatcher::Never,
                     (inner, stop, None) => constructor(Related::new(inner), stop),
@@ -646,28 +640,8 @@ pub(crate) fn compile_ast_rule(
                             ),
                         ),
                     },
-                };
-            // A neighbour is the sibling right beside the node; a walk steps over tokens to the
-            // next named one, so where a token is beside it, a named target is not the neighbour.
-            let neighbour = matches!(key, "precedes" | "follows")
-                && relation.get("stopBy").is_none_or(|stop| stop == "neighbor")
-                && relation.get("field").is_none();
-            let term = if neighbour && !matches!(term, AstMatcher::Never) {
-                use crate::code_rule_dsl::matcher::tokens::Place;
-                let place = if key == "precedes" { Place::After } else { Place::Before };
-                let mut alone = token_test(Vec::new(), rule.get("kind").and_then(Value::as_str).and_then(|kind| token_kinds(kind, language)));
-                if let AstMatcher::Semantic(crate::code_rule_dsl::matcher::Semantic::Tokens(test)) = &mut alone {
-                    test.none = vec![place];
-                }
-                AstMatcher::All(vec![term, alone])
-            } else {
-                term
-            };
-            terms.push(match tokens {
-                Some(tokens) if !matches!(term, AstMatcher::Never) => AstMatcher::Any(vec![term, tokens]),
-                Some(tokens) => tokens,
-                None => term,
-            });
+                },
+            );
             group_paths.push(relation_path);
         }
     }
@@ -829,23 +803,18 @@ pub(crate) fn compile_ast_rule(
         let count_path = format!("{path}/count");
         let spec = count_bounds(count, &count_path)?;
         let relation_path = format!("{count_path}/{}", spec.key);
-        let parts = spec.binding.is_none().then(|| counted_parts(spec.key, spec.relation, spec.min, spec.max, rule.get("kind").and_then(Value::as_str), language)).flatten();
-        if let Some(parts) = parts {
-            terms.push(parts);
-        } else {
-            let (inner, stop, _) =
-                compile_relation(spec.relation, language, &relation_path, gaps, utils)?;
-            let constructor = AST_RELATIONS
-                .iter()
-                .find_map(|(name, constructor)| (*name == spec.key).then_some(*constructor))
-                .expect("count_bounds returns a relation key");
-            terms.push(AstMatcher::Count(Box::new(Count {
-                relation: constructor(Related::new(inner), stop),
-                min: spec.min,
-                max: spec.max,
-                binding: spec.binding,
-            })));
-        }
+        let (inner, stop, _) =
+            compile_relation(spec.relation, language, &relation_path, gaps, utils)?;
+        let constructor = AST_RELATIONS
+            .iter()
+            .find_map(|(name, constructor)| (*name == spec.key).then_some(*constructor))
+            .expect("count_bounds returns a relation key");
+        terms.push(AstMatcher::Count(Box::new(Count {
+            relation: constructor(Related::new(inner), stop),
+            min: spec.min,
+            max: spec.max,
+            binding: spec.binding,
+        })));
     }
     if let Some(compare) = rule.get("compare") {
         let compare_path = format!("{path}/compare");
@@ -872,10 +841,6 @@ pub(crate) fn compile_ast_rule(
             comparison.transform = Some(transform.clone());
         }
         terms.push(AstMatcher::Compare(Box::new(comparison)));
-    }
-    // Token tests read only the node and its parent's children (RER-131).
-    if let Some(tokens) = rule.get("tokens") {
-        terms.push(compile_tokens(tokens, rule.get("kind").and_then(Value::as_str), language, &format!("{path}/tokens"), gaps, utils)?);
     }
     // A layout binds nothing and may read a capture, like a comparison.
     if let Some(layout) = rule.get("layout") {
@@ -1151,10 +1116,11 @@ mod tests {
     }
 
     #[test]
-    fn kindless_rules_range_over_named_nodes_and_tokens_are_tested_by_text() {
+    fn kindless_rules_are_accepted_and_test_anonymous_tokens() {
         // ast-grep 0.45.3 rejects a rule with no inferable kinds ("Rule must specify a set of AST
-        // kinds to match"). Rerail accepts it; it tests every named node (RER-131): a rule reaches
-        // anonymous tokens (`==`, `,`, `default`) only through `tokens` and patterns.
+        // kinds to match"). Rerail keeps accepting it: it is the only way to report an anonymous
+        // token (`kind` names named kinds only), such as `==`, `,` or `default`. Such a rule tests
+        // every node, so it can report punctuation.
         let compiled = compile_typescript_rule(json!({
             "inside": { "kind": "parenthesized_expression" },
             "not": { "kind": "number" },
@@ -1162,26 +1128,15 @@ mod tests {
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "(1);\n";
         let result = evaluate_file(&compiled, "typescript", "a.ts", source);
-        assert!(matched_texts(&result, source).is_empty());
-        // A token is tested at its parent, and `as` binds it for a message, anchor or fix range.
+        assert_eq!(matched_texts(&result, source), ["(", ")"]);
         let operator = compile_typescript_rule(json!({
-            "kind": "binary_expression",
-            "tokens": { "has": "^==$", "as": "OP" },
+            "regex": "^==$",
+            "inside": { "kind": "binary_expression" },
         }))
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "a == b;\n";
         let result = evaluate_file(&operator, "typescript", "a.ts", source);
-        assert_eq!(matched_texts(&result, source), ["a == b OP==="]);
-        // A relation to a bare regex keeps reaching tokens: here the `(` before the arguments.
-        let call = compile_typescript_rule(json!({
-            "kind": "arguments",
-            "has": { "regex": "^\\($" },
-            "inside": { "kind": "call_expression", "precedes": { "regex": "^;$" } },
-        }))
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        let source = "f(1);\n";
-        let result = evaluate_file(&call, "typescript", "a.ts", source);
-        assert_eq!(matched_texts(&result, source), ["(1)"]);
+        assert_eq!(matched_texts(&result, source), ["=="]);
     }
 
     #[test]
@@ -1284,182 +1239,4 @@ mod tests {
             "{reason}"
         );
     }
-}
-
-/// `tokens`: `{ place: regex, ... }`, at least one ([`crate::code_rule_dsl::matcher::TokenTest`]).
-fn compile_tokens(value: &Value, kind: Option<&str>, language: GrammarDialect, path: &str, gaps: &mut Vec<String>, utils: &UtilScope) -> Result<AstMatcher> {
-    use crate::code_rule_dsl::matcher::tokens::Place;
-    let object = value.as_object().ok_or_else(|| invalid(format!("{path}: tokens is an object of has, below, before, after, earlier and later")))?;
-    if object.is_empty() {
-        return Err(invalid(format!("{path}: tokens needs a place")));
-    }
-    let mut tests = Vec::new();
-    let mut capture = None;
-    let mut rule = None;
-    for (key, value) in object {
-        if key == "where" {
-            rule = Some(Box::new(compile_ast_rule(value, language, &format!("{path}/where"), gaps, utils)?));
-            continue;
-        }
-        if key == "as" {
-            let name = value.as_str().filter(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
-            capture = Some(name.ok_or_else(|| invalid(format!("{path}/as: a capture name")))?.to_owned());
-            continue;
-        }
-        let place = Place::of_key(key).ok_or_else(|| invalid(format!("{path}/{key}: tokens takes has, below, before, after, earlier and later")))?;
-        let source = value.as_str().ok_or_else(|| invalid(format!("{path}/{key}: a regex string")))?;
-        tests.push((place, Regex::new(source).map_err(|_| invalid(format!("{path}/{key}: Parsing text matcher fails.")))?));
-    }
-    if (capture.is_some() || rule.is_some()) && !tests.first().is_some_and(|(place, _)| !matches!(place, Place::Below | Place::Earlier | Place::Later)) {
-        return Err(invalid(format!("{path}: as and where read the token of the first test, which must be has, before, after, beforeCode, afterCode or a field")));
-    }
-    let mut test = token_test(tests, kind.and_then(|kind| token_kinds(kind, language)));
-    if let AstMatcher::Semantic(crate::code_rule_dsl::matcher::Semantic::Tokens(test)) = &mut test {
-        test.capture = capture;
-        test.rule = rule;
-    }
-    Ok(test)
-}
-
-fn token_kinds(kind: &str, language: GrammarDialect) -> Option<BTreeSet<u16>> {
-    Some(language.kinds().kind_ids(kind).into_iter().collect::<BTreeSet<u16>>())
-        .filter(|kinds| !is_supertype(kind, language) && !kinds.is_empty())
-}
-
-fn token_test(tests: Vec<(crate::code_rule_dsl::matcher::tokens::Place, Regex)>, kinds: Option<BTreeSet<u16>>) -> AstMatcher {
-    AstMatcher::Semantic(crate::code_rule_dsl::matcher::Semantic::Tokens(Box::new(crate::code_rule_dsl::matcher::TokenTest { tests, counts: Vec::new(), none: Vec::new(), capture: None, rule: None, kinds })))
-}
-
-/// The token test a relation's walk to tokens became (RER-131): a relation walks named nodes, so
-/// where its target can be a bare `regex` (alone, or an `any` alternative), the tokens it reached
-/// are tested here. `None` where the target asks more of a node than its text, or the walk is
-/// bounded by a rule.
-fn reached_tokens(key: &str, relation: &Value, kind: Option<&str>, language: GrammarDialect) -> Option<AstMatcher> {
-    let (place, regex, _) = token_reach(key, relation, language)?;
-    Some(token_test(vec![(place, regex)], kind.and_then(|kind| token_kinds(kind, language))))
-}
-
-/// A relation whose target tests a token's text and more (`precedes: {regex: "^==$", precedes:
-/// …}`): the tokens it reached that match the regex are tested by the rest of the target at the
-/// token (`TokenTest::rule`), as the walk tested every node before tokens left the records.
-/// `None` where the target has no regex, or what it asks besides holds of named nodes only.
-fn reached_tokens_where(key: &str, relation: &Value, kind: Option<&str>, language: GrammarDialect, path: &str, gaps: &mut Vec<String>, utils: &UtilScope) -> Result<Option<AstMatcher>> {
-    let Some(object) = relation.as_object() else { return Ok(None) };
-    // An `all` of parts with distinct keys reads as their one object, as `token_reach` reads it.
-    let mut flat = object.clone();
-    if let Some(parts) = object.get("all").and_then(Value::as_array) {
-        flat.remove("all");
-        for part in parts {
-            let Some(part) = part.as_object() else { return Ok(None) };
-            for (key, value) in part {
-                if flat.insert(key.clone(), value.clone()).is_some() {
-                    return Ok(None);
-                }
-            }
-        }
-    }
-    let object = &flat;
-    let Some(regex) = object.get("regex").and_then(Value::as_str) else { return Ok(None) };
-    let rest: serde_json::Map<String, Value> = object.iter().filter(|(key, _)| !matches!(key.as_str(), "stopBy" | "field" | "regex")).map(|(k, v)| (k.clone(), v.clone())).collect();
-    // A named kind or a pattern never holds at a token.
-    let named_kind = rest.get("kind").and_then(Value::as_str).is_some_and(|kind| language.kinds().kind_ids(kind).iter().all(|&id| language.kind_is_named(id)));
-    if rest.is_empty() || named_kind || rest.contains_key("pattern") {
-        return Ok(None);
-    }
-    let mut bare = object.clone();
-    bare.retain(|key, _| matches!(key.as_str(), "stopBy" | "field" | "regex"));
-    let Some((place, _, _)) = token_reach(key, &Value::Object(bare), language) else { return Ok(None) };
-    let Ok(regex) = Regex::new(&format!("(?:{regex})")) else { return Ok(None) };
-    let rule = compile_ast_rule(&Value::Object(rest), language, &format!("{path}/tokens"), gaps, utils)?;
-    let mut test = token_test(vec![(place, regex)], kind.and_then(|kind| token_kinds(kind, language)));
-    if let AstMatcher::Semantic(crate::code_rule_dsl::matcher::Semantic::Tokens(test)) = &mut test {
-        test.rule = Some(Box::new(rule));
-    }
-    Ok(Some(test))
-}
-
-/// Where relation `key`'s walk reaches tokens, and the regex they are tested by; with whether the
-/// whole target is that regex (not one `any` alternative of it).
-fn token_reach(key: &str, relation: &Value, language: GrammarDialect) -> Option<(crate::code_rule_dsl::matcher::tokens::Place, Regex, bool)> {
-    use crate::code_rule_dsl::matcher::tokens::Place;
-    let object = relation.as_object()?;
-    // `stopBy: {not: {kind: comment}}` walks past comments to the nearest code: a neighbour.
-    let past_comments = object.get("stopBy") == Some(&serde_json::json!({ "not": { "kind": "comment" } }));
-    let end = match object.get("stopBy").and_then(Value::as_str) {
-        None if object.contains_key("stopBy") && !past_comments => return None,
-        None | Some("neighbor") => false,
-        Some("end") => true,
-        Some(_) => return None,
-    };
-    let field = object.get("field").and_then(Value::as_str);
-    let place = match (key, end, field) {
-        ("has", false, Some(field)) => Place::Field(field.to_owned()),
-        (_, _, Some(_)) => return None,
-        ("has", false, None) => Place::Own,
-        ("has", true, None) => Place::Below,
-        ("follows", false, None) if past_comments => Place::BeforeCode,
-        ("precedes", false, None) if past_comments => Place::AfterCode,
-        (_, false, None) if past_comments => return None,
-        ("follows", false, None) => Place::Before,
-        ("follows", true, None) => Place::Earlier,
-        ("precedes", false, None) => Place::After,
-        ("precedes", true, None) => Place::Later,
-        _ => return None,
-    };
-    // A bare regex, with at most a `$$X` capture (which also binds tokens): a test of text alone.
-    let bare = |rule: &Value| -> Option<String> {
-        // An `all` of parts with distinct keys reads as their one object.
-        let flat;
-        let rule = match rule.as_object()? {
-            object if object.len() == 1 && object.contains_key("all") => {
-                let mut merged = serde_json::Map::new();
-                for part in object["all"].as_array()? {
-                    for (key, value) in part.as_object()? {
-                        if merged.insert(key.clone(), value.clone()).is_some() {
-                            return None;
-                        }
-                    }
-                }
-                flat = merged;
-                &flat
-            }
-            object => object,
-        };
-        let capture = rule.get("pattern").and_then(Value::as_str).is_some_and(|p| p.starts_with("$$") && p[2..].chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'));
-        // `not` of named kinds holds at every token.
-        let named = |rule: &Value| rule.get("kind").and_then(Value::as_str).is_some_and(|kind| rule.as_object().is_some_and(|r| r.len() == 1) && language.kinds().kind_ids(kind).iter().all(|&id| language.kind_is_named(id)));
-        let not_named = rule.get("not").is_some_and(|not| named(not) || not.as_object().is_some_and(|o| o.len() == 1) && not.get("any").and_then(Value::as_array).is_some_and(|any| !any.is_empty() && any.iter().all(named)));
-        if rule.len() != usize::from(rule.contains_key("regex")) + usize::from(capture) + usize::from(not_named) || !(rule.contains_key("regex") || capture) {
-            return None;
-        }
-        Some(rule.get("regex").and_then(Value::as_str).map_or_else(|| "(?s:.)".to_owned(), |regex| format!("(?:{regex})")))
-    };
-    let target: serde_json::Map<String, Value> = object.iter().filter(|(key, _)| !matches!(key.as_str(), "stopBy" | "field")).map(|(k, v)| (k.clone(), v.clone())).collect();
-    let (regexes, whole): (Vec<String>, bool) = match bare(&Value::Object(target.clone())) {
-        Some(regex) => (vec![regex], true),
-        None if target.len() == 1 => (target.get("any")?.as_array()?.iter().filter_map(bare).collect(), false),
-        None => return None,
-    };
-    if regexes.is_empty() {
-        return None;
-    }
-    Some((place, Regex::new(&regexes.join("|")).ok()?, whole))
-}
-
-/// A `count` whose relation's target is a bare regex counted tokens with the named nodes: it
-/// counts the parts it reaches, by text (`TokenTest::counts`).
-fn counted_parts(key: &str, relation: &Value, min: usize, max: Option<usize>, kind: Option<&str>, language: GrammarDialect) -> Option<AstMatcher> {
-    use crate::code_rule_dsl::matcher::tokens::{PartCount, Place};
-    let (place, regex, whole) = token_reach(key, relation, language)?;
-    if !whole || !matches!(place, Place::Own | Place::Below | Place::Earlier | Place::Later) {
-        return None;
-    }
-    Some(AstMatcher::Semantic(crate::code_rule_dsl::matcher::Semantic::Tokens(Box::new(crate::code_rule_dsl::matcher::TokenTest {
-        tests: Vec::new(),
-        counts: vec![PartCount { place, regex, min, max }],
-        none: Vec::new(),
-        capture: None,
-        rule: None,
-        kinds: kind.and_then(|kind| token_kinds(kind, language)),
-    }))))
 }

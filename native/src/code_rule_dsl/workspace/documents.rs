@@ -531,7 +531,7 @@ pub(super) struct NodeReference {
     ordinal: u32,
 }
 
-const NODE_REFERENCE_FORMAT: &str = "rerail.node-reference/v2";
+const NODE_REFERENCE_FORMAT: &str = "rerail.node-reference/v3";
 
 fn hash_text(hash: HashKey) -> String {
     hash.sha256_bytes()

@@ -28,8 +28,6 @@ mod embedded;
 mod exported;
 mod format_args;
 mod layout;
-pub(in crate::code_rule_dsl) mod tokens;
-pub(in crate::code_rule_dsl) use tokens::TokenTest;
 // 06-first-slice S1: reached from the S1 gate only until the slice's wave (S4) calls it.
 #[cfg_attr(not(test), allow(dead_code))]
 mod lower;

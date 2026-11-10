@@ -1,349 +1,201 @@
-//! Named-only tapes (RER-131): `tokens::fold` and `unfold` round trips, sizes and costs.
+//! Named-only tapes (RER-131): which tokens the writer stores (`TokenGrammar::stored_children`).
 
-use super::tokens::{FoldStats, TokenGrammar, fold, grammar_json, unfold};
-use super::*;
-use std::path::PathBuf;
+use super::tokens::{TokenGrammar, grammar_json};
+use super::{Grammar, TapeDoc, TapeImage};
+use crate::code_rule_dsl::language::GrammarDialect;
+use ast_grep_core::AstGrep;
+use ast_grep_core::language::Language as _;
+use std::sync::Arc;
 
-fn dialect(label: &str) -> GrammarDialect {
-    match label {
-        "python" => GrammarDialect::Python,
-        "javascript" => GrammarDialect::JavaScript,
-        "typescript" => GrammarDialect::TypeScript,
-        "tsx" => GrammarDialect::Tsx,
-        "sql" => GrammarDialect::Sql,
-        "vue" => GrammarDialect::Vue,
-        "rust" => GrammarDialect::Rust,
-        "php" => GrammarDialect::Php,
-        other => panic!("unknown dialect {other}"),
-    }
-}
-
-/// This thread's CPU time, in seconds.
-fn cpu() -> f64 {
-    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) };
-    time.tv_sec as f64 + time.tv_nsec as f64 * 1e-9
-}
-
-/// The encoder's preorder nodes and memberships for `source`, as `encode_tree_image` builds them.
-fn tree_nodes(grammar: &Grammar, source: &str) -> Option<(Vec<Pending>, Vec<(u32, u16)>, bool)> {
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&grammar.lang.get_ts_language()).unwrap();
-    let parsed = crate::code_rule_dsl::language::adapter::parse_input(grammar.lang, source);
-    let tree = parser.parse(parsed.as_bytes(), None)?;
-    let language = grammar.kinds.grammar()?;
-    let (mut nodes, mut supertypes) = (Vec::new(), Vec::new());
-    encode_tree(&mut nodes, &mut supertypes, tree.root_node(), language, None, &|| false).ok()?;
-    Some((nodes, supertypes, tree.root_node().has_error()))
-}
-
-fn same(a: &Pending, b: &Pending) -> bool {
-    a.kf == b.kf && a.parent == b.parent && a.start == b.start && a.length == b.length && a.extra == b.extra && a.error == b.error && a.missing == b.missing && a.kind_alias == b.kind_alias
-}
-
-/// The first difference between two node lists, for a failure message.
-fn difference(a: &[Pending], b: &[Pending], language: &tree_sitter::Language, source: &str) -> Option<String> {
-    let describe = |n: &Pending| format!("{:?} f{} parent {:?} {}..{} {:?}", language.node_kind_for_id(n.kf & 1023), n.kf >> 10, n.parent, n.start, n.start + n.length, &source[n.start as usize..(n.start + n.length) as usize]);
-    if let Some(i) = (0..a.len().min(b.len())).find(|&i| !same(&a[i], &b[i])) {
-        return Some(format!("node {i}: tree {} / unfolded {}", describe(&a[i]), describe(&b[i])));
-    }
-    (a.len() != b.len()).then(|| format!("{} nodes / {} unfolded", a.len(), b.len()))
-}
-
-#[derive(Default)]
-struct Totals {
-    files: usize,
-    with_errors: usize,
-    failures: usize,
-    stats: FoldStats,
-    source: usize,
-    bytes: [usize; 2],
-    zstd: [usize; 2],
-    codes: [usize; 2],
-    rec_bytes: [usize; 2],
-    time_fold: f64,
-    time_unfold: f64,
-    time_pack: [f64; 2],
-    time_restore: [f64; 2],
-}
-
-/// Folds, packs, restores and unfolds each file of `files`; asserts every round trip.
-fn run(lang: GrammarDialect, files: &[PathBuf], verbose: bool) -> Totals {
+/// `source`'s tape, restored.
+fn tape(lang: GrammarDialect, source: &str) -> TapeDoc {
+    let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
     let grammar = Grammar::new(lang).unwrap();
-    let language = grammar.kinds.grammar().unwrap().clone();
-    let start = cpu();
-    let tokens = TokenGrammar::from_json(grammar_json(lang).expect("grammar.json"), &language).unwrap();
-    if verbose {
-        eprintln!("{lang:?}: {} kinds, built in {:.3}s CPU; unsupported {:?}", tokens.kind_count(), cpu() - start, tokens.unsupported);
-    }
-    let mut totals = Totals::default();
-    for path in files {
-        let Ok(source) = std::fs::read_to_string(path) else { continue };
-        let Some((nodes, supertypes, errors)) = tree_nodes(&grammar, &source) else { continue };
-        totals.files += 1;
-        totals.with_errors += usize::from(errors);
-        totals.source += source.len();
-        let t = cpu();
-        let (folded, classes, stats) = fold(&nodes, &supertypes, &tokens, &language, &source);
-        totals.time_fold += cpu() - t;
-        totals.stats.add(&stats);
-        let t = cpu();
-        let unfolded = unfold(&folded, &classes, &tokens, &language, &source);
-        totals.time_unfold += cpu() - t;
-        let ok = match &unfolded {
-            Ok((back, back_classes)) => {
-                let mut want = supertypes.clone();
-                want.sort_unstable();
-                let mut got = back_classes.clone();
-                got.sort_unstable();
-                match difference(&nodes, back, &language, &source) {
-                    None if want == got => true,
-                    None => {
-                        eprintln!("{}: memberships differ", path.display());
-                        false
-                    }
-                    Some(diff) => {
-                        eprintln!("{}: {diff}", path.display());
-                        false
-                    }
-                }
-            }
-            Err(error) => {
-                eprintln!("{}: unfold failed: {error}", path.display());
-                false
-            }
-        };
-        if !ok {
-            totals.failures += 1;
-            continue;
-        }
-        for (side, (list, classes)) in [(nodes, supertypes), (folded, classes)].into_iter().enumerate() {
-            let t = cpu();
-            let image = TapeImage::finish(list, classes, &grammar, &source, &|| false).unwrap();
-            totals.time_pack[side] += cpu() - t;
-            let bytes = if side == 1 {
-                // As v12 stores it.
-                let mut stored = image.clone();
-                stored.widths[0] |= NAMED_ONLY;
-                stored.to_bytes().unwrap()
-            } else {
-                image.to_bytes().unwrap()
-            };
-            // RERAIL_DUMP_TAPES=<dir>: each file's full (0) and named-only (1) image bytes, for
-            // compression studies; files are numbered in list order.
-            if let Some(dir) = std::env::var_os("RERAIL_DUMP_TAPES") {
-                let dir = PathBuf::from(dir).join(format!("{lang:?}").to_lowercase()).join(["full", "named"][side]);
-                std::fs::create_dir_all(&dir).unwrap();
-                std::fs::write(dir.join(format!("{:05}.tape", totals.files)), &bytes).unwrap();
-            }
-            totals.bytes[side] += bytes.len();
-            totals.zstd[side] += zstd::encode_all(&bytes[..], 3).unwrap().len();
-            totals.codes[side] += image.codes.len();
-            let source = Arc::new(source.clone());
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
-            let t = cpu();
-            let doc = TapeDoc::restore_tree(Arc::clone(&source), Arc::clone(&grammar), &image, lines, &|| false).unwrap();
-            totals.time_restore[side] += cpu() - t;
-            totals.rec_bytes[side] += doc.data.len() * std::mem::size_of::<Rec>() + doc.supertypes.len() * 8;
-        }
-    }
-    totals
+    let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
+    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
 }
 
-fn report(label: &str, t: &Totals) {
-    let s = &t.stats;
-    let pct = |a: usize| 100.0 * a as f64 / s.tokens.max(1) as f64;
-    eprintln!(
-        "{label}: {} files ({} with errors, {} round-trip failures), {:.1} MB source\n  \
-         nodes {} = named {} + tokens {} ({:.1}%); tokens implied {} ({:.1}%), kept: not default {} ({:.1}%), unrecoverable {} ({:.1}%), node flagged {} ({:.1}%) in {} nodes\n  \
-         kept nodes {} = {:.3}x; bytes {:.2} -> {:.2} MB ({:.3}x); zstd {:.2} -> {:.2} MB ({:.3}x); restored records {:.1} -> {:.1} MB ({:.3}x)\n  \
-         CPU s: fold {:.3} unfold {:.3}; pack {:.3} -> {:.3}; restore {:.3} -> {:.3}",
-        t.files, t.with_errors, t.failures, t.source as f64 / 1e6,
-        s.nodes, s.named, s.tokens, 100.0 * s.tokens as f64 / s.nodes.max(1) as f64,
-        s.implied, pct(s.implied), s.kept_not_default, pct(s.kept_not_default), s.kept_unrecoverable, pct(s.kept_unrecoverable), s.kept_flagged, pct(s.kept_flagged), s.flagged_nodes,
-        s.nodes - s.implied, (s.nodes - s.implied) as f64 / s.nodes.max(1) as f64,
-        t.bytes[0] as f64 / 1e6, t.bytes[1] as f64 / 1e6, t.bytes[1] as f64 / t.bytes[0].max(1) as f64,
-        t.zstd[0] as f64 / 1e6, t.zstd[1] as f64 / 1e6, t.zstd[1] as f64 / t.zstd[0].max(1) as f64,
-        t.rec_bytes[0] as f64 / 1e6, t.rec_bytes[1] as f64 / 1e6, t.rec_bytes[1] as f64 / t.rec_bytes[0].max(1) as f64,
-        t.time_fold, t.time_unfold, t.time_pack[0], t.time_pack[1], t.time_restore[0], t.time_restore[1],
-    );
-    let mut flagged: Vec<_> = s.flagged_kinds.iter().collect();
-    flagged.sort_by(|a, b| b.1.cmp(a.1));
-    eprintln!("  flagged kinds: {:?}", flagged.iter().take(12).collect::<Vec<_>>());
-    let mut gaps: Vec<_> = s.not_default.iter().collect();
-    gaps.sort_by(|a, b| b.1.cmp(a.1));
-    eprintln!("  kept, not default: {:?}", gaps.iter().take(25).collect::<Vec<_>>());
+/// The texts of the tape's anonymous nodes, in preorder.
+fn stored_tokens(lang: GrammarDialect, source: &str) -> Vec<String> {
+    let doc = AstGrep::doc(tape(lang, source));
+    doc.root().dfs().filter(|node| !node.is_named()).map(|node| node.text().into_owned()).collect()
 }
 
-fn snippet(lang: GrammarDialect, name: &str, source: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("rerail-named-only-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(format!("{name}.{lang:?}"));
-    std::fs::write(&path, source).unwrap();
-    path
+/// The texts of tree-sitter's anonymous nodes, in preorder.
+fn tree_tokens(lang: GrammarDialect, source: &str) -> Vec<String> {
+    let doc = AstGrep::doc(ast_grep_core::tree_sitter::StrDoc::new(source, lang));
+    doc.root().dfs().filter(|node| !node.is_named()).map(|node| node.text().into_owned()).collect()
 }
 
 #[test]
-fn named_only_tapes_round_trip_on_samples() {
-    let samples = [
-        (GrammarDialect::Python, "async def f(a, b=1, *c, **d) -> int:\n    return (a + b) if a is not b else [x for x in c if x not in d]\n\nfrom .m import (x, y,)\nt = (1,)\nimport a.b as c\nclass C(B, metaclass=M):\n    x: int = 3  # note\n    def g(self): ...\n"),
-        (GrammarDialect::TypeScript, "export const f = async <T,>(a: T, b?: number): Promise<void> => { let x = [1,,2]; for (const k of a as any) { if (k?.y ?? 0) continue; } };\ninterface I { a: string; b(): void, }\nclass K { static readonly z = 1; get y() { return 1 } }\n"),
-        (GrammarDialect::JavaScript, "const a = [1,,3]\nfunction f(x, y,) { return x ? y : `t${x}` }\nlet o = {a, b: 2, ...c,};\n"),
-        (GrammarDialect::Rust, "pub fn f<'a, T: Clone>(x: &'a [T]) -> Option<&'a T> { let b = b\"x\"; if let Some(y) = x.first() { return Some(y); } macro_rules! m { ($a:expr) => { $a + 1 }; } None }\n"),
-        (GrammarDialect::Php, "<?php\nnamespace A;\nFUNCTION f($a, $b = [1, 2,]) { return $a ?? $b; }\nclass C extends D implements E { public function g(): ?int { return null; } }\n"),
-        (GrammarDialect::Sql, "SELECT a, b AS c FROM t WHERE x IN (1, 2) AND y IS NOT NULL ORDER BY a DESC;\nCREATE TABLE t (a int[] NOT NULL, b text);\n"),
-    ];
-    for (lang, source) in samples {
-        let path = snippet(lang, "sample", source);
-        let totals = run(lang, &[path], false);
-        report(&format!("{lang:?}"), &totals);
-        assert_eq!(totals.failures, 0, "{lang:?}: a round trip failed");
-        assert!(totals.stats.implied > 0, "{lang:?}: nothing implied");
+fn every_grammar_builds() {
+    for lang in [
+        GrammarDialect::Python,
+        GrammarDialect::JavaScript,
+        GrammarDialect::TypeScript,
+        GrammarDialect::Tsx,
+        GrammarDialect::Sql,
+        GrammarDialect::Vue,
+        GrammarDialect::Rust,
+        GrammarDialect::Php,
+    ] {
+        let language = Grammar::new(lang).unwrap().kinds.grammar().unwrap().clone();
+        let grammar = TokenGrammar::from_json(grammar_json(lang).unwrap(), &language).unwrap();
+        assert!(grammar.kind_count() > 20, "{lang:?}");
     }
 }
 
-/// `RERAIL_NAMED_ONLY='<dialect>=<list file>[:step];...'`: each list file names one source path
-/// per line, every `step`-th read. One report per dialect.
+/// An implied token is never a record; a token that says more than its kind and named children
+/// is stored as tree-sitter has it.
 #[test]
-#[ignore = "corpus measurement: RERAIL_NAMED_ONLY='python=list.txt:5;...', --ignored --nocapture"]
-fn named_only_tapes_on_corpora() {
-    let spec = std::env::var("RERAIL_NAMED_ONLY").expect("RERAIL_NAMED_ONLY");
-    let mut failures = 0;
-    for entry in spec.split(';').filter(|e| !e.trim().is_empty()) {
-        let (label, list) = entry.split_once('=').expect("<dialect>=<list>");
-        let (list, step) = list.split_once(':').map_or((list, 1), |(l, s)| (l, s.parse().unwrap()));
-        let files: Vec<PathBuf> = std::fs::read_to_string(list).unwrap().lines().enumerate().filter(|(i, _)| i % step == 0).map(|(_, l)| PathBuf::from(l)).collect();
-        let totals = run(dialect(label.trim()), &files, true);
-        report(label.trim(), &totals);
-        failures += totals.failures;
-    }
-    assert_eq!(failures, 0, "round trips failed");
+fn the_tape_stores_the_tokens_the_grammar_does_not_imply() {
+    let py = GrammarDialect::Python;
+    // A call's punctuation and a statement's keyword: implied.
+    assert_eq!(stored_tokens(py, "f(a, b)\n"), Vec::<String>::new());
+    assert_eq!(stored_tokens(py, "def f():\n    return 1\n"), Vec::<String>::new());
+    // A trailing comma: the call's shortest end is `)` alone, so both are stored.
+    assert_eq!(stored_tokens(py, "f(a, b,)\n"), [",", ")"]);
+    // An operator: as short as every other.
+    assert_eq!(stored_tokens(py, "a + b\n"), ["+"]);
+    assert_eq!(stored_tokens(py, "a < b\n"), ["<"]);
+    // `async`: optional.
+    assert_eq!(stored_tokens(py, "async def f():\n    pass\n"), ["async", "def"]);
+    // `else` and `except` follow from their clauses' kinds.
+    assert_eq!(stored_tokens(py, "if a:\n    b\nelse:\n    c\n"), Vec::<String>::new());
+    assert_eq!(stored_tokens(py, "try:\n    a\nexcept:\n    b\n"), Vec::<String>::new());
+    let js = GrammarDialect::JavaScript;
+    // An array's separators are implied; a hole is not.
+    assert_eq!(stored_tokens(js, "x = [1, 2];\n").iter().filter(|t| *t == ",").count(), 0);
+    assert!(stored_tokens(js, "x = [1,, 2];\n").iter().filter(|t| *t == ",").count() >= 2);
 }
 
-/// The Rust and PHP grammars the automata are built from are the crates' own, byte for byte:
-/// a crate upgrade without refreshing `grammars/token-grammars` fails here (where the crate's
-/// sources are on disk).
+/// What the tape stores is tree-sitter's tokens in order, implied ones left out.
 #[test]
-fn token_grammars_match_the_parser_crates() {
-    let home = std::env::var("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap()).join(".cargo"));
-    let Ok(registries) = std::fs::read_dir(home.join("registry/src")) else { return };
-    let registries: Vec<PathBuf> = registries.filter_map(|entry| Some(entry.ok()?.path())).collect();
-    let cargo = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../Cargo.lock")).unwrap();
-    for (lang, krate, inner) in [(GrammarDialect::Rust, "tree-sitter-rust", "src"), (GrammarDialect::Php, "tree-sitter-php", "php/src")] {
-        let version = cargo.split("[[package]]").find_map(|package| {
-            package.contains(&format!("name = \"{krate}\"")).then(|| package.lines().find_map(|line| line.strip_prefix("version = \"")?.strip_suffix('"').map(str::to_owned)))?
-        });
-        let Some(version) = version else { continue };
-        let Some(path) = registries.iter().map(|registry| registry.join(format!("{krate}-{version}")).join(inner).join("grammar.json")).find(|path| path.exists()) else { continue };
-        assert_eq!(grammar_json(lang).unwrap(), std::fs::read_to_string(&path).unwrap(), "{krate} {version}: refresh grammars/token-grammars");
-    }
-}
-
-/// What the node API answers for every node of `root`'s tree, in dfs order: the token view's
-/// parity check (RER-131 option B). Field lookups are checked on every `field_stride`-th node.
-fn node_answers<D: ast_grep_core::Doc>(root: ast_grep_core::Node<'_, D>, fields: &[&str], field_stride: usize) -> Vec<String> {
-    let at = |node: &ast_grep_core::Node<'_, D>| format!("{}@{:?}", node.kind(), node.range());
-    root.dfs()
-        .enumerate()
-        .map(|(i, node)| {
-            let children: Vec<_> = node.children().map(|c| at(&c)).collect();
-            let mut line = format!(
-                "{} n{} x{} e{} m{} {:?} next {:?} prev {:?}",
-                at(&node),
-                u8::from(node.is_named()),
-                u8::from(node.get_inner_node().is_extra()),
-                u8::from(node.is_error()),
-                u8::from(node.get_inner_node().is_missing()),
-                children,
-                node.next().map(|n| at(&n)),
-                node.prev().map(|n| at(&n)),
-            );
-            if i % field_stride == 0 {
-                line.push_str(&format!(" all {}+{}", node.next_all().count(), node.prev_all().count()));
-                for name in fields {
-                    if let Some(child) = node.field(name) {
-                        line.push_str(&format!(" {name}={}", at(&child)));
-                    }
-                }
-            }
-            line
-        })
-        .collect()
-}
-
-/// The first answer that differs between tree-sitter's tree as records (every node a record,
-/// `every_node_for_test`) and the named-only document, if any; `None` where the source does not encode
-/// named-only. (The full document is checked against tree-sitter's tree elsewhere; it differs in
-/// one way on purpose: tree-sitter also finds a hidden child's fields on its parent.)
-fn view_difference(lang: GrammarDialect, source: &str, field_stride: usize) -> Option<String> {
-    use ast_grep_core::AstGrep;
-    use ast_grep_core::tree_sitter::StrDoc;
-    let native = StrDoc::new(source, lang);
-    let grammar = Grammar::new(lang).unwrap();
-    let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).ok()?;
-    if !image.primary.is_named_only() {
-        return None;
-    }
-    let language = grammar.kinds.grammar().unwrap().clone();
-    let fields: Vec<&str> = (1..=language.field_count() as u16).filter_map(|id| language.field_name_for_id(id)).collect();
-    let source = Arc::new(source.to_owned());
-    let every = TapeImage::every_node_for_test(native.tree.root_node(), &grammar, &source).unwrap();
-    let full = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &every, &|| false).unwrap();
-    let tape = TapeDoc::restore(source, grammar, &image.primary, &|| false).unwrap();
-    assert!(tape.is_named_only_in_memory() && !full.is_named_only_in_memory());
-    drop(native);
-    let (native, tape) = (AstGrep::doc(full), AstGrep::doc(tape));
-    let (want, got) = (node_answers(native.root(), &fields, field_stride), node_answers(tape.root(), &fields, field_stride));
-    let at = (0..want.len().min(got.len())).find(|&i| want[i] != got[i]);
-    match at {
-        Some(i) => Some(format!("node {i}:\n  full        {}\n  named-only  {}", want[i], got[i])),
-        None => (want.len() != got.len()).then(|| format!("{} nodes / {} named-only", want.len(), got.len())),
-    }
-}
-
-/// The named-only document's node API (records plus recognized tokens) answers as tree-sitter's
-/// tree does.
-#[test]
-fn the_token_view_answers_as_tree_sitter_does() {
+fn stored_tokens_are_tree_sitters_in_order() {
     for (lang, source) in [
-        (GrammarDialect::Python, "async def f(a, b=1):  # c\n    return a if a is not b else [x for x in b if x not in a]\n"),
-        (GrammarDialect::TypeScript, "const f = async (a, b?) => { let x = [1,,2]; return a?.b ?? 0; };\nfor (let i = 0; i < 3; i++) {}\n"),
-        (GrammarDialect::JavaScript, "export default function* g(a = 1, ...r) { yield* r; if (a) return; else { a += 2 } }\n"),
+        (GrammarDialect::Python, "async def f(a, b=1):  # c\n    return a if a is not b else [x for x in b]\nimport os, sys\nfrom . import (x, y,)\n"),
+        (GrammarDialect::JavaScript, "const f = async (a, b) => { let x = [1,,2]; return a?.b ?? 0; };\nfor (const k of o) if (!k) break;\n"),
+        (GrammarDialect::TypeScript, "const f = async (a, b?) => { let x = [1,,2]; return a?.b ?? 0; };\ninterface I { readonly a: string; }\n"),
         (GrammarDialect::Rust, "fn f(x: &[u8]) -> Option<u8> { if let Some(y) = x.first() { return Some(*y + 1); } None }\n"),
         (GrammarDialect::Php, "<?php\nFUNCTION f($a, $b = [1, 2,]) { return $a ?? $b; }\n"),
-        (GrammarDialect::Sql, "SELECT a, `b` FROM t WHERE a = 1 AND b IN (1, 2) ORDER BY a DESC;\n"),
+        (GrammarDialect::Sql, "SELECT a, b FROM t WHERE a = 1 AND b IN (1, 2);\n"),
     ] {
-        assert_eq!(view_difference(lang, source, 1), None, "{lang:?}");
+        let (stored, tree) = (stored_tokens(lang, source), tree_tokens(lang, source));
+        assert!(stored.len() < tree.len(), "{lang:?}: {stored:?}");
+        let mut rest = tree.iter();
+        for token in &stored {
+            assert!(rest.any(|t| t == token), "{lang:?}: {token} out of order in {stored:?}");
+        }
     }
 }
 
-/// RERAIL_VIEW_PARITY="<dialect>=<list>[:<step>];...": the token view's parity check on corpora.
+/// RER-131 census (ignored): per language, tree-sitter's nodes and tokens, and how many the tape
+/// stores. `RERAIL_TOKEN_CENSUS=<dialect>=<file list>[:<max>];...`.
 #[test]
-#[ignore = "corpus run: set RERAIL_VIEW_PARITY"]
-fn the_token_view_answers_as_tree_sitter_does_on_corpora() {
-    let spec = std::env::var("RERAIL_VIEW_PARITY").expect("RERAIL_VIEW_PARITY");
-    let mut failures = Vec::new();
-    for entry in spec.split(';').filter(|e| !e.trim().is_empty()) {
+#[ignore = "corpora: RERAIL_TOKEN_CENSUS"]
+fn token_census() {
+    let spec = std::env::var("RERAIL_TOKEN_CENSUS").expect("RERAIL_TOKEN_CENSUS");
+    for entry in spec.split(';').filter(|entry| !entry.trim().is_empty()) {
         let (label, list) = entry.split_once('=').expect("<dialect>=<list>");
-        let (list, step) = list.split_once(':').map_or((list, 1), |(l, s)| (l, s.parse().unwrap()));
-        let lang = dialect(label.trim());
-        let (mut files, mut checked) = (0, 0);
-        for (i, path) in std::fs::read_to_string(list).unwrap().lines().enumerate() {
-            if i % step != 0 {
-                continue;
-            }
+        let (list, most) = list.split_once(':').map_or((list, usize::MAX), |(list, most)| (list, most.parse().expect("a count")));
+        let lang = match label.trim() {
+            "python" => GrammarDialect::Python,
+            "javascript" => GrammarDialect::JavaScript,
+            "typescript" => GrammarDialect::TypeScript,
+            "tsx" => GrammarDialect::Tsx,
+            "rust" => GrammarDialect::Rust,
+            "php" => GrammarDialect::Php,
+            "sql" => GrammarDialect::Sql,
+            other => panic!("unknown dialect {other}"),
+        };
+        let (mut files, mut nodes, mut tokens, mut records, mut kept) = (0usize, 0usize, 0usize, 0usize, 0usize);
+        let mut by_text = std::collections::BTreeMap::<String, usize>::new();
+        for path in std::fs::read_to_string(list).expect("a file list").lines().take(most) {
             let Ok(source) = std::fs::read_to_string(path) else { continue };
+            let native = AstGrep::doc(ast_grep_core::tree_sitter::StrDoc::new(&source, lang));
+            nodes += native.root().dfs().count();
+            tokens += native.root().dfs().filter(|n| !n.is_named()).count();
+            let doc = AstGrep::doc(tape(lang, &source));
+            records += doc.root().dfs().count();
+            for node in doc.root().dfs().filter(|n| !n.is_named()) {
+                kept += 1;
+                *by_text.entry(node.text().into_owned()).or_default() += 1;
+            }
             files += 1;
-            if let Some(difference) = view_difference(lang, &source, 7) {
-                failures.push(format!("{path}: {difference}"));
-            } else {
-                checked += 1;
+        }
+        let mut top: Vec<_> = by_text.into_iter().collect();
+        top.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+        eprintln!(
+            "{label}: {files} files, {nodes} nodes ({tokens} tokens) -> {records} records ({:.3}x), {kept} tokens stored ({:.1}% of tokens); top {:?}",
+            records as f64 / nodes.max(1) as f64,
+            100.0 * kept as f64 / tokens.max(1) as f64,
+            &top[..top.len().min(16)]
+        );
+    }
+}
+
+/// Every pack rule's patterns: a token the filter keeps only because the pattern's tree has an
+/// error (`TokenGrammar::stored_children` keeps all under one), which a document's tape may not
+/// store. Lists each such pattern.
+#[test]
+fn pack_patterns_keep_no_token_under_an_error() {
+    use ast_grep_core::matcher::PatternNode;
+    use crate::code_rule_dsl::language::{PatternSource, dialect_by_label, rule_pattern};
+    fn tokens_under_error(node: &PatternNode, under: bool) -> bool {
+        match node {
+            PatternNode::Terminal { is_named, .. } => under && !is_named,
+            PatternNode::MetaVar { .. } => false,
+            PatternNode::Internal { kind_id, children } => {
+                let under = under || *kind_id == u16::MAX;
+                children.iter().any(|child| tokens_under_error(child, under))
             }
         }
-        eprintln!("{label}: {checked} of {files} files answer alike");
     }
-    for failure in failures.iter().take(20) {
-        eprintln!("{failure}");
+    fn walk(value: &serde_json::Value, lang: Option<GrammarDialect>, found: &mut Vec<(GrammarDialect, String)>) {
+        let lang = value.get("language").and_then(|l| l.as_str()).and_then(dialect_by_label).or(lang);
+        match value {
+            serde_json::Value::Object(map) => {
+                if let (Some(lang), Some(pattern)) = (lang, map.get("pattern")) {
+                    match pattern {
+                        serde_json::Value::String(text) => found.push((lang, text.clone())),
+                        serde_json::Value::Object(p) => {
+                            if let (Some(c), Some(s)) = (p.get("context").and_then(|v| v.as_str()), p.get("selector").and_then(|v| v.as_str())) {
+                                found.push((lang, format!("{c}\u{0}{s}")));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                map.values().for_each(|v| walk(v, lang, found));
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|v| walk(v, lang, found)),
+            _ => {}
+        }
     }
-    assert!(failures.is_empty(), "{} files differ", failures.len());
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
+    let mut found = Vec::new();
+    for pack in std::fs::read_dir(&root).unwrap() {
+        let Ok(rules) = std::fs::read_dir(pack.unwrap().path().join("rules")) else { continue };
+        for rule in rules {
+            let path = rule.unwrap().path();
+            if path.extension().is_some_and(|e| e == "json") {
+                walk(&serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap(), None, &mut found);
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    let mut bad = Vec::new();
+    for (lang, text) in &found {
+        let source = match text.split_once('\u{0}') {
+            Some((context, selector)) => PatternSource::Contextual { context, selector },
+            None => PatternSource::Plain(text),
+        };
+        let Ok(pattern) = rule_pattern(source, *lang) else { continue };
+        if tokens_under_error(&pattern.node, false) {
+            bad.push(format!("{lang:?}: {text:?}"));
+        }
+    }
+    eprintln!("{} patterns; {} keep a token under an error", found.len(), bad.len());
+    assert!(bad.is_empty(), "{bad:#?}");
 }

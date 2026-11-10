@@ -521,9 +521,6 @@ fn the_backends_find_the_same_keys_on_real_files() {
         let run = audit(&store, WS, root, &mut rules).inspect_err(|_| crate::code_rule_dsl::prof::report(name)).unwrap();
         let (found, covered) = (keys(&run), coverage(&run));
         eprintln!("phase 4 {name}: {} files, {} clauses, {} keys, cpu {:?}", run.paths.len(), rules.clauses(), found.len(), cpu() - start);
-        if std::env::var_os("RERAIL_PROF").is_some() {
-            crate::code_rule_dsl::prof::report(name);
-        }
         match &reference {
             None => {
                 if let Ok(path) = std::env::var("RERAIL_DUMP_KEYS") {

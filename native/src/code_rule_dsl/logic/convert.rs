@@ -247,15 +247,7 @@ impl Emitter {
             }
             AstMatcher::Any(ms) => {
                 let mark = self.next;
-                // A token alternative holds at no token here (`no_token`): the others are the `any`.
-                let mut kept = Vec::with_capacity(ms.len());
-                for t in ms {
-                    match t {
-                        AstMatcher::Semantic(Semantic::Tokens(test)) if token_alternative(test) && ms.len() > 1 => self.no_token(test)?,
-                        _ => kept.push(t),
-                    }
-                }
-                let bodies = kept.into_iter().map(|t| self.at_node(n, "$n", |e| e.scoped(|e| e.body(t, "$n")))).collect::<Res<Vec<_>>>()?;
+                let bodies = ms.iter().map(|t| self.at_node(n, "$n", |e| e.scoped(|e| e.body(t, "$n")))).collect::<Res<Vec<_>>>()?;
                 if bodies.iter().any(Vec::is_empty) {
                     return Ok(Vec::new());
                 }
@@ -322,22 +314,6 @@ impl Emitter {
                 body.extend(self.condition(condition, &p)?);
                 body
             }
-            // A neighbour's "no token beside it" (`TokenTest::none`, RER-131): siblings are read among
-            // named children already, which is that approximation.
-            AstMatcher::Semantic(Semantic::Tokens(test))
-                if test.tests.is_empty() && test.counts.is_empty() && test.rule.is_none() && test.capture.is_none() && !test.none.is_empty() =>
-            {
-                self.approx.insert("siblings among named children".into());
-                Vec::new()
-            }
-            // A token test (RER-131: a relation to a regex reaches tokens through one, `any: [named,
-            // tokens]`). As before tokens left the records, a regex is read on names, the only text
-            // the relations hold: one that names an operator or keyword is a gap, any other holds
-            // at no token, and the named alternative is the relation.
-            AstMatcher::Semantic(Semantic::Tokens(test)) if token_alternative(test) => {
-                self.no_token(test)?;
-                self.never(n)
-            }
             AstMatcher::Semantic(other) => return gap(format!("semantic {}", semantic_name(other))),
             AstMatcher::Call(_) => return gap("utility call"),
             AstMatcher::Compare(_) => return gap("compare"),
@@ -346,22 +322,6 @@ impl Emitter {
             #[cfg(test)]
             AstMatcher::TestUnknown(_) => return gap("three-valued"),
         })
-    }
-
-    /// A token test read as before tokens left the records (RER-131): a regex is read on names, the
-    /// only text the relations hold, so one that names an operator or keyword is a gap, and any
-    /// other holds at no token.
-    fn no_token(&mut self, test: &crate::code_rule_dsl::matcher::TokenTest) -> Res<()> {
-        for (_, regex) in &test.tests {
-            let hir = regex_syntax::ParserBuilder::new().build().parse(regex.as_str()).map_err(|e| Gap(format!("regex {}: {e}", regex.as_str())))?;
-            if let Some(Shape::Names(set)) = shape(&hir)
-                && set.iter().any(|w| !w.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') || KEYWORDS.contains(&w.as_str()))
-            {
-                return gap("a regex on an anonymous token");
-            }
-        }
-        self.approx.insert("a regex on a node of any kind as a name".into());
-        Ok(())
     }
 
     fn never(&mut self, n: &str) -> Body {
@@ -1212,12 +1172,6 @@ fn kinds(m: &AstMatcher, depth: usize) -> Option<BTreeSet<u16>> {
     }
 }
 
-/// A token test a relation to a regex reaches tokens through (`any: [named, tokens]`, RER-131),
-/// with a regex tested at each token, and nothing bound or counted.
-fn token_alternative(test: &crate::code_rule_dsl::matcher::TokenTest) -> bool {
-    test.capture.is_none() && test.counts.is_empty() && test.none.is_empty() && !test.tests.is_empty()
-}
-
 /// A semantic predicate's name, for the gaps.
 fn semantic_name(s: &Semantic) -> &'static str {
     match s {
@@ -1232,7 +1186,6 @@ fn semantic_name(s: &Semantic) -> &'static str {
         Semantic::Capture(_) => "capture",
         Semantic::FormatArgs(_) => "formatArgs",
         Semantic::Layout(_) => "layout",
-        Semantic::Tokens(_) => "tokens",
         Semantic::FilePath(_) => "file path",
         Semantic::Calls(_) => "calls",
         Semantic::ImportTarget(_) => "importTarget",

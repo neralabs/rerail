@@ -1455,6 +1455,12 @@ impl PackedPattern {
         matches!(self, Self::Terminal { named: false, .. })
     }
 
+    /// The end-of-children goal (`PatternNode::children_end`, RER-131): it matches no node, so a
+    /// token or a comment is skipped and a named node refused, and it holds where the candidates end.
+    fn is_children_end(&self) -> bool {
+        matches!(self, Self::Terminal { kind, .. } if *kind == ast_grep_core::matcher::kind_utils::CHILDREN_END)
+    }
+
     fn exact(tape: &TapeDoc, left: u32, right: u32) -> bool {
         if left == right {
             return true;
@@ -1487,11 +1493,9 @@ impl PackedPattern {
     fn bind_multi(
         bindings: &mut PatternBindings,
         name: &str,
-        mut nodes: Vec<u32>,
+        nodes: Vec<u32>,
         tape: &TapeDoc,
     ) -> bool {
-        // A recognized token is no node a binding can hold (`TapeDoc::pattern_children`).
-        nodes.retain(|node| node & crate::code_rule_dsl::tape::RECOGNIZED_TOKEN == 0);
         match bindings.values.get(name) {
             Some(bound) => {
                 let bound = bound
@@ -1525,19 +1529,6 @@ impl PackedPattern {
         bindings: &mut PatternBindings,
         root: bool,
     ) -> PatternVerdict {
-        use crate::code_rule_dsl::tape::RECOGNIZED_TOKEN;
-        // A token a named-only document recognizes (`TapeDoc::pattern_children`): it has a kind,
-        // and is neither named nor extra; a `$$X` matches it but binds nothing.
-        if node & RECOGNIZED_TOKEN != 0 {
-            let token = (node & 0xffff) as u16;
-            return match self {
-                Self::Terminal { named: false, kind, .. } if ast_grep_core::matcher::kind_utils::are_kinds_matching(*kind, token) => PatternVerdict::Matched,
-                Self::Terminal { .. } => PatternVerdict::SkipCandidate,
-                Self::Single { named: false, .. } => PatternVerdict::Matched,
-                Self::Single { .. } | Self::Internal { .. } => PatternVerdict::NoMatch,
-                Self::Ellipsis(_) => PatternVerdict::SkipGoal,
-            };
-        }
         match self {
             Self::Terminal { text, named, kind } => {
                 if ast_grep_core::matcher::kind_utils::are_kinds_matching(
@@ -1588,7 +1579,7 @@ impl PackedPattern {
                 ) {
                     return PatternVerdict::NoMatch;
                 }
-                let candidates = tape.pattern_children(node);
+                let candidates = tape.transducer_children(node).collect::<Vec<_>>();
                 if Self::children(children, &candidates, tape, bindings) {
                     PatternVerdict::Matched
                 } else {
@@ -1605,7 +1596,11 @@ impl PackedPattern {
         bindings: &mut PatternBindings,
     ) -> bool {
         if candidates.is_empty() {
-            return false;
+            // A node with no children (its tokens all implied, RER-131): ellipses bind nothing.
+            return goals.iter().all(|goal| match goal {
+                Self::Ellipsis(name) => name.as_ref().is_none_or(|name| Self::bind_multi(bindings, name, Vec::new(), tape)),
+                goal => goal.is_children_end(),
+            });
         }
         let (mut goal, mut candidate) = (0_usize, 0_usize);
         while goal < goals.len() {
@@ -1670,7 +1665,7 @@ impl PackedPattern {
                 let Some(&node) = candidates.get(candidate) else {
                     return goals[goal..]
                         .iter()
-                        .all(|goal| matches!(goal, Self::Ellipsis(_)));
+                        .all(|goal| matches!(goal, Self::Ellipsis(_)) || goal.is_children_end());
                 };
                 match goals[goal].one(node, tape, bindings, false) {
                     PatternVerdict::Matched => break,
@@ -4610,7 +4605,7 @@ pub(super) fn execute_production_corpus_pages(
     }
 }
 
-pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 4;
+pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 5;
 const VALUE_INDEX_LIMIT: usize = 96;
 
 pub(in crate::code_rule_dsl) fn execute_many(
@@ -4715,8 +4710,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(",")
         );
-        // Mode 0 edges reach the `(` and `)` tokens: a tape that keeps them as records.
-        let file = TapeDoc::every_node_for_test(SupportLang::Python, &source);
+        let file = tape(&source);
         let arguments = SupportLang::Python
             .get_ts_language()
             .id_for_node_kind("argument_list", true);

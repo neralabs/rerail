@@ -35,12 +35,10 @@ fn roots<'f>(
 ) -> Box<dyn Iterator<Item = u32> + 'f> {
     let tape = file.root().get_doc();
     let kinds = matcher.anchors.root_kinds().cloned();
-    // A rule's roots are named nodes (RER-131): tokens are read by `tokens` and patterns.
     let of_kind = move |node: &u32| {
-        tape.transducer_is_named(*node)
-            && kinds
-                .as_ref()
-                .is_none_or(|kinds| kinds.contains(&tape.transducer_kind(*node)))
+        kinds
+            .as_ref()
+            .is_none_or(|kinds| kinds.contains(&tape.transducer_kind(*node)))
     };
     match (node, selected, matcher.anchors.root_kinds()) {
         (Some(node), _, _) => Box::new(
@@ -49,8 +47,8 @@ fn roots<'f>(
                 .filter(of_kind),
         ),
         (None, Some(selected), _) => Box::new(selected.iter().copied().filter(of_kind)),
-        (None, None, Some(kinds)) => Box::new(super::memo::nodes_of_kinds(file, kinds).into_iter().filter(move |&node| tape.transducer_is_named(node))),
-        (None, None, None) => Box::new((0..tape.transducer_len() as u32).filter(move |&node| tape.transducer_is_named(node))),
+        (None, None, Some(kinds)) => Box::new(super::memo::nodes_of_kinds(file, kinds).into_iter()),
+        (None, None, None) => Box::new(0..tape.transducer_len() as u32),
     }
 }
 

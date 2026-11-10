@@ -222,15 +222,13 @@ fn a_union_with_a_superset_of_every_branch_is_that_superset() {
 }
 
 /// The preorders the matcher accepts on `doc`, by a full walk.
-/// The records `matcher` matches, by preorder record index (rows' node ids; roots are named
-/// nodes, so a recognized token is never one).
 fn matches(doc: &TapeDoc, matcher: &AstMatcher) -> Vec<u32> {
     let root = AstGrep::doc(doc.clone());
     root.root()
         .dfs()
-        .filter(|node| !node.get_inner_node().is_token())
-        .filter(|node| matcher.match_node(node.clone()).is_some())
-        .map(|node| node.node_id() as u32)
+        .enumerate()
+        .filter(|(_, node)| matcher.match_node(node.clone()).is_some())
+        .map(|(pre, _)| pre as u32)
         .collect()
 }
 
@@ -364,10 +362,8 @@ fn the_sql_fallback_relates_on_the_tape_exactly() {
                 assert_eq!(candidates, matched, "{rule} reported exact on tape {file}");
             }
         }
-        // Every rule but the pattern (its parent hops stay a superset) and the neighbours is
-        // exact: a neighbour is also no token beside the node (RER-131), tested after the rows.
-        let neighbour = ["precedes", "follows"].iter().any(|key| rule[key].is_object() && rule[key].get("stopBy").is_none());
-        assert_eq!(*exact, number != rules.len() - 1 && !neighbour, "{rule}");
+        // Every rule but the pattern (its parent hops stay a superset) is exact.
+        assert_eq!(*exact, number != rules.len() - 1, "{rule}");
     }
     // Each relation finds something in the sample, so the equalities above are not vacuous.
     for ((rows, _), rule) in selected.iter().zip(&rules) {
@@ -393,8 +389,7 @@ fn regex_vocabulary_fills_once_follows_new_terms_and_dies_with_its_terms() {
     assert_eq!(count("SELECT count(*) FROM vocabulary_pending"), 0);
     // A new tape's new terms are pending until the next statement matches them.
     let second = put(&store, "let tarp = gamma;", lang);
-    // `let` is a keyword the records leave out (RER-131): no term.
-    assert_eq!(count("SELECT count(*) FROM vocabulary_pending WHERE term IN (SELECT atom FROM atoms WHERE value IN ('tarp','gamma','let'))"), 2);
+    assert_eq!(count("SELECT count(*) FROM vocabulary_pending WHERE term IN (SELECT atom FROM atoms WHERE value IN ('tarp','gamma','let'))"), 3);
     let tapes = [first, second];
     let selected = select_each(&store, lang, &tapes, &rules);
     for per_tape in &selected {

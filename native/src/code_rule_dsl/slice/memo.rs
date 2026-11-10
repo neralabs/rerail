@@ -16,7 +16,7 @@ use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult
 use sha2::{Digest as _, Sha256};
 
 /// The memo's fact schema: bumped when the rows' meaning changes.
-const SCHEMA: u32 = 2;
+const SCHEMA: u32 = 3;
 
 /// One document's wave rows without its key: matches (clause, node) and spans (node, start, end).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

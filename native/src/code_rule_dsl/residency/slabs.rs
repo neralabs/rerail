@@ -60,7 +60,7 @@ pub(in crate::code_rule_dsl) struct DocView {
     pub(in crate::code_rule_dsl) nodes: u32,
     pub(in crate::code_rule_dsl) node_base: u32,
     /// `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails measured
-    /// from the node's own start; bit 13: a named-only image (`DOC_NAMED_ONLY`, RER-131).
+    /// from the node's own start.
     pub(in crate::code_rule_dsl) widths: u32,
     pub(in crate::code_rule_dsl) code: u32,
     pub(in crate::code_rule_dsl) size: u32,
@@ -640,7 +640,7 @@ fn place(
         by_code[fill[usize::from(code)] as usize] = node as u32;
         fill[usize::from(code)] += 1;
     }
-    let widths = u32::from(layout.widths[0]) | u32::from(layout.widths[1]) << 4 | u32::from(layout.widths[2]) << 8 | u32::from(layout.from_start) << 12 | u32::from(layout.named_only) << 13;
+    let widths = u32::from(layout.widths[0]) | u32::from(layout.widths[1]) << 4 | u32::from(layout.widths[2]) << 8 | u32::from(layout.from_start) << 12;
     let at = |offset: usize| u32::try_from(offset).map_err(|_| invalid("a slab offset past 4 GiB"));
     let view = DocView {
         slab: 0,

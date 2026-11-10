@@ -359,11 +359,7 @@ pub(crate) struct SubTree {
 /// characters (`HostMap`), in the document the literal was parsed from.
 impl crate::code_rule_dsl::origin::Origin for SubTree {
     /// A literal's characters stand in source order, so a node stands for one source range.
-    fn of_node(&self, id: usize, range: Range<usize>) -> Option<FileRanges> {
-        // A token a named-only tree recognizes has no record (`tape::TOKEN_ID_BIT`): its bytes are its span's.
-        if id & crate::code_rule_dsl::tape::TOKEN_ID_BIT != 0 {
-            return self.of_range(range);
-        }
+    fn of_node(&self, id: usize, _: Range<usize>) -> Option<FileRanges> {
         let rec = self.nodes.get(self.index_of(id)?)?;
         Some(FileRanges::one(
             self.map_range(rec.start as usize..rec.end as usize),

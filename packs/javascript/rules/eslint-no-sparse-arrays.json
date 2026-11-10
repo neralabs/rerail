@@ -17,18 +17,15 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "kind": "array",
-            "tokens": {
-              "has": "^,$",
-              "as": "TOKEN",
-              "where": {
-                "follows": {
-                  "regex": "^[\\[,]$",
-                  "stopBy": {
-                    "not": {
-                      "kind": "comment"
-                    }
-                  }
+            "regex": "^,$",
+            "inside": {
+              "kind": "array"
+            },
+            "follows": {
+              "regex": "^[\\[,]$",
+              "stopBy": {
+                "not": {
+                  "kind": "comment"
                 }
               }
             }
@@ -36,7 +33,7 @@
         }
       },
       "violation": {
-        "anchor": "capture.TOKEN",
+        "anchor": "witness.span",
         "code": "no-sparse-arrays",
         "message": "Unexpected comma in middle of array.",
         "suppress": {

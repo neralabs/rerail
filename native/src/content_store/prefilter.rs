@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
 /// edges (`kind_size`, `edge_freq`). 5: terms are atoms. 6: kind postings are container segments
 /// (`postings::segment_positions`, decision 0045).
-pub(crate) const PREFILTER_VERSION: i64 = 7;
+pub(crate) const PREFILTER_VERSION: i64 = 8;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub(crate) const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.

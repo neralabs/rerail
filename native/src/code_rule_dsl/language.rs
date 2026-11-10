@@ -74,11 +74,17 @@ impl Language for GrammarDialect {
     }
 
     /// Blade's patterns are Forte trees (`blade::forte::tree`), whose kinds are numbered as Blade's
-    /// tapes number them; every other dialect's are tree-sitter trees.
+    /// tapes number them; every other dialect's are tapes of tree-sitter trees, written as documents
+    /// are: no token the grammar implies (`tape::pattern_doc`, RER-131).
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
         match self {
             Self::Blade => BladeLang.build_pattern(builder),
-            _ => builder.build(|source| StrDoc::try_new(source, *self)),
+            _ => {
+                let (doc, shape) = crate::code_rule_dsl::tape::pattern_doc(*self, builder.source()).map_err(PatternError::Parse)?;
+                let ends = |node: usize| shape.ends.get(node).copied().unwrap_or(false);
+                let single = |node: usize| shape.single.get(node).copied().unwrap_or(false);
+                builder.build_doc(doc, &ast_grep_core::matcher::PatternShape { ends: Some(&ends), single: Some(&single) })
+            }
         }
     }
 }

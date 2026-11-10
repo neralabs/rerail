@@ -4,7 +4,7 @@ use crate::code_rule_dsl::{language::GrammarDialect, matcher::Semantic};
 pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> AnchorPlan {
     match semantic {
         // Lines and bytes hold on any node.
-        Semantic::Layout(_) | Semantic::Tokens(_) | Semantic::FilePath(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
+        Semantic::Layout(_) | Semantic::FilePath(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
             AnchorPlan::unrestricted()
         }
         // An import target is a string's own value; its kinds are the strings the test lists.

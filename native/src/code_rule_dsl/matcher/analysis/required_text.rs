@@ -151,16 +151,6 @@ fn needs(matcher: &AstMatcher, utilities: &mut Utilities, reach: Reach) -> Vec<C
         },
         AstMatcher::Util(util) => util_needs(util, utilities, reach),
         AstMatcher::Call(call) => util_needs(&call.util, utilities, reach),
-        // A token's text is a slice of the node's where the token is its own or a descendant's
-        // (RER-131: tokens are tested by text); beside the node, it is elsewhere in the file.
-        AstMatcher::Semantic(super::super::Semantic::Tokens(test)) => {
-            use crate::code_rule_dsl::matcher::tokens::Place;
-            test.tests
-                .iter()
-                .filter(|(place, _)| reach == Reach::File || matches!(place, Place::Own | Place::Below | Place::Field(_)))
-                .filter_map(|(_, regex)| regex_clause(regex.as_str()))
-                .collect()
-        }
         _ => Vec::new(),
     }
 }
