@@ -639,6 +639,11 @@ export async function writeTextFile(path: string, text: string, existing: { exis
   await replaceFile(target, text, { mode: existing.mode });
 }
 
+/** What a write of a file is: an update of one that exists, or the creation of one that does not. */
+function writeAction(file: { exists: boolean }): RegistrationChange["action"] {
+  return file.exists ? "updated" : "created";
+}
+
 function planMutation(
   context: Context, harness: Harness, path: string, action: RegistrationChange["action"], detail: string, apply: () => Promise<void>,
 ): Plan {
@@ -664,7 +669,7 @@ async function planJsonFile(
     const reason = context.mode === "register" ? "already in place" : "nothing to remove";
     return { change: { harness, path, action: "unchanged", detail: `${text}: ${reason}` } };
   }
-  return planMutation(context, harness, path, existing.exists ? "updated" : "created", text,
+  return planMutation(context, harness, path, writeAction(existing), text,
     () => writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing));
 }
 
@@ -796,21 +801,29 @@ function registerClaudeStatus(
 ): ClaudeStatusRegistration {
   const command = claudeStatusCommand(context, path);
   const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
-  const previous = statusLine ?? inherited;
-  const wrapper = previous !== undefined
-    && (previous.command === command || claudeStatusScript(previous.command, context.platform) !== undefined);
-  if (!ownsStatus && !replaceable && wrapper) {
-    throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
-  }
-  const replaced = !ownsStatus && replaceable;
-  const previousInherited = ownsStatus ? registration.previousInherited : !replaced && statusLine === undefined && inherited !== undefined;
-  next.statusLine = composedClaudeStatus(previous, command);
-  const unownedPrevious = replaced ? null : previous ?? null;
+  const predecessor = ownsStatus ? registration : unownedClaudeStatus(context, path, command, { statusLine, inherited, replaceable });
+  next.statusLine = composedClaudeStatus(statusLine ?? inherited, command);
   return {
     settingsPath: path, installedRoot: context.root, installedCommand: command,
-    previous: ownsStatus ? registration.previous : unownedPrevious,
-    ...(previousInherited ? { previousInherited: true } : {}),
+    previous: predecessor.previous,
+    ...(predecessor.previousInherited === true ? { previousInherited: true } : {}),
   };
+}
+
+/**
+ * What a status line Rerail has no record of owning leaves for removal to bring back: nothing when it is `replaceable`,
+ * else itself or the one it inherits, which must not be a wrapper of Rerail's own (`claudeStatusScript`).
+ */
+function unownedClaudeStatus(
+  context: Context, path: string, command: string,
+  { statusLine, inherited, replaceable }: { statusLine: ClaudeStatusLine | undefined; inherited: ClaudeStatusLine | undefined; replaceable: boolean },
+): Pick<ClaudeStatusRegistration, "previous" | "previousInherited"> {
+  if (replaceable) return { previous: null };
+  const previous = statusLine ?? inherited;
+  if (previous !== undefined && (previous.command === command || claudeStatusScript(previous.command, context.platform) !== undefined)) {
+    throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
+  }
+  return { previous: previous ?? null, previousInherited: statusLine === undefined && inherited !== undefined };
 }
 
 function restoreClaudeStatus(next: JsonObject, statusLine: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration): void {
@@ -820,12 +833,16 @@ function restoreClaudeStatus(next: JsonObject, statusLine: ClaudeStatusLine | un
     delete next.statusLine;
     return;
   }
-  const restored: ClaudeStatusLine = { ...statusLine, type: registration.previous.type, command: registration.previous.command };
-  if (statusLine.refreshInterval === installedStatus.refreshInterval) {
-    if (registration.previous.refreshInterval === undefined) delete restored.refreshInterval;
-    else restored.refreshInterval = registration.previous.refreshInterval;
-  }
-  next.statusLine = restored;
+  next.statusLine = restoredClaudeStatus(statusLine, registration.previous, installedStatus);
+}
+
+/** `previous` back in place of the installed status line, keeping the display settings the person changed since. */
+function restoredClaudeStatus(current: ClaudeStatusLine, previous: ClaudeStatusLine, installed: ClaudeStatusLine): ClaudeStatusLine {
+  const restored: ClaudeStatusLine = { ...current, type: previous.type, command: previous.command };
+  if (current.refreshInterval !== installed.refreshInterval) return restored;
+  if (previous.refreshInterval === undefined) delete restored.refreshInterval;
+  else restored.refreshInterval = previous.refreshInterval;
+  return restored;
 }
 
 /** Whether `path` is `container` or lies inside it. */
@@ -965,6 +982,21 @@ function rerailDataDirectories(context: Context): RerailDataDirectories {
 }
 
 /**
+ * The deny rules that keep a coding agent's file tools out of Rerail's data: no `write` (the host's name for its write
+ * tools) into the Rerail home or the content cache, no read of the cache or of the home's data
+ * (`RERAIL_HOME_DATA_ENTRIES`). `rulePath` writes a folder as the host matches it.
+ */
+function rerailDataDenyRules(
+  { rerailHome, cache, isolateHome }: RerailDataDirectories, write: "Edit" | "Write", rulePath: (path: string) => string,
+): string[] {
+  return [
+    ...(isolateHome ? [rerailHome, cache] : [cache]).map(directory => `${write}(${rulePath(directory)}/**)`),
+    ...isolateHome ? RERAIL_HOME_DATA_ENTRIES.map(entry => `Read(${rulePath(rerailHome)}/${entry})`) : [],
+    `Read(${rulePath(cache)}/**)`,
+  ];
+}
+
+/**
  * What keeps the Rerail home and the content cache out of the agent's reach in Claude Code's user settings. Sandboxed
  * commands may neither read nor write either; within the home they may read the installed package, which
  * `/rerail-create` reads. The file tools follow `permissions.deny`: no edit of either, no read of the cache or of the
@@ -972,14 +1004,10 @@ function rerailDataDirectories(context: Context): RerailDataDirectories {
  * (`excludedCommands`) and goes through the person's permission rules there.
  */
 async function claudeIsolationEntries(context: Context): Promise<Record<string, string[]>> {
-  const { rerailHome, cache, isolateHome } = rerailDataDirectories(context);
+  const directories = rerailDataDirectories(context);
+  const { rerailHome, cache, isolateHome } = directories;
   const protectedDirectories = isolateHome ? [rerailHome, cache] : [cache];
-  const rule = (path: string): string => claudeRulePath(path, context.platform);
-  const deny = [
-    ...protectedDirectories.map(directory => `Edit(${rule(directory)}/**)`),
-    ...isolateHome ? RERAIL_HOME_DATA_ENTRIES.map(entry => `Read(${rule(rerailHome)}/${entry})`) : [],
-    `Read(${rule(cache)}/**)`,
-  ];
+  const deny = rerailDataDenyRules(directories, "Edit", path => claudeRulePath(path, context.platform));
   // Native Windows runs commands unsandboxed: only the file tools' rules apply there.
   if (context.platform === "win32") return { "permissions.deny": deny };
   const packageCode = [join(rerailHome, CURRENT_LINK), join(rerailHome, VERSIONS_DIR), context.root, await realpath(context.root).catch(() => context.root)];
@@ -992,6 +1020,71 @@ async function claudeIsolationEntries(context: Context): Promise<Record<string, 
   };
 }
 
+/** The `statusLine` of the settings `value` read from `path`; one that is not a command specification throws. */
+function settingsStatusLine(value: JsonObject, path: string): ClaudeStatusLine | undefined {
+  const { statusLine } = value;
+  if (statusLine !== undefined && !isClaudeStatusLine(statusLine)) {
+    throw new Error(`Cannot register rerail status line: "statusLine" in ${path} is not a command specification`);
+  }
+  return statusLine;
+}
+
+/**
+ * This home's record of the status line Rerail composed in `path`. On registration the install it names counts as one
+ * of this package (`isRerailPackageRoot`), so its hooks and status line are replaced.
+ */
+function claudeStatusRecord(context: Context, path: string): ClaudeStatusRegistration | undefined {
+  const registration = readClaudeStatusRegistration(context.home, path);
+  if (context.mode === "register" && registration !== undefined) {
+    context.packageRoots.set(registration.installedRoot, Promise.resolve(true));
+  }
+  return registration;
+}
+
+/**
+ * The user settings `value` at `path` with Rerail's hooks, and the isolation entries (`claudeIsolationEntries`) that an
+ * earlier registration added (`added`) and that this one adds (`nextAdded`). A project's settings get neither.
+ */
+async function claudeUserSettings(
+  context: Context, path: string, value: JsonObject,
+): Promise<{ next: JsonObject; added: AddedSettingsEntries | undefined; nextAdded: AddedSettingsEntries | undefined }> {
+  // Claude Code runs shell-form hooks through Git Bash on Windows, which rewrites `cmd /d /c` into drive paths;
+  // cmd then reads the hook's JSON from stdin as commands. Exec form (`args`) spawns node with no shell.
+  const hookEntry = context.platform === "win32"
+    ? hookExecEntry(context, ENTRY_POINTS.claudeHook)
+    : { type: "command", command: hookCommand(context, ENTRY_POINTS.claudeHook) };
+  const next = structuredClone(await updateGroupedHooks(value, path, context, CLAUDE_HOOK_EVENTS, CLAUDE_TOOL_EVENTS, ENTRY_POINTS.claudeHook, hookEntry));
+  const added = readAddedSettingsEntries(context.home, path);
+  const nextAdded = replaceAddedEntries(context, next, added, context.mode === "register" ? await claudeIsolationEntries(context) : {}, path);
+  return { next, added, nextAdded };
+}
+
+/** The status line's record once this registration composes it in `next`, or this removal restores what it replaced. */
+async function nextClaudeStatusRecord(
+  context: Context, path: string, next: JsonObject,
+  { statusLine, inherited, registration }: { statusLine: ClaudeStatusLine | undefined; inherited: ClaudeStatusLine | undefined; registration: ClaudeStatusRegistration | undefined },
+): Promise<ClaudeStatusRegistration | undefined> {
+  if (context.mode === "register") {
+    const replaceable = await isPackageClaudeStatus(context, statusLine ?? inherited);
+    return registerClaudeStatus(context, path, next, statusLine, inherited, registration, replaceable);
+  }
+  if (registration?.installedRoot !== context.root) return registration;
+  restoreClaudeStatus(next, statusLine, registration);
+  return undefined;
+}
+
+/** What a plan of Claude Code's settings says it does, for the user settings and for a project's. */
+const CLAUDE_SETTINGS_DETAILS: Readonly<Record<"user" | "project", Readonly<Record<Mode, string>>>> = {
+  user: {
+    register: `register rerail hooks for ${CLAUDE_HOOK_EVENTS.length} Claude Code events, compose the status line and keep Rerail's data from the agent`,
+    unregister: "remove rerail hooks and data denies and restore the Claude Code status line",
+  },
+  project: {
+    register: "compose the project Claude Code status line",
+    unregister: "restore the project Claude Code status line",
+  },
+};
+
 /** Global hooks and statusLine share one preflight and atomic settings replacement. */
 async function planClaudeSettings(
   context: Context,
@@ -1000,46 +1093,21 @@ async function planClaudeSettings(
 ): Promise<Plan> {
   const global = path === join(context.home, ".claude", "settings.json");
   const existing = await readJsonFile(path);
-  const registration = readClaudeStatusRegistration(context.home, path);
-  const statusLine = existing.value.statusLine;
-  if (statusLine !== undefined && !isClaudeStatusLine(statusLine)) {
-    throw new Error(`Cannot register rerail status line: "statusLine" in ${path} is not a command specification`);
-  }
-  if (context.mode === "register" && registration !== undefined) {
-    context.packageRoots.set(registration.installedRoot, Promise.resolve(true));
-  }
-  // Claude Code runs shell-form hooks through Git Bash on Windows, which rewrites `cmd /d /c` into drive paths;
-  // cmd then reads the hook's JSON from stdin as commands. Exec form (`args`) spawns node with no shell.
-  const hookEntry = context.platform === "win32"
-    ? hookExecEntry(context, ENTRY_POINTS.claudeHook)
-    : { type: "command", command: hookCommand(context, ENTRY_POINTS.claudeHook) };
-  const next = global
-    ? structuredClone(await updateGroupedHooks(existing.value, path, context, CLAUDE_HOOK_EVENTS, CLAUDE_TOOL_EVENTS, ENTRY_POINTS.claudeHook, hookEntry))
-    : { ...existing.value };
+  const registration = claudeStatusRecord(context, path);
+  const statusLine = settingsStatusLine(existing.value, path);
   // Only the user settings carry the isolation entries; a project's settings never get them.
-  const added = global ? readAddedSettingsEntries(context.home, path) : undefined;
-  const nextAdded = global
-    ? replaceAddedEntries(context, next, added, context.mode === "register" ? await claudeIsolationEntries(context) : {}, path)
-    : undefined;
-  let nextRegistration: ClaudeStatusRegistration | undefined = registration;
-  if (context.mode === "register") {
-    const replaceable = await isPackageClaudeStatus(context, statusLine ?? inherited);
-    nextRegistration = registerClaudeStatus(context, path, next, statusLine, inherited, registration, replaceable);
-  } else if (registration?.installedRoot === context.root) {
-    restoreClaudeStatus(next, statusLine, registration);
-    nextRegistration = undefined;
-  }
+  const { next, added, nextAdded } = global
+    ? await claudeUserSettings(context, path, existing.value)
+    : { next: { ...existing.value }, added: undefined, nextAdded: undefined };
+  const nextRegistration = await nextClaudeStatusRecord(context, path, next, { statusLine, inherited, registration });
   const settingsChanged = stableJsonText(existing.value) !== stableJsonText(next);
   const ownershipChanged = stableJsonText(registration ?? {}) !== stableJsonText(nextRegistration ?? {});
   const addedChanged = stableJsonText(added ?? {}) !== stableJsonText(nextAdded ?? {});
-  let detail = context.mode === "register" ? "compose the project Claude Code status line" : "restore the project Claude Code status line";
-  if (global) detail = context.mode === "register"
-    ? `register rerail hooks for ${CLAUDE_HOOK_EVENTS.length} Claude Code events, compose the status line and keep Rerail's data from the agent`
-    : "remove rerail hooks and data denies and restore the Claude Code status line";
+  const detail = CLAUDE_SETTINGS_DETAILS[global ? "user" : "project"][context.mode];
   if (!settingsChanged && !ownershipChanged && !addedChanged) {
     return { change: { harness: "claude-code", path, action: "unchanged", detail: `${detail}: already in place` } };
   }
-  return planMutation(context, "claude-code", path, existing.exists ? "updated" : "created", detail, async () => {
+  return planMutation(context, "claude-code", path, writeAction(existing), detail, async () => {
     const writeSettings = async (): Promise<void> => {
       if (settingsChanged) await writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing);
     };
@@ -1051,6 +1119,12 @@ async function planClaudeSettings(
     else await writeWithStatus();
   });
 }
+
+/** What a plan of the Cursor CLI's config says it does. */
+const CURSOR_CLI_DETAILS: Readonly<Record<Mode, string>> = {
+  register: "deny the Cursor CLI's file tools Rerail's data",
+  unregister: "remove Rerail's data denies from the Cursor CLI",
+};
 
 /**
  * The Cursor CLI's file tools follow `permissions.deny` in `~/.cursor/cli-config.json`: no write to the Rerail home or
@@ -1065,39 +1139,41 @@ async function planCursorCli(context: Context): Promise<Plan[]> {
   const existing = await readJsonFile(path);
   const previous = readAddedSettingsEntries(context.home, path);
   if (!existing.exists && previous === undefined) return [];
-  const { rerailHome, cache, isolateHome } = rerailDataDirectories(context);
-  const deny = [
-    ...(isolateHome ? [rerailHome, cache] : [cache]).map(directory => `Write(${directory}/**)`),
-    ...isolateHome ? RERAIL_HOME_DATA_ENTRIES.map(entry => `Read(${rerailHome}/${entry})`) : [],
-    `Read(${cache}/**)`,
-  ].map(rule => (context.platform === "win32" ? rule.replaceAll("/", "\\") : rule));
+  const deny = rerailDataDenyRules(rerailDataDirectories(context), "Write", directory => directory)
+    .map(rule => (context.platform === "win32" ? rule.replaceAll("/", "\\") : rule));
   const wanted = context.mode === "register" && existing.exists ? { "permissions.deny": deny } : {};
   const next = structuredClone(existing.value);
   const added = replaceAddedEntries(context, next, previous, wanted, path);
-  const settingsChanged = stableJsonText(existing.value) !== stableJsonText(next);
-  const detail = context.mode === "register" ? "deny the Cursor CLI's file tools Rerail's data" : "remove Rerail's data denies from the Cursor CLI";
-  if (!settingsChanged && stableJsonText(previous ?? {}) === stableJsonText(added ?? {})) {
+  const detail = CURSOR_CLI_DETAILS[context.mode];
+  // Unchanged when neither the settings nor the record of what Rerail added in them changes.
+  if (stableJsonText([existing.value, previous ?? {}]) === stableJsonText([next, added ?? {}])) {
     return [{ change: { harness: "cursor", path, action: "unchanged", detail: `${detail}: already in place` } }];
   }
   return [planMutation(context, "cursor", path, "updated", detail, () => writeAddedSettingsEntries(context.home, path, added, async () => {
-    if (settingsChanged) await writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing);
+    if (stableJsonText(existing.value) !== stableJsonText(next)) await writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing);
   }))];
 }
 
 /**
- * The script of the generated executable shape, recognized even when its old package/ownership is gone: direct, as
- * Windows and earlier versions write it, or behind the POSIX fallback.
+ * The node and the script a status line command runs, unquoted, when it has the generated shape: direct, as Windows
+ * and earlier versions write it, or behind the POSIX fallback, with a project's settings path after the script or not.
  */
-function claudeStatusScript(command: string, platform: NodeJS.Platform): string | undefined {
+function claudeStatusNodeAndScript(command: string, platform: NodeJS.Platform): [node: string, script: string] | undefined {
   const fallback = command.startsWith(CLAUDE_STATUS_FALLBACK);
   const direct = fallback ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command;
-  const words = direct.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu);
-  if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== direct) return undefined;
+  const words = direct.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu) ?? [];
+  if (![2, 3].includes(words.length) || words.join(" ") !== direct) return undefined;
   // Words behind the fallback are POSIX-quoted on every platform; only the direct form earlier Windows set-ups wrote is not.
   const windows = platform === "win32" && !fallback;
-  const script = unquoteShellWord(words[1]!, windows);
-  return isNodeExecutable(unquoteShellWord(words[0]!, windows))
-    && script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatus) ? script : undefined;
+  return [unquoteShellWord(words[0]!, windows), unquoteShellWord(words[1]!, windows)];
+}
+
+/** The script of a generated status line (`claudeStatusNodeAndScript`), recognized even when its old package/ownership is gone. */
+function claudeStatusScript(command: string, platform: NodeJS.Platform): string | undefined {
+  const words = claudeStatusNodeAndScript(command, platform);
+  if (words === undefined) return undefined;
+  const [node, script] = words;
+  return isNodeExecutable(node) && script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatus) ? script : undefined;
 }
 
 /** A status line generated by any install of this package, or by one that is gone, identified as hooks are (`isReplaceableScript`). */
@@ -1109,28 +1185,37 @@ async function isPackageClaudeStatus(context: Context, statusLine: ClaudeStatusL
 /** Claude uses the safe main-checkout root for local settings, but shared settings stay at cwd. */
 async function claudeLocalDirectory(workspaceDir: string, context: Context): Promise<string> {
   if (context.platform === "win32" || process.getuid === undefined) return workspaceDir;
-  let root: string;
+  const root = await mainCheckoutRoot(workspaceDir);
+  if (root === undefined || root === await realpath(context.home).catch(() => context.home)) return workspaceDir;
+  return await ownedBy([root, join(root, ".git"), join(root, ".claude")], process.getuid()) ? root : workspaceDir;
+}
+
+/**
+ * The main checkout of the repository at `directory`, the first worktree Git lists, with its symlinks resolved;
+ * undefined when Git names none. rev-parse rejects non-repositories and bare repositories; Git also enforces
+ * safe.directory.
+ */
+async function mainCheckoutRoot(directory: string): Promise<string | undefined> {
   try {
-    // rev-parse rejects non-repositories/bare repositories; Git also enforces safe.directory.
-    if (runGit(workspaceDir, ["rev-parse", "--show-toplevel"]).status !== 0) return workspaceDir;
-    const worktrees = runGit(workspaceDir, ["worktree", "list", "--porcelain", "-z"]);
-    if (worktrees.status !== 0) return workspaceDir;
-    const first = worktrees.stdout.split("\0", 1)[0];
-    if (first === undefined || !first.startsWith("worktree ")) return workspaceDir;
-    root = await realpath(first.slice("worktree ".length));
+    if (runGit(directory, ["rev-parse", "--show-toplevel"]).status !== 0) return undefined;
+    const worktrees = runGit(directory, ["worktree", "list", "--porcelain", "-z"]);
+    const first = worktrees.status === 0 ? worktrees.stdout.split("\0", 1)[0] : undefined;
+    return first?.startsWith("worktree ") ? await realpath(first.slice("worktree ".length)) : undefined;
   } catch {
-    return workspaceDir;
+    return undefined;
   }
-  if (root === await realpath(context.home).catch(() => context.home)) return workspaceDir;
-  const uid = process.getuid();
-  for (const path of [root, join(root, ".git"), join(root, ".claude")]) {
+}
+
+/** Whether each of `paths` that exists belongs to `uid`, and so does what it links to. */
+async function ownedBy(paths: readonly string[], uid: number): Promise<boolean> {
+  for (const path of paths) {
     try {
-      if ((await lstat(path)).uid !== uid || (await stat(path)).uid !== uid) return workspaceDir;
+      if ((await lstat(path)).uid !== uid || (await stat(path)).uid !== uid) return false;
     } catch (error) {
       if (!isMissing(error)) throw error;
     }
   }
-  return root;
+  return true;
 }
 
 async function planClaudeProjectSettings(workspace: string, context: Context): Promise<Plan[]> {
@@ -1141,24 +1226,18 @@ async function planClaudeProjectSettings(workspace: string, context: Context): P
     join(workspaceDir, ".claude", "settings.local.json"),
   ])];
   if (context.mode === "unregister") {
-    const plans: Plan[] = [];
-    for (const path of localPaths) {
-      if (readClaudeStatusRegistration(context.home, path) !== undefined) plans.push(await planClaudeSettings(context, path));
-    }
-    return plans;
+    const recorded = localPaths.filter(path => readClaudeStatusRegistration(context.home, path) !== undefined);
+    return Promise.all(recorded.map(path => planClaudeSettings(context, path)));
   }
   // User-local predecessors win; generated inherited wrappers resolve cwd inheritance on every invocation.
   for (const path of localPaths) {
     const existing = await readJsonFile(path);
     if (existing.value.statusLine !== undefined) return [await planClaudeSettings(context, path)];
   }
+  if (workspaceDir === await realpath(context.home).catch(() => context.home)) return [];
   const sharedPath = join(workspaceDir, ".claude", "settings.json");
-  const shared = await readJsonFile(sharedPath);
-  if (shared.value.statusLine === undefined || workspaceDir === await realpath(context.home).catch(() => context.home)) return [];
-  if (!isClaudeStatusLine(shared.value.statusLine)) {
-    throw new Error(`Cannot register rerail status line: "statusLine" in ${sharedPath} is not a command specification`);
-  }
-  return [await planClaudeSettings(context, localPaths[0]!, shared.value.statusLine)];
+  const shared = settingsStatusLine((await readJsonFile(sharedPath)).value, sharedPath);
+  return shared === undefined ? [] : [await planClaudeSettings(context, localPaths[0]!, shared)];
 }
 
 function planCursor(context: Context): Promise<Plan> {
@@ -1459,7 +1538,7 @@ async function planCodexSkill(context: Context, name: RerailCommandName): Promis
   const text = commandFileText("codex", name, commandContext(context));
   if (existing.text === text) return { change: { harness: "codex", path, action: "unchanged", detail: `$${name} skill: already in place` } };
   // Only a skill carrying Rerail's marker gets here: Rerail generated it, so it is not backed up.
-  return planMutation(context, "codex", path, existing.exists ? "updated" : "created", `register the $${name} skill`,
+  return planMutation(context, "codex", path, writeAction(existing), `register the $${name} skill`,
     () => writeTextFile(path, text, existing, false));
 }
 
