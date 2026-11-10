@@ -45,6 +45,12 @@ pub(super) use metal_backend::launch::LaunchScope as MetalTestScope;
 mod metal_batch_abi;
 #[cfg(target_os = "macos")]
 mod metal_parallel;
+// Row programs on Metal: scan, count and scatter over the 16-bit layout (decision 0095).
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) mod metal_rows;
+// Relations sorted by a key on the device, and the joins that probe them (decision 0095).
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) mod metal_sort;
 #[cfg(target_os = "macos")]
 mod metal_program_backend;
 #[cfg(target_os = "macos")]
@@ -248,7 +254,12 @@ mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
 mod native_cpu_block;
+// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2).
+pub(in crate::code_rule_dsl) mod native_cpu_rows;
+// Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
+pub(in crate::code_rule_dsl) mod rows_sort;
 mod native_cpu_lanes;
+mod native_cpu_pressure;
 mod native_cpu_shape;
 mod native_cpu_stream;
 mod native_ir;
@@ -270,6 +281,8 @@ pub(in crate::code_rule_dsl) mod block;
 pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
 mod block_tests;
+#[cfg(test)]
+mod block_rows_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
 mod bitlex_compile;
 // The `.rr` parser: the Bitlex grammar compiled, the engine's parser for what it refuses.
@@ -280,6 +293,9 @@ mod bitlex_tier2;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
 mod bitlex_compile_tests;
+mod token_local;
+#[cfg(test)]
+mod token_local_tests;
 #[cfg(test)]
 mod bitlex_corpus_tests;
 #[cfg(test)]
@@ -2185,6 +2201,13 @@ impl Program {
             digest.update((self.readings.provisional.len() as u64).to_le_bytes());
             for f in &self.readings.provisional {
                 digest.update(f.to_le_bytes());
+            }
+            if !self.readings.extras.is_empty() {
+                digest.update(b"extras");
+                digest.update((self.readings.extras.len() as u64).to_le_bytes());
+                for k in &self.readings.extras {
+                    digest.update(k.to_le_bytes());
+                }
             }
         }
         format!("{:x}", digest.finalize())

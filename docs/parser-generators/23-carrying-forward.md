@@ -123,6 +123,49 @@ On step 14 the first run has 258 wrong starts, all of them the number carry. Tha
 correct: its wrong segments run again. From the second run on, nothing runs again. Step 15 (with
 comments) learns its number carry the same way.
 
+### 3.1 A fixed point is a carry of a few states
+
+A `rounds until settled` group cannot be guessed from a warm-up when it never forgets. The rr
+grammar's regions are one: at a segment's start the bytes may be code, or inside a string, a
+line or block comment, or one of three backtick literals. One wrong guess there spreads one
+segment per check, file by file. On the rr corpus that was 711 wrong starts of 1,901, and
+16,011 segments run again over 237 launches.
+
+The group's state is small, though. Its scans are its six regions' fills, and at most one of
+them is open. So the group is taken as one carry of seven states: none set, or one.
+
+1. A group has a level, as a scan does: one more than the highest level of what its members
+   read outside it.
+2. Its level's pass runs each segment once from each state, one SIMD group a segment and a
+   state. The state is set at the warm-up's first block. Each run writes the state it reaches
+   at the segment's start and at the next segment's warm-up start. A state with two carries
+   set is no state (`NONE`).
+3. A prefix of those 8-entry maps over each file's segments gives each segment its state. It
+   sets the group's bits of the segment's exact carries, as a scan's prefix does.
+
+The scans that read the group can then be exact too: the rr grammar's depth counter, say.
+
+A start with no state, or a wrong one, still only costs a run again: the check stays.
+
+### 3.2 The first lane's `prev`s
+
+A segment's first lane reads its `prev`s as zero. Inside a string that is wrong at the first
+byte: a closing quote there reads as code, and opens a string. So what a `prev` reads before
+the first lane is made from the exact carries there. A toggle's or a fill's word ends in its
+carry out. A carry ends in its next, and a `prev` in its operand. What reads the bytes is
+unknown, and unknown reads as zero. The compiler writes each value's end as a pair of MSL
+booleans, known and value, folded where they are constant.
+
+On the rr corpus (1,346 files), against tier 1 on Cranelift, with every output equal:
+
+| | wrong starts | run again | launches | GPU |
+|---|---|---|---|---|
+| guessed (before) | 711 of 1,901 | 16,011 | 237 | 219 ms |
+| the group's states | 52 of 1,901 | 250 | 69 | 107 ms |
+| and the first lane's `prev`s | 2 of 1,901 | 51 | 59 | 55 ms |
+
+The two wrong starts left are a fill not yet learned exact (§3).
+
 ## 4. The CPU's shape: one thread a segment
 
 The first forward-only form runs each segment in one GPU thread, the state in registers, as

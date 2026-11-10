@@ -626,9 +626,10 @@ impl CodeRuleSqlExecutor {
             .iter()
             .map(|(name, _)| (name.clone(), program::logical_arity(&program, name)))
             .collect();
-        let (emitted, producers) = self.compile(program, dialect)?;
-        let indexes = indexes::wanted(&emitted);
+        let (mut emitted, producers) = self.compile(program, dialect)?;
         let objects = self.output_objects(&emitted)?;
+        let projection_relations = session::normalize_views(&mut emitted);
+        let indexes = indexes::wanted(&emitted);
         self.db
             .execute_batch("SAVEPOINT sql_extension_run")
             .map_err(error)?;
@@ -692,20 +693,18 @@ impl CodeRuleSqlExecutor {
                 }
                 self.db.execute_batch(statement).map_err(error)?;
             }
-            let minimal_setup =
-                emitted.views.is_empty() && emitted.queries.iter().all(Option::is_some);
-            if minimal_setup {
-                schedule::declare_outputs(&self.db, &emitted.program).map_err(error)?;
-            } else {
-                schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
-            }
-            self.control_ready.set(true);
+            #[cfg(any(test, feature = "headless"))]
+            let retained = !self.cold_oracle;
+            #[cfg(not(any(test, feature = "headless")))]
+            let retained = true;
+            let minimal_setup = emitted.queries.iter().all(Option::is_some);
+            if minimal_setup { schedule::declare_outputs(&self.db, &emitted.program).map_err(error)?; }
+            else { schedule::declare_sql(&self.db, &emitted.program).map_err(error)?; }
             for (table, columns) in &indexes {
-                if minimal_setup && !emitted.program.relations.iter().any(|(r, _)| r == table) {
-                    continue;
-                }
+                if minimal_setup && !emitted.program.relations.iter().any(|(r, _)| r == table) { continue; }
                 session::index(&self.db, table, columns).map_err(error)?;
             }
+            self.control_ready.set(true);
             self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY,rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
             let counts = emitted
                 .program
@@ -746,41 +745,11 @@ impl CodeRuleSqlExecutor {
             let mut work = maintenance::Work::new(&self.db, &self.scratch);
             work.versions = Some(&self.versions);
             work.profiler = self.db.profiler();
-            let projections_scope = profiling::scope(&self.db, "projection preparation");
-            let projection_mark = work.mark();
-            let materialized_views = maintenance::track_views(&mut work, &mut execution)?;
+            let materialized_views = 0;
             let constant_tables = constants::prepare(&self.db, &mut execution)?;
-            // These views used to inherit native estimates. Their retained SQL tables need
-            // actual index statistics before support joins choose their access paths.
-            for (name, _) in &emitted.views {
-                self.db
-                    .execute_batch(&format!("ANALYZE temp.{}", quote(name)))
-                    .map_err(error)?;
-            }
-            drop(projections_scope);
-            work.rewind(projection_mark)?;
-            #[cfg(any(test, feature = "headless"))]
-            let native_initial = if self.cold_oracle {
-                None
-            } else {
-                temporal::initial::run(
-                    &mut work,
-                    &self.versions,
-                    &mut execution,
-                    trace_namespace,
-                    &emitted.program,
-                    !minimal_setup,
-                )?
-            };
-            #[cfg(not(any(test, feature = "headless")))]
-            let native_initial = temporal::initial::run(
-                &mut work,
-                &self.versions,
-                &mut execution,
-                trace_namespace,
-                &emitted.program,
-                !minimal_setup,
-            )?;
+            let native_initial = if retained {
+                temporal::initial::run(&mut work, &self.versions, &mut execution, trace_namespace, &emitted.program, !minimal_setup)?
+            } else { None };
             let mut initializations = Vec::new();
             let waves = if let Some(waves) = native_initial {
                 waves
@@ -817,6 +786,9 @@ impl CodeRuleSqlExecutor {
                     }
                 }
                 if retain {
+                    for (name,_) in &emitted.views {
+                        self.db.execute_batch(&format!("ANALYZE temp.{}",quote(name))).map_err(error)?;
+                    }
                     let _support = profiling::scope(&self.db, "support preparation");
                     let walks = walks::prepare(&mut work, &mut execution, None)?;
                     if !walks.is_empty() { reductions::cold::after_walks(&work, &mut execution)?; }
@@ -845,7 +817,7 @@ impl CodeRuleSqlExecutor {
                 plan::insert_many(&self.db,"INSERT OR REPLACE INTO wave_stats(tbl,rows)",statistics).map_err(error)?;
             }
             work.cleanup()?;
-            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created,"summary_transition_reuses":work.summary_reuses,"recursive_frames":execution.temporal.values().map(temporal::Trace::frames).sum::<usize>(),"initial_execution":if native_initial.is_some(){"retained"}else{"cold"}});
+            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"projection_relations":projection_relations,"constant_tables":constant_tables,"scratch_tables_created":work.created,"summary_transition_reuses":work.summary_reuses,"recursive_frames":execution.temporal.values().map(temporal::Trace::frames).sum::<usize>(),"initial_execution":if native_initial.is_some(){"retained"}else{"cold"}});
             self.db
                 .execute_batch("RELEASE sql_extension_run")
                 .map_err(error)?;

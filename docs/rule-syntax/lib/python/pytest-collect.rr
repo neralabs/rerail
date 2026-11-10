@@ -22,7 +22,7 @@
 //   1. Files and names: which modules, and which names in them are tests.
 //   2. Classes: which Test classes are collected, their nesting and their methods through the MRO.
 //   3. Marks: parametrize and usefixtures, from the def, its classes and the module's pytestmark.
-//   4. Lengths: how many elements an argvalues or params expression has (pc_len), on demand.
+//   4. Lengths: how many elements an argvalues or params expression has (len_of), on demand.
 //   5. Fixtures: the closure of fixtures a test requests, nearest definition first.
 //   6. The count: a product of factors per test, summed per file.
 //   7. Names: pc_sym, the module-level lookup the model uses, asked only for the expressions above.
@@ -35,6 +35,7 @@
 
 #include "python/ast.rr"
 #include "python/calls.rr"   // call_arg, callee, posarg, dexpr (syntax only: no call targets are asked for)
+#include "python/lengths.rr"
 
 .decl collect_root(dir: symbol)
 .decl collect_fn_prefix(p: symbol)
@@ -186,139 +187,42 @@ pc_pz_name(e, x) :- pc_pz_names(e, a), str_const(a, s), match_all("\\s*(?<x>[^,\
 pc_pz_name(e, x) :- pc_pz_names(e, a), (kind(a, "list") ; kind(a, "tuple")), child(a, s, _), str_const(s, x).
 
 // ---- 4. lengths --------------------------------------------------------------------------------------------------
-// pc_len(e, k): expression e evaluates to k elements. Only expressions pc_want asks about are evaluated: the
-// argvalues and params expressions, and what their lengths depend on. A missing row is unknown. Where an
-// expression has several readings (both arms of `a if c else b`, a name bound twice), each gives a row, and the
-// count takes the largest. The demand (pc_want) never reads a count, so the counts stay outside its recursion.
-// A name's value is anywhere in the workspace, so the recursion does not move along the tree; every length it
-// makes is instead one of pc_num's, 0 to 100000, and a cycle of definitions stops there.
-.decl pc_want(e: node)
-pc_want(v) :- pc_pz_vals(_, v).
-pc_want(v) :- pc_fx_params(_, v).
-.decl pc_len(e: node, k: number)
-.decl pc_num(n: number)
-pc_num(0).
-pc_num(n + 1) :- pc_num(n), n < 100000.
-
-// Parentheses.
-pc_want(x) :- pc_want(e), kind(e, "parenthesized_expression"), unparen(e, x), x != e.
-pc_len(e, k) :- pc_want(e), kind(e, "parenthesized_expression"), unparen(e, x), x != e, pc_len(x, k).
-
-// List, tuple and set literals: the plain elements, plus each `*xs`'s length, folded in source order.
-.decl pc_seq(l: node)
-pc_seq(l) :- pc_want(l), (kind(l, "list") ; kind(l, "tuple") ; kind(l, "set")).
-.decl pc_plain(l: node, n: number)
-pc_plain(l, n) :- pc_seq(l), n = count : { child(l, e, _), !kind(e, "comment"), !kind(e, "list_splat") }.
-.decl pc_splat(l: node, s: node, j: number)
-pc_splat(l, s, j) :- pc_seq(l), child(l, s, _), kind(s, "list_splat"),
-    j = count : { child(l, s2, _), kind(s2, "list_splat"), s2 < s }.
-.decl pc_nsplat(l: node, n: number)
-pc_nsplat(l, n) :- pc_seq(l), n = count : { child(l, s, _), kind(s, "list_splat") }.
-pc_want(x) :- pc_seq(l), child(l, s, _), kind(s, "list_splat"), child(s, x, 0).
-.decl pc_lit(l: node, j: number, k: number)
-pc_lit(l, 0, k) :- pc_plain(l, k).
-pc_lit(l, j + 1, t) :- pc_lit(l, j, k), j < 100000, pc_splat(l, s, j), child(s, x, 0), pc_len(x, w), t = k + w, pc_num(t).
-pc_len(l, k) :- pc_lit(l, n, k), pc_nsplat(l, n).
-// A dict literal: its pairs, unknown with a `**` spread.
-pc_len(l, n) :- pc_want(l), kind(l, "dictionary"), count : { child(l, s, _), kind(s, "dictionary_splat") } = 0,
-    n = count : { child(l, s, _), kind(s, "pair") }.
+// python/lengths evaluates an expression's length from its syntax (len_of, len_size). Asked here: the argvalues and
+// params expressions. Supplied here: what a name stands for, Enum-like classes, workspace helpers, function-local
+// names and lists a function builds.
+len_want(v) :- pc_pz_vals(_, v).
+len_want(v) :- pc_fx_params(_, v).
 
 // A name or attribute: the value of a constant in the scope the name reads, in an imported module, or in a
-// class; or an
-// Enum-like class, by its assignments. A reference inside the value it would stand for is not followed.
-.decl pc_val(e: node, v: node)
-pc_val(e, v) :- pc_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc_sym(e, q), split_dot(q, mq, x),
+// class; or an Enum-like class, by its assignments. A reference inside the value it would stand for is not followed.
+len_val(e, v) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc_sym(e, q), split_dot(q, mq, x),
     modname(m, mq), live_asg(m, x, v), !within(e, v).
-pc_val(e, v) :- pc_want(e), attr_of(e, o, a), pc_sym(o, qc), class_def(c, qc), live_asg(c, a, v), !within(e, v).
-pc_want(v) :- pc_val(_, v).
-pc_len(e, k) :- pc_val(e, v), pc_len(v, k).
-pc_len(e, n) :- pc_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc_sym(e, q), class_def(c, q),
-    field(c, "body", b), n = count : { body_stmt(b, s, _), asgstmt(a, s), !field(a, "type", _) }, n > 0.
-
-// a + b, and a * n with a literal n.
-pc_want(l) :- pc_want(e), kind(e, "binary_operator"), field(e, "left", l).
-pc_want(r) :- pc_want(e), kind(e, "binary_operator"), op(e, "+"), field(e, "right", r).
-pc_len(e, t) :- pc_want(e), kind(e, "binary_operator"), op(e, "+"), field(e, "left", l), field(e, "right", r),
-    pc_len(l, a), pc_len(r, b), t = a + b, pc_num(t).
-pc_len(e, t) :- pc_want(e), kind(e, "binary_operator"), op(e, "*"), field(e, "left", l), field(e, "right", r),
-    pc_int(r, n), pc_len(l, a), t = a * n, pc_num(t).
-
-// A comprehension: the product of its `for` clauses' lengths. An `if` clause makes it an upper bound.
-.decl pc_comp(e: node)
-pc_comp(e) :- pc_want(e), (kind(e, "list_comprehension") ; kind(e, "set_comprehension") ;
-    kind(e, "generator_expression") ; kind(e, "dictionary_comprehension")).
-.decl pc_gen(e: node, g: node, j: number)
-pc_gen(e, g, j) :- pc_comp(e), child(e, g, _), kind(g, "for_in_clause"),
-    j = count : { child(e, g2, _), kind(g2, "for_in_clause"), g2 < g }.
-.decl pc_ngen(e: node, n: number)
-pc_ngen(e, n) :- pc_comp(e), n = count : { child(e, g, _), kind(g, "for_in_clause") }.
-pc_want(it) :- pc_comp(e), child(e, g, _), kind(g, "for_in_clause"), field(g, "right", it).
-.decl pc_cf(e: node, j: number, k: number)
-pc_cf(e, 0, 1) :- pc_comp(e).
-pc_cf(e, j + 1, t) :- pc_cf(e, j, k), j < 100000, pc_gen(e, g, j), field(g, "right", it), pc_len(it, w), t = k * w,
-    pc_num(t).
-pc_len(e, k) :- pc_cf(e, n, k), pc_ngen(e, n), n > 0.
-
-// `a if c else b`: either arm.
-pc_want(x) :- pc_want(e), kind(e, "conditional_expression"), (child(e, x, 0) ; child(e, x, 2)).
-pc_len(e, k) :- pc_want(e), kind(e, "conditional_expression"), (child(e, x, 0) ; child(e, x, 2)), pc_len(x, k).
-
-// Calls, by the called name: list/tuple/sorted/set/frozenset/reversed/enumerate of one argument; range of
-// literals or len(); zip (the shortest); product (the product); d.keys()/values()/items(); and a workspace function
-// by the lengths of what it returns.
-.decl pc_call(e: node, f: symbol)
-pc_call(e, f) :- pc_want(e), kind(e, "call"), callee(e, h), kind(h, "identifier"), text(h, f).
-pc_call(e, f) :- pc_want(e), kind(e, "call"), callee(e, h), attr_of(h, _, f).
-.decl pc_npos(e: node, n: number)
-pc_npos(e, n) :- pc_call(e, _), n = count : { posarg(e, _, _) }.
-.decl pc_one(e: node, a: node)
-pc_one(e, a) :- pc_call(e, _), pc_npos(e, 1), posarg(e, 0, a).
-pc_one(e, a) :- pc_call(e, _), field(e, "arguments", a), kind(a, "generator_expression").
-.decl pc_wrapf(f: symbol)
-pc_wrapf("list"). pc_wrapf("tuple"). pc_wrapf("sorted"). pc_wrapf("set"). pc_wrapf("frozenset").
-pc_wrapf("reversed"). pc_wrapf("enumerate").
-pc_want(a) :- pc_call(e, f), pc_wrapf(f), posarg(e, 0, a).
-pc_want(a) :- pc_call(e, f), pc_wrapf(f), field(e, "arguments", a), kind(a, "generator_expression").
-pc_len(e, k) :- pc_call(e, f), pc_wrapf(f), pc_one(e, a), pc_len(a, k).
-.decl pc_int(a: node, n: number)
-pc_int(a, n) :- pc_want(e), (posarg(e, _, a) ; field(e, "right", a)), kind(a, "integer"), text(a, t), n = to_number(t).
-// range's bounds: integer literals, or `len(x)` of a sequence with a length.
-.decl pc_ival(a: node, n: number)
-pc_ival(a, n) :- pc_call(e, "range"), posarg(e, _, a), pc_int(a, n).
-pc_want(x) :- pc_call(e, "range"), posarg(e, _, a), kind(a, "call"), callee(a, h), text(h, "len"), posarg(a, 0, x).
-pc_ival(a, n) :- pc_call(e, "range"), posarg(e, _, a), kind(a, "call"), callee(a, h), text(h, "len"),
-    posarg(a, 0, x), pc_len(x, n).
-pc_len(e, t) :- pc_call(e, "range"), pc_npos(e, 1), posarg(e, 0, a), pc_ival(a, n), t = max(n, 0), pc_num(t).
-pc_len(e, t) :- pc_call(e, "range"), pc_npos(e, 2), posarg(e, 0, x), pc_ival(x, a), posarg(e, 1, y),
-    pc_ival(y, b), t = max(b - a, 0), pc_num(t).
-pc_len(e, t) :- pc_call(e, "range"), pc_npos(e, 3), posarg(e, 0, x), pc_ival(x, a), posarg(e, 1, y),
-    pc_ival(y, b), posarg(e, 2, z), pc_ival(z, s), s > 0, t = max((b - a + s - 1) / s, 0), pc_num(t).
-pc_want(a) :- pc_call(e, f), (f = "zip" ; f = "product"), posarg(e, _, a).
-.decl pc_zf(e: node, i: number, k: number)
-pc_zf(e, 1, w) :- pc_call(e, f), (f = "zip" ; f = "product"), posarg(e, 0, a), pc_len(a, w).
-pc_zf(e, i + 1, t) :- pc_call(e, "zip"), pc_zf(e, i, k), i < 100000, posarg(e, i, a), pc_len(a, w), t = min(k, w),
-    pc_num(t).
-pc_zf(e, i + 1, t) :- pc_call(e, "product"), pc_zf(e, i, k), i < 100000, posarg(e, i, a), pc_len(a, w), t = k * w,
-    pc_num(t).
-pc_len(e, k) :- pc_zf(e, n, k), pc_npos(e, n).
-pc_want(o) :- pc_call(e, f), (f = "keys" ; f = "values" ; f = "items"), callee(e, h), attr_of(h, o, _).
-pc_len(e, k) :- pc_call(e, f), (f = "keys" ; f = "values" ; f = "items"), pc_npos(e, 0), callee(e, h),
-    attr_of(h, o, _), pc_len(o, k).
+len_val(e, v) :- len_want(e), attr_of(e, o, a), pc_sym(o, qc), class_def(c, qc), live_asg(c, a, v), !within(e, v).
+len_of(e, n) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc_sym(e, q), class_def(c, q),
+    field(c, "body", b), n = count : { body_stmt(b, s, _), asgstmt(a, s), !field(a, "type", _), field(a, "left", l),
+    text(l, x), !match("_.*", x) }, n > 0.
+// A name defined in a module this run does not read: its length by symbol, from the `values` phase (module- and
+// class-level constants and Enum-like classes of every document, re-exports followed).
+.decl values__len(q: symbol, n: number)
+len_of(e, k) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc_sym(e, q), split_dot(q, mq, y), y != "",
+    !pc_read(mq), values__len(q, k).
+.decl pc_read(mq: symbol)
+pc_read(mq) :- modname(_, mq).
 .decl pc_helper(e: node, g: node)
-pc_helper(e, g) :- pc_call(e, _), callee(e, h), kind(h, "identifier"), pc_sym(h, q), qualname(g, q),
+pc_helper(e, g) :- len_call(e, _), callee(e, h), kind(h, "identifier"), pc_sym(h, q), qualname(g, q),
     kind(g, "function_definition").
 // Each of the helper's own returns (not a nested def's) is a reading.
 .decl pc_hret(g: node, v: node)
 pc_hret(g, v) :- pc_helper(_, g), within(r, g), kind(r, "return_statement"), nearest(r, g, "function_definition"),
     child(r, v, 0), !kind(v, "comment").
-pc_want(v) :- pc_hret(_, v).
-pc_len(e, k) :- pc_helper(e, g), pc_hret(g, v), pc_len(v, k).
+len_want(v) :- pc_hret(_, v).
+len_of(e, k) :- pc_helper(e, g), pc_hret(g, v), len_of(v, k).
 
 // A local name: each value the reading function assigns to it; a list value is read as built (below).
 .decl pc_local(e: node, g: node, x: symbol)
-pc_local(e, g, x) :- pc_want(e), kind(e, "identifier"), text(e, x), nearest(e, g, "function_definition"),
+pc_local(e, g, x) :- len_want(e), kind(e, "identifier"), text(e, x), nearest(e, g, "function_definition"),
     asg(g, x, _, _).
-pc_val(e, v) :- pc_local(e, g, x), live_asg(g, x, v), !within(e, v), !kind(v, "list").
+len_val(e, v) :- pc_local(e, g, x), live_asg(g, x, v), !within(e, v), !kind(v, "list").
 
 // A list the function builds: `x = [...]`, then `x.append(v)`, `x.extend(s)` and `x += s` in the same function,
 // folded in source order from the literal. A growth counts once per iteration of each `for` around it in the
@@ -326,47 +230,44 @@ pc_val(e, v) :- pc_local(e, g, x), live_asg(g, x, v), !within(e, v), !kind(v, "l
 // length an upper bound.
 .decl pc_bld(g: node, x: symbol, l: node)
 pc_bld(g, x, l) :- pc_local(_, g, x), asg(g, x, l, _), kind(l, "list").
-pc_want(l) :- pc_bld(_, _, l).
+len_want(l) :- pc_bld(_, _, l).
 .decl pc_bop(g: node, x: symbol, c: node)
 pc_bop(g, x, c) :- pc_bld(g, x, _), within(c, g), kind(c, "call"), callee(c, h), attr_of(h, o, f),
     (f = "append" ; f = "extend"), kind(o, "identifier"), text(o, x), nearest(c, g, "function_definition").
 pc_bop(g, x, c) :- pc_bld(g, x, _), within(c, g), kind(c, "augmented_assignment"), op(c, "+="), field(c, "left", o),
     kind(o, "identifier"), text(o, x), nearest(c, g, "function_definition").
-pc_want(a) :- pc_bop(_, _, c), kind(c, "call"), callee(c, h), attr_of(h, _, "extend"), posarg(c, 0, a).
-pc_want(r) :- pc_bop(_, _, c), kind(c, "augmented_assignment"), field(c, "right", r).
+len_want(a) :- pc_bop(_, _, c), kind(c, "call"), callee(c, h), attr_of(h, _, "extend"), posarg(c, 0, a).
+len_want(r) :- pc_bop(_, _, c), kind(c, "augmented_assignment"), field(c, "right", r).
 // pc_loop(c, f): `for` statement f, inside the building function, encloses growth c.
 .decl pc_loop(c: node, f: node)
 pc_loop(c, f) :- pc_bop(g, _, c), nearest(c, f, "for_statement"), within(f, g).
 pc_loop(c, f2) :- pc_loop(c, f), pc_bop(g, _, c), nearest(f, f2, "for_statement"), within(f2, g).
 .decl pc_inwhile(c: node)
 pc_inwhile(c) :- pc_bop(g, _, c), nearest(c, w, "while_statement"), within(w, g).
-pc_want(it) :- pc_loop(_, f), field(f, "right", it).
+len_want(it) :- pc_loop(_, f), field(f, "right", it).
 .decl pc_lj(c: node, f: node, j: number)
 pc_lj(c, f, j) :- pc_loop(c, f), j = count : { pc_loop(c, f2), f2 < f }.
 .decl pc_nl(c: node, n: number)
 pc_nl(c, n) :- pc_bop(_, _, c), n = count : { pc_loop(c, _) }.
 .decl pc_lf(c: node, j: number, k: number)
 pc_lf(c, 0, 1) :- pc_bop(_, _, c), !pc_inwhile(c).
-pc_lf(c, j + 1, t) :- pc_lf(c, j, k), j < 100000, pc_lj(c, f, j), field(f, "right", it), pc_len(it, w), t = k * w,
-    pc_num(t).
+pc_lf(c, j + 1, t) :- pc_lf(c, j, k), j < 100000, pc_lj(c, f, j), field(f, "right", it), len_of(it, w), t = k * w,
+    t >= 0, t <= 100000.
 .decl pc_grow(c: node, k: number)
 pc_grow(c, m) :- pc_lf(c, n, m), pc_nl(c, n), callee(c, h), attr_of(h, _, "append").
-pc_grow(c, t) :- pc_lf(c, n, m), pc_nl(c, n), callee(c, h), attr_of(h, _, "extend"), posarg(c, 0, a), pc_len(a, w),
-    t = m * w, pc_num(t).
-pc_grow(c, t) :- pc_lf(c, n, m), pc_nl(c, n), kind(c, "augmented_assignment"), field(c, "right", r), pc_len(r, w),
-    t = m * w, pc_num(t).
+pc_grow(c, t) :- pc_lf(c, n, m), pc_nl(c, n), callee(c, h), attr_of(h, _, "extend"), posarg(c, 0, a), len_of(a, w),
+    t = m * w, t >= 0, t <= 100000.
+pc_grow(c, t) :- pc_lf(c, n, m), pc_nl(c, n), kind(c, "augmented_assignment"), field(c, "right", r), len_of(r, w),
+    t = m * w, t >= 0, t <= 100000.
 .decl pc_bj(g: node, x: symbol, c: node, j: number)
 pc_bj(g, x, c, j) :- pc_bop(g, x, c), j = count : { pc_bop(g, x, c2), c2 < c }.
 .decl pc_nb(g: node, x: symbol, n: number)
 pc_nb(g, x, n) :- pc_bld(g, x, _), n = count : { pc_bop(g, x, _) }.
 .decl pc_bf(g: node, x: symbol, j: number, k: number)
-pc_bf(g, x, 0, k) :- pc_bld(g, x, l), pc_len(l, k).
-pc_bf(g, x, j + 1, t) :- pc_bf(g, x, j, k), j < 100000, pc_bj(g, x, c, j), pc_grow(c, w), t = k + w, pc_num(t).
-pc_len(e, k) :- pc_local(e, g, x), pc_bf(g, x, n, k), pc_nb(g, x, n).
+pc_bf(g, x, 0, k) :- pc_bld(g, x, l), len_of(l, k).
+pc_bf(g, x, j + 1, t) :- pc_bf(g, x, j, k), j < 100000, pc_bj(g, x, c, j), pc_grow(c, w), t = k + w, t >= 0, t <= 100000.
+len_of(e, k) :- pc_local(e, g, x), pc_bf(g, x, n, k), pc_nb(g, x, n).
 
-// The length used: the largest reading.
-.decl pc_size(e: node, k: number)
-pc_size(e, k) :- pc_len(e, _), k = max n : { pc_len(e, n) }.
 
 // ---- 5. fixtures -------------------------------------------------------------------------------------------------
 // Scopes, nearest last: each conftest.py from the root down to the module's directory, the module, then each
@@ -427,15 +328,15 @@ pc_reach(d, o, f, g) :- pc_need(d, o, f, x, b), !pc_direct(d, o, f, x), pc_pick(
 // ---- 6. the count ------------------------------------------------------------------------------------------------
 // pc_factor(d, o, f, site, w): the template is multiplied by w at site (a parametrize call, or a fixture def).
 .decl pc_pz_len(e: node, k: number)
-pc_pz_len(e, max(k, 1)) :- pc_pz_vals(e, v), pc_size(v, k).
+pc_pz_len(e, max(k, 1)) :- pc_pz_vals(e, v), len_size(v, k).
 pc_pz_len(e, 1) :- pc_pz(e), !pc_pz_vals(e, _).
 .decl pc_factor(d: number, o: node, f: node, site: node, w: number)
 pc_factor(d, o, f, e, w) :- pc_tmark(d, o, f, e, "parametrize"), pc_pz_len(e, w).
-pc_factor(d, o, f, g, max(w, 1)) :- pc_reach(d, o, f, g), pc_fx_params(g, v), pc_size(v, w).
+pc_factor(d, o, f, g, max(w, 1)) :- pc_reach(d, o, f, g), pc_fx_params(g, v), len_size(v, w).
 
 .decl collect_open(d: number, o: node, f: node)
-collect_open(d, o, f) :- pc_tmark(d, o, f, e, "parametrize"), pc_pz_vals(e, v), !pc_size(v, _).
-collect_open(d, o, f) :- pc_reach(d, o, f, g), pc_fx_params(g, v), !pc_size(v, _).
+collect_open(d, o, f) :- pc_tmark(d, o, f, e, "parametrize"), pc_pz_vals(e, v), !len_size(v, _).
+collect_open(d, o, f) :- pc_reach(d, o, f, g), pc_fx_params(g, v), !len_size(v, _).
 
 .decl collect_item(d: number, o: node, f: node, k: number)
 collect_item(d, o, f, k) :- pc_tmpl(d, o, f), k = product w : { pc_factor(d, o, f, _, w) }.
@@ -457,9 +358,9 @@ collected_dir(g, n) :- pc_group(_, g), n = sum k : { pc_group(d, g), collected_f
 // function or class body is looked up in its module too. Only the expressions the rules above ask about
 // (pc_symq) are looked up: python/names' sym_of walks the scopes of every name in every file (O-names-cost).
 .decl pc_symq(e: node)
-pc_symq(e) :- pc_want(e), (kind(e, "identifier") ; kind(e, "attribute")).
-pc_symq(o) :- pc_want(e), attr_of(e, o, _).
-pc_symq(h) :- pc_want(e), kind(e, "call"), callee(e, h), kind(h, "identifier").
+pc_symq(e) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")).
+pc_symq(o) :- len_want(e), attr_of(e, o, _).
+pc_symq(h) :- len_want(e), kind(e, "call"), callee(e, h), kind(h, "identifier").
 pc_symq(e) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), !kind(e, "keyword_argument"),
     !kind(e, "comment").
 pc_symq(e) :- kind(c, "class_definition"), dexpr(c, e), !kind(e, "call").
@@ -474,6 +375,7 @@ pc_qdom(mq) :- modname(_, mq).
 pc_qdom(@dot(mq, x)) :- modname(m, mq), live_asg(m, x, _).
 pc_qdom(@dot(cq, x)) :- class_def(c, cq), live_asg(c, x, _).
 pc_qdom(q) :- ibind(_, _, q).
+pc_qdom(q) :- values__len(q, _).
 .decl pc_home(e: node, m: node)
 pc_home(e, m) :- pc_symq(e), nearest(e, m, pc_module_kind).
 .decl pc_module_kind(k: symbol)

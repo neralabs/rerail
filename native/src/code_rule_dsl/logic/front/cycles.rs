@@ -582,8 +582,21 @@ fn summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&s
     }
 }
 
-/// The variables a rule's positive atoms of relations outside `component` bind: finitely many values each.
+/// The variables a rule's positive atoms of relations outside `component` bind, and those it bounds above and below
+/// by integers (`$t >= 0, $t <= 100000`: a whole number between two, as a table of them would bind it): finitely
+/// many values each.
 fn finite_vars<'a>(rule: &'a Rule, component: &BTreeSet<String>) -> BTreeSet<&'a String> {
+    let bound = |v: &String, below: bool| {
+        rule.body.iter().any(|l| match l {
+            Literal::Cmp { l: Term::Var(x), op, r: Term::Int(_) } if x == v => if below { matches!(*op, ">" | ">=") } else { matches!(*op, "<" | "<=") },
+            Literal::Cmp { l: Term::Int(_), op, r: Term::Var(x) } if x == v => if below { matches!(*op, "<" | "<=") } else { matches!(*op, ">" | ">=") },
+            _ => false,
+        })
+    };
+    let ranged = rule.body.iter().filter_map(|l| match l {
+        Literal::Cmp { l: Term::Var(v), r: Term::Int(_), .. } | Literal::Cmp { l: Term::Int(_), r: Term::Var(v), .. } if bound(v, true) && bound(v, false) => Some(v),
+        _ => None,
+    });
     rule.body
         .iter()
         .filter_map(|l| match l {
@@ -591,6 +604,7 @@ fn finite_vars<'a>(rule: &'a Rule, component: &BTreeSet<String>) -> BTreeSet<&'a
             _ => None,
         })
         .flat_map(|a| a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }))
+        .chain(ranged)
         .collect()
 }
 

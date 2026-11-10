@@ -142,6 +142,8 @@ fn write_cache(path: &std::path::Path, roofs: &BTreeMap<Unit, Option<f64>>) {
 fn measure(units: &[Unit]) -> BTreeMap<Unit, Option<f64>> {
     let units = units.to_vec();
     std::thread::spawn(move || {
+        // What the memory sampler names while the loops run (not a span: `write` holds the profile's records).
+        let _doing = super::memory::Doing::new("profile: the machine's roofs measured (roofline, not the run's work)");
         #[cfg(target_os = "macos")]
         unsafe {
             unsafe extern "C" {
@@ -277,7 +279,8 @@ fn roof(u: Unit) -> Option<f64> {
         Unit::Literal => {
             use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
             let var = |i: usize| Term::Var(format!("v{}", i % 7));
-            let body: Vec<Literal> = (0..1usize << 20)
+            // 2^16 literals: a clone's cost per literal, as 2^20 measured it, without ~650 MB held three times over.
+            let body: Vec<Literal> = (0..1usize << 16)
                 .map(|i| Literal::Atom(Atom { rel: format!("r{}", i % 97), args: vec![var(i), var(i + 1), var(i + 2)], neg: false, gated: false }))
                 .collect();
             Some(best(3, || {

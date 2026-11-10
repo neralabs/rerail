@@ -1,0 +1,222 @@
+// P2, `types` (decision 0083 §1): what the structure means, over struct.'s exports only. It reads no document and
+// loads nothing: every name it resolves is a symbol struct. handed on. Its own fixed point resolves
+// - a module's names through imports and re-exports, to the definition each names (`binds`);
+// - a class's bases as written, to the classes they name (`bases`), and its ancestors (`anc`);
+// - a name looked up on a class, through its bases left first (`attr`);
+// - the annotations of parameters, returns and declared values, as written, to the symbol their head names
+//   (`sig`, `rtype`, `vtype`): `list[T]` keeps its text, and its head resolves to `builtins.list`.
+//
+// ```text
+// # m.py                       # n.py                     types.binds("n", "C", "m.C").
+// class B:                     from m import C            types.bases("m.C", 0, "m.B").
+//     def run(self) -> int: …  def f(c: C) -> None: …    types.attr("m.C", "run", "m.B.run", "m.B").
+// class C(B): pass                                        types.rtype("m.B.run", "int", "builtins.int").
+//                                                         types.sig("n.f", 0, "c", "C", "m.C").
+// ```
+//
+// Approximations, kept on purpose for the first version:
+// - `attr` takes the first base, left to right and depth first, that has the name: Python's C3 order differs only
+//   for a class that reaches one ancestor by two paths;
+// - a name bound more than once in a module (by branches, redefinitions) resolves to each binding;
+// - a class body's own names are not in scope for its methods' annotations, as in Python, but neither are
+//   enclosing functions' (annotations are read at module level);
+// - generic annotations are kept as written, their parameters unresolved: instantiating them is P3's search
+//   (0083 §4).
+
+#include "core.rr"
+
+.phase types
+.export binds, bases, anc, attr, sig, rtype, vtype, owner, callret, tparam, tmap, rvar, rgen, ropen
+
+.decl struct__def(s: symbol, k: symbol)
+.decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
+.decl struct__base(c: symbol, i: number, b: symbol)
+.decl struct__member(c: symbol, x: symbol, t: symbol)
+.decl struct__param(f: symbol, i: number, x: symbol, a: symbol)
+.decl struct__ret(f: symbol, a: symbol)
+.decl struct__vann(s: symbol, a: symbol)
+.decl struct__alias(s: symbol, e: symbol)
+.decl struct__tvar(s: symbol)
+
+// ---- where a symbol is: the module it is defined in ------------------------------------------------------------
+.decl owner(s: symbol, m: symbol)
+owner(s, s) :- struct__def(s, "module").
+// The nearest module up: `unittest.mock.patch` is unittest.mock's, though `unittest.mock` is also a name `unittest`
+// binds.
+owner(s, p) :- parent(s, p), struct__def(p, "module").
+owner(s, m) :- parent(s, p), !struct__def(p, "module"), owner(p, m).
+// parent(s, p): s is defined in p, by its symbol: made once, so the recursion above joins on p. `split_dot` gives
+// every split of s, so the last part is the one with no dot. Stored (`no_inline`, decision 0099): unfolded into the
+// recursion, each new owner row scanned every definition and split its symbol (445 M rows, 311 s on the 84 files).
+.decl parent(s: symbol, p: symbol) no_inline
+parent(s, p) :- struct__def(s, k), k != "module", split_dot(s, p, x), !contains(".", x).
+parent(s, p) :- struct__vann(s, _), split_dot(s, p, x), !contains(".", x).
+
+// ---- a module's names ------------------------------------------------------------------------------------------
+// binds(m, x, d): module m binds x to symbol d: a definition, a value assigned (its symbol `m.x`), or what an
+// import names, resolved (`res`).
+.decl binds(m: symbol, x: symbol, d: symbol)
+binds(m, x, d) :- struct__binds(m, x, "def", d).
+binds(m, x, @dot(m, x)) :- struct__binds(m, x, "assign", "").
+binds(m, x, d) :- struct__binds(m, x, "import", t), res(t, d).
+// A name assigned another name (`local = _thread._local`): also what that one names, in the module. The aliases
+// are made first, keyed by the name they read (y), so a new binding of y joins only its own aliases.
+.decl malias(m: symbol, x: symbol, y: symbol, r: symbol)
+malias(m, x, e, "") :- struct__binds(m, x, "assign", ""), struct__alias(@dot(m, x), e), !contains(".", e), e != x.
+malias(m, x, y, r) :- struct__binds(m, x, "assign", ""), struct__alias(@dot(m, x), e), contains(".", e), y = @head(e),
+    r = substr(e, strlen(y) + 1, strlen(e) - strlen(y) - 1).
+binds(m, x, d) :- malias(m, x, y, ""), binds(m, y, d).
+binds(m, x, d) :- malias(m, x, y, r), r != "", binds(m, y, d0), t = @dot(d0, r), res(t, d).
+// `from n import *`: n's names that are not private, and not bound in m itself.
+binds(m, x, d) :- struct__binds(m, "*", "star", n), binds(n, x, d), x != "*", !prefix("_", x), !own_name(m, x).
+.decl own_name(m: symbol, x: symbol)
+own_name(m, x) :- struct__binds(m, x, how, _), how != "star".
+.decl mbound(m: symbol, x: symbol)
+mbound(m, x) :- binds(m, x, _).
+
+// res(t, d): qualified name t names symbol d: a definition by that name, or a module's (or a class's own) name,
+// followed through re-exports.
+.decl want(t: symbol)
+want(t) :- struct__binds(_, _, "import", t).
+want(t) :- malias(m, _, y, r), r != "", binds(m, y, d0), t = @dot(d0, r).
+want(t) :- head_of(m, _, h), contains(".", h), x = @head(h), binds(m, x, d0), r = substr(h, strlen(x) + 1, strlen(h) - strlen(x) - 1),
+    t = @dot(d0, r).
+.decl res(t: symbol, d: symbol)
+res(t, t) :- want(t), struct__def(t, _).
+res(t, d) :- want(t), !struct__def(t, _), split_dot(t, m, y), !contains(".", y), struct__def(m, "module"), binds(m, y, d).
+res(t, d) :- want(t), !struct__def(t, _), split_dot(t, c, y), !contains(".", y), struct__def(c, "class"), struct__member(c, y, d), d != "".
+
+// ---- annotations and bases, as written, resolved in their module -------------------------------------------------
+// head_of(m, e, h): expression e written in module m, its head name h: `typing.List[int]` gives `typing.List`, a
+// quoted forward reference `"C"` gives `C`.
+.decl written(m: symbol, e: symbol)
+written(m, e) :- struct__base(c, _, e), owner(c, m).
+written(m, a) :- struct__param(f, _, _, a), a != "", owner(f, m).
+written(m, a) :- struct__ret(f, a), owner(f, m).
+written(m, a) :- struct__vann(s, a), owner(s, m).
+.decl head_of(m: symbol, e: symbol, h: symbol)
+head_of(m, e, h) :- alt(m, e, a), h0 = @replace_all(a, "\\[.*$", ""), h = @replace_all(h0, "^[\"']|[\"']$", ""), h != "", !contains("]", h).
+// alt(m, e, a): an alternative of union e (`A | None`), each part split at its first `|` (one inside brackets
+// splits too: the part left of it keeps its head, the part right of it has `]` and is dropped above).
+.decl alt(m: symbol, e: symbol, a: symbol)
+.decl rest(m: symbol, e: symbol, s: symbol)
+rest(m, e, e) :- written(m, e).
+rest(m, e, b) :- rest(m, e, s), match("^[^|]*\\|\\s*(?<b>.*)$", s).
+alt(m, e, a) :- rest(m, e, s), match("^(?<a>[^|]*[^|\\s])\\s*(\\|.*)?$", s).
+// rexpr(m, e, d): e's head names d: a name of m, or else a builtin; a dotted head through its first name. hexpr
+// keeps which alternative h of a union names it.
+.decl hexpr(m: symbol, e: symbol, h: symbol, d: symbol)
+// `None` is the type of None.
+hexpr(m, e, "None", "builtins.None") :- head_of(m, e, "None").
+hexpr(m, e, h, d) :- head_of(m, e, h), !contains(".", h), binds(m, h, d).
+hexpr(m, e, h, d) :- head_of(m, e, h), !contains(".", h), !mbound(m, h), binds("builtins", h, d).
+hexpr(m, e, h, d) :- head_of(m, e, h), contains(".", h), x = @head(h), binds(m, x, d0), r = substr(h, strlen(x) + 1, strlen(h) - strlen(x) - 1),
+    t = @dot(d0, r), res(t, d).
+.decl rexpr(m: symbol, e: symbol, d: symbol)
+rexpr(m, e, d) :- hexpr(m, e, _, d).
+// resolved(m, e): every alternative of e names a class, or is None. One that does not (a type variable, `Any`, a
+// special form, a name of a module not read) leaves what e declares partly unknown: `sig`, `rtype` and `vtype` give
+// the symbols the alternatives name and a "" row.
+.decl hclass(m: symbol, e: symbol, h: symbol)
+hclass(m, e, h) :- hexpr(m, e, h, d), struct__def(d, "class").
+hclass(m, e, "None") :- head_of(m, e, "None").
+.decl unresolved(m: symbol, e: symbol)
+unresolved(m, e) :- written(m, e), !head_of(m, e, _).
+unresolved(m, e) :- head_of(m, e, h), !hclass(m, e, h).
+.decl resolved(m: symbol, e: symbol)
+resolved(m, e) :- written(m, e), !unresolved(m, e).
+
+// ---- generics: type variables, a class's parameters, and returns that name them -------------------------------
+// gin(m, e, a, s): alternative a of e is a subscript whose arguments s hold no subscript (`Iterator[_T]`,
+// `dict_items[_KT, _VT]`); garg(m, e, a, j, x): its j-th argument is the name x.
+.decl gin(m: symbol, e: symbol, a: symbol, s: symbol)
+gin(m, e, a, s) :- alt(m, e, a), match("^[A-Za-z_.]+\\[(?<s>[^\\[\\]]*)\\]$", a).
+.decl grest(m: symbol, e: symbol, a: symbol, j: number, s: symbol)
+grest(m, e, a, 0, s) :- gin(m, e, a, s).
+grest(m, e, a, j, r) :- grest(m, e, a, i, s), match("^[^,]*,\\s*(?<r>.*)$", s), succ(i, j).
+.decl garg(m: symbol, e: symbol, a: symbol, j: number, x: symbol)
+garg(m, e, a, j, x) :- grest(m, e, a, j, s), match("^(?<x>[A-Za-z_][A-Za-z_0-9.]*)\\s*(,.*)?$", s).
+.decl succ(i: number, j: number)
+succ(0, 1). succ(1, 2). succ(2, 3). succ(3, 4). succ(4, 5).
+// galt(m, e, a, h): a subscript alternative a and its head h, as `head_of` gives it.
+.decl galt(m: symbol, e: symbol, a: symbol, h: symbol)
+galt(m, e, a, h) :- gin(m, e, a, _), h = @replace_all(a, "\\[.*$", "").
+// tv(m, x, y): name x written in module m is the type variable y.
+.decl tv(m: symbol, x: symbol, y: symbol)
+tv(m, x, y) :- garg(m, _, _, _, x), binds(m, x, y), struct__tvar(y).
+tv(m, x, y) :- alt(m, _, x), binds(m, x, y), struct__tvar(y).
+// tparam(c, i, y): class c's i-th type parameter is the type variable y: as its `Generic[...]` or `Protocol[...]`
+// base lists them, else the type variables of its first base that takes one, in order (PEP 484 orders them by
+// first appearance over every base: the first base's are most classes').
+.decl btv(c: symbol, i: number, j: number, y: symbol)
+btv(c, i, j, y) :- struct__base(c, i, e), owner(c, m), garg(m, e, e, j, x), tv(m, x, y).
+.decl pbase(c: symbol, i: number)
+pbase(c, i) :- struct__base(c, i, e), match("^([A-Za-z_.]*\\.)?(Generic|Protocol)\\[.*$", e).
+.decl explicit(c: symbol)
+explicit(c) :- pbase(c, _).
+.decl gbase(c: symbol, i: number)
+gbase(c, i) :- btv(c, i, _, _), !pbase(c, i).
+.decl gbase_later(c: symbol, j: number)
+gbase_later(c, j) :- gbase(c, j), gbase(c, i), i < j.
+.decl tparam(c: symbol, i: number, y: symbol)
+tparam(c, k, y) :- pbase(c, i), btv(c, i, j, y), k = count : { btv(c, i, j2, _), j2 < j }.
+tparam(c, k, y) :- gbase(c, i), !gbase_later(c, i), !explicit(c), btv(c, i, j, y), k = count : { btv(c, i, j2, _), j2 < j }.
+// tmap(k, i, a, y): ancestor a's parameter y is k's parameter i (`class dict(MutableMapping[_KT, _VT])`: Mapping's
+// `_VT_co` is dict's parameter 1); a = k for its own.
+.decl tmap(k: symbol, i: number, a: symbol, y: symbol)
+tmap(k, i, k, y) :- tparam(k, i, y).
+tmap(k, i, a, y) :- btv(k, b, j, z), tparam(k, i, z), bases(k, b, bc), tmap(bc, j, a, y).
+// rvar(f, y): an alternative of f's declared return is the type variable y (`-> _VT | None`); rgen(f, k, j, y): one is
+// a generic of class k whose j-th argument is the type variable y (`-> Iterator[_T]`).
+.decl rvar(f: symbol, y: symbol)
+rvar(f, y) :- struct__ret(f, a), owner(f, m), alt(m, a, x), tv(m, x, y).
+.decl rgen(f: symbol, k: symbol, j: number, y: symbol)
+rgen(f, k, j, y) :- struct__ret(f, a), owner(f, m), galt(m, a, s, h), hexpr(m, a, h, k), struct__def(k, "class"), garg(m, a, s, j, x),
+    tv(m, x, y).
+// ropen(f): an alternative of f's declared return names no class, None nor type variable (`Any`, a special form): a
+// call of f may hold what no symbol names, whatever binds the type variables.
+.decl ropen(f: symbol)
+ropen(f) :- struct__ret(f, a), owner(f, m), !head_of(m, a, _).
+ropen(f) :- struct__ret(f, a), owner(f, m), head_of(m, a, h), !hclass(m, a, h), !tv(m, h, _).
+
+// ---- classes ---------------------------------------------------------------------------------------------------
+.decl bases(c: symbol, i: number, b: symbol)
+bases(c, i, b) :- struct__base(c, i, e), owner(c, m), rexpr(m, e, b), struct__def(b, "class").
+.decl anc(c: symbol, a: symbol)
+anc(c, a) :- bases(c, _, a).
+anc(c, a) :- anc(c, b), bases(b, _, a).
+// reaches(c, x): class c or an ancestor defines x.
+.decl reaches(c: symbol, x: symbol)
+reaches(c, x) :- struct__member(c, x, _).
+reaches(c, x) :- bases(c, _, b), reaches(b, x).
+.decl defines(c: symbol, x: symbol)
+defines(c, x) :- struct__member(c, x, _).
+// shadowing(c, i, x): a base of c before its i-th has x.
+.decl shadowing(c: symbol, i: number, x: symbol)
+shadowing(c, i, x) :- bases(c, i, _), bases(c, j, b), j < i, reaches(b, x).
+// attr(c, x, d, k): x looked up on class c is d (its symbol; "" for a value assigned in the class body), defined
+// in class k.
+.decl attr(c: symbol, x: symbol, d: symbol, k: symbol)
+attr(c, x, d, c) :- struct__member(c, x, d).
+// A class-level alias of another member (`__ror__ = __or__`): that member.
+attr(c, x, d, c) :- struct__member(c, x, ""), struct__alias(@dot(c, x), e), e != x, struct__member(c, e, d), d != "".
+attr(c, x, d, k) :- bases(c, i, b), attr(b, x, d, k), !defines(c, x), !shadowing(c, i, x).
+
+// ---- signatures and declared types: as written, each alternative's symbol, and "" when one names no class ---------
+.decl sig(f: symbol, i: number, x: symbol, a: symbol, d: symbol)
+sig(f, i, x, "", "") :- struct__param(f, i, x, "").
+sig(f, i, x, a, d) :- struct__param(f, i, x, a), a != "", owner(f, m), rexpr(m, a, d).
+sig(f, i, x, a, "") :- struct__param(f, i, x, a), a != "", owner(f, m), !resolved(m, a).
+.decl rtype(f: symbol, a: symbol, d: symbol)
+rtype(f, a, d) :- struct__ret(f, a), owner(f, m), rexpr(m, a, d).
+rtype(f, a, "") :- struct__ret(f, a), owner(f, m), !resolved(m, a).
+.decl vtype(s: symbol, a: symbol, d: symbol)
+vtype(s, a, d) :- struct__vann(s, a), owner(s, m), rexpr(m, a, d).
+vtype(s, a, "") :- struct__vann(s, a), owner(s, m), !resolved(m, a).
+// callret(f, b, d): f is declared to return a callable whose own return is b, b's head d: a decorator that wraps
+// what it decorates (`contextmanager(func: Callable[_P, Iterator[_T]]) -> Callable[_P, _GeneratorContextManager[_T]]`).
+.decl cbody(f: symbol, b: symbol)
+cbody(f, b) :- struct__ret(f, a), match("^([A-Za-z_.]*\\.)?Callable\\[[A-Za-z_0-9]+, (?<b>.*)\\]$", a).
+written(m, b) :- cbody(f, b), owner(f, m).
+.decl callret(f: symbol, b: symbol, d: symbol)
+callret(f, b, d) :- cbody(f, b), owner(f, m), rexpr(m, b, d).

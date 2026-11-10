@@ -133,6 +133,11 @@ pub(crate) trait Source: Send + Sync {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         None
     }
+    /// How many rows hold each value `v` in column `c`, for each `(c, v)` of `wanted`, where the source keeps them
+    /// (its rows do not change): `None` when the caller counts them.
+    fn value_counts(&self, _wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
+        None
+    }
     /// Why rows could not be made, where a source makes them on demand and making them failed (a
     /// stored frame that does not decode). The statement reading it fails with this message rather
     /// than reading the rows as absent.

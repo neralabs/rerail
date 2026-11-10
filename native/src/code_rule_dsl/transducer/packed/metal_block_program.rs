@@ -86,6 +86,9 @@ struct FileRow {
     slab: u32,
     /// Where the file's counts start (one per counted output: `native_cpu_block::counted`).
     tot_base: u32,
+    /// A program in passes (`native_ir::Passes`, the forward carry only): where the file's slot
+    /// words start in the output buffer, block `b`'s slot `k` at `slot_base + b * slots + k`.
+    slot_base: u32,
 }
 
 /// A program of a batch, as the interpreter reads it (`ProgramRow` in the interpreter).
@@ -122,13 +125,18 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
         BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
         BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
-        BlockInst::Position(_) => unreachable!("refused at `run_batch`: Metal makes no position planes yet"),
+        // `j` in `a`; below 6 the period's pattern in `b` and `imm`.
+        BlockInst::Position(j) => {
+            let pattern = (0..64u32).filter(|i| u32::from(j) < 6 && i >> j & 1 == 1).fold(0u64, |a, i| a | 1 << i);
+            [16, u32::from(j), pattern as u32, (pattern >> 32) as u32]
+        }
         // The period in `a` (`k | r << 8`, never read as a slot: it is clamped), its bits in `b` and `imm`.
         BlockInst::Phase(k, r) => {
             let bits = super::block::period_bits(k);
             [15, u32::from(k) | u32::from(r) << 8, bits as u32, (bits >> 32) as u32]
         }
         BlockInst::Class { .. } | BlockInst::Pair { .. } => unreachable!("the planes form has no class or pair"),
+        BlockInst::Cmp { .. } | BlockInst::Bit { .. } => unreachable!("a row program's, never a byte program's"),
     }
 }
 
@@ -195,9 +203,8 @@ pub(in crate::code_rule_dsl) fn run_batch(
 ) -> Result<BatchRun, Error> {
     // A fixed point (`rounds`) is the CPU's for now: each lane would run its rounds in its own
     // frame, within `block::MAX_ROUNDS`, to the same values.
-    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet;
-    // and a position's planes, which need the word's place in its file.
-    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_) | BlockInst::Position(_)))) {
+    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet.
+    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
         return Err(Error::UnsupportedBackend);
     }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
@@ -249,6 +256,7 @@ pub(in crate::code_rule_dsl) fn run_batch(
             pos_base: fit(pos_base)?,
             slab: slab_of[i],
             tot_base: fit(tot_base)?,
+            slot_base: 0,
         });
         group_file.extend(std::iter::repeat_n(fit(i)?, groups));
         group0 += groups;
@@ -633,8 +641,8 @@ const FILE_ROW: &str = "// A file of the batch (decision 0066). Lane words are i
 // out_base + k * groups * 32 + gl; carry j of group g at state_base + j * groups + g (a halo's
 // three words from halo_base + (j * groups + g) * 3); counted output c's state of group g at
 // ext_base + c * groups + g, and its total at tot_base + c; extract e's positions from
-// pos_base + e * max(len, 1).
-struct FileRow { uint src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, slab, tot_base; };
+// pos_base + e * max(len, 1); in passes, block b's slot k at slot_base + b * SLOTS + k.
+struct FileRow { uint src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, slab, tot_base, slot_base; };
 static inline uint4 load16(device const uint4* bytes, FileRow f, uint c) {
   const uint chunks = max((f.len + 15u) / 16u, 1u);
   const uint4 v = bytes[f.src16 + min(c, chunks - 1u)];
@@ -1147,7 +1155,11 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
 fn full_form(native: &BlockNative) -> BlockNative {
     let plan = super::native_cpu_lanes::Plan::of(native);
     let mut form = native.clone();
+    let members = group_members(native);
     for (at, inst) in form.insts.iter_mut().enumerate() {
+        if members[at] {
+            continue;
+        }
         let folded = match (*inst, plan.full[at]) {
             (BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..), _) => None,
             (BlockInst::Within(_), _) => Some(u64::MAX),
@@ -1161,13 +1173,25 @@ fn full_form(native: &BlockNative) -> BlockNative {
     form
 }
 
+/// Whether each instruction is a fixed point's member: its value is the loop's, never folded.
+fn group_members(native: &BlockNative) -> Vec<bool> {
+    let mut members = vec![false; native.insts.len()];
+    for g in &native.groups {
+        for &m in &g.members {
+            members[m] = true;
+        }
+    }
+    members
+}
+
 /// A program's form in a full group of ASCII bytes: `full_form`, with each byte-local value known
 /// on ASCII bytes (`native_cpu_lanes::Plan::ascii`) a constant: a UTF-8 check's, say.
 fn ascii_form(native: &BlockNative) -> BlockNative {
     let plan = super::native_cpu_lanes::Plan::of(native);
     let mut form = full_form(native);
+    let members = group_members(native);
     for (at, inst) in form.insts.iter_mut().enumerate() {
-        if inst.carried() || !plan.lanes[at] {
+        if inst.carried() || !plan.lanes[at] || members[at] {
             continue;
         }
         if let Some(one) = plan.ascii[at] {
@@ -1236,13 +1260,15 @@ fn emit(
     if insts.iter().any(|i| matches!(i, BlockInst::Plane(_) | BlockInst::PlaneBefore(_))) {
         out.push_str(&planes(width));
     }
-    for &at in chosen {
+    // Each instruction's statements, into `out`.
+    let mut one = |at: usize, out: &mut String| {
         let inst = &native.insts[at];
         if inst.carried() {
-            carried(at, inst, &mut out);
-            continue;
+            carried(at, inst, out);
+            return;
         }
         let rhs = match *inst {
+            BlockInst::Cmp { .. } | BlockInst::Bit { .. } => unreachable!("a row program's, never a byte program's"),
             BlockInst::Class { table, bits: sel } => {
                 let s4 = u32::from(sel) * 0x0101_0101;
                 (0..chunks)
@@ -1291,14 +1317,142 @@ fn emit(
                 format!("{m}({bits:#018x}ul << (({r}u + {k}u - (({offset}) % {k}u)) % {k}u))")
             }
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => unreachable!(),
-            BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
-            BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
-        BlockInst::Position(_) => unreachable!("refused at `run_batch`: Metal makes no position planes yet"),
+            // Bit j of each byte's place in its file: below 6 a pattern of period 2^(j+1), from
+            // the word's first byte (a lane's bytes start at a multiple of its width); from 6 on
+            // the same in all of a word's bytes, at most 64 of them.
+            BlockInst::Position(j) if j < 6 => {
+                let pattern = (0..64u32).filter(|i| i >> j & 1 == 1).fold(0u64, |a, i| a | 1 << i);
+                format!("{m}({pattern:#018x}ul >> ulong(({offset}) & 63u))")
+            }
+            BlockInst::Position(j) => format!("{m}(0) - {m}((uint({offset}) >> {j}u) & 1u)"),
+            BlockInst::Carry(_) => unreachable!("a carry is its group's loop's (`emit`)"),
+            // A slot word of a pass before (`native_ir::Passes`): the forward carry's, a block a
+            // word, in the output buffer `out`.
+            BlockInst::Load(k) => format!("out[f.slot_base + ({offset}) / 64u * SLOTS{p} + {k}u]"),
+            BlockInst::BackFill(..) => unreachable!("a backward pass's (`metal_block_serial::back_kernels`)"),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
+    };
+    // The order: `chosen`'s, each fixed point (`rounds until settled`) one step where its members
+    // can all run (`schedule`).
+    for step in schedule(native, chosen) {
+        match step {
+            Step::One(at) => one(at, &mut out),
+            Step::Group(g) => group_loop(native, g, m, &mut |at, out| one(at, out), &mut out),
+        }
     }
     let _ = bits;
     out
+}
+
+/// A step of `emit`: an instruction, or a fixed point's group (`BlockNative::groups`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Step {
+    One(usize),
+    Group(usize),
+}
+
+/// `chosen` in an order its values can be made in: each instruction once its operands are, the
+/// first ready first; a group once every operand of its members outside it is, its members
+/// together. As Cranelift places a group (`native_cpu_block`).
+fn schedule(native: &BlockNative, chosen: &[usize]) -> Vec<Step> {
+    let mut group_of = vec![None; native.insts.len()];
+    for (g, group) in native.groups.iter().enumerate() {
+        for &m in &group.members {
+            group_of[m] = Some(g);
+        }
+    }
+    if chosen.iter().all(|&at| group_of[at].is_none()) {
+        return chosen.iter().map(|&at| Step::One(at)).collect();
+    }
+    let wanted: std::collections::BTreeSet<usize> = chosen.iter().copied().collect();
+    // A value not chosen is made already (an earlier level's), or not at all.
+    let mut done: Vec<bool> = (0..native.insts.len()).map(|at| !wanted.contains(&at)).collect();
+    let mut ran = vec![false; native.groups.len()];
+    let mut out = Vec::with_capacity(chosen.len());
+    loop {
+        let mut progress = false;
+        for &at in chosen {
+            if !done[at] && group_of[at].is_none() && native.insts[at].operands().iter().all(|&o| done[o]) {
+                out.push(Step::One(at));
+                done[at] = true;
+                progress = true;
+            }
+        }
+        for (g, group) in native.groups.iter().enumerate() {
+            if !ran[g] && group.members.iter().all(|&m| wanted.contains(&m)) && group.members.iter().all(|&m| native.insts[m].operands().iter().all(|&o| done[o] || group_of[o] == Some(g))) {
+                out.push(Step::Group(g));
+                for &m in &group.members {
+                    done[m] = true;
+                }
+                ran[g] = true;
+                progress = true;
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+    if let Some(&at) = chosen.iter().find(|&&at| !done[at]) {
+        let why: Vec<String> = native.insts[at].operands().iter().filter(|&&o| !done[o]).map(|&o| format!("%{o} {:?} (group {:?}, chosen {})", native.insts[o], group_of[o], wanted.contains(&o))).collect();
+        let blocked: Vec<String> = native
+            .groups
+            .iter()
+            .enumerate()
+            .filter(|&(g, _)| !ran[g])
+            .flat_map(|(g, group)| group.members.iter().flat_map(move |&m| native.insts[m].operands().into_iter().map(move |o| (g, m, o))).collect::<Vec<_>>())
+            .filter(|&(g, _, o)| !done[o] && group_of[o] != Some(g))
+            .map(|(g, m, o)| format!("group {g}: %{m} {:?} reads %{o} {:?} (group {:?}, chosen {})", native.insts[m], native.insts[o], group_of[o], wanted.contains(&o)))
+            .collect();
+        panic!("%{at} {:?} (group {:?}) is never made: waits on {why:?}; {blocked:?}", native.insts[at], group_of[at]);
+    }
+    out
+}
+
+/// Group `g`'s loop (`rounds until settled`): its members made again from its carries until no
+/// carry changes in any thread of the SIMD group, at most `MAX_ROUNDS` rounds a block of the
+/// group. Every member is a variable before the loop, so the words after it read the last
+/// round's; the carried members' outs too (`o`, `co`), read by the block's tail. A thread that
+/// has settled makes the same values again: a fixed point.
+fn group_loop(native: &BlockNative, g: usize, m: &str, one: &mut dyn FnMut(usize, &mut String), out: &mut String) {
+    let group = &native.groups[g];
+    for &x in &group.members {
+        out.push_str(&format!("  {m} v{x} = {m}(0);\n"));
+        if matches!(native.insts[x], BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..)) {
+            out.push_str(&format!("  uint o{x} = 0u, co{x} = 0u;\n"));
+        }
+    }
+    for (k, &(c, _)) in group.carries.iter().enumerate() {
+        let BlockInst::Carry(init) = native.insts[c] else { unreachable!("a carry") };
+        out.push_str(&format!("  {m} gc{g}_{k} = v{init};\n"));
+    }
+    let bound = super::block::MAX_ROUNDS * GROUP;
+    out.push_str(&format!("  for (uint r{g} = 0u; r{g} < {bound}u; r{g}++) {{\n"));
+    for (k, &(c, _)) in group.carries.iter().enumerate() {
+        out.push_str(&format!("    v{c} = gc{g}_{k};\n"));
+    }
+    for &x in &group.members {
+        if matches!(native.insts[x], BlockInst::Carry(_)) {
+            continue;
+        }
+        let mut text = String::new();
+        one(x, &mut text);
+        // The member's own declarations become assignments to the variables above.
+        let text = text
+            .replace(&format!("const {m} v{x} = "), &format!("v{x} = "))
+            .replace(&format!("const ulong v{x} = "), &format!("v{x} = "))
+            .replace(&format!("uint o{x} = 0u;"), &format!("o{x} = 0u;"))
+            .replace(&format!("const uint co{x} = "), &format!("co{x} = "));
+        for line in text.lines() {
+            out.push_str(&format!("  {line}\n"));
+        }
+    }
+    let changed: Vec<String> = group.carries.iter().enumerate().map(|(k, &(_, x))| format!("v{x} != gc{g}_{k}")).collect();
+    out.push_str(&format!("    const bool more{g} = {};\n", changed.join(" || ")));
+    for (k, &(_, x)) in group.carries.iter().enumerate() {
+        out.push_str(&format!("    gc{g}_{k} = v{x};\n"));
+    }
+    out.push_str(&format!("    if (!simd_any(more{g})) break;\n  }}\n"));
 }
 
 /// Generated MSL run: every output's words over `bytes`, as 64-bit words of the stream.
