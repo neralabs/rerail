@@ -357,6 +357,8 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) wait_cpu: f64,
     pub(in crate::code_rule_dsl) wait_wall: f64,
     pub(in crate::code_rule_dsl) decode_cpu: f64,
+    /// Head rows left once made distinct on the device (of `rows`).
+    pub(in crate::code_rule_dsl) distinct: u64,
     pub(in crate::code_rule_dsl) upload_cpu: f64,
     /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
     pub(in crate::code_rule_dsl) uploads: u32,
@@ -394,6 +396,10 @@ struct Run<'p> {
     /// Each stage's first counter (`None`: it counts no fused steps).
     counter: Vec<Option<usize>>,
     rels: Vec<Option<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>)>>,
+    /// The head's distinct rows (a column per slot of `uniq_cols`), made on the device after the last stage; their
+    /// count is `totals`' last word.
+    uniq: Option<mj::Table>,
+    uniq_cols: Vec<usize>,
 }
 
 /// The device's copy of `rel`, and its sort by `cols` (none when it has no keys), uploaded and encoded into `batch`
@@ -483,14 +489,23 @@ impl<'p> Run<'p> {
                 counter.push(None);
             }
         }
-        let totals = mj::Words::zeroed(slot + 1).map_err(|e| format!("{e:?}"))?;
+        let totals = mj::Words::zeroed(slot + 2).map_err(|e| format!("{e:?}"))?;
         totals.set(0, 1);
         let counters = mj::Words::zeroed(ncounters.max(1)).map_err(|e| format!("{e:?}"))?;
         let mut tables: Vec<Option<mj::Table>> = (0..=slot).map(|_| None).collect();
         tables[0] = Some(mj::Table::one(plan.nslots, &[]).map_err(|e| format!("{e:?}"))?);
         let mut caps = vec![0; slot + 1];
         caps[0] = 1;
-        Ok(Run { plan, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()] })
+        let mut uniq_cols: Vec<usize> = Vec::new();
+        for (h, &s) in plan.head.iter().zip(&plan.head_slots) {
+            if h.is_none() && !uniq_cols.contains(&s) {
+                uniq_cols.push(s);
+            }
+        }
+        if uniq_cols.len() > 16 {
+            return Err("a head of more than 16 slots".into());
+        }
+        Ok(Run { plan, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], uniq: None, uniq_cols })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -546,6 +561,12 @@ impl<'p> Run<'p> {
                 }
             }
         }
+        // The head rows made distinct, as the store keeps them (fewer rows back to the host).
+        let last = self.io.last().map_or(0, |io| io.1);
+        let table = self.tables[last].as_ref().expect("the last table");
+        let uniq = mj::Table::new(self.uniq_cols.len(), table.cap).map_err(|e| format!("{e:?}"))?;
+        batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}"))?;
+        self.uniq = Some(uniq);
         Ok(())
     }
 
@@ -619,11 +640,17 @@ pub(super) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mu
     for (r, &(plan, j, head)) in runs.iter().zip(rules) {
         let last = r.io.last().map_or(0, |io| io.1);
         let n = r.totals.get(last) as usize;
-        let table = r.tables[last].as_ref().expect("the last table");
-        let cols: Vec<&[i64]> = plan.head_slots.iter().map(|&s| table.column(s, n)).collect();
+        let distinct = r.totals.get(r.totals.len - 1) as usize;
+        let uniq = r.uniq.as_ref().expect("the head's distinct rows");
+        let cols: Vec<&[i64]> = plan
+            .head_slots
+            .iter()
+            .map(|s| uniq.column(r.uniq_cols.iter().position(|u| u == s).unwrap_or(0), distinct))
+            .collect();
         let mut row = vec![0i64; plan.head.len()];
         let rel = &store.rels[head];
-        for x in 0..n {
+        rep.distinct += distinct as u64;
+        for x in 0..distinct {
             for (c, h) in plan.head.iter().enumerate() {
                 row[c] = h.unwrap_or_else(|| cols[c][x]);
             }

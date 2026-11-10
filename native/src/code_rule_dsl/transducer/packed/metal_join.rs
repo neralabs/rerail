@@ -362,6 +362,66 @@ kernel void scan_scatter(device const long* L [[buffer(0)]], device const long* 
     if (offsets[r + 1] > at && at < s.cap_out) write_row(s, L, 0, R, r, O, at);
 }
 
+// A rule's head rows made distinct: each row claims a place in an open-addressed table by its columns' hash (the
+// least row index of rows equal to it wins), and a row is kept when it holds its place. The kept rows keep their order.
+struct Dedup { uint cap; uint in_slot; uint out_slot; uint ncols; uint mask; uint cols[16]; };
+
+static inline bool same_row(constant Dedup& d, device const long* T, uint a, uint b) {
+    for (uint c = 0; c < d.ncols && c < 16; c++) if (T[ulong(d.cols[c]) * d.cap + a] != T[ulong(d.cols[c]) * d.cap + b]) return false;
+    return true;
+}
+
+static inline uint row_hash(constant Dedup& d, device const long* T, uint x) {
+    ulong h = 0x9E3779B97F4A7C15ul;
+    for (uint c = 0; c < d.ncols && c < 16; c++) { h ^= ulong(T[ulong(d.cols[c]) * d.cap + x]); h *= 0xff51afd7ed558ccdul; h ^= h >> 33; }
+    return uint(h) & d.mask;
+}
+
+kernel void dedup_clear(device uint* P [[buffer(0)]], constant Dedup& d [[buffer(1)]], uint i [[thread_position_in_grid]]) {
+    if (i <= d.mask) P[i] = 0xffffffffu;
+}
+
+kernel void dedup_claim(device const long* T [[buffer(0)]], device const uint* totals [[buffer(1)]], device atomic_uint* P [[buffer(2)]],
+                        constant Dedup& d [[buffer(3)]], uint x [[thread_position_in_grid]]) {
+    uint n = min(totals[d.in_slot], d.cap);
+    if (x >= n) return;
+    uint at = row_hash(d, T, x);
+    // Bounded: a place at a time, and a weak exchange's spurious failure tries the place again.
+    for (uint k = 0; k < 2 * (d.mask + 1); k++) {
+        uint seen = 0xffffffffu;
+        if (atomic_compare_exchange_weak_explicit(&P[at], &seen, x, memory_order_relaxed, memory_order_relaxed)) return;
+        if (seen == 0xffffffffu) continue;
+        if (same_row(d, T, seen, x)) { atomic_fetch_min_explicit(&P[at], x, memory_order_relaxed); return; }
+        at = (at + 1) & d.mask;
+    }
+}
+
+kernel void dedup_mark(device const long* T [[buffer(0)]], device const uint* totals [[buffer(1)]], device const uint* P [[buffer(2)]],
+                       device uint* counts [[buffer(3)]], constant Dedup& d [[buffer(4)]], uint x [[thread_position_in_grid]]) {
+    if (x > d.cap) return;
+    uint n = min(totals[d.in_slot], d.cap);
+    if (x >= n) { counts[x] = 0; return; }
+    uint at = row_hash(d, T, x);
+    uint keep = 0;
+    for (uint k = 0; k <= d.mask; k++) {
+        uint y = P[at];
+        if (y == 0xffffffffu) break;
+        if (y == x) { keep = 1; break; }
+        if (same_row(d, T, y, x)) break;
+        at = (at + 1) & d.mask;
+    }
+    counts[x] = keep;
+}
+
+kernel void dedup_scatter(device const long* T [[buffer(0)]], device uint* totals [[buffer(1)]], device const uint* offsets [[buffer(2)]],
+                          device long* O [[buffer(3)]], constant Dedup& d [[buffer(4)]], uint x [[thread_position_in_grid]]) {
+    if (x == 0) totals[d.out_slot] = offsets[d.cap];
+    if (x >= d.cap) return;
+    uint at = offsets[x];
+    if (offsets[x + 1] == at) return;
+    for (uint c = 0; c < d.ncols && c < 16; c++) O[ulong(c) * d.cap + at] = T[ulong(d.cols[c]) * d.cap + x];
+}
+
 // A relation's rows' hash of its key columns, for its sort.
 kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buffer(1)]], constant uint* p [[buffer(2)]],
                      uint t [[thread_position_in_grid]]) {
@@ -635,6 +695,40 @@ impl Batch {
         Ok(())
     }
 
+    /// `table`'s distinct rows over slots `cols` (at most 16) into `out` (a column per slot of `cols`, in that order,
+    /// the same capacity), their count into `totals[out_slot]`; the first of equal rows is kept, and the order kept.
+    pub(in crate::code_rule_dsl) fn dedup(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table) -> Result<(), Error> {
+        let clear = pipeline("join", "dedup_clear", || SOURCE.to_owned())?;
+        let claim = pipeline("join", "dedup_claim", || SOURCE.to_owned())?;
+        let mark = pipeline("join", "dedup_mark", || SOURCE.to_owned())?;
+        let scatter = pipeline("join", "dedup_scatter", || SOURCE.to_owned())?;
+        assert!(cols.len() <= 16 && out.cap == table.cap);
+        let places = (2 * table.cap).next_power_of_two().max(16);
+        let mut d = [0u32; 21];
+        d[0] = table.cap as u32;
+        d[1] = in_slot as u32;
+        d[2] = out_slot as u32;
+        d[3] = cols.len() as u32;
+        d[4] = (places - 1) as u32;
+        for (i, &c) in cols.iter().enumerate() {
+            d[5 + i] = c as u32;
+        }
+        let bytes: &[u8] = unsafe { std::slice::from_raw_parts(d.as_ptr().cast::<u8>(), std::mem::size_of_val(&d)) };
+        let p = Held::new(4 * places)?;
+        let n = table.cap + 1;
+        let counts = scratch(super::metal_sort::FREE, 4 * n)?;
+        let scan = Scan::new(n)?;
+        let pass = self.pass(12)?;
+        let t: &BufferRef = &table.buffer.buffer;
+        pass.run_bytes(&clear, &[&p.buffer], bytes, groups(places));
+        pass.run_bytes(&claim, &[t, &totals.buffer.buffer, &p.buffer], bytes, groups(table.cap));
+        pass.run_bytes(&mark, &[t, &totals.buffer.buffer, &p.buffer, &counts], bytes, groups(n));
+        scan.encode(pass, &counts)?;
+        pass.run_bytes(&scatter, &[t, &totals.buffer.buffer, &counts, &out.buffer.buffer], bytes, groups(n));
+        self.keep.push(p);
+        Ok(())
+    }
+
     /// Sets slots of `table` in place (`stage`'s binds: program columns of the binding's slots, or parameters).
     pub(in crate::code_rule_dsl) fn map(&mut self, mut stage: Stage, table: &Table, in_slot: usize, totals: &Words) -> Result<(), Error> {
         let map = pipeline("join", "stage_map", || SOURCE.to_owned())?;
@@ -760,6 +854,36 @@ mod tests {
         assert_eq!(got(&t3, totals.get(3) as usize), want3);
         assert_eq!(got(&t4, totals.get(4) as usize), want4);
         assert!(!want4.is_empty() && want4.len() < want3.len() && want3.len() < want2.len());
+    }
+
+    /// A table's rows over two of its three slots made distinct on the device: the first of equal rows, in order.
+    #[test]
+    fn head_rows_made_distinct_keep_the_first_of_each_in_order() {
+        if super::super::metal_sort::device().is_err() {
+            return;
+        }
+        let (cap, n) = (5000, 4321);
+        let a = rows(cap, 7, 40);
+        let b = rows(cap, 11, 30);
+        let c = rows(cap, 13, 1000);
+        let t = Table::new(3, cap).unwrap();
+        // SAFETY: the table holds 3 * cap values and nothing else refers to it yet.
+        let v = unsafe { std::slice::from_raw_parts_mut(t.buffer.buffer.contents().cast::<i64>(), 3 * cap) };
+        v[..cap].copy_from_slice(&c);
+        v[cap..2 * cap].copy_from_slice(&a);
+        v[2 * cap..].copy_from_slice(&b);
+        let totals = Words::zeroed(2).unwrap();
+        totals.set(0, n as u32);
+        let out = Table::new(2, cap).unwrap();
+        let mut batch = Batch::new().unwrap();
+        batch.dedup(&t, &[2, 1], 0, 1, &totals, &out).unwrap();
+        batch.finish().unwrap();
+        let mut seen = std::collections::HashSet::new();
+        let want: Vec<(i64, i64)> = (0..n).map(|x| (b[x], a[x])).filter(|r| seen.insert(*r)).collect();
+        let got_n = totals.get(1) as usize;
+        let got: Vec<(i64, i64)> = (0..got_n).map(|x| (out.column(0, got_n)[x], out.column(1, got_n)[x])).collect();
+        assert!(want.len() < n && want.len() > 100);
+        assert_eq!(got, want);
     }
 
     #[test]
