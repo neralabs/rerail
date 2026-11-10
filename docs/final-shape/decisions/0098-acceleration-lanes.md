@@ -224,8 +224,8 @@ executor of its run's binding (`logic::lanes`):
 - **CPU binding:** the cores and SME. SME is part of the CPU.
 - **Metal binding:** every lane.
 
-Today a batch is one stratum's launches. Device waves (0095 §5) make a batch of a dependency level's launches
-across strata. The executor already takes them, so no interface changes.
+A batch is a dependency level's launches across strata (device waves, 0095 §5: "Device waves for kernel
+launches", below). The executor took them without any change to its interface.
 
 ## Answered (the user, 2026-11-09)
 
@@ -339,10 +339,17 @@ All of it was checked exactly against the CPU reference. Times are from release 
       it.
     - `RERAIL_PROJECT_COLUMNS=off` turns it off.
   - **`closure`.** A component whose one recursive probe walks one column along an edge relation (`seed ∘ E⁺`) runs
-    the edge's join once per distinct node. Its reach comes by chains when every node has one successor (tree
-    climbs), and by the executor's `Closure` kernel otherwise, up to 16,384 nodes. Larger graphs run semi-naive from
-    the seeds. `RERAIL_CLOSURE_FORM=off` turns it off. On the same slice, outputs are identical with it on and off
-    (local CPU 14.2 s on, 13.9 s off: noise).
+    the edge's join once per distinct node. No path leaves a weakly connected component of the reach graph, so each
+    component's reach is found on its own:
+    - a component whose every node has one successor (a tree climb) by walking its chains;
+    - components of up to 16,384 nodes packed into pieces of about 1,024 nodes, one `Closure` launch of the
+      executor per piece. A piece's bit rows grow with its nodes squared, so packing keeps the bits near the graph's
+      nodes times 1,024, not its nodes squared;
+    - a component past 16,384 nodes, or past the closure's budget of 2³⁰ bits, by a search on the host from each of
+      its start nodes, once per start.
+
+    So no closure runs semi-naive any more, except when its edge search fails. `RERAIL_CLOSURE_FORM=off` turns the
+    form off. On the same slice, outputs are identical with it on and off (local CPU 14.2 s on, 13.9 s off: noise).
   - **`count table`** (`setfix::table`). A count step over an input walks the matching rows at every binding that
     reaches it. Once its walks have read as many rows as building a table would, the step reads a table instead.
     So it never costs more than about twice the walks alone.
@@ -357,10 +364,11 @@ All of it was checked exactly against the CPU reference. Times are from release 
     - **Gate:** outputs are identical with it on and off. Local CPU was 18.6 s both ways (load 106–110): these counts
       are small at the pack's size.
     - `RERAIL_COUNT_TABLE=off` turns it off.
-  - **Device waves of count tables** (0095 §5). A stratum's level is one more than the deepest level it reads. When
-    a level's first stratum runs, the level's count tables are built as one batch: those an earlier chunk built and
-    whose relations the run holds. So each lane gets one submission per level. On the slice's second chunk, a level
-    of 15 strata built its one table that way.
+  - **Device waves** (0095 §5): "Device waves for kernel launches", below.
+    - **Count tables.** When a level's first stratum runs, the level's count tables are built as one batch: those
+      an earlier chunk built and whose relations the run holds. So each lane gets one submission per level. On the
+      slice's second chunk, a level of 15 strata built its one table that way.
+    - **Closures.** A level's closures prepare their launches, wait, and run as one batch when the level ends.
   - **`bit product` in the prefilter** (`prefilter::gates`). Each plan's gate, an `And` and `Or` of terms, goes to
     disjunctive form, up to 256 conjunctions. Then one launch serves every plan of the batch:
     - the batch's files are rows of bits over the terms, and the conjunctions are rows of bits marked as a fixed
@@ -412,8 +420,9 @@ The whole Python pack (534 programs, 486 files, CPU binding, load 100 to 120), C
 What it shows:
 - **The bottleneck is not in the kernels.** It is not in launching them either. The host work around the
   kernels costs 20 times what the kernels do, and the closure's edge search is most of it.
-- **Most closures launch nothing.** 140 of 144 are chains (tree climbs), which the host walks, and 6 more fall
-  back to semi-naive past 16,384 nodes (`prog_ast_parent`, `prog_ast_up`). So only 4 used a kernel.
+- **Most closures launch nothing.** 140 of 159 are chains (tree climbs), which the host walks, and 15 more fell
+  back to semi-naive past 16,384 nodes (`prog_ast_parent`, `prog_ast_up` and 8 more). So only 4 used a kernel. All
+  19 now run in pieces, in device waves (below).
 - **The closure's real cost is its expansion.** It makes 680 k rows, which its readers then join. That is
   decision 0097's case for not materializing: keep (row, start node) and look the reach up in the reader.
 - **The forms are 2% of the run under the CPU binding.** In that binding every launch stays on the CPU, since
@@ -434,12 +443,114 @@ What it shows:
     1,055 to 467 ms CPU on the 8-program slice.
   - Its rows are pushed once, with no fresh-row buffer hashed first.
 
+### Device waves for kernel launches (2026-11-09)
+
+Before this, each closure submitted its one launch alone, in the middle of its stratum, and a closure past 16,384
+nodes ran semi-naive. Now a dependency level's closures launch together, and large closures run in pieces.
+
+**The problem.** A closure's launch is known only after its stratum has done most of its work: the seeds, the edge
+search over every node reached, the adjacency. Its rows are needed before the stratum can finish. So a batch of a
+level's launches needs every closure stratum of the level stopped between the two, until all have prepared theirs.
+
+**The design: a stratum suspends with its state.** It is not specific to closures. Any form that launches kernels
+can use it.
+
+- **A form runs in two halves around its launches.** For the closure, `prepare` does the seeds, the edge search,
+  the components and the pieces' launches. `finish` turns the bit rows into rows.
+- **A wave per thread** (`lanes::wave`). The stratum driver holds a `Suspendable` while its component runs. Inside
+  one, a form puts its launches in the wave and gets tickets back. The component's run then returns a fourth status,
+  "waiting on its wave", next to "done", "more waves" and "paused for a request".
+- **The driver is resumable** (`Run::drive`). A native stratum is opened (its spec, plans and component), then
+  driven: chunks of waves, replanning between them, the profile, the close. All the driver's state is one value
+  (`Driving`). On "waiting", the driver returns it as `Native::Waiting`, and the strata loop goes on to the level's
+  next stratum.
+- **The flush.** The loop flushes the wave when the level ends, when a stratum depends on a waiting one, and at the
+  end of the run. Every waiting launch, of every form, goes to the executor as one batch: one submission per lane.
+  Then each waiting stratum resumes in order. Its run takes its outputs by ticket and finishes. A stratum that waits
+  again (a second form) waits on the next flush.
+- **Strata in level order.** In native runs the strata are sorted by level, a stable sort, so a level's strata
+  are adjacent. A stratum's level is one more than the deepest stratum it depends on: its reads, the request it
+  answers, a native operator's inputs. The dependency order alone interleaves levels depth first, so few closures
+  would be pending at once. A run that is all SQL keeps the dependency order, since SQL launches nothing (and T's
+  golden plans are in that order).
+- **What a waiting stratum may still read.** Nothing outside its own component. It read its inputs before it
+  waited, so the loop may drop the inputs it read, and release the relations it read, while it waits. Its own
+  relations join the native ones when it finishes. Those that no stratum reads are released or read out at the next
+  stratum, as they would have been at the stratum after them.
+- **Where no caller can wait** (a component run through SQL, the lattice fixpoint, a test), the form runs its
+  launches at once, as a batch of their own. `RERAIL_WAVES=off` does that everywhere. It is a measurement switch.
+- **The profile** counts batches by their launches, the batches each dependency level ran, the waves flushed, and
+  for closures the chains, pieces and host walks.
+
+**Pieces instead of the semi-naive fallback.** A closure's reach graph is split into its weakly connected
+components ("Built", above). On the pack, 15 closures fell back past 16,384 nodes. They are 10 relations, some in
+both chunks: `ast_parent`, `ast_up`, `literal`, `p202_await_ok`, `p362_parsed_within`, `runs_at_import`, `up_fn_of`,
+and `rr_in_annotation_0`'s copies of three of them. All 15 run by pieces now. None of their components is past the
+limit, so on the pack no closure runs semi-naive and none is walked on the host. A test covers a component past
+the limit (host walks), with 100 chains and 200 small cyclic components packed into several pieces. Its rows equal
+semi-naive's and a plain search's, run alone or inside a wave.
+
+**A workload where waves matter** (`fixtures/python/logic/closure-waves/`): six programs over the ruff fixtures,
+with a closure each over a tree or a graph that forks:
+
+- the descendants of each def, each class and each call's arguments;
+- statement successors through ifs;
+- inheritance within a file;
+- the call graph within a file, a level above the descendants of each def it reads.
+
+The 486 files are 2 chunks, so 14 closures run: 11 by pieces, 3 by chains alone. Per level, with `RERAIL_WAVES=off`
+for the comparison. Three runs each, at load 94–120; CPU is user + sys:
+
+| | waves | batches | batches in a level | kernels' wall (ms) | kernels' CPU (ms) | host phases' CPU (ms) |
+|---|---|---|---|---|---|---|
+| CPU binding | off | 11 | 3–4 in two levels, 1 in three | 455, 190, 159 | 35, 35, 35 | 166, 164, 167 |
+| CPU binding | on | 5 | 1 in each of five | 211, 107, 71 | 35, 32, 37 | 155, 151, 165 |
+| Metal binding | off | 11 | 3–4 in two levels, 1 in three | 1,687, 128, 169 | 41, 35, 34 | 158, 160, 166 |
+| Metal binding | on | 5 | 1 in each of five | 242, 102, 120 | 33, 34, 34 | 158, 162, 160 |
+
+- **The level of four closures** (descendants of defs, classes and calls, and the call graph's def bodies) goes
+  from 4 batches to 1 in each chunk: 44 launches in one chunk, 19 in the other. The 66 launches went into 5
+  batches with waves, and 11 without.
+- **The kernels' wall time falls by about half** (best runs: 71 against 159 ms, and 102 against 128 ms): one
+  parallel pass over a wave's launches, not one per stratum. Their CPU is the same. Wall times at this load are noisy.
+- **The host phases do not change.** The edge search (about 75 ms) and the decode (about 77 ms) are each stratum's
+  own work, whether it waits or not.
+- **Under the Metal binding every closure launch stays on the cores.** By the measured prices, a closure costs
+  7.5·10⁻¹⁰ s a unit on one core and 1.7·10⁻¹⁰ s on the GPU. Spread over 18 cores, the cores finish first and use
+  less energy, whatever the batch's size. So a wave saves the GPU's submissions only once a form's GPU kernel beats
+  the cores.
+- The findings are identical across the four configurations.
+
+**The pack and the slice** (CPU binding):
+
+- **Findings are identical** to the binary before this change: the 8-program slice under both bindings, and the
+  whole pack once.
+- **The pack**, base then new, at load 98–154:
+  - CPU: 298.9 + 14.0 s against 296.2 + 13.5 s;
+  - the closures' host phases: 6.22 s against 6.37 s;
+  - peak RSS: 1,448 MB against 1,565 MB. The run's own phase table puts the difference already in its first phase
+    (`combine`, 423 against 518 MB), before any stratum runs, so it is not clearly the level order. A quiet paired
+    run would settle it.
+- **Pack waves.** 19 closures ran by pieces (37 launches), 140 by chains alone. The pieces' kernels took 272 ms of
+  wall in all, against 45 ms for the base's 4 launches: the 15 closures that ran semi-naive before now launch.
+  - 10 waves held the 19 waiting strata.
+  - The executor ran 15 batches over 12 levels: 10 levels ran one batch, one level two, and one level three or four.
+    The batches past the waves are count tables: 2 built ahead for a level, and 3 that a step built once its walks
+    paid for one, mid-stratum, which do not wait for the wave yet.
+- **The slice** has one closure by pieces, which before fell back to semi-naive.
+- **By retired instructions** (the run's report; steadier than CPU at this load), after merging the base branch's
+  latest, paired runs each way, the first run of each binary left out:
+  - the slice: 232.50 and 232.74 G for the base, 232.77 and 232.48 G with waves and pieces (equal within 0.1%),
+    findings identical;
+  - the closure-waves workload: 22.63 and 22.72 G for the base, 22.02 and 21.95 G with waves and pieces (−3%),
+    21.90 and 21.96 G with `RERAIL_WAVES=off`. So waves change where the kernels' wall goes, not the work done; the
+    3% is the pieces.
+
 **Not built yet:**
 
-- **Device waves for every kernel.** Count tables are built ahead. A closure's launch is known only once its walk
-  has searched its nodes, so it is still submitted alone. Batching it needs a level's strata to run in two phases:
-  search, then one batch, then the rows. On the pack that would batch 4 launches (194 ms of kernel wall) and save
-  at most 4 submissions' fixed cost, so it waits behind the closure's expansion and the Metal binding (above).
+- **Count tables a step builds mid-stratum** still launch alone. A step's table is known only once its walks have
+  paid for it, in the middle of a join. Waiting for the wave there needs the join itself to stop and resume, which
+  the two halves of a form do not cover.
 - **The Neural Engine's overlap at large tiles, measured quietly.** At W5's tile size, under heavy load, the overlapped
   decode is descheduled. Its median gain is unproved until a run at low load. The plain-array path, for shapes past
   IOSurface's limits, is not pipelined.

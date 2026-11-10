@@ -2455,6 +2455,46 @@ impl Fx<'_> {
 }
 
 /// A run's evaluation state on its connection.
+/// A native stratum's outcome.
+enum Native<'a> {
+    /// A rule has a literal with no native step: nothing ran.
+    Declined,
+    Ran,
+    /// Its run waits on its device wave (`lanes::wave`): the driver's state, to resume once the wave ran.
+    Waiting(Box<Driving<'a>>),
+}
+
+/// A native stratum between its component's open and its close: what its driver (`Run::drive`) needs to run the
+/// component's chunks of waves, replan between them and record what it did. Held while the stratum waits on its
+/// device wave.
+struct Driving<'a> {
+    scc: BTreeSet<String>,
+    solving: bool,
+    name: String,
+    lines: Vec<String>,
+    rels: Vec<String>,
+    ri: BTreeMap<String, usize>,
+    views: HashMap<String, (String, String)>,
+    sql_views: bool,
+    sql_probe: Vec<bool>,
+    orders: Vec<Vec<Step>>,
+    probes: Vec<(&'a Rule, usize, Vec<Step>)>,
+    order_rules: Vec<u64>,
+    nseeds: usize,
+    seeds: Vec<&'a Rule>,
+    ngates: usize,
+    explained: Vec<(String, Option<usize>, Option<super::profile::RulePlan>, f64, u64)>,
+    counted: Vec<Vec<(u64, u64)>>,
+    timed: Vec<f64>,
+    chunk: i64,
+    started: std::time::Instant,
+    placed: placement::Placement,
+    shape: placement::Shape,
+    /// This thread's CPU the stratum has spent so far (while profiling).
+    cpu_own: f64,
+    lab: Option<super::native::component::lab::Capture>,
+}
+
 struct Run<'a, 'b> {
     prog: &'a Program,
     db: &'a Connection,
@@ -3026,7 +3066,7 @@ fn const_tok(t: &Term) -> Option<String> {
     }
 }
 
-impl Run<'_, '_> {
+impl<'a> Run<'a, '_> {
     fn fx(&self) -> Fx<'_> {
         Fx { db: self.db, direct: self.model.inputs.atoms.is_some() }
     }
@@ -3484,16 +3524,30 @@ impl Run<'_, '_> {
         Some(lines.join("\n"))
     }
 
-    /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it.
-    fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
+    /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it. The stratum
+    /// may come back waiting on its device wave (`Native::Waiting`); `native_resume` finishes it once the wave ran.
+    fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule]) -> Result<Native<'a>> {
         let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
-        self.model.stats.solving = if reads { scc.clone() } else { BTreeSet::new() };
+        self.lent(reads.then(|| scc.clone()), |this, native_rels, numbers| this.native_stratum_(scc, rules, native_rels, numbers))
+    }
+
+    /// Resumes a stratum that waited on its device wave, after the wave ran: its driver goes on from the run that
+    /// suspended it.
+    fn native_resume(&mut self, d: Box<Driving<'a>>) -> Result<Native<'a>> {
+        let solving = d.solving.then(|| d.scc.clone());
+        self.lent(solving, |this, native_rels, numbers| this.drive(d, native_rels, numbers))
+    }
+
+    /// Runs `f` with the relations run natively so far and the rules' numbers lent to it, and `solving` as the
+    /// component being solved.
+    fn lent<T>(&mut self, solving: Option<BTreeSet<String>>, f: impl FnOnce(&mut Self, &BTreeSet<String>, &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<T>) -> Result<T> {
+        self.model.stats.solving = solving.unwrap_or_default();
         // The relations run natively so far, lent to the stratum (it reads them, and adds its own only at the end):
         // cloning them per stratum was quadratic in strata (3% of a combined run's main thread).
         let native_rels = std::mem::take(&mut self.native_rels);
         // Lent too, so the stratum may call `&mut self` methods while its spans name rules by number.
         let numbers = std::mem::take(&mut self.numbers);
-        let out = self.native_stratum_(scc, rules, &native_rels, &numbers);
+        let out = f(self, &native_rels, &numbers);
         self.numbers = numbers;
         let added = std::mem::replace(&mut self.native_rels, native_rels);
         self.native_rels.extend(added);
@@ -3506,19 +3560,19 @@ impl Run<'_, '_> {
     /// replanned from live counts between chunks of waves (T's `native_stratum_`). Lower strata it reads natively
     /// come from the native store (`r:`), others from their tables or the facts. Nothing is written back: the
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
-    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule], native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<bool> {
+    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule], native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let prog = self.prog;
         self.why_not = None;
         self.why_class = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
             self.why_not = Some("a lattice relation: the native set engine holds sets only".into());
             self.why_class = Some("a lattice relation".into());
-            return Ok(false);
+            return Ok(Native::Declined);
         }
         if scc.iter().any(|r| prog.natives.contains_key(r)) {
             self.why_not = Some("a relation made natively from its inputs' tables (`dfs_first`)".into());
             self.why_class = Some("read of a dfs_first relation".into());
-            return Ok(false);
+            return Ok(Native::Declined);
         }
         let rels: Vec<&String> = scc.iter().collect();
         let ri: BTreeMap<String, usize> = rels.iter().enumerate().map(|(i, r)| ((*r).clone(), i)).collect();
@@ -3526,7 +3580,7 @@ impl Run<'_, '_> {
         let mut gates: Vec<&(String, crate::code_rule_dsl::logic::magic::Gate)> = prog.gates.iter().filter(|(g, _)| scc.contains(g)).collect();
         gates.sort_by(|a, b| (a.1.level, &a.0).cmp(&(b.1.level, &b.0)));
         // A gate's rule only placed it here.
-        let rules: Vec<&Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
+        let rules: Vec<&'a Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
         // A maintained stratum's survivors (`h :- h__old, !h__del`, decision 0077): the relation starts as the kept
         // `h__old` with `h__del`'s rows dead in place (decision 0090 step 4), not derived row by row.
         // `RERAIL_DRED_COPY`: derive them by the rule (to measure what starting in place saves).
@@ -3581,7 +3635,7 @@ impl Run<'_, '_> {
             }
             super::profile::stratum(&stratum_key(scc), "native set engine", || "every rule joins an empty relation: held empty, no component opened".to_owned());
             self.native_rels.extend(scc.iter().cloned());
-            return Ok(true);
+            return Ok(Native::Ran);
         }
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
         // is the joins' specs and their checks; planning is in its `plan #…` spans).
@@ -3662,7 +3716,7 @@ impl Run<'_, '_> {
                 }
                 self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, None)));
                 self.why_class = Some(missing_class(self, &r.head, &order, None));
-                return Ok(false);
+                return Ok(Native::Declined);
             };
             explained.push((format!("seed {}", r.head.rel), rule_no(r), x, took, 0));
             *est.entry(r.head.rel.as_str()).or_default() += rows;
@@ -3723,7 +3777,7 @@ impl Run<'_, '_> {
                     }
                     self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, Some(at))));
                     self.why_class = Some(missing_class(self, &r.head, &order, Some(at)));
-                    return Ok(false);
+                    return Ok(Native::Declined);
                 };
                 let x = x.map(|x| delta_sources(x, &order, at, scc));
                 explained.push((format!("join {} (delta {})", r.head.rel, a.rel), rule_no(r), x, took, 0));
@@ -3793,9 +3847,58 @@ impl Run<'_, '_> {
             }
         }
         order_rules.extend(probes.iter().map(|p| obs_rule(&p.0.head, &p.0.body)));
-        let mut chunk: i64 = 1;
+        let d = Driving {
+            scc: scc.clone(),
+            solving: !self.model.stats.solving.is_empty(),
+            name,
+            lines,
+            rels: rels.iter().map(|r| (*r).clone()).collect(),
+            ri,
+            views,
+            sql_views,
+            sql_probe,
+            orders,
+            probes,
+            order_rules,
+            nseeds,
+            seeds,
+            ngates: gates.len(),
+            explained,
+            counted,
+            timed,
+            chunk: 1,
+            started,
+            placed,
+            shape,
+            cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
+            lab,
+        };
+        self.drive(Box::new(d), native_rels, numbers)
+    }
+
+    /// A native stratum's driver: its component's chunks of waves to the fixpoint, replanned from live counts
+    /// between them, then what it did recorded and the component closed. A run that waits on its device wave
+    /// (`lanes::wave`) suspends the stratum: the driver's state goes back to the strata loop, which resumes it once
+    /// the wave ran.
+    fn drive(&mut self, d: Box<Driving<'a>>, native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
+        let prog = self.prog;
+        let Driving { scc: scc_owned, solving, name, lines, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut timed, mut chunk, started, placed, shape, cpu_own, lab } = *d;
+        let scc = &scc_owned;
+        let rels: Vec<&String> = rels_owned.iter().collect();
+        let planning = |r: &Rule, what: &str| {
+            super::profile::span(|| {
+                let no = numbers.get(&(r as *const Rule)).map_or("?".to_owned(), |k| format!("{k:04}"));
+                format!("{what} #{no} {}, {} literals", r.head.rel, r.body.len())
+            })
+        };
+        let profiling = super::profile::on();
+        // This thread's CPU at the stratum's start, less what other strata spent while it waited.
+        let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_own } else { 0.0 };
         loop {
-            let f: String = self.fx().run(&name, chunk as u32)?;
+            let f: String = {
+                let _wave = super::lanes::wave::suspendable();
+                self.fx().run(&name, chunk as u32)?
+            };
             let f: Vec<&str> = f.split_whitespace().collect();
             if let Some(per) = f.get(7).filter(|_| f.len() == 9 && super::profile::on()) {
                 for (k, item) in per.split(',').enumerate() {
@@ -3808,6 +3911,15 @@ impl Run<'_, '_> {
             if f.last() == Some(&"2") {
                 answer_pending(self.db, self.model.inputs.atoms.is_some(), &mut self.answer, &mut self.answered, &name, scc)?;
                 continue;
+            }
+            // Waiting on its device wave: the stratum is suspended with its driver's state, and resumed here.
+            if f.last() == Some(&"3") {
+                drop(rels);
+                return Ok(Native::Waiting(Box::new(Driving {
+                    scc: scc_owned, solving, name, lines, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
+                    explained, counted, timed, chunk, started, placed, shape, lab,
+                    cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
+                })));
             }
             let steps = self.fx().steps(&name)?;
             for ((o, &rule), line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&order_rules).zip(&steps) {
@@ -3920,7 +4032,7 @@ impl Run<'_, '_> {
                     "every rule has a native step: component {name}, {} seed joins, {} delta probes, {} gates; inputs read in place, derived relations held in memory",
                     seeds.len(),
                     probes.len(),
-                    gates.len()
+                    ngates
                 )
             });
             for (k, (kind, rule, x, took, replans)) in explained.iter().enumerate() {
@@ -3968,7 +4080,7 @@ impl Run<'_, '_> {
             super::native::component::lab::capture_outputs(self.db, capture);
         }
         self.native_rels.extend(scc.iter().cloned());
-        Ok(true)
+        Ok(Native::Ran)
     }
 
     /// Runs a one-relation flat-lattice component natively (sqlite-ext `lattice_fixpoint`, T's `native_fixpoint`)
@@ -4593,7 +4705,13 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     if super::profile::on() {
         super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
     }
-    let (sccs, _) = strata(prog)?;
+    let (sccs, deps) = strata(prog)?;
+    // Device waves (decision 0095 §5, 0098 §6): the strata in order of their levels. A stratum's level is one more
+    // than the deepest level it depends on, so a level's strata do not depend on each other, and in this order each
+    // level's strata are adjacent: a level is a device wave. The sort is stable, so within a level the strata keep
+    // the dependency order's. Only strata run natively make waves (SQL launches nothing), so a run all in SQL keeps
+    // the dependency order, and T's plans in it.
+    let (sccs, level_of) = by_level(sccs, &deps, model.inputs.native.contains("program"));
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {
         rules_by.entry(r.head.rel.as_str()).or_default().push(r);
@@ -4729,20 +4847,15 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     for (r, &l) in &last {
         after_last[(l + 1).min(sccs.len())].push(r.clone());
     }
-    // Device waves (decision 0095 §5, 0098 §6). A stratum's level is one more than the deepest level it reads, so a
-    // level's strata read only earlier levels' relations. Each level's count tables that an earlier chunk found worth
-    // building (`count table`) are built as one batch when the level's first stratum runs: one submission per lane
-    // for the level, not one per stratum. A table whose relation is not held yet is built by its step, as before.
-    let level_of: Vec<usize> = {
-        let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
-        let by = rules_by_stratum(prog, &sccs);
-        let mut level = vec![0usize; sccs.len()];
-        for j in 0..sccs.len() {
-            let deepest = by[j].iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).filter_map(|a| of.get(a.rel.as_str())).filter(|&&d| d != j && d < j).map(|&d| level[d] + 1).max();
-            level[j] = deepest.unwrap_or(0);
-        }
-        level
-    };
+    // Device waves (decision 0095 §5, 0098 §6), by level (`by_level`):
+    // - Each level's count tables that an earlier chunk found worth building (`count table`) are built as one batch
+    //   when the level's first stratum runs. A table whose relation is not held yet is built by its step, as before.
+    // - A stratum whose form launches kernels (the closure's bit rows) prepares them and waits (`Native::Waiting`),
+    //   and the next strata of its level run. When the level ends, or a stratum depends on a waiting one, every
+    //   waiting launch goes to the executor as one batch (`lanes::wave::flush`), and the waiting strata finish in
+    //   order. So each lane gets one submission per level for each, not one per stratum.
+    // A waiting stratum has read its inputs: what it does after its wave reads only its own component and the
+    // launches' outputs. So the inputs it read may be dropped, and the relations it read released, while it waits.
     let wants_of: Vec<BTreeSet<(String, Vec<usize>)>> = rules_by_stratum(prog, &sccs)
         .iter()
         .zip(&sccs)
@@ -4760,13 +4873,30 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         })
         .collect();
     let mut waved = vec![false; sccs.len()];
+    // Strata waiting on their device wave: position, key, driver's state.
+    let mut waiting: Vec<(usize, String, Box<Driving>)> = Vec::new();
+    // Relations no stratum reads, of strata that finished after the stratum following them ran: released or read
+    // out at the next stratum, as they would have been at the one following them.
+    let mut carry: Vec<String> = Vec::new();
     for (at, scc) in sccs.iter().enumerate() {
+        if !waiting.is_empty() {
+            let reads_waiting = || {
+                let theirs: HashSet<&str> = waiting.iter().flat_map(|w| sccs[w.0].iter().map(String::as_str)).collect();
+                scc.iter().flat_map(|r| deps.get(r).into_iter().flatten()).any(|(d, _)| theirs.contains(d.as_str()))
+            };
+            if level_of[at] != level_of[waiting[0].0] || reads_waiting() {
+                finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last)?;
+            }
+        }
+        super::lanes::prof::level(Some(level_of[at]));
         let candidates: Vec<String> = if at == 0 {
             run.native_rels.iter().cloned().collect()
         } else {
             let mut c = std::mem::take(&mut after_last[at]);
             c.extend(sccs[at - 1].iter().filter(|r| !last.contains_key(*r)).cloned());
-            c.retain(|r| run.native_rels.contains(r));
+            c.append(&mut carry);
+            let mut seen = HashSet::new();
+            c.retain(|r| run.native_rels.contains(r) && seen.insert(r.clone()));
             c
         };
         let done: Vec<String> = candidates.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
@@ -4873,9 +5003,16 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             let native_span = super::profile::span(|| "native".into());
             let ran = run.native_stratum(scc, &rules)?;
             drop(native_span);
-            if ran {
-                outcome.native.insert(key);
-                continue;
+            match ran {
+                Native::Ran => {
+                    outcome.native.insert(key);
+                    continue;
+                }
+                Native::Waiting(d) => {
+                    waiting.push((at, key, d));
+                    continue;
+                }
+                Native::Declined => {}
             }
             why = format!("the native engine declined: {}", run.why_not.take().unwrap_or_else(|| "no reason given".into()));
             if prog.gates.iter().any(|(g, _)| scc.contains(g)) {
@@ -4970,6 +5107,8 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
+    finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last)?;
+    super::lanes::prof::level(None);
     let _outputs = super::profile::span(|| "outputs".into());
     let kept = run.model.inputs.kept.clone();
     outcome.kept = kept.iter().filter(|r| run.native_rels.contains(*r)).cloned().collect();
@@ -4985,6 +5124,54 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     outcome.nodes = nodes;
     outcome.handed = handed;
     Ok(outcome)
+}
+
+/// The strata in order of their levels (stable; with `sort`), and each one's level: one more than the deepest level of a stratum
+/// it depends on (`deps`: reads, requests answered, a native operator's inputs). A level's strata do not depend on
+/// each other, so it is a device wave (decision 0095 §5).
+fn by_level(sccs: Vec<BTreeSet<String>>, deps: &super::front::Edges, sort: bool) -> (Vec<BTreeSet<String>>, Vec<usize>) {
+    let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
+    let mut level = vec![0usize; sccs.len()];
+    for j in 0..sccs.len() {
+        level[j] = sccs[j]
+            .iter()
+            .flat_map(|r| deps.get(r).into_iter().flatten())
+            .filter_map(|(d, _)| of.get(d.as_str()).copied())
+            .filter(|&d| d < j)
+            .map(|d| level[d] + 1)
+            .max()
+            .unwrap_or(0);
+    }
+    let mut order: Vec<usize> = (0..sccs.len()).collect();
+    if sort {
+        order.sort_by_key(|&j| level[j]);
+    }
+    let levels = order.iter().map(|&j| level[j]).collect();
+    let mut sccs: Vec<Option<BTreeSet<String>>> = sccs.into_iter().map(Some).collect();
+    (order.into_iter().map(|j| sccs[j].take().expect("each stratum once")).collect(), levels)
+}
+
+/// Runs the device wave the waiting strata wait on (`lanes::wave::flush`: their launches as one batch), then
+/// resumes each in order; one that waits again (a second form's launches) waits on the next wave.
+fn finish_wave<'a>(run: &mut Run<'a, '_>, waiting: &mut Vec<(usize, String, Box<Driving<'a>>)>, outcome: &mut Outcome, carry: &mut Vec<String>, sccs: &[BTreeSet<String>], last: &HashMap<String, usize>) -> Result<()> {
+    while !waiting.is_empty() {
+        {
+            let _wave = super::profile::span(|| "device wave (kernel launches)".into());
+            super::lanes::wave::flush(waiting.len()).map_err(Error::Plan)?;
+        }
+        for (j, key, d) in std::mem::take(waiting) {
+            let _stratum = super::profile::span(|| format!("stratum {} (after its device wave)", if key.len() > 80 { format!("{}…", &key[..80]) } else { key.clone() }));
+            match run.native_resume(d)? {
+                Native::Ran => {
+                    outcome.native.insert(key);
+                    carry.extend(sccs[j].iter().filter(|r| !last.contains_key(*r)).cloned());
+                }
+                Native::Waiting(d) => waiting.push((j, key, d)),
+                Native::Declined => return Err(Error::Plan(format!("{key}: a stratum that waited on its wave declined"))),
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Per relation, the first stratum whose rules read it; a view is read where its first reader runs.

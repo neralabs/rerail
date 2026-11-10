@@ -305,6 +305,106 @@ fn a_walk_along_an_edge_runs_as_its_closure() {
     }
 }
 
+/// The closure form over a reach graph of many components (decision 0098 §1): chains, small cyclic components packed
+/// into pieces of bit rows (several launches), and a component past the bit rows' limit walked on the host. Its rows
+/// are semi-naive's and search's. Run inside a device wave, its run waits for the wave (`3`), and the run after the
+/// flush finishes it with the same rows.
+#[test]
+fn a_closure_over_many_components_runs_in_pieces_like_semi_naive() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let mut edges: Vec<(i64, i64)> = Vec::new();
+    let mut seeds: Vec<(i64, i64)> = Vec::new();
+    // 300 small components of 7 nodes: a third chains, the rest with a fork and a cycle back to their first node.
+    for c in 0..300i64 {
+        let b = 1_000 + c * 10;
+        for i in 0..6 {
+            edges.push((b + i, b + i + 1));
+        }
+        if c % 3 != 0 {
+            edges.push((b, b + 2));
+            edges.push((b + 3, b + 5));
+            edges.push((b + 6, b));
+        }
+        seeds.push((b, c));
+        seeds.push((b + 4, c + 1_000));
+    }
+    // One component past 16,384 nodes: a binary tree of 17,000 nodes with its last node leading back to the root.
+    let (root, big) = (100_000i64, 17_000i64);
+    assert!(big as usize > super::setfix::closure::MAX_DENSE);
+    for i in 0..big {
+        for k in [2 * i + 1, 2 * i + 2] {
+            if k < big {
+                edges.push((root + i, root + k));
+            }
+        }
+    }
+    edges.push((root + big - 1, root));
+    seeds.extend([(root, 7), (root + 5, 8), (root + big - 1, 9)]);
+    let rows = |semi_naive: bool, wave: bool| -> Vec<(i64, i64)> {
+        let db = connection();
+        db.execute_batch("CREATE TABLE s(c0, c1); CREATE TABLE e(c0, c1); CREATE TABLE r(c0, c1);").unwrap();
+        for (a, b) in &seeds {
+            db.execute("INSERT INTO s VALUES (?1, ?2)", [a, b]).unwrap();
+        }
+        for (a, b) in &edges {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [a, b]).unwrap();
+        }
+        let src = |t: &str| format!("t:b:{}:{}:ii", hex(t), hex("c0, c1"));
+        let seed = format!("pos {} v0 v1\nhead v0 v1", src("s"));
+        let walk = format!("pos d0 v0 v1\npos {} v0 v2\nhead v2 v1", src("e"));
+        super::setfix::closure::semi_naive_here(semi_naive);
+        super::setfix::open(&db, &format!("name pieces\nrel r ii empty\nseed 0 {}\njoin 0 0 {}", hex(&seed), hex(&walk))).unwrap();
+        super::setfix::closure::semi_naive_here(false);
+        let before = crate::code_rule_dsl::logic::lanes::wave::flushed();
+        let report = if wave {
+            let first = {
+                let _w = crate::code_rule_dsl::logic::lanes::wave::suspendable();
+                super::setfix::run(&db, "pieces", 0).unwrap()
+            };
+            assert!(first.ends_with(" 3"), "inside a wave the run waits for it: {first}");
+            let launches = crate::code_rule_dsl::logic::lanes::wave::flush(1).unwrap();
+            assert!(launches >= 2, "the small components are packed into several pieces: {launches}");
+            let after = crate::code_rule_dsl::logic::lanes::wave::flushed();
+            assert_eq!((after.0 - before.0, after.1 - before.1), (1, launches as u64), "one wave of every piece");
+            super::setfix::run(&db, "pieces", 0).unwrap()
+        } else {
+            super::setfix::run(&db, "pieces", 0).unwrap()
+        };
+        assert!(report.ends_with(" 1"), "{report}");
+        let mut got = pairs(&db, "SELECT c0, c1 FROM r");
+        super::setfix::close(&db, "pieces").unwrap();
+        got.sort();
+        got
+    };
+    // Reachability by search: each seed's node, and every node a path of one or more edges leads to.
+    let mut out: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    for &(a, b) in &edges {
+        out.entry(a).or_default().push(b);
+    }
+    let mut want = Vec::new();
+    for &(n, t) in &seeds {
+        let mut seen = std::collections::HashSet::from([n]);
+        let mut todo = vec![n];
+        while let Some(v) = todo.pop() {
+            for &w in out.get(&v).into_iter().flatten() {
+                if seen.insert(w) {
+                    todo.push(w);
+                }
+            }
+        }
+        want.extend(seen.into_iter().map(|v| (v, t)));
+    }
+    want.sort();
+    let semi = rows(true, false);
+    assert_eq!(semi.len(), want.len(), "semi-naive is reachability");
+    assert!(semi == want, "semi-naive is reachability");
+    let closure = rows(false, false);
+    assert_eq!(closure.len(), semi.len());
+    assert!(closure == semi, "the closure in pieces gives semi-naive's rows");
+    let waved = rows(false, true);
+    assert!(waved == semi, "the closure after its wave gives semi-naive's rows");
+}
+
 /// A count step that many bindings reach is answered from a count table (decision 0098 §1), exactly as walking counts:
 /// per row of the join's first scan when the key comes from it, else from the relation's histogram by its key.
 #[test]

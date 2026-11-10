@@ -55,7 +55,7 @@ use std::time::Instant;
 
 /// Strata captured and run again on their own (decision 0095, step 0).
 pub(in crate::code_rule_dsl) mod lab;
-mod closure;
+pub(super) mod closure;
 mod table;
 
 fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()) }
@@ -292,6 +292,26 @@ impl Rel {
         for id in 0..self.n { ix.add(&self.data, self.k, id as u32, if id >= self.lo { self.wave } else { 0 }); }
         self.idx.push(ix);
     }
+    /// Room for `n` more rows, so a wave's rows are not rehashed as the tables grow (the pack's joins spent 18 s of
+    /// 155 s growing them): the dedup set by `n`, each index by `n` times its keys per row so far (a column of few
+    /// values does not reserve a key a row).
+    fn reserve(&mut self, n: usize) {
+        if n < 64 {
+            return;
+        }
+        let k = self.k;
+        self.data.reserve(n * k);
+        let data = &self.data;
+        self.set.reserve(n, |&i| hash_vals(data[i as usize * k..][..k].iter().copied()));
+        let rows = self.n.max(1);
+        for ix in &mut self.idx {
+            ix.next.reserve(n);
+            // Keys per row so far; a relation still empty reserves for a key every 8 rows.
+            let keys = if self.n == 0 { n / 8 } else { (n as u128 * ix.table.len() as u128 / rows as u128) as usize };
+            let cols = &ix.cols;
+            ix.table.reserve(keys, |p| hash_vals(cols.iter().map(|&c| data[p.head as usize * k + c])));
+        }
+    }
     /// Adds a row (of the next wave, its delta) unless it is there.
     fn push(&mut self, row: &[i64]) -> bool {
         let h = hash_vals(row.iter().copied());
@@ -367,7 +387,9 @@ pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
 /// `produced`: relations only the caller adds to, which the fixpoint does not write.
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool,
-                   requests: Vec<(usize, usize)>, produced: Vec<usize>, closure: Option<closure::Closure> }
+                   requests: Vec<(usize, usize)>, produced: Vec<usize>, closure: Option<closure::Closure>,
+                   /// A closure whose launches wait in this thread's device wave (`lanes::wave`), with their tickets.
+                   waiting: Option<(closure::Closure, closure::Prepared, Vec<u64>)> }
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
@@ -502,12 +524,12 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                         }
                     }
                     if seeded {
-                        for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                        { let rows = read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)?; rel.reserve(rows.len()); for row in rows { rel.push(&row); } }
                     }
                 } else if let Some(sql) = from {
-                    for row in read_sql(conn, &sql, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                    { let rows = read_sql(conn, &sql, &rel.types.clone(), &mut syms)?; rel.reserve(rows.len()); for row in rows { rel.push(&row); } }
                 } else if !empty {
-                    for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                    { let rows = read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)?; rel.reserve(rows.len()); for row in rows { rel.push(&row); } }
                 }
                 // A relation started from a kept one has none of its rows in its table (made this run).
                 rel.stored = if kept_base { 0 } else { rel.n };
@@ -578,7 +600,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let mut reg = COMPONENTS.lock().unwrap();
     let key = (scope(conn), name.clone());
     reg.retain(|(k, _)| *k != key);
-    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None };
+    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None };
     comp.closure = {
         let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
         closure::recognize(&comp)
@@ -638,10 +660,19 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let wave_trace = std::env::var_os("RDL_WAVE_TRACE").is_some();
     let mut gates = std::mem::take(&mut comp.gates);
     let gates_done: Vec<usize> = gates.iter().map(|g| g.done).collect();
-    // The closure form (decision 0098 §1): seeds once, then the walk's reach over distinct nodes. When the reach is
-    // too large for it, the seeds' rows are the first delta and the waves below run semi-naive from there.
-    if !seeded && let Some(cl) = comp.closure.take() {
-        let tp = Instant::now();
+    // The closure form (decision 0098 §1): seeds once, then the walk's reach over distinct nodes, in two halves around
+    // its launches. When the caller can wait (`lanes::wave::can_wait`: the stratum driver, which runs a level's
+    // strata to their launches first), the launches join this thread's device wave and the run returns `3`; the run
+    // after the wave ran finishes it. Otherwise they run here, as a batch of their own.
+    let mut closure_ran: Option<Option<closure::Ran>> = None;
+    let tp = Instant::now();
+    if let Some((cl, prep, tickets)) = comp.waiting.take() {
+        let outs = crate::code_rule_dsl::logic::lanes::wave::take(&tickets).map_err(|e| err(format!("{name}: {e}")))?;
+        let mut guard = comp.store.write().unwrap();
+        closure_ran = Some(closure::finish(&cl, prep, outs, &mut guard));
+        drop(guard);
+        comp.closure = Some(cl);
+    } else if !seeded && let Some(cl) = comp.closure.take() {
         let mut guard = comp.store.write().unwrap();
         let store = &mut *guard;
         let mut syms = symbols.write().unwrap();
@@ -654,11 +685,41 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             per[pi].1 += n;
         }
         let k = store.rels[0].k;
+        store.rels[0].reserve(fresh[0].n);
         for i in 0..fresh[0].n { store.rels[0].push(&fresh[0].data[i * k..][..k]); }
-        let lanes = crate::code_rule_dsl::logic::lanes::executor();
-        let ran = closure::run(&cl, store, &mut syms, lanes);
+        let prep = closure::prepare(&cl, store, &mut syms);
+        drop(syms);
+        match prep {
+            None => closure_ran = Some(None),
+            Some(mut prep) if !prep.launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
+                let tickets = crate::code_rule_dsl::logic::lanes::wave::queue("closure", std::mem::take(&mut prep.launches));
+                drop(guard);
+                comp.waiting = Some((cl, prep, tickets));
+                comp.seeded = true;
+                let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
+                let ms = t0.elapsed().as_secs_f64() * 1e3;
+                return Ok(format!("0 1 {visits} {runs} {skips} {ms:.1} {ms:.1} {} 3", per.join(",")));
+            }
+            Some(mut prep) => {
+                let launches = std::mem::take(&mut prep.launches);
+                let outs = if launches.is_empty() {
+                    Vec::new()
+                } else {
+                    let batch = rerail_accel::Batch(launches.into_iter().map(rerail_accel::Launch::new).collect());
+                    let (done, _) = crate::code_rule_dsl::logic::lanes::prof::run("closure", batch).map_err(|e| err(format!("{name}: {e}")))?;
+                    done.into_iter().map(|d| d.out).collect()
+                };
+                closure_ran = Some(closure::finish(&cl, prep, outs, store));
+            }
+        }
+        drop(guard);
+        comp.closure = Some(cl);
+    }
+    if let Some(ran) = closure_ran {
         seeded = true;
         waves = 1;
+        let mut guard = comp.store.write().unwrap();
+        let store = &mut *guard;
         let n = store.rels[0].n;
         match ran {
             Some(r) => {
@@ -669,13 +730,11 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                 done = true;
             }
             None => {
-                crate::code_rule_dsl::logic::profile::decision("closure (decision 0098 §1)", || format!("a walk's reach too large for bit rows: semi-naive from its seeds ({name})"));
+                crate::code_rule_dsl::logic::lanes::prof::count("closure", "closures run semi-naive (the edge search failed)", 1);
+                crate::code_rule_dsl::logic::profile::decision("closure (decision 0098 §1)", || format!("a walk's edge search failed: semi-naive from its seeds ({name})"));
                 store.rels[0].set_delta(0, n)
             }
         }
-        drop(syms);
-        drop(guard);
-        comp.closure = Some(cl);
     }
     while !done {
         let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
@@ -791,6 +850,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         for (r, f) in fresh.into_iter().enumerate() {
             let rel = &mut store.rels[r];
             let (lo, k) = (rel.n, rel.k);
+            rel.reserve(f.n);
             for i in 0..f.n { any |= rel.push(&f.data[i * k..][..k]); }
             lo_of[r] = lo;
             if !gates_done.contains(&r) { let hi = rel.n; rel.set_delta(lo, hi); }
@@ -883,6 +943,7 @@ pub fn add(conn: &Connection, name: &str, table: &str, rows: &[Vec<i64>]) -> Res
     let rel = &mut store.rels[r];
     if rel.lo != rel.hi { return Err(err(format!("{name}: {table} was added to twice in one pause"))); }
     let lo = rel.n;
+    rel.reserve(rows.len());
     let new = rows.iter().filter(|row| rel.push(row)).count();
     let hi = rel.n;
     rel.set_delta(lo, hi);
