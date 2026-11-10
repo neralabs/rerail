@@ -35,6 +35,7 @@ struct Output {
     keys: Keys,
     key_width: usize,
 }
+#[derive(Clone)]
 pub(super) struct Counts {
     pub keys: usize,
     pub rows: usize,
@@ -62,18 +63,22 @@ pub(super) struct Template {
 }
 impl Template {
     pub fn sql(&self) -> String {
+        self.sql_with(&[])
+    }
+    pub fn sql_with(&self, bindings: &[String]) -> String {
         let reads = self.reads.arms.join(" UNION ALL ");
-        if self.definitions.is_empty() {
+        let definitions = bindings
+            .iter()
+            .map(String::as_str)
+            .chain(self.definitions.iter().map(|d| d.sql.as_str()))
+            .collect::<Vec<_>>();
+        if definitions.is_empty() {
             return reads;
         }
-        format!(
-            "WITH {} {reads}",
-            self.definitions
-                .iter()
-                .map(|d| d.sql.as_str())
-                .collect::<Vec<_>>()
-                .join(",")
-        )
+        format!("WITH {} {reads}", definitions.join(","))
+    }
+    pub fn names(&self) -> Vec<&str> {
+        self.publication.names()
     }
     pub fn width(&self) -> usize {
         self.width

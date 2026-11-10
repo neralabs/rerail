@@ -4,6 +4,7 @@ use super::maintenance::{Delta, Work};
 use super::*;
 use crate::code_rule_dsl::logic::native::aggregation::{Grouping, Reduction};
 mod compose;
+mod cold_loop;
 mod batches;
 mod fold;
 mod frame;
@@ -245,7 +246,7 @@ impl Trace {
         limit: u32,
     ) -> Result<u32> {
         let mut pending = (0..self.steps.len()).collect::<BTreeSet<_>>();
-        let preparing = self.frames.is_empty();
+        let preparing = self.frames.iter().all(|f| !f.composed);
         let no_external_changes = BTreeMap::new();
         let (mut at, mut waves) = (0usize, 0u32);
         // Retain a quiescent frame after the last active wave. Its inputs include
@@ -253,8 +254,16 @@ impl Trace {
         // a large, obsolete frontier from the preceding active wave.
         let mut needs_close = false;
         let mut diagnostic_rows = vec![];
-        let components = &self.components;
+        let components = Arc::clone(&self.components);
+        let mut sql_phases=0usize;
+        let mut loop_attempted=false;
         while at < self.frames.len() || !pending.is_empty() || needs_close {
+            if preparing && !loop_attempted && !pending.is_empty() && sql_phases>=cold_loop::HOST_PHASE_LIMIT {
+                loop_attempted=true;
+                if let Some(done)=cold_loop::resume(self,w,store,&pending,waves,limit,&mut diagnostic_rows)? {
+                    waves=done;break;
+                }
+            }
             let _context = w.profile_scope(||json!({"stage":if preparing {"retained initialization"} else {"retained update"},"component":self.prefix,"frame":at}));
             let _cpu = super::super::logic::profile::span(|| "retained frame replay".into());
             if !pending.is_empty() {
@@ -367,7 +376,7 @@ impl Trace {
                         ("sql_phases".into(),frame.phase_batches as i64)]).finish_unobserved();
             }
             if preparing {
-                for (id, template) in frame.prepared(store) {
+                for (id, template) in frame.prepared_missing(store, &self.templates) {
                     Arc::make_mut(&mut self.templates)
                         .entry(id)
                         .or_insert(template);
@@ -407,6 +416,7 @@ impl Trace {
                     .collect();
                 diagnostic_rows.extend(rows);
             }
+            sql_phases+=frame.phase_batches;
             w.rewind(mark)?;
             needs_close = !active.is_empty();
             at += 1;

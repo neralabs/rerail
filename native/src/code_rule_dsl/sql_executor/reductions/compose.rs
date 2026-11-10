@@ -2,6 +2,23 @@
 use super::*;
 
 impl Retained {
+    /// A single positive conjunction has no contexts if any of its atom sources is empty.
+    pub(in crate::code_rule_dsl::sql_executor) fn empty_positive_inputs(&self) -> Vec<String> {
+        if self.rules.len() == 1 && self.rules[0].reducers.is_empty() {
+            self.rules[0]
+                .atoms
+                .iter()
+                .map(|a| a.relation.clone())
+                .collect()
+        } else {
+            vec![]
+        }
+    }
+    pub(in crate::code_rule_dsl::sql_executor) fn version_loop_eligible(&self) -> bool {
+        self.lattice.is_none() && self.can_fuse() && self.rules.iter().all(|r| !r.atoms.is_empty())
+    }
+
+
     pub(in crate::code_rule_dsl::sql_executor) fn common_phase(&self) -> crate::code_rule_dsl::logic::analysis::Decision {
         let support = self.can_fuse() || self.isolated_phase().proven || self.scalar_phase_eligible();
         let bounded = self.phase_arms()<400;

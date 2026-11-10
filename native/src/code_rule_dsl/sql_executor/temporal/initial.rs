@@ -18,6 +18,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn eligible(
         return true;
     }
     if !producers.is_empty() { return true; }
+    if super::cold_loop::candidate(e) { return true; }
     // Preserve the specialized walk and partition kernels beyond the checked phase-size boundary.
     let composable=e.program.steps.len()<=32 && e.queries.iter().flatten().all(|q|q.ctes.is_empty());
     if !recursive_steps.is_empty() {
@@ -140,7 +141,10 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
             );
         }
         let _context = attempt.profile_scope(|| json!({"stage":"initial retained execution"}));
-        let waves = trace.replay(&mut attempt, store, &BTreeMap::new(), run.max_waves)?;
+        let waves = match super::cold_loop::run(&mut trace, &mut attempt, store, run.max_waves)? {
+            Some(waves) => waves,
+            None => trace.replay(&mut attempt, store, &BTreeMap::new(), run.max_waves)?,
+        };
         let final_versions = trace.frames.last().unwrap().versions(store);
         for (r, spec) in &trace.relations {
             let frame = trace.frames.last().unwrap();

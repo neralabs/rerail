@@ -849,3 +849,19 @@ Compound-key `IN` filters descend through existing prefixes without constructing
 SQLite rechecks tuple correlation, affinity, and remaining predicates.
 Frozen cursors and transaction rollback preserve the previous rows and index configuration.
 This reduces initial CPU and memory. Supported recursive programs use the single retained schedule described above.
+
+Eligible cold positive graphs can continue inside a recursive SQL version loop.
+Production first uses the host SQL schedule. After 48 phases, qualifying remaining work uses one SQL submission.
+Short feedback chains keep the host schedule, including large inputs where the full loop costs more CPU.
+The loop retains contexts, support, intermediate frontiers, and maintenance cursors for later edits.
+Native callbacks construct storage and expose immutable versions. Rule evaluation stays in SQL.
+
+The current eligibility requires a mutually recursive set component, total expressions, no internal CTEs, and at most 32 emitted steps.
+Each retained rule requires a positive body. The collector supports at most 120 columns.
+Existing preparation and result-arm bounds still apply. Other shapes keep their existing paths.
+This loop uses the scored owner connection. Independent queryPlan groups use the shared SQL worker pool.
+Warm-history lowering, mixed-component lowering, and complete-session admission remain separate integration work.
+
+The first loop frame's explain data includes `sql_version_loop`.
+It records placement, logical analysis, rule stages, prefix phases, preparation costs, VM work, and storage CPU.
+The outer operation keeps its original VM and time limits across the handoff.

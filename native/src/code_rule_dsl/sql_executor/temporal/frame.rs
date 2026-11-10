@@ -40,11 +40,16 @@ fn snapshot(
 }
 
 impl Frame {
-    pub fn prepared(&self, store: &versions::Store) -> Vec<(usize, Prepared)> {
+    /// Capture an initial template once, without revisiting its roots on later frames.
+    pub fn prepared_missing(
+        &self,
+        store: &versions::Store,
+        existing: &BTreeMap<usize, Prepared>,
+    ) -> Vec<(usize, Prepared)> {
         self.operators
             .iter()
             .enumerate()
-            .filter(|(_, op)| op.ready())
+            .filter(|(id, op)| op.ready() && !existing.contains_key(id))
             .map(|(id, op)| {
                 (
                     id,

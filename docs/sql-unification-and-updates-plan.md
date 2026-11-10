@@ -3374,3 +3374,75 @@ Private versions advance only after every output validates. Owner roots remain u
 This extraction does not reduce retained-wave submissions by itself.
 The production loop must preserve intermediate frontiers, contexts, support roots, gates, and maintenance cursors.
 Returning only final heads would lose frontier consumers; rebuilding support afterward would duplicate evaluation.
+
+### Continue cold retained execution inside SQL (2026-11-10)
+
+The production executor can now continue an eligible cold graph inside one recursive SQL statement.
+The statement builds contexts, contributions, support counts, results, and every intermediate frontier.
+It retains the versions and maintenance cursors that later edits consume.
+It does not evaluate the rules again to reconstruct support.
+
+Eligibility uses the shared component analysis and each cache's checked support analysis.
+The current path covers total positive set rules with a mutually recursive component, no internal CTEs, and at most 32 emitted steps.
+Each retained rule requires a positive body. The collector currently accepts up to 120 columns.
+The existing 20,000-unit preparation bound and 400-arm bound still apply.
+Single-relation closure and walk kernels keep their existing placement.
+Scalar, lattice, opaque, and incompatible checked shapes keep their established transitions.
+
+SQL evaluates joins, expressions, signed support transitions, and relation folds.
+Native callbacks expose indexed storage, compare immutable versions, construct private roots, and schedule gates from frontier lengths.
+SQL tests positive-input emptiness before invoking storage-only cache clearing.
+Private patches publish only after the statement succeeds. Changed-root lists avoid republishing an entire snapshot.
+Each initial cache template is captured once, across both execution strategies.
+
+The first combined transition reduced submissions but increased CPU substantially.
+It built SQL structures for inactive rules, compared growing inputs with EXCEPT, and retained obsolete frontier contexts.
+Conditional rule subplans now skip inactive SQL work. Shared persistent-index differences avoid full input comparisons.
+Empty-input proofs clear obsolete contexts and advance their unprotected cursors.
+Cold set inputs only grow; frozen external facts need no deletion branch. Generated frontier inputs retain signed differences.
+
+Always selecting a SQL loop also regressed large workloads with short feedback chains.
+Production now keeps the host SQL schedule initially.
+If an eligible graph remains active after 48 SQL phases, its remaining work continues in one SQL statement.
+The handoff uses the existing support roots, input versions, gate mask, and cursors.
+It preserves the operation's VM and time limits.
+This phase slice reserves headroom for owner work and publication. Exact whole-session admission remains required.
+
+Debug comparisons use mutual recursion, cycles, and a downstream frontier consumer.
+Every output row is compared, including results above the query API's default 10,000-row limit.
+The table reports one measured ordered run. CPU measurements exclude construction, fact binding, and verification queries.
+Lifecycle statements include those operations and shutdown.
+
+| Input | Strategy | Evaluation submissions | run() statements | Lifecycle statements | Debug CPU |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 8 regions, 64 nodes each | Host SQL schedule | 130 | 147 | 162 | 0.498 s |
+| Same | Adaptive handoff | 49 | 66 | 81 | 0.480 s |
+| Same | Full SQL loop | 1 | 18 | 33 | 0.402 s |
+| 10,000 regions, 8 nodes each | Host SQL schedule | 18 | 35 | 50 | 9.609 s |
+| Same | Adaptive handoff | 18 | 35 | 50 | 9.121 s |
+| Same | Full SQL loop | 1 | 18 | 33 | 16.094 s |
+
+A reversed small-case run measured 0.427 seconds for the host, 0.423 for adaptive execution, and 0.415 for the full loop.
+The large adaptive case selects the same statements and VM work as the host schedule.
+Its CPU difference is measurement variation, not an algorithmic improvement.
+The full loop still executes more VM work: 3,075,502 versus 476,755 steps on the long small case.
+On the large case, it executes 285,201,654 versus 63,167,003 steps.
+The adaptive policy avoids that large regression when the faster schedule already fits.
+These examples do not establish whole-product acceptance or the original corpus session target.
+
+The SQL scoreboard records the loop as an owner-bound SQL job, including preparation and failures.
+Explain reports its logical proof, rule-stage dependencies, placement, preparation costs, prefix phases, VM steps, and storage CPU.
+Profiler captures account for every executed statement, with no unknown origins or missing plans.
+The debug SQL suite passes 194 tests, with three subprocess or comparison helpers ignored.
+The shared analysis suite passes sixteen tests; the SQL-profiler suite passes twelve.
+Tests cover intermediate consumers, alternate support, sparse edits, snapshot edits, rollback, retry, and a handoff with nonempty caches.
+
+Required next work:
+
+1. Lower eligible recursive components within mixed graphs, preserving scalar and opaque gates.
+   Current whole-graph eligibility excludes the original workload and call-analysis captures.
+2. Extend lowering to affected warm history, including pending external journals and synchronized summary cursors.
+3. Connect checked rule and maintenance groups to the parallel SQL graph planner.
+   Independent queryPlan groups use the shared pool; this retained loop still uses its owner connection.
+4. Admit owner control, publication, worker groups, failures, and verification against one complete-session statement allowance.
+5. Reduce version-transport and CTE costs, then repeat the original complete corpus sessions in debug builds.
