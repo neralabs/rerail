@@ -3353,3 +3353,24 @@ The public Rust SDK example runs a recursive join and aggregate from a backgroun
 Debug runs with one and four configured workers both return the expected three rows, in one submission and 357 VM steps.
 A bounded subprocess wait checks that either run terminates.
 The existing one- and two-worker profiling regression covers the eager worker configuration used by the library.
+
+### Share SQL phase storage construction with retained loops (2026-11-10)
+
+A reusable phase template now separates SQL evaluation from root construction.
+Ordinary phases use this template, including cached preparation, result sharing, validation, and atomic publication.
+The storage builder accepts explicit previous versions. It has no connection or rule evaluator.
+SQL aggregates can therefore build retained roots from SQL results without submitting helper queries or evaluating rules again.
+
+Publication inputs retain each snapshot use, including different versions of one named key source.
+Schema checks reject incompatible versions before publication.
+The existing profiler retains preparation, read-arm, expansion, strategy, and root-sharing measurements.
+Publication context now includes snapshot uses.
+
+The debug SQL suite passes 188 tests, with two subprocess helpers ignored by the parent runner.
+Eight phase tests cover shared reads, row identity, sparse and dense patches, schema checks, and atomic failure.
+An aggregate regression reuses the builder across iterations, including empty replacement and failure in a later output.
+Private versions advance only after every output validates. Owner roots remain unchanged inside the aggregate.
+
+This extraction does not reduce retained-wave submissions by itself.
+The production loop must preserve intermediate frontiers, contexts, support roots, gates, and maintenance cursors.
+Returning only final heads would lose frontier consumers; rebuilding support afterward would duplicate evaluation.

@@ -1,11 +1,13 @@
 //! Read identical materialized projections once, then distribute their rows to publication targets.
 use super::*;
 
+#[derive(Clone)]
 struct Read {
     width: usize,
     first: (usize, bool),
     more: Vec<(usize, bool)>,
 }
+#[derive(Clone)]
 pub(super) struct Plan {
     pub arms: Vec<String>,
     pub logical_reads: usize,
@@ -79,15 +81,42 @@ impl Plan {
         rows: &mut [Vec<Vec<Option<i64>>>],
         keys: &mut [Vec<Vec<Option<i64>>>],
     ) -> Result<()> {
-        let tag = row.get::<_, i64>(0).map_err(error)? as usize;
+        let tag = row.get::<_, i64>(0).map_err(error)?;
+        let at = usize::try_from(tag).map_err(|_| error("invalid SQL phase output tag"))?;
+        let read = self
+            .reads
+            .get(at)
+            .ok_or_else(|| error("invalid SQL phase output tag"))?;
+        let cells = (1..=read.width)
+            .map(|c| row.get(c))
+            .collect::<rusqlite::Result<Vec<Option<i64>>>>()
+            .map_err(error)?;
+        Self::append(read, cells, rows, keys)
+    }
+    pub fn collect_cells(
+        &self,
+        tag: i64,
+        cells: Vec<Option<i64>>,
+        rows: &mut [Vec<Vec<Option<i64>>>],
+        keys: &mut [Vec<Vec<Option<i64>>>],
+    ) -> Result<()> {
+        let tag = usize::try_from(tag).map_err(|_| error("invalid SQL phase output tag"))?;
         let read = self
             .reads
             .get(tag)
             .ok_or_else(|| error("invalid SQL phase output tag"))?;
-        let mut cells = (1..=read.width)
-            .map(|c| row.get(c))
-            .collect::<rusqlite::Result<Vec<Option<i64>>>>()
-            .map_err(error)?;
+        Self::append(read, cells, rows, keys)
+    }
+    fn append(
+        read: &Read,
+        mut cells: Vec<Option<i64>>,
+        rows: &mut [Vec<Vec<Option<i64>>>],
+        keys: &mut [Vec<Vec<Option<i64>>>],
+    ) -> Result<()> {
+        if cells.len() < read.width {
+            return Err(error("SQL phase result has too few columns"));
+        }
+        cells.truncate(read.width);
         for (at, &(id, key)) in std::iter::once(&read.first).chain(&read.more).enumerate() {
             let target = if key { &mut keys[id] } else { &mut rows[id] };
             target.push(if at == read.more.len() {
