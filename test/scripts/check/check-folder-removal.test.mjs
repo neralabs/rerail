@@ -5,9 +5,9 @@ import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { EXEMPT, folderRemovalProblems, HELPER } from "../../scripts/check/check-folder-removal.mjs";
+import { EXEMPT, folderRemovalProblems, HELPER } from "../../../scripts/check/check-folder-removal.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = (problems) => problems.map(({ path, line, rule }) => `${path}:${line}:${rule}`);
 
 describe("check-folder-removal", () => {

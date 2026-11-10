@@ -1,7 +1,7 @@
 // scripts/check/check-windows-paths.mjs: every tracked path checks out on Windows.
 
 import { describe, expect, it } from "vitest";
-import { MAX_LENGTH, windowsPathProblems } from "../../scripts/check/check-windows-paths.mjs";
+import { MAX_LENGTH, windowsPathProblems } from "../../../scripts/check/check-windows-paths.mjs";
 
 const paths = (problems) => problems.map((problem) => problem.path);
 /** A path of exactly `length` characters. */

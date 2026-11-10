@@ -6,8 +6,8 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { internalRefProblems, privateNameProblems } from "../../scripts/check/check-internal-refs.mjs";
-import { removeFolderSync } from "../support/platform/remove-folder.ts";
+import { internalRefProblems, privateNameProblems } from "../../../scripts/check/check-internal-refs.mjs";
+import { removeFolderSync } from "../../support/platform/remove-folder.ts";
 
 /** A ticket ID, assembled so this file does not hold one itself. */
 const ticket = (prefix, number) => `${prefix}-${number}`;

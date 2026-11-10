@@ -4,8 +4,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ciPathProblems, COMMON, e2eInstalledPackReads, expectedOutput } from "../../scripts/check/check-ci-paths.mjs";
-import { removeFolderSync } from "../support/platform/remove-folder.ts";
+import { ciPathProblems, COMMON, e2eInstalledPackReads, expectedOutput } from "../../../scripts/check/check-ci-paths.mjs";
+import { removeFolderSync } from "../../support/platform/remove-folder.ts";
 
 let root;
 afterEach(() => {

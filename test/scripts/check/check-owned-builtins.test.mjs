@@ -4,9 +4,9 @@ import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { ownedBuiltinProblems, RULES } from "../../scripts/check/check-owned-builtins.mjs";
+import { ownedBuiltinProblems, RULES } from "../../../scripts/check/check-owned-builtins.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = (problems) => problems.map(({ path, line, rule }) => `${path}:${line}:${rule}`);
 const rule = (id) => RULES.find(row => row.id === id);
 const member = (base, path) => `${base}${path.map(part => `.${part}`).join("")}`;
