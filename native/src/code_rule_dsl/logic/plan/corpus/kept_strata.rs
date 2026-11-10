@@ -167,7 +167,7 @@ impl KeptStrata for Kept<'_> {
 /// A relation's frame records the digest of each input its rows were derived from (the inputs its stratum reads, and
 /// theirs, down to the program's inputs). Frames are shared by identity, so a relation another program kept may be
 /// of other inputs than the inputs' frames hold now: it is read back only when every input it records has the
-/// digest the input's frame holds. A program output's rows are kept as any relation's, and its lines decoded from
+/// digest the input's frame holds. An input's frame is its program's (`retain::key`), not shared. A program output's rows are kept as any relation's, and its lines decoded from
 /// them when its stratum is clean (`plan::decode_kept`); but `finding`, which SQL decodes, runs again.
 pub(in crate::code_rule_dsl) struct Part {
     space: [u8; 32],
@@ -226,6 +226,7 @@ pub(in crate::code_rule_dsl) fn load(
     key: [u8; 32],
     prog: &crate::code_rule_dsl::logic::front::Program,
     inputs: &[(String, Arc<dyn Source>)],
+    now: &HashMap<String, u64>,
 ) -> super::Result<(Option<super::retain::Retained>, Part)> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part kept, from the store".into());
     let space = part_space(root);
@@ -238,9 +239,14 @@ pub(in crate::code_rule_dsl) fn load(
         .filter(|(name, _)| name != "finding" && !input_names.contains(name.as_str()))
         .map(|(name, ident)| (name.clone(), (FrameRel { name, ident }, None)))
         .collect();
+    // An input's rows are its program's: programs over the same root bind inputs of the same name to other rows
+    // (P3's cross part and its loading cone, a phase), so its frame is under the program's key too.
     for (rel, _) in inputs {
-        let ident = crate::code_rule_dsl::logic::plan::leaf_identity(prog, rel);
-        frames.insert(rel.clone(), (FrameRel { name: rel.clone(), ident }, None));
+        let mut h = Sha256::new();
+        h.update(b"rerail.kept-input/v1\0");
+        h.update(key);
+        h.update(crate::code_rule_dsl::logic::plan::leaf_identity(prog, rel));
+        frames.insert(rel.clone(), (FrameRel { name: rel.clone(), ident: h.finalize().into() }, None));
     }
     let asked: Vec<FrameRel> = frames.values().map(|(f, _)| f.clone()).collect();
     let stored = store.frames(&space, &asked, 0).unwrap_or_default();
@@ -265,7 +271,18 @@ pub(in crate::code_rule_dsl) fn load(
         let values = (0..w).map(|c| Some((0..rows.n).map(|i| rows.rows[i * w + c]).collect())).collect();
         kept_inputs.push((rel.clone(), was.digest, crate::code_rule_dsl::logic::native::component::columns_source(names, values)));
     }
-    let input_digest: HashMap<&str, u64> = kept_inputs.iter().map(|(r, d, _)| (r.as_str(), *d)).collect();
+    // An input this program kept no frame of (its first run) reads as unchanged, at this run's digest, with no old
+    // rows: a relation another program kept is read back only if it was derived from rows of that digest.
+    let mut input_digest: HashMap<&str, u64> = kept_inputs.iter().map(|(r, d, _)| (r.as_str(), *d)).collect();
+    let mut unkept: Vec<(String, u64)> = Vec::new();
+    for (rel, _) in inputs {
+        if !input_digest.contains_key(rel.as_str())
+            && let Some(d) = now.get(rel)
+        {
+            input_digest.insert(rel.as_str(), *d);
+            unkept.push((rel.clone(), *d));
+        }
+    }
     let (mut rels, mut stale) = (Vec::new(), 0usize);
     for (name, (f, was)) in &part.frames {
         let Some(was) = was.as_ref().filter(|_| !input_names.contains(name.as_str())) else { continue };
@@ -283,7 +300,7 @@ pub(in crate::code_rule_dsl) fn load(
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || {
         format!("{} relations and {} inputs read back from the store, {} rows; {stale} kept of other inputs, not read", rels.len(), kept_inputs.len(), rels.iter().map(|(_, _, r)| r.rows()).sum::<usize>())
     });
-    Ok((Some(super::retain::Retained::of_rows(key, kept_inputs, rels)), part))
+    Ok((Some(super::retain::Retained::of_rows(key, kept_inputs, unkept, rels)), part))
 }
 
 /// Writes what `next` keeps whose rows or inputs differ from what the store holds, behind the run, and marks every

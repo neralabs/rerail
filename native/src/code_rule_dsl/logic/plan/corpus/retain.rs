@@ -426,12 +426,19 @@ pub(in crate::code_rule_dsl) fn kept_source(
 impl Retained {
     /// What a run of program `key` kept, read back from the store in a new process (t32 4.1, `kept_strata::load`):
     /// each input's digest and source, and each relation's rows as the engine holds them. Nothing measured.
-    pub(in crate::code_rule_dsl) fn of_rows(key: [u8; 32], inputs: Vec<(String, u64, Arc<dyn Source>)>, rels: Vec<(String, usize, Arc<InRel>)>) -> Retained {
+    /// `digested`: inputs known by their digest alone (no rows kept: unchanged, or derived again if they changed).
+    pub(in crate::code_rule_dsl) fn of_rows(
+        key: [u8; 32],
+        inputs: Vec<(String, u64, Arc<dyn Source>)>,
+        digested: Vec<(String, u64)>,
+        rels: Vec<(String, usize, Arc<InRel>)>,
+    ) -> Retained {
         let mut out = Retained { key, ..Default::default() };
         for (rel, digest, source) in inputs {
             out.inputs.insert(rel.clone(), digest);
             out.input_srcs.insert(rel, source);
         }
+        out.inputs.extend(digested);
         for (rel, width, held) in rels {
             out.rels.insert(rel, Kept { rel: held, width, output: None });
         }
