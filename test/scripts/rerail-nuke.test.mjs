@@ -195,11 +195,13 @@ test("on Windows the matcher reads the home in either slash, any case, and the d
   // The status line is a POSIX word for Git Bash, each backslash written twice.
   assert.ok(matches(String.raw`sh -c '...' /opt/node "C:\\Users\\me\\.rerail\\current\\dist\\hosts\\claude\\claude-status.js"`));
   assert.ok(matches("node C:/Users/me/.rerail/current/dist/x.js"));
-  assert.ok(matches(String.raw`node c:\users\ME\.rerail/current\dist\x.js`));
+  // No `\u` or `\x` in a raw string below: Tree-sitter's JavaScript grammar, which Rerail's own rules parse this file
+  // with, reads one as a broken escape and leaves the whole file unchecked.
+  assert.ok(matches(String.raw`node c:\USERS\Me\.rerail/current\dist\cli.js`));
   assert.ok(matches("node ~/.rerail/current/dist/x.js"));
   assert.ok(matches(String.raw`C:\Users\me\.rerail`));
-  assert.ok(!matches(String.raw`node C:\Users\me\.rerail-other\x.js`));
-  assert.ok(!matches(String.raw`node C:\Users\me\project\.rerail\x.js`));
+  assert.ok(!matches(String.raw`node C:\Users\me\.rerail-other\cli.js`));
+  assert.ok(!matches(String.raw`node C:\Users\me\project\.rerail\cli.js`));
 });
 
 test("hook stripping handles grouped and flat entries and drops only events it emptied", () => {
