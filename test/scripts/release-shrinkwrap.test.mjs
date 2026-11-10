@@ -1,7 +1,10 @@
 // scripts/release/shrinkwrap.mjs: the npm-shrinkwrap.json core's tarball ships, from package-lock.json, and the
-// release's check of the packed one.
+// release's check of the packed one (scripts/release/shrinkwrap-pack.mjs check).
 
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { shrinkwrapFrom, shrinkwrapProblem, shrinkwrapText } from "../../scripts/release/shrinkwrap.mjs";
 
@@ -88,5 +91,26 @@ describe("shrinkwrapProblem", () => {
     stale.packages["node_modules/a"].version = "0.9.0";
     expect(shrinkwrapProblem(JSON.stringify(stale), expected)).toContain("node_modules/a");
     expect(shrinkwrapProblem("not json", expected)).toBeDefined();
+  });
+});
+
+describe("shrinkwrap-pack.mjs check", () => {
+  it("reads the shrinkwrap of a tarball named by its absolute path, a drive letter's colon and all", () => {
+    const folder = mkdtempSync(join(tmpdir(), "rerail-shrinkwrap-check-"));
+    try {
+      mkdirSync(join(folder, "package"));
+      writeFileSync(join(folder, "package", "npm-shrinkwrap.json"), shrinkwrapText(process.cwd()));
+      // Relative names, so the tar that packs it reads no colon whatever the platform.
+      execFileSync("tar", ["-czf", "rerail.tgz", "package"], { cwd: folder, stdio: "ignore" });
+      const tarball = join(folder, "rerail.tgz");
+
+      const check = spawnSync(process.execPath, ["scripts/release/shrinkwrap-pack.mjs", "check", tarball], { encoding: "utf8" });
+
+      expect(check.stderr).toBe("");
+      expect(check.stdout).toBe(`${tarball} ships the npm-shrinkwrap.json package-lock.json gives.\n`);
+      expect(check.status).toBe(0);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
   });
 });
