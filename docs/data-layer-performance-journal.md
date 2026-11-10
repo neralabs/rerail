@@ -11354,3 +11354,45 @@ The source oracle passes all 191 framework and receipt-auditor assertions. Nativ
 Both shared MCP modules must run separately: their duplicate ARC-009 ownership marks prevent combined collection upstream.
 These are outstanding acceptance tasks, not excluded assertions. Two hundred shared original cases remain open.
 Dynamic loading remains a draft; global admission remains 12 of 100 ports.
+
+### Final fc6 merge and shared-assertion acceptance, 2026-11-10
+
+Commit `f3fa4de15` preserves the preceding work before merge `532ad5afd` imports Final `fc6c1e0d9`.
+The merge adds AST capture joins and matcher batching. It has no conflicts.
+The optimized root CLI build takes 130.726 seconds, recorded separately from acceptance.
+The registered artifact is `63278a96b660a897…`; its source identity includes the merged engine and the reviewed generic extensions.
+
+The [dynamic-loading checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-dynamic-finalfc6-progress.json.gz) retains 576 native executions on this artifact.
+Each API passes all 115 dedicated tests, 191 shared framework assertions, seven shared MCP detector tests, and the separate repository-ban test.
+Both APIs also pass the 116-case scanner contract, including positive findings and complete returned values.
+The 191 framework assertions exercise configuration and receipt validation. They have no individual detector calls; they remain executed assertions.
+Their passive registration fixtures load before the detector guard. A regression confirms that this setup does not permit unselected detectors to execute.
+No reporter, extractor, or subprocess runs during this fixture setup.
+
+The fixed inventory has 315 original assertions. This checkpoint passes 314 per API and does not admit the rule.
+The [full MCP rejection](../gate/data-layer/fixtures/host/data-layer-port/rr-mcp-runtime-finalfc6-red.json.gz) preserves the remaining assertion through both APIs.
+It calls the original application's plan-builder API to check fingerprint determinism and fragment-reference collisions.
+The guard rejects the original linter's `run_behavior_probes`; all seven other assertions pass in that full run.
+This runtime-probe requirement remains open. Production and plugin removal controls also remain open.
+The preceding ca24 checkpoint retains the broader interface, production, update, and scanner-removal evidence for its own artifact.
+
+### ClassVar API scope and collector order, 2026-11-10
+
+Commit `18a4236fd` records failing source-parity cases before the implementation fixes.
+The [initial red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-classvar-api-finalfc6-red.json.gz) proves five snapshot mismatches and broader workspace false negatives.
+The workspace entry omitted files outside production roots. The adapter also lost original test-directory components and read missing content-API files too early.
+Named APIs now admit their supplied documents. Native clauses apply the exact `.py` suffix and test-path exclusions to the original logical paths.
+The content API applies its native source gate before reading the named file. Missing content-API files return the source's empty result.
+
+A [second red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-classvar-order-finalfc6-red.json.gz) exposes collector order across function defaults, bodies, and decorators.
+The source reports lines 2, 3, then 1. The previous adapter sorted them as lines 1, 2, then 3.
+The native rule now exports its AST visit index, and the adapter preserves that index and comparator ordinal.
+The [green checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-classvar-finalfc6-progress.json.gz) passes all 63 contract cases and all eight original dedicated assertions through each API.
+It preserves complete finding tuples, byte columns, duplicates, exceptions, and 144 native executions.
+
+ClassVar remains a draft. Plugin, production, CLI, directory-update, removal-control, and complete shared-inventory acceptance remain open.
+Global admission remains 12 of 100 ports. No full-repository cold benchmark ran. No Linear ticket was created.
+
+The final tooling run passes 398 tests in 13.773 seconds. The migration inventory verification also passes.
+The ClassVar content API still needs broader read-selection acceptance, including unreadable files that its fact scope excludes.
+The checkpoints retain the tested cases and do not claim full ClassVar API acceptance.

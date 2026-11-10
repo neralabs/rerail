@@ -2,7 +2,20 @@
 
 
 def classvar_check(source, target, header):
-    return header('classvar_check', target) + r'''
+    from data_layer_rr_cli import logical_scope
+    text = logical_scope(header('classvar_check', target), 'cv_selected')
+    return text + r'''
+.decl cv_test_path(path: symbol)
+cv_test_path(p) :- option_item("cvLogicalPaths",_,p), (contains("/tests/",cat("/",p)) ; contains("/test/",cat("/",p))).
+.decl cv_fact_file(d: number)
+cv_fact_file(d) :- doc(d,p,_), option_item("cvDocuments",i,p), option_item("cvLogicalPaths",i,full),
+    suffix(".py",full), !cv_test_path(full).
+cv_fact_file(d) :- doc(d,p,_), !option_item("cvDocuments",_,_), suffix(".py",p),
+    !path_part(d,"tests"), !path_part(d,"test").
+.violation ClassVarSourceGate(at: span) code "CV_SOURCE_GATE" "source gate"
+ClassVarSourceGate(@place("",0)) :- option("entryPoint","_classvar_source_gate"), option("callSource",t),
+    contains("get_origin",t), contains("ClassVar",t).
+
 .decl cv_source(d: number, t: symbol)
 cv_source(d, t) :- source(d, sp), text(sp, t).
 .decl cv_trigger(d: number)
@@ -27,17 +40,17 @@ cv_candidate(c, i, style) :- cv_operand(c, 0, raw), unparen(raw, call), kind(cal
     field(call, "function", f), cv_leaf(f, "get_origin"), op_at(c, i, op), cv_operand(c, i + 1, other),
     cv_leaf(other, "ClassVar"), (op = "is", style = "is/==" ; op = "==", style = "is/==" ;
     op = "is not", style = "is not/!=" ; op = "!=", style = "is not/!="),
-    docof(c, d), cv_trigger(d), cv_api_gate(d), !syntax_error(d, _, _).
+    docof(c, d), cv_trigger(d), cv_api_gate(d), cv_selected(d), cv_fact_file(d), !syntax_error(d, _, _).
 .decl cv_helper(f: node)
 cv_helper(f) :- kind(f, "function_definition"), def_name(f, name), @nfkc(name) = "is_classvar_annotation", !op(f, "async").
 .decl cv_exempt(c: node)
 cv_exempt(c) :- cv_candidate(c, _, _), cv_helper(f), within(c, f).
 cv_exempt(c) :- cv_candidate(c, _, _), cv_helper(f), decorator(f, e), c = e.
 cv_exempt(c) :- cv_candidate(c, _, _), cv_helper(f), decorator(f, e), within(c, e).
-.violation ClassVarComparison(at: node, ordinal: number, style: symbol, column: number) code "CLASSVAR001"
+.violation ClassVarComparison(at: node, ordinal: number, style: symbol, column: number, collector_visit: number) code "CLASSVAR001"
     "Direct get_origin(...) {style} ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead."
 // Keep the comparator ordinal: repeated links produce repeated public DTOs, as the source collector does.
-ClassVarComparison(c, ordinal, style, column) :- cv_candidate(c, ordinal, style), !cv_exempt(c), col(c, column).
+ClassVarComparison(c, ordinal, style, column, visit) :- cv_candidate(c, ordinal, style), !cv_exempt(c), col(c, column), visit_index(c, visit).
 '''
 
 

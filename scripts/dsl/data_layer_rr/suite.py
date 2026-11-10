@@ -391,6 +391,12 @@ class Suite:
             return scan(self, entry, module, arguments)
         path = Path(arguments.get('path', arguments.get('file_path', arguments.get('filepath', 'input.py'))))
         if check == 'classvar_check':
+            if entry == 'lint_file_content':
+                gates = self.native(check, '_classvar_source_gate', [], dict(callSource=arguments['source']))
+                if len(gates) > 1 or any(r['code'] != 'CV_SOURCE_GATE' for r in gates):
+                    raise AssertionError('Invalid native ClassVar source gate')
+                if not gates or not path.is_file():
+                    return []
             if entry == 'lint_directory':
                 paths = []
                 for directory, names, filenames in os.walk(arguments['dirpath']):
@@ -408,11 +414,12 @@ class Suite:
                 originals[name] = item
                 files.append(dict(path=name, source=item.read_text()))
             options = dict(callSource=arguments['source']) if entry == 'lint_file_content' else {}
+            options.update(cvDocuments=list(originals), cvLogicalPaths=[str(item) for item in originals.values()])
             rows = self.native(check, entry, files, options)
             if any(row['code'] != 'CLASSVAR001' for row in rows):
                 raise AssertionError('Unexpected native ClassVar code')
             order = {f['path']: i for i, f in enumerate(files)}
-            rows.sort(key=lambda r: (order[r['path']], r['line'], r['parameters']['column'], r['parameters']['ordinal']))
+            rows.sort(key=lambda r: (order[r['path']], r['parameters']['collector_visit'], r['parameters']['ordinal']))
             return [module.LintIssue(file=originals[r['path']], line=r['line'], col=r['parameters']['column'],
                                      message=r['message'], code=r['code']) for r in rows]
         if check == 'dynamic_module_loading':
@@ -824,6 +831,8 @@ def main():
             if pattern not in module.ALLOWED_PATTERNS or re.search(pattern, f'    if hasattr(txn, "{witness}"):') is None:
                 raise AssertionError('The source no longer validates this skipped-case witness')
     backend = Suite(source, engine, checks, args.part, args.parts, args.baseline.resolve(), args.rule_root.resolve(),execution_mode=args.mode)
+    from framework_fixtures import prepare
+    prepare(backend, targets)
     os.chdir(source)
     code = pytest.main(['--rootdir', str(source), '-c', str(source / 'pyproject.toml'), '-q', *map(str, tests)], plugins=[backend])
     from data_layer_probe_record import verify_sources

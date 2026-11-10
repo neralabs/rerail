@@ -23,6 +23,8 @@ def cases(_module):
         ('helper-default', 'def is_classvar_annotation(x=get_origin(x) is ClassVar):\n    pass\n'),
         ('async-in-helper', 'def is_classvar_annotation(x):\n    async def inner():\n        return ' + BAD),
         ('helper-in-async', 'async def outer():\n    def is_classvar_annotation(x):\n        return ' + BAD),
+        ('function-visit-order', '@decorator(get_origin(x) is ClassVar)\ndef f(x=get_origin(x) is ClassVar):\n    return get_origin(x) is ClassVar\n'),
+        ('nested-visit-order', 'get_origin(get_origin(x) is ClassVar) is ClassVar\n'),
         ('lambda', 'f = lambda: ' + BAD),
         ('unusual-newlines', 'get_origin(x) \\\n is ClassVar\n'),
     ]:

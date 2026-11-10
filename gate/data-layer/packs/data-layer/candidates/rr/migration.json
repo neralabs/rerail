@@ -1581,7 +1581,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/classvar-check.rr",
-      "sha256": "2594f851a6d9f651ad1c823d0bca7de9d92325dd8a48a8533658bd68f3629d37",
+      "sha256": "a135e1975ab6a1ead74d4c702a40f0d7079bb4551647face88ead279712d748d",
       "origin": "authored",
       "upstreamPath": "scripts/lint_classvar_check.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3448,7 +3448,7 @@
       "legacySha256": "9056ad18066c1d44a2d9c8d6ae676f25a4aada9c2130cd698976d64c48857eda",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/classvar-check.rr",
-      "ruleSha256": "2594f851a6d9f651ad1c823d0bca7de9d92325dd8a48a8533658bd68f3629d37"
+      "ruleSha256": "a135e1975ab6a1ead74d4c702a40f0d7079bb4551647face88ead279712d748d"
     },
     {
       "check": "type_safety_patterns",
@@ -4638,7 +4638,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
-    "status": "Final fc6c1e0d9 merged; new CLI build and native acceptance pending.",
+    "status": "Final fc6c1e0d9 merged and root CLI rebuilt. Dynamic loading retains 314 of 315 original assertions per API; ClassVar retains 63 contract cases and 8 dedicated original assertions per API. Both remain drafts.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4886,17 +4886,17 @@
       }
     ],
     "cliArtifact": {
-      "engineCommit": "66f65dd5362d89ca2a31b28c9613df13a376a35a",
-      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
+      "engineCommit": "ba106b5311f06fb8f77abec8c4009780d37ffbd9",
+      "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
       "sourceTrees": {
-        "native": "b9f5792c538851dcc6a0217367a0d6b6f450b895",
+        "native": "6f49bc7e10d0657c2d8223c9dea11c3432597a61",
         "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
         "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
       },
-      "path": ".rerail/modern-engine-alignment/cli-cf886770ed29ec41",
-      "sha256": "cf886770ed29ec41cfd549dd57f1b6f5fb3ef4376097a0c63fb167e1bfae8b84",
+      "path": ".rerail/modern-engine-alignment/cli-63278a96b660a897",
+      "sha256": "63278a96b660a897b54396e66b40ba3fff50035da44f9250b1907d307a50e66f",
       "command": [
         "cargo",
         "build",
@@ -4909,7 +4909,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 241.082
+      "seconds": 130.726
     },
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
