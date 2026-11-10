@@ -8,7 +8,8 @@
 //! functions with their pipeline states, and each function's arguments as Metal's reflection describes them, which
 //! the grid runtime binds a kernel's parameters to by name.
 //!
-//! Here so far: `MetalComputeFunctionLibrary` (`compileFromSource`, `getFunction`), `MetalComputeFunction`
+//! Here so far: `MetalBindContext` (with the queue's `newBindContext` and `finish`, over one command buffer),
+//! `MetalComputeFunctionLibrary` (`compileFromSource`, `getFunction`), `MetalComputeFunction`
 //! (pipeline state with reflection, `getArgumentInfo`), and `getKernelType` with the data type, struct and array
 //! translations. `compileFromSourceFile`'s preprocessing step is the build step (`accel/build/forest.rs`); the
 //! Metal version it queried with `xcrun metal` is fixed there, as no Metal toolchain is installed. MLDB's value
@@ -316,5 +317,66 @@ impl MetalComputeFunctionLibrary {
     pub fn get_function(&self, device: &DeviceRef, function_name: &str) -> Result<MetalComputeFunction, String> {
         let function = self.mtl_library.get_function(function_name, None).map_err(|e| format!("Error getting function '{function_name}' from Metal library ({}): {e}", self.mtl_library.function_names().join(", ")))?;
         MetalComputeFunction::new(device, function)
+    }
+}
+
+/// A queue of kernel launches on a command buffer of the shared device's queue (`MetalComputeQueue`): each launch
+/// is encoded in its own compute encoder, in order; `finish` commits and waits.
+pub struct MetalComputeQueue {
+    pub command_buffer: metal::CommandBuffer,
+}
+
+impl MetalComputeQueue {
+    pub fn new(queue: &metal::CommandQueueRef) -> Self {
+        MetalComputeQueue { command_buffer: queue.new_command_buffer().to_owned() }
+    }
+
+    /// `newBindContext`: an encoder for one launch of `function`.
+    pub fn new_bind_context(&self, function: &MetalComputeFunction) -> MetalBindContext {
+        let encoder = self.command_buffer.new_compute_command_encoder().to_owned();
+        encoder.set_compute_pipeline_state(&function.compute_pipeline_state);
+        MetalBindContext { encoder }
+    }
+
+    pub fn finish(self) -> Result<(), String> {
+        self.command_buffer.commit();
+        self.command_buffer.wait_until_completed();
+        match self.command_buffer.status() {
+            metal::MTLCommandBufferStatus::Completed => Ok(()),
+            s => Err(format!("Metal command buffer: {s:?}")),
+        }
+    }
+}
+
+/// The bind context of one launch (`MetalBindContext`): its encoder, ended when it is dropped.
+pub struct MetalBindContext {
+    pub encoder: metal::ComputeCommandEncoder,
+}
+
+impl crate::forest::compute_kernel_grid::GridBindContext for MetalBindContext {
+    fn set_primitive(&mut self, arg_num: u64, bytes: &[u8]) {
+        self.encoder.set_bytes(arg_num, bytes.len() as u64, bytes.as_ptr().cast());
+    }
+
+    fn set_buffer(&mut self, arg_num: u64, buffer: &metal::BufferRef) {
+        self.encoder.set_buffer(arg_num, Some(buffer), 0);
+    }
+
+    fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
+        self.encoder.set_threadgroup_memory_length(arg_num, n_bytes);
+    }
+
+    fn launch(&mut self, grid: &[u64], block: &[u64]) -> Result<(), String> {
+        let d = |v: &[u64], i: usize| v.get(i).copied().unwrap_or(1);
+        let grid_size = metal::MTLSize::new(d(grid, 0), d(grid, 1), d(grid, 2));
+        let block_size = metal::MTLSize::new(d(block, 0), d(block, 1), d(block, 2));
+        self.encoder.dispatch_thread_groups(grid_size, block_size);
+        Ok(())
+    }
+}
+
+impl Drop for MetalBindContext {
+    fn drop(&mut self) {
+        self.encoder.end_encoding();
     }
 }

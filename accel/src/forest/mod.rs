@@ -38,6 +38,10 @@ pub mod randomforest_recursive;
 pub mod compute_kernel_metal;
 #[path = "mldb/plugins/jml/randomforest_kernels_metal.rs"]
 pub mod randomforest_kernels_metal;
+#[path = "mldb/block/compute_kernel_grid.rs"]
+pub mod compute_kernel_grid;
+#[path = "mldb/plugins/jml/randomforest_kernels_grid.rs"]
+pub mod randomforest_kernels_grid;
 #[cfg(test)]
 #[path = "mldb/plugins/jml/testing/rf_kernel_test.rs"]
 mod rf_kernel_test;
