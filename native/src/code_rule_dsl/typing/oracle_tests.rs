@@ -777,6 +777,47 @@ fn the_analysis_phase_binds_a_library_generics_type_variables_fits_overloads_and
 }
 
 #[test]
+fn the_analysis_phase_fits_a_library_overload_by_its_keywords_and_its_literal_arguments_types() {
+    // calls_p3 over a miniature typeshed: `e.get("k", default=1)` is the overload with a `default` parameter, not the
+    // one that has room for its one positional argument; `conv(1)` is the overload declaring an `int`, `conv("s")`
+    // the one declaring a `str`; `wide(1)` fits `x: float`.
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-overloads");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\ntyping: 3.0-\nbox: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int: ...\nclass float: ...\nclass str: ...\n").unwrap();
+    std::fs::write(lib.join("typing.pyi"), "def overload(f: object) -> object: ...\n").unwrap();
+    std::fs::write(
+        lib.join("box.pyi"),
+        "from typing import overload\nclass A:\n    def run(self) -> int: ...\nclass B:\n    def run(self) -> int: ...\nclass Env:\n    @overload\n    def get(self, key: str, /) -> A: ...\n    @overload\n    def get(self, key: str, /, default: int) -> B: ...\n@overload\ndef conv(x: int) -> A: ...\n@overload\ndef conv(x: str) -> B: ...\n@overload\ndef wide(x: float) -> A: ...\n@overload\ndef wide(x: str) -> B: ...\n",
+    )
+    .unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "from box import Env, conv, wide\ndef f(e: Env) -> None:\n    e.get(\"k\", default=1).run()\n    conv(1).run()\n    conv(\"s\").run()\n    wide(1).run()\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    // The overloads each call fits (`lcfn`), by the call's line.
+    let text = format!("{}\n{JEDI_SPANS}\n.decl t_fit(c: node, f: symbol)\nt_fit(c, f) :- lcfn(c, _, f), struct__flag(f, \"overload\").\n.output t_fit\n", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
+    let starts: std::collections::HashMap<String, usize> =
+        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+    let mut fits: Vec<(u64, String)> = read("t_fit").lines().filter_map(|l| l.split_once('\t')).map(|(c, f)| (line(&src, starts[c]), f.to_owned())).collect();
+    fits.sort();
+    let want: Vec<(u64, String)> = [(3, "box.Env.get#1"), (4, "box.conv"), (5, "box.conv#1"), (6, "box.wide")].iter().map(|(l, f)| (*l, (*f).to_owned())).collect();
+    assert_eq!(fits, want, "{}", read("t_fit"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn the_analysis_phase_infers_a_library_constructors_type_variables_from_its_arguments() {
     // calls_p3 over a miniature typeshed: `Set(xs)`, where `__new__(cls, xs: Src[_T])` and `Lst(Src[_T])`, is a
     // `Set` of what xs holds. Of a workspace V (`xs: Lst[V]`), a loop over it binds V (`x.run()` targets V.run); of
@@ -1857,6 +1898,8 @@ fn spike_o125_replay() {
     let keep = |step: usize, what: &str| {
         if let Some(p) = &profile {
             let _ = std::fs::copy(p.join("native.tsv"), p.join(format!("native-{step:02}-{what}.tsv")));
+            let _ = std::fs::copy(p.join("spans.tsv"), p.join(format!("spans-{step:02}-{what}.tsv")));
+            let _ = std::fs::copy(p.join("profile.txt"), p.join(format!("profile-{step:02}-{what}.txt")));
         }
     };
     let phase = |r: &corpus::Report, name: &str| -> f64 { r.phases.iter().filter(|p| p.0 == name).map(|p| p.1 + p.2).sum() };

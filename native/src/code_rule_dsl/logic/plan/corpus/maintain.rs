@@ -72,8 +72,6 @@ pub(in crate::code_rule_dsl) struct Maintained {
     pub(in crate::code_rule_dsl) recursive: usize,
     /// Each stratum derived again, by one of its relations, and why.
     pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
-    /// Caches whose key has the rows it had (decision 0103): kept as they were, clean, by the caller's cut.
-    pub(in crate::code_rule_dsl) kept_as_is: Vec<String>,
 }
 
 fn named(rel: &str, suffix: &str) -> String {
@@ -100,11 +98,9 @@ fn insert(rules: &mut Vec<Rule>, h: &str, args: &[Term], body: Vec<Literal>, gon
 }
 
 /// Whether recursive strata are maintained by levels (decision 0090), not delete-and-rederive.
-fn levels_wanted() -> bool {
-    // Opt-in (`RERAIL_RECURSIVE=levels`) on the integration branch: merged, O125 step 08 keeps 1 `type_of` and 2
-    // `possible_type` rows a full run does not (steps 01-07 equal), with delete-and-rederive 8 of 8 (decision 0090,
-    // "Merged: levels opt-in"). The levels branch's default is levels.
-    std::env::var("RERAIL_RECURSIVE").is_ok_and(|v| v == "levels")
+pub(in crate::code_rule_dsl) fn levels_wanted() -> bool {
+    // The default (decision 0090, levels checked); `RERAIL_RECURSIVE=dred` keeps delete-and-rederive.
+    std::env::var("RERAIL_RECURSIVE").map_or(true, |v| v != "dred")
 }
 
 fn atom(rel: String, args: Vec<Term>, neg: bool) -> Literal {
@@ -187,7 +183,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let why = if kept.is_none() { "nothing kept" } else { "the program has gates" };
     let Some(kept) = kept.filter(|_| cross.program.gates.is_empty()) else {
         let again = dirty.iter().map(|scc| (scc.iter().next().cloned().unwrap_or_default(), why)).collect();
-        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again, kept_as_is: Vec::new() });
+        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again });
     };
     let old = |rel: &str| kept.has_old(rel);
     let mut changed: BTreeSet<String> = cut.changed.iter().cloned().collect();
@@ -199,58 +195,17 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut fresh: Vec<(String, String)> = Vec::new();
     // Relations of the strata maintained: their net deltas come from their own del, redo and ins.
     let mut maint: BTreeSet<String> = BTreeSet::new();
-    // Of those, the ones maintained exactly (counting): their deletes are final, nothing is derived again.
-    let mut exact_rels: BTreeSet<String> = BTreeSet::new();
     // Relations of strata maintained by levels: their rows gone are `h__gone`, not `h__del`.
     let mut gone_of: BTreeSet<String> = BTreeSet::new();
-    // A cache (decision 0103) is maintained by its key alone: the rows of a gone key go, the output rule runs for the
-    // new keys, and nothing else it reads is looked at.
-    let caches = front::caches::caches_here(&cross.program).unwrap_or_default();
-    let mut kept_as_is: Vec<String> = Vec::new();
+    // Of those, the ones maintained exactly (counting): their deletes are final, nothing is derived again.
+    let mut exact_rels: BTreeSet<String> = BTreeSet::new();
+    // Each maintained stratum, the span of `rules` its maintained form wrote, and its rules as given: its form
+    // derived again (`front::Again`).
+    let mut groups: Vec<(BTreeSet<String>, usize, usize, Vec<Rule>)> = Vec::new();
     for scc in dirty {
         let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
         let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
         let mine: Vec<&Rule> = named_rules.iter().collect();
-        if let Some(cache) = caches.iter().find(|c| scc.len() == 1 && scc.contains(&c.out))
-            && old(&cache.out)
-            && (!changed.contains(&cache.key) || maint.contains(&cache.key) || old(&cache.key))
-        {
-            let (c, k) = (&cache.out, &cache.key);
-            let v = row(part.program.decls[c].len());
-            let head = |rel: String, args: Vec<Term>| Atom { rel, args, neg: false, gated: false };
-            maintained += 1;
-            if !changed.contains(k) {
-                // Its key has the rows it had: so has the cache. It is kept as it was, read in place, not copied, and
-                // its readers see no change of it.
-                if !part.program.inputs.contains(c) {
-                    part.program.inputs.push(c.clone());
-                }
-                kept_as_is.push(c.clone());
-                continue;
-            }
-            olds.insert(c.clone());
-            deltas.insert(k.clone());
-            if !maint.contains(k) {
-                olds.insert(k.clone());
-            }
-            let key_of_c: Vec<Term> = cache.cols.iter().map(|&p| v[p].clone()).collect();
-            rules.push(Rule { head: head(named(c, "del"), v.clone()), body: vec![atom(named(k, "minus"), key_of_c, false), atom(named(c, "old"), v.clone(), false)] });
-            for rule in &mine {
-                let body = rule.body.iter().map(|l| match l {
-                    Literal::Atom(a) if &a.rel == k => atom(named(k, "plus"), a.args.clone(), false),
-                    other => other.clone(),
-                }).collect();
-                rules.push(Rule { head: Atom { rel: named(c, "ins"), ..rule.head.clone() }, body });
-            }
-            rules.push(Rule { head: head(c.clone(), v.clone()), body: vec![atom(named(c, "old"), v.clone(), false), atom(named(c, "del"), v.clone(), true)] });
-            rules.push(Rule { head: head(c.clone(), v.clone()), body: vec![atom(named(c, "ins"), v, false)] });
-            fresh.push((c.clone(), named(c, "del")));
-            fresh.push((c.clone(), named(c, "ins")));
-            maint.insert(c.clone());
-            exact_rels.insert(c.clone());
-            changed.insert(c.clone());
-            continue;
-        }
         // `RERAIL_CROSS_MAINTAIN_ONLY`: maintain only the strata holding one of these relations (comma-separated; empty:
         // none), to find a stratum whose maintenance departs from deriving it again.
         let only = std::env::var("RERAIL_CROSS_MAINTAIN_ONLY").ok().map(|v| v.split(',').filter(|x| !x.is_empty()).map(str::to_owned).collect::<BTreeSet<String>>());
@@ -267,6 +222,8 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             continue;
         }
         maintained += 1;
+        let start = rules.len();
+        let as_given: Vec<Rule> = given.iter().map(|r| (*r).clone()).collect();
         let exact = scc.iter().all(|r| super::supports::is_support(r));
         // Under counting, a head whose every rule projects one of its supports (`h(x) :- h__sup0(x, _)`) is exact
         // too: a row is gone when it lost a support and none is left in the new rows, a count reaching zero. Its
@@ -458,6 +415,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
         maint.extend(scc.iter().cloned());
         changed.extend(scc.iter().cloned());
+        groups.push((scc.clone(), start, rules.len(), as_given));
     }
     let mut sources = Vec::new();
     for rel in &deltas {
@@ -486,6 +444,38 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         fresh.push((rel.clone(), named(rel, "minus")));
         fresh.push((rel.clone(), named(rel, "plus")));
     }
+    // Each maintained stratum's form derived again (decision 0090 §4): its rules as given, and its deltas against
+    // its old rows; what its maintained form makes (its pieces' heads, and its relations' deltas) is replaced.
+    // A maintained relation's minus and plus rules, by the relation: found once, not per stratum.
+    let delta_of: std::collections::HashMap<String, &str> = deltas.iter().filter(|r| maint.contains(*r)).flat_map(|r| [(named(r, "minus"), r.as_str()), (named(r, "plus"), r.as_str())]).collect();
+    let mut delta_rules: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    for (i, r) in rules.iter().enumerate() {
+        if let Some(&rel) = delta_of.get(&r.head.rel) {
+            delta_rules.entry(rel).or_default().push(i);
+        }
+    }
+    for (scc, start, end, given) in groups {
+        let mine: Vec<&Rule> = rules[start..end].iter().chain(scc.iter().filter_map(|s| delta_rules.get(s.as_str())).flatten().map(|&i| &rules[i])).collect();
+        let owned: BTreeSet<String> = mine.iter().map(|r| r.head.rel.clone()).chain(scc.iter().cloned()).collect();
+        let reads: BTreeSet<String> = mine
+            .iter()
+            .flat_map(|r| r.body.iter().filter_map(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(&a.rel),
+                _ => None,
+            }))
+            .filter(|r| !owned.contains(*r) && (r.ends_with("__minus") || r.ends_with("__plus")))
+            .cloned()
+            .collect();
+        let mut again_deltas = Vec::new();
+        for rel in scc.iter().filter(|r| deltas.contains(*r)) {
+            let v = row(part.program.decls[rel].len());
+            let a = |rel: String, neg: bool| atom(rel, v.clone(), neg);
+            again_deltas.push(Rule { head: Atom { rel: named(rel, "minus"), args: v.clone(), neg: false, gated: false }, body: vec![a(named(rel, "old"), false), a(rel.clone(), true)] });
+            again_deltas.push(Rule { head: Atom { rel: named(rel, "plus"), args: v.clone(), neg: false, gated: false }, body: vec![a(rel.clone(), false), a(named(rel, "old"), true)] });
+        }
+        let olds = scc.iter().map(|r| named(r, "old")).collect();
+        part.program.again.push(front::Again { scc, owned, rules: given, deltas: again_deltas, reads: reads.into_iter().collect(), olds });
+    }
     for rel in &olds {
         // Named as the planner reads its statistics (`sql_col`).
         let (source, held) = kept.old_source(rel, &named(rel, "old")).expect("a maintained read's old rows");
@@ -512,7 +502,5 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
     }
     part.program.rules = rules;
-    // The run writes a cache's new keys to the store (decision 0103), as a run without a session does.
-    front::caches::mark(&mut part.program, &caches);
-    Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again, kept_as_is })
+    Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again })
 }

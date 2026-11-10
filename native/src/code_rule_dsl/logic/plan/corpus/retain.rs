@@ -275,14 +275,8 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.rels.contains_key(r)));
     let whole = kept.is_none() || (!prog.gates.is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
-    // A cache (decision 0103) is stale only when its key is: nothing else its output rule reads is looked at.
-    let caches = front::caches::caches_here(prog).unwrap_or_default();
     for scc in &sccs {
-        let cache = caches.iter().find(|c| scc.len() == 1 && scc.contains(&c.out));
-        let stale = whole || match cache {
-            Some(c) => dirty.contains(&c.key),
-            None => reads(prog, scc).iter().any(|r| dirty.contains(r)),
-        };
+        let stale = whole || reads(prog, scc).iter().any(|r| dirty.contains(r));
         if stale {
             ran += 1;
             dirty.extend(scc.iter().cloned());
@@ -513,6 +507,21 @@ impl Retained {
     }
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         self.rels.values().map(Kept::bytes).sum()
+    }
+    /// What the kept relations hold, by kind of relation (a counting support, `h__sup…`, or any other): rows,
+    /// values, levels, and indexes and sets, in bytes (`InRel::held_bytes`). `RERAIL_KEPT_BYTES` prints it.
+    pub(in crate::code_rule_dsl) fn held(&self) -> [(&'static str, usize, usize, usize, usize); 2] {
+        let mut out = [("supports", 0, 0, 0, 0), ("other", 0, 0, 0, 0)];
+        for (rel, k) in &self.rels {
+            let at = usize::from(!super::supports::is_support(rel));
+            let (values, levels, index) = k.rel.held_bytes();
+            let o = &mut out[at];
+            o.1 += k.rel.rows();
+            o.2 += values;
+            o.3 += levels;
+            o.4 += index;
+        }
+        out
     }
 }
 

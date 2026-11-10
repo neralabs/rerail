@@ -21,6 +21,7 @@ static MADE: [std::sync::atomic::AtomicBool; 2] = [std::sync::atomic::AtomicBool
 
 static CPU: LazyLock<Executor> = LazyLock::new(|| {
     MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
+    super::costs::start();
     let all = Executor::new();
     let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default())];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -32,6 +33,7 @@ static CPU: LazyLock<Executor> = LazyLock::new(|| {
 });
 static ALL: LazyLock<Executor> = LazyLock::new(|| {
     MADE[1].store(true, std::sync::atomic::Ordering::Relaxed);
+    super::costs::start();
     // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
     #[cfg(target_os = "macos")]
     crate::code_rule_dsl::transducer::packed::metal_sort::install_guard();
@@ -41,6 +43,24 @@ static ALL: LazyLock<Executor> = LazyLock::new(|| {
 /// The executor for this thread's run.
 pub(in crate::code_rule_dsl) fn executor() -> &'static Executor {
     if super::plan::placement::device() { &ALL } else { &CPU }
+}
+
+/// The executor of a binding: every lane under the device binding (`device`), the cores' (and SME's) otherwise. For
+/// a job on another thread than the run's (whose binding is the run's thread's, [`executor`]).
+pub(in crate::code_rule_dsl) fn executor_for(device: bool) -> &'static Executor {
+    if device { &ALL } else { &CPU }
+}
+
+/// Each executor made so far, by binding, and its scoreboard: for the profile.
+pub(in crate::code_rule_dsl) fn scores() -> Vec<(&'static str, rerail_accel::score::Score)> {
+    let mut out = Vec::new();
+    if MADE[0].load(std::sync::atomic::Ordering::Relaxed) {
+        out.push(("cpu binding", CPU.score()));
+    }
+    if MADE[1].load(std::sync::atomic::Ordering::Relaxed) {
+        out.push(("metal binding", ALL.score()));
+    }
+    out
 }
 
 /// Device waves (decision 0095 §5, 0098 §6): the launches of strata that do not read each other, run as one batch.
@@ -143,8 +163,7 @@ pub(in crate::code_rule_dsl) mod wave {
 /// (`run`), and `report` renders the profile's section. Only under `RERAIL_PROFILE`.
 pub(in crate::code_rule_dsl) mod prof {
     use super::super::profile;
-    use rerail_accel::exec::{Done, Report};
-    use rerail_accel::score::thread_cpu;
+    use rerail_accel::exec::{Done, Report, thread_cpu};
     use rerail_accel::{Batch, Lane};
     use std::collections::BTreeMap;
     use std::fmt::Write as _;
@@ -163,14 +182,20 @@ pub(in crate::code_rule_dsl) mod prof {
         /// Host phases by name, in first-seen order: calls, wall seconds, this thread's CPU seconds.
         host: Vec<(&'static str, Time)>,
         batches: u64,
-        /// Per lane: launches, submissions and wall. Where a lane's time went (its phases) is the executor's
-        /// scoreboard's (`rerail_accel::score`, in the profile's scoreboard section).
+        /// Per lane: launches, submissions, wall, the lane thread's CPU, the backend's phases.
         launches: [u64; 4],
         submissions: [u64; 4],
         wall: [f64; 4],
-        /// The batches' wall (the slowest lane's) and the process's CPU over them.
+        lane_cpu: [f64; 4],
+        encode: [f64; 4],
+        device: [f64; 4],
+        device_known: [bool; 4],
+        decode: [f64; 4],
+        worker_cpu: [f64; 4],
+        /// The executor's own: placement, and spawning/joining the lanes' threads.
         total: f64,
-        cpu: f64,
+        place: f64,
+        overhead: f64,
         /// Counted events by name (probes answered, rows emitted, rows walked before a table paid).
         counts: Vec<(&'static str, u64)>,
     }
@@ -286,8 +311,9 @@ pub(in crate::code_rule_dsl) mod prof {
             let mut forms = FORMS.lock().unwrap();
             let f = forms.entry(form).or_default();
             f.batches += 1;
-            f.total += rep.wall.iter().copied().fold(0.0, f64::max);
-            f.cpu += rep.cpu;
+            f.total += rep.total;
+            f.place += rep.place;
+            f.overhead += rep.overhead();
             for l in Lane::ALL {
                 let i = l.index();
                 if rep.launches[i] == 0 {
@@ -296,6 +322,15 @@ pub(in crate::code_rule_dsl) mod prof {
                 f.launches[i] += rep.launches[i] as u64;
                 f.submissions[i] += 1;
                 f.wall[i] += rep.wall[i];
+                f.lane_cpu[i] += rep.lane_cpu[i];
+                let p = &rep.phases[i];
+                f.encode[i] += p.encode;
+                f.decode[i] += p.decode;
+                f.worker_cpu[i] += p.worker_cpu;
+                if let Some(d) = p.device {
+                    f.device[i] += d;
+                    f.device_known[i] = true;
+                }
             }
         }
         Ok(r)
@@ -311,14 +346,17 @@ pub(in crate::code_rule_dsl) mod prof {
         }
         let ms = |s: f64| s * 1e3;
         let _ = writeln!(r, "\n== Acceleration (decision 0098): planning, launching and execution per form");
-        let _ = writeln!(r, "Host phases are timed on the engine's thread (wall, and that thread's CPU). Per lane: launches,");
-        let _ = writeln!(r, "submissions and wall; where a lane's time went is the executor's scoreboard's (its own section).");
+        let _ = writeln!(r, "Host phases are timed on the engine's thread (wall, and that thread's CPU). Per lane: the submission's");
+        let _ = writeln!(r, "wall, the lane thread's CPU, the backend's encode / device / decode split and its workers' CPU. The");
+        let _ = writeln!(r, "executor's own: placement, and spawning and joining lane threads (its wall less the slowest lane).");
         let mut grand = (0.0f64, 0.0f64);
         for (name, f) in forms.iter() {
             let host_cpu: f64 = f.host.iter().map(|h| h.1.cpu).sum();
-            let _ = writeln!(r, "\n{name}: {} batches; host {:.1} ms CPU; batches {:.1} ms wall, {:.1} ms process CPU", f.batches, ms(host_cpu), ms(f.total), ms(f.cpu));
-            grand.0 += host_cpu;
-            grand.1 += f.cpu;
+            let kernel: f64 = (0..4).map(|i| if f.device_known[i] { f.device[i] } else { f.wall[i] - f.encode[i] - f.decode[i] }).sum();
+            let _ = writeln!(r, "\n{name}: {} batches; host {:.1} ms CPU; executor {:.1} ms wall ({:.1} placing, {:.1} threads); kernels {:.1} ms",
+                f.batches, ms(host_cpu), ms(f.total), ms(f.place), ms(f.overhead), ms(kernel));
+            grand.0 += host_cpu + f.place + f.overhead + f.encode.iter().sum::<f64>() + f.decode.iter().sum::<f64>();
+            grand.1 += kernel;
             for (phase, t) in &f.host {
                 let _ = writeln!(r, "  host  {phase:<44} {:>7} calls {:>10.2} ms wall {:>10.2} ms CPU", t.n, ms(t.wall), ms(t.cpu));
             }
@@ -327,7 +365,9 @@ pub(in crate::code_rule_dsl) mod prof {
                 if f.launches[i] == 0 {
                     continue;
                 }
-                let _ = writeln!(r, "  lane  {:<4} {:>5} launches in {:>5} submissions: {:>9.2} ms wall", l.name(), f.launches[i], f.submissions[i], ms(f.wall[i]));
+                let dev = if f.device_known[i] { format!("{:.2}", ms(f.device[i])) } else { "-".into() };
+                let _ = writeln!(r, "  lane  {:<4} {:>5} launches in {:>5} submissions: {:>9.2} ms wall, {:>9.2} ms lane CPU; encode {:.2}, device {dev}, decode {:.2}, workers {:.2} ms CPU",
+                    l.name(), f.launches[i], f.submissions[i], ms(f.wall[i]), ms(f.lane_cpu[i]), ms(f.encode[i]), ms(f.decode[i]), ms(f.worker_cpu[i]));
             }
             for (what, n) in &f.counts {
                 let _ = writeln!(r, "  count {what:<44} {n:>12}");
@@ -341,19 +381,7 @@ pub(in crate::code_rule_dsl) mod prof {
                 b.levels, b.max_per_level, b.per_level[0], b.per_level[1], b.per_level[2], b.per_level[3], b.per_level[4]);
             let _ = writeln!(r, "Device waves (decision 0095 §5): {} waves flushed, {} launches of {} waiting strata in them", b.waves, b.wave_launches, b.wave_strata);
         }
-        let _ = writeln!(r, "\nAll forms: {:.1} ms of host phases' CPU; {:.1} ms of the process's CPU over their batches", ms(grand.0), ms(grand.1));
+        let _ = writeln!(r, "\nAll forms: {:.1} ms around the kernels (host phases' CPU, placing, threads, lanes' encode and decode) against {:.1} ms in them", ms(grand.0), ms(grand.1));
         r
     }
-}
-
-/// Each executor made so far, by binding, and its scoreboard: for the profile.
-pub(in crate::code_rule_dsl) fn scores() -> Vec<(&'static str, rerail_accel::score::Score)> {
-    let mut out = Vec::new();
-    if MADE[0].load(std::sync::atomic::Ordering::Relaxed) {
-        out.push(("cpu binding", CPU.score()));
-    }
-    if MADE[1].load(std::sync::atomic::Ordering::Relaxed) {
-        out.push(("metal binding", ALL.score()));
-    }
-    out
 }

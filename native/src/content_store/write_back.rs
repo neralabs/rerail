@@ -169,7 +169,7 @@ impl ContentStore {
                 s = w.shared.changed.wait(s).expect("the writer's state");
             }
             if let Some(t) = t {
-                crate::code_rule_dsl::sql_hazards::wait_in_wave("the queue's back-pressure", t.elapsed().as_secs_f64());
+                super::hazards::wait_in_wave("the queue's back-pressure", t.elapsed().as_secs_f64());
             }
             s.bytes += bytes;
             s.jobs += 1;
@@ -204,7 +204,7 @@ impl ContentStore {
             .name("rerail-store-writer".into())
             .spawn(move || {
                 // What this thread sends to SQLite no wave waits for.
-                crate::code_rule_dsl::sql_hazards::behind_the_run();
+                super::hazards::behind_the_run();
                 for (job, bytes, keys, holder) in rx {
                     *store.holder.lock() = holder;
                     let before = thread_cpu();
@@ -232,7 +232,7 @@ impl ContentStore {
             s = w.shared.changed.wait(s).expect("the writer's state");
         }
         if let Some(t) = t {
-            crate::code_rule_dsl::sql_hazards::wait_in_wave("a read of a queued write (settle)", t.elapsed().as_secs_f64());
+            super::hazards::wait_in_wave("a read of a queued write (settle)", t.elapsed().as_secs_f64());
         }
     }
 
@@ -246,7 +246,7 @@ impl ContentStore {
             s = w.shared.changed.wait(s).expect("the writer's state");
         }
         if let Some(t) = t {
-            crate::code_rule_dsl::sql_hazards::wait_in_wave("every queued write (written)", t.elapsed().as_secs_f64());
+            super::hazards::wait_in_wave("every queued write (written)", t.elapsed().as_secs_f64());
         }
         match s.error.take() {
             Some(e) => Err(StoreError::Invalid(format!("a write queued behind the run failed: {e}"))),

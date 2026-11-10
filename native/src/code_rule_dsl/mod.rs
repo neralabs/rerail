@@ -15,7 +15,10 @@ mod language;
 mod lines;
 mod literal;
 mod logic;
-/// The profile's SQL hazards, for the content store's connections and writer (decision 0104).
+/// A pool job's span under the span that started it (`crate::threads`), so a job's work is charged to its caller.
+pub(crate) use logic::profile::{here as profile_here, span_at as profile_span_at};
+/// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
+/// the library loads; decision 0104).
 pub(crate) mod sql_hazards {
     pub(crate) use super::logic::profile::{behind_the_run, on, sql_in_wave, wait_in_wave};
 }

@@ -32,7 +32,7 @@ pub enum Error {
 }
 
 /// The executor's GPU lane reports its failures as messages; to the engine they are a backend failure, as the other
-/// device paths' (`metal_rows`, `metal_join`).
+/// device paths' (`metal_join`, `metal_rows`).
 impl From<String> for Error {
     fn from(_: String) -> Error {
         Error::BackendFailure

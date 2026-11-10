@@ -347,7 +347,11 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             }
             Err(why) => why,
         };
-        let report = super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, options)?;
+        let report = {
+            // The phase's own run, its workers' spans under it (`profile::span_at`).
+            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: run"));
+            super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, options)?
+        };
         let began = thread_cpu();
         let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &program, &declared, &out)? };
         let ((exports, units, granules), versions) = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports kept")); keep_in_session(&name, rows.clone(), &declared, producer)? };
@@ -562,7 +566,8 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
 
 /// The documents a run read: the workspace's and those it loaded, each once.
 fn documents(consulted: &[(String, String, String)]) -> usize {
-    consulted.iter().filter(|c| c.0 == "doc" || c.0 == "load").map(|c| c.1.as_str()).collect::<BTreeSet<_>>().len()
+    // A workspace document listed without a digest was not read (`run_observed`: none built).
+    consulted.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").map(|c| c.1.as_str()).collect::<BTreeSet<_>>().len()
 }
 
 fn parse_consulted(text: &str) -> Vec<(String, String, String)> {

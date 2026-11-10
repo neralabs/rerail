@@ -25,6 +25,17 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[1]["result"],vec!["1\t99\t3\t17\t3\t7","2\t99\t1\t-2\t-2\t-2","4\t99\t3\t9223372036854775807\t-1\t9223372036854775807"]);
 }
 
+/// Whether this process numbers nodes in preorder, as T's facts and outputs do (`RERAIL_NODE_IDS=preorder`). The
+/// tests that compare with T run only then: under ids per definition (the default, decision 0094 §2a) a program that
+/// orders nodes reads `node_order`, which T's facts do not have, and outputs show ids as `slot.index`.
+fn t_numbering(test: &str) -> bool {
+    let preorder = !crate::code_rule_dsl::facts::vtab::syntax::definition_ids();
+    if !preorder {
+        eprintln!("{test}: skipped, T's facts number nodes in preorder; run with RERAIL_NODE_IDS=preorder");
+    }
+    preorder
+}
+
 /// A head that qualifies a bound name by a constant scope (`sym_at($e, @cat(1539, $x))`, the builtins' symbols)
 /// has a native step: the name is made into a slot before the head. A stratum the native engine declines runs in
 /// SQLite, a wait on SQL tables between waves that are otherwise in memory.
@@ -122,6 +133,9 @@ fn chosen_line(c: &Chosen) -> String {
 /// On T's facts, the port chooses T's plans (anchor, walks, estimated work, rule for rule) and derives T's outputs.
 #[test]
 fn t_programs_plan_and_run_like_t() {
+    if !t_numbering("t_programs_plan_and_run_like_t") {
+        return;
+    }
     let facts = facts();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
@@ -157,6 +171,9 @@ fn t_programs_plan_and_run_like_t() {
 /// child process of this test, as T's `rdl.py` does.
 #[test]
 fn t_programs_run_natively_like_t() {
+    if !t_numbering("t_programs_run_natively_like_t") {
+        return;
+    }
     const CASE: &str = "RERAIL_RDL_NATIVE_CASE";
     if let Ok(case) = std::env::var(CASE) {
         let (modes, name) = case.split_once(' ').expect("modes and program");
@@ -262,6 +279,9 @@ fn outputs_match(name: &str, got: &Outcome, first: &HashMap<i64, i64>, failures:
 /// get T's plans and, decoded, T's outputs.
 #[test]
 fn t_programs_over_atoms_plan_and_run_like_t() {
+    if !t_numbering("t_programs_over_atoms_plan_and_run_like_t") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     let path = crate::code_rule_dsl::prefilter::tests::temp();
     let store = ContentStore::open(&path).unwrap();
@@ -312,6 +332,9 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
 /// the estimates and again from the counts the first run's boundary recorded.
 #[test]
 fn t_programs_as_wave_programs_give_run_atoms_outputs() {
+    if !t_numbering("t_programs_as_wave_programs_give_run_atoms_outputs") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::waves::{owner::Backing, schedule};
     use crate::content_store::Binding;
@@ -388,6 +411,9 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
 #[test]
 #[cfg_attr(debug_assertions, ignore = "O82: aborts in the metal crate on a debug build (`slice::from_raw_parts` precondition, metal-0.33.0 lib.rs:82)")]
 fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
+    if !t_numbering("t_programs_with_the_transducers_nearest_derive_t_outputs") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
     let t = Connection::open_in_memory().unwrap();
@@ -433,6 +459,9 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
 /// each component a mode runs in `logic::native` gives the rows T's pure SQL mode gives (the goldens).
 #[test]
 fn t_programs_run_natively_over_atoms_like_t() {
+    if !t_numbering("t_programs_run_natively_over_atoms_like_t") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
     let t = Connection::open_in_memory().unwrap();
@@ -544,6 +573,9 @@ fn product_programs_derive_t_outputs() {
 /// differ only in how they are written (`path:index` against T's global ids), so the own outputs are mapped to T's.
 #[test]
 fn own_ingestion_derives_what_t_facts_do() {
+    if !t_numbering("own_ingestion_derives_what_t_facts_do") {
+        return;
+    }
     use crate::code_rule_dsl::typing::file_local::Binding;
     let raw = zstd::decode_all(std::fs::File::open(root().join("../facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
     let corpus: Vec<(String, String)> = serde_json::from_slice(&raw).unwrap();
@@ -795,40 +827,6 @@ captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
     assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
 }
 
-/// An equality of a bound variable with an unbound one, `$s = $a` with `$s` bound, assigns `$a` (decision 0099 item
-/// 4): the second atom is read by it, not crossed with the first and narrowed after (`fl4317_typing_root`: 14 k rows,
-/// then 2.86 M, then 603). The rule runs to the same rows either way round.
-#[test]
-fn an_equality_binds_its_right_side_before_the_next_join() {
-    let p = parse(
-        ".decl p(s: number)\n.decl q(a: number)\n.decl o(s: number)\n.decl o2(s: number)\n\
-         p(1). p(2). p(3). q(2). q(3). q(4).\n\
-         o(s) :- p(s), q(a), s = a.\no2(s) :- p(s), q(a), 3 = a, s = a.\n.output o\n.output o2\n",
-    )
-    .unwrap();
-    let db = Connection::open_in_memory().unwrap();
-    let mut stats = Stats::empty(&p);
-    stats.card.insert("p".into(), 14_000.0);
-    stats.card.insert("q".into(), 14_000.0);
-    let mut inputs = Inputs::file();
-    inputs.facts.clear();
-    inputs.given = Some(stats);
-    let model = make_plan(&p, &db, inputs).unwrap();
-    let r = &p.rules.iter().find(|r| r.head.rel == "o").unwrap();
-    let (order, work, _) = model.plan_rule(&p, &r.head, &r.body, None).unwrap();
-    let shown: Vec<String> = order.iter().map(|s| s.lit.to_string()).collect();
-    assert_eq!(shown[1], "$s = $a", "the equality between the joins: {shown:?}, work {work}");
-    assert!(work < 100_000.0, "a cross product priced: {work}");
-    let mut inputs = Inputs::file();
-    inputs.facts.clear();
-    inputs.given = Some(Stats::empty(&p));
-    let out = run(&p, &db, inputs, None, Hooks::default()).unwrap();
-    let mut o: Vec<String> = out.outputs["o"].iter().map(|r| format!("{r:?}")).collect();
-    o.sort();
-    assert_eq!(o.len(), 2, "{o:?}");
-    assert_eq!(out.outputs["o2"].len(), 1);
-}
-
 /// A delta probe of a recursive component prices a lookup by the share of the binding's values the column holds
 /// (containment): `fbind`'s shape, where `fcall` by `$a` (a few hundred rows, few distinct `$a`) is probed by
 /// `pv`'s many `$a`. Priced as if every probe hit, `fcall` looked dearer than `tfix` by `$k`, and the plan read
@@ -864,4 +862,38 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     let ((order, _, _), _) = model.plan_rule_explained(&p, &r.head, &r.body, Some(2)).unwrap();
     let order: Vec<&str> = order.iter().filter_map(|s| s.lit.atom()).map(|a| a.rel.as_str()).collect();
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
+}
+
+/// An equality of a bound variable with an unbound one, `$s = $a` with `$s` bound, assigns `$a` (decision 0099 item
+/// 4): the second atom is read by it, not crossed with the first and narrowed after (`fl4317_typing_root`: 14 k rows,
+/// then 2.86 M, then 603). The rule runs to the same rows either way round.
+#[test]
+fn an_equality_binds_its_right_side_before_the_next_join() {
+    let p = parse(
+        ".decl p(s: number)\n.decl q(a: number)\n.decl o(s: number)\n.decl o2(s: number)\n\
+         p(1). p(2). p(3). q(2). q(3). q(4).\n\
+         o(s) :- p(s), q(a), s = a.\no2(s) :- p(s), q(a), 3 = a, s = a.\n.output o\n.output o2\n",
+    )
+    .unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut stats = Stats::empty(&p);
+    stats.card.insert("p".into(), 14_000.0);
+    stats.card.insert("q".into(), 14_000.0);
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(stats);
+    let model = make_plan(&p, &db, inputs).unwrap();
+    let r = &p.rules.iter().find(|r| r.head.rel == "o").unwrap();
+    let (order, work, _) = model.plan_rule(&p, &r.head, &r.body, None).unwrap();
+    let shown: Vec<String> = order.iter().map(|s| s.lit.to_string()).collect();
+    assert_eq!(shown[1], "$s = $a", "the equality between the joins: {shown:?}, work {work}");
+    assert!(work < 100_000.0, "a cross product priced: {work}");
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    let out = run(&p, &db, inputs, None, Hooks::default()).unwrap();
+    let mut o: Vec<String> = out.outputs["o"].iter().map(|r| format!("{r:?}")).collect();
+    o.sort();
+    assert_eq!(o.len(), 2, "{o:?}");
+    assert_eq!(out.outputs["o2"].len(), 1);
 }

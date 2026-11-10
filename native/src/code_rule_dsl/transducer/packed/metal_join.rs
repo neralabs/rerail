@@ -39,6 +39,7 @@ use super::metal_sort::queue;
 use metal::{BufferRef, CommandBuffer};
 use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, SortParts, Submitted, Width, encode_sort, groups, pipeline, scratch};
 
+
 /// No output or step: `Stage::last`, `Stage::passed`.
 pub(in crate::code_rule_dsl) const NONE: u32 = u32::MAX;
 /// The most keys, column tests, program columns, parameters, binds and operations a stage holds.

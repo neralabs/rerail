@@ -1,11 +1,13 @@
 use super::*;
 use cranelift_codegen::binemit::Reloc;
+#[cfg(test)]
 use cranelift_codegen::ir::{AbiParam, InstBuilder, types};
+#[cfg(test)]
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{BranchProtection, JITBuilder, JITMemoryProvider, SystemMemoryProvider};
-use cranelift_module::{
-    Linkage, ModuleReloc, ModuleRelocTarget, ModuleResult, default_libcall_names,
-};
+#[cfg(test)]
+use cranelift_module::Linkage;
+use cranelift_module::{ModuleReloc, ModuleRelocTarget, ModuleResult, default_libcall_names};
 use std::cell::RefCell;
 use std::io;
 

@@ -89,7 +89,8 @@ fn not_yet<T>(what: impl std::fmt::Display) -> Result<T, Error> {
 fn ty(t: &str) -> String {
     match t {
         "number" | "unsigned" => "int".to_owned(),
-        "symbol" => "sym".to_owned(),
+        // A tape is stored as a symbol (its content key); `tape_type` checks it before lowering.
+        "symbol" | "tape" => "sym".to_owned(),
         "span" | "loc" => "node".to_owned(),
         // A float column holds floats' keys (`float_key`).
         "float" => "int".to_owned(),
@@ -236,6 +237,7 @@ fn scope_report_globs(settings: &[(String, String)]) -> Vec<String> {
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
+    super::tape_type::check(&statements)?;
     let mut l = Lowerer::default();
     let mut clauses = Vec::new();
     for (item, line) in statements {
@@ -416,6 +418,9 @@ impl Lowerer {
         }
         let mut out = Vec::new();
         for (i, (c, t)) in cols.iter().enumerate() {
+            if t == "tape" {
+                self.prog.tapes.entry(name.clone()).or_default().insert(i);
+            }
             let Some(lattice) = t.strip_suffix("<>") else {
                 out.push((c.clone(), ty(t)));
                 continue;
@@ -933,6 +938,7 @@ impl Lowerer {
                 if !self.prog.inputs.iter().any(|i| i == rel) {
                     self.prog.inputs.push(rel.to_owned());
                     self.prog.decls.insert(rel.to_owned(), cols.iter().map(|(c, ty)| ((*c).to_owned(), (*ty).to_owned())).collect());
+                    self.prog.tapes.entry(rel.to_owned()).or_default().extend(super::tape_type::tape_columns(rel));
                 }
             }
             // `@tree_digest(n)` reads the tree: a variable bound by the engine's `tree_digest(n, h)`.
@@ -1419,9 +1425,13 @@ impl Lowerer {
                 let hit = vec![atom(&up, vec![v(&n), v(&s)]), atom(&set, vec![v(&s)])];
                 let none = self.negate(vec![hit.clone()], std::slice::from_ref(&n))?;
                 let mut out = Vec::new();
+                // The nearest stop is a, or a is below it: by the tree, not by comparing ids (ids follow preorder only
+                // inside a granule, decision 0094 §2).
+                let above = atom(crate::code_rule_dsl::facts::vtab::syntax::WITHIN, vec![v(&a), v(&s)]);
                 for b in below {
                     out.push(b.iter().cloned().chain([none.clone()]).collect());
-                    out.push(b.into_iter().chain(hit.iter().cloned()).chain([Literal::Cmp { l: v(&s), op: "<=", r: v(&a) }]).collect());
+                    out.push(b.iter().cloned().chain(hit.iter().cloned()).chain([Literal::Cmp { l: v(&s), op: "=", r: v(&a) }]).collect());
+                    out.push(b.into_iter().chain(hit.iter().cloned()).chain([above.clone()]).collect());
                 }
                 out
             }

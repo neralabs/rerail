@@ -11,8 +11,9 @@
 //! ```
 //!
 //! with `idx` a child's index among those nodes, `par` -1 at the root and `size` the descendants
-//! among them. Every value is an integer: a node is `d << 32 | its preorder index`, so a document is
-//! an interval of ids and a subtree the ids `n + 1 ..= n + size`; `d` is the caller's key for the
+//! among them. Every value is an integer: a node is `d << 32 | its granule's slot and its index there`
+//! (`granules`; under `RERAIL_NODE_IDS=preorder`, `d << 32 | its preorder index`, where a subtree is the ids
+//! `n + 1 ..= n + size`), so a document is an interval of ids; `d` is the caller's key for the
 //! document (its path atom in the push path); `kind` is the kind atom (`core::kind_atom`), `f` the
 //! field atom (`tag << 16 | field code`), and paths, modules, packages, identifier text and
 //! operators are name atoms (C12), interned when the batch is built.
@@ -50,6 +51,7 @@ mod python_syntax;
 mod python_parts;
 use core_rr::Family;
 mod guests;
+mod granules;
 use guests::GuestRows;
 
 /// Which projection of the tree a batch serves.
@@ -369,7 +371,7 @@ pub(crate) fn numbering(doc: &Document) -> StoreResult<Numbering> {
     let guest = doc.guest.as_deref().map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), &dialect, Shape::Core, false, guest);
     // A unit's own nodes are numbered before its tokens, so the nodes' ids need no tokens.
-    let back = definition_ids().then(|| DefIds::new(&p, &dialect, &[])).flatten().map(|d| d.back);
+    let back = p.defs.map(|d| d.back);
     Ok(Numbering { nodes: p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect(), back })
 }
 
@@ -550,12 +552,9 @@ struct Projected {
     defs: Option<DefIds>,
 }
 
-/// Node ids numbered per definition (decision 0083 §3, `RERAIL_NODE_IDS=definition`): a node's id is
-/// `document << 32 | slot << 18 | index`. Its definition unit (the document's root, each class and function:
-/// `core_rr::is_unit`) has a slot, by a hash of its qualified name and its ordinal among same-named units in its
-/// parent; the index counts the unit's own nodes in preorder, then its tokens. An edit inside one function then
-/// renumbers that function's nodes and no other's. Spans that are positions (a document's text, its lines, matches)
-/// are in slot `SPANS`, in order.
+/// Node ids per definition (decisions 0083 §3, 0094 §2; `granules`): a node's id is `document << 32 | slot << 18 |
+/// index`, its granule's slot and its index there. An edit renumbers the granules it touches and no other's.
+/// Spans that are positions (a document's text, its lines, matches) are in the top slots, in order.
 struct DefIds {
     /// The low 32 bits of each node's and token's id, by local id.
     low: Vec<u32>,
@@ -563,13 +562,12 @@ struct DefIds {
     back: Vec<(u32, u32)>,
 }
 
-const SLOT_BITS: u32 = 14;
-const INDEX_BITS: u32 = 32 - SLOT_BITS;
-const SPANS: u32 = (1 << SLOT_BITS) - 1;
+use granules::INDEX_BITS;
 
-/// Whether this process numbers nodes per definition (`RERAIL_NODE_IDS=definition`).
+/// Whether this process numbers nodes per definition: the default; `RERAIL_NODE_IDS=preorder` numbers them in
+/// preorder, to compare.
 pub(crate) fn definition_ids() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_NODE_IDS").is_ok_and(|v| v == "definition"));
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !std::env::var("RERAIL_NODE_IDS").is_ok_and(|v| v == "preorder"));
     *ON
 }
 
@@ -585,55 +583,12 @@ pub(crate) fn shown_local(low: i64) -> String {
 }
 
 impl DefIds {
-    /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition; `None` when a unit
-    /// would overflow its slot's indexes or there are more units than slots (the document keeps preorder ids).
-    fn new(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Option<Self> {
-        let f = &*p.facts;
-        let n = p.core.len();
-        // Each node's unit: itself when it is one, else its parent's.
-        let mut unit = vec![0u32; n];
-        let mut units: Vec<u32> = Vec::new();
-        for l in 0..n {
-            unit[l] = if l == 0 || core_rr::is_unit(dialect.family, dialect.name(f, p.core[l])) { units.push(l as u32); l as u32 } else { unit[p.parent[l] as usize] };
-        }
-        if units.len() >= SPANS as usize {
-            return None;
-        }
-        // A unit's key: its parent unit's, its name, and its ordinal among same-named units of that parent.
-        let mut key: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
-        let mut seen: std::collections::HashMap<(u32, String), u32> = std::collections::HashMap::new();
-        let mut slot_of: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
-        let mut taken = vec![false; SPANS as usize];
-        taken[0] = true;
-        slot_of.insert(0, 0);
-        key.insert(0, String::new());
-        for &u in units.iter().skip(1) {
-            let parent = unit[p.parent[u as usize] as usize];
-            let name = core_rr::unit_name(f, dialect, p.core[u as usize]).unwrap_or_default().to_owned();
-            let ord = seen.entry((parent, name.clone())).or_insert(0);
-            let k = format!("{}.{}#{}", key[&parent], name, *ord);
-            *ord += 1;
-            let mut slot = (u64::from_le_bytes(<sha2::Sha256 as sha2::Digest>::digest(k.as_bytes())[..8].try_into().unwrap()) % u64::from(SPANS - 1)) as u32 + 1;
-            while taken[slot as usize] {
-                slot = slot % (SPANS - 1) + 1;
-            }
-            taken[slot as usize] = true;
-            slot_of.insert(u, slot);
-            key.insert(u, k);
-        }
-        let mut next: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
-        let mut low = Vec::with_capacity(n + tokens.len());
-        for owner in (0..n as u32).map(|l| unit[l as usize]).chain(tokens.iter().map(|&t| unit[t as usize])) {
-            let i = next.entry(owner).or_insert(0);
-            if *i >= 1 << INDEX_BITS {
-                return None;
-            }
-            low.push(slot_of[&owner] << INDEX_BITS | *i);
-            *i += 1;
-        }
+    /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition.
+    fn new(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Self {
+        let low = granules::number(p, dialect, tokens);
         let mut back: Vec<(u32, u32)> = low.iter().enumerate().map(|(l, &g)| (g, l as u32)).collect();
         back.sort_unstable();
-        Some(DefIds { low, back })
+        DefIds { low, back }
     }
 }
 
@@ -743,8 +698,8 @@ impl Projected {
                     }
                 }
             }
-            if definition_ids() && guest.is_none() {
-                p.defs = DefIds::new(&p, dialect, &token_nodes);
+            if definition_ids() {
+                p.defs = Some(DefIds::new(&p, dialect, &token_nodes));
             }
             let tokens = spans.len() as u32;
             // Raw file text remains valid when its tree is withheld. Guests have no own text spans.
@@ -755,9 +710,9 @@ impl Projected {
             let matched = spans.len() as u32;
             let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
             p.extra = Some(Box::new(Extra { lines, spans, tokens, matched, host }));
-        } else if definition_ids() && guest.is_none() {
+        } else if definition_ids() {
             // T's shape has no token spans: its nodes alone are numbered per definition.
-            p.defs = DefIds::new(&p, dialect, &[]);
+            p.defs = Some(DefIds::new(&p, dialect, &[]));
         }
         p
     }
@@ -784,7 +739,7 @@ impl Projected {
     /// `global`, from the two fields it reads (so a caller may hold the others mutably).
     fn id(key: u32, defs: &Option<DefIds>, local: u32) -> i64 {
         let low = match defs {
-            Some(d) => d.low.get(local as usize).copied().unwrap_or_else(|| SPANS << INDEX_BITS | (local - d.low.len() as u32)),
+            Some(d) => d.low.get(local as usize).copied().unwrap_or_else(|| granules::span_low(local - d.low.len() as u32)),
             None => local,
         };
         i64::from(key) << 32 | i64::from(low)
@@ -792,7 +747,7 @@ impl Projected {
     /// The node or span whose id's low 32 bits are `low` (`global`'s inverse).
     fn local_of(&self, low: u32) -> Option<u32> {
         match &self.defs {
-            Some(d) if low >> INDEX_BITS == SPANS => Some(d.low.len() as u32 + (low & ((1 << INDEX_BITS) - 1))),
+            Some(d) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| d.low.len() as u32 + i),
             Some(d) => d.back.binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| d.back[i].1),
             None => Some(low),
         }
@@ -852,6 +807,9 @@ enum View {
     Visit,
     /// `ast_depth(n, k)`: the node's depth, the root's 0.
     Depth,
+    /// `node_order(n, k)`: the node's preorder key, `document << 32 | its preorder index`: the order node ids had
+    /// before they were numbered per definition (`granules`). Rules that order nodes read it (`rr::lower`).
+    Order,
     /// `core.rr`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
     /// read from the document's lines (`core_rr::Lines`), rows laid out over `Projected::locs`.
     Loc(Place),
@@ -949,7 +907,7 @@ impl Batch {
                     use crate::code_rule_dsl::logic::front::SpanIn;
                     let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
                     let prefilter = match within {
-                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::compile(re, *within == SpanIn::Line),
+                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::compile(re, *within == SpanIn::Line).map(Arc::new),
                         _ => None,
                     };
                     regex::Regex::new(re).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
@@ -960,24 +918,27 @@ impl Batch {
         };
         // The AST patterns, compiled once per grammar; one a grammar does not parse matches nothing there.
         let mut ast_patterns: HashMap<u8, Vec<(&str, ast_grep_core::matcher::Pattern)>> = HashMap::new();
-        // Every prefiltered pattern's marks over every file, in one batch of block programs (decision 0081 §3): on Metal
-        // under the device binding, the CPU interpreter otherwise. `span_ends[doc][pattern]`.
+        // Every prefiltered pattern's marks over every file, in one batch of block programs (decision 0081 §3): one
+        // launch of the executor (decision 0100 §13), on the cores or, under the device binding, the GPU, as its price
+        // places it. `span_ends[doc][pattern]`.
         let span_ends: Vec<Vec<Option<Vec<u64>>>> = {
-            use crate::code_rule_dsl::transducer::packed::regex_block::{RanOn, SpanPrefilter, ends_batch};
-            let filters: Vec<(usize, &SpanPrefilter)> = rx_spans.iter().enumerate().filter_map(|(i, (_, _, _, f))| f.as_ref().map(|f| (i, f))).collect();
+            use crate::code_rule_dsl::transducer::packed::regex_block::{RanOn, SpanPrefilter, ends_launch};
+            let filters: Vec<(usize, &Arc<SpanPrefilter>)> = rx_spans.iter().enumerate().filter_map(|(i, (_, _, _, f))| f.as_ref().map(|f| (i, f))).collect();
             let mut out: Vec<Vec<Option<Vec<u64>>>> = vec![vec![None; rx_spans.len()]; documents.len()];
             if !filters.is_empty() {
                 let mut at = Vec::new();
-                let mut files: Vec<(&[u8], usize)> = Vec::new();
+                let mut sources: Vec<Arc<String>> = Vec::new();
+                let mut files: Vec<(usize, usize)> = Vec::new();
                 for (j, d) in documents.iter().enumerate().filter(|(_, d)| d.guest.is_none()) {
+                    sources.push(Arc::clone(&d.facts.source));
                     for (f, _) in filters.iter().enumerate() {
                         at.push((j, filters[f].0));
-                        files.push((d.facts.source.as_bytes(), f));
+                        files.push((sources.len() - 1, f));
                     }
                 }
                 let _span = crate::code_rule_dsl::logic::profile::span(|| "span prefilter".into());
-                let programs: Vec<&SpanPrefilter> = filters.iter().map(|(_, f)| *f).collect();
-                let (ends, ran) = ends_batch(&programs, &files, metal);
+                let programs: Vec<Arc<SpanPrefilter>> = filters.iter().map(|(_, f)| Arc::clone(f)).collect();
+                let (ends, ran) = ends_launch(crate::code_rule_dsl::logic::lanes::executor_for(metal), &programs, &sources, &files, metal).map_err(StoreError::Invalid)?;
                 crate::code_rule_dsl::logic::profile::decision("span prefilter", || match ran {
                     RanOn::Metal => "metal".into(),
                     RanOn::Cpu => "cpu".into(),
@@ -1236,7 +1197,7 @@ impl Batch {
 
     fn offsets(&self, view: View) -> &[usize] {
         match view {
-            View::Node | View::Line | View::Tape | View::Core | View::Visit | View::Depth => &self.nodes,
+            View::Node | View::Line | View::Tape | View::Core | View::Visit | View::Depth | View::Order => &self.nodes,
             View::Child => &self.children,
             View::Field => &self.fields,
             View::Loc(_) => &self.locs,
@@ -1291,7 +1252,7 @@ impl Batch {
     fn row(&self, view: View, doc: usize, local: u32) -> Option<usize> {
         let p = &self.docs[doc];
         let within = match view {
-            View::Node | View::Line | View::Tape | View::Core | View::Visit | View::Depth | View::Loc(_) => Some(local as usize),
+            View::Node | View::Line | View::Tape | View::Core | View::Visit | View::Depth | View::Order | View::Loc(_) => Some(local as usize),
             View::Child => (local > 0).then(|| local as usize - 1),
             View::Field => p.fielded.binary_search(&local).ok(),
         }?;
@@ -1338,6 +1299,7 @@ impl Viewed {
             View::Core => &["d", "t", "n"],
             View::Visit => &["n", "i"],
             View::Depth => &["n", "k"],
+            View::Order => &["n", "k"],
             View::Loc(Place::Line | Place::EndLine) => &["n", "l"],
             View::Loc(Place::Col) => &["n", "c"],
             View::Loc(Place::Docof) => &["n", "d"],
@@ -1347,7 +1309,7 @@ impl Viewed {
     fn own(&self) -> usize {
         match self.view {
             View::Node | View::Child => 1,
-            View::Line | View::Visit | View::Depth | View::Loc(_) => 0,
+            View::Line | View::Visit | View::Depth | View::Order | View::Loc(_) => 0,
             View::Field | View::Core => 2,
             View::Tape => 0,
         }
@@ -1357,7 +1319,7 @@ impl Viewed {
         match self.view {
             View::Child | View::Field => Some(0),
             View::Tape => Some(1),
-            View::Node | View::Line | View::Core | View::Visit | View::Depth | View::Loc(_) => None,
+            View::Node | View::Line | View::Core | View::Visit | View::Depth | View::Order | View::Loc(_) => None,
         }
     }
 }
@@ -1375,6 +1337,8 @@ impl Source for Viewed {
             4
         } else if matches!(self.view, View::Node | View::Core) && column == 0 {
             self.len() / self.batch.docs.len().max(1)
+        } else if matches!(self.view, View::Order) && column == 1 {
+            1
         } else if matches!(self.view, View::Core) && column == 1 {
             // One probe per document of the batch.
             self.batch.docs.len()
@@ -1388,6 +1352,7 @@ impl Source for Viewed {
             || Some(column) == self.parent()
             || matches!(self.view, View::Node) && matches!(column, 0 | 2)
             || matches!(self.view, View::Core) && matches!(column, 0 | 1)
+            || matches!(self.view, View::Order) && column == 1
     }
     fn range_indexed(&self, column: usize) -> bool {
         column == self.own()
@@ -1452,6 +1417,10 @@ impl Viewed {
                 } else if let Some((doc, local)) = b.node(v) {
                     rows.extend(b.docs[doc].children(local).filter_map(|c| b.row(self.view, doc, c)));
                 }
+            } else if matches!(self.view, View::Order) && column == 1 {
+                // A preorder key: its document and its local id.
+                let local = (v & 0xffff_ffff) as u32;
+                rows.extend(b.doc(v >> 32).filter(|&doc| v >= 0 && local < b.docs[doc].len()).and_then(|doc| b.row(self.view, doc, local)));
             } else if matches!(self.view, View::Node | View::Core) && column == 0 {
                 rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes[doc]..b.nodes[doc + 1]));
             } else if matches!(self.view, View::Core) && column == 1 {
@@ -1516,7 +1485,7 @@ impl Viewed {
             };
         }
         let local = match self.view {
-            View::Node | View::Line | View::Tape | View::Core | View::Visit | View::Depth | View::Loc(_) => i as u32,
+            View::Node | View::Line | View::Tape | View::Core | View::Visit | View::Depth | View::Order | View::Loc(_) => i as u32,
             View::Child => i as u32 + 1,
             View::Field => p.fielded[i],
         };
@@ -1547,6 +1516,7 @@ impl Viewed {
                 }
             },
             (View::Depth, 1) => i64::from(p.depth[l]),
+            (View::Order, 1) => i64::from(p.key) << 32 | i64::from(local),
             _ => p.global(local),
         }
     }
@@ -1574,7 +1544,7 @@ pub(crate) fn shaped(store: &ContentStore, documents: Vec<Document>, projection:
 /// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
 fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
-    let mut named = vec![("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core)];
+    let mut named = vec![("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core), ("node_order", View::Order)];
     match batch.shape {
         Shape::T => named.push(("line", View::Line)),
         Shape::Core => named.extend([

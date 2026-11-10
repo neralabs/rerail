@@ -1,0 +1,10 @@
+[package]
+name = "rerail-rr-syntax"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The rule engine's own .rr parser: a .rr file's statements and its tree as the tape holds it."
+
+[dependencies]
+# A `.policy` block's document, as the engine reads it.
+serde_json = "1.0"

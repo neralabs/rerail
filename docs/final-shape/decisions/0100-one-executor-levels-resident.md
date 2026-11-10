@@ -1,7 +1,7 @@
 # 0100: One executor for a chunk's strata: levels sent to every lane at once, relations kept on the GPU
 
 Status: draft (2026-11-09). It builds 0095 §5 (device waves) on the executor of 0098 §6. The order of work is
-below; steps 1–5 and 7–10 are built, and step 6 is measured.
+below; steps 1–5 and 7–14 are built, and step 6 is measured.
 
 ## Intro
 
@@ -158,8 +158,8 @@ reads the shared symbol table, and new symbols take its write lock, so the gain 
 
 The executor runs **jobs**, and each lane's jobs run beside every other lane's:
 
-- **The cores** have one pool for the process, of `RERAIL_THREADS` threads (4 when unset). Both of the engine's
-  executors (the CPU binding's and the Metal binding's) share it. Each launch placed on the cores is a job of its
+- **The cores** are the process's one pool (§12), of `RERAIL_THREADS` threads (the machine's cores when unset).
+  Both of the engine's executors (the CPU binding's and the Metal binding's) share it, with every other job. Each launch placed on the cores is a job of its
   own, so a batch's launches there run on every thread at once, beside other batches' launches. A kernel that splits
   its work splits it over the same threads.
 - **SME, the GPU and the Neural Engine** each have one worker thread. A batch's share of such a lane is one job, one
@@ -281,6 +281,221 @@ encoding and commit run while the host fills, instead of after it. The submissio
   - batches stalled, and the longest stall;
   - the slack now.
 - In the trace, a line per batch with its overlap and stall.
+
+### 11. Claims: a plan, and launches taken by whoever reaches them
+
+Placement (§9) decides once, at `begin`, from estimates. Under a load spike the estimate is wrong: the cores'
+pool is taken by other work, or the GPU's worker is still busy with an earlier batch. A launch placed there then
+waits, while another lane sits idle.
+
+So placement makes a **plan**, and the lanes **claim** launches as they reach them (`exec::Claims`):
+
+- Every launch has its planned lane, and the time by which that lane should have started it.
+- Every lane that can run a launch has it on its list. The cores' list runs largest first. A device takes all of
+  its planned launches in one submission.
+- A lane takes its own launches first. It takes another lane's only while that launch is still free, and only when
+  that lane is **behind its plan** by more than the taker's own time for the launch (at least 0.2 ms).
+- A claim is one atomic exchange, so no launch runs twice. A pinned launch stays on its lane.
+
+When a launch falls due: on a device, once the work outstanding there is done; on the cores, once one of the
+pool's threads is free. The outstanding work is spread over the threads, then the batch's launches, largest
+first, each go on the thread free soonest.
+
+Who takes what:
+
+- **The cores' pool** takes its own launches, then any launch of a device whose worker has not reached the batch
+  in time.
+- **A device** takes, after each submission of its own, the cores' launches their pool has not reached. A device
+  is sent every batch it could take a launch of, planned there or not. It keeps a batch while a launch in it may
+  yet be left for it, and sleeps until the soonest of those falls due.
+- **The waiting caller** runs free launches itself, on the cores, instead of stalling. It takes the cores' own
+  ones, and those of a lane behind its plan.
+
+With no spike the plan stands: a device starts a batch within microseconds, so its launches are never late, and
+nothing moves. The claims only move work when a lane falls behind.
+
+**Two submissions deep.** A device's worker begins its next submission (the GPU's: encoded and committed)
+before it reads the one in flight (`Backend::start`, `Pending::finish`). Each of the two has its own scratch
+buffers. The right sides a submission sorts are kept at once; a later read of their runs waits for its command
+buffer.
+
+**Chaining levels.** A level's batch also carries the next level's seed joins whose relations are already held.
+Their launch, and the device's 1.7 ms of submit and schedule, then run under this level's strata instead of at the
+start of the next one. The next level's batch skips a join already sent. A join sent early is taken by its spec's
+digest and its relations' identity, as any other (§5). If either changed, the stratum runs without the pairs.
+
+**What the explain output adds:**
+
+- Per kind of batch: launches as planned and as run, per lane; launches moved off their planned lane; launches
+  the caller ran while it waited.
+- In the trace, the same per batch.
+- The level joins' decision line says how many of a batch's joins were the next level's.
+
+### 12. One pool for every job of a run
+
+Before this, a corpus run used several thread pools and threads of its own, each sized on its own:
+
+- rayon's global pool (the machine's cores), for the parallel loops;
+- the executor's pool (4 threads), for the cores' launches;
+- a work pool (4 threads), for the workspace's and the store's parallel loops;
+- a thread for the chunk builder, one per document builder (cores − 2), a thread for the cone of requests, one
+  for the store's collection, one per background compilation, and one to warm the GPU's kernels.
+
+So the run used far more threads than `RERAIL_THREADS`, and the executor's model of the cores (4 threads) was not
+the cores that ran its launches.
+
+Now there is **one pool**, rayon's global pool, made by `rerail_accel::exec::configure`: `RERAIL_THREADS`
+threads, else the machine's cores, named `rerail-cpu <i>`. Every job runs on it:
+
+- the cores' launches, and the executor's host jobs;
+- every parallel loop of the engine (the work pool is gone; its loops run on the one pool);
+- the chunk builder's work: each window of files resolved, each document parsed and made facts, each chunk
+  projected, as a job of its own;
+- each chunk's sources in the waves' schedule, the store's collection, background compilations, and the GPU's
+  kernel warm-up.
+
+The process's main thread is the pool's thread 0 (rayon's `use_current_thread`): the rules it runs, and the
+jobs it runs while it waits, are the pool's. The pool is made as the library loads, before `main` in the engine's
+binary, so nothing makes it first.
+
+**Waits run jobs.** A job that waits for others (a chunk, a batch's launches, a host job) runs the pool's queued
+jobs meanwhile (`exec::help_until`), and sleeps between polls a little more each time, from 20 µs to 1 ms. So no
+thread holds its place idle while work queues. The CPU of the jobs a thread runs for others while it waits is
+counted apart (`exec::helped`), so the run's phases count only the main thread's own work.
+
+**No thread waits for another's turn.** A job that waits for a job could run that job inside its own wait, on its
+own stack. Two jobs that each wait for the other would then never end. So nothing that waits for another long
+job is a job:
+
+- **The chunk builder has no thread.** It is a state behind a lock. Whichever job ends (a window, a document, a
+  projection), or the main thread when it asks for a chunk, advances it: the documents taken in order, cut into
+  chunks, a chunk projected as a job, handed on in the order cut. The main thread takes one chunk at a time, as
+  through a channel of one.
+- **The windows are resolved one at a time**, each a job started when the last ends. A window's statements may
+  run a parallel loop, whose wait may run another job: if that job resolved a window too, it would wait for a
+  lock its own thread holds.
+- **The cone of requests** takes turns with the main thread: it asks, the main thread answers. It runs on
+  another of the pool's threads, and the main thread runs no job until it has started, so it never runs inside
+  the main thread's wait. With one thread, it gets a thread of its own: one thread cannot hold both stacks.
+
+**What stays a thread of its own.** None of these runs a run's work on the cores:
+
+- each device lane's worker (SME, the GPU, the Neural Engine), which submits to its device and waits for it;
+- the profile's watchers and the residency's drop timer, which sleep until their deadline.
+
+(The transducer had its own Metal dispatcher thread, a batcher of single files. Nothing called it; it is gone.)
+
+**Waits are measured.** A thread that runs another's job while it waits can find what it waited for ready only
+when that job ends. The profile's table `Waits that ran others' jobs` gives, for each place that waits (a batch's
+launches, a host job, the main thread's next chunk, the cone's answer, a wave chunk's sources):
+
+- its waits, how many ran jobs, and the jobs' wall and CPU;
+- how many ended right after a job they ran, so were late by at most that job's wall (`late ms<=`), and the
+  longest;
+- how late exactly, where the waited work says when it ended (a batch's launches, a host job);
+- the longest job run, by name.
+
+Below it, the jobs that made waits late, by name. Every job carries one (`exec::as_job`, `Jobs::spawn`); a
+parallel loop's pieces show as `(unnamed)`.
+
+**Long jobs first.** The chunk builder starts the documents within its reach longest first, by their source's
+bytes. Other threads take a thread's jobs oldest first, and a wait takes its own thread's newest. So the long
+builds start soonest, on other threads, and a waiting thread runs the short ones.
+
+On the pack, the main thread's waits for its next chunk:
+
+| Order of the documents' builds | Late, at most (all waits) | Longest late | Jobs run in waits |
+|---|---|---|---|
+| In order | 159 ms (2 waits) | 93 ms, a document built | 42 |
+| Longest first | 27 ms (4 waits) | 26 ms, a document built | 126 |
+
+The waits now run more, shorter jobs, and are held far less past their chunk.
+
+### 13. Every dispatch is a launch
+
+Every piece of work sent to a device or to the cores' kernels is a launch of the executor: priced, placed,
+claimed by whichever lane reaches it first, run on that lane's worker, and scored. That includes the work whose
+kernel the engine makes itself, as the parser's programs are.
+
+Such work is a **program** (`rerail_accel::kernel::Program`, `Kernel::Program`). A program gives:
+
+- its name and its size in units (bytes, for a program over text);
+- its seconds a unit on each lane it has a form for: none, and the lane does not take it;
+- a run on each of those lanes, whose result is the caller's own type.
+
+The executor prices a program by its own rates, not by the forms' table. A program's cores' form is one job on
+one thread, so its price is not divided over the cores. A device's form submits its own command buffers, on the
+one device and queue (`gpu::shared`); a device form that refuses the work (its capacity, a shape it lacks) runs
+the cores' form instead, so the launch does not fail.
+
+**The first program is the span prefilter's** (decision 0081 §3): a chunk's regexes over its sources, as block
+programs, which tell where a match can end. It was a direct call that chose Metal under the device binding and
+waited for it on whatever thread projected the chunk. Now it is one launch:
+
+```rust
+// facts/vtab/syntax.rs: a chunk's patterns over its sources, one launch
+let (ends, ran) = ends_launch(executor_for(metal), &programs, &sources, &files, metal)?;
+```
+
+Its GPU form is the generated block program; its cores' form, the interpreter. Its sources are the documents'
+own (`Arc<String>`), not copied. Its rates are priors, for now: 30 ps a byte and operation on one core, 1 ps on
+the GPU. Over the fixtures, a pattern over every file gave the same rows on both bindings. Under the device
+binding, the executor placed one batch on the cores and one on the GPU; the GPU's took 2.1 ms against its
+0.28 ms estimate, so the prior is low.
+
+**One device and one queue.** The engine's own Metal programs (`METAL_DEVICE`) take the process's device from
+`gpu::shared`, and the block programs' queue is the shared queue. So the executor's lanes and the engine's
+programs submit in one order.
+
+**What is not yet a launch.** The transducer's other Metal paths (the waves' set steps and label passes, nearest,
+the lattice, the packed demand backends) are reached only from the slice, the demand driver, SQL functions and
+tests, never from a corpus run. Each would become a program in turn. Most are several passes resident on the
+device, so each is one program whose GPU form runs its passes.
+
+
+
+### 14. Execution costs recorded, and fitted back into the prices
+
+The prices start from priors: a table of seconds a unit for each form and lane, and a program's own rates.
+Some are guesses (§13). The executor already measures every job it runs, but only for the profile of one run.
+Now every finished job also becomes a **sample**, kept across runs, and the prices learn from the samples.
+
+A sample is what a regressor would need later, one row a job:
+
+- the lane, its launches' kernel names (a program's own name, a form's otherwise), the launch count and units;
+- what the price expected: wall seconds and host CPU seconds;
+- what it cost: its wall, its thread's CPU, its wait in the queue, and its phases (encode, upload, the device's
+  submit and schedule, and so on);
+- whether it was cold (it compiled a pipeline or made a buffer), whether it failed, and the machine's load.
+
+Each row also has its time, its machine (the architecture, the cores, the GPU) and the pool's thread count.
+
+**Written back on a thread of its own.** The scoreboard keeps a job's sample when it finishes, in a bounded
+buffer (100,000; past it, samples are dropped and counted). A thread wakes once a second, takes the buffer and
+writes it to SQLite in one transaction. A command's end writes what is left. The run never waits on the store.
+
+```rust
+// accel/src/score.rs, Scoreboard::finish: one sample a finished job
+held.push(Sample { lane: t.lane, forms, units, estimate: est, wall: ran, cpu, cold, ... });
+```
+
+**Read lazily, on another thread.** When the run first makes an executor, a pool job reads this machine's
+latest 20,000 samples and fits rates from them. Until it is done, the prices are the priors. Each price looks
+the rate up in its own thread's copy, taken again only when the fitted rates change, so pricing takes no shared
+lock. (A first version read a shared `RwLock` on every price: 7 s more CPU on the pack, from its contended
+cache line.)
+
+**What is fitted.** For now, only what one sample measures directly: a device lane's rate, from its wall less
+its submission and launch costs, and a program's rate on the cores (one job, one thread). A table form on the
+cores splits over threads, so its wall is not one unit's cost, and it keeps its prior. A rate is the median of
+at least 8 warm, successful samples of one kernel name alone. The profile lists the samples read and each rate
+in place.
+
+**The store** is `RERAIL_COSTS` (a SQLite file, or `off`), else `~/.cache/rerail/costs.sqlite`. Tests write
+none unless it is set. It keeps 500,000 samples for each machine.
+
+A regressor trained on the table (over units, load, launches and phases) replaces the medians later, behind the
+same lookup.
 
 ## Order of work
 
@@ -425,7 +640,78 @@ encoding and commit run while the host fills, instead of after it. The submissio
     - In the warm loop, 46 of 10,050 batches reached their commit before the host had filled them. The device
       waited on the event for those; the rest were filled while the lane encoded.
     - In the pack, the fill takes 42 µs a batch on the caller's thread, while the lane encodes and commits.
-11. **Gates:**
+11. **The open GPU items (§9).** *Built*:
+    - **Pipelines prewarmed.** The prewarm thread now also compiles the radix sort of each width, the gathers and
+      the pair sort. A variant's source is compiled once, into one library, for all its kernels (a sort's five
+      kernels were five compiles). A job that needs a pipeline still compiling waits for it (`pipeline wait`)
+      instead of compiling it again.
+    - **Spilled probes** run again through the fused probe, all in one dispatch, into one arena of their exact
+      total. The separate one-probe kernel, whose many width variants were compiled on first use, is gone.
+    - **Pairs as views.** A probe's pairs are handed out as segments of the arena (`Output::View`, `Pairs`),
+      which the view keeps. The level batch hands each seed its pairs once, without the copy it made before.
+    - **Tile pairs sorted on the GPU,** in the scatter's command buffer: a key of (left row, right row) in 32
+      or 64 bits, the radix sort's passes alone, and a gather (`encode_sorted_pairs`, with a test of both key
+      widths).
+    - Results, the pack under `--metal`, findings identical (load 30–110):
+
+      | | Before | After |
+      |---|---|---|
+      | Unpinned: callers' stall, level joins | 169 ms | 28 ms |
+      | Unpinned: longest stall | 62 ms | 5.7 ms |
+      | GPU pinned: pipeline compiles in jobs | 12 | 0 |
+      | GPU pinned: host CPU of the joins | 25 ms | 13.4 ms |
+      | GPU pinned: callers' stall | 370 ms | 101 ms |
+
+    - Warm loop at a load of about 107: 50–53 µs a job, against 54–55 µs for the build before, back to back.
+      Reading the pairs went from 2.4 to 1.9 µs a job. The rise from 33 µs is the load.
+12. **Claims and chaining (§11).** *Built*:
+    - A test makes the GPU lane's worker busy for 300 ms and plans a batch's 12 launches on it. The caller runs
+      all 12 on the cores while it waits; the batch stalls 2 ms.
+    - In the pack, unpinned, 1 of 153 launches moved. Pinned to the cores, the waiting caller ran 38 of 153 itself,
+      and the callers' stall was 16 ms (82 ms before, with the pool alone).
+    - Chaining puts up to 13 of the next level's joins in a level's batch. The run sends 153 launches and runs 132
+      seeds from their pairs, the same as without chaining.
+13. **Late work, pool threads, two deep (§11).** *Built*:
+    - A device is sent every batch it could take a launch of. A test plans 8 launches on the cores, holds every
+      pool thread, and has the caller wait late: the device, with nothing planned, takes all 8.
+    - The cores' due times model the pool's threads.
+    - A device's worker begins its next submission before it reads the one in flight. A test logs a fake
+      device's starts and ends: start, start, end, end.
+    - The pack's findings are identical, unpinned and pinned to the GPU. Pinned, the callers' stall is 99 ms
+      (101 ms before): the pack rarely has a second batch waiting for the GPU.
+14. **One pool (§12).** *Built*:
+    - In a sample of the pack's run, the process has the main thread and 17 `rerail-cpu` threads (18, the
+      machine's cores), the four device lanes' workers, the profile's watchers and the system's own threads.
+      Before, it had about 30 threads of the run's own: rayon's 18, the executor's 4, and the chunk worker beside
+      the main thread.
+    - Tests: jobs that start jobs end with their scope; a job beside its caller takes turns with it; the corpus
+      tests, the cone of requests' among them; the waves' schedule; background compilation.
+    - The pack's findings are identical. CPU (user + sys), the two builds run in turn at a load of 81–92:
+
+      | | Run 1 | Run 2 |
+      |---|---|---|
+      | Before (several pools) | 65.9 s | 64.6 s |
+      | One pool | 63.3 s | 59.8 s |
+
+      The load moves the CPU by more than the change: the build before took 53.2 s at a load of 53.
+15. **Waits measured; long jobs first (§12).** *Built*: the profile's table of waits that ran others' jobs, every
+    job named; the chunk builder's documents started longest first.
+16. **Every dispatch a launch (§13).** *Built*:
+    - `Kernel::Program`. A test places three programs by their own prices: one with only a cores' form, one with
+      only a GPU's, one far cheaper on the GPU. Each runs the form of the lane it lands on, and the scoreboard
+      counts it.
+    - The span prefilter is a program. Its test checks every (file, pattern) against the pattern alone, pinned to
+      the cores, pinned to the GPU, and placed by price.
+    - The engine's Metal programs use the shared device and queue; the dead dispatcher is removed.
+17. **Execution costs recorded (§14).** *Built*:
+    - Samples kept by the scoreboard, written on the statistics thread and read back on a pool job.
+    - Rates fitted into the prices. A test fits a device lane's rate from warm samples of one kernel, and leaves
+      out cold, failed and mixed jobs and a table form on the cores.
+    - Over three runs of the pack sharing one store, each run read the samples of the runs before it (173, then
+      346). No rate was fitted yet: a run gives only 4 warm samples of each device kernel. The findings are
+      identical. CPU against the build before, in turn at a load of 48–103: 46.5 s and 42.1 s, against 48.7 s and
+      49.1 s.
+18. **Gates:**
    - The pack's findings are identical, and so are the data layer's at scale.
    - Host CPU (user + sys) of the device joins is below the CPU radix sort join's, on the lab's 232 joins and on
      the pack.
@@ -433,14 +719,12 @@ encoding and commit run while the host fills, instead of after it. The submissio
 
 ## Open
 
-- **Prewarm the radix sort's pipelines.** Unpinned, the GPU's first large joins compile 12 pipelines (94 ms of
-  wall time), and that is the longest stall (62 ms). Prewarming covers the fused pipelines only.
-- **Reads as views.** A probe's pairs are copied out of the arena (1.7 µs a job, warm). Handing the caller a view
-  of the arena saves that.
-- **Tile pairs sorted on the GPU.** Tiles still sort their pairs on the host. The engine sends no tile joins
-  yet.
-- **Chaining levels.** A level's batch could wait on the event of the level before it, so the next level's
-  launches are committed before the first one's results are read.
+- **Which waits run jobs.** A thread waiting on the pool may run a long job of another's, and its own work then
+  waits for it (§12, measured). A critical path that still suffers from it would wait without running jobs, at
+  the cost of a thread.
+- **Program prices are priors** until enough samples are kept (§14). A table form on the cores is not fitted yet;
+  a regressor over the samples would fit it, with the threads it split over as a feature.
+- **The transducer's other GPU paths** become programs (§13) as they reach a corpus run.
 
 - **Count tables and the scalar summaries overlap.** The engine's per-key memo of scalar summaries answers a count
   once per key, and a count table answers it once per relation. Since the merge, a count the memo serves never walks

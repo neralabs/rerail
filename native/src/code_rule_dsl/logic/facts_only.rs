@@ -46,6 +46,8 @@ const FACT_STORE: &[&str] = &[
     "node_type",
     "frames",
     "frame_spaces",
+    // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
+    "samples",
     "{p}_out in code_rule_dsl/logic/native.rs",
     "{p}_out in code_rule_dsl/logic/native/extension.rs",
     "{} in code_rule_dsl/logic/plan.rs",
@@ -158,6 +160,8 @@ const NOT_YET_TABLES_PIN: usize = 66;
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
+    ("code_rule_dsl/logic/costs.rs", "FITTED"),
+    ("code_rule_dsl/logic/costs.rs", "WRITER"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
@@ -218,9 +222,11 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "BUSY_DEADLINE_OVERRIDE"),
     ("content_store/connection.rs", "BUSY_TIMEOUT_OVERRIDE"),
     ("content_store/connection.rs", "BUSY_WAIT_HOOK"),
+    ("content_store/connection.rs", "CONNECTION_FUNCTIONS"),
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
+    ("content_store/hazards.rs", "HAZARDS"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
@@ -321,7 +327,7 @@ fn maps() -> BTreeSet<(String, String)> {
     let head = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+([A-Z_][A-Z_0-9]*)\s*:").unwrap();
     let held = regex::Regex::new(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<").unwrap();
     // A plain number, flag or instant holds no result.
-    let plain = regex::Regex::new(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<\s*(\(\s*\)|bool|u8|u16|u32|u64|usize|i32|i64|f64|std::time::Instant|Instant|std::time::Duration|Option<\s*(usize|u64|bool|f64|std::time::Instant)\s*>|\(\s*(Option<usize>|usize|u64|f64)\s*,\s*(usize|u64|f64)\s*\))\s*>").unwrap();
+    let plain = regex::Regex::new(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<\s*(\(\s*\)|bool|u8|u16|u32|u64|usize|i32|i64|f64|std::time::Instant|Instant|std::time::Duration|Option<\s*(usize|u64|i64|bool|f64|std::time::Instant)\s*>|\(\s*(Option<usize>|usize|u64|f64)\s*,\s*(usize|u64|f64)\s*\))\s*>").unwrap();
     let mut out = BTreeSet::new();
     for f in fs {
         let text = std::fs::read_to_string(&f).unwrap_or_default();

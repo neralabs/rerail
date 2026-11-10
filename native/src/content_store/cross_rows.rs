@@ -136,7 +136,7 @@ impl ContentStore {
 
 impl SourceId {
     /// The id as `cross_rows` returns it in a source column (`ContentStore::cross_rows` with `with_source`).
-    pub(crate) fn raw(self) -> i64 {
+    pub fn raw(self) -> i64 {
         self.0
     }
 }
