@@ -12,6 +12,8 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     // Before any thread starts: a stop signal or `RERAIL_DEADLINE` dumps the run first (decision 0084).
     rerail_engine::tools::watch();
+    // Before any pool is made: the most threads the process uses (`RERAIL_THREADS`).
+    rerail_engine::threads::configure();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match rerail_engine::tools::cli(&args) {
         Ok(text) => {

@@ -102,6 +102,13 @@ pub fn digest(spec: &JoinSpec) -> u64 {
     h.finish()
 }
 
+fn fx(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    s.hash(&mut h);
+    h.finish()
+}
+
 /// The relation's identity, as the pairs were made from it: its id, rows and dead rows.
 fn ident(r: &InRel) -> (u64, usize, usize) {
     (r.uid.0, r.len(), r.ndead)
@@ -139,15 +146,11 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
     let mut pending = Vec::new();
     for spec in specs {
         // Every atom a native relation's: the spec reads nothing the level makes, nor an input not loaded yet.
-        let srcs: Vec<&Source> = spec
-            .items
-            .iter()
-            .filter_map(|i| match i {
-                JoinItem::Atom { src, .. } | JoinItem::Count { src, .. } | JoinItem::Extreme { src, .. } | JoinItem::StrJoin { src, .. } => Some(src),
-                _ => None,
-            })
-            .collect();
-        if srcs.is_empty() || !srcs.iter().all(|s| matches!(s, Source::Native(_))) {
+        let atoms = spec.items.iter().filter_map(|i| match i {
+            JoinItem::Atom { src, .. } | JoinItem::Count { src, .. } | JoinItem::Extreme { src, .. } | JoinItem::StrJoin { src, .. } => Some(src),
+            _ => None,
+        });
+        if atoms.clone().next().is_none() || !atoms.into_iter().all(|s| matches!(s, Source::Native(_))) {
             continue;
         }
         let key = digest(spec);
@@ -182,12 +185,7 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
             .collect::<Vec<_>>()
             .into();
         // The right's id in the space: the relation and its key columns.
-        let right_id = {
-            use std::hash::{Hash, Hasher};
-            let mut h = rustc_hash::FxHasher::default();
-            (r1.uid.0, slot_keys.iter().map(|&(c, _)| c).collect::<Vec<_>>()).hash(&mut h);
-            h.finish()
-        };
+        let right_id = fx(&format!("{} {:?}", r1.uid.0, slot_keys.iter().map(|&(c, _)| c).collect::<Vec<_>>()));
         launches.push(Launch::new(Kernel::Join { left, right, right_id: Some(right_id), by: JoinBy::Probe }));
         pending.push((key, Pending { batch: Arc::new(LevelBatch { running: Mutex::new(None), outs: OnceLock::new() }), at: launches.len() - 1, left: ident(r0), right: ident(r1), lids }));
     }
