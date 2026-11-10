@@ -5,6 +5,59 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
+#[cfg(unix)]
+#[test]
+fn loads_return_existing_snapshot_document_keys_through_aliases() {
+    let base=crate::code_rule_dsl::prefilter::tests::temp().with_extension("loaded-document-identity");
+    let real=base.join("real");
+    std::fs::create_dir_all(real.join("shared")).unwrap();
+    std::fs::write(real.join("shared/a.py"),"value = 1\n").unwrap();
+    std::os::unix::fs::symlink("shared",real.join("via")).unwrap();
+    std::os::unix::fs::symlink("real",base.join("caller")).unwrap();
+    let root=base.join("caller");
+    let rule=base.join("identity.rr");
+    std::fs::write(&rule,r#"
+.language python
+.decl loaded_doc(path: symbol,module: symbol,grammar: symbol,d: number)
+.input loaded_doc
+load("via/a.py","first","python").
+load("via/a.py","second","python").
+.violation Identity(at: span,module: symbol,source_path: symbol,physical: symbol) code "IDENTITY" "identity"
+Identity(@place(p,1),m,p,c) :- loaded_doc(c,m,"python",d),doc(d,p,_),doc_role(d,"primary").
+"#).unwrap();
+    let report=crate::code_rule_dsl::tools::run_rr(&rule,&root,&base.join("out"),&serde_json::json!({"inputFiles":["shared/a.py"]})).unwrap();
+    let mut rows:Vec<_>=report["diagnostics"].as_array().unwrap().iter().map(|r|(
+        r["parameters"]["module"].as_str().unwrap(),r["parameters"]["source_path"].as_str().unwrap(),
+        r["parameters"]["physical"].as_str().unwrap())).collect();
+    rows.sort();
+    let canonical=std::fs::canonicalize(real.join("shared/a.py")).unwrap();
+    let physical=canonical.to_str().unwrap();
+    assert_eq!(rows,vec![("first","shared/a.py",physical),("second","shared/a.py",physical)]);
+    assert_eq!(report["files"],1,"loads reuse the existing document without another parse");
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn loads_return_fresh_document_keys_for_every_module_answer() {
+    let root=crate::code_rule_dsl::prefilter::tests::temp().with_extension("loaded-fresh-identity");
+    std::fs::create_dir_all(&root).unwrap();std::fs::write(root.join("a.py"),"value = 1\n").unwrap();
+    let rule=root.join("identity.rr");
+    std::fs::write(&rule,r#"
+.language python
+.decl loaded_doc(path: symbol,module: symbol,grammar: symbol,d: number)
+.input loaded_doc
+load("a.py","first","python").
+load("a.py","second","python").
+.violation Identity(at: span,module: symbol) code "IDENTITY" "identity"
+Identity(@place(p,1),m) :- loaded_doc(p,m,"python",d),doc(d,p,_).
+"#).unwrap();
+    let report=crate::code_rule_dsl::tools::run_rr(&rule,&root,&root.join("out"),&serde_json::json!({"inputFiles":[]})).unwrap();
+    let mut modules:Vec<_>=report["diagnostics"].as_array().unwrap().iter().map(|r|r["parameters"]["module"].as_str().unwrap()).collect();
+    modules.sort();assert_eq!(modules,vec!["first","second"]);
+    assert_eq!(report["files"],1,"one physical load answers both modules");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn host_info_answers_only_demanded_keys_without_primary_documents() {
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("host-info");
