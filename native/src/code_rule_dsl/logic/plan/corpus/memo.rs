@@ -83,13 +83,16 @@ fn plan(program: &[u8; 32]) -> FactsPlanSet {
     FactsPlanSet::new(vec![plan_digest(program)])
 }
 
-/// A digest of a program part: its rules, declarations, inputs and outputs as lowered, and every fact, those the
-/// engine reads (a guest policy) as well as those its rules read.
+/// A digest of a program part: its rules, declarations, inputs and outputs as lowered, every fact, those the engine
+/// reads (a guest policy) as well as those its rules read, and the spans and patterns the batch matches for it.
 pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
     let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().collect();
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-program/v3\0");
     hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, facts, program.inputs, program.outputs).as_bytes());
+    // What the batch makes for the part besides its rules' reads: the regex spans and AST patterns it matches
+    // (O-stored-patterns).
+    hash.update(format!("\n{:?}\n{:?}", program.rx_spans, program.ast_patterns).as_bytes());
     hash.finalize().into()
 }
 
@@ -99,6 +102,25 @@ pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8
     hash.update(b"rerail.corpus-local-options/v1\0");
     hash.update(digest);
     hash.update(options.to_string().as_bytes());
+    hash.finalize().into()
+}
+
+/// `digest` with rows folded in, by relation: the key of a file-local part that reads relations whose rows are not in
+/// its text (a phase's exports). The rows' order is not part of it.
+pub(super) fn with_rows<'a>(digest: [u8; 32], rels: impl Iterator<Item = (&'a str, &'a Vec<Vec<crate::code_rule_dsl::logic::front::Value>>)>) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-rows/v1\0");
+    hash.update(digest);
+    for (rel, rows) in rels {
+        let mut lines: Vec<String> = rows.iter().map(|r| format!("{r:?}")).collect();
+        lines.sort_unstable();
+        hash.update(rel.as_bytes());
+        hash.update([0]);
+        for l in &lines {
+            hash.update(l.as_bytes());
+            hash.update([0]);
+        }
+    }
     hash.finalize().into()
 }
 
@@ -144,11 +166,28 @@ pub(in crate::code_rule_dsl) fn decode_frame(frame: &FactsFrame) -> StoreResult<
 pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
     off();
     let set = plan(program);
-    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path })?;
-    match memo.results.get(&set.plans[0]) {
+    // This program's row only: the file's other programs' rows are not decoded.
+    match store.facts_result(FactsMemoKey { source, fact_schema: SCHEMA, path }, set.plans[0])? {
         Some(result) => Ok(Some(decode(&result.entry)?).filter(|entry| entry.key == key)),
         None => Ok(None),
     }
+}
+
+/// `lookup` of many documents, each `(source, path, key)`, in their order: one statement whatever their number.
+pub(super) fn lookup_all(store: &ContentStore, program: &[u8; 32], docs: &[(SourceId, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
+    off();
+    let set = plan(program);
+    let keys: Vec<(SourceId, &str)> = docs.iter().map(|(s, p, _)| (*s, *p)).collect();
+    let found = store.facts_results_for(SCHEMA, set.plans[0], &keys)?;
+    docs.iter().zip(found).map(|((_, _, key), bytes)| Ok(match bytes { Some(b) => Some(decode(&b)?).filter(|e| e.key == *key), None => None })).collect()
+}
+
+/// `source` of many texts, in their order: the stored ones found (and pinned) in one statement, the others stored.
+pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<SourceId>> {
+    off();
+    let hashes: Vec<HashKey> = texts.iter().map(|t| HashKey::sha256(t.as_bytes())).collect();
+    let found = store.held_sources_by_hash(&hashes)?;
+    texts.iter().zip(hashes).zip(found).map(|((text, hash), id)| match id { Some(id) => Ok(id), None => store.put_source_hashed(text.as_bytes(), hash, &[]) }).collect()
 }
 
 /// Memoises `entry` as the document's at `path`.
@@ -158,6 +197,20 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, path: &str, key: 
     let result = FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(&Entry { key, ..entry.clone() }) };
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, result.entry.len() as u64);
     store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path }, &set, &[result], &[])?;
+    Ok(())
+}
+
+/// Memoises many documents' entries at once, each `(source, path, key, entry)` under `program`: one transaction of
+/// a few statements (`put_facts_results`), not one per document.
+pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: &[(SourceId, &str, i64, &Entry)]) -> StoreResult<()> {
+    off();
+    let set = plan(program);
+    let results: Vec<(SourceId, &str, FactsResult)> = entries
+        .iter()
+        .map(|(source, path, key, entry)| (*source, *path, FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(&Entry { key: *key, ..(*entry).clone() }) }))
+        .collect();
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, results.iter().map(|r| r.2.entry.len() as u64).sum());
+    store.put_facts_results(SCHEMA, &set, &results)?;
     Ok(())
 }
 
@@ -173,7 +226,7 @@ pub(super) enum Memo<'a> {
 pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), Entry>>;
 
 /// A file's content as the memo knows it: its stored source, or (held) its digest.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Content {
     Stored(SourceId),
     Held([u8; 32]),
@@ -201,6 +254,29 @@ impl Memo<'_> {
         }
     }
 
+    /// `content` of many texts, in their order (`sources`).
+    pub(super) fn contents(self, texts: &[&str]) -> StoreResult<Vec<Content>> {
+        match self {
+            Memo::Stored(store) => Ok(sources(store, texts)?.into_iter().map(Content::Stored).collect()),
+            Memo::Held(_) => Ok(texts.iter().map(|t| Content::Held(Sha256::digest(t.as_bytes()).into())).collect()),
+        }
+    }
+
+    /// `lookup` of many documents, each `(content, path, key)`, in their order: stored ones in one statement.
+    pub(super) fn lookup_all(self, program: &[u8; 32], docs: &[(Content, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
+        match self {
+            Memo::Stored(store) => {
+                let mut out: Vec<Option<Entry>> = vec![None; docs.len()];
+                let (at, stored): (Vec<usize>, Vec<(SourceId, &str, i64)>) = docs.iter().enumerate().filter_map(|(i, (c, p, k))| c.stored().map(|id| (i, (id, *p, *k)))).unzip();
+                for (i, e) in at.into_iter().zip(lookup_all(store, program, &stored)?) {
+                    out[i] = e;
+                }
+                Ok(out)
+            }
+            Memo::Held(_) => docs.iter().map(|(c, p, k)| self.lookup(*c, p, *k, program)).collect(),
+        }
+    }
+
     pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
         match (self, content) {
             (Memo::Stored(store), Content::Stored(id)) => lookup(store, id, path, key, program),
@@ -208,6 +284,22 @@ impl Memo<'_> {
                 Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), *program)).filter(|e| e.key == key).cloned())
             }
             _ => Ok(None),
+        }
+    }
+
+    /// `remember` of many documents, stored ones written as one wave (`remember_all`).
+    pub(super) fn remember_all(self, program: &[u8; 32], entries: &[(Content, &str, i64, &Entry)]) -> StoreResult<()> {
+        match self {
+            Memo::Stored(store) => {
+                let stored: Vec<(SourceId, &str, i64, &Entry)> = entries.iter().filter_map(|(c, p, k, e)| c.stored().map(|id| (id, *p, *k, *e))).collect();
+                remember_all(store, program, &stored)
+            }
+            Memo::Held(_) => {
+                for (content, path, key, entry) in entries {
+                    self.remember(*content, path, *key, program, entry)?;
+                }
+                Ok(())
+            }
         }
     }
 

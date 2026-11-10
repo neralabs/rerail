@@ -395,3 +395,35 @@ fn sparse_warm_deletion_has_a_bounded_sql_budget_on_large_native_inputs() {
     e.set_limits("{}".into()).unwrap();
     assert_eq!(rows(&e, "SELECT count(*) FROM reach"), json!([[100000]]));
 }
+
+#[test]
+fn row_count_publication_skips_equal_counts_and_tracks_live_input_sizes() {
+    let (_d,mut e)=executor();
+    e.bind_relation(json!({"name":"seed","columns":["x"],"rows":[[1]]}).to_string()).unwrap();
+    e.run(".decl seed(x:number)\n.input seed\n.decl out(x:number)\nout(x) :- seed(x).\n.output out\n".into(),"python".into(),None).unwrap();
+    for (patch,size) in [(json!([{"name":"seed","insert":[[2]]}]),2),(json!([{"name":"seed","insert":[[3]]}]),3),(json!([{"name":"seed","delete":[[1]],"insert":[[4]]}]),3)] {
+        e.apply_changes(patch.to_string(),None).unwrap();
+        assert_eq!(rows(&e,"SELECT rows FROM wave_stats WHERE tbl='seed'"),json!([[size]]));
+        assert_eq!(rows(&e,"SELECT rows FROM wave_stats WHERE tbl='out'"),json!([[size]]));
+    }
+}
+
+#[test]
+fn retained_statistics_are_sql_queryable_through_views_and_restore_on_failure() {
+    let (_d,mut e)=executor();
+    e.bind_relation(json!({"name":"edge","columns":["a","b","w"],"rows":[[0,1,2]]}).to_string()).unwrap();
+    e.bind_relation(json!({"name":"root","columns":["n"],"rows":[[0]]}).to_string()).unwrap();
+    let p=".decl edge(a:number,b:number,w:number)\n.decl root(n:number)\n.input edge,root\n.decl distance(n:number,d:min<>) widen 3\ndistance(n,0) :- root(n).\ndistance(b,d+w) :- distance(a,d),edge(a,b,w).\n.output distance\n";
+    e.run(p.into(),"python".into(),None).unwrap();
+    assert!(e.statistics.snapshot().is_some());
+    e.connection().execute_batch("CREATE TEMP VIEW observed_counts AS SELECT tbl,rows FROM temp.wave_stats").unwrap();
+    assert_eq!(rows(&e,"SELECT rows FROM observed_counts WHERE tbl='distance' AND rows=2"),json!([[2]]));
+    assert_eq!(rows(&e,"SELECT typeof(tbl) FROM wave_stats WHERE tbl='distance'"),json!([["text"]]));
+    e.apply_changes(json!([{"name":"edge","insert":[[1,2,2]]}]).to_string(),None).unwrap();
+    assert_eq!(rows(&e,"SELECT rows FROM observed_counts WHERE tbl='distance'"),json!([[3]]));
+    assert!(e.apply_changes(json!([{"name":"edge","insert":[[2,3,2]]}]).to_string(),Some(1)).is_err());
+    assert_eq!(rows(&e,"SELECT rows FROM observed_counts WHERE tbl='distance'"),json!([[3]]));
+    e.run(".decl copied(n:number,d:number)\n.input copied(IO=sql, query=\"SELECT c0,c1 FROM distance\")\n.output copied\n".into(),"python".into(),None).unwrap();
+    assert!(e.statistics.snapshot().is_none());
+    assert_eq!(rows(&e,"SELECT rows FROM observed_counts WHERE tbl='distance'"),json!([[3]]));
+}

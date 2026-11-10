@@ -43,6 +43,7 @@ pub(crate) const WITHIN: &str = "within";
 /// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
 pub(crate) const SPAN_WITHIN: &str = "span_within";
 mod core_rr;
+mod stored_spike;
 pub(crate) mod normalized;
 mod python_order;
 mod python_syntax;
@@ -333,19 +334,43 @@ pub(crate) struct Document {
     pub module: Option<Arc<str>>,
 }
 
-/// A file's nodes as `core.rr`'s shape numbers them (`node` ids are `key << 32 | local`): each local id's core id and
-/// kind name. For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
-pub(crate) fn numbering(doc: &Document) -> StoreResult<Vec<(u32, &'static str)>> {
+/// A file's nodes as `core.rr`'s shape numbers them: each local id's core id and kind name, and the way from a node
+/// id's low 32 bits to its local id (they differ when nodes are numbered per definition, `DefIds`). For making
+/// guests from requests that name host nodes (decision 0055, `corpus::guests`).
+pub(crate) struct Numbering {
+    pub(crate) nodes: Vec<(u32, &'static str)>,
+    /// `(low, local)`, ascending, under `DefIds`; `None` when the low bits are the local id.
+    back: Option<Vec<(u32, u32)>>,
+}
+
+impl Numbering {
+    /// The local id of the node whose id's low 32 bits are `low`.
+    pub(crate) fn local(&self, low: u32) -> Option<u32> {
+        match &self.back {
+            None => Some(low),
+            Some(b) => b.binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| b[i].1),
+        }
+    }
+    /// The node whose id's low 32 bits are `low`: its local id, core id and kind.
+    pub(crate) fn at(&self, low: u32) -> Option<(u32, u32, &'static str)> {
+        let l = self.local(low)?;
+        self.nodes.get(l as usize).map(|&(id, k)| (l, id, k))
+    }
+}
+
+pub(crate) fn numbering(doc: &Document) -> StoreResult<Numbering> {
     // A document read as text only has no nodes.
     if doc.facts.len() == 0 {
-        return Ok(Vec::new());
+        return Ok(Numbering { nodes: Vec::new(), back: None });
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::new(tag)?;
     // A guest's nodes are its root's subtree.
     let guest = doc.guest.as_deref().map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), &dialect, Shape::Core, false, guest);
-    Ok(p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect())
+    // A unit's own nodes are numbered before its tokens, so the nodes' ids need no tokens.
+    let back = definition_ids().then(|| DefIds::new(&p, &dialect, &[])).flatten().map(|d| d.back);
+    Ok(Numbering { nodes: p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect(), back })
 }
 
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
@@ -716,6 +741,9 @@ impl Projected {
             let matched = spans.len() as u32;
             let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
             p.extra = Some(Box::new(Extra { lines, spans, tokens, matched, host }));
+        } else if definition_ids() && guest.is_none() {
+            // T's shape has no token spans: its nodes alone are numbered per definition.
+            p.defs = DefIds::new(&p, dialect, &[]);
         }
         p
     }
@@ -845,7 +873,8 @@ impl Batch {
         }
         let mut dialects: HashMap<u8, Dialect> = HashMap::new();
         let mut strings: Vec<String> = Vec::new();
-        let mut at: HashMap<String, usize> = HashMap::new();
+        // Every string of every node passes here: Fx, not SipHash (a third of the projection's time with SipHash).
+        let mut at: rustc_hash::FxHashMap<String, usize> = rustc_hash::FxHashMap::default();
         let mut string = |s: &str| -> usize {
             if let Some(&i) = at.get(s) {
                 return i;
@@ -874,10 +903,21 @@ impl Batch {
         let mut errors = Vec::new();
         // `core.rr`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
+        let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
+        c.skip = core_rr::Skip {
+            ops: !wants_any(&["op", "op_at"]),
+            next_sibling: !projection.wants("next_sibling"),
+            comment: !projection.wants("comment"),
+            spread: !projection.wants("spread"),
+            name: !projection.wants("name"),
+            literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "text"]),
+        };
         let wants_text = core && projection.wants("text");
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Line);
         let wants_split_lines = core && projection.wants("split_line");
+        // Asked once for the batch, not per node (a lookup in the program's set of read relations).
+        let (wants_parts, wants_part_starts, wants_words) = (projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_word"));
         let wants_lf_lines = core && projection.wants("lf_line");
         let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
         // Only a program that reads it: every node's hash is a symbol.
@@ -973,7 +1013,9 @@ impl Batch {
             let error = if core && (projection.wants("syntax_error") || guest.is_some()) { core_rr::verdict(&d.facts, dialect) } else { None };
             let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
+            let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
+            drop(new_span);
             if !rx_spans.is_empty() && guest.is_none() && !withheld {
                 c.matches(&mut p, dialect, &rx_spans, &span_ends[j], &mut string);
             }
@@ -1026,6 +1068,7 @@ impl Batch {
                 errors.push(key);
             }
             let f = &*d.facts;
+            let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
                 if !core {
@@ -1092,9 +1135,11 @@ impl Batch {
                     _ => {}
                 }
                 if core {
-                    c.node(&p, dialect, local as u32, &mut string, wants_text, projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_word"));
+                    c.node(&p, dialect, local as u32, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
                 }
             }
+            drop(nodes_span);
+            let document_span = crate::code_rule_dsl::logic::profile::span(|| "document rows".into());
             if let Some((line, msg)) = &error {
                 let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
                 c.withheld(&p, &(line, msg.clone()), &mut string);
@@ -1105,6 +1150,7 @@ impl Batch {
                     c.digests(&p, dialect, &mut string, wants_trees, wants_units);
                 }
             }
+            drop(document_span);
             docs.push(p);
         }
         // The guests' rows, once every document is projected: a guest's host may be a guest after it. Either shape:
@@ -1127,6 +1173,7 @@ impl Batch {
             spreads: spreads.map(atom),
             rows: Default::default(),
         });
+        let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
             let mut r = Relation::new(columns);
             rows.for_each(|row| r.push(&row));
@@ -1344,6 +1391,12 @@ impl Source for Viewed {
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         self.row_value(row, column)
+    }
+    fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let (p, i) = self.batch.locate(self.view, row);
+        for (o, &c) in out.iter_mut().zip(columns) {
+            *o = self.value_at(p, i, c);
+        }
     }
 }
 impl Viewed {
@@ -1621,6 +1674,7 @@ pub(crate) fn with_nearest(
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
+    let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
@@ -1647,10 +1701,31 @@ pub(crate) fn with_nearest(
         };
         out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members))));
     }
+    // The stored-projection spike (measurement only): the relations the program reads, but the per-node axes.
+    if let Some(db) = std::env::var_os("RERAIL_SPIKE_PROJECTION") {
+        let viewed: BTreeSet<&str> = views(&batch).iter().map(|(n, _)| *n).collect();
+        let read: Vec<(String, Arc<dyn Source>, stored_spike::Kind)> = out
+            .iter()
+            .filter(|(n, _)| projection.wants(n))
+            .filter_map(|(n, s)| {
+                let kind = if rows_named.contains(n) { stored_spike::Kind::Rows } else if viewed.contains(n.as_str()) { stored_spike::Kind::View } else { return None };
+                Some((n.clone(), Arc::clone(s), kind))
+            })
+            .collect();
+        let keys: Vec<u32> = batch.docs.iter().map(|p| p.key).collect();
+        drop(_nearest);
+        stored_spike::run(&db, &read, &keys);
+        return Ok(out_with_within(out, &batch));
+    }
     // Containment (decision 0050): made per looked-up node, so a program that never reads it pays nothing.
-    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree))));
-    out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Span))));
-    Ok(out)
+    Ok(out_with_within(out, &batch))
+}
+
+/// `out` with containment's two relations (decision 0050).
+fn out_with_within(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>) -> Vec<(String, Arc<dyn Source>)> {
+    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Tree))));
+    out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Span))));
+    out
 }
 
 /// The planner's statistics of `source` (`stat_col`'s rows, ndv, sq and sqd per column, `sqd` by
@@ -1659,6 +1734,11 @@ pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64
     if let Some(known) = source.statistics() {
         return known;
     }
+    measured(source)
+}
+
+/// `statistics`, measured from the rows (a source that keeps its own calls this once).
+pub(crate) fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
     let rows = source.len();
     // Each row's document (the first column's high half), read once for every column.
     let docs: Vec<i64> = (0..rows).map(|row| source.value(row, 0) >> 32).collect();
@@ -1677,10 +1757,15 @@ pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64
             let mut values: Vec<(i64, i64)> = (0..rows).map(|row| (source.value(row, c), docs[row])).collect();
             values.sort_unstable();
             let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
+            let shadow = crate::code_rule_dsl::logic::plan::sketch::shadowing();
+            let mut sketch = crate::code_rule_dsl::logic::plan::sketch::Sketch::default();
             let mut at = 0;
             while at < values.len() {
                 let v = values[at].0;
                 let end = at + values[at..].partition_point(|x| x.0 == v);
+                if shadow {
+                    sketch.add(v, (end - at) as i64);
+                }
                 ndv += 1;
                 sq += ((end - at) * (end - at)) as i64;
                 let mut d = at;
@@ -1691,6 +1776,9 @@ pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64
                     d = de;
                 }
                 at = end;
+            }
+            if shadow {
+                crate::code_rule_dsl::logic::plan::sketch::shadow("measured", &name, rows as i64, ndv, sq, &sketch);
             }
             (name, rows as i64, ndv, sq, sqd)
         })

@@ -2,6 +2,7 @@
 use super::*;
 mod dependencies;
 mod lookup;
+pub(in crate::code_rule_dsl::sql_executor) mod transition;
 pub(super) mod combined;
 #[derive(Clone, Copy)]
 enum Kind {
@@ -16,6 +17,7 @@ enum Kind {
 pub(super) struct Reducer {
     combined: Option<combined::Shared>,
     pool_consumers: usize,
+    transition_key: Option<Arc<str>>,
     pub original: E,
     kind: Kind,
     pub relation: String,
@@ -23,6 +25,7 @@ pub(super) struct Reducer {
     projection: Query,
     columns: Vec<String>,
     groups: String,
+    dependencies: String,
     values: String,
     join: Option<E>,
     native_keys: bool,
@@ -60,7 +63,7 @@ impl Reducer {
                         arguments,
                     } if arguments.len() == 2 && arguments[1] == integer(0) => {
                         let E::Call {
-                            name: "sum",
+                            name: "sum" | "rr_exact_sum",
                             arguments,
                         } = &arguments[0]
                         else {
@@ -269,6 +272,7 @@ impl Reducer {
         Ok(Some(Self {
             combined: None,
             pool_consumers: 1,
+            transition_key: None,
             original: original.clone(),
             kind,
             relation: relation.into(),
@@ -276,11 +280,13 @@ impl Reducer {
             projection,
             columns: fields,
             groups: format!("{prefix}_groups"),
+            dependencies: format!("{prefix}_dependencies"),
             values: format!("{prefix}_values"),
             join,
             native_keys,
         }))
     }
+    pub(super) fn prepare_transition(&mut self) { self.transition_key=transition::descriptor(self); }
     fn keys(&self) -> usize {
         self.outer_keys.len().max(1)
     }
@@ -489,6 +495,9 @@ impl Reducer {
         w: &mut Work<'_>,
         changes: &BTreeMap<String, Delta>,
     ) -> Result<Option<(String, u64)>> {
+        transition::apply(self, w, changes)
+    }
+    fn apply_uncached(&self, w: &mut Work<'_>, changes: &BTreeMap<String, Delta>) -> Result<Option<(String, u64)>> {
         if let Some(shared) = &self.combined { return combined::apply(self, shared, w, changes); }
         let Some(delta) = changes
             .get(&self.relation)

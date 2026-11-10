@@ -81,16 +81,69 @@ impl Unit {
     }
 }
 
-/// Nanoseconds per unit at the roof, by unit (`None`: no roof). On a thread of the highest quality of service, so
-/// that on a machine with performance and efficiency cores it runs where the engine's busy threads do.
-/// Measured once per process: a run that makes runs (`corpus::world`'s rounds) writes a profile per run.
-pub(super) fn calibrate() -> BTreeMap<Unit, Option<f64>> {
-    static ROOFS: std::sync::OnceLock<BTreeMap<Unit, Option<f64>>> = std::sync::OnceLock::new();
-    ROOFS.get_or_init(measure).clone()
+/// Nanoseconds per unit at the roof, for the units a run charged work to (`None`: no roof). On a thread of the
+/// highest quality of service, so that on a machine with performance and efficiency cores it runs where the engine's
+/// busy threads do. Each unit is measured once per process (a run that makes runs, `corpus::world`'s rounds, writes a
+/// profile per run), and once per engine binary and day across processes: the loops take seconds in a debug build,
+/// which every profiled run paid before its report (O139). Returns where the roofs came from.
+pub(super) fn calibrate(units: &std::collections::BTreeSet<Unit>) -> (BTreeMap<Unit, Option<f64>>, String) {
+    static ROOFS: std::sync::LazyLock<std::sync::Mutex<BTreeMap<Unit, Option<f64>>>> = std::sync::LazyLock::new(Default::default);
+    let mut known = ROOFS.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = cache_file();
+    let mut source = "measured now";
+    if units.iter().any(|u| !known.contains_key(u))
+        && let Some(stored) = cache.as_deref().and_then(read_cache)
+    {
+        for (u, ns) in stored {
+            known.entry(u).or_insert(ns);
+        }
+        source = "read from the roof cache";
+    }
+    let missing: Vec<Unit> = units.iter().copied().filter(|u| !known.contains_key(u)).collect();
+    if !missing.is_empty() {
+        known.extend(measure(&missing));
+        source = if missing.len() == units.len() { "measured now" } else { "partly measured now" };
+        if let Some(path) = cache {
+            write_cache(&path, &known);
+        }
+    }
+    (units.iter().map(|u| (*u, known.get(u).copied().flatten())).collect(), source.to_owned())
 }
 
-fn measure() -> BTreeMap<Unit, Option<f64>> {
-    std::thread::spawn(|| {
+/// The roof cache of this engine binary: `<temp>/rerail-roofs/<digest of its path, size and modification time>.json`.
+fn cache_file() -> Option<std::path::PathBuf> {
+    use sha2::Digest as _;
+    let exe = std::env::current_exe().ok()?;
+    let meta = std::fs::metadata(&exe).ok()?;
+    let modified = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    let key = sha2::Sha256::digest(format!("{}\0{}\0{modified}", exe.display(), meta.len()).as_bytes());
+    let name: String = key.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    Some(std::env::temp_dir().join("rerail-roofs").join(format!("{name}.json")))
+}
+
+/// A cache written within the last day, by unit name.
+fn read_cache(path: &std::path::Path) -> Option<BTreeMap<Unit, Option<f64>>> {
+    let age = std::fs::metadata(path).ok()?.modified().ok()?.elapsed().ok()?;
+    if age > std::time::Duration::from_secs(24 * 3600) {
+        return None;
+    }
+    let stored: BTreeMap<String, Option<f64>> = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    Some(Unit::ALL.iter().filter_map(|u| stored.get(u.name()).map(|ns| (*u, *ns))).collect())
+}
+
+fn write_cache(path: &std::path::Path, roofs: &BTreeMap<Unit, Option<f64>>) {
+    let stored: BTreeMap<&str, Option<f64>> = roofs.iter().map(|(u, ns)| (u.name(), *ns)).collect();
+    if let (Some(dir), Ok(text)) = (path.parent(), serde_json::to_string(&stored)) {
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::write(path, text);
+    }
+}
+
+fn measure(units: &[Unit]) -> BTreeMap<Unit, Option<f64>> {
+    let units = units.to_vec();
+    std::thread::spawn(move || {
+        // What the memory sampler names while the loops run (not a span: `write` holds the profile's records).
+        let _doing = super::memory::Doing::new("profile: the machine's roofs measured (roofline, not the run's work)");
         #[cfg(target_os = "macos")]
         unsafe {
             unsafe extern "C" {
@@ -99,7 +152,7 @@ fn measure() -> BTreeMap<Unit, Option<f64>> {
             // QOS_CLASS_USER_INTERACTIVE
             pthread_set_qos_class_self_np(0x21, 0);
         }
-        Unit::ALL.iter().map(|&u| (u, roof(u))).collect()
+        units.iter().map(|&u| (u, roof(u))).collect()
     })
     .join()
     .unwrap_or_default()
@@ -226,7 +279,8 @@ fn roof(u: Unit) -> Option<f64> {
         Unit::Literal => {
             use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
             let var = |i: usize| Term::Var(format!("v{}", i % 7));
-            let body: Vec<Literal> = (0..1usize << 20)
+            // 2^16 literals: a clone's cost per literal, as 2^20 measured it, without ~650 MB held three times over.
+            let body: Vec<Literal> = (0..1usize << 16)
                 .map(|i| Literal::Atom(Atom { rel: format!("r{}", i % 97), args: vec![var(i), var(i + 1), var(i + 2)], neg: false, gated: false }))
                 .collect();
             Some(best(3, || {
@@ -262,7 +316,8 @@ struct Line {
 /// The roofline section of the report. `work` holds what was charged by span; `own` each span's own CPU.
 pub(super) fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMap<(String, Unit), u64>, joins: &BTreeMap<String, (u64, u64)>) {
     let t = Instant::now();
-    let roofs = calibrate();
+    let charged: std::collections::BTreeSet<Unit> = work.keys().map(|(_, u)| *u).collect();
+    let (roofs, source) = calibrate(&charged);
     let calibration = t.elapsed().as_secs_f64();
     let load = std::fs::read_to_string("/proc/loadavg").ok().or_else(|| {
         std::process::Command::new("sysctl").args(["-n", "vm.loadavg"]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
@@ -271,7 +326,7 @@ pub(super) fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMa
         r,
         "\n== Roofline: each span's work against the best this machine does that work (its roof); excess = own CPU less units x roof"
     );
-    let _ = writeln!(r, "Roofs measured now in {calibration:.2} s{}:", load.map(|l| format!(" (load {l})")).unwrap_or_default());
+    let _ = writeln!(r, "Roofs of the {} kinds of work charged, {source} in {calibration:.2} s{}:", roofs.len(), load.map(|l| format!(" (load {l})")).unwrap_or_default());
     for (u, ns) in &roofs {
         match ns {
             Some(ns) => {
@@ -366,5 +421,22 @@ pub(super) fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMa
     let _ = writeln!(r, "\nOwn CPU with no work counter: {bare_all:.2} s in all; spans over 0.2% of the run:");
     for (p, s) in bare.iter().take(25) {
         let _ = writeln!(r, "  {s:>8.3} s  {p}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Roofs written to the cache read back by unit name, `None` included; an unknown name is skipped.
+    #[test]
+    fn the_roof_cache_reads_back_what_it_wrote() {
+        let path = std::env::temp_dir().join(format!("rerail-roofs-test-{}.json", std::process::id()));
+        let roofs: BTreeMap<Unit, Option<f64>> = [(Unit::JoinRow, Some(3.5)), (Unit::SourceByte, None)].into();
+        write_cache(&path, &roofs);
+        assert_eq!(read_cache(&path), Some(roofs));
+        std::fs::write(&path, r#"{"no such unit": 1.0}"#).unwrap();
+        assert_eq!(read_cache(&path), Some(BTreeMap::new()));
+        let _ = std::fs::remove_file(&path);
     }
 }

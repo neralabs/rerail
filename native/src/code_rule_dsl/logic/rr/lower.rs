@@ -398,6 +398,16 @@ impl Lowerer {
                     self.three.insert(name.clone());
                 }
                 "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
+                // What the relation keeps (decision 0099): an override of the planner's choice.
+                q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {
+                    let own = self.prog.qualifiers.entry(name.clone()).or_default();
+                    own.insert(q.to_owned());
+                    for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic")] {
+                        if own.contains(a) && own.contains(b) {
+                            return Err(Error::Syntax(format!(".decl {name}: `{a}` and `{b}` together")));
+                        }
+                    }
+                }
                 other => return not_yet(format!("`{other}` on .decl {name}")),
             }
         }
@@ -1723,9 +1733,22 @@ impl Lowerer {
         })
     }
 
-    /// Whether a sibling atom reads `v` at a column declared a node (a node or span).
+    /// Whether a sibling atom reads `v` at a column declared a node (a node or span), or `v` is a named group of a
+    /// sibling `match_all` (or `match`) over a node or span: `rx_span`'s capture `m` is a span. Without the second, a
+    /// test of the capture in the same body (`match_all("(?<w>…)", t), match("…", w)`, RUF001's words) was a test of
+    /// the span's id as a text, and never held.
     fn node_typed(&self, v: &str) -> bool {
+        self.node_typed_at(v, 0)
+    }
+
+    fn node_typed_at(&self, v: &str, depth: usize) -> bool {
         self.siblings.iter().any(|l| match l {
+            Lit::Atom { rel, args, neg: false } if depth < 4 && matches!(rel.as_str(), "match_all" | "match") => match args.as_slice() {
+                [STerm::Str(re), STerm::Var(s), ..] if s != v && groups(re).iter().any(|g| g == v) => {
+                    self.span_container(s).is_some() || self.node_typed_at(s, depth + 1)
+                }
+                _ => false,
+            },
             Lit::Atom { rel, args, neg: false } => self.prog.decls.get(rel).is_some_and(|cols| {
                 args.iter().zip(cols).any(|(a, (_, t))| matches!(a, STerm::Var(x) if x == v) && t == "node")
             }),
@@ -1867,7 +1890,14 @@ impl Lowerer {
                 return Ok(Literal::Atom(Atom { rel: format!("{axis}{set}"), args, neg, gated: false }));
             }
             ("split_dot", [q, m, x]) if !neg => {
-                return Ok(Literal::Cmp { l: self.term(q)?, op: "=", r: Term::Call("cat".to_owned(), vec![self.term(m)?, self.term(x)?]) });
+                // A part not wanted (`split_dot(q, m, _)`) is a variable of its own, so the split is placed only once
+                // q is bound, or both parts are: a wildcard part would read as bound.
+                let mut part = |t: &STerm| -> Result<Term, Error> {
+                    let t = self.term(t)?;
+                    Ok(if matches!(t, Term::Wild) { Term::Var(self.fresh("part")) } else { t })
+                };
+                let (m, x) = (part(m)?, part(x)?);
+                return Ok(Literal::Cmp { l: self.term(q)?, op: "=", r: Term::Call("cat".to_owned(), vec![m, x]) });
             }
             ("ast", _) if !neg => return self.ast(args),
             ("precedes_stop", [a, b, set]) => {
@@ -2162,6 +2192,7 @@ impl Lowerer {
             "min" => AggOp::Min,
             "max" => AggOp::Max,
             "sum" => AggOp::Sum,
+            "product" => AggOp::Product,
             "join" => AggOp::Join { by: by.clone(), sep: sep.clone().unwrap_or_default() },
             other => return not_yet(format!("the aggregate {other}")),
         };
@@ -2190,6 +2221,12 @@ impl Lowerer {
         // Otherwise a helper relation of the body. `count` and `sum` read the body's distinct rows, so they keep every
         // variable; `min`, `max` and `join` keep the aggregated one (and a join's keys) and those the rule shares.
         let mut inner = body_vars(body);
+        // A nested aggregate's variables that the rule shares are the helper's too: in `count : { ident(x), count : {
+        // ref(n, f, x) } = 0 }`, the inner count is per (f, x), so the helper is a relation of f and x, and f is bound
+        // inside it by the context. Without f, the inner count read it free, and the outer could not group by it.
+        let mut nested = Vec::new();
+        body.iter().for_each(|l| l.vars(&mut nested));
+        inner.extend(nested.into_iter().filter(|v| outer.contains(v)));
         // `match_all`'s groups are variables of the body too, named in its regex: each match is a row to count.
         for l in body {
             if let Lit::Atom { rel, args, neg: false } = l
@@ -2199,7 +2236,7 @@ impl Lowerer {
                 inner.extend(groups(re));
             }
         }
-        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum) || own(v) || outer.contains(*v)).cloned().collect();
+        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum | AggOp::Product) || own(v) || outer.contains(*v)).cloned().collect();
         let name = self.fresh("agg");
         let mut bodies = self.conjunction(body, outer)?;
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by

@@ -20,17 +20,19 @@ mod scalar_phase;
 mod properties;
 use plan::{Rule, column, integer, names, plain, source};
 use reducer::Reducer;
+pub(super) use reducer::transition::{Transition,Initial};
 
 #[derive(Clone)]
 pub(super) struct Retained {
     output: String,
     heads: String,
     width: usize,
-    rules: Vec<Rule>,
+    rules: Arc<Vec<Rule>>,
     lattice: Option<lattice::Lattice>,
     pub(super) ready: bool,
     cold_reuse: crate::code_rule_dsl::logic::analysis::Decision,
     cold_initialized: bool,
+    support_uniqueness: crate::code_rule_dsl::logic::analysis::Decision,
 }
 
 impl Retained {
@@ -64,7 +66,7 @@ impl Retained {
     /// Drop support for an empty positive body, retaining global scalar input indexes.
     pub(super) fn clear_contexts(&self, store: &versions::Store) -> Result<()> {
         let mut objects = vec![self.heads.clone()];
-        for rule in &self.rules {
+        for rule in self.rules.iter() {
             objects.push(rule.contexts.clone());
             if !rule.contribution_view { objects.push(rule.contributions.clone()); }
             objects.extend(rule.reducers.iter().filter_map(Reducer::dependency_object));
@@ -189,7 +191,7 @@ fn equal(a: &str, b: &str, width: usize) -> String {
         .join(" AND ")
 }
 fn execute(db: &rusqlite::Connection, sql: &str) -> Result<usize> {
-    db.execute(sql, []).map_err(error)
+    db.prepare_cached(sql).map_err(error)?.execute([]).map_err(error)
 }
 fn temporary(w: &mut Work<'_>, width: usize, extra: &str, keys: Option<usize>) -> Result<String> {
     let mut definition = schema(width);
@@ -243,7 +245,7 @@ pub(super) fn prepare(
                     vec![],
                 )
             });
-            state.initialize(w.db, &mut run.objects, storage)?;
+            state.initialize(w, &mut run.objects, storage)?;
             if let Some(operation) = operation {
                 operation.finish_unobserved();
             }
@@ -343,18 +345,20 @@ fn plan_local(
             continue;
         }
         let cold_reuse = cold::eligibility(run, output, &rules, lattice.is_some());
+        let support_uniqueness=crate::code_rule_dsl::logic::analysis::keys::union_support(&rules.iter().map(|r| (r.uniqueness.decision.proven,r.contribution_storage.heads.clone())).collect::<Vec<_>>());
         let mut state = Retained {
+            support_uniqueness,
             output: output.clone(),
             heads: format!("__sql_state_{output}_heads"),
             width: *width,
-            rules,
+            rules: Arc::new(rules),
             lattice,
             ready: false,
             cold_reuse,
             cold_initialized: false,
         };
         if native && state.can_fuse() {
-            for rule in &mut state.rules { if rule.contribution_storage.decision.proven { rule.reconstruct_contributions(); } }
+            for rule in Arc::make_mut(&mut state.rules) { if rule.contribution_storage.decision.proven { rule.reconstruct_contributions(); } }
         }
         crate::code_rule_dsl::logic::profile::decision("retained logical analyses", || state.explain().to_string());
         retained.insert(output.clone(), state);
@@ -379,10 +383,11 @@ impl Retained {
     }
     fn initialize(
         &self,
-        db: &rusqlite::Connection,
+        w: &mut Work<'_>,
         objects: &mut Vec<(String, bool)>,
         storage: Option<&versions::Store>,
     ) -> Result<()> {
+        let db=w.db;
         let fused = self.can_fuse() && storage.is_some_and(|s| s.contains(&self.output));
         owned_phase(
             db,
@@ -396,9 +401,9 @@ impl Retained {
             storage,
             fused,
         )?;
-        for rule in &self.rules {
+        for rule in self.rules.iter() {
             for reducer in &rule.reducers {
-                reducer.initialize(db, objects, storage)?;
+                reducer::transition::initialize(reducer,w,objects,storage)?;
             }
             owned_phase(
                 db,

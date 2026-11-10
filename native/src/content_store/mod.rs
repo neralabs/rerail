@@ -4,6 +4,8 @@
 //! The code-rule runtime will call this module through coarse Rust operations.
 
 pub(crate) mod atoms;
+#[cfg(target_os = "macos")]
+mod accel_models;
 // Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
 mod bounded_insert;
@@ -19,6 +21,7 @@ mod cross_rows;
 mod derivation;
 mod facts_memo;
 mod objects;
+pub(crate) mod observe;
 pub(crate) use objects::ResidentFrames;
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
@@ -225,6 +228,16 @@ impl HashKey {
         })
     }
 
+    /// The key as bytes: its algorithm, then its lanes (an alias table's key).
+    pub(crate) fn key_bytes(self) -> [u8; 40] {
+        let mut out = [0_u8; 40];
+        out[..8].copy_from_slice(&self.algorithm.to_be_bytes());
+        for (chunk, lane) in out[8..].chunks_exact_mut(8).zip(self.lanes) {
+            chunk.copy_from_slice(&lane.to_be_bytes());
+        }
+        out
+    }
+
     pub fn git_sha256(bytes: [u8; 32]) -> Self {
         Self::from_padded(HASH_GIT_SHA256, bytes)
     }
@@ -309,6 +322,13 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
+
+impl SourceId {
+    /// An id a record of this store kept (`raw`; a kept statistics blob, decision 0096 §2). A source collected since reads as absent: a lookup finds nothing.
+    pub fn from_raw(id: i64) -> Self {
+        SourceId(id)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
@@ -599,6 +619,8 @@ pub struct ContentStore {
     working_set: working_set::WorkingSet,
     /// The owner and lease under which this handle pins each source it stores or finds (`hold_sources`, O95).
     holder: parking_lot::Mutex<Option<(String, i64)>>,
+    /// This handle's shared collection lease (`hold_collection`).
+    lease: std::sync::Arc<collection_guard::SharedLease>,
     #[cfg(test)]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(test)]
@@ -638,6 +660,9 @@ impl ContentStore {
             Self::initialize(&mut connection)
         })?;
         drop(connection);
+        // Compiled Neural Engine models are facts of this store (decision 0098 §3).
+        #[cfg(target_os = "macos")]
+        rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection {
@@ -654,6 +679,7 @@ impl ContentStore {
             atoms: if created { atoms::Atoms::fresh(path) } else { atoms::Atoms::for_path(path) },
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
+            lease: Default::default(),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),
             #[cfg(test)]

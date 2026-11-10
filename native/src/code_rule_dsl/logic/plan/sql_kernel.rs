@@ -115,7 +115,7 @@ pub(super) fn component(
         queries.push(Some(q));
     }
     if recursive {
-        run.model.stats.solving = scc.clone();
+        run.model.stats.solve(scc.clone());
         for rule in rules {
             for (i, l) in rule.body.iter().enumerate() {
                 if let Literal::Atom(a) = l
@@ -139,7 +139,7 @@ pub(super) fn component(
                 }
             }
         }
-        run.model.stats.solving.clear();
+        run.model.stats.solve(BTreeSet::new());
     }
     let tops = run
         .prog
@@ -150,7 +150,8 @@ pub(super) fn component(
         })
         .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
     let mut emitted = emit::Emitted {
-        analysis: std::sync::Arc::clone(&run.model.analysis),
+        value_types: std::sync::Arc::new(run.prog.decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
+        analysis: run.model.analysis(run.prog),
         program: p,
         queries,
         setup: vec![],

@@ -270,6 +270,7 @@ pub(super) fn rule(
 
 impl Rule {
     pub fn rewrite(&mut self, q: &Query) {
+        for reducer in &mut self.reducers { reducer.prepare_transition(); }
         let mut evaluation = q.clone();
         replace(&mut evaluation.body, &mut |e| {
             if let Some(reducer) = self.reducers.iter().find(|r| r.original == *e) {

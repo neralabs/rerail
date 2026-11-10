@@ -1859,13 +1859,16 @@ version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b47c88884dd3c1a19a39da19d10211fcdea2809aadc86869b6e824a1774340f"
 dependencies = [
+ "bitflags 2.13.1",
  "bstr",
  "gix-commitgraph",
  "gix-date",
  "gix-error",
  "gix-hash",
+ "gix-hashtable",
  "gix-object",
  "gix-revwalk",
+ "gix-trace",
  "nonempty",
 ]
 
@@ -3135,6 +3138,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-accel"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "cc",
+ "libc",
+ "metal",
+ "objc",
+ "rayon",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "rerail-compiler"
 version = "0.1.0"
 dependencies = [
@@ -3188,6 +3204,7 @@ dependencies = [
  "regex",
  "regex-automata",
  "regex-syntax",
+ "rerail-accel",
  "rerail-compiler",
  "rerail-parser-tests",
  "rerail-rr-syntax",
@@ -3198,6 +3215,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha1",
  "sha2 0.10.9",
  "tempfile",
  "tikv-jemalloc-ctl",

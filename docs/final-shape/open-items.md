@@ -4,6 +4,11 @@ Status: live, started 2026-10-27. Each item says what is open, why it matters, h
 closed or validated, and where it stands. Items are added at the phase they are found and are
 never deleted: a closed item keeps its row with the commit that closed it.
 
+**Ids.** From 2026-11-08, a new item takes a mnemonic id, `O-<area>-<topic>` (`O-artifact-store`,
+`O-git-merge-base`), not the next number. Branches drift apart in numbers (on 2026-11-08 one was at O146 and the
+others at O143) and collided three times in a day (0094 §9); a name says what the item is and two branches
+choosing the same one are writing about the same thing. Numbered items keep their numbers.
+
 | Id | Found | Item | Status |
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated; 2026-11-01: called by every slice run before its push (`a_run_after_a_crashed_push_recovers_it`) |
@@ -2662,6 +2667,39 @@ count). The tool is a dev script, not engine code.
 
 Not yet measured: key churn across commits (renames and moves), and rows under tree-sitter's tapes rather than `ast`.
 
+**0094 §2's encoding, sized** (2026-11-08, `scripts/profiling/o126/encoding.py`). Same repository and `ast` proxy.
+Granules as §2 sets them: the innermost function or method, a class header, and each module-level statement (an
+import by the names it binds, any other by its digest and `#k`). A slot is a hash of the symbol over 14 bits. The run
+covers 136 commits of the last 300 that change at most 40 files; two chunks of the run hit the 2-minute cap.
+
+- **Rows renumbered per commit**, in the encoding against preorder: a median 3.8x fewer (p25 2.4x, p75 6.0x).
+  - On the 7 one-file commits: 225 rows against 2,620 (11.6x).
+  - The encoding renumbers a median 13.7% of the changed files' nodes; preorder renumbers 53%.
+- **How clashes are settled hardly matters for rows.**
+  - Settling by symbol order (§2) and probing in source order (today's flag) differ by 818 rows of 2.48 M.
+  - Granules moved by a clash: 21 by symbol order and 35 in source order, over all 136 commits.
+  - §2's rule is about stability (a granule never moves because of an unrelated insert), not about cost.
+- **Module-level statements as granules save little.** Keeping them as one root granule, as the flag does today,
+  renumbers a median 6% more rows per commit (12% in total, over 25 commits).
+- **Field widths**, over the 13,088 files at HEAD:
+  - granules per file: p50 17, p99 221, max 3,073;
+  - granules that share a slot with another: 1,873 at 14 bits, 493 at 16, 7,559 at 12;
+  - the largest granule is 21,388 `ast` nodes. Tree-sitter's nodes plus tokens are a few times that, under
+    18 bits' 262,144.
+
+  The flag's widths (14-bit slot, 18-bit index) fit. A file with more granules than slots keeps preorder ids
+  (`DefIds::new`).
+
+**Readers that assumed preorder ids** (2026-11-08). The flag's encoding can only go in once nothing reads a node
+id's low bits as a preorder index or a subtree as a contiguous id range:
+- `core_rr.rs` (part starts) and both guest paths (`facts/vtab/syntax/guests.rs`, `plan/corpus/guests.rs`) now map
+  the id to its local index (`local_of`, `syntax::Numbering`) before indexing.
+- `front/cycles.rs` treats `<` and `>` between two node variables under the flag as ordering by value
+  (`Later`/`Earlier`), not as moves down or up the tree.
+- `native/extension.rs`'s tape (dense, preorder vectors, and `down` as `n+1..=n+size`) is read only by
+  `run_sql_native` over T's own per-file facts, which are preorder by construction. Every engine path drops
+  `nearest` and `kseed`, so the tape never sees an engine id. It is unchanged.
+
 ## O127. Layout invariance of today's engine (decision 0083, spike 3)
 
 **Method:** move definitions between modules of the 84 files, with imports rewritten by a script. Run with and
@@ -2925,6 +2963,18 @@ and both in a `rr_in_annotation_0_*` relation.
   has matching rows (`pv__del(…6154, 1451, …5048)`, `ext_base_up__old(c, …6154)`). Turning the demand split off
   does not change it. The suspicion is the evaluation of the rewritten rule (delta probe or replanning), not the
   rewrite.
+
+  It persists on the tree with every branch merged (survivors in place, scalar sharing, exports in memory;
+  2026-11-08). One session over steps 01–20 matches a full run until step 05. From step 05 on, `call_open` has 2
+  extra rows (`l2055_lazy_result/tests/test_lazy_result_bugs.py:1067`), unchanged through step 20. Survivors in
+  place is not the cause, because the departure is older than that spike. On the merged tree, the row is
+  `(c, b) = (…6151, …5048)` with `e = …6154`, and the rule now reads `fl684_ext_base_up__old(c, e),
+  pv__del(e, 158, b), !special_base__old(e)`. Every input row is present: `ext_base_up__old(c, e)`,
+  `pv__del(e, 158, b)` and no `special_base__old(e)`. The profile shows the rule ran with `pv__del` as its delta:
+  40 delta rows in, 8 out, and the row is not among them. `base(c, b)` itself is in `base__del`. So the fault is
+  in the semi-naive evaluation of the over-delete stratum (174 relations). The step to take next is to replay
+  step 05 with that stratum evaluated naively. If the row comes back, the delta bookkeeping is wrong; if not, the
+  probe is.
 - **Typeshed, step 17.** `rr_in_annotation_0_gfn` has 60 rows extra and 3 missing. The extra rows are in `__del`
   and in `__ins` but not in `__old`: the insert rules derive them from rows that a full run does not have.
 
@@ -2960,6 +3010,26 @@ The design is written (`docs/rule-syntax/lib/core.rr`, run artifacts; `data-laye
 **Closure:** both checks lower and run on the sample with no artifact (static findings, withheld rules reported) and
 with a stamped one (their artifact findings), and a stale stamp gives `input_error(…, "stale", …)`.
 
+**Built 2026-11-08 (items 1–6):** `corpus/inputs.rs` reads `artifact=` from `--facts DIR` (default
+`<root>/.rerail/facts`), checks the envelope and the digest (git blob ids over the files the corpus walk sees), and
+gives one `input_error("artifact:NAME", kind, …)` per artifact. `withhold` removes, to a fixpoint, every rule that
+reads an incomplete relation through `!` or an aggregate, and the run prints each finding relation that may be
+missing rows, with how many of its rules read the artifact (`unknown: budget_exceeded (artifact:test_collection
+missing; 2 of its 3 rules)`). `rerail-engine facts-stamp RAW --out DIR --root REPO POLICY…` stamps. On the 133-file
+sample both checks now run, in 0.2 s and 1.0 s of CPU: without artifacts, with a failed producer, and with a fresh
+artifact (no Unknown). Tests: `corpus::inputs` (12).
+
+**Built 2026-11-08 (item 7, `--require-facts`):** `at="base"` reads a `filename=` input from the object store, through
+`gix`, at `logic --base REV` (a commit id or a reference name), under the corpus root's prefix in the repository.
+Without a base, or with a path the base lacks, the input gives `input_error("PATH@base", kind, …)` and its readers
+under `!` are withheld, as an artifact's are: a burn-down comparison never reports every entry as new.
+`--require-facts` fails the run on an artifact that is missing, stale or malformed, and on a failed one unless a rule
+reads `input_error` (RUN-FACTS §5). Tests: `corpus::inputs` (16).
+
+**Still open:** the merge base. `--base` names the revision; computing the merge base of a change and giving
+`git_rev`, `git_has` and `git_commit` as facts is the git provider's (0094's order of work, last). Unknown *places*
+(FINDINGS-LAYER §2's second evaluation), which needs the findings layer.
+
 ## O139. `RERAIL_PROFILE` adds 5–8 s of CPU to every run
 
 Measured 2026-11-08, load 47–110: `data-layer-compat-aliases` over 133 files takes 0.17–0.25 s of user CPU, and 5.0–8.3
@@ -2968,6 +3038,14 @@ per check at that load, lies outside every phase and span: the profile's own rep
 checks taken before this was found are inflated by it.
 
 **Closure:** the report's cost found and made proportional to the program, and the profile states its own CPU.
+
+**Found and fixed 2026-11-08.** The cost was the roofline's calibration (`profile/roofline.rs`): before writing
+each report, about ten micro-benchmarks of 1–64 M iterations, five times over, 7.25 s in a debug build at load 33.
+The report now measures only the kinds of work the run charged, and keeps the roofs per engine binary (its path, size
+and modification time) for a day in `<temp>/rerail-roofs/`. The report says where they came from and how long it
+took ("read from the roof cache in 0.00 s"). data-layer-compat-aliases: 0.25 s with the profile, the same as without;
+the first profiled run of a new binary still pays the calibration once. Test:
+`the_roof_cache_reads_back_what_it_wrote`. Profiled timings taken before this are inflated by 5–9 s each.
 
 ## O140. Engine rules that make per-file facts look global
 
@@ -2985,6 +3063,23 @@ findings layer's stages 2–3.
 
 **Closure:** the classification rerun with both fixed shows no check global through lowering alone, with findings
 equal on the 65 checks that finish both ways.
+
+**2026-11-08, worked:**
+
+- **Item 2 is not a leak.** In the 39 checks with `x(c) :- x_at(_, c)`, none of the projections' 144 readers binds
+  the projected row's document; the 7 that bind some document read the projection by a value. A projection is a union
+  of per-file rows, a unit fact (0092 §4), and there is nothing to rewrite (0093 §4, corrected).
+- **Item 3 is fixed.** `file_local::push_with` closes each candidate's variables under the rule's `a = b` equalities,
+  both when it groups the atoms and when it counts their independent node groups. `deco_word`'s four cross-file rules
+  are now pushed into the chunks (bootstrap-engine-invariants, graph-lazy-sql-plan, schema-bootstrap-contracts).
+  Test: `an_equality_between_two_pieces_joins_them_in_the_chunks`. Over the 25 checks with variable equalities in
+  their cross part, findings are equal with and without the grouping half of the fix, and CPU is within noise.
+- **Found while checking: a nested aggregate lost the rule's variables.** `count : { bei_identity(x), count : {
+  def_walk(n, f), bei_ref(n, x) } = 0 } > 0` made a helper of x alone, so bootstrap-engine-invariants failed to plan
+  after the final-rerail-shape merge ("unplaced literals … in rr_agg72($x)"). The helper now has every variable the
+  rule shares with its nested aggregates, bound by the context. Test:
+  `a_nested_aggregate_keeps_the_rules_variables_it_reads`.
+- The findings assembly (`rr_diagnostic`, `violation`) is a union too; it moves when the findings layer is built.
 
 ## O141. The 66-rule pack costs 70% more instructions after the merges of 2026-11-08
 
@@ -3020,9 +3115,21 @@ s50, 43 files, the same 32 violations:
 The fix leaves the pack slightly cheaper than before the merges. The analysis, planner, corpus and SQL executor
 tests pass, and so does the replay gate (`converted_rules_give_the_recorded_findings`).
 
+## O142. `calls_cx`'s process peak RSS is above the run's sampled peak and the 1 GB budget
+
+**Seen (2026-11-08, t24).** On the 84 files with typeshed and both memos on, the run's report gives a peak RSS of
+762 MB for a cold run and 355 MB for a warm one. `/usr/bin/time -l` gives 1.46 GB and 1.07 GB for the same
+processes. An edit's run gives 712 MB and 1.43 GB. Phase 0's whole-run cutoff is not the cause: the warm figure
+is with it off.
+
+**Open.** The report samples RSS at phase ends, so a transient peak inside a phase is missed. Find the phase, and
+whether the per-phase figures the budget is checked against should be the process peak.
+
+**Closure:** the process peak within the budget, or the phase that exceeds it named, with a figure the report gives.
+
 ## O143. The Python pack's annotation stratum read every annotation guest once per binding
 
-**Status:** fix in progress (2026-11-08); this entry reserves the number.
+**Status:** closed (2026-11-08).
 
 **What.** On the Python pack (534 programs), the `ann_input/ann_strip/type_app` stratum cost 39 s of about 89 s of
 CPU. The cause was not a collision of guest ids. In every chunk, each `ann_strip` row has its own `t`: the rows equal
@@ -3034,3 +3141,303 @@ their distinct first columns, about 480 to 800 per chunk. The cause was join ord
   number is the relation's size at that moment, not a property of the join.
 - **The result.** Between chunks the replanner moved `parsed` straight after the delta, as a filter. Every delta row
   then read every annotation guest: 10,857 bindings gave 5.4M rows for RUF013 alone.
+
+**The fix** (`5e335eb4d`):
+
+- the guest postings are measured after the guest rounds;
+- an atom that shares no bound variable is priced from its relation, with at least one row per binding.
+
+The run went from about 89 s to 51.6 s of CPU, with identical findings.
+
+**The rest of the run, measured the same day.** The work below brought the pack to 8.7 s warm and 61.3 s cold (CPU,
+user + sys, load 46 to 74), with identical findings:
+
+| What | Before | After | Commit |
+|---|---|---|---|
+| Strata that fell back to SQLite (native steps for calls, arithmetic, `strlen`, computed comparisons, string joins) | 168 strata, 7.4 s | 5 strata, 0.06 s | `152096654` |
+| Exports to the cross-file part, held in memory and read in place instead of copied through `x` | 5.6 s | — | `49035cc90` |
+| A collection lock taken per guest parse; one locate per row instead of per column | 2.6 s (sampled) | — | `92b5bbe2c`, `e88cdd20d` |
+| The per-file memo, which kept no rows on a cold run (text-test rows of other chunks' strings) | 0 of 486 files | 486 of 486 | `6ae30c48a` |
+| The combined program, kept in the store by the module graph (decision 0094 §6) | 6.4 s warm | 0.24 s | `6ae30c48a` |
+| The prepared program's split, kept with it | 0.57 s warm | 0.11 s | `24d05da80` |
+
+What a warm run still spends (8.7 s):
+
+- the cross-file part, 4.5 s: joins 1.75 s and engine open 0.78 s. The 1,473 small strata take 0.63 s in all,
+  about 0.4 ms each.
+- the memo replay, 1.6 s. 0.6 s of it measures the replayed exports again (`Totals::add_rows`).
+- the workers' memo lookups, 0.9 s, mostly zstd and decoding.
+- the prepared program's lookup, 0.56 s.
+
+A warm run with nothing changed still derives the whole cross-file part again. That is 0090's maintenance (an
+empty delta), not a fixed cost.
+
+## O144. A relation the request cone derives is written empty as an output
+
+**Seen (2026-11-08, t25).** `bootstrap.rr` first declared `p0_resolved` as an output. It is in the cone of `load`
+requests (a load is asked from it), and its output table was written empty, though the run had the rows. The cross
+path holds back cone relations that are outputs and expects them to be read from their table
+(`corpus.rs`, `held.extend(cone.reads … !outputs_of(r))`); the table is not filled.
+
+**Worked around.** `bootstrap.rr` outputs copies (`p0_include`, `p0_missing`, `p0_absent`) that no request reads.
+
+**Closure:** a cone relation declared `.output` is written with its rows, and `bootstrap.rr` drops the copies.
+
+## O145. A per-file relation with no node column is lost for documents a `load` brings in
+
+**Seen (2026-11-08, t25).** A loaded document's rows of the per-file relations the cone reads are found by its
+node range (`corpus.rs`, the `rr_load_new` join on the relation's first location column). A per-file relation
+whose columns are all symbols and numbers (`p0_names(f, at, name)`) has no location, so a loaded module's
+`#include`s did not reach the cone: phase 0 stopped after the first level.
+
+**Worked around.** `p0_names` and `p0_declares_doc` carry the node `i` as their first column.
+
+**Closure:** the per-file rows of a loaded document are found by the document they were derived from (the chunk
+builder knows it), so a relation needs no node column; or the engine refuses such a relation with a message.
+
+## O146. Tests against the shared default tape cache wait on its atoms lease
+
+**Seen (2026-11-08, t25).** `$TMPDIR/rerail-tape-cache.sqlite` (425 MB) is shared with other sessions. Each phase-0
+run takes the atoms lease, and while another process holds it a test waits (`LEASE_WAIT`, 60 s); a run of
+`logic::rr::` took minutes against seconds on an isolated store (`RERAIL_TAPE_CACHE=<own path>`). Phase-0 runs take
+no corpus session (a session held across the nested run deadlocked against the lease).
+
+**Closure:** the lease is held only across the atoms write, not the run; or tests default to a per-process store.
+
+## O147. Each phase-0 run costs about 0.25 s, paid once per seed set
+
+**Seen (2026-11-08, t25).** A run of `bootstrap.rr` over one text with includes costs about 0.25 s CPU when nothing
+is kept. Callers that resolve programs one at a time pay it each time: `rule_syntax_files_pass_check_rr` took about
+1,300 such runs until it asked for all its files in one (`phase0::graphs`). The pack loader and the corpus run batch
+already. A process keeps each seed's graph while its modules' stats hold.
+
+**Closure:** every caller that resolves more than one program batches its seeds, or a run's fixed cost (planning
+`bootstrap.rr`, opening the store) is below 50 ms.
+
+## O-artifact-entries. An artifact is one digest, so one edit makes all of it stale
+
+Decision 0095 §2. `test_collection`'s inputs are `**/*.py`: after any edit the artifact is stale everywhere, and
+locally it is never fresh again. **Closure:** the v2 envelope with entries, each with its own digest and status;
+`facts-stamp` writing entries; a stale entry withholding and making Unknown only its rows' places; a test where one
+edited key file stales one entry.
+
+## O-artifact-digest-p0. Artifact digests walk and hash the tree beside phase 0
+
+Decision 0095 §3. `inputs_digest` walks the root and hashes every matching file on every run and in every cutoff
+check, and it hashes git blob ids where phase 0 keys content by sha256. **Closure:** digests over phase 0's
+content sources, no read of an unchanged file on a warm run (counted by the observer), and stamp and run agreeing.
+
+## O-artifact-store. One stamp per artifact, lost on a branch switch
+
+Decision 0095 §4. **Closure:** stamped entries in the store by `(artifact, key, digest)`, absorbed from the facts
+directory; a revert finds its old stamp; least recently used entries removed within the disk budget.
+
+## O-artifact-imports. An entry's inputs are globs, not its imports
+
+Decision 0095 §2. **Closure:** an entry's digest as a join over its import closure, once phase 0's module graph is
+a phase output (t24, "not built").
+
+## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
+
+Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
+
+**Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
+model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
+tree; `test-budget` counting with it, the artifact optional, `collect_disabled` reported as `collection_disabled`.
+**Measured (2026-11-08, pinned corpus, against `notes/t13/truth-full.json`).**
+
+| Scope | Files exact | Total (pytest 14,449; model 13,610) | CPU |
+|---|---:|---:|---:|
+| `conform/` and the root's files (1,418 files) | 1,120 of 1,143 | 13,515 | 327 s user + sys, load 12–17 |
+| the same plus `data_layer_testing/`, on the five directories that differed (394 files) | 143 of 145 (the model: 145) | | 63 s |
+
+With `conform/` alone, all eleven files where the rules and the model differ read a name from outside it: a case
+list (`READ_PERMISSION_SCENARIO_KEYS`), a decorator that replaces a class with a function (`requires_capabilities`),
+or an enum. `data_layer_testing/` holds the first two; `test-budget` reads it. The two files left read enums of
+`data_layer` itself (`DelegationCapability`, `BranchTipMaterialization`), which the scope leaves open.
+
+**Measured (2026-11-09), `test-budget`'s scope** (`conform/`, `data_layer_testing/`, the root's files; 1,601
+files): 1,127 of 1,143 exact, total 13,585; 262 s user + 4.6 s sys, load 90–130. The four files where the rules and
+the model differ read an enum defined outside the scope (`MatchProducerFamily` in `l1470_matching_contracts/`,
+`BranchTipMaterialization` and two more in `data_layer/`); each is reported open and counted as 1.
+
+**Beyond the model (2026-11-09).** Lists a function builds by `append`/`extend`/`+=` under `for` loops, helpers
+with several returns (the largest), function-local names, and `range` bounds given as `len(x)`.
+`test_speculative_publication_scenarios.py` (pytest 66, model 13) and `test_branches.py` (18, model 8) are now
+exact. The same scope run with them: 1,129 of 1,143 exact, total 13,648; 208 s user + 4.2 s sys, load 20–60; the
+only files below the model are the four enum files above. A list built by introspection (`test_phase1_case_matrix.py`, 819) has no length; it stays in
+`collect_disabled`.
+
+**The enums need only their documents (2026-11-09).** A scoped run of the four files, plus each enum's re-export
+chain (`data_layer/matching.py` → `l5250_matching/__init__.py` → `l1470_matching_contracts/graph_producer_models.py`;
+`data_layer/versioned_schema.py` → `l7000_versioned_schema/compatibility.py` → `…/versioned_schema.py`;
+`l1500_llm/delegation_consent.py`), counts all four exactly (22, 12, 25, 40): no rule change.
+
+**Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Through the `values` phase
+(O-names-cost) the four enum files count exactly on a 212-file root; over the whole workspace that waits on the
+phase's cold cost. Expected over the whole
+workspace: 1,133 of 1,143, once names over the whole workspace fit the budget (O-names-cost). Known difference from
+the model: a nested Test class reached through two parents counts once (the owner is a node, not a path).
+
+## O-names-cost. Name resolution costs about 75 ms of CPU per file
+
+**Seen (2026-11-08).** `python/pytest-collect.rr` over the 9,010-file data layer ran past 9 min of CPU and 1.8 GB,
+and was stopped. On the 133-file sample, `resolve_export` alone costs 15 s of the run's 28 s (debug build), and
+nearly all of that is `qn`, which reads `look`: the LEGB walk of every name reference (`type_checking_block` reads
+`qn`, and `import_time` negates it). Every check that reads `sym_of` pays this.
+
+The run over `conform/` (1,418 files) also peaked at 3.8 GB RSS, in the parse workers and the cross-file part,
+against the 1 GB budget.
+
+**Progress (2026-11-09).** `python/pytest-collect.rr` no longer reads `sym_of`: its own lookup (`pc_sym`) is asked
+only for the expressions the count needs (`pc_symq`), at module level, through `live_def`, `live_asg`, `ibind` and
+the from-import chain, with no LEGB walk. The 133-file sample went from 28 s to 10.4 s. Rewriting the lookup over
+`parsed_in` guest parses was slower (68 s, and past 2 min) and was dropped. The library-wide `sym_of` is still
+whole-relation: `export_query(q) :- qn(_, q)` in `imports.rr` and `resolve_export`'s identity rule ask for every
+name.
+
+Memory, on the 1,601-file run of `test-budget`'s scope: the engine reports a peak RSS of 3,770 MB in the parse and
+batch workers and the cross part, and 1,184 MB in the local part, against the 1 GB budget. Not yet looked into.
+(`/usr/bin/time -l`'s "peak memory footprint", 1,245,496, is the same in every run, the smallest included: it is
+the wrapper's, in bytes, not the engine's.)
+
+**Spikes (2026-11-09) toward reading the enums' documents.**
+- A, the whole workspace (no scope): stopped at 20 min, 527 s user + 11 s sys at load 108–150, unfinished.
+- B, loads along import chains (`load` inside the fixpoint): the cone of requests may read per-file exports only
+  ("reads base relation node"), so the node-level demand cannot drive loads. A per-file, symbol-keyed demand
+  (the names a document's decorators import, chained over `ifrom`) loaded 76 documents for the four enum files
+  and counted all four exactly; each loaded document ran the whole per-file part (22.7 s over 285 files).
+- `struct` (P1) costs about 3 ms per file on the 133-file sample against 72–80 ms for `pytest-collect`; over the
+  whole workspace it did not finish in 115 s at load 80.
+- Direction (to decide): module- and class-level values as written in P1, evaluated across files after P2
+  (`len`, `int`, enum members, by symbol); `pytest-collect` reads them for imported names, and runs on the
+  checked files only.
+- `values` prototyped (`cabb761ad`; typing/programs/values.rr, exports `len(q, n)`): exact on the fixture in both
+  scopes. Over the whole workspace (2026-11-09, the four enum files checked, struct and values over all 9,010
+  documents) it did not finish in 1,500 s: 1,803 s user + 33 s sys, load 11–33 at the start and about 20 at the
+  end. The values phase's store was still being written when it stopped, so the four counts were not read.
+- Profiled (2026-11-09) on samples of the workspace's directories (149, 601 and 2,063 files; 10.4 MB at 601,
+  33.6 MB at 2,063, against 137.9 MB in all), each phase alone (`struct` reused from the run before through the
+  phase record), CPU user + sys at load 8–23. Two rules grew with the square of the workspace, both fixed:
+  - `v_name` of an assigned name joined from `struct__binds` (every assignment in the workspace: 15,820 rows at
+    601 files) to the chunk's wanted names, 1.57 M pairs for 239 matches; the planner priced `v_nq` at 0.35 rows.
+    Now the name and its module come first (`v_idn`), and the binds are probed on both. `v_dom`, the whole
+    workspace's symbols remade in every chunk, is gone: an attribute's symbol is checked against struct's three
+    exports directly.
+  - In `python/lengths`: `len_num` (0..100000) counted up by a recursion of 100,001 steps in every chunk, now one
+    join of digits; `len_plain`'s count made a view of every child edge (295 k rows for 116 lists), now only the
+    asked lists'; parentheses went through `python/ast`'s `unparen`, made for every node, now one `child` step as
+    asked. 149 files: 7.7 s to 5.2 s. Fixture and outputs unchanged (325 rows at 149 files, 1,573 at 601).
+- After the fixes both phases are linear: from 601 to 2,063 files `struct` took 27.8 s to 122 s and `values`
+  19.8 s to 66 s, every span growing alike (parsing too). Over the whole workspace that is about 500 s and 270 s.
+  Half of `values` (34.6 of 66 s) is parsing and projecting its documents again, as every phase does; then
+  `len_num` (0.24 s a chunk, now the domain's join), `posarg` (every call's arguments) and `v_asg`. Peak RSS 578 MB.
+  The tape is memoized across phases and runs (the tape cache): with it on, three phases over 596 files read
+  1,788 documents and parsed 591 (1.75 s). What each phase repeats is the tape's restore (0.7 ms a document), its
+  facts (2 ms) and the batch's projection, the largest; the projection's string table (SipHash) and three
+  per-node `wants` lookups took a fifth to a quarter of it, fixed (`bc4c60651`). Every measurement above and the
+  1,500 s run had the tape cache off (`RERAIL_TAPE_CACHE=off`).
+  `values` keeps reading every document: a phase's exports are keyed by its own inputs, so any reader reuses them;
+  reading only what one reader's documents import would key them by the reader.
+- Whole workspace, tape cache on, cold (2026-11-09 15:03, load 93–138): `struct` ended and was recorded at 13
+  minutes (218,783 granules; tapes for 8,986 files); `values` had not ended at 1,800 s (1,327 s CPU). A warm rerun
+  reuses both.
+- The values phase as `test-budget` would read it, on a root of 212 files (2026-11-09, load 31–35): the four enum
+  files, their conftests, each enum's re-export chain (19 files), and `data_layer_testing/` and the root's files
+  (`pcE.rr`'s scope). `struct` and `values` run over all 212; `pytest-collect` reads `values__len`. All four exact
+  (22, 12, 25, 40), none open. Cold 25.0 s CPU (318 MB peak RSS); phases reused 13.9 s; with the per-file memo on,
+  19.4 s then 5.6 s. `test_fts_versioned_isolation.py`'s 12 needs `data_layer_testing`: its `TestFTSBranchIsolation`
+  is replaced by a function (`@requires_capabilities`, `pc_replaced`); without the decorator's document the class
+  counts 21 more (its fixture's 7 scenarios, now read through `values`, times three tests).
+- What a cold phase spends, measured on samples (237, 591 and 2,063 files), and fixed (2026-11-09; outputs
+  compared each time: struct's four exports on 237 files, `values`' 1,379 rows on 591, the fixture's counts):
+  - The per-file memo's lookup decoded every plan ever run on the file (zstd), 0.86 ms a lookup; it now reads the
+    run's row alone, 0.2 ms (`17c00cc9c`).
+  - `py_dead_at` (python/conditions) joined `py_dead` with every child edge in the cross part (4.3 M rows at 2,063
+    files, 6.2 s); its descent is now per file below guarded branches only (`8e3f8ee4b`): struct 14.35 s to 11.84 s
+    on 237 files.
+  - `pdef` joined `nearest` in the cross part, which then held and indexed every node's nearest scope (352 k rows
+    and two 150 ms index builds at 237 files, 4.7 s and 2.4 s of the 2,063-file cross part); the lookup is now per
+    file (`pdef_at`, `34f45e49c`): struct's cross part 0.63 s to 0.33 s on 237 files.
+  - `len_num`, 100,001 numbers derived in every chunk to bound a length, is gone: the bound is `t >= 0, t <= 100000`,
+    which the cycle check now takes as finite (`34a2dc514`). `values`' rules on 591 files: 8.86 s to 6.58 s.
+  - What a cold phase still spends on 591 files (load 120–150): `struct` 26 s CPU (rules 7.2 s, projection 8.1 s,
+    tape restore and facts 3.3 s, parse 1.9 s); `values` 23.5 s (rules 6.6 s, projection 4.1 s, tape and facts
+    4.2 s). Linear in the documents, so over the whole workspace about 400 s and 350 s of CPU cold. A warm run
+    reuses each phase from its record.
+- Whole workspace, cold, 4 threads (2026-11-09 22:13, `44d7dac3f`, load 35–88): `struct` then `values` over 9,024
+  files finished: 861 s wall, 966 s CPU (899.6 user + 66.1 sys), 36,643 `lens` rows. Peak RSS 3,142 MB, three times
+  the budget. Two causes found, not yet fixed:
+  - Memory was above 1 GB from the start, so the chunk sizer shrank every chunk to its least (8,192 nodes): 2,028
+    chunks, against 4 for 237 files. Every per-chunk cost is paid 2,028 times.
+  - `v_enum` (`values.rr:77`) and its count (`rr_agg63`) read struct's exports alone, no document, yet run in the
+    per-file part, so each chunk derives them again over all of struct's exports: 116.6 M `struct__member` rows for
+    one answer, 148 s and 35 s. Relations made from facts alone are left to the split (`constants::foldable` skips
+    `constant_relations`), which derives them per chunk; cheap for small facts, not for a phase's exports.
+  - The rest: per-file rules 477 s in all, projection 149 s, tape and facts 137 s, cross part 120 s.
+- A main program over phase exports alone (`defs(q, k) :- struct__def(q, k)`) no longer builds documents
+  (`58a5243a1`): 480 builds to 243 on 237 files for `struct`, 726 to 489 for `values`.
+- Spike (2026-11-09, `RERAIL_SPIKE_PROJECTION`, `syntax/stored_spike.rs`): each document's projected relations
+  kept on disk per (document, relation), so a later phase or run reads them instead of rebuilding them. On 591
+  files, `struct` and `values` (1,197 builds, load 102–120): a build now costs 9.5 ms a document (tape restore
+  0.75, facts 2.1, projection 5.8, text tests 0.85); reading back every relation the phases read, views included,
+  2.0 ms (SQLite, zstd and varint decode, the relations remade). 12 MB on disk for the 591 files (about 20 KB a
+  document), against the tape cache's 52 MB; writing is 0.5 ms a document. Open: both phases read the per-node
+  axes (`rr_nearest_scope`, `rr_inside_*`), computed from each document's tree as asked, so a phase that reads
+  them still needs the facts unless the axes run over stored tree columns; joins over stored relations against
+  views over facts were not compared.
+
+**Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
+imported from outside is then open, counted as 1.
+
+**Closure:** the walk computed only for the references a rule asks about (demand), or `qn` without the walk for
+names no import binds; a run of `sym_of` over the data layer within the run and memory budgets.
+
+## O-git-tracked. `git_tracked` is declared and never made
+
+**Status:** closed (2026-11-08, `3cb7d0d0a`). `@git_tracked(path)` is a functor over the index phase 0's Git
+provider reads (`strings/git.rs`), read again when the index file's digest moves; the test stages an add and reads
+it again. Decision 0095 §6.
+
+## O-git-merge-base. `git_rev` is declared and never made; `--base` is the caller's
+
+**Status:** closed (2026-11-08, `3cb7d0d0a`). `git_rev("head", …)` and `git_rev("base", …)`, the merge base of
+`HEAD` and `--base` by gix's `merge_base`, are made when a rule reads `git_rev`; `at="base"` reads at the merge base;
+the whole-run cutoff records both as a read (`git_rev`, with the index as `git_index`) and checks them again. A bad
+`--base` gives `input_error("git_rev", "unreadable", …)`. Decision 0095 §6.
+
+
+## O-stored-patterns. A stored prepared program lost its AST patterns, and its memo kept the result (fixed)
+
+**Seen (2026-11-08)** as `pattern_literals_match_and_bind_their_metavariables` failing on a warm shared tape cache
+and passing on an empty one. Every finding was `Plain`, none `Cut`: the run had no `ast_match` rows.
+
+- `program_facts` writes a program's `rx_spans` and not its `ast_patterns`. A prepared program read back from the store
+  (`prepared::lookup`) therefore asks the batch for no pattern matches.
+- A run that reuses the prepared program and finds no file-local memo row makes the document's facts without
+  `ast_match`, and memoises that result. `program_digest`, the memo's key, did not include the patterns, so the result
+  matched the key of a correct run, and later runs read it.
+- To reproduce on an empty cache: run the test, delete `facts_results` rows with `fact_schema = 5`, run it again.
+
+**Fix:** `ast_pattern(p, s)` in the program facts, read back into `ast_patterns`
+(`ast_patterns_read_back_as_written`). `program_digest` now also hashes `rx_spans` and `ast_patterns`.
+
+**Still open:** `Program::answers` has no relation in the program facts either. Check whether a stored prepared
+program needs it. **Closure:** every `Program` field a run reads after `prepared::lookup` either round-trips through
+the program facts or is derived from what does, and a test compares a read-back program against the original.
+
+## O-replay-intermittent. The replay gate gave 3988 248 243 once
+
+**Seen (2026-11-08).** `converted_rules_give_the_recorded_findings` gave `3988 248 243 0` once and `3988 303 298 0`
+on the next run, with the same code. Suspect: the shared default tape cache (O146), which other sessions write.
+After the merges of 2026-11-08 (`0078ba091`, with the collection rules), 2026-11-09 00:15: `3988 303 298 0`, 55.6 s
+CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
+**Closure:** the cause found, or twenty runs on an isolated store all `3988 303 298 0`.
+
+## O-parse-single-splat. A list of one `*` element loses its `list_splat` node
+
+**Seen (2026-11-09).** In `A = [*range(4)]` the list's one child is a `call` whose text is `*range(4)`: no
+`list_splat` node. `[1, *range(2, 5)]` has its `list_splat`. `python/lengths` then counts `[*range(4)]` as one
+element. Not yet traced (parser or tape); the `values` fixture uses `[0, *range(4)]`.
+
+**Closure:** `[*x]` and `(*x,)` keep their `list_splat` node, with a test.

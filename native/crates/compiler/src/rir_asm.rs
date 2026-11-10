@@ -444,6 +444,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     program.output_delays.resize(k, u8::MAX);
                     program.output_delays.push(own.unwrap_or(u8::MAX));
                 }
+            } else if first == "rows" {
+                // `block N rows C P S`: a row program, before its operations.
+                if !program.ops.is_empty() || program.rows.is_some() {
+                    return Err(format!("block {at} rows after the operations"));
+                }
+                let (columns, params, sets): (u16, u16, u16) = (line.number("")?, line.number("")?, line.number("")?);
+                program.rows = Some(crate::block::RowShape { columns, params, sets });
             } else if first == "delay" {
                 // `block N delay D`: the outputs are D bytes late (`crate::block::BlockProgram::delay`).
                 let d: u64 = line.number("")?;

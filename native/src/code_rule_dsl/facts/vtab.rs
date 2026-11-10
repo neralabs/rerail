@@ -39,7 +39,8 @@ fn failure(message: &str) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.to_owned().into())
 }
 
-/// A relation of integer columns, stable while SQL cursors read it.
+/// A native relation with integer lookup columns, stable while SQL cursors read it.
+/// Text result columns stay in SQLite's filters and never enter integer probes.
 /// A mutable owner must close every reader before changing rows, then refresh its binding
 /// and planner estimates. Most producers expose immutable snapshots.
 pub(crate) trait RowCells: Send+Sync {
@@ -59,6 +60,8 @@ pub(crate) trait Source: Send + Sync {
     fn lookup_primary_batch(&self, _values:&[Vec<i64>])->Option<Vec<usize>> {None}
     /// Pin a stable version before a SQL cursor starts. Immutable sources need no copy.
     fn frozen(&self) -> Option<Arc<dyn Source>> { None }
+    /// A stable data revision for this source identity; None disables cross-gate reuse.
+    fn revision(&self) -> Option<u64> { None }
     fn cell(&self,row:usize,column:usize)->Value { Value::Integer(self.value(row,column)) }
     fn row_id(&self,row:usize)->i64 { row as i64+1 }
     fn writable(&self)->bool {false}
@@ -68,8 +71,16 @@ pub(crate) trait Source: Send + Sync {
     fn write(&self,_old:Option<i64>,_new:Option<i64>,_values:Option<Vec<Option<i64>>>,_replace:bool,_ignore:bool)->Result<i64> {
         Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),None))
     }
+    fn text_column(&self, _column: usize) -> bool { false }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
+    /// Row `row`'s values of `columns`, into `out`: one value at a time by default; a source that finds a row's
+    /// place first (a view of a batch's documents) finds it once.
+    fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        for (o, &c) in out.iter_mut().zip(columns) {
+            *o = self.value(row, c);
+        }
+    }
     fn estimated_len(&self) -> usize {
         self.len()
     }
@@ -119,6 +130,11 @@ pub(crate) trait Source: Send + Sync {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         None
     }
+    /// How many rows hold each value `v` in column `c`, for each `(c, v)` of `wanted`, where the source keeps them
+    /// (its rows do not change): `None` when the caller counts them.
+    fn value_counts(&self, _wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
+        None
+    }
     /// Why rows could not be made, where a source makes them on demand and making them failed (a
     /// stored frame that does not decode). The statement reading it fails with this message rather
     /// than reading the rows as absent.
@@ -166,7 +182,7 @@ impl Binding {
         *self.current.write() = self.schema.clone();
     }
     pub fn set(&self, source: Arc<dyn Source>) -> Result<()> {
-        if self.schema.columns != source.columns() || self.schema.writable!=source.writable() {
+        if self.schema.columns != source.columns() || self.schema.writable!=source.writable() || self.schema.text.iter().enumerate().any(|(c,t)| *t!=source.text_column(c)) {
             return Err(failure("native binding schema changed"));
         }
         *self.current.write() = source;
@@ -180,10 +196,12 @@ impl Binding {
     }
 }
 struct Metadata {
+    text: Vec<bool>,
     columns: Vec<String>,
     writable: bool,
 }
 impl Source for Metadata {
+    fn text_column(&self,c:usize)->bool { self.text[c] }
     fn writable(&self)->bool {self.writable}
     fn columns(&self) -> Vec<String> {
         self.columns.clone()
@@ -255,7 +273,7 @@ impl Modules {
             return binding.set(source);
         }
         let binding = Binding {
-            schema: Arc::new(Metadata { columns: source.columns(), writable:source.writable() }),
+            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns: source.columns(), writable:source.writable() }),
             current: Arc::new(parking_lot::RwLock::new(source)),
             stats: Arc::new(Counters::default()),
         };
@@ -405,13 +423,13 @@ unsafe impl<'a> VTab<'a> for Table {
             let code=unsafe {rusqlite::ffi::sqlite3_vtab_config(db.handle(),rusqlite::ffi::SQLITE_VTAB_CONSTRAINT_SUPPORT,1)};
             if code!=rusqlite::ffi::SQLITE_OK {return Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code),None));}
         }
-        let columns: Vec<String> = binding.schema.columns.iter().map(|c| format!("{} INTEGER", quote(c))).collect();
+        let columns: Vec<String> = binding.schema.columns.iter().enumerate().map(|(i,c)| format!("{} {}", quote(c), if binding.schema.text[i] {"TEXT"} else {"INTEGER"})).collect();
         let sql = CString::new(format!("CREATE TABLE x({})", columns.join(","))).map_err(|_| failure("invalid native columns"))?;
         Ok((Cow::Owned(sql), Self { base: rusqlite::ffi::sqlite3_vtab::default(), binding, connection:unsafe {db.handle()} }))
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         let source = self.binding.current();
-        let equal=info.constraints().enumerate().filter(|(i,c)|c.is_usable()&&c.column()>=0&&c.operator()==IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ&&info.collation(*i).is_ok_and(|v|v=="BINARY")).map(|(i,c)|(i,c.column() as usize)).collect::<Vec<_>>();
+        let equal=info.constraints().enumerate().filter(|(i,c)|c.is_usable()&&c.column()>=0&&!source.text_column(c.column() as usize)&&c.operator()==IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ&&info.collation(*i).is_ok_and(|v|v=="BINARY")).map(|(i,c)|(i,c.column() as usize)).collect::<Vec<_>>();
         let order=info.order_bys().map(|o|(o.column() as usize,o.is_order_by_desc())).collect::<Vec<_>>();
         if !order.is_empty()&&equal.iter().all(|(i,_)|info.is_in_constraint(*i).is_ok_and(|b|!b))&&source.ordered(&equal.iter().map(|(_,c)|*c).collect::<Vec<_>>(),&order) {
             for (arg,&(i,_)) in equal.iter().enumerate(){info.constraint_usage(i).set_argv_index((arg+1) as i32);}
@@ -456,6 +474,7 @@ unsafe impl<'a> VTab<'a> for Table {
             if !c.is_usable()
                 || c.operator() != IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
                 || c.column() < 0
+                || source.text_column(c.column() as usize)
                 || !info.collation(i).is_ok_and(|v| v == "BINARY")
             {
                 continue;
@@ -888,6 +907,7 @@ impl Relation {
     }
 }
 impl Source for Relation {
+    fn revision(&self)->Option<u64> {Some(0)}
     fn columns(&self) -> Vec<String> {
         self.columns.clone()
     }

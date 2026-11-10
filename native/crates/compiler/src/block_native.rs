@@ -79,6 +79,11 @@ pub enum BlockInst {
     /// A fixed point's carry (`block::BlockOp::Carry`): its initial value's word in a block's
     /// first round, its next's after.
     Carry(u16),
+    /// A row program's comparison (`block::BlockOp::Cmp`): 64 rows' lanes compared, one bit
+    /// each.
+    Cmp { col: u16, op: crate::block::CmpOp, rhs: crate::block::Rhs, width: u8 },
+    /// A row program's set test (`block::BlockOp::Bit`): 64 rows' values looked up in a set.
+    Bit { set: u16, col: u16 },
 }
 
 impl BlockInst {
@@ -124,6 +129,8 @@ impl BlockNative {
                 BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
                 BlockOp::Position(j) => BlockInst::Position(j),
                 BlockOp::Carry(a) => BlockInst::Carry(a),
+                BlockOp::Cmp { col, op, rhs, width } => BlockInst::Cmp { col, op, rhs, width },
+                BlockOp::Bit { set, col } => BlockInst::Bit { set, col },
             })
             .collect();
         Self {

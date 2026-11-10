@@ -167,7 +167,7 @@ fn bag_storage_ignores_outer_mapping_but_preserves_value_and_effect_barriers() {
     other.lookup=vec![E::Column(999)];
     assert!(other.same_bag(&a.scalar_storage.bags.inputs[1]).proven);
     assert!(!other.compatible(&a.scalar_storage.bags.inputs[1]).proven);
-    other.dependent=true;assert!(!other.same_bag(&other).proven);
+    other.dependent=true;assert!(other.same_bag(&other).proven);assert!(!other.compatible(&other).proven);
     let mut sum=a.scalar_storage.bags.inputs[1].clone();sum.kind=Kind::Sum;
     let mut other_value=sum.clone();other_value.value=E::Column(2);
     let analysis=scalars::analyze_bags(vec![sum, a.scalar_storage.bags.inputs[0].clone(),other_value]);
@@ -197,4 +197,39 @@ fn cross_rule_counts_keep_local_value_lookups_when_stores_are_shared() {
     let a=ProgramAnalysis::analyze(&p);
     assert_eq!(a.scalar_storage.bags.families[0].members,vec![0,1]);
     assert_eq!(a.scalar_storage.bags.families[1].members,vec![2,3]);
+}
+
+#[test]
+fn disjoint_literal_tags_prove_unique_union_support_and_overlap_keeps_counts() {
+    let program = rr::parse(".decl a(x:number)\n.input a\n.decl tagged(tag:number,x:number)\ntagged(1,x) :- a(x).\ntagged(2,x) :- a(x).\n.output tagged\n").unwrap();
+    let analysis=ProgramAnalysis::analyze(&program);
+    assert!(analysis.support_uniqueness["tagged"].proven);
+    let overlap=rr::parse(".decl a(x:number)\n.input a\n.decl tagged(tag:number,x:number)\ntagged(1,x) :- a(x).\ntagged(1,x) :- a(x).\n.output tagged\n").unwrap();
+    assert!(!ProgramAnalysis::analyze(&overlap).support_uniqueness["tagged"].proven);
+    assert!(!scalars::maintenance_equivalent(true,false).proven);
+    assert!(!scalars::maintenance_equivalent(false,true).proven);
+    assert!(scalars::maintenance_equivalent(true,true).proven);
+}
+
+#[test]
+fn dependency_lookup_effects_do_not_escape_into_shared_bag_proofs() {
+    use scalars::{Scalar,Kind,Expression as E};
+    let scalar=Scalar {kind:Kind::Sum,source:"events".into(),keys:vec![E::Column(0)],predicates:vec![],lookup:vec![E::Opaque("dependent checked lookup".into())],value:E::Column(1),dependent:true,non_null:true};
+    assert!(scalar.same_bag(&scalar).proven);
+    assert!(!scalar.compatible(&scalar).proven);
+    let mut nullable=scalar.clone(); nullable.non_null=false;
+    assert!(!nullable.same_bag(&nullable).proven);
+    let mut opaque=scalar.clone(); opaque.predicates.push(E::Opaque("callback".into()));
+    assert!(!opaque.same_bag(&opaque).proven);
+}
+
+#[test]
+fn total_boolean_values_can_share_and_checked_arithmetic_keeps_its_contract() {
+    use scalars::{Scalar,Kind,Expression as E};
+    let scalar=Scalar {kind:Kind::Sum,source:"events".into(),keys:vec![E::Column(0)],predicates:vec![],lookup:vec![E::Column(0)],value:E::Apply("Greater".into(),vec![E::Column(1),E::Integer(0)]),dependent:false,non_null:true};
+    assert!(scalar.value.non_null());
+    assert!(scalar.compatible(&scalar).proven);
+    let mut checked=scalar;checked.value=E::Apply("Add".into(),vec![E::Column(1),E::Integer(1)]);
+    assert!(!checked.value.non_null());
+    assert!(!checked.compatible(&checked).proven);
 }

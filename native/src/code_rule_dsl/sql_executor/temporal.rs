@@ -97,55 +97,28 @@ pub(super) fn delta(
         )
     });
     let _cpu = super::super::logic::profile::span(|| "native version difference".into());
-    let (plus, minus, visited) = old.difference(new);
-    w.version_nodes += visited;
-    let convert = |rows: Vec<Vec<Option<i64>>>| -> Result<Vec<Vec<i64>>> {
-        rows.into_iter()
-            .map(|r| {
-                r.into_iter()
-                    .map(|v| v.ok_or_else(|| error("null in temporal fact relation")))
-                    .collect()
-            })
-            .collect()
-    };
-    let plus = convert(plus)?;
-    let minus = convert(minus)?;
-    if let Some(operation) = operation {
-        operation.finish(plus.len() + minus.len());
+    // Empty and identical versions have an exact difference without a row walk.
+    // Share the immutable roots instead of decoding, hashing and indexing them again.
+    if old.len() == 0 || new.len() == 0 || old.same(new) {
+        let plus = w.output_table(old.columns().len())?;
+        let minus = w.output_table(old.columns().len())?;
+        let same = old.same(new);
+        let empty = old.empty_like();
+        let added = if same { &empty } else { new };
+        let removed = if same { &empty } else { old };
+        let store = w.versions.ok_or_else(|| error("temporal rows require native storage"))?;
+        if store.clone_scratch(&plus, added)? && store.clone_scratch(&minus, removed)? {
+            w.version_nodes += 1;
+            if let Some(operation) = operation { operation.finish(added.len()+removed.len()); }
+            return Ok(Delta {plus,minus,inserted:added.len() as u64,deleted:removed.len() as u64});
+        }
     }
-    let (inserted, deleted) = (plus.len() as u64, minus.len() as u64);
-    Ok(Delta {
-        plus: frozen_rows(w, old.columns().len(), plus)?,
-        minus: frozen_rows(w, old.columns().len(), minus)?,
-        inserted,
-        deleted,
-    })
-}
-
-fn frozen_rows(w: &mut Work<'_>, width: usize, rows: Vec<Vec<i64>>) -> Result<String> {
-    let name = w.output_table(width)?;
-    let n = rows.len();
-    let operation = w.profiler.map(|p| {
-        p.operation(
-            "bulk delta storage",
-            ("sql-extension", 0),
-            0,
-            vec![("rows".into(), n as i64)],
-        )
-    });
-    let _cpu = super::super::logic::profile::span(|| "bulk delta storage".into());
-    w.versions
-        .ok_or_else(|| error("temporal rows require native storage"))?
-        .load_scratch(
-            &name,
-            rows.into_iter()
-                .map(|r| r.into_iter().map(Some).collect())
-                .collect(),
-        )?;
-    if let Some(operation) = operation {
-        operation.finish(n);
-    }
-    Ok(name)
+    let plus=w.output_table(old.columns().len())?;
+    let minus=w.output_table(old.columns().len())?;
+    let (inserted,deleted,visited)=w.versions.ok_or_else(||error("temporal rows require native storage"))?.difference_scratch(&plus,&minus,old,new)?;
+    w.version_nodes+=visited;
+    if let Some(operation)=operation {operation.finish(inserted+deleted);}
+    Ok(Delta{plus,minus,inserted:inserted as u64,deleted:deleted as u64})
 }
 
 #[derive(Clone)]
@@ -155,15 +128,26 @@ pub(super) struct Trace {
     prefix: String,
     emitted: Arc<plan::emit::Emitted>,
     relations: BTreeMap<String, Relation>,
-    steps: Vec<(schedule::Step, Query)>,
+    steps: Arc<Vec<(schedule::Step, Query)>>,
     after: BTreeSet<(u32, u32)>,
     frames: Vec<Frame>,
     limit: u32,
 }
 
 impl Trace {
+    pub(in crate::code_rule_dsl::sql_executor) fn retained_explanations(&self) -> Vec<Value> {
+        self.templates.iter().flat_map(|(id,p)|p.operator.run.reductions.iter().flat_map(|s|s.values()).map(move |state| {
+            let mut value=state.explain();
+            value["operator_relation"]=value["relation"].clone();
+            value["relation"]=json!(self.steps[*id].0.output);
+            value
+        })).collect()
+    }
+    pub(in crate::code_rule_dsl::sql_executor) fn scalar_storage_explanations(&self) -> Vec<Value> {
+        self.templates.values().flat_map(|p|p.operator.run.reductions.iter().flat_map(|s|s.storage.iter()).map(|s|json!(s))).collect()
+    }
     pub(in crate::code_rule_dsl::sql_executor) fn explain(&self) -> Value {
-        json!({"scalar_storage_boundary":"Wave gates retain separate input versions and maintenance histories","frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"operators":f.operators.iter().map(|op|json!({"active":op.active,"phase_eligible":op.phase_eligible,"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+        json!({"execution_shape":if self.whole {"One retained relation graph, including checked projections"} else {"Retained recursive component"},"public_storage":if self.whole {"SQL result tables; publish actual deltas from retained roots"}else{"SQL-owned component results"},"phase_policy":"Operator-specific boundaries preserve phase composition for compatible neighbors","scalar_storage_boundary":"Wave gates reuse transitions only for equal input versions, prior summary roots, and pending journals", "summary_transition_proof":crate::code_rule_dsl::logic::analysis::scalars::maintenance_equivalent(true,true),"frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"operators":f.operators.iter().map(|op|json!({"active":op.active,"phase_eligible":op.phase_eligible,"boundary":if op.phase_eligible {"Composed support and fold"}else{"Separate retained operator evaluation; shared wave publication"},"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
     }
     pub fn stable_phases(&self, program: &schedule::Program) -> bool {
         self.whole
@@ -507,7 +491,7 @@ pub(super) fn prepare(
             prefix: format!("__it{namespace}_s{stratum}"),
             emitted: e.clone(),
             relations,
-            steps,
+            steps: Arc::new(steps),
             after,
             frames: vec![],
             limit: run.max_waves,

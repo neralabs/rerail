@@ -7,8 +7,10 @@ pub(in crate::code_rule_dsl) mod analysis;
 // Nothing emits SQL through them until the planner (Phase 6) does.
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod front;
+pub(in crate::code_rule_dsl) mod lanes;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod answers;
+pub(in crate::code_rule_dsl) mod liveness;
 pub(in crate::code_rule_dsl) mod magic;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod native;

@@ -1,0 +1,7 @@
+workload w3, load average 137, data load 0.07 s CPU, 13088 documents
+documents 13088, edges 105691, strongly connected components 10824, largest 2198, components of size > 1: 22
+(a) bit-row closure over the condensed DAG (10824 components, 35629 edges): 0.0031 s CPU; reach pairs between documents 29722613 (29.7 M rows, 238 MB as two u32 columns)
+(b) semi-naive per source with a hash set, every 16th source (818 sources): 0.3358 s CPU, 1837146 rows; ×16 ≈ 5.37 s for all
+(c) boolean squaring to a fixpoint (row-OR, word-parallel): 1.5567 s CPU, 5 squarings of 10824×10824
+exported cadj_bits.u64 (10824 rows × 170 words: condensed DAG, row c has the successors of component c) and comp_sizes.u32; expected document reach pairs 29722613
+total CPU 1.98 s

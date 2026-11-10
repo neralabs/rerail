@@ -4,6 +4,27 @@ use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::magic::{Options, magic_adorn, magic_sets};
 use crate::content_store::ContentStore;
 
+#[test]
+fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters() {
+    let p=parse(".decl event(k:number,id:number,g:number,v:number)\nevent(9,0,1,7).\nevent(9,1,1,7).\nevent(9,2,1,3).\nevent(8,3,1,90).\nevent(9,4,2,-2).\nevent(9,5,4,9223372036854775807).\nevent(9,6,4,1).\nevent(9,7,4,-1).\n.decl owner(g:number,v:number)\nowner(1,99).\nowner(2,99).\nowner(3,99).\nowner(4,99).\n.decl result(g:number,v:number,n:number,s:number,lo:number,hi:number)\nresult(g,v,n,s,lo,hi) :- owner(g,v), n=count : {event(9,_,g,_)}, s=sum v : {event(9,_,g,v)}, lo=min x : {event(9,_,g,x)}, hi=max y : {event(9,_,g,y)}, dead=sum z : {event(_,_,_,z)}, unused=dead.\n.decl repeated(g:number,s:number)\nrepeated(g,s) :- owner(g,_), s=sum x : {event(x,_,g,x)}.\n.output result,repeated\n").unwrap();
+    let mut outputs=Vec::new();
+    for modes in ["","program"] {
+        let path=crate::code_rule_dsl::prefilter::tests::temp();
+        let store=ContentStore::open(&path).unwrap();
+        let python=crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered=lower::lower(&p,python,&mut |s|store.intern_atoms(s).map_err(|e|Error::Plan(e.to_string()))).unwrap();
+        let db=Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty(&lowered.program),BTreeSet::new(),modes).unwrap();
+        if !modes.is_empty() {assert!(got.native.contains("result"),"scalar result must execute natively");}
+        outputs.push(got.outputs.clone());
+    }
+    assert_eq!(outputs[0],outputs[1]);
+    assert_eq!(outputs[1]["repeated"],vec!["1\t0","2\t0","3\t0","4\t0"]);
+    assert_eq!(outputs[1]["result"],vec!["1\t99\t3\t17\t3\t7","2\t99\t1\t-2\t-2\t-2","4\t99\t3\t9223372036854775807\t-1\t9223372036854775807"]);
+}
+
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
 }
@@ -705,4 +726,41 @@ captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
     let result = result.unwrap();
     assert_eq!(result.outputs["captured"].len(), 1000);
     assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
+}
+
+/// A delta probe of a recursive component prices a lookup by the share of the binding's values the column holds
+/// (containment): `fbind`'s shape, where `fcall` by `$a` (a few hundred rows, few distinct `$a`) is probed by
+/// `pv`'s many `$a`. Priced as if every probe hit, `fcall` looked dearer than `tfix` by `$k`, and the plan read
+/// `tfix` and `fgp` first (19 M rows of work for 220 in calls_cx).
+#[test]
+fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
+    let p = parse(
+        ".decl pv(a:number, k:number, v:number)\n.decl fcall(c:number, f:number, i:number, a:number)\n.decl tfix(k:number, ka:number, w:number, x:number)\n\
+         .decl fgp(f:number, i:number, ka:number, w:number, y:number)\n.decl fbind(c:number, f:number, y:number, x:number)\n\
+         fbind(c, f, y, x) :- fcall(c, f, i, a), fgp(f, i, ka, w, y), pv(a, 1, k), tfix(k, ka, w, x).\n.output fbind\n",
+    )
+    .unwrap();
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut model = Model { analysis: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+    model.stats.nodes = 450_000.0;
+    // Live counts, as a wave leaves them: rows, then distinct values by column.
+    for (rel, rows, ndv) in [
+        ("pv", 400_000.0, vec![300_000.0, 3.0, 5_000.0]),
+        ("fcall", 400.0, vec![400.0, 50.0, 5.0, 100.0]),
+        ("tfix", 550.0, vec![350.0, 50.0, 10.0, 300.0]),
+        ("fgp", 100.0, vec![50.0, 5.0, 50.0, 10.0, 20.0]),
+        ("fbind", 1.0, vec![1.0; 4]),
+    ] {
+        model.stats.card.insert(rel.to_owned(), rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    model.stats.solve(["pv", "fcall", "tfix", "fgp", "fbind"].into_iter().map(str::to_owned).collect());
+    let r = &p.rules[0];
+    let ((order, _, _), _) = model.plan_rule_explained(&p, &r.head, &r.body, Some(2)).unwrap();
+    let order: Vec<&str> = order.iter().filter_map(|s| s.lit.atom()).map(|a| a.rel.as_str()).collect();
+    assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }

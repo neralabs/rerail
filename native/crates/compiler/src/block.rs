@@ -80,6 +80,77 @@ pub enum BlockOp {
     /// A carry of a fixed point (`BlockProgram::rounds`): in a block's first round, `init`'s
     /// word; in each round after, its next's word in the round before.
     Carry(u16),
+    /// A row program's (`BlockProgram::rows`): the rows whose column `col` compares by `op` with
+    /// `rhs`, each value read as a signed `width`-bit integer (16, 32 or 64: a column held
+    /// narrow compares its lanes as they are). Bit `j` of a word is row `j` of its 64.
+    Cmp { col: u16, op: CmpOp, rhs: Rhs, width: u8 },
+    /// A row program's: the rows whose column `col` holds a value `v` whose bit is set in set
+    /// `set` (bit `v % 64` of word `v / 64`; a value outside the set's words has none). A unary
+    /// relation's members, or a text test's verdicts by symbol, read as a mask.
+    Bit { set: u16, col: u16 },
+}
+
+/// How a row comparison compares (`BlockOp::Cmp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+}
+
+impl CmpOp {
+    const ALL: [(CmpOp, &'static str); 4] = [(CmpOp::Eq, "eq"), (CmpOp::Ne, "ne"), (CmpOp::Lt, "lt"), (CmpOp::Le, "le")];
+
+    fn name(self) -> &'static str {
+        CmpOp::ALL.iter().find(|p| p.0 == self).expect("every comparison is named").1
+    }
+
+    /// Whether `a op b`.
+    pub fn holds(self, a: i64, b: i64) -> bool {
+        match self {
+            CmpOp::Eq => a == b,
+            CmpOp::Ne => a != b,
+            CmpOp::Lt => a < b,
+            CmpOp::Le => a <= b,
+        }
+    }
+}
+
+/// A row comparison's right side: another column of the row, or a parameter, one value for
+/// every row of a run (an outer binding, a constant).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Rhs {
+    Col(u16),
+    Param(u16),
+}
+
+/// What a row program reads (`BlockProgram::rows`): its columns, its parameters and its sets,
+/// by count. Each run gives them (`RowBatch`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct RowShape {
+    pub columns: u16,
+    pub params: u16,
+    pub sets: u16,
+}
+
+/// A row program's input for one run: its columns (each `len` values), its parameters and its
+/// sets (`RowShape`).
+#[derive(Clone, Copy)]
+pub struct RowBatch<'a> {
+    pub columns: &'a [&'a [i64]],
+    pub params: &'a [i64],
+    pub sets: &'a [&'a [u64]],
+    pub len: usize,
+}
+
+/// `v` read as a signed `width`-bit integer.
+pub fn lane(v: i64, width: u8) -> i64 {
+    match width {
+        16 => i64::from(v as i16),
+        32 => i64::from(v as i32),
+        _ => v,
+    }
 }
 
 /// The bound on a block's rounds: a strictly causal group is right on one more bit each round,
@@ -178,13 +249,21 @@ impl BlockOp {
             BlockOp::Phase(k, r) => format!("phase {k} {r}"),
             BlockOp::Position(j) => format!("position {j}"),
             BlockOp::Carry(a) => format!("carry %{a}"),
+            BlockOp::Cmp { col, op, rhs, width } => {
+                let rhs = match rhs {
+                    Rhs::Col(c) => format!("c{c}"),
+                    Rhs::Param(p) => format!("p{p}"),
+                };
+                format!("cmp {} c{col} {rhs} {width}", op.name())
+            }
+            BlockOp::Bit { set, col } => format!("bit s{set} c{col}"),
         }
     }
 
     /// The values the operation reads.
     pub fn operands(&self) -> Vec<u16> {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) => vec![],
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => vec![],
             BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) | BlockOp::Carry(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) | BlockOp::BackFill(a, b) => {
                 vec![a, b]
@@ -195,7 +274,7 @@ impl BlockOp {
     /// The operation with each operand `v` replaced by `f(v)`.
     pub fn renumbered(&self, f: impl Fn(u16) -> u16) -> Self {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) => *self,
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => *self,
             BlockOp::Not(a) => BlockOp::Not(f(a)),
             BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
             BlockOp::Toggle(a) => BlockOp::Toggle(f(a)),
@@ -227,7 +306,17 @@ impl BlockOp {
             t.strip_prefix('t').and_then(|t| t.parse().ok()).ok_or_else(|| format!("a bad table `{t}`"))
         };
         let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        let index = |word: &str, prefix: char| -> Result<u16, String> {
+            word.strip_prefix(prefix).and_then(|v| v.parse().ok()).ok_or_else(|| format!("a bad operand `{word}`"))
+        };
         match words.as_slice() {
+            ["cmp", op, c, r, w] => {
+                let op = CmpOp::ALL.iter().find(|p| p.1 == *op).ok_or_else(|| format!("a bad comparison `{op}`"))?.0;
+                let rhs = if r.starts_with('p') { Rhs::Param(index(r, 'p')?) } else { Rhs::Col(index(r, 'c')?) };
+                let width = w.parse().map_err(|_| format!("a bad width `{w}`"))?;
+                Ok(BlockOp::Cmp { col: index(c, 'c')?, op, rhs, width })
+            }
+            ["bit", set, c] => Ok(BlockOp::Bit { set: index(set, 's')?, col: index(c, 'c')? }),
             ["pair", a, t, b] => Ok(BlockOp::Pair { before: table(a)?, table: table(t)?, bits: byte(b)? }),
             ["eq", b] => Ok(BlockOp::Eq(byte(b)?)),
             ["class", t, b] => Ok(BlockOp::Class {
@@ -306,6 +395,23 @@ impl BlockOp {
             BlockOp::Carry(a) => two(out, 16, a, a),
             BlockOp::BackFill(a, b) => two(out, 17, a, b),
             BlockOp::Position(j) => out.extend([18, j]),
+            BlockOp::Cmp { col, op, rhs, width } => {
+                out.push(19);
+                out.extend_from_slice(&col.to_le_bytes());
+                out.push(CmpOp::ALL.iter().position(|p| p.0 == op).expect("named") as u8);
+                let (tag, at) = match rhs {
+                    Rhs::Col(c) => (0, c),
+                    Rhs::Param(p) => (1, p),
+                };
+                out.push(tag);
+                out.extend_from_slice(&at.to_le_bytes());
+                out.push(width);
+            }
+            BlockOp::Bit { set, col } => {
+                out.push(20);
+                out.extend_from_slice(&set.to_le_bytes());
+                out.extend_from_slice(&col.to_le_bytes());
+            }
         }
     }
 }
@@ -359,6 +465,11 @@ pub struct BlockProgram {
     /// from a carry to a next) until no carry changes; every such way passes a `prev`, so they
     /// settle within `MAX_ROUNDS` (docs/parser-generators/03-bitlex.md §2.7).
     pub rounds: Vec<Vec<(u16, u16)>>,
+    /// A row program's inputs: its stream is rows, not bytes, bit `j` of word `i` row `64 i + j`
+    /// of a run's columns (decision 0095 §2). Its values come from `Cmp` and `Bit` and the mask
+    /// operations; it reads no bytes, has no delay, carries nothing from word to word and
+    /// writes no tier-2 masks. Its extract pass writes row numbers: a filter's survivors.
+    pub rows: Option<RowShape>,
 }
 
 /// A rounds group's layout: its members in order (the values on a way from one of its carries
@@ -488,7 +599,26 @@ impl BlockProgram {
             .iter()
             .enumerate()
             .all(|(at, op)| op.operands().iter().all(|&v| usize::from(v) < at));
-        let tables = self.ops.iter().all(|op| match *op {
+        // A row program reads columns and no bytes; a byte program reads no columns.
+        let streams = match self.rows {
+            Some(shape) => {
+                let col = |c: u16| c < shape.columns;
+                let reads = self.ops.iter().all(|op| match *op {
+                    BlockOp::Cmp { col: c, rhs, width, .. } => {
+                        col(c) && [16, 32, 64].contains(&width) && match rhs {
+                            Rhs::Col(d) => col(d),
+                            Rhs::Param(p) => p < shape.params,
+                        }
+                    }
+                    BlockOp::Bit { set, col: c } => set < shape.sets && col(c),
+                    BlockOp::Const(_) | BlockOp::Not(_) | BlockOp::And(..) | BlockOp::Or(..) | BlockOp::Xor(..) | BlockOp::AndNot(..) => true,
+                    _ => false,
+                });
+                reads && self.delay == 0 && self.output_delays.is_empty() && self.rounds.is_empty() && self.masks.is_empty()
+            }
+            None => !self.ops.iter().any(|op| matches!(op, BlockOp::Cmp { .. } | BlockOp::Bit { .. })),
+        };
+        let tables = streams && self.ops.iter().all(|op| match *op {
             BlockOp::Class { table, bits } => usize::from(table) < self.tables.len() && bits != 0,
             BlockOp::Pair { before, table, bits } => {
                 usize::from(before) < self.tables.len() && usize::from(table) < self.tables.len() && bits != 0
@@ -565,6 +695,13 @@ impl BlockProgram {
                     out.extend_from_slice(&c.to_le_bytes());
                     out.extend_from_slice(&x.to_le_bytes());
                 }
+            }
+        }
+        // A row program's shape, tagged.
+        if let Some(shape) = self.rows {
+            out.extend_from_slice(b"rows");
+            for n in [shape.columns, shape.params, shape.sets] {
+                out.extend_from_slice(&n.to_le_bytes());
             }
         }
         // And the outputs' own delays, when any is not the program's.
@@ -748,6 +885,7 @@ impl BlockProgram {
                 BlockOp::Phase(k, r) => place.iter().map(|&(at, _)| phase(64 * at, k, r)).collect(),
                 BlockOp::Position(j) => place.iter().map(|&(at, _)| position(at, j)).collect(),
                 BlockOp::Carry(_) => unreachable!("a carry is its group's, run with it"),
+                BlockOp::Cmp { .. } | BlockOp::Bit { .. } => unreachable!("verified: a row program's, run by `run_rows`"),
                 BlockOp::Eq(byte) => blocks.iter().map(|block| eq(block, byte)).collect(),
                 BlockOp::Class { table, bits } => {
                     let table = &self.tables[usize::from(table)];
@@ -864,6 +1002,100 @@ pub fn run_batch(programs: &[&BlockProgram], files: &[BatchFile<'_>]) -> Vec<Blo
         }
     }
     out.into_iter().map(|run| run.expect("every file names a program of the batch")).collect()
+}
+
+impl BlockProgram {
+    /// The CPU interpreter of a row program (`rows`): every value's words over the batch's rows,
+    /// `values` holding them value by value (`words` each, reused from run to run), then each
+    /// output's words, cut at the batch's length. Straight-line word operations over the
+    /// columns; `Cmp` and `Bit` build a word from 64 rows each.
+    pub fn interpret_rows<'v>(&'v self, batch: &RowBatch<'_>, values: &'v mut Vec<u64>) -> impl Iterator<Item = &'v [u64]> + 'v {
+        let words = batch.len.div_ceil(64);
+        values.clear();
+        values.resize(self.ops.len() * words, 0);
+        for (x, op) in self.ops.iter().enumerate() {
+            let (before, rest) = values.split_at_mut(x * words);
+            let out = &mut rest[..words];
+            let v = |a: u16| &before[usize::from(a) * words..][..words];
+            match *op {
+                BlockOp::Cmp { col, op, rhs, width } => {
+                    let a = batch.columns[usize::from(col)];
+                    for (w, word) in out.iter_mut().enumerate() {
+                        let rows = &a[64 * w..batch.len.min(64 * w + 64)];
+                        let mut m = 0u64;
+                        match rhs {
+                            Rhs::Param(p) => {
+                                let b = lane(batch.params[usize::from(p)], width);
+                                for (j, &x) in rows.iter().enumerate() {
+                                    m |= u64::from(op.holds(lane(x, width), b)) << j;
+                                }
+                            }
+                            Rhs::Col(c) => {
+                                let b = &batch.columns[usize::from(c)][64 * w..];
+                                for (j, (&x, &y)) in rows.iter().zip(b).enumerate() {
+                                    m |= u64::from(op.holds(lane(x, width), lane(y, width))) << j;
+                                }
+                            }
+                        }
+                        *word = m;
+                    }
+                }
+                BlockOp::Bit { set, col } => {
+                    let (s, a) = (batch.sets[usize::from(set)], batch.columns[usize::from(col)]);
+                    for (w, word) in out.iter_mut().enumerate() {
+                        let mut m = 0u64;
+                        for (j, &x) in a[64 * w..batch.len.min(64 * w + 64)].iter().enumerate() {
+                            let hit = usize::try_from(x).ok().and_then(|x| s.get(x / 64).map(|word| word >> (x % 64) & 1)).unwrap_or(0);
+                            m |= hit << j;
+                        }
+                        *word = m;
+                    }
+                }
+                BlockOp::Const(c) => out.fill(c),
+                BlockOp::Not(a) => out.iter_mut().zip(v(a)).for_each(|(o, &x)| *o = !x),
+                BlockOp::And(a, b) => out.iter_mut().zip(v(a).iter().zip(v(b))).for_each(|(o, (&x, &y))| *o = x & y),
+                BlockOp::Or(a, b) => out.iter_mut().zip(v(a).iter().zip(v(b))).for_each(|(o, (&x, &y))| *o = x | y),
+                BlockOp::Xor(a, b) => out.iter_mut().zip(v(a).iter().zip(v(b))).for_each(|(o, (&x, &y))| *o = x ^ y),
+                BlockOp::AndNot(a, b) => out.iter_mut().zip(v(a).iter().zip(v(b))).for_each(|(o, (&x, &y))| *o = x & !y),
+                _ => unreachable!("verified: a row program reads no bytes"),
+            }
+        }
+        // Bits past the batch are cut from the outputs (a `Not` sets them).
+        for &o in &self.outputs {
+            let at = usize::from(o) * words;
+            mask_tail(&mut values[at..at + words], batch.len);
+        }
+        let values: &'v [u64] = values;
+        self.outputs.iter().map(move |&o| &values[usize::from(o) * words..][..words])
+    }
+
+    /// A row program of `ops` over `shape`'s inputs, with its outputs and the outputs whose rows
+    /// the extract pass writes; verified.
+    pub fn row_program(shape: RowShape, ops: Vec<BlockOp>, outputs: Vec<u16>, extracts: Vec<u16>) -> Result<Self, Error> {
+        let program = BlockProgram { ops, outputs, extracts, rows: Some(shape), ..BlockProgram::default() };
+        program.verify()?;
+        Ok(program)
+    }
+
+    /// A row program on the CPU JIT (`native_cpu_rows`).
+    pub fn compile_rows(&self) -> Result<crate::native_cpu_rows::CompiledRows, Error> {
+        self.verify()?;
+        let shape = self.rows.ok_or(Error::InvalidTarget(0))?;
+        crate::native_cpu_rows::compile(&crate::block_native::BlockNative::lower(self), usize::from(shape.columns))
+    }
+
+    /// A row program's extract pass: the rows (numbers within the batch, in order) whose bit
+    /// output `k` sets, appended to `out`.
+    pub fn extract_rows(&self, batch: &RowBatch<'_>, k: usize, values: &mut Vec<u64>, out: &mut Vec<u32>) {
+        let words = self.interpret_rows(batch, values).nth(k).expect("an output");
+        for (w, &word) in words.iter().enumerate() {
+            let mut m = word;
+            while m != 0 {
+                out.push(64 * w as u32 + m.trailing_zeros());
+                m &= m - 1;
+            }
+        }
+    }
 }
 
 /// The extract pass on the CPU (`10-bit-programs.md` §4.1): a plane's set bits as
@@ -1129,6 +1361,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
     let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     for (t, table) in block.tables.iter().enumerate() {
         let _ = writeln!(out, "  block {at} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
+    }
+    // `block N rows C P S`: a row program's columns, parameters and sets (`RowShape`).
+    if let Some(shape) = block.rows {
+        let _ = writeln!(out, "  block {at} rows {} {} {}", shape.columns, shape.params, shape.sets);
     }
     for (value, op) in block.ops.iter().enumerate() {
         let _ = writeln!(out, "  block {at} %{value} = {}", op.text());

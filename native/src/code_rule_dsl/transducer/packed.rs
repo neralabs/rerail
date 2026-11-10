@@ -45,6 +45,12 @@ pub(super) use metal_backend::launch::LaunchScope as MetalTestScope;
 mod metal_batch_abi;
 #[cfg(target_os = "macos")]
 mod metal_parallel;
+// Row programs on Metal: scan, count and scatter over the 16-bit layout (decision 0095).
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) mod metal_rows;
+// Relations sorted by a key on the device, and the joins that probe them (decision 0095).
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) mod metal_sort;
 #[cfg(target_os = "macos")]
 mod metal_program_backend;
 #[cfg(target_os = "macos")]
@@ -251,6 +257,11 @@ use rerail_compiler::native_cpu_block;
 use rerail_compiler::native_cpu_lanes;
 use rerail_compiler::native_cpu_pressure;
 use rerail_compiler::native_cpu_shape;
+// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
+#[allow(unused_imports)]
+pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_rows;
+// Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
+pub(in crate::code_rule_dsl) mod rows_sort;
 mod native_cpu_stream;
 mod native_ir;
 mod output;
@@ -271,6 +282,8 @@ pub(in crate::code_rule_dsl) use rerail_compiler::block;
 pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
 mod block_tests;
+#[cfg(test)]
+mod block_rows_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
 mod bitlex_compile;
 // The tree section's compilers, the compiler crate's.

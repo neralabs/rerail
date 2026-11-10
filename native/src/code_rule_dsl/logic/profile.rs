@@ -33,6 +33,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
+mod kinds;
 mod memory;
 mod roofline;
 mod watch;
@@ -102,6 +103,8 @@ struct State {
     sql: BTreeMap<(String, String), SqlTotal>,
     /// By (span path, plan text): per step, rows in and out.
     native: BTreeMap<(String, String), Vec<(u64, u64)>>,
+    /// By (span path, plan text): the CPU seconds its probes ran, as the native engine timed them.
+    native_cpu: BTreeMap<(String, String), f64>,
     notes: BTreeMap<String, String>,
     /// Run-level decisions by (topic, text): how many times made.
     decisions: BTreeMap<(String, String), u64>,
@@ -117,6 +120,28 @@ struct State {
     work: BTreeMap<(String, Unit), u64>,
     /// Waits by (the waiter's span path, what it waited on, what that was doing when the wait began) (`wait`).
     waits: BTreeMap<(String, String, String), WaitTotal>,
+    /// Where each native stratum ran, by stratum (`placed`, decision 0095).
+    placements: BTreeMap<String, PlacedTotal>,
+}
+
+/// A stratum's placements, summed over its runs (chunks, guests, the cross-file part).
+#[derive(Default)]
+struct PlacedTotal {
+    runs: u64,
+    on_gpu: u64,
+    gpu_cheaper: u64,
+    device: bool,
+    forms: Vec<&'static str>,
+    missing: Vec<&'static str>,
+    planned_work: f64,
+    work: u64,
+    cpu_estimate: f64,
+    gpu_estimate: f64,
+    cpu: f64,
+    /// Its join steps by the form placement chose (CPU index, GPU sort and probe, GPU tile): how many, their
+    /// estimate on the CPU's index, and on the form chosen (of the steps estimated under `JOIN_ESTIMATE_CAP`), and
+    /// how many were estimated over it.
+    joins: [(u64, f64, f64, u64); 3],
 }
 
 #[derive(Default)]
@@ -291,6 +316,7 @@ pub(in crate::code_rule_dsl) fn span(name: impl FnOnce() -> String) -> Span {
         return Span(false);
     }
     let name = name();
+    memory::sample();
     STACK.with(|s| {
         let mut s = s.lock();
         let path = match s.opens.last() {
@@ -336,6 +362,30 @@ impl Drop for Span {
     }
 }
 
+/// Each live thread's innermost open span, as `thread: path` (for the memory sampler).
+fn open_paths() -> (Vec<String>, usize) {
+    let all: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
+    (all.iter().filter_map(|t| { let t = t.lock(); t.opens.last().map(|o| format!("{}: {}", t.name, o.path)) }).collect(), all.len())
+}
+
+/// The process's peaks so far, for a caller to print after a run (the run's report is written before its caller's
+/// own work): the high-water mark of the footprint and of the resident set, and the sampler's peak with what was
+/// open then. Also rewrites `memory.tsv` in the profile directory, so the timeline covers the caller's work too.
+pub(in crate::code_rule_dsl) fn peaks() -> String {
+    let (now, max) = memory::footprint();
+    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+    // SAFETY: fills a `rusage` for this process.
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+    // macOS reports bytes, Linux kilobytes.
+    let rss = if cfg!(target_os = "macos") { usage.ru_maxrss as f64 } else { usage.ru_maxrss as f64 * 1024.0 };
+    let mut r = format!("process: footprint {} MB now, {} MB at most; resident set {} MB at most\n", memory::mb(now as f64), memory::mb(max as f64), memory::mb(rss));
+    memory::sampled_report(&mut r);
+    if let Some(dir) = directory() {
+        let _ = std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv());
+    }
+    r
+}
+
 /// This thread's open span's path, `-` outside any.
 pub(in crate::code_rule_dsl) fn current() -> String {
     STACK.with(|s| s.lock().opens.last().map_or_else(|| "-".to_owned(), |o| o.path.clone()))
@@ -363,10 +413,11 @@ pub(in crate::code_rule_dsl) fn work(unit: Unit, n: u64) {
     *STATE.lock().unwrap().work.entry((path, unit)).or_default() += n;
 }
 
-/// Adds a native plan's rows in and out per step to the current span.
-pub(in crate::code_rule_dsl) fn native(plan: String, steps: &[(u64, u64)]) {
+/// Adds a native plan's rows in and out per step, and its probes' CPU seconds, to the current span.
+pub(in crate::code_rule_dsl) fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64) {
     let path = current();
     let mut state = STATE.lock().unwrap();
+    *state.native_cpu.entry((path.clone(), plan.clone())).or_default() += cpu_s;
     let t = state.native.entry((path, plan)).or_default();
     if t.len() < steps.len() {
         t.resize(steps.len(), (0, 0));
@@ -453,6 +504,122 @@ pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) 
 }
 
 /// The engine stratum `key` ran on, and why (the first reason given; one loop per call).
+/// Records where native stratum `key` ran (`plan::placement`), its shape, the work it did and the CPU it took.
+pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Placement, shape: &crate::code_rule_dsl::logic::plan::placement::Shape, work: u64, cpu: f64) {
+    if !on() {
+        return;
+    }
+    let mut state = STATE.lock().unwrap();
+    let t = state.placements.entry(key.to_owned()).or_default();
+    t.runs += 1;
+    t.on_gpu += u64::from(p.gpu);
+    t.gpu_cheaper += u64::from(p.gpu_cheaper);
+    t.device |= p.device;
+    t.forms = shape.forms.iter().map(|f| f.name()).collect();
+    t.missing = p.missing.iter().map(|f| f.name()).collect();
+    t.planned_work += shape.work;
+    t.work += work;
+    t.cpu_estimate += p.cpu_s;
+    t.gpu_estimate += p.gpu_s;
+    t.cpu += cpu;
+    for c in &p.joins {
+        use crate::code_rule_dsl::logic::plan::placement::JoinForm;
+        let chosen = match c.form {
+            JoinForm::Index => c.index_s,
+            JoinForm::Probe => c.probe_s.unwrap_or(c.index_s),
+            JoinForm::Tile => c.tile_s.unwrap_or(c.index_s),
+        };
+        let e = &mut t.joins[c.form as usize];
+        e.0 += 1;
+        if c.index_s < JOIN_ESTIMATE_CAP {
+            e.1 += c.index_s;
+            e.2 += chosen;
+        } else {
+            e.3 += 1;
+        }
+    }
+}
+
+/// A join step estimated over this many seconds is a planned estimate gone wrong (a cross product priced at 10^20
+/// rows): counted, not summed.
+const JOIN_ESTIMATE_CAP: f64 = 1e3;
+
+/// Where the native strata ran (decision 0095): how many on each backend, the strata the GPU would run cheaper and
+/// the forms it lacks for them, by their CPU. What the device must take on next, and what it would save.
+fn placements(r: &mut String, state: &State) {
+    use crate::code_rule_dsl::logic::plan::placement::gpu_price;
+    let all = &state.placements;
+    if all.is_empty() {
+        return;
+    }
+    let runs: u64 = all.values().map(|t| t.runs).sum();
+    let gpu: u64 = all.values().map(|t| t.on_gpu).sum();
+    let cpu: f64 = all.values().map(|t| t.cpu).sum();
+    let device = all.values().any(|t| t.device);
+    let _ = writeln!(
+        r,
+        "\n== Placement (decision 0095): {} strata, {runs} runs; {gpu} runs on the GPU, {} on the CPU ({cpu:.2} s CPU); binding {}",
+        all.len(),
+        runs - gpu,
+        if device { "Metal" } else { "CPU" }
+    );
+    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU assumed (2 ns a unit, 0.15 ms a submission) but for join steps, priced on each form from the relational lab's measures.");
+    // The strata the GPU would run cheaper in at least one run, and did not.
+    let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
+    let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();
+    // The GPU priced at the work each stratum did, not the work planned: a planned estimate can be far off (a cross
+    // product priced at 10^20 rows that met none).
+    let at_work = |t: &PlacedTotal| gpu_price(t.runs, t.work as f64);
+    let cheaper_gpu: f64 = cheaper.iter().map(|(_, t)| at_work(t)).sum();
+    let _ = writeln!(r, "The GPU would be cheaper for {} strata: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
+    // Strata whose planned work is off by 10x or more, either way, by their CPU: the placement read a wrong price, and
+    // the join order likely came from the same estimate.
+    let off = |t: &PlacedTotal| {
+        let (p, w) = (t.planned_work.max(1.0), (t.work as f64).max(1.0));
+        w / p >= 10.0 || p / w >= 10.0
+    };
+    let (under, over) = all.values().filter(|t| off(t)).fold(((0u64, 0.0), (0u64, 0.0)), |(u, o), t| {
+        if (t.work as f64) > t.planned_work { ((u.0 + 1, u.1 + t.cpu), o) } else { (u, (o.0 + 1, o.1 + t.cpu)) }
+    });
+    let _ = writeln!(r, "Planned work off by 10x or more: {} strata under (did more, {:.2} s CPU), {} over (did less, {:.2} s CPU); marked ! below.", under.0, under.1, over.0, over.1);
+    // By the form the GPU lacks: a stratum counts under each form it lacks.
+    let mut by: BTreeMap<&str, (u64, f64)> = BTreeMap::new();
+    for (_, t) in &cheaper {
+        for f in &t.missing {
+            let e = by.entry(f).or_default();
+            e.0 += 1;
+            e.1 += t.cpu;
+        }
+    }
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by(|a, b| b.1.1.total_cmp(&a.1.1));
+    let _ = writeln!(r, "GPU support missing, by form (a stratum counts under each form it lacks):");
+    let _ = writeln!(r, "{:>9} {:>7}  form", "cpu s", "strata");
+    for (f, (n, c)) in &by {
+        let _ = writeln!(r, "{c:>9.3} {n:>7}  {f}");
+    }
+    // The strata themselves, costliest first.
+    let mut top = cheaper.clone();
+    top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
+    // Each join step on the form its prices chose (the lab's measured device prices): what the device's joins would
+    // take on, in strata the device runs once it has their other forms.
+    let joins: Vec<(u64, f64, f64, u64)> = (0..3).map(|f| all.values().fold((0, 0.0, 0.0, 0), |a, t| (a.0 + t.joins[f].0, a.1 + t.joins[f].1, a.2 + t.joins[f].2, a.3 + t.joins[f].3))).collect();
+    if joins.iter().any(|j| j.0 > 0) {
+        use crate::code_rule_dsl::logic::plan::placement::JoinForm;
+        let _ = writeln!(r, "Join steps by the form their prices choose (estimates; the device's prices measured by the relational lab; steps estimated over {JOIN_ESTIMATE_CAP:.0} s counted, not summed):");
+        let _ = writeln!(r, "{:>9} {:>10} {:>10} {:>9}  form", "steps", "index s", "chosen s", "over cap");
+        for (f, form) in [JoinForm::Index, JoinForm::Probe, JoinForm::Tile].into_iter().enumerate() {
+            let _ = writeln!(r, "{:>9} {:>10.3} {:>10.3} {:>9}  {}", joins[f].0, joins[f].1, joins[f].2, joins[f].3, form.name());
+        }
+    }
+    let _ = writeln!(r, "Costliest strata the GPU would run cheaper:");
+    let _ = writeln!(r, "{:>8} {:>8} {:>12} {:>12} {:>5}  stratum: forms (missing on the GPU)", "cpu s", "gpu s", "planned", "work", "runs");
+    for (key, t) in top.iter().take(20) {
+        let mark = if off(t) { "!" } else { " " };
+        let _ = writeln!(r, "{:>8.3} {:>8.4} {:>12.0} {:>11}{mark} {:>5}  {}: {} (missing {})", t.cpu, at_work(t), t.planned_work, t.work, t.runs, short(key, 60), t.forms.join(", "), t.missing.join(", "));
+    }
+}
+
 /// Records that stratum `key` fell back to SQLite, and the kind of literal the native engine declined (`class`).
 pub(in crate::code_rule_dsl) fn fallback(key: &str, class: String) {
     if !on() {
@@ -603,6 +770,16 @@ pub(in crate::code_rule_dsl) fn one_run() -> std::sync::MutexGuard<'static, ()> 
     ONE_RUN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// Holds the profile for one run if no run holds it: a run nested in another (phase 0's, inside a run's preparing)
+/// is then the outer run's, and neither resets nor writes the profile.
+pub(in crate::code_rule_dsl) fn one_run_if_free() -> Option<std::sync::MutexGuard<'static, ()>> {
+    match ONE_RUN.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
+}
+
 /// Forgets everything recorded (a run's start).
 pub(in crate::code_rule_dsl) fn reset() {
     *STATE.lock().unwrap() = State::default();
@@ -735,6 +912,7 @@ fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     for (p, t) in rose.iter().take(15) {
         let _ = writeln!(r, "{:>10} MB  {}", memory::mb(t.own_rise as f64), short(p, 140));
     }
+    memory::sampled_report(r);
 }
 
 /// CPU (user + system) of the thread with Mach port `port` (macOS), read from another thread; `None` elsewhere.
@@ -813,6 +991,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let _ = writeln!(spans_tsv, "{p}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}", t.calls, t.total, t.own, t.alloc, t.own_alloc, t.freed, t.rise, t.own_rise);
     }
     std::fs::write(dir.join("spans.tsv"), spans_tsv)?;
+    std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv())?;
     let mut sql: Vec<_> = state.sql.iter().collect();
     sql.sort_by_key(|(_, s)| std::cmp::Reverse(s.ns));
     let mut sql_tsv = String::from("span\truns\tms\tvm_steps\tfullscan_steps\tsorts\tautoindex_rows\tsql\n");
@@ -823,17 +1002,28 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     let work = |steps: &Vec<(u64, u64)>| steps.iter().map(|(a, _)| a).sum::<u64>();
     let mut native: Vec<_> = state.native.iter().collect();
     native.sort_by_key(|(_, s)| std::cmp::Reverse(work(s)));
-    let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\n");
+    let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\n");
     for ((p, plan), steps) in &native {
         let s: Vec<String> = steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
-        let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}", work(steps), s.join(","));
+        let cpu = state.native_cpu.get(&(p.clone(), plan.clone())).copied().unwrap_or(0.0);
+        let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}", work(steps), s.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
+    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\n");
+    for (key, t) in &state.placements {
+        let _ = writeln!(
+            placement_tsv,
+            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}",
+            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(",")
+        );
+    }
+    std::fs::write(dir.join("placement.tsv"), placement_tsv)?;
 
     // The report.
     let mut r = String::new();
     r.push_str(header);
     fallbacks(&mut r, &state);
+    placements(&mut r, &state);
     explain(&mut r, &state);
     // A root is a span with no parent recorded: a top span, or one whose parent was still open (a dump).
     let root = |p: &str| p.rsplit_once('/').is_none_or(|(parent, _)| !state.spans.contains_key(parent));
@@ -861,6 +1051,12 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         }
     }
     walk(&mut r, &state.spans, None, 0, roots);
+    let kinds_tsv = kinds::by_kind(&mut r, &state.spans);
+    std::fs::write(dir.join("kinds.tsv"), kinds_tsv)?;
+    kinds::unexplained(&mut r, &state.spans);
+    kinds::searches(&mut r, &state.spans);
+    let heads_tsv = kinds::by_head(&mut r, &native, &state.native_cpu);
+    std::fs::write(dir.join("heads.tsv"), heads_tsv)?;
     memory_report(&mut r, &state.spans);
 
     let sql_ns: u64 = sql.iter().map(|(_, s)| s.ns).sum();
@@ -884,10 +1080,11 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         }
     }
 
-    let _ = writeln!(r, "\n== Native joins by work (rows into every step, summed over chunks); steps in:out");
+    let _ = writeln!(r, "\n== Native joins by work (rows into every step, summed over chunks), with their probes' CPU; steps in:out");
     for ((p, plan), steps) in native.iter().take(30) {
         let s: Vec<String> = steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
-        let _ = writeln!(r, "{:>12}  {p}\n{:>14}steps {}\n{:>14}{}", work(steps), "", s.join(" "), "", short(plan, 600));
+        let cpu = state.native_cpu.get(&((*p).clone(), (*plan).clone())).copied().unwrap_or(0.0);
+        let _ = writeln!(r, "{:>12}  {cpu:.2} s  {p}\n{:>14}steps {}\n{:>14}{}", work(steps), "", s.join(" "), "", short(plan, 600));
     }
 
     // The roofline: SQL's VM steps and the native joins' rows are charged here, the rest by `work`. A native
@@ -944,6 +1141,18 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
             }
             let _ = writeln!(r, "{:>14} MB made, {} MB reused", d.made >> 20, d.reused >> 20);
         }
+    }
+
+    // The executor's scoreboard (rerail-accel): every job on every lane, its thread CPU and its phases. On a device
+    // lane, `cpu s` is the host CPU the device cost; `wall` phases with no CPU are the device's own timeline.
+    let _ = writeln!(r, "\n== Executor (rerail-accel): jobs per lane, host CPU per phase");
+    let scores = super::lanes::scores();
+    if scores.is_empty() {
+        r.push_str("(no executor)\n");
+    }
+    for (binding, score) in scores {
+        let _ = writeln!(r, "-- {binding}");
+        let _ = writeln!(r, "{score}");
     }
 
     // Warnings: the shapes that usually explain a slow rule.
@@ -1068,6 +1277,25 @@ mod tests {
 
     /// Decision 0084: a span charges the bytes its thread allocated, its own apart from its children's, and what it
     /// freed; a dump lists the spans still open on every thread, with the SQL statement running.
+    #[test]
+    fn the_memory_sampler_charges_a_rise_to_the_span_open_on_its_thread() {
+        let _serial = one_run();
+        set(true);
+        {
+            let _s = span(|| "sampler probe: a big allocation".into());
+            // Touched pages, held for several sampling periods, well above anything before it in this test process.
+            let big = std::hint::black_box(vec![7u8; 256 << 20]);
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            drop(big);
+        }
+        let s = memory::SAMPLED.lock().unwrap();
+        assert!(s.every_ms > 0);
+        let charged: Vec<&String> = s.rise.iter().filter(|(p, (r, _))| p.ends_with("sampler probe: a big allocation") && *r > 0).map(|(p, _)| p).collect();
+        assert!(!charged.is_empty(), "the rise is charged to the open span: {:?}", s.rise.keys().collect::<Vec<_>>());
+        drop(s);
+        set(false);
+    }
+
     #[test]
     fn spans_charge_memory_and_a_dump_lists_what_is_open() {
         let _serial = one_run();

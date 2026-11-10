@@ -234,6 +234,9 @@ fn rule_syntax_files_pass_check_rr() {
         given.extend(check::fix_relations(&read(f).unwrap().0));
     }
     let mut problems = Vec::new();
+    // Phase 0 resolves every file's includes in one run of `bootstrap.rr`, not one run each.
+    let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonicalize().unwrap())).collect();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
     for f in rr_files() {
         for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
@@ -500,7 +503,9 @@ kv(2, "b"). kv(1, "a"). kv(3, "c"). kv(4, "a").
 .decl agg(s: symbol, t: number, l: number, e: symbol)
 agg(s, t, l, e) :- kv(4, _), s = join v by k sep "," : { kv(k, v) }, t = sum k : { kv(k, _) },
     l = sum strlen(v) * 2 : { kv(_, v) }, e = join v by k sep "," : { kv(k, v), k > 9 }.
-.output joined, num, fl, neg, assigns, agg
+.decl prod(p: number, none: number)
+prod(p, e) :- kv(4, _), p = product k : { kv(k, _) }, e = product k : { kv(k, _), k > 9 }.
+.output joined, num, fl, neg, assigns, agg, prod
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -511,6 +516,7 @@ agg(s, t, l, e) :- kv(4, _), s = join v by k sep "," : { kv(k, v) }, t = sum k :
     assert_eq!(read("neg"), "-2.25\n");
     assert!(read("assigns").ends_with("\t3\n"), "{}", read("assigns"));
     assert_eq!(read("agg"), "a,b,c,a\t10\t6\t\n");
+    assert_eq!(read("prod"), "24\t1\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1248,6 +1254,36 @@ NQ(m, c) :- hit(m, c).
     assert_eq!(read("hasb"), "a=1 b=22 c=x");
     assert_eq!(read("nob"), "none here");
     assert_eq!(read("via"), "Bar\nFoo");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A text test of a capture in the body that captured it tests the capture's text: `match_all("(?<w>…)", t),
+/// match("…", w)` over a string's content (RUF001's words). It once tested the span's id as a text, and never held.
+#[test]
+fn a_text_test_of_a_capture_in_its_own_body_tests_the_captured_text() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("capturetest");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a = \"x\u{211d}y plain\"\nb = \"2\u{211d}6789\"\n").unwrap();
+    let rule = dir.join("m.rr");
+    std::fs::write(&rule, r#"
+.decl piece(t: loc)
+piece(p) :- kind(p, "string_content").
+.decl wide(w: symbol)
+wide(x) :- piece(t), match_all("(?<w>[\\p{Alphabetic}\\p{N}]+)", t), match("[\\s\\S]*[^\\x00-\\x7f][\\s\\S]*", w), text(w, x).
+.decl odd(w: symbol)
+odd(x) :- piece(t), match_all("(?<w>[a-z0-9ℝ]+)", t), !match(".*ℝ.*", w), text(w, x).
+.output wide, odd
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| {
+        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        rows.sort();
+        rows.join("\n")
+    };
+    assert_eq!(read("wide"), "2\u{211d}6789\nx\u{211d}y");
+    assert_eq!(read("odd"), "plain");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2279,4 +2315,17 @@ fn a_grammar_the_registry_does_not_have_is_refused() {
     assert!(lower(&rule("sql")).is_ok(), "a dialect's label");
     let refused = lower(&rule("postgres")).unwrap_err();
     assert!(refused.contains("no grammar \"postgres\""), "{refused}");
+}
+
+/// bootstrap-engine-invariants' BEI027: `count : { bei_identity(x), count : { def_walk(n, f), bei_ref(n, x) } = 0 } > 0`.
+/// The inner count is per (f, x), f the rule's: the outer helper is a relation of f and x, f bound by the context.
+/// It lost f, and planning failed with "unplaced literals … in rr_agg72($x)".
+#[test]
+fn a_nested_aggregate_keeps_the_rules_variables_it_reads() {
+    let p = parse(".decl ident(x: symbol)\nident(\"a\").\n.decl fn(f: number)\n.decl ref(n: number, f: number, x: symbol)\n.input fn, ref\n.decl hit(f: number)\n.output hit\nhit(f) :- fn(f), count : { ident(x), count : { ref(n, f, x) } = 0 } > 0.\n").unwrap();
+    let shown: Vec<String> = p.rules.iter().map(ToString::to_string).collect();
+    let helper = shown.iter().find(|r| r.contains("count { ref(")).expect("the inner count's rule");
+    assert!(helper.starts_with("rr_agg") && helper.contains("($f, $x) :- rr_ctx"), "{shown:#?}");
+    let hit = shown.iter().find(|r| r.starts_with("hit(")).unwrap();
+    assert!(hit.contains("($f, _)"), "the outer count groups by f: {hit}");
 }

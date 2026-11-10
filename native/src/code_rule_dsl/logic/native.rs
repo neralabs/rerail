@@ -19,6 +19,8 @@
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
 mod setfix;
+#[cfg(test)]
+pub(crate) use setfix::DERIVATIONS;
 pub(in crate::code_rule_dsl) use setfix::forget_scope;
 pub(in crate::code_rule_dsl) mod aggregation;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
@@ -33,7 +35,9 @@ pub(in crate::code_rule_dsl) mod extension;
 pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols};
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
-    pub(in crate::code_rule_dsl) use super::setfix::{add, close, columns_source, derived, forget_derived, forget_inputs_of, live, materialize, open, pending, release, reprobe, run, step_counts, table_source, unindex};
+    pub(in crate::code_rule_dsl) use super::setfix::lab;
+    pub(in crate::code_rule_dsl) use super::setfix::spec;
+    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, cat_symbols, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, run, step_counts, unindex};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -378,6 +382,7 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
         Ok(flat_bin(&o, ctx.get(1)?, ctx.get(2)?))
     })?;
     db.create_aggregate_function(c"flat_join", 1, det, FlatJoin)?;
+    aggregation::register_sum(db)?;
     // lattice_fixpoint(p[, target[, lattice[, widen[, binding]]]]): the lattice by declared name (`flat` by
     // default), the changes after which a node widens, and where it solves (`cpu`, the default, or `metal`). A NULL
     // target is the default `<p>_out`.

@@ -650,3 +650,29 @@ fn recursive_sum_caches_defer_unused_group_overflow_and_restore_native_state() {
         &["amount", "__sql_changes_amount"],
     );
 }
+
+#[test]
+fn scalar_transitions_share_across_wave_frames_only_at_matching_cursors() {
+    let (_dir, mut e) = executor();
+    bind(&mut e,"event",&["id","g","v"],json!([[1,0,2],[2,0,3]]));
+    bind(&mut e,"owner",&["g"],json!([[0]]));
+    let p = ".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl amount(g:number,v:max<>) widen 4\namount(g,0) :- owner(g).\namount(g,v+s+n) :- amount(g,v), v<10, n=count : {event(_,g,_)}, s=sum x : {event(_,g,x)}.\n.decl other(g:number,v:max<>) widen 4\nother(g,0) :- owner(g).\nother(g,v+s+n) :- other(g,v), v<10, n=count : {event(_,g,_)}, s=sum x : {event(_,g,x)}.\n.output amount,other\n";
+    let initial:Value=serde_json::from_str(&e.run(p.into(),"python".into(),None).unwrap()).unwrap();
+    assert!(initial["preparation"]["summary_transition_reuses"].as_u64().unwrap()>0,"{initial}");
+    let before=rows(&e,"SELECT * FROM amount");
+    let failed=json!([{"name":"event","insert":[[99,0,1]]}]);
+    assert!(e.apply_changes(failed.to_string(),Some(1)).is_err());
+    assert_eq!(rows(&e,"SELECT * FROM amount"),before);
+    assert_eq!(rows(&e,"SELECT count(*) FROM event WHERE id=99"),json!([[0]]));
+    let mut reuses=0;
+    for patch in [
+        json!([{"name":"event","insert":[[3,0,1]]}]),
+        json!([{"name":"owner","delete":[[0]]},{"name":"event","delete":[[1,0,2]]}]),
+        json!([{"name":"owner","insert":[[0]]},{"name":"event","insert":[[4,0,4]]}]),
+    ] {
+        let report:Value = serde_json::from_str(&e.apply_changes(patch.to_string(),None).unwrap()).unwrap();
+        reuses+=report["summary_transition_reuses"].as_u64().unwrap();
+        check(&e,p,&[("event",&["id","g","v"]),("owner",&["g"])],&["amount","__sql_changes_amount","other","__sql_changes_other"]);
+    }
+    assert!(reuses>0,"the recursive gates must reuse a synchronized bag transition");
+}

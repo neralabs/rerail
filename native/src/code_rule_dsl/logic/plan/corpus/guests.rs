@@ -202,7 +202,7 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
 #[derive(Default)]
 pub(super) struct Guests {
     run: &'static str,
-    numbering: HashMap<u32, Vec<(u32, &'static str)>>,
+    numbering: HashMap<u32, syntax::Numbering>,
     made: HashSet<(i64, String)>,
     asked: HashSet<Request>,
     taken: HashSet<u32>,
@@ -293,8 +293,10 @@ impl Guests {
         let host_key = (at >> 32) as u32;
         let Some(host) = by_key.get(&host_key).copied() else { return Ok(None) };
         let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
-        let local = (at & 0xffff_ffff) as u32;
         let ids = self.numbering(host)?;
+        // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
+        let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(None) };
+        let ids = &ids.nodes;
         let placed = match text {
             Some(text) => {
                 let Some(&(id, _)) = ids.get(local as usize) else { return Ok(None) };
@@ -354,7 +356,7 @@ impl Guests {
         let Some(d) = by_key.get(&((node >> 32) as u32)).copied() else { return Ok(None) };
         let Some(w) = docs.iter().find(|x| syntax::tape_hex(&x.digest) == with) else { return Ok(None) };
         let ids = self.numbering(d)?;
-        let Some(&(id, _)) = ids.get((node & 0xffff_ffff) as usize) else { return Ok(None) };
+        let Some((_, id, _)) = ids.at((node & 0xffff_ffff) as u32) else { return Ok(None) };
         let base = syntax::unparsed(d);
         // The unparsed text's offset in the document's text (a wrapped fragment's root starts past the `(`).
         let off = match d.guest.as_deref() {
@@ -378,7 +380,7 @@ impl Guests {
         Ok(Some((grammar, text, syntax::tape_hex(&d.digest), d.path.clone())))
     }
 
-    fn numbering(&mut self, host: &Document) -> Result<&Vec<(u32, &'static str)>, String> {
+    fn numbering(&mut self, host: &Document) -> Result<&syntax::Numbering, String> {
         if !self.numbering.contains_key(&host.key) {
             let ids = syntax::numbering(host).map_err(|e| e.to_string())?;
             self.numbering.insert(host.key, ids);

@@ -25,13 +25,14 @@ use crate::code_rule_dsl::waves::schedule;
 
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Emitted {
+    pub(in crate::code_rule_dsl) value_types: std::sync::Arc<BTreeMap<String, Vec<String>>>,
     pub(in crate::code_rule_dsl) analysis: std::sync::Arc<super::super::analysis::ProgramAnalysis>,
     pub(in crate::code_rule_dsl) program: schedule::Program,
     /// Statements the steps read besides the program's relations: `rdl_int`, then the views.
     pub(in crate::code_rule_dsl) setup: Vec<String>,
     /// Each step's checked query, as `program.steps` (`None`: a relation's constant rows).
     pub(in crate::code_rule_dsl) queries: Vec<Option<Query>>,
-    /// The views among `setup`, each as its query.
+    /// Planner-selected projection queries. Session execution can schedule them as retained relations.
     pub(in crate::code_rule_dsl) views: Vec<(String, Query)>,
     /// The program's inputs, which its statements may read.
     pub(in crate::code_rule_dsl) inputs: Vec<String>,
@@ -43,6 +44,7 @@ impl Emitted {
     pub(in crate::code_rule_dsl) fn for_session(&mut self, namespace: &str, bound: &BTreeSet<String>) {
         let names: BTreeMap<String, String> = self.views.iter().filter(|(rel,_)|bound.contains(rel)).map(|(rel, _)| (rel.clone(), format!("__sql_{namespace}_{rel}"))).collect();
         for (old, new) in &names {
+            if let Some(types) = self.value_types.get(old).cloned() { std::sync::Arc::make_mut(&mut self.value_types).insert(new.clone(),types); }
             if let Some(keys) = self.analysis.relation_keys.get(old).cloned() { std::sync::Arc::make_mut(&mut self.analysis).relation_keys.insert(new.clone(), keys); }
         }
         let old: HashSet<String> = self.views.iter().map(|(rel, q)| view_sql(rel, q)).collect();
@@ -198,7 +200,7 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
             step(&rule.head.rel, stratum, reads, &query.render(), Some(query));
         }
         if recursive {
-            model.stats.solving = scc.clone();
+            model.stats.solve(scc.clone());
             for rule in &rules {
                 for (i, l) in rule.body.iter().enumerate() {
                     if !own(l) {
@@ -213,12 +215,13 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
                     step(&rule.head.rel, stratum, vec![a.rel.clone()], &query.render(), Some(query));
                 }
             }
-            model.stats.solving.clear();
+            model.stats.solve(BTreeSet::new());
         }
     }
     let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();
     Ok(Emitted {
-        analysis: std::sync::Arc::clone(&model.analysis),
+        value_types: std::sync::Arc::new(prog.decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
+        analysis: model.analysis(prog),
         program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
         setup,
         queries,
@@ -259,7 +262,7 @@ pub(in crate::code_rule_dsl) fn emit_program(
 /// relation of its own stratum or a later one (recursion), reads a walk or constant rows, or the
 /// program has lattices.
 pub(in crate::code_rule_dsl) fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
-    let Emitted { analysis, program, setup, queries, views, inputs } = emitted;
+    let Emitted { value_types, analysis, program, setup, queries, views, inputs } = emitted;
     let fail = |message: String| Error::Plan(format!("{}: {message}", program.name));
     if !program.lattices.is_empty() {
         return Err(fail("a lattice needs the fixpoint".to_owned()));
@@ -339,7 +342,7 @@ pub(in crate::code_rule_dsl) fn single(emitted: Emitted, output: &str) -> Result
         steps: vec![schedule::Step { output: output.to_owned(), stratum: 0, reads: Vec::new(), sql }],
         ..program
     };
-    Ok(Emitted { analysis, program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs })
+    Ok(Emitted { value_types, analysis, program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs })
 }
 
 /// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.

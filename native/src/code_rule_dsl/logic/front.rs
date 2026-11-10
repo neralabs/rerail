@@ -156,6 +156,9 @@ pub(in crate::code_rule_dsl) enum AggOp {
     Max,
     /// Soufflé's `sum`: 0 over no rows.
     Sum,
+    /// `product x : {…}`: the product of `x` over the rows, 1 over no rows, saturating at i64's range (a count of
+    /// combinations, as pytest's stacked parametrize marks multiply).
+    Product,
     /// `core.rr`'s `join x by k sep ","`: the `over` values ordered by the `by` columns' values (ties by the value),
     /// joined by `sep`; "" over no rows.
     Join { by: Vec<String>, sep: String },
@@ -261,6 +264,7 @@ impl fmt::Display for Literal {
                 let op = match op {
                     AggOp::Min => "min",
                     AggOp::Sum => "sum",
+                    AggOp::Product => "product",
                     _ => "max",
                 };
                 write!(f, "${var} = {op} ${} : {{ {atom} }}", over.as_deref().unwrap_or_default())
@@ -356,6 +360,38 @@ pub(in crate::code_rule_dsl) struct Program {
     /// only, its `doc`, `source` and `src_line` and no tree, when a scope selects it. Every program's, in a combined
     /// one.
     pub(in crate::code_rule_dsl) text_globs: Vec<String>,
+    /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
+    /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
+    pub(in crate::code_rule_dsl) qualifiers: BTreeMap<String, BTreeSet<String>>,
+    /// A session's maintained strata, each with the rules that derive it again instead (decision 0090 §4,
+    /// `maintain::rewrite`): the run chooses per stratum, once its input deltas are known (`plan::run`).
+    pub(in crate::code_rule_dsl) again: Vec<Again>,
+}
+
+/// A maintained stratum's other form (decision 0090 §4). Both make its relations and their deltas (`r__minus`,
+/// `r__plus`), which are all that other strata read of it, so each stratum chooses alone.
+#[derive(Clone, Debug, Default)]
+pub(in crate::code_rule_dsl) struct Again {
+    /// The stratum's own relations (one fixpoint when derived again).
+    pub(in crate::code_rule_dsl) scc: BTreeSet<String>,
+    /// Every relation the maintained form makes for it: its relations, their pieces (`__del`, `__ins`, …) and deltas.
+    pub(in crate::code_rule_dsl) owned: BTreeSet<String>,
+    /// Its rules over the current inputs, then its deltas against its old rows.
+    pub(in crate::code_rule_dsl) rules: Vec<Rule>,
+    pub(in crate::code_rule_dsl) deltas: Vec<Rule>,
+    /// The input deltas its maintained form reads, and its relations' old rows: the sizes that choose.
+    pub(in crate::code_rule_dsl) reads: Vec<String>,
+    pub(in crate::code_rule_dsl) olds: Vec<String>,
+}
+
+/// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
+pub(in crate::code_rule_dsl) const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic"];
+
+impl Program {
+    /// Whether `.decl rel(…)` carries the qualifier `word` (one of `QUALIFIERS`).
+    pub(in crate::code_rule_dsl) fn qualified(&self, rel: &str, word: &str) -> bool {
+        self.qualifiers.get(rel).is_some_and(|q| q.contains(word))
+    }
 }
 
 /// A `.scope` entry taken from a policy option (`.scope dirs option("applicationRoots")`), as `doc_scopes` holds it
