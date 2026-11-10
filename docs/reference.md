@@ -38,7 +38,7 @@ The package ships no rules. Each rule is one of:
 
 A third party's pack installs into `$RERAIL_HOME/packs` too. Pack rules are read from the installed packs, never copied into the database. They run only where a repository adds the rule or a pack that holds it.
 
-Editing a By Rerail rule stores a copy in the library, added where the original was. The original switches off there once the copy is approved.
+Editing a By Rerail rule stores a copy in the library, added where the original was. The original switches off there once the copy is approved. From a terminal or any coding agent, `rerail rules show <id>` prints the rule as a draft, and `rerail rules add` of a draft that keeps its id stores the copy ([Testing and adding a rule draft](#testing-and-adding-a-rule-draft)).
 
 `rerail update` first copies the whole database to `$RERAIL_HOME/rerail.sqlite.pre-update`. `rerail reset` never touches rules.
 
@@ -749,7 +749,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 
 - **`/rerail`**: rendered by `rerail session`; Cursor gets the repository-level form.
 - **`/rerail-manage`**: the same link the footer's rule count carries.
-- **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts the rule, tests it (`rerail rules test <draft.json>`) and reads it back. On your yes, `rerail rules add <draft.json>` and `rerail rules approve <id>` add it to your library and this repository, setting the repository up with that rule if needed. It also tunes misfiring rules, and audits a pending rule or pack before asking you to approve it.
+- **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts the rule, tests it (`rerail rules test <draft.json>`) and reads it back. On your yes, `rerail rules add <draft.json>` and `rerail rules approve <id>` add it to your library and this repository, setting the repository up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
 - **`/rerail-start`**: OMP and Pi ask set-up's questions via their picker; Claude Code and Cursor as text.
 - **`/rerail-stop`**: the shared daemon keeps running; the reply names `rerail daemon stop`, run in a terminal.
 - **`/rerail-uninstall`**: OMP and Pi ask via a native selector; Claude Code doesn't pre-approve it.
@@ -762,8 +762,9 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 
 A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `rerail rules test --help` prints the format; [Writing rules](writing-rules.md#testing-a-draft) explains each field.
 
+- `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule as this repository runs it (the option values and mode the repository's settings give it, not a checkout's). A note on stderr, so stdout saves as a draft file, says where saving changes it: your rule here and in which other repositories, or that it is not added here; for a By Rerail rule, your copy, the copy this repository already has, or that the rule is not added or is off here (a copy would run on).
 - `rerail rules test` validates a draft, runs its cases and a repository pass, and writes nothing.
-- `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`).
+- `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
 - The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)).
 
 <details>
@@ -774,7 +775,7 @@ A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `
 - Text output shows the first five matches and files; `--json` shows all. Path and `file`-query matches have no line.
 - A bare rule document, such as `.rerail/rules/<name>.json`, gets validation and the repository pass only.
 
-`rerail rules add` sets the repository up with only that rule if needed, and won't replace a rule shipped by Rerail. `rerail rules approve` with no names lists everything awaiting approval and its source.
+`rerail rules add` sets the repository up with only that rule if needed. A rule already added here stays where it is when the draft names no `folder`; `"folder": ""` widens it to the whole repository. It never replaces a rule shipped by Rerail. Your copy of one takes no `folder`. It is refused where the repository does not add the original, and where your copy of it is already added; `rules show` names that copy, the one to change. Your copy made for another repository is refused where its original runs and the copy is not added, since both would steer. `rerail rules approve` with no names lists everything awaiting approval and its source.
 
 </details>
 

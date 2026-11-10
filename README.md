@@ -136,7 +136,7 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 | --- | --- |
 | `/rerail` | What Rerail is doing in this repository, and every command (`/rerail-help` is the same) |
 | `/rerail-start`, `/rerail-stop` | Start or stop Rerail in this checkout and the worktrees inside it; rules and history are kept |
-| `/rerail-create` | Create a rule in your own words |
+| `/rerail-create` | Create a rule in your own words, or change one, where it applies included |
 | `/rerail-show-me` | See Rerail catch a broken rule in this repository and steer the fix, then clean up |
 | `/rerail-bug-report` | Work out what went wrong: fix your own rule, or report a Rerail bug in an issue |
 | `/rerail-manage` | Open the dashboard |
