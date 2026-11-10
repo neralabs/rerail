@@ -215,8 +215,12 @@ Faults the 2026-11-09 merge brought, all fixed here:
 
 ### P3 still to come
 
-- A constructor's type variables inferred from its arguments, for library classes (`frozenset(xs)` of a `list[str]`:
-  calls_cx's `fbind`). Generic instantiation by annotations, returns and bases is done (above).
+- Library decorators that wrap (`@contextmanager`'s `Callable[P, Iterator[T]] -> Callable[P, _GeneratorContextManager[T]]`):
+  calls_cx reads the stub's nodes (`wrap`); P3 has no P2 fact for them, so `with batch_context(txn) as batch` is open
+  (3 calls calls_cx answers).
+- `dict.setdefault(k, []).append`: setdefault's two overloads both fit two arguments, so the call is open.
+- A workspace class with a library generic base (`class A(AbstractContextManager[None])`): its call is open in P3.
+- `cls.__new__(cls)` after `cls = variant_map.get(v)` and `if cls is None: raise`.
 - Overloads by keyword or by argument type: fitted by positional arity only.
 - An awaited call's value: an `async def`'s call is open today, not its return.
 - The cross-file memo's plan misses every component when any phase export it reads changes; finer, a component would
@@ -323,6 +327,22 @@ values over the binding's (containment), where both are measured. `fbind` now re
 runs is not comparable with the ones above: the machine's load was 37 to 140, not 11 to 19, and every phase was
 about 1.4 times slower, setup included. P3's instructions retired are 805 G cold, 200 G warm (820 G and 274 G
 before).
+
+**Inline or store, priced by delta plans (2c6a1aec5).** The inline-or-store choice priced a reader by its whole plan.
+A reader in a recursion runs as its delta plans, and its whole plan may start from the inlined relation's inputs,
+which no delta plan can: that is how `parent` and `rr_cx_edge` came to be inlined (priced at 0 and −7.8 M work).
+Each copy is now priced with the reader's delta atom first. Without their `no_inline` marks both are stored:
+`rr_cx_edge`'s readers would add 248 M work against 227 k stored, `parent`'s 3.7 M against 53 k. Answers are
+unchanged, and no other choice changed in calls_cx.
+
+**Constructor inference (3d07a226c).** P2 exports `pgen` (a parameter declared a generic of a type variable,
+`iterable: Iterable[_T_co]`) and `rcarg` (a return declared a generic of classes, `-> list[str]`). P3 holds a
+generic value's library-class arguments as symbols (`lgarg`), and a library class's call binds its type parameters
+from its argument's generic through `tmap`: `frozenset(dir(cls))` is a `frozenset[str]`. P3: 6,404 agree (6,390),
+619 unknown (633), no answer worse; 795 G instructions cold (805 G), 214 G warm (200 G), the memo's 59 components
+found warm and verified equal. Of the 12 calls calls_cx answered and P3 did not, 6 now agree, and 8 that calls_cx
+leaves open agree too. The other 6 are under "P3 still to come". `garg` is stored now: inlined, its readers joined
+on a regex's group, and the new `nclass` read every `grest` row per class (5.4 s).
 
 The merge also needed two mends: `corpus.rs`'s window-at-a-time memo lookups (serverplan-quality) and the document
 builders on `RERAIL_THREADS`' helpers (More-ergonomic) now share one resolver, and serverplan-quality's tip did
