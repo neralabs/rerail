@@ -4693,8 +4693,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
-    "status": "Final fc6c1e0d9 merged and root CLI rebuilt. ClassVar admitted after 1,198 native executions and all eight original assertions through both APIs. Dynamic loading remains a draft.",
+    "upstreamCommit": "9e5fa489e0a28d514282ff31652ad05da33bad32",
+    "status": "Final 9e5fa489e merged. The new CLI build and parity runs are pending.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4734,7 +4734,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "0b13d02be0aa6eb020a392e6c0e0f8a9671cfc1d0bf0dbcf7d4d37f23306add8"
+        "sha256": "496c1b1a5c3648a476123f6e6d315afae1b31f3112b257b3e8e30fad1c8b2a94"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
@@ -4806,16 +4806,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "9da26c8f5e2b7ccad8329b26f028254ed8493f5981ba94c0c0d3c67059ff0d79"
+        "sha256": "0496782fd0eeeee014773c80268e4c0cc8d6da41f2ec0cc4f4c9ee9ff2fcddb0"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "b3336ba05a7d02ebd7b5016d1450a3a4d7a5b4101c1a4549242fca1449fe92d9"
+        "sha256": "9d8324d5ce78a1edf44d14e1119ffe72b58828b2bdb49c04087455816d20939a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
-        "sha256": "b5e8b994bc2125c04a227e7f87e48eab8c227b4cba43fb8fd8aba742d637827f",
-        "reason": "Preserve tab, newline, CR, NUL and literal escape markers across the folded-constant output boundary; witnessed by dynamic discovery source corpus."
+        "sha256": "b5e8b994bc2125c04a227e7f87e48eab8c227b4cba43fb8fd8aba742d637827f"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -4843,7 +4842,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "b5b9622116d89ff1bffcb16191aa4e208f87fc043574e21b4e4291a860f80278"
+        "sha256": "00ed10d3d7eac3d491594e8e9e8831652715b1e77be944b61570c587139d1fc2"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
@@ -4859,11 +4858,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "8f866a3a66b13fceffbb76723c94d995f8f132a4964593d3564eeab3d16e0be3"
+        "sha256": "f8eff95323537de5d5c3c97b9dcf00098694dd0f54c0e7a4e2fb8bcae65eb994"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "b3658ce6306d282fe5b0ae59d4f9e61764fcf27eef59f59f06388c9556d1971a"
+        "sha256": "aafa1a3362303e14faa05d73c76e1f44426fc6da070be1d20d050b8f105d33c7"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
@@ -4883,7 +4882,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/tests.rs",
-        "sha256": "081fb0efaa5893b0b3e2c788c7841c87ecaec97e3f8a0bd63511caddd9e0a53c"
+        "sha256": "db3a3cf3cb6049939a8d4acdeca0bca16ff6935cad42f9a5aed6cbb1d3858867"
       },
       {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
@@ -4911,8 +4910,8 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "532ad5afd7ab87af48265fb4653cd6e89c12fde6",
-    "previousUpstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
+    "upstreamMerge": "06ec7a805b008b6f957927d4a297a7dae3fe0cdf",
+    "previousUpstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
     "artifactHistory": [
       {
         "engineCommit": "1954d7c425c81efe98232d0ef6ff1a5c270e2c1a",
@@ -4939,40 +4938,40 @@
           "profiling"
         ],
         "seconds": 95.52
+      },
+      {
+        "engineCommit": "ba106b5311f06fb8f77abec8c4009780d37ffbd9",
+        "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
+        "sourceTrees": {
+          "native": "6f49bc7e10d0657c2d8223c9dea11c3432597a61",
+          "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
+          "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+          "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+          "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-63278a96b660a897",
+        "sha256": "63278a96b660a897b54396e66b40ba3fff50035da44f9250b1907d307a50e66f",
+        "command": [
+          "cargo",
+          "build",
+          "-p",
+          "rerail-engine",
+          "--features",
+          "headless",
+          "--bin",
+          "rerail-engine",
+          "--profile",
+          "profiling"
+        ],
+        "seconds": 130.726
       }
     ],
-    "cliArtifact": {
-      "engineCommit": "ba106b5311f06fb8f77abec8c4009780d37ffbd9",
-      "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
-      "sourceTrees": {
-        "native": "6f49bc7e10d0657c2d8223c9dea11c3432597a61",
-        "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
-        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-        "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
-        "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-63278a96b660a897",
-      "sha256": "63278a96b660a897b54396e66b40ba3fff50035da44f9250b1907d307a50e66f",
-      "command": [
-        "cargo",
-        "build",
-        "-p",
-        "rerail-engine",
-        "--features",
-        "headless",
-        "--bin",
-        "rerail-engine",
-        "--profile",
-        "profiling"
-      ],
-      "seconds": 130.726
-    },
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
-      "engineCommit": "532ad5afd7ab87af48265fb4653cd6e89c12fde6",
+      "upstreamCommit": "9e5fa489e0a28d514282ff31652ad05da33bad32",
+      "engineCommit": "06ec7a805b008b6f957927d4a297a7dae3fe0cdf",
       "sourceTrees": {
-        "native": "6f49bc7e10d0657c2d8223c9dea11c3432597a61",
+        "native": "8ecb7697775e02279086ac1f2eb862fd66d02262",
         "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
