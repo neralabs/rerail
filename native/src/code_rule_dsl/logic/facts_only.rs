@@ -59,6 +59,9 @@ const FACT_STORE: &[&str] = &[
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
     "x",
+    // native_demand's tests' tables.
+    "keys",
+    "facts",
     "a",
     "b",
     "c",
@@ -199,6 +202,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
+    ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),

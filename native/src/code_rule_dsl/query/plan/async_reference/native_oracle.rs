@@ -4,7 +4,7 @@
 use crate::code_rule_dsl::{
     CompiledCodeRuleDsl,
     language::GrammarDialect,
-    matcher::{self, Corpus, CorpusSlot, FileAnchorIndex, FileGates, FileScopeSlot, Stopped},
+    matcher::{self, Corpus, CorpusSlot, FileGates, FileScopeSlot, Stopped, p_anchors::sql::FileAnchorIndex},
     model::{Anchor, ClauseKind, FileInput, Query},
     module_path::ModulePath,
     origin::InFile,
