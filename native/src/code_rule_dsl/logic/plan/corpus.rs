@@ -4085,8 +4085,12 @@ fn run_observed(
                     // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare.
                     let mut stored = cross.clone();
                     let inline_too = std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on");
+                    // The relations the program declares `inline`: inlined in a session as in a full run. The session
+                    // keeps no rows of theirs (the run's `Outcome::inlined` names them), and the strata over them are
+                    // derived again each run: the cost the author chose by writing `inline`.
+                    let declared_inline: BTreeSet<String> = cross.program.decls.keys().filter(|r| cross.program.qualified(r, "inline")).cloned().collect();
                     for rel in cross.program.rules.iter().map(|r| r.head.rel.clone()).collect::<std::collections::BTreeSet<_>>() {
-                        if !inline_too && !cross.program.qualified(&rel, "inline") {
+                        if !inline_too && !declared_inline.contains(&rel) {
                             stored.program.qualifiers.entry(rel).or_default().insert("no_inline".to_owned());
                         }
                     }
@@ -4235,10 +4239,11 @@ fn run_observed(
                         eprintln!("O125 input deltas: {} documents changed ({read} rows in their entries), {from_entries} from entries ({from_entries_rows} rows), by hashing {hashed:?}", changes.as_ref().map_or(0, Vec::len));
                     }
                     drop(s);
-                    // What the session keeps for the next run is stored, never inlined into its readers (decision
-                    // 0099): its rows are read back to be kept, and maintained from next run as `r__old` ("no such
-                    // table: py_f", inlined into `py_true` and `py_false`). So are the measurement aids' deltas.
-                    // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare (as above).
+                    // What the session keeps for the next run is stored, not inlined into its readers (decision
+                    // 0099): its rows are read back to be kept, and maintained from next run as `r__old`. So are the
+                    // measurement aids' deltas. A relation the program declares `inline` is the exception (above): it
+                    // stays inlined, and is not read back (`Outcome::inlined`). `RERAIL_SESSION_INLINE=on` inlines as a
+                    // full run does, to compare (as above).
                     if !std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on") {
                         let aids = ["RERAIL_SPIKE_DELTA", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_CROSS_VERIFY"].iter().any(|v| std::env::var_os(v).is_some());
                         let program = &mut maintained.program.program;
@@ -4246,7 +4251,7 @@ fn run_observed(
                         if aids {
                             stored.extend(program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
                         }
-                        for rel in stored {
+                        for rel in stored.into_iter().filter(|r| !declared_inline.contains(r)) {
                             let q = program.qualifiers.entry(rel).or_default();
                             q.remove("inline");
                             q.insert("no_inline".to_owned());
