@@ -148,9 +148,9 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
       return performance.now() - started;
     };
     const finished = await Promise.all([toolCall("t1"), toolCall("t2"), toolCall("t3")]);
-    // One hook gives up on a silent daemon after about 12 s. Each waited under the session's lock, so the third
-    // finished after about 38 s.
-    expect(Math.max(...finished)).toBeLessThan(20_000);
+    // Each hook gives up on the silent daemon about 12 s after its event arrives. Under the session's lock each would
+    // begin its wait when the one before it gave up, and the three would finish 2 s or more apart.
+    expect(Math.max(...finished) - Math.min(...finished)).toBeLessThan(1_000);
   });
 
   it("gives up on a silent daemon 12 s after the event arrives, the start check's read of it included", { timeout: 60_000 }, async () => {

@@ -154,8 +154,8 @@ async function runHostHookOnce(
     });
   }
   // Found before the session's lock is taken: a session's hooks that arrive together (parallel tool calls, subagents)
-  // wait out a busy daemon side by side, and the lock orders only their events and held steers. Under the lock each
-  // hook's wait began when the one before it gave up, so three hooks of one session took 14, 26 and 38 s.
+  // wait out a busy daemon side by side, and the lock orders only their events and held steers. Under the lock, each
+  // hook would begin its wait only when the one before it gave up.
   const daemon = await hookDaemon(options, startsSession);
   if (daemon.status !== "running") {
     // This event is lost, so say so where `rerail status` looks. A daemon that is gone (it crashed, or was stopped)
