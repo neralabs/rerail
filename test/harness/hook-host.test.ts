@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { basename, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
+import { encodeRerailEventResult } from "../../src/runtime/index.js";
 import {
   emitHookOutput,
   holdStopSteers,
@@ -246,6 +248,46 @@ describe("hook host durable state", () => {
       throw new Error("ingest failed");
     })).rejects.toThrow("ingest failed");
     await expect(withSessionLock(root, "codex", "session-1", async () => "recovered")).resolves.toBe("recovered");
+  });
+
+  it("lets the session's other hooks reach the daemon while one waits for the daemon's answer, as parallel subagents' hooks do", { timeout: 20_000 }, async () => {
+    const root = await temporaryDirectory();
+    // A daemon's engine socket that answers the first event only when the test says so: a busy daemon checking an edit.
+    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-parallel-hooks-${process.pid}-${Date.now()}` : join(root, "engine.sock");
+    const received: string[] = [];
+    const firstArrived = Promise.withResolvers<void>();
+    const answerFirst = Promise.withResolvers<void>();
+    const engine = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += String(chunk);
+      const { event } = JSON.parse(body) as { event: { eventId: string } };
+      received.push(event.eventId);
+      if (received.length === 1) {
+        firstArrived.resolve();
+        await answerFirst.promise;
+      }
+      response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [] }));
+    });
+    await new Promise<void>(resolve => engine.listen(socketPath, resolve));
+    const hooks: Promise<unknown>[] = [];
+    try {
+      const { embedder: _embedder, ...options } = hookOptions(root);
+      // Every subagent's tool call reaches Rerail under its parent's session id.
+      const toolCall = (agent: string) => runClaudeHook({
+        session_id: "parent-session", cwd: root, hook_event_name: "PreToolUse", agent_id: agent, agent_type: "general-purpose",
+        tool_name: "Write", tool_use_id: `${agent}-write`, tool_input: { file_path: join(root, `${agent}.py`), content: "x = 1\n" },
+      }, { ...options, kernelSocketPath: socketPath });
+      hooks.push(toolCall("agent-a"));
+      await firstArrived.promise;
+      hooks.push(toolCall("agent-b"));
+      await vi.waitFor(() => expect(received).toEqual(["parent-session:tool-call:agent-a-write", "parent-session:tool-call:agent-b-write"]), { timeout: 5_000 });
+      answerFirst.resolve();
+      await expect(Promise.all(hooks)).resolves.toEqual([{}, {}]);
+    } finally {
+      answerFirst.resolve();
+      await Promise.allSettled(hooks);
+      await new Promise<void>(resolve => engine.close(() => resolve()));
+    }
   });
 
   it("holds steers on disk scrubbed of secrets and hands the hook their original text", async () => {

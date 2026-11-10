@@ -271,6 +271,14 @@ async function releaseLock(path: string, serializedOwner: string): Promise<void>
   }
 }
 
+/**
+ * The lock a hook holds for its session, which guards the session's held steers. `released` lets go of it while `work`
+ * runs, for work that touches no session file, such as waiting for the daemon's answer, and takes it again after.
+ */
+export interface SessionLock {
+  released<T>(work: () => Promise<T>): Promise<T>;
+}
+
 export interface SessionLockOptions {
   /** The platform whose errors for a lock file being deleted count as the lock being taken; this process's by default. */
   platform?: NodeJS.Platform;
@@ -280,7 +288,7 @@ export async function withSessionLock<T>(
   storageRoot: string,
   host: HookHost,
   sessionId: string,
-  operation: () => Promise<T>,
+  operation: (lock: SessionLock) => Promise<T>,
   options: SessionLockOptions = {},
 ): Promise<T> {
   return withLockFile(sessionFile(storageRoot, host, "locks", sessionId, "lock"), sessionId, operation, options.platform ?? process.platform);
@@ -302,20 +310,34 @@ export async function withPendingFileLock<T>(pendingFile: string, operation: () 
 async function withLockFile<T>(
   path: string,
   label: string,
-  operation: () => Promise<T>,
+  operation: (lock: SessionLock) => Promise<T>,
   platform: NodeJS.Platform,
 ): Promise<T> {
   await makeLedgerFolder(dirname(path));
   const owner: LockOwner = { pid: process.pid, token: randomUUID() };
   const serializedOwner = JSON.stringify(owner);
   await acquireLock(path, serializedOwner, label, platform);
+  let held = true;
+  const lock: SessionLock = {
+    async released(work) {
+      if (!held) return await work();
+      await releaseLock(path, serializedOwner);
+      held = false;
+      try {
+        return await work();
+      } finally {
+        await acquireLock(path, serializedOwner, label, platform);
+        held = true;
+      }
+    },
+  };
   try {
-    const result = await operation();
-    await releaseLock(path, serializedOwner);
+    const result = await operation(lock);
+    if (held) await releaseLock(path, serializedOwner);
     return result;
   } catch (error) {
     try {
-      await releaseLock(path, serializedOwner);
+      if (held) await releaseLock(path, serializedOwner);
     } catch {
       // Preserve the operation failure; a stale lock is reclaimable by the next process.
     }

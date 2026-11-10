@@ -1,0 +1,1 @@
+A session whose subagents run tools at the same time no longer loses their events to hooks waiting on each other: a hook lets go of its session's lock while the daemon checks its event, and on Windows it waits through a lock file another hook is deleting instead of failing.
