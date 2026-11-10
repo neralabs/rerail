@@ -67,7 +67,7 @@ def anchor_captures(text, base):
 # Directive names (`.scope`, `.policy`, `.decl`, …) at a line start are never renamed either.
 LIT = re.compile(r'"(?:[^"\\]|\\.)*"|`[^`]*`|//[^\n]*|(?m:^\.\w+)')
 def rename_outside_literals(text, names, tag):
-    pat = re.compile(r"(?<![\w$])(" + "|".join(sorted(map(re.escape, names), key=len, reverse=True)) + r")(?!\w)")
+    pat = re.compile(r"(?<![\w$])(?<!: )(" + "|".join(sorted(map(re.escape, names), key=len, reverse=True)) + r")(?!\w)")
     out, pos = [], 0
     for m in LIT.finditer(text):
         out.append(pat.sub(lambda x: tag + "_" + x.group(1), text[pos:m.start()])); out.append(m.group(0)); pos = m.end()
@@ -140,7 +140,8 @@ TEXT_USE = re.compile(r"(?<![\w$])text\((\w+), (\w+)\)")
 
 
 def aggregate_spans(body):
-    """(start, end) of each innermost-first `{ … }` aggregate body, outside string and pattern literals."""
+    """Scopes a variable can be local to, as (start, end): each `{ … }` aggregate body, and each branch of a
+    `( a ; b )` disjunction (end: the `;` or `)` after it). Outside string and pattern literals."""
     spans, stack, q = [], [], None
     for i, ch in enumerate(body):
         if q:
@@ -149,10 +150,17 @@ def aggregate_spans(body):
             continue
         if ch in "\"`":
             q = ch
-        elif ch == "{":
-            stack.append(i)
+        elif ch in "{(":
+            stack.append([ch, i, i, False])     # kind, open, branch start, has `;`
+        elif ch == ";" and stack and stack[-1][0] == "(":
+            spans.append((stack[-1][2], i))
+            stack[-1][2], stack[-1][3] = i, True
         elif ch == "}" and stack:
-            spans.append((stack.pop(), i))
+            spans.append((stack.pop()[1], i))
+        elif ch == ")" and stack:
+            kind, start, branch, disj = stack.pop()
+            if disj:
+                spans.append((branch, i))
     return spans
 
 
