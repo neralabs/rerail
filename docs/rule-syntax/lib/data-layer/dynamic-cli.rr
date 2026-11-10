@@ -1,0 +1,84 @@
+// Standard argparse consumes the native schema. Relations select every action,
+// signature message, report fragment, and status; ordinals preserve occurrences.
+.decl dmc_config(key: symbol,value: symbol)
+.decl dmc_argument(ordinal: number,flag: symbol,schema: symbol)
+.decl dmc_sign_pattern(pattern: symbol)
+.violation DynamicCliConfig(at: span,key: symbol,value: symbol) code "DML_CLI_CONFIG" "CLI configuration"
+DynamicCliConfig(@place("",0),k,v) :- option("entryPoint","_dynamic_cli_configuration"),dmc_config(k,v).
+.violation DynamicCliArgument(at: span,ordinal: number,flag: symbol,schema: symbol) code "DML_CLI_ARG" "CLI argument"
+DynamicCliArgument(@place("",0),i,f,s) :- option("entryPoint","_dynamic_cli_configuration"),dmc_argument(i,f,s).
+.violation DynamicCliAction(at: span,value: symbol) code "DML_CLI_ACTION" "CLI action"
+DynamicCliAction(@place("",0),"sign") :- option("entryPoint","_dynamic_cli_start"),option("cliSign","1").
+DynamicCliAction(@place("",0),"verify") :- option("entryPoint","_dynamic_cli_start"),option("cliSign","0").
+.decl dmc_allowed(ordinal: number,value: symbol)
+dmc_allowed(i,p) :- option("entryPoint","_dynamic_cli_start"),option_item("cliAllowed",i,p).
+.violation DynamicCliAllow(at: span,ordinal: number,value: symbol) code "DML_CLI_ALLOW" "ordered allowlist entry"
+DynamicCliAllow(@place("",0),n,p) :- dmc_allowed(i,p),n=count : { dmc_allowed(j,q),(@str_cmp(q,p)<0 ; q=p,j<i) }.
+.violation DynamicCliExit(at: span,status: number) code "DML_CLI_EXIT" "CLI status"
+DynamicCliExit(@place("",0),0) :- option("entryPoint","_dynamic_cli_signed"),option("cliResult","1").
+DynamicCliExit(@place("",0),1) :- option("entryPoint","_dynamic_cli_signed"),option("cliResult","0").
+DynamicCliExit(@place("",0),1) :- option("entryPoint","_dynamic_cli_verified"),option("cliResult","0").
+DynamicCliAction(@place("",0),"resolve") :- option("entryPoint","_dynamic_cli_verified"),option("cliResult","1").
+.violation DynamicCliOutput(at: span,phase: number,ordinal: number,channel: symbol,text: symbol) code "DML_CLI_OUTPUT" "CLI output"
+DynamicCliOutput(@place("",0),0,0,"stdout",t) :- option("entryPoint","_dynamic_cli_verified"),option("cliResult","0"),dmc_config("failure",t).
+DynamicCliOutput(@place("",0),0,0,"stdout",t) :- option("entryPoint","_dynamic_cli_begin"),dmc_config("begin",t).
+
+.decl dmc_count(n: number)
+dmc_count(n) :- option("entryPoint","_dynamic_cli_report"),n=count : { option_item("cliFile",i,_) }.
+.decl dmc_path(i: number,path: symbol)
+dmc_path(i,".") :- dmc_count(_),option_item("cliFile",i,p),option("sourceRoot",p).
+dmc_path(i,@slice(p,strlen(r)+1,strlen(p))) :- dmc_count(_),option_item("cliFile",i,p),option("sourceRoot",r),r!="/",r!="//",prefix(cat(r,"/"),p).
+dmc_path(i,@slice(p,1,strlen(p))) :- dmc_count(_),option_item("cliFile",i,p),option("sourceRoot","/"),prefix("/",p),!prefix("//",p).
+dmc_path(i,@slice(p,2,strlen(p))) :- dmc_count(_),option_item("cliFile",i,p),option("sourceRoot","//"),prefix("//",p).
+dmc_path(i,p) :- dmc_count(_),option_item("cliFile",i,p),option("sourceRoot","."),!prefix("/",p).
+.decl dmc_bad_path(i: number,path: symbol)
+dmc_bad_path(i,p) :- dmc_count(_),option_item("cliFile",i,p),!dmc_path(i,_).
+.decl dmc_first_error(i: number)
+dmc_first_error(n) :- dmc_bad_path(_,_),n=min i : { dmc_bad_path(i,_) }.
+.violation DynamicCliPathError(at: span,ordinal: number,path: symbol) code "DML_CLI_PATH_ERROR" "path is outside the root"
+DynamicCliPathError(@place("",0),i,p) :- dmc_first_error(i),dmc_bad_path(i,p).
+.decl dmc_display(i: number,text: symbol)
+dmc_display(i,t) :- dmc_count(_),option_item("cliSnippet",i,t),strlen(t)<=100.
+dmc_display(i,cat(@slice(t,0,100),"...")) :- dmc_count(_),option_item("cliSnippet",i,t),strlen(t)>100.
+DynamicCliOutput(@place("",0),0,0,"stdout",t) :- dmc_count(0),dmc_config("clean",t).
+DynamicCliOutput(@place("",0),0,0,"stdout",cat("Found ",to_string(n)," violation(s):\n\n")) :- dmc_count(n),n>0.
+DynamicCliOutput(@place("",0),1,i,"stdout",cat("  ",p,":",l,"\n    Pattern: ",d,"\n    Line: ",s,"\n\n")) :- dmc_path(i,p),option_item("cliLine",i,l),option_item("cliDescription",i,d),dmc_display(i,s),(!dmc_first_error(_) ; dmc_first_error(e),i<e).
+DynamicCliOutput(@place("",0),2,0,"stdout",t) :- dmc_count(n),n>0,!dmc_first_error(_),dmc_config("guidance",t).
+DynamicCliExit(@place("",0),0) :- dmc_count(0).
+DynamicCliExit(@place("",0),0) :- dmc_count(n),n>0,!dmc_first_error(_),option("cliCheck","0").
+DynamicCliExit(@place("",0),1) :- dmc_count(n),n>0,!dmc_first_error(_),option("cliCheck","1").
+
+// Canonical helper messages preserve the supplied list's order and duplicates.
+.decl dmc_verifying()
+dmc_verifying() :- option("entryPoint","_dynamic_verify").
+.decl dmc_message(message: symbol)
+dmc_message(cat("{\"allowlist\":[",body,"],\"linter\":",@json_str(l),",\"version\":",v,"}")) :- dmc_verifying(),option("verifyLinter",l),option("verifyVersion",v),body=join q by i sep "," : { option_item("verifyEntries",i,e),q=@json_str(e) }.
+.violation DynamicVerify(at: span,ok: number) code "DML_VERIFY" "verification result"
+DynamicVerify(@place("",0),1) :- dmc_verifying(),option("verifySignature",s),!unsigned_sig(s),dmc_message(m),nera_key(k),@ed25519_ok(k,m,s)=1.
+DynamicVerify(@place("",0),0) :- dmc_verifying(),option("verifySignature",s),!unsigned_sig(s),dmc_message(m),nera_key(k),@ed25519_ok(k,m,s)=0.
+DynamicVerify(@place("",0),1) :- dmc_verifying(),option("verifySignature",s),unsigned_sig(s),option("verifyWarn","1").
+DynamicVerify(@place("",0),0) :- dmc_verifying(),option("verifySignature",s),unsigned_sig(s),option("verifyWarn","0").
+DynamicCliOutput(@place("",0),0,0,"stderr",cat("WARNING: Allowlist for ",l," is ",label,"\n")) :- dmc_verifying(),option("verifySignature",s),unsigned_sig(s),option("verifyLinter",l),option("verifyWarn","1"),(s="NEEDS_SIGNING",label="needs signing" ; s!="NEEDS_SIGNING",label="unsigned").
+DynamicCliOutput(@place("",0),0,0,"stderr",cat("FAIL: WARNING: Allowlist for ",l," is ",label,". Sign with --sign-allowlist.\n")) :- dmc_verifying(),option("verifySignature",s),unsigned_sig(s),option("verifyLinter",l),option("verifyWarn","0"),(s="NEEDS_SIGNING",label="needs signing" ; s!="NEEDS_SIGNING",label="unsigned").
+DynamicCliOutput(@place("",0),0,0,"stderr",cat("FAIL: Allowlist signature verification failed for ",l,": ",@ed25519_error(k,m,s),"\n")) :- dmc_verifying(),option("verifySignature",s),!unsigned_sig(s),dmc_message(m),nera_key(k),@ed25519_ok(k,m,s)=0,option("verifyLinter",l).
+
+.decl dmc_sign_message(message: symbol)
+dmc_sign_message(cat("{\"allowlist\":[",body,"],\"linter\":",@json_str(l),",\"version\":",v,"}")) :- option("entryPoint","_dynamic_sign_request"),option("signLinter",l),option("signVersion",v),body=join q by i sep "," : { option_item("signEntries",i,e),q=@json_str(e) }.
+.violation DynamicSignRequest(at: span,request_id: symbol,key_env: symbol,message: symbol) code "DML_SIGN_REQUEST" "signing request"
+DynamicSignRequest(@place("",0),"dynamic.signing","NERA_SIGNING_KEY",m) :- dmc_sign_message(m).
+.violation DynamicSignResult(at: span,ok: number,write_file: number,updated_source: symbol,stdout: symbol,stderr: symbol) code "DML_SIGN_RESULT" "signing result"
+DynamicSignResult(@place("",0),0,0,"","","ERROR: NERA_SIGNING_KEY environment variable not set.\nOnly the user may have access to NERA_SIGNING_KEY. Ask the user to run the documented `uv run ... --sign-allowlist` command in an environment where the key is already present.\nAI agents must never have access to this proof-of-human key and must never try to obtain it.\n") :- option("entryPoint","_dynamic_sign_error"),option("signStatus","missing-key").
+DynamicSignResult(@place("",0),0,0,"","","ERROR: NERA_SIGNING_KEY must be 32 bytes\n") :- option("entryPoint","_dynamic_sign_error"),option("signStatus","key-length").
+DynamicSignResult(@place("",0),0,0,"","",cat("ERROR: Failed to decode NERA_SIGNING_KEY: ",d,"\n")) :- option("entryPoint","_dynamic_sign_error"),option("signStatus","invalid-hex"),option("signDetail",d).
+.decl dmc_sign_matched()
+dmc_sign_matched() :- option("entryPoint","_dynamic_sign_update"),option("scriptSource",s),dmc_sign_pattern(p),@count_matches(p,s)>0.
+DynamicSignResult(@place("",0),1,1,@replace_all(s,p,cat("${1}\"",sig,"\"${2}")),cat("Updated ",v," in ",path,"\n"),"") :- option("entryPoint","_dynamic_sign_update"),option("scriptSource",s),option("scriptPath",path),option("newSignature",sig),option("signVariable",v),dmc_sign_pattern(p),dmc_sign_matched().
+DynamicSignResult(@place("",0),0,0,"","",cat("ERROR: Could not find ",v," in ",p,"\n")) :- option("entryPoint","_dynamic_sign_update"),option("scriptPath",p),option("signVariable",v),!dmc_sign_matched().
+// Root choice and raw directory arguments are independent of filesystem discovery.
+.violation DynamicCliRoot(at: span,path: symbol) code "DML_CLI_ROOT" "CLI root"
+DynamicCliRoot(@place("",0),p) :- option("entryPoint","_dynamic_cli_root"),option("cliHasRoot","1"),option("cliRoot",p).
+DynamicCliRoot(@place("",0),@dir(@dir(@dir(p)))) :- option("entryPoint","_dynamic_cli_root"),option("cliHasRoot","0"),option("discoverySource",p).
+.violation DynamicCliScanArgument(at: span,ordinal: number,path: symbol) code "DML_CLI_SCAN_ARG" "CLI directory input"
+DynamicCliScanArgument(@place("",0),i,p) :- option("entryPoint","_dynamic_cli_root"),option("cliHasDirs","1"),option_item("cliDirs",i,p).
+DynamicCliScanArgument(@place("",0),i,p) :- option("entryPoint","_dynamic_cli_root"),option("cliHasDirs","0"),option("cliHasDefaults","1"),option_item("cliDefaultDirs",i,p).
+DynamicCliScanArgument(@place("",0),0,"public") :- option("entryPoint","_dynamic_cli_root"),option("cliHasDirs","0"),option("cliHasDefaults","0").

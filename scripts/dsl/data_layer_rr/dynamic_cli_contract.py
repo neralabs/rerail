@@ -53,16 +53,35 @@ def dict_to_hit(hit,**kw):
 def exercise(module,case,temporary):
     root=temporary/'repo';root.mkdir();write_fixture(root,case.get('files',[]));events=[]
     real_scan=module.find_violations;real_resolve=module.resolve_root_and_dirs
+    def canon(value):
+        # macOS resolves /var to /private/var. Normalize only this fixture's aliases.
+        aliases=[temporary,temporary.resolve()]
+        def align(v):
+            if isinstance(v,Path):
+                for alias in aliases:
+                    if v.is_absolute() and v.is_relative_to(alias):return temporary/v.relative_to(alias)
+                return v
+            if isinstance(v,str):
+                for alias in aliases:
+                    prefix=str(alias)+'/'
+                    if v.startswith(prefix):return str(temporary)+'/'+v[len(prefix):]
+                for alias in aliases:v=v.replace(str(alias),'$TEMP')
+                return v
+            if isinstance(v,tuple):return tuple(align(x) for x in v)
+            if isinstance(v,list):return [align(x) for x in v]
+            if isinstance(v,dict):return {k:align(x) for k,x in v.items()}
+            return v
+        return canonical(align(value),temporary)
     def streams(prefix):
         sys.stdout.write(case.get(prefix+'Stdout',''));sys.stderr.write(case.get(prefix+'Stderr',''))
-    def verify(*args,**kw):events.append(dict(name='verify',args=canonical(args,temporary),kwargs=canonical(kw,temporary)));streams('verify');return case.get('verifyResult',True)
-    def sign(*args,**kw):events.append(dict(name='sign',args=canonical(args,temporary),kwargs=canonical(kw,temporary)));streams('sign');return case.get('signResult',False)
+    def verify(*args,**kw):events.append(dict(name='verify',args=canon(args),kwargs=canon(kw)));streams('verify');return case.get('verifyResult',True)
+    def sign(*args,**kw):events.append(dict(name='sign',args=canon(args),kwargs=canon(kw)));streams('sign');return case.get('signResult',False)
     def resolve(args,**kw):
-        events.append(dict(name='resolve',args=canonical(vars(args),temporary),kwargs=canonical(kw,temporary)));streams('resolve')
+        events.append(dict(name='resolve',args=canon(vars(args)),kwargs=canon(kw)));streams('resolve')
         if 'resolveError' in case:raise RuntimeError(case['resolveError'])
         return real_resolve(args,**kw) if case.get('resolveReal') else (root,case.get('directories',['api']))
     def scan(actual_root,dirs):
-        events.append(dict(name='scan',args=canonical((actual_root,dirs),temporary)));streams('scan')
+        events.append(dict(name='scan',args=canon((actual_root,dirs))));streams('scan')
         if 'scanError' in case:raise RuntimeError(case['scanError'])
         if 'findings' in case:return [(Path(p.replace('$ROOT',str(root))),line,text,desc) for p,line,text,desc in case['findings']]
         return real_scan(actual_root,dirs)
@@ -75,11 +94,11 @@ def exercise(module,case,temporary):
         if 'signature' in case:stack.enter_context(patch.object(module,'ALLOWLIST_SIGNATURE',case['signature']))
         with redirect_stdout(out),redirect_stderr(err):
             try:value=dict(status=module.cli_main())
-            except BaseException as error:value=dict(error=dict(type=type(error).__module__+'.'+type(error).__qualname__,args=canonical(error.args,temporary)))
-    return dict(value,stdout=out.getvalue().replace(str(root),'$ROOT'),stderr=err.getvalue().replace(str(root),'$ROOT'),events=events)
+            except BaseException as error:value=dict(error=dict(type=type(error).__module__+'.'+type(error).__qualname__,args=canon(error.args)))
+    return dict(value,stdout=out.getvalue().replace(str(root),'$ROOT').replace(str(root.resolve()),'$ROOT'),stderr=err.getvalue().replace(str(root),'$ROOT').replace(str(root.resolve()),'$ROOT'),events=events)
 
 
 if __name__=='__main__':
     from contract_runner import main
     from dynamic_port import install
-    main(CHECK,'rerail.dynamic-cli-contract/v1',cases,exercise,install,['dynamic_cli_contract.py','dynamic_port.py'])
+    main(CHECK,'rerail.dynamic-cli-contract/v1',cases,exercise,install,['dynamic_cli_contract.py','dynamic_port.py','dynamic_cli_port.py'],guard_modules=['scripts.lint_lib.discovery','scripts.lint_lib.signing'])

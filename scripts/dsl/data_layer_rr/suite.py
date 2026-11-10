@@ -605,7 +605,7 @@ class Suite:
                 return
             check, name, passive = originals[frame.f_code]
             host = {'admin_async_purity': {'cli_main'},
-                    'async_executor': {'cli_main'}, 'dynamic_module_loading': {'cli_main'}, 'classvar_check': {'cli_main'},
+                    'async_executor': {'cli_main'}, 'classvar_check': {'cli_main'},
                     'type_safety_patterns': {'cli_main'},
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},
                     'data_layer_facade_purity': {'cli_main', '_print_results'},

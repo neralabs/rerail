@@ -1,0 +1,6 @@
+// Expand public roots without walking or reading any source file.
+#include "data-layer/python-discovery-roots.rr"
+sgd_enabled() :- env("dml.paths","true").
+sgd_configured() :- env("data-layer.scan.configured","true").
+.violation DynamicCliDirectory(at: span,ordinal: number,path: symbol) code "DML_CLI_DIRECTORY" "CLI directory"
+DynamicCliDirectory(@place("",0),i,p) :- option("entryPoint","_dynamic_cli_paths"),sgd_chosen(a,b,p),i=count : { sgd_chosen(c,d,_),(c<a ; c=a,d<b) }.

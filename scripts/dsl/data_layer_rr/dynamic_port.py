@@ -47,6 +47,7 @@ def disk_results(rows,root):
 
 def install(backend,module,detectors=False):
     config=configuration(backend)
+    config_call=len(backend.calls)-1
     if not config:raise ValueError('Native dynamic-loading configuration is missing')
     backend.replace(module,'__doc__',config['docstring'][0])
     backend.replace(module,'LINTER_NAME',config['linter'][0]);backend.replace(module,'ALLOWLIST_SIGNATURE',config['signature'][0])
@@ -68,5 +69,7 @@ def install(backend,module,detectors=False):
             return bool(rows)
         backend.replace(module,'_is_in_type_checking_block',predicate)
     if hasattr(backend,'configuration_bindings'):
-        backend.configuration_bindings[CHECK]=dict(nativeCall=len(backend.calls)-1,names=['__doc__','LINTER_NAME','ALLOWLIST_SIGNATURE','ALLOWLISTED_FILES','_FAST_SUBSTRINGS','_PATTERNS','_IMPORT_MODULE_PATTERNS','DYNAMIC_MODULE_LOADING_EXTRACTOR'])
+        backend.configuration_bindings[CHECK]=dict(nativeCall=config_call,names=['__doc__','LINTER_NAME','ALLOWLIST_SIGNATURE','ALLOWLISTED_FILES','_FAST_SUBSTRINGS','_PATTERNS','_IMPORT_MODULE_PATTERNS','DYNAMIC_MODULE_LOADING_EXTRACTOR'])
+    from dynamic_cli_port import install as install_cli
+    install_cli(backend,module)
     module._rerail_dynamic_configuration=lambda:configuration(backend)

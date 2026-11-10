@@ -290,6 +290,15 @@ def main():
             index=next((i for i,file in enumerate(manifest['files']) if file['destination']==companion.as_posix()),None)
             if index is None:manifest['files'].append(item)
             else:manifest['files'][index]=dict(manifest['files'][index],**item)
+        if check=='dynamic_module_loading':
+            from data_layer_rr_dynamic_cli import paths_program
+            companion=path.with_name('dynamic-module-loading-paths.rr');content=paths_program(source,entry,header)
+            (ROOT/companion).write_text(content)
+            item=dict(destination=companion.as_posix(),sha256=sha(content.encode()),origin='authored',sourceCommit=PIN,
+                upstreamPath='scripts/lint_dynamic_module_loading.py')
+            index=next((i for i,file in enumerate(manifest['files']) if file['destination']==companion.as_posix()),None)
+            if index is None:manifest['files'].append(item)
+            else:manifest['files'][index]=dict(manifest['files'][index],**item)
         if check=='plan_composition_architecture':
             companion=path.with_name(path.stem+'-source.rr');content=composition(source,entry,header)[1]
             (ROOT/companion).write_text(content)
