@@ -77,6 +77,15 @@ function assertEventHost(host: RerailHost): void {
 }
 
 /**
+ * Whether a session of `host` keeps its samples in memory, in its semantic workspace's source: only an agent with the
+ * semantic tools (`select`, `project`, `relate`) reads them back. A hook host's session (Claude Code, Codex, Cursor)
+ * keeps them in its ledger alone, since it records thousands and nothing queries them.
+ */
+function keepsSamples(host: RerailHost): boolean {
+  return ADAPTER_CAPABILITIES[host].toolSurface === "native";
+}
+
+/**
  * How long a one-shot hook (Claude Code, Codex, Cursor) waits after a tool for that edit's rule check, so a steer lands
  * under the edit and the coding agent can act on it in the same turn. A check usually takes tens of milliseconds; one
  * that runs longer goes out at the next hook (with the experimental missed-steer digest, in the digest the turn's end
@@ -1411,7 +1420,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #initialSessionState({ session, checkout, startedAt, ledger, restored, watermarks, steerStrategy }: SessionStart): RuntimeSessionState {
     const { registry, turn, ruleSync } = restored;
     const items = ledger.entries.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
-    const source = new MutableContentSource(items);
+    const source = new MutableContentSource(keepsSamples(session.host) ? items : []);
     const secrets = secretCallsOf(ledger.entries);
     return {
       descriptor: session,
@@ -1678,7 +1687,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         fields: { eventId: sample.eventId, sampleSource: sample.source, boundary: sample.boundary },
       },
     };
-    state.source.append(item);
+    if (keepsSamples(state.descriptor.host)) state.source.append(item);
     // A result stored without its output leaves its text out of the ledger as well; matching still reads it.
     await this.#append(state, { type: "sample", item: state.withheldResults.has(sample.eventId) ? { ...item, text: "" } : item });
     const registry = state.registry;
