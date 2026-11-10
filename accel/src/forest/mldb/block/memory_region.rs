@@ -272,6 +272,9 @@ impl<T: Pod> FrozenMemoryRegionT<T> {
 
     pub fn data(&self) -> &[T] {
         let bytes = self.raw.data();
+        if bytes.is_empty() {
+            return &[]; // an empty region's bytes may not be aligned for T
+        }
         unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / std::mem::size_of::<T>()) }
     }
 
@@ -379,6 +382,9 @@ impl<T: Pod> MutableMemoryRegionT<T> {
 
     pub fn data(&self) -> &[T] {
         let bytes = self.raw.data();
+        if bytes.is_empty() {
+            return &[]; // an empty region's bytes may not be aligned for T
+        }
         unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / std::mem::size_of::<T>()) }
     }
 

@@ -6,7 +6,7 @@
 //!
 //! Recursive (CPU) kernels for the random forest algorithm. Here so far: the core of the split search
 //! (`testFeatureKernel`, `chooseSplitKernel`, `testFeatureNumber`) and `decodeRows`, which the kernels' host forms
-//! (randomforest_kernels.rs) call.
+//! (randomforest_kernels.rs) call, and `extractTree`, which builds a tree from the partitioned trainer's splits.
 //!
 //! The C++ template over row iterators and bucket lists is two traits: `RowSource` (a row iterator, or decoded rows)
 //! and `BucketSource` (a bucket list, a view of one, or a plain `u16`/`u32` array). The `debug` traces are not
@@ -14,7 +14,10 @@
 
 use crate::forest::bucket::{BucketList, BucketListRef};
 use crate::forest::randomforest_kernels::score_split;
-use crate::forest::randomforest_types::{decode_row_arr, decode_row_iter, DecodedRow, Feature, RowIterator, Rows, W};
+use crate::forest::dataset_feature_space::DatasetFeatureSpace;
+use crate::forest::randomforest_types::{decode_row_arr, decode_row_iter, get_leaf, get_node, DecodedRow, Feature, PartitionIndex, PartitionSplit, RowIterator, Rows, W};
+use crate::forest::tree::{Ptr, Tree};
+use std::collections::BTreeMap;
 
 /// `decodeRow` over what the split search reads its rows from.
 pub trait RowSource {
@@ -169,4 +172,40 @@ pub fn decode_rows(rows: &Rows) -> Vec<f32> {
         *d = row.weight * (1 - 2 * row.label as i32) as f32;
     }
     decoded_rows
+}
+
+/// Builds the tree under `root` from the splits and leaves of a partitioned training: a leaf where there is one, else
+/// a node from the split (its children recursively, or leaves from the split's sides where they cannot recurse).
+/// There is no calculating going on here, just creation of the data structure.
+#[allow(clippy::too_many_arguments)]
+pub fn extract_tree(depth: i32, max_depth: i32, tree: &mut Tree, root: PartitionIndex, splits: &BTreeMap<PartitionIndex, PartitionSplit>, leaves: &BTreeMap<PartitionIndex, Ptr>, features: &[Feature], fs: &DatasetFeatureSpace) -> Result<Ptr, String> {
+    assert_eq!(root.depth(), depth);
+    // First look for a leaf.
+    if let Some(&l) = leaves.get(&root) {
+        return Ok(l);
+    }
+    // Secondly look for a split.
+    let Some(s) = splits.get(&root) else {
+        return Ok(Ptr::Null);
+    };
+    if s.left.count() + s.right.count() == 0 {
+        return Ok(Ptr::Null);
+    } else if s.feature == -1 {
+        return Ok(get_leaf(tree, &(s.left + s.right)));
+    }
+    let total = s.left + s.right;
+    // No impurity.
+    if total.v[0].to_f32() == 0.0 || total.v[1].to_f32() == 0.0 {
+        return Ok(Ptr::Null);
+    }
+    let mut left = extract_tree(depth + 1, max_depth, tree, root.left_child(), splits, leaves, features, fs)?;
+    let mut right = extract_tree(depth + 1, max_depth, tree, root.right_child(), splits, leaves, features, fs)?;
+    // Fill in from the information in the split if we can't recurse.
+    if !left.is_some() {
+        left = get_leaf(tree, &s.left);
+    }
+    if !right.is_some() {
+        right = get_leaf(tree, &s.right);
+    }
+    get_node(tree, s.score, s.feature as i32, s.value as i32, left, right, s.left, s.right, features, fs)
 }

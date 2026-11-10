@@ -8,7 +8,9 @@
 //! functions with their pipeline states, and each function's arguments as Metal's reflection describes them, which
 //! the grid runtime binds a kernel's parameters to by name.
 //!
-//! Here so far: `MetalBindContext` (with the queue's `newBindContext` and `finish`, over one command buffer),
+//! Here so far: `MetalComputeQueue` (launches, copies from the host, fills, device copies, `flush` and `finish`
+//! over a command buffer at a time) with its event, the array allocation and transfers over shared storage,
+//! `MetalBindContext`,
 //! `MetalComputeFunctionLibrary` (`compileFromSource`, `getFunction`), `MetalComputeFunction`
 //! (pipeline state with reflection, `getArgumentInfo`), and `getKernelType` with the data type, struct and array
 //! translations. `compileFromSourceFile`'s preprocessing step is the build step (`accel/build/forest.rs`); the
@@ -320,15 +322,33 @@ impl MetalComputeFunctionLibrary {
     }
 }
 
-/// A queue of kernel launches on a command buffer of the shared device's queue (`MetalComputeQueue`): each launch
-/// is encoded in its own compute encoder, in order; `finish` commits and waits.
+/// A queue of operations on the shared device (`MetalComputeQueue`): kernel launches, each in its own compute
+/// encoder, and copies and fills, each in its own blit encoder, all in order on the current command buffer.
+/// `flush` commits it (and starts another) and gives an event to await; `finish` flushes and waits.
 pub struct MetalComputeQueue {
+    pub queue: metal::CommandQueue,
     pub command_buffer: metal::CommandBuffer,
+}
+
+/// A committed command buffer (`MetalComputeEvent`).
+pub struct MetalComputeEvent {
+    pub command_buffer: metal::CommandBuffer,
+}
+
+impl MetalComputeEvent {
+    /// Waits for the work to complete; an error if it did not.
+    pub fn await_(&self) -> Result<(), String> {
+        self.command_buffer.wait_until_completed();
+        match self.command_buffer.status() {
+            metal::MTLCommandBufferStatus::Completed => Ok(()),
+            s => Err(format!("Metal command buffer: {s:?}")),
+        }
+    }
 }
 
 impl MetalComputeQueue {
     pub fn new(queue: &metal::CommandQueueRef) -> Self {
-        MetalComputeQueue { command_buffer: queue.new_command_buffer().to_owned() }
+        MetalComputeQueue { queue: queue.to_owned(), command_buffer: queue.new_command_buffer().to_owned() }
     }
 
     /// `newBindContext`: an encoder for one launch of `function`.
@@ -338,14 +358,71 @@ impl MetalComputeQueue {
         MetalBindContext { encoder }
     }
 
-    pub fn finish(self) -> Result<(), String> {
-        self.command_buffer.commit();
-        self.command_buffer.wait_until_completed();
-        match self.command_buffer.status() {
-            metal::MTLCommandBufferStatus::Completed => Ok(()),
-            s => Err(format!("Metal command buffer: {s:?}")),
+    /// `enqueueCopyFromHost`: the bytes are staged now, and copied into `dst` at `dst_offset` in queue order.
+    pub fn enqueue_copy_from_host(&self, dst: &metal::BufferRef, dst_offset: u64, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
         }
+        let device = dst.device();
+        let staging = device.new_buffer_with_data(bytes.as_ptr().cast(), bytes.len() as u64, metal::MTLResourceOptions::StorageModeShared);
+        let blit = self.command_buffer.new_blit_command_encoder();
+        blit.copy_from_buffer(&staging, 0, dst, dst_offset, bytes.len() as u64);
+        blit.end_encoding();
     }
+
+    /// `enqueueFillArray`: `count` copies of `value` into `dst` from element `offset` (all of it when `count` is
+    /// `None`).
+    pub fn enqueue_fill_array<T: crate::forest::memory_region::Pod>(&self, dst: &metal::BufferRef, value: &T, offset: usize, count: Option<usize>) {
+        let size = std::mem::size_of::<T>();
+        let count = count.unwrap_or(dst.length() as usize / size - offset);
+        let one = unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size) };
+        if one.iter().all(|&b| b == 0) {
+            let blit = self.command_buffer.new_blit_command_encoder();
+            blit.fill_buffer(dst, metal::NSRange::new((offset * size) as u64, (count * size) as u64), 0);
+            blit.end_encoding();
+            return;
+        }
+        let bytes: Vec<u8> = one.iter().copied().cycle().take(count * size).collect();
+        self.enqueue_copy_from_host(dst, (offset * size) as u64, &bytes);
+    }
+
+    /// `enqueueCopyBetweenDeviceRegions`.
+    pub fn enqueue_copy_between_device_regions(&self, src: &metal::BufferRef, dst: &metal::BufferRef, src_offset: u64, dst_offset: u64, length: u64) {
+        let blit = self.command_buffer.new_blit_command_encoder();
+        blit.copy_from_buffer(src, src_offset, dst, dst_offset, length);
+        blit.end_encoding();
+    }
+
+    /// Commits the work so far; its event.
+    pub fn flush(&mut self) -> MetalComputeEvent {
+        let next = self.queue.new_command_buffer().to_owned();
+        let cb = std::mem::replace(&mut self.command_buffer, next);
+        cb.commit();
+        MetalComputeEvent { command_buffer: cb }
+    }
+
+    pub fn finish(mut self) -> Result<(), String> {
+        self.flush().await_()
+    }
+}
+
+/// `allocUninitializedArraySync`: device memory for `length` elements (shared storage, so the host reads it back
+/// after the work completes; at least 16 bytes, as Metal will not bind an empty buffer).
+pub fn alloc_uninitialized_array_sync<T>(device: &DeviceRef, length: usize) -> metal::Buffer {
+    device.new_buffer((length * std::mem::size_of::<T>()).max(16) as u64, metal::MTLResourceOptions::StorageModeShared)
+}
+
+/// `transferToDeviceImmutable`/`manageMemoryRegionSync`: device memory holding `data`.
+pub fn transfer_to_device_immutable<T: crate::forest::memory_region::Pod>(device: &DeviceRef, data: &[T]) -> metal::Buffer {
+    let b = alloc_uninitialized_array_sync::<T>(device, data.len());
+    unsafe { std::ptr::copy_nonoverlapping(data.as_ptr().cast::<u8>(), b.contents().cast::<u8>(), std::mem::size_of_val(data)) };
+    b
+}
+
+/// `transferToHostSync`: the first `length` elements (the work writing them must have completed).
+pub fn transfer_to_host_sync<T: crate::forest::memory_region::Pod + Clone>(buffer: &metal::BufferRef, length: usize) -> Vec<T> {
+    assert!(length * std::mem::size_of::<T>() <= buffer.length() as usize);
+    unsafe { std::slice::from_raw_parts(buffer.contents().cast::<T>(), length).to_vec() }
 }
 
 /// The bind context of one launch (`MetalBindContext`): its encoder, ended when it is dropped.
