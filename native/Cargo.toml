@@ -57,6 +57,9 @@ ast-grep-core = "=0.50.0"
 ast-grep-language = { version = "=0.50.0", default-features = false }
 # The transducer's CPU JIT (code_rule_dsl/transducer/packed).
 cranelift-codegen = "=0.125.4"
+# Tier 1 of the transducer's parsers, a crate of its own so that a change to it rebuilds little.
+rerail-compiler = { path = "crates/compiler" }
+rerail-rr-syntax = { path = "crates/rr_syntax" }
 cranelift-frontend = "=0.125.4"
 cranelift-module = "=0.125.4"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
@@ -144,6 +147,9 @@ block = "0.1.6"
 metal = "0.33.0"
 
 [dev-dependencies]
+# Tier 1's test hooks (the relocations' recording) for the engine's tests.
+rerail-compiler = { path = "crates/compiler", features = ["test-hooks"] }
+rerail-parser-tests = { path = "crates/parser_tests" }
 # The test-only dialects' grammars: `builtin-parser` without tree-sitter-python,
 # tree-sitter-typescript and tree-sitter-javascript, which Rerail vendors.
 ast-grep-language = { version = "=0.50.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }

@@ -50,18 +50,29 @@ pub fn get() -> Option<&'static Shared> {
         .as_ref()
 }
 
-fn pipelines() -> &'static Mutex<HashMap<String, ComputePipelineState>> {
-    static PIPELINES: OnceLock<Mutex<HashMap<String, ComputePipelineState>>> = OnceLock::new();
+/// A pipeline's slot: made once. A thread that asks while another makes it waits for that one (the prewarm's
+/// compile is not done twice by a job that needs it first).
+type Slot = std::sync::Arc<Mutex<Option<ComputePipelineState>>>;
+
+fn pipelines() -> &'static Mutex<HashMap<String, Slot>> {
+    static PIPELINES: OnceLock<Mutex<HashMap<String, Slot>>> = OnceLock::new();
     PIPELINES.get_or_init(Default::default)
 }
 
-/// The pipeline kept under `key`, made by `make` the first time.
+/// The pipeline kept under `key`, made by `make` the first time. A caller that finds another thread making it
+/// waits, scored as the phase `pipeline wait` (a cold job, like the compile itself).
 pub fn pipeline<E>(key: &str, make: impl FnOnce() -> Result<ComputePipelineState, E>) -> Result<ComputePipelineState, E> {
-    if let Some(p) = pipelines().lock().expect("the pipelines").get(key) {
+    let slot = std::sync::Arc::clone(pipelines().lock().expect("the pipelines").entry(key.to_owned()).or_default());
+    let mut s = match slot.try_lock() {
+        Ok(s) => s,
+        Err(std::sync::TryLockError::WouldBlock) => crate::score::phase("pipeline wait", || slot.lock().unwrap_or_else(|p| p.into_inner())),
+        Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+    };
+    if let Some(p) = &*s {
         return Ok(p.clone());
     }
     let p = crate::score::phase("pipeline compile", make)?;
-    pipelines().lock().expect("the pipelines").insert(key.to_owned(), p.clone());
+    *s = Some(p.clone());
     Ok(p)
 }
 
@@ -174,6 +185,14 @@ pub fn drop_idle() {
     p.held = 0;
     drop(p);
     pipelines().lock().expect("the pipelines").clear();
+}
+
+/// Releases every idle buffer, keeping the pipelines: what a lane gives back to the device's budget after a refusal
+/// for room.
+pub fn drop_free() {
+    let mut p = pool().lock().expect("the pool");
+    p.idle.clear();
+    p.held = 0;
 }
 
 static GUARD: OnceLock<fn() -> Result<(), String>> = OnceLock::new();

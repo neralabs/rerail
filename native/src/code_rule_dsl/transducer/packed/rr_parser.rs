@@ -17,7 +17,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// The grammar: the ladder's last step.
-const GRAMMAR: &str = include_str!("bitlex_ladder/rr/20-json-depth.bitlex");
+const GRAMMAR: &str = include_str!("../../../../crates/rr_syntax/bitlex_ladder/20-json-depth.bitlex");
 
 /// Ids above the engine's, for the grammar's own names (supertypes, marks) that never reach a
 /// tape.
@@ -128,7 +128,7 @@ fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Columns>) -> bool {
         Ok((_, run)) => {
             let mut i = 0;
             for file in files {
-                out.push(c.parser.columns_on(&run, i).unwrap_or_else(|_| engine_columns(&rr::tape(file))));
+                out.push(super::native_cpu_stream::columns_on(&c.parser, &run, i).unwrap_or_else(|_| engine_columns(&rr::tape(file))));
                 i += 1;
             }
             true
@@ -223,21 +223,21 @@ pub(super) mod tests {
         let path = [
             ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn tape(src: &str)"),
             ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn compiled_tape("),
-            ("native_cpu_stream.rs", "pub(super) fn columns(&self, bytes: &[u8])"),
-            ("native_cpu_stream.rs", "pub(super) fn columns(mut self)"),
-            ("native_cpu_stream.rs", "pub(super) fn tape(&self, batch"),
-            ("native_cpu_stream.rs", "pub(super) fn tape(&self, n: usize)"),
-            ("native_cpu_stream.rs", "pub(super) fn words(&self, batch"),
-            ("native_cpu_stream.rs", "fn stream<'b>(&self"),
-            ("native_cpu_stream.rs", "pub(super) unsafe fn call(&self, bytes"),
-            ("native_cpu_stream.rs", "pub(super) fn columns_on(&self"),
-            ("native_cpu_stream.rs", "unsafe fn call_once(&self"),
-            ("native_cpu_stream.rs", "fn full_tape(&self"),
-            ("native_cpu_stream.rs", "fn sized(&self"),
+            ("../../../../crates/compiler/src/native_cpu_stream.rs", "pub fn columns(&self, bytes: &[u8])"),
+            ("../../../../crates/compiler/src/native_cpu_stream.rs", "pub fn columns(mut self)"),
+            ("../../../../crates/compiler/src/native_cpu_stream.rs", "pub fn tape(&self, batch"),
+            ("../../../../crates/compiler/src/native_cpu_stream.rs", "pub fn tape(&self, n: usize)"),
+            ("../../../../crates/compiler/src/native_cpu_stream.rs", "pub fn words(&self, batch"),
+            ("../../../../crates/compiler/src/native_cpu_stream.rs", "fn stream<'b>(&self"),
+            ("../../../../crates/compiler/src/native_cpu_stream.rs", "pub unsafe fn call(&self, bytes"),
+            ("native_cpu_stream.rs", "pub(super) fn columns_on(parser: &Parser"),
+            ("../../../../crates/compiler/src/native_cpu_stream.rs", "unsafe fn call_once(&self"),
+            ("../../../../crates/compiler/src/native_cpu_stream.rs", "fn full_tape(&self"),
+            ("../../../../crates/compiler/src/native_cpu_stream.rs", "fn sized(&self"),
             ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn tapes("),
             ("rr_parser.rs", "fn metal_tapes("),
-            ("native_cpu_block.rs", "pub(super) fn new(program: &CompiledBlock, files"),
-            ("native_cpu_block.rs", "pub(super) fn call(&mut self, program: &CompiledBlock)"),
+            ("../../../../crates/compiler/src/native_cpu_block.rs", "pub fn new(program: &CompiledBlock, files"),
+            ("../../../../crates/compiler/src/native_cpu_block.rs", "pub fn call(&mut self, program: &CompiledBlock)"),
         ];
         let walks = [".iter(", ".iter_mut(", ".into_iter(", ".chunks", ".windows(", ".flatten(", ".map(", ".fold(", ".for_each(", ".bytes()", ".chars()", ".collect", ".position(", ".find(", ".any(", ".all(", ".filter(", ".sum(", ".count()", "while ", "loop {", "nodes()"];
         let loops_allowed = ["for file in files", "for entry in &program.entries"];

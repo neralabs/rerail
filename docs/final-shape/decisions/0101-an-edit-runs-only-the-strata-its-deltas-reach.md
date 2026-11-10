@@ -147,11 +147,17 @@ against the full run's 5–7 s. Today a one-file step is 1.28 s.
 - **§1, the skip.** A stratum left with only survivor rules, each over an empty `h__del`, is passed on: each
   `h` is its kept `h__old`, the same engine relation with its indexes. Nothing of it is planned, specified or
   opened, and its readers are planned from the kept relation's statistics, as an opened one's would be.
-- **§2, the passes.** The inline choice (0099) and the demand split (0048) are made once per program in a
-  session. A later run of the same program takes them as they are.
-- **§2, made cheap where they are not kept.** The inline choice now estimates only what it prices. Before, it
-  estimated every derived relation of the program; now only the relations whose shape leaves the choice open,
-  and the relations their rules and readers read.
+- **§2, the passes.** The inline choice (0099) and the demand split (0048) are kept by program, so a later
+  run of the same program takes them as they are.
+- **§2, made cheap where they are not kept.** The inline choice estimates only what it prices. Before, it
+  estimated every derived relation of the program; now it estimates only the relations whose shape leaves the
+  choice open, and the relations their rules and readers read.
+
+**Where §2's code is.** The integration branch built both parts of §2 in parallel with this work:
+`plan::choices` keeps the choices by program digest and by the scale they were made at (c99cf4686), and
+`keeps::choose` estimates only a cone of candidates (634a8a453 and after). The merge (2026-11-10) took that
+code, and this branch's own pass cache and narrowing were dropped. The measurements below were taken on
+this branch's versions first; the post-merge row is the integration branch's code.
 
 **Why the second part of §2 was needed.** The cross part's program is the maintenance rewrite of the edited
 files, so it differs from step to step and the kept passes never match it at O125. Its 17,340 rules are nearly
@@ -178,14 +184,13 @@ session's statistics, patched by delta, carry over unchanged.
 | switch | effect |
 |---|---|
 | `RERAIL_KEEP_QUIET_STRATA` | opens quiet strata as before |
-| `RERAIL_PASSES_EACH_RUN` | makes the passes every run |
 
 **The tests.**
 
-- `a_session_passes_on_a_quiet_stratum`, which fails with either switch set. An edit adds an import that
+- `a_session_passes_on_a_quiet_stratum`, which fails with the switch set. An edit adds an import that
   `via_h` filters out, so `seen` deletes and derives nothing. Four strata are passed on, and the findings are a
-  full run's. The second run's file-local program takes the first run's passes.
-- The inline choice's 75 tests (`keeps`) pass unchanged.
+  full run's.
+- The inline choice's tests (`keeps`, 80 after the merge) pass.
 
 **Measured.** O125 replay, steps 01–03, debug build, CPU, load 11–105. Every step is the same as a full run.
 
@@ -196,7 +201,9 @@ figures included.
 | span (per step) | before | after |
 |---|---:|---:|
 | cross part, `demand` (the inline choice) | 3.25–3.79 s | 0.18–0.26 s |
+| the same, after the merge | | 0.17–0.22 s |
 | file-local part, `demand` | 0.28–0.32 s | 0.001 s (kept) |
+| the same, after the merge | | 0.002–0.003 s |
 | quiet strata skipped | — | 471–592 |
 | those strata's CPU | 0.12–0.23 s | 0.05–0.07 s |
 

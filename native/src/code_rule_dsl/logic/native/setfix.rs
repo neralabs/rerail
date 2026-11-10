@@ -57,9 +57,14 @@ use std::time::Instant;
 pub(in crate::code_rule_dsl) mod lab;
 pub(in crate::code_rule_dsl) mod spec;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
-mod closure;
+pub(super) mod closure;
 mod table;
 mod level;
+/// A stratum's joins on the device, when the placement puts it there (decision 0095, step 4).
+#[cfg(target_os = "macos")]
+mod device;
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) use device::{Report as DeviceReport, take_report as device_report};
 
 fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()) }
 
@@ -227,10 +232,19 @@ impl Index {
 /// indexes, one per key-column set a join probe reads the relation with, so a probe bound on several columns reads
 /// exactly its matches rather than the shortest single-column list.
 /// `dead`: rows deleted but kept in place (`based`), which every reader skips; `ndead` of them.
+/// `level`: each row's level (decision 0090, levels for recursive strata): `lbase` plus the wave that pushed it, or
+/// the kept row's level for a row started from a kept relation. A row's level is above the levels of the rows it was
+/// first derived from, as they were pushed in earlier waves; `lbase` is above every kept row's level in the
+/// component, so a maintained run's new rows are above the rows they read.
 struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i64>, set: HashTable<u32>, stored: usize, lo: usize, hi: usize,
              wave: u32, idx: Vec<Index>, dead: Vec<u64>, ndead: usize, summaries: scalars::Pool,
              /// The kept relation it started as (`InRel::delta_since`).
-             from: Option<Origin> }
+             from: Option<Origin>,
+             /// Each row's level (decision 0090: `lbase` plus the wave that pushed it), while every row has one.
+             level: Vec<u32>, lbase: u32,
+             /// Whether its rows get levels: only a relation of a recursive stratum reads them (`open`), and at 4
+             /// bytes a row they are not held for the others.
+             leveled: bool }
 
 /// The kept relation (by address) a maintained relation started as, and how its rows follow from that one's.
 #[derive(Clone)]
@@ -245,13 +259,15 @@ impl Rel {
     fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         let idx = (0..k).map(|c| Index { cols: vec![c], table: HashTable::new(), next: Vec::new() }).collect();
-        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead: Vec::new(), ndead: 0, summaries: Default::default(), from: None }
+        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead: Vec::new(), ndead: 0, summaries: Default::default(), from: None, level: Vec::new(), lbase: 0, leveled: true }
     }
     /// A relation that starts as `old` (a kept one: its rows, dedup set and indexes, copied as memory, not hashed
     /// again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are the first wave's
     /// delta, so each rule's whole plan reads them once. `None` when `old` has no set to start from, or when too
-    /// many of its rows would be dead (then it is made from its rows, compacted).
-    fn based(table: &str, types: &[u8], old: &InRel, gone: &InRel) -> Option<Rel> {
+    /// many of its rows would be dead (then it is made from its rows, compacted). No `gone`: all of `old`'s rows.
+    fn based(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Option<Rel> {
+        let none = InRel::empty(old.k);
+        let gone = gone.unwrap_or(&none);
         if old.view.is_some() || old.k != types.len() || gone.k != old.k || (old.n > 0 && old.set.is_empty()) {
             return None;
         }
@@ -289,23 +305,30 @@ impl Rel {
                 p.dlen = p.len;
             }
         }
+        let level = if old.has_levels() { old.level.clone() } else { Vec::new() };
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n });
-        Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), set: set.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead, ndead, summaries: Default::default(), from })
+        Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), set: set.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead, ndead, summaries: Default::default(), from, level, lbase: 0, leveled: true })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
-    fn compacted(table: &str, types: &[u8], old: &InRel, gone: &InRel) -> Rel {
+    fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
         let mut rel = Rel::new(table, types);
         let k = rel.k;
         let mut gone_rows: rustc_hash::FxHashSet<Vec<i64>> = Default::default();
-        for id in 0..gone.len() { if !is_dead(&gone.dead, id as u32) { let r = gone.at(id); gone_rows.insert((0..k).map(|c| r.at(c)).collect()); } }
+        if let Some(gone) = gone {
+            for id in 0..gone.len() { if !is_dead(&gone.dead, id as u32) { let r = gone.at(id); gone_rows.insert((0..k).map(|c| r.at(c)).collect()); } }
+        }
+        // Each row keeps its kept level; without levels, none are recorded (`Rel::push`).
+        let levels = old.has_levels();
+        if !levels { rel.level = vec![0; 1]; }
         let mut row = vec![0i64; k];
         let mut removed = Vec::new();
         for id in 0..old.len() {
             if is_dead(&old.dead, id as u32) { continue; }
             let r = old.at(id);
             for (c, v) in row.iter_mut().enumerate() { *v = r.at(c); }
-            if gone_rows.contains(&row) { removed.extend_from_slice(&row); } else { rel.push(&row); }
+            if gone_rows.contains(&row) { removed.extend_from_slice(&row); } else if rel.push(&row) && levels { *rel.level.last_mut().expect("a level pushed") = old.level[id]; }
         }
+        if !levels { rel.level.clear(); }
         if old.view.is_none() && old.k == k {
             rel.from = Some(Origin::Compacted { at: old as *const InRel as usize, old_n: old.n, kept: rel.n, removed });
         }
@@ -327,6 +350,26 @@ impl Rel {
         for id in 0..self.n { ix.add(&self.data, self.k, id as u32, if id >= self.lo { self.wave } else { 0 }); }
         self.idx.push(ix);
     }
+    /// Room for `n` more rows, so a wave's rows are not rehashed as the tables grow (the pack's joins spent 18 s of
+    /// 155 s growing them): the dedup set by `n`, each index by `n` times its keys per row so far (a column of few
+    /// values does not reserve a key a row).
+    fn reserve(&mut self, n: usize) {
+        if n < 64 {
+            return;
+        }
+        let k = self.k;
+        self.data.reserve(n * k);
+        let data = &self.data;
+        self.set.reserve(n, |&i| hash_vals(data[i as usize * k..][..k].iter().copied()));
+        let rows = self.n.max(1);
+        for ix in &mut self.idx {
+            ix.next.reserve(n);
+            // Keys per row so far; a relation still empty reserves for a key every 8 rows.
+            let keys = if self.n == 0 { n / 8 } else { (n as u128 * ix.table.len() as u128 / rows as u128) as usize };
+            let cols = &ix.cols;
+            ix.table.reserve(keys, |p| hash_vals(cols.iter().map(|&c| data[p.head as usize * k + c])));
+        }
+    }
     /// Adds a row (of the next wave, its delta) unless it is there.
     fn push(&mut self, row: &[i64]) -> bool {
         let h = hash_vals(row.iter().copied());
@@ -335,6 +378,10 @@ impl Rel {
         if self.set.find(h, |&id| !is_dead(&self.dead, id) && &self.data[id as usize * k..][..k] == row).is_some() { return false; }
         let id = self.n as u32;
         self.data.extend_from_slice(row);
+        // A relation started from a kept one without levels has none (`has_levels` then says so).
+        if self.leveled && self.level.len() == self.n {
+            self.level.push(self.lbase + self.wave + 1);
+        }
         self.n += 1;
         let data = &self.data;
         self.set.insert_unique(h, id, |&i| hash_vals(data[i as usize * k..][..k].iter().copied()));
@@ -406,8 +453,145 @@ pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
 /// `produced`: relations only the caller adds to, which the fixpoint does not write.
+/// `device`: the seed joins' device plans, by probe, when the spec asked for the device and it takes every one of them
+/// (`device::compile`); `seed_specs`, their specs, to parse them again with the CPU's indexes when the device refuses
+/// one at run time.
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool,
-                   requests: Vec<(usize, usize)>, produced: Vec<usize>, closure: Option<closure::Closure> }
+                   requests: Vec<(usize, usize)>, produced: Vec<usize>, closure: Option<closure::Closure>, levels: Levels,
+                   /// A closure whose launches wait in this thread's device wave (`lanes::wave`), with their tickets.
+                   waiting: Option<(closure::Closure, closure::Prepared, Vec<u64>)>,
+                   #[cfg(target_os = "macos")] device: Option<Vec<(usize, device::Plan)>>,
+                   seed_specs: Vec<(usize, Arc<JoinSpec>)> }
+
+/// Decision 0090's levels for a recursive stratum: which of its kept rows are gone, decided in level order. Per
+/// relation `h` of the stratum, a line names five relations of the component:
+/// - `cand`: rows of `h` that lost a derivation (the rules: an old derivation with a premise gone);
+/// - `chk`: the candidates of the level being checked, which this driver writes;
+/// - `held`: those of them with a derivation from rows below them (the rules, reading `live`);
+/// - `gone`: those without, which this driver writes;
+/// - `live`: `h`'s kept rows, each with its level, of which a rule reads only those below the level checked and not
+///   gone: every other row is dead while it is checked.
+///
+/// Each time the component is quiet, the checked level's candidates not held go to `gone` (whose rules make more
+/// candidates, above them), then the lowest level with candidates is checked. A candidate at or below a level
+/// already checked lost no derivation from below (its premises from below were decided already): it stays.
+#[derive(Default)]
+struct Levels { lines: Vec<LevelLine>, cur: Option<u32>, last: Option<u32>, started: bool,
+                heap: std::collections::BinaryHeap<std::cmp::Reverse<(u32, usize, u32)>> }
+struct LevelLine { cand: usize, chk: usize, held: usize, gone: usize, live: usize,
+                   /// Candidate rows seen (a prefix of `cand`), those checked or passed, and those of the level checked.
+                   seen: usize, decided: Vec<bool>, batch: Vec<u32>,
+                   /// `live`'s rows by level, and how many of them are shown; its rows gone.
+                   order: Vec<u32>, shown: usize, gone_rows: Vec<u64>,
+                   /// `live`'s rows dead before it was checked (deleted in an earlier run, a later copy live): never
+                   /// shown, and never a candidate's row.
+                   was_dead: Vec<u64> }
+
+fn revive(dead: &mut [u64], id: u32) -> bool {
+    let w = id as usize >> 6;
+    let Some(word) = dead.get_mut(w) else { return false };
+    let was = *word >> (id & 63) & 1 == 1;
+    *word &= !(1 << (id & 63));
+    was
+}
+
+impl Rel {
+    /// A row's id, hidden or not, but not one of `was_dead` (a copy deleted before: the row's live copy, if any,
+    /// is a later one, with its own level).
+    fn id_of(&self, row: &[i64], was_dead: &[u64]) -> Option<u32> {
+        let (data, k) = (&self.data, self.k);
+        self.set.find(hash_vals(row.iter().copied()), |&id| !is_dead(was_dead, id) && &data[id as usize * k..][..k] == row).copied()
+    }
+}
+
+/// `RERAIL_LEVELS_TRACE=<value>`: the candidates holding the value, and how each is decided.
+fn levels_traced(row: &[i64]) -> bool {
+    static V: std::sync::LazyLock<Option<i64>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_LEVELS_TRACE").ok().and_then(|v| v.parse().ok()));
+    V.is_some_and(|v| row.contains(&v))
+}
+
+impl Levels {
+    /// Every `live` row dead until its level is below the one checked.
+    fn start(&mut self, store: &mut Store) {
+        self.started = true;
+        for ln in &mut self.lines {
+            let live = &mut store.rels[ln.live];
+            ln.was_dead = live.dead.clone();
+            let mut order: Vec<u32> = (0..live.n as u32).filter(|&id| !is_dead(&ln.was_dead, id)).collect();
+            if live.level.len() == live.n {
+                order.sort_by_key(|&i| live.level[i as usize]);
+            }
+            for id in 0..live.n as u32 {
+                if kill(&mut live.dead, id) { live.ndead += 1; }
+            }
+            ln.order = order;
+        }
+    }
+    /// One step at a quiet point: whether it gave the component more to derive.
+    fn step(&mut self, store: &mut Store) -> bool {
+        if self.lines.is_empty() { return false; }
+        if !self.started { self.start(store); }
+        if let Some(l) = self.cur.take() {
+            let mut any = false;
+            for ln in &mut self.lines {
+                let lo = store.rels[ln.gone].n;
+                for &id in &ln.batch {
+                    let row = store.rels[ln.cand].row(id as usize).to_vec();
+                    if levels_traced(&row) { eprintln!("RERAIL_LEVELS_TRACE {} {row:?} at level {l}: {}", store.rels[ln.cand].table, if store.rels[ln.held].contains(&row) { "held" } else { "gone" }); }
+                    if store.rels[ln.held].contains(&row) { continue; }
+                    any |= store.rels[ln.gone].push(&row);
+                    if let Some(lid) = store.rels[ln.live].id_of(&row, &ln.was_dead) { kill(&mut ln.gone_rows, lid); }
+                }
+                ln.batch.clear();
+                let hi = store.rels[ln.gone].n;
+                if hi > lo { store.rels[ln.gone].set_delta(lo, hi); }
+            }
+            self.last = Some(l);
+            if any { return true; }
+        }
+        // New candidates, by their kept level.
+        for (li, ln) in self.lines.iter_mut().enumerate() {
+            let (cand, live) = (&store.rels[ln.cand], &store.rels[ln.live]);
+            ln.decided.resize(cand.n, false);
+            for id in ln.seen..cand.n {
+                let level = live.id_of(cand.row(id), &ln.was_dead).filter(|_| live.level.len() == live.n).map(|lid| live.level[lid as usize]);
+                if levels_traced(cand.row(id)) { eprintln!("RERAIL_LEVELS_TRACE {} {:?}: candidate, level {level:?}, last {:?}", cand.table, cand.row(id), self.last); }
+                match level {
+                    Some(l) if self.last.is_none_or(|last| l > last) => self.heap.push(std::cmp::Reverse((l, li, id as u32))),
+                    _ => ln.decided[id] = true,
+                }
+            }
+            ln.seen = cand.n;
+        }
+        let Some(&std::cmp::Reverse((l, _, _))) = self.heap.peek() else { return false };
+        // The rows below `l` not gone are shown; the level's candidates are checked.
+        for ln in &mut self.lines {
+            let live = &mut store.rels[ln.live];
+            while ln.shown < ln.order.len() && live.level[ln.order[ln.shown] as usize] < l {
+                let id = ln.order[ln.shown];
+                if !is_dead(&ln.gone_rows, id) && revive(&mut live.dead, id) { live.ndead -= 1; }
+                ln.shown += 1;
+            }
+        }
+        let mut los: Vec<usize> = self.lines.iter().map(|ln| store.rels[ln.chk].n).collect();
+        while let Some(&std::cmp::Reverse((l2, li, id))) = self.heap.peek() {
+            if l2 != l { break; }
+            self.heap.pop();
+            let ln = &mut self.lines[li];
+            if ln.decided[id as usize] { continue; }
+            ln.decided[id as usize] = true;
+            let row = store.rels[ln.cand].row(id as usize).to_vec();
+            store.rels[ln.chk].push(&row);
+            ln.batch.push(id);
+        }
+        for (ln, lo) in self.lines.iter().zip(los.drain(..)) {
+            let hi = store.rels[ln.chk].n;
+            if hi > lo { store.rels[ln.chk].set_delta(lo, hi); }
+        }
+        self.cur = Some(l);
+        true
+    }
+}
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
@@ -499,10 +683,16 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
     let name = spec.name.clone();
     let mut write = true;
     let (mut requests, mut produced) = (Vec::new(), Vec::new());
+    let mut levels = Levels::default();
     let joins = |j: &JoinSpec, syms: &mut Interner| -> Result<JoinRule> {
         let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into());
         join_rule(conn, j, syms)
     };
+    // `device`: the placement put the stratum on the device (decision 0095 §7); its seeds are parsed without the
+    // CPU's indexes, and compiled for the device below.
+    let mut device_wanted = false;
+    let mut leveled = false;
+    let mut seed_specs: Vec<(usize, Arc<JoinSpec>)> = Vec::new();
     for line in &spec.lines {
         match line {
             Line::Rel { name: table, types, start } => {
@@ -516,27 +706,33 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
                 let _rows = crate::code_rule_dsl::logic::profile::span(move || what.into());
                 match start {
                     Start::Base { old, gone, seeded } => {
-                        let (o, g) = { let d = DERIVED.lock().unwrap(); (d.get(&(scope(conn), old.clone())).cloned(), d.get(&(scope(conn), gone.clone())).cloned()) };
+                        let (o, g) = { let d = DERIVED.lock().unwrap(); (d.get(&(scope(conn), old.clone())).cloned(), if gone == "-" { None } else { d.get(&(scope(conn), gone.clone())).cloned() }) };
+                        // `-`: no rows gone (a copy of the kept relation, its levels with it).
                         let o = o.ok_or_else(|| err(format!("rel: no native relation {old}")))?;
                         // The rows gone, from the stratum that made them: a native relation, or a table where a SQL
                         // stratum wrote them (an overdelete reading an input's delta); they are the delta's size.
                         let g = match g {
-                            Some(g) => g,
-                            None => InRel::flat(&read_rows(conn, gone, types.as_bytes(), &mut syms)?, types.as_bytes().to_vec()),
+                            Some(g) => Some(g),
+                            None if gone == "-" => None,
+                            None => Some(InRel::flat(&read_rows(conn, gone, types.as_bytes(), &mut syms)?, types.as_bytes().to_vec())),
                         };
-                        match Rel::based(table, types.as_bytes(), &o, &g) {
+                        match Rel::based(table, types.as_bytes(), &o, g.as_deref()) {
                             Some(b) => rel = b,
-                            None => rel = Rel::compacted(table, types.as_bytes(), &o, &g),
+                            None => rel = Rel::compacted(table, types.as_bytes(), &o, g.as_deref()),
                         }
                         if *seeded {
                             for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
                         }
                     }
                     Start::From(sql) => {
-                        for row in read_sql(conn, sql, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                        let rows = read_sql(conn, sql, &rel.types.clone(), &mut syms)?;
+                        rel.reserve(rows.len());
+                        for row in rows { rel.push(&row); }
                     }
                     Start::Rows => {
-                        for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                        let rows = read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)?;
+                        rel.reserve(rows.len());
+                        for row in rows { rel.push(&row); }
                     }
                     Start::Empty => {}
                 }
@@ -545,7 +741,13 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
                 rels.push(rel);
             }
             Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None }),
-            Line::Seed { head, join } => probes.push(ProbeRule { head: *head, delta: SEED, body: Body::Join(joins(join, &mut syms)?), whole: None, wkey: None }),
+            Line::Device => device_wanted = cfg!(target_os = "macos"),
+            Line::Leveled => leveled = true,
+            Line::Seed { head, join } => {
+                let j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, join, &mut syms, !device_wanted)? };
+                if device_wanted { seed_specs.push((probes.len(), join.clone())); }
+                probes.push(ProbeRule { head: *head, delta: SEED, body: Body::Join(j), whole: None, wkey: None });
+            }
             Line::NoWrite => write = false,
             Line::Request(r) => requests.push((*r, 0)),
             Line::Produced(r) => produced.push(*r),
@@ -554,6 +756,8 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
                 let w = match whole { Some(w) => Some(joins(w, &mut syms)?), None => None };
                 probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Join(joins(join, &mut syms)?), whole: w, wkey: whole.clone() });
             }
+            Line::Levels { cand, chk, held, gone, live } => levels.lines.push(LevelLine { cand: *cand, chk: *chk, held: *held, gone: *gone, live: *live,
+                                                       seen: 0, decided: Vec::new(), batch: Vec::new(), order: Vec::new(), shown: 0, gone_rows: Vec::new(), was_dead: Vec::new() }),
             Line::Edge(e) => {
                 let mut pat = Vec::new();
                 for t in &e.pat {
@@ -583,8 +787,81 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
             }
         }
     }
+    // The device's plans of the seeds, or why it takes none of them: then they are parsed again with the CPU's indexes.
+    #[cfg(target_os = "macos")]
+    let device_plans = if device_wanted {
+        let _plan = crate::code_rule_dsl::logic::profile::span(|| "open: device plans".into());
+        let refused = if !edges.is_empty() || !gates.is_empty() || !requests.is_empty() || !produced.is_empty() {
+            Some("a component with gates, requests or edge rules".to_owned())
+        } else if probes.iter().any(|p| p.delta != SEED) {
+            Some("a recursive component".to_owned())
+        } else {
+            None
+        };
+        let plans = match refused {
+            Some(r) => Err(r),
+            None => seed_specs.iter().map(|(pi, js)| match &probes[*pi].body {
+                Body::Join(j) => device::compile(j, &js.to_text()).map(|p| (*pi, p)),
+                Body::Sql(_) => Err("a SQL seed".to_owned()),
+            }).collect::<std::result::Result<Vec<_>, String>>(),
+        };
+        match plans {
+            Ok(p) if !p.is_empty() && crate::code_rule_dsl::transducer::packed::metal_join::available() => Some(p),
+            other => {
+                let why = match other { Err(e) => e, Ok(p) if p.is_empty() => "no seed join".to_owned(), Ok(_) => "no Metal device".to_owned() };
+                device::refuse(why);
+                for (pi, js) in &seed_specs {
+                    probes[*pi].body = Body::Join(join_rule(conn, js, &mut syms)?);
+                }
+                seed_specs.clear();
+                None
+            }
+        }
+    } else {
+        None
+    };
     let _multi = crate::code_rule_dsl::logic::profile::span(|| "open: indexes".into());
+    // Levels only where they are read: in a component that keeps them (`leveled`, a session's), a relation on a
+    // cycle of the component's rules (a recursive stratum's); one of a levels line, or one started from a kept
+    // relation with levels. The others hold none.
+    {
+        let n = rels.len();
+        let mut next: Vec<Vec<usize>> = vec![Vec::new(); n];
+        // A seed probe (`SEED`) reads no relation of the component.
+        for p in probes.iter().filter(|p| p.delta < n) { next[p.delta].push(p.head); }
+        for e in edges.iter().filter(|e| e.src < n) { next[e.src].push(e.head); }
+        let mut keep = vec![false; n];
+        for ln in &levels.lines { for r in [ln.cand, ln.chk, ln.held, ln.gone, ln.live] { keep[r] = true; } }
+        for r in 0..n {
+            if keep[r] || (rels[r].n > 0 && rels[r].level.len() == rels[r].n) { keep[r] = true; continue; }
+            if !leveled { continue; }
+            // Whether `r` reaches itself.
+            let mut seen = vec![false; n];
+            let mut stack = next[r].clone();
+            while let Some(x) = stack.pop() {
+                if x == r { keep[r] = true; break; }
+                if !std::mem::replace(&mut seen[x], true) { stack.extend(next[x].iter().copied()); }
+            }
+        }
+        for (r, keep) in rels.iter_mut().zip(keep) {
+            if !keep { r.leveled = false; r.level = Vec::new(); }
+        }
+    }
+    // Rows this run pushes go above every kept row's level in the component (`Rel::level`).
+    let lbase = rels.iter().filter(|r| r.level.len() == r.n).flat_map(|r| r.level.iter().copied()).max().unwrap_or(0);
+    for r in &mut rels { r.lbase = lbase; }
     for r in &mut rels { let n = r.n; r.set_delta(0, n); }   // the first wave reads the seeds as its delta
+    // Levels (decision 0090): `live`'s rows are shown a level at a time, never a delta, so no probe reads it as
+    // one; the other levels relations get small batches from row 0, which a whole plan (one for a delta that is
+    // its whole relation) would join by scanning `live` or `old`.
+    for ln in &levels.lines {
+        let n = rels[ln.live].n;
+        rels[ln.live].set_delta(n, n);
+        for p in probes.iter_mut().filter(|p| [ln.cand, ln.chk, ln.held, ln.gone].contains(&p.delta)) {
+            p.whole = None;
+            p.wkey = None;
+        }
+    }
     for p in &probes {
         if let Body::Join(j) = &p.body { for (r, cols) in &j.multi { rels[*r].add_multi(cols); } }
         if let Some(j) = &p.whole { for (r, cols) in &j.multi { rels[*r].add_multi(cols); } }
@@ -595,8 +872,12 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
     let mut reg = COMPONENTS.lock().unwrap();
     let key = (scope(conn), name.clone());
     reg.retain(|(k, _)| *k != key);
-    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None };
-    comp.closure = closure::recognize(&comp);
+    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, levels, waiting: None,
+                               #[cfg(target_os = "macos")] device: device_plans, seed_specs };
+    comp.closure = {
+        let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
+        closure::recognize(&comp)
+    };
     reg.push((key, Arc::new(Mutex::new(comp))));
     Ok(name)
 }
@@ -651,11 +932,21 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let mut row: Vec<i64> = Vec::new();
     let wave_trace = std::env::var_os("RDL_WAVE_TRACE").is_some();
     let mut gates = std::mem::take(&mut comp.gates);
+    let mut levels = std::mem::take(&mut comp.levels);
     let gates_done: Vec<usize> = gates.iter().map(|g| g.done).collect();
-    // The closure form (decision 0098 §1): seeds once, then the walk's reach over distinct nodes. When the reach is
-    // too large for it, the seeds' rows are the first delta and the waves below run semi-naive from there.
-    if !seeded && let Some(cl) = comp.closure.take() {
-        let tp = Instant::now();
+    // The closure form (decision 0098 §1): seeds once, then the walk's reach over distinct nodes, in two halves around
+    // its launches. When the caller can wait (`lanes::wave::can_wait`: the stratum driver, which runs a level's
+    // strata to their launches first), the launches join this thread's device wave and the run returns `3`; the run
+    // after the wave ran finishes it. Otherwise they run here, as a batch of their own.
+    let mut closure_ran: Option<Option<closure::Ran>> = None;
+    let tp = Instant::now();
+    if let Some((cl, prep, tickets)) = comp.waiting.take() {
+        let outs = crate::code_rule_dsl::logic::lanes::wave::take(&tickets).map_err(|e| err(format!("{name}: {e}")))?;
+        let mut guard = comp.store.write().unwrap();
+        closure_ran = Some(closure::finish(&cl, prep, outs, &mut guard));
+        drop(guard);
+        comp.closure = Some(cl);
+    } else if !seeded && let Some(cl) = comp.closure.take() {
         let mut guard = comp.store.write().unwrap();
         let store = &mut *guard;
         let mut syms = symbols.write().unwrap();
@@ -668,11 +959,41 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             per[pi].1 += n;
         }
         let k = store.rels[0].k;
+        store.rels[0].reserve(fresh[0].n);
         for i in 0..fresh[0].n { store.rels[0].push(&fresh[0].data[i * k..][..k]); }
-        let lanes = crate::code_rule_dsl::logic::lanes::executor();
-        let ran = closure::run(&cl, store, &mut syms, lanes);
+        let prep = closure::prepare(&cl, store, &mut syms);
+        drop(syms);
+        match prep {
+            None => closure_ran = Some(None),
+            Some(mut prep) if !prep.launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
+                let tickets = crate::code_rule_dsl::logic::lanes::wave::queue("closure", std::mem::take(&mut prep.launches));
+                drop(guard);
+                comp.waiting = Some((cl, prep, tickets));
+                comp.seeded = true;
+                let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
+                let ms = t0.elapsed().as_secs_f64() * 1e3;
+                return Ok(format!("0 1 {visits} {runs} {skips} {ms:.1} {ms:.1} {} 3", per.join(",")));
+            }
+            Some(mut prep) => {
+                let launches = std::mem::take(&mut prep.launches);
+                let outs = if launches.is_empty() {
+                    Vec::new()
+                } else {
+                    let batch = rerail_accel::Batch(launches.into_iter().map(rerail_accel::Launch::new).collect());
+                    let (done, _) = crate::code_rule_dsl::logic::lanes::prof::run("closure", batch).map_err(|e| err(format!("{name}: {e}")))?;
+                    done.into_iter().map(|d| d.out).collect()
+                };
+                closure_ran = Some(closure::finish(&cl, prep, outs, store));
+            }
+        }
+        drop(guard);
+        comp.closure = Some(cl);
+    }
+    if let Some(ran) = closure_ran {
         seeded = true;
         waves = 1;
+        let mut guard = comp.store.write().unwrap();
+        let store = &mut *guard;
         let n = store.rels[0].n;
         match ran {
             Some(r) => {
@@ -683,13 +1004,11 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                 done = true;
             }
             None => {
-                crate::code_rule_dsl::logic::profile::decision("closure (decision 0098 §1)", || "a walk's reach too large for bit rows: semi-naive from its seeds".into());
+                crate::code_rule_dsl::logic::lanes::prof::count("closure", "closures run semi-naive (the edge search failed)", 1);
+                crate::code_rule_dsl::logic::profile::decision("closure (decision 0098 §1)", || format!("a walk's edge search failed: semi-naive from its seeds ({name})"));
                 store.rels[0].set_delta(0, n)
             }
         }
-        drop(syms);
-        drop(guard);
-        comp.closure = Some(cl);
     }
     while !done {
         let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
@@ -712,7 +1031,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             raw.push((p.head, got));
         }
         let mut guard = comp.store.write().unwrap();
-        let store = &mut *guard;
+        let mut store = &mut *guard;
         let mut syms = symbols.write().unwrap();
         for (head, got) in raw {
             let types = store.rels[head].types.clone();
@@ -726,12 +1045,70 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                 if !store.rels[head].contains(&row) { fresh[head].add(&row); }
             }
         }
+        // The seed joins on the device, in one batch, when the stratum was placed there (decision 0095, step 4).
+        #[cfg(target_os = "macos")]
+        let tried = !seeded && comp.device.is_some();
+        #[cfg(target_os = "macos")]
+        let on_device = tried && {
+            let plans = comp.device.as_ref().expect("device plans");
+            let tp = Instant::now();
+            let c0 = cpu_now();
+            let rules: Vec<(&device::Plan, &JoinRule, usize)> = plans.iter().map(|(pi, plan)| match &comp.probes[*pi].body {
+                Body::Join(j) => (plan, j, comp.probes[*pi].head),
+                Body::Sql(_) => unreachable!("a device plan is a join's"),
+            }).collect();
+            let mut dev_fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
+            match device::run(&rules, store, &mut dev_fresh) {
+                Ok(made) => {
+                    let cpu = cpu_now() - c0;
+                    let wall = tp.elapsed().as_secs_f64();
+                    for ((pi, _), n) in plans.iter().zip(made) {
+                        runs += 1;
+                        visits += n;
+                        per[*pi].1 += n;
+                        per[*pi].0 += wall / plans.len() as f64;
+                        per[*pi].2 += cpu / plans.len() as f64;
+                    }
+                    for (f, d) in fresh.iter_mut().zip(dev_fresh) {
+                        f.data.extend_from_slice(&d.data);
+                        f.n += d.n;
+                    }
+                    true
+                }
+                Err(why) => {
+                    // Refused at run time (a table past the device's budget): the seeds run on the CPU, named.
+                    device::refuse(why);
+                    false
+                }
+            }
+        };
+        #[cfg(not(target_os = "macos"))]
+        let on_device = false;
+        #[cfg(target_os = "macos")]
+        if tried && !on_device {
+            // The seeds were parsed without the CPU's indexes: parse them again with them.
+            drop(syms);
+            drop(guard);
+            let specs = std::mem::take(&mut comp.seed_specs);
+            {
+                let mut syms = Interner::for_loading(&symbols);
+                for (pi, js) in &specs {
+                    let j = join_rule(conn, js, &mut syms)?;
+                    comp.probes[*pi].body = Body::Join(j);
+                }
+                syms.check()?;
+            }
+            comp.device = None;
+            guard = comp.store.write().unwrap();
+            store = &mut *guard;
+            syms = symbols.write().unwrap();
+        }
         // Join probes, natively; seed joins in the first wave only.
         let mut wholes_run: Vec<&Arc<JoinSpec>> = Vec::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let Body::Join(j) = &p.body else { continue };
             let tp = Instant::now();
-            if p.delta == SEED { if seeded { continue } }
+            if p.delta == SEED { if seeded || on_device { continue } }
             else if store.rels[p.delta].lo == store.rels[p.delta].hi { skips += 1; continue; }
             let j = match (&p.whole, &p.wkey) {
                 (Some(w), Some(k)) if p.delta != SEED && store.rels[p.delta].lo == 0 => {
@@ -808,6 +1185,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         for (r, f) in fresh.into_iter().enumerate() {
             let rel = &mut store.rels[r];
             let (lo, k) = (rel.n, rel.k);
+            rel.reserve(f.n);
             for i in 0..f.n { any |= rel.push(&f.data[i * k..][..k]); }
             if counting && f.emitted > 0 {
                 let mut all = DERIVATIONS.lock().unwrap();
@@ -842,11 +1220,14 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             gates[gi].passed = n;
         }
         for &r in &gates_done { let (lo, hi) = (lo_of[r], store.rels[r].n); store.rels[r].set_delta(lo, hi); }
+        // Quiet: a recursive stratum's levels decide the next rows gone, or check the next level (`Levels`).
+        if !any { any = levels.step(store); }
         if !any { done = true; break; }
         if max_waves > 0 && waves >= max_waves { break; }
     }
     comp.seeded = seeded;
     comp.gates = gates;
+    comp.levels = levels;
     // A symbol a wave could not intern fails the run.
     symbols.write().unwrap().check()?;
     let solve = t0.elapsed();
@@ -906,6 +1287,7 @@ pub fn add(conn: &Connection, name: &str, table: &str, rows: &[Vec<i64>]) -> Res
     let rel = &mut store.rels[r];
     if rel.lo != rel.hi { return Err(err(format!("{name}: {table} was added to twice in one pause"))); }
     let lo = rel.n;
+    rel.reserve(rows.len());
     let new = rows.iter().filter(|row| rel.push(row)).count();
     let hi = rel.n;
     rel.set_delta(lo, hi);
@@ -1130,7 +1512,10 @@ pub fn reprobe_spec(conn: &Connection, name: &str, i: usize, new: &Reprobe) -> R
         // The probe's whole plan (`ProbeRule::whole`), planned again from live statistics.
         Reprobe::Whole(spec) => {
             let j = joined(&comp, spec)?;
+            let levels: Vec<usize> = comp.levels.lines.iter().flat_map(|l| [l.cand, l.chk, l.held, l.gone, l.live]).collect();
             let p = comp.probes.get_mut(i).ok_or_else(|| err(format!("no probe {i} of {n}")))?;
+            // A levels relation's probes take no whole plan (`open`).
+            if levels.contains(&p.delta) { return Ok(()); }
             p.whole = Some(j);
             p.wkey = Some(Arc::clone(spec));
             return Ok(());
@@ -1321,7 +1706,9 @@ pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, base:
                    /// The kept relation a maintained one started as (`Rel::from`).
                    from: Option<Origin>,
                    /// Its id for the run: the executor keeps what a lane built from it by this (decision 0100 §4).
-                   uid: level::Uid }
+                   uid: level::Uid,
+                   /// Each row's level, when the native engine derived it (`Rel::level`); empty otherwise.
+                   level: Vec<u32> }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
 /// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
 pub struct View { src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
@@ -1509,6 +1896,33 @@ pub fn hold_empty(conn: &Connection, table: &str, types: Vec<u8>) {
     DERIVED.lock().unwrap().insert((scope(conn), table.to_owned()), InRel::flat(&[], types));
 }
 
+/// Holds `table` in `conn`'s run as a relation of `rows` (flat, `types.len()` values each): one a run kept from an
+/// earlier run of the same stratum over the same inputs (decision 0077 §4), read as if this run had derived it.
+pub fn hold_rows(conn: &Connection, table: &str, types: Vec<u8>, rows: Vec<i64>, n: usize) {
+    let k = types.len();
+    let rel = Arc::new(InRel { k, n, rows, view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() });
+    let _ = rel.name.set(table.to_owned());
+    DERIVED.lock().unwrap().insert((scope(conn), table.to_owned()), rel);
+}
+
+/// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live
+/// rows, flat.
+pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
+    let rel = DERIVED.lock().unwrap().get(&(scope(conn), table.to_owned())).cloned()?;
+    if rel.view.is_some() {
+        return None;
+    }
+    let k = rel.k;
+    let mut out = Vec::with_capacity(rel.rows() * k);
+    for id in 0..rel.len() as u32 {
+        if rel.ndead > 0 && is_dead(&rel.dead, id) {
+            continue;
+        }
+        out.extend_from_slice(&rel.rows[id as usize * k..id as usize * k + k]);
+    }
+    Some((rel.types.clone(), out, rel.rows()))
+}
+
 /// The relations `adopt`ed into `conn`'s next run, taken by its planner.
 pub fn adopted(conn: &Connection) -> std::collections::BTreeSet<String> {
     let at = scope(conn);
@@ -1525,15 +1939,25 @@ impl InRel {
         let k = types.len();
         let n = rows.len();
         let flat: Vec<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
-        Arc::new(InRel { k, n, rows: flat, view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default() })
+        Arc::new(InRel { k, n, rows: flat, view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() })
     }
     /// Its rows, as a source of columns `names`.
     pub fn source(self: &Arc<Self>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
         Derived::new(Arc::clone(self), Some(names))
     }
-    /// Its rows' bytes (its indexes not counted).
+    /// Its rows' bytes and their levels' (decision 0090, 4 bytes a row); its indexes not counted.
     pub fn bytes(&self) -> usize {
-        self.rows.len() * 8
+        self.rows.len() * 8 + self.level.len() * 4
+    }
+    /// What it holds in memory, by part: its values, its rows' levels, and its dedup set, dead bits and hash
+    /// indexes (each by capacity, the bytes allocated).
+    pub fn held_bytes(&self) -> (usize, usize, usize) {
+        let values = self.rows.capacity() * 8;
+        let levels = self.level.capacity() * 4;
+        // A hash table's entry and its control byte.
+        let set = self.set.capacity() * (4 + 1) + self.dead.capacity() * 8;
+        let chains: usize = self.chains.iter().map(|ix| ix.next.capacity() * 4 + ix.table.capacity() * (std::mem::size_of::<Post>() + 1)).sum();
+        (values, levels, set + chains)
     }
     pub fn rows(&self) -> usize {
         self.len() - self.ndead
@@ -1550,6 +1974,12 @@ impl InRel {
 pub fn prefetch_tables(conn: &Connection, wants: &std::collections::BTreeSet<(String, Vec<usize>)>) -> Result<(usize, usize)> {
     let at = scope(conn);
     table::prefetch(wants, |name| DERIVED.lock().unwrap().get(&(at, name.to_owned())).cloned()).map_err(err)
+}
+
+/// Tests: this thread's count steps build their tables at their first probe.
+#[cfg(test)]
+pub fn count_tables_at_once(on: bool) {
+    table::AT_ONCE.with(|c| c.set(on));
 }
 
 /// The count tables built so far in this process: histograms, counts per row, and the rows they read.
@@ -1677,7 +2107,7 @@ impl InRel {
     /// A component's relation at its fixpoint, its rows and indexes moved.
     fn moved(rel: Rel) -> InRel {
         InRel { k: rel.k, n: rel.n, rows: rel.data, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx,
-                set: rel.set, dead: rel.dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default() }
+                set: rel.set, dead: rel.dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level }
     }
     /// Its rows' change from `old`, the kept relation it started as (`Rel::based`), as `(added, removed)` row-major:
     /// the rows it added after `old`'s, and `old`'s live rows it marked dead. A row deleted and derived again is in
@@ -1767,6 +2197,18 @@ impl InRel {
             }
         }
         Some(out)
+    }
+    /// No rows, `k` columns.
+    fn empty(k: usize) -> InRel {
+        InRel { k, n: 0, rows: Vec::new(), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() }
+    }
+    /// Rows, levels held, and whether it is a view (`RERAIL_LEVELS_WHY`).
+    pub fn levels_shape(&self) -> (usize, usize, bool) {
+        (self.n, self.level.len(), self.view.is_some())
+    }
+    /// Whether every row has its level (a relation the native engine derived; decision 0090's levels).
+    pub fn has_levels(&self) -> bool {
+        self.view.is_none() && self.level.len() == self.n
     }
     /// A whole view's rows are its source's, counted when first asked: a source that makes its rows on lookup
     /// (`syntax::within`) makes them all only for a scan.
@@ -1977,7 +2419,7 @@ fn input_of(conn: &Connection, spec: &InputKey, syms: &mut Interner) -> Result<A
     if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
         if let Some(view) = view(conn, &table, &cols) {
             let n = view.ids.as_ref().map_or(0, Vec::len);
-            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default() });
+            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
             if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
@@ -1993,7 +2435,7 @@ fn input_of(conn: &Connection, spec: &InputKey, syms: &mut Interner) -> Result<A
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default() });
+    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() });
     {
         let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
         l.0 += thread_cpu() - c0;
@@ -2373,6 +2815,14 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
 
 /// A native join's steps from its spec: each slot bound by its first step, tested by later ones.
 fn join_rule(conn: &Connection, spec: &JoinSpec, syms: &mut Interner) -> Result<JoinRule> {
+    join_rule_with(conn, spec, syms, true)
+}
+
+/// `join_rule`, with the CPU's indexes of its input relations (`index`) or without them: a join the device runs
+/// reads its relations by its own sorts (`device`), so building the CPU's would be work for nothing. Without them
+/// the join must not run on the CPU (`open` parses it again with them when the device refuses it).
+fn join_rule_with(conn: &Connection, spec: &JoinSpec, syms: &mut Interner, index: bool) -> Result<JoinRule> {
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0 });
     let mut bound: Vec<bool> = Vec::new();
     let mut steps = Vec::new();
     let mut out = Vec::new();
@@ -2430,13 +2880,13 @@ fn join_rule(conn: &Connection, spec: &JoinSpec, syms: &mut Interner) -> Result<
                     Source::Native(table) => {
                         let rel = DERIVED.lock().unwrap().get(&(scope(conn), table.clone())).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
                         let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
-                        let ix = rel.index(&cols);
+                        let ix = if index { rel.index(&cols) } else { unindexed(&cols) };
                         Src::In(rel, ix)
                     }
                     Source::Input(key) => {
                         let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
                         let rel = input_of(conn, key, syms)?;
-                        let ix = rel.index(&cols);
+                        let ix = if index { rel.index(&cols) } else { unindexed(&cols) };
                         Src::In(rel, ix)
                     }
                 };
@@ -2605,7 +3055,22 @@ fn run_join_collect(j: &JoinRule, store: &Store, syms: &mut Interner, preset: &[
     run_join_in(j, 0, store, syms, &mut [], preset, Some(out), None)
 }
 
+/// The join's rows for each value of slot `y` in turn, collected: `next` is handed the previous value's rows (empty
+/// the first time) and gives the next value, or `None` to stop. One context for every value (a closure's search of
+/// its edges, node after node), not one per value.
+fn run_join_each(j: &JoinRule, store: &Store, syms: &mut Interner, y: usize, next: &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>) -> Result<u64> {
+    let mut out = Vec::new();
+    run_join_in_each(j, 0, store, syms, &mut [], &[], Some(&mut out), None, Some((y, next)))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>, paired: Option<&level::Paired>) -> Result<u64> {
+    run_join_in_each(j, head, store, syms, fresh, preset, collect, paired, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>,
+                    paired: Option<&level::Paired>, each: Option<(usize, &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>)>) -> Result<u64> {
     struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
                      key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)>, scratch: Vec<rowcode::Scratch>,
                      collect: Option<&'c mut Vec<i64>>,
@@ -2714,10 +3179,12 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
                                 for &(slot, b) in &f.binds {
                                     slots[slot] = match b { rowcode::Bind::Column(k) => s.columns[k][r], rowcode::Bind::Param(k) => s.params[k] };
                                 }
+                                if i == 0 { cx.at0 = s.ids[r]; }
                                 go(cx, i + 1 + f.steps, slots);
                             }
                         }
                         s.rows = 0;
+                        s.ids.clear();
                         s.columns.iter_mut().for_each(Vec::clear);
                     }
                     cands.any(|id| {
@@ -2725,6 +3192,7 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
                         let row = rows.row(id);
                         if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
                         for &(k, c) in &f.gather { s.columns[k].push(row.at(c)); }
+                        if i == 0 { s.ids.push(id); }
                         s.rows += 1;
                         if s.rows == rowcode::CHUNK { flush(cx, i, f, &mut s, slots); }
                         false
@@ -2751,10 +3219,9 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
             Step::Scalar { src, keys, tests, col, kind, out, bind, bag } => {
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
-                // A count first reads its count table, when the relation has one by these columns (a bag's memo holds
-                // the same counts by key).
-                let plain = *kind == ScalarKind::Count;
-                if plain && let Some(n) = table::count(&j.forms[i], src, keys, tests, &cx.key, cx.at0) {
+                // A count from the step's count table, once it has one (`table`, decision 0098 §1).
+                let counting = *kind == ScalarKind::Count && col.is_none();
+                if counting && let Some(n) = table::count(&j.forms[i], src, keys, tests, &cx.key, cx.at0) {
                     if *bind { slots[*out] = n } else if slots[*out] != n { return }
                     go(cx, i + 1, slots);
                     return;
@@ -2787,7 +3254,7 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
                     };
                     pool.evaluate(bag, &cx.key, epoch, build)
                 } else { build(*col) };
-                if plain { table::spent(&j.forms[i], &j.steps, i, walked.get()); }
+                if counting { table::spent(&j.forms[i], &j.steps, i, walked.get()); }
                 if *kind==ScalarKind::Sum && *bind {
                     cx.pending.retain(|(slot,_)|slot!=out);
                     if let Ok(value)=i64::try_from(summary.sum) {slots[*out]=value;}
@@ -2902,15 +3369,23 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0 };
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
-    match (paired, j.steps.first(), j.steps.get(1)) {
+    match (each, paired, j.steps.first(), j.steps.get(1)) {
+        (Some((y, next)), ..) => loop {
+            let out = cx.collect.as_deref_mut().expect("a join run for each value collects");
+            let Some(v) = next(out) else { break };
+            out.clear();
+            slots[y] = v;
+            go(&mut cx, 0, &mut slots);
+            if cx.error.is_some() { break; }
+        },
         // The first two steps' pairs from a level's batch: each left row binds the first atom's slots (its rows
         // passed its tests already), each right row is checked as the walk checks it and binds the second's.
-        (Some(p), Some(Step::Atom { src: Src::In(r0, _), binds: b0, .. }), Some(Step::Atom { src: Src::In(r1, _), keys: k1, binds: b1, tests: t1, .. })) => {
+        (None, Some(p), Some(Step::Atom { src: Src::In(r0, _), binds: b0, .. }), Some(Step::Atom { src: Src::In(r1, _), keys: k1, binds: b1, tests: t1, .. })) => {
             let (rows0, rows1) = (Rows::In(r0), Rows::In(r1));
             let c0 = &j.counts[0];
             c0[0].set(c0[0].get() + 1);
             let mut last = u32::MAX;
-            for &(li, rid) in &p.pairs {
+            for (li, rid) in p.pairs.iter() {
                 if cx.error.is_some() { break; }
                 if li != last {
                     last = li;
@@ -2991,7 +3466,7 @@ mod posted_tests {
             gone.push(&[node(d, i), i % 3, if i % 2 == 0 { node(4 - d, i % 5) } else { i % 4 }]);
         }
         let gone = InRel::moved(gone);
-        for rel in [old.clone_rows(), InRel::moved(Rel::based("t", b"iii", &old, &gone).expect("few rows dead"))] {
+        for rel in [old.clone_rows(), InRel::moved(Rel::based("t", b"iii", &old, Some(&gone)).expect("few rows dead"))] {
             let rel = Arc::new(rel);
             let source = Derived::new(Arc::clone(&rel), None);
             let measured: Vec<[i64; 4]> = crate::code_rule_dsl::facts::vtab::syntax::measured(source.as_ref()).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect();
@@ -3018,7 +3493,7 @@ mod posted_tests {
             let r = old.row(id).to_vec();
             gone.push(&r);
         }
-        let rel = InRel::moved(Rel::based("t", b"iiii", &old, &InRel::moved(gone)).expect("few dead"));
+        let rel = InRel::moved(Rel::based("t", b"iiii", &old, Some(&InRel::moved(gone))).expect("few dead"));
         let names: Vec<String> = (0..4).map(|c| format!("c{c}")).collect();
         let live = rel.live_rows().expect("flat");
         let mut want = RelStats::paired(names.clone());
@@ -3042,7 +3517,7 @@ mod posted_tests {
             gone.push(&[i, i % 3]);
         }
         let gone = InRel::moved(gone);
-        let mut new = Rel::based("t", b"ii", &old, &gone).expect("few rows dead");
+        let mut new = Rel::based("t", b"ii", &old, Some(&gone)).expect("few rows dead");
         new.push(&[5, 2]);
         new.push(&[100, 1]);
         let new = InRel::moved(new);
@@ -3062,14 +3537,38 @@ mod posted_tests {
             most.push(&[i, i % 3]);
         }
         let most = Arc::new(InRel::moved(most));
-        assert!(Rel::based("t", b"ii", &old, &most).is_none());
-        let mut new = Rel::compacted("t", b"ii", &old, &most);
+        assert!(Rel::based("t", b"ii", &old, Some(&most)).is_none());
+        let mut new = Rel::compacted("t", b"ii", &old, Some(&most));
         new.push(&[3, 0]);
         new.push(&[100, 1]);
         let new = InRel::moved(new);
         let (mut added, mut removed) = new.delta_since(&old).expect("started as old");
         assert_eq!(rows(&mut added), vec![vec![3, 0], vec![100, 1]]);
         assert_eq!(rows(&mut removed), (0..20).map(|i| vec![i, i % 3]).collect::<Vec<_>>());
+    }
+
+    /// Every row a component pushes has its level (decision 0090), which a kept relation counts as 4 bytes a row and
+    /// keeps through `based` and compaction.
+    #[test]
+    fn a_kept_relation_keeps_and_counts_its_levels() {
+        let mut rel = Rel::new("t", b"ii");
+        for i in 0..40 {
+            rel.push(&[i, i % 3]);
+        }
+        let old = Arc::new(InRel::moved(rel));
+        assert!(old.has_levels());
+        assert_eq!(old.bytes(), 40 * 2 * 8 + 40 * 4);
+        let mut most = Rel::new("g", b"ii");
+        for i in 0..20 {
+            most.push(&[i, i % 3]);
+        }
+        let most = InRel::moved(most);
+        let new = InRel::moved(Rel::compacted("t", b"ii", &old, Some(&most)));
+        assert!(new.has_levels());
+        let kept: Vec<u32> = (20..40).map(|i| old.level[i]).collect();
+        assert_eq!(new.level, kept);
+        let same = InRel::moved(Rel::based("t", b"ii", &old, None).expect("nothing gone"));
+        assert_eq!(same.level, old.level);
     }
 
     /// Rows held as columns measure from their sorted indexes what `syntax::measured` gives, a column held nowhere
@@ -3107,7 +3606,7 @@ mod posted_tests {
     impl InRel {
         fn clone_rows(&self) -> InRel {
             InRel { k: self.k, n: self.n, rows: self.rows.clone(), view: None, base: false, types: self.types.clone(), stored: self.stored, idx: Mutex::new(HashMap::default()), chains: self.chains.clone(),
-                    set: self.set.clone(), dead: self.dead.clone(), ndead: self.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default() }
+                    set: self.set.clone(), dead: self.dead.clone(), ndead: self.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: self.level.clone() }
         }
     }
 }

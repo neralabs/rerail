@@ -3151,6 +3151,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-compiler"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-jit-wasm",
+ "cranelift-module",
+ "libc",
+]
+
+[[package]]
 name = "rerail-engine"
 version = "0.1.0"
 dependencies = [
@@ -3192,6 +3205,9 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-compiler",
+ "rerail-parser-tests",
+ "rerail-rr-syntax",
  "ruff_python_ast",
  "ruff_python_parser",
  "rusqlite",
@@ -3212,6 +3228,24 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-parser-tests"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-compiler",
+ "rerail-rr-syntax",
+ "tree-sitter",
+ "tree-sitter-json",
+]
+
+[[package]]
+name = "rerail-rr-syntax"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

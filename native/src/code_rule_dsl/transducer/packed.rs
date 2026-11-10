@@ -51,6 +51,9 @@ pub(in crate::code_rule_dsl) mod metal_rows;
 // Relations sorted by a key on the device, and the joins that probe them (decision 0095).
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) mod metal_sort;
+// A stratum's join plan on the device: binding tables and their stages (decision 0095, step 4).
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) mod metal_join;
 #[cfg(target_os = "macos")]
 mod metal_program_backend;
 #[cfg(target_os = "macos")]
@@ -243,7 +246,7 @@ pub(in crate::code_rule_dsl) use compilation::PlanId;
 mod native_cpu;
 mod native_cpu_capture;
 mod native_cpu_capture_pair;
-mod native_cpu_codegen;
+use rerail_compiler::native_cpu_codegen;
 mod native_cpu_lua;
 mod native_cpu_output;
 mod native_cpu_output_sort;
@@ -253,14 +256,15 @@ mod native_cpu_regex;
 mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
-mod native_cpu_block;
-// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2).
-pub(in crate::code_rule_dsl) mod native_cpu_rows;
+use rerail_compiler::native_cpu_block;
+use rerail_compiler::native_cpu_lanes;
+use rerail_compiler::native_cpu_pressure;
+use rerail_compiler::native_cpu_shape;
+// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
+#[allow(unused_imports)]
+pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_rows;
 // Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
 pub(in crate::code_rule_dsl) mod rows_sort;
-mod native_cpu_lanes;
-mod native_cpu_pressure;
-mod native_cpu_shape;
 mod native_cpu_stream;
 mod native_ir;
 mod output;
@@ -277,7 +281,7 @@ pub(in crate::code_rule_dsl) mod fusion;
 pub(in crate::code_rule_dsl) mod rir;
 mod value;
 // Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
-pub(in crate::code_rule_dsl) mod block;
+pub(in crate::code_rule_dsl) use rerail_compiler::block;
 pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
 mod block_tests;
@@ -285,11 +289,10 @@ mod block_tests;
 mod block_rows_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
 mod bitlex_compile;
+// The tree section's compilers, the compiler crate's.
+use rerail_compiler::{bitlex_prove, bitlex_tier2, grammar};
 // The `.rr` parser: the Bitlex grammar compiled, the engine's parser for what it refuses.
 pub(in crate::code_rule_dsl) mod rr_parser;
-mod grammar;
-mod bitlex_prove;
-mod bitlex_tier2;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
 mod bitlex_compile_tests;
@@ -297,15 +300,13 @@ mod token_local;
 #[cfg(test)]
 mod token_local_tests;
 #[cfg(test)]
-mod gating_tests;
-#[cfg(test)]
-mod outline_tests;
+mod gating_rr_tests;
+#[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+mod regex_relocation_tests;
 #[cfg(test)]
 mod bitlex_corpus_tests;
 #[cfg(test)]
 mod bitlex_ladder_tests;
-#[cfg(test)]
-mod bitlex_rr_tests;
 #[cfg(test)]
 mod bitlex_json_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
@@ -316,68 +317,9 @@ mod block_plan_tests;
 mod value_packing;
 mod value_prefix;
 
-const STOP: u8 = 0x00;
-const KIND: u8 = 0x01;
-const FIELD: u8 = 0x02;
-const FLAGS: u8 = 0x03;
-const TEXT: u8 = 0x04;
-const SIZE: u8 = 0x05;
-const ASSERT: u8 = 0x06;
-const FIRST: u8 = 0x07;
-const LAST: u8 = 0x08;
-const ABSENT_FIELD: u8 = 0x09;
-const SUPERTYPE: u8 = 0x0a;
-const CHILD: u8 = 0x10;
-const NEXT: u8 = 0x11;
-const PARENT: u8 = 0x12;
-const DESCEND: u8 = 0x13;
-const FOLLOWING: u8 = 0x14;
-const SAVE_CURSOR: u8 = 0x15;
-const RESTORE_CURSOR: u8 = 0x16;
-const CAPTURE: u8 = 0x20;
-const REPEAT_BEGIN: u8 = 0x21;
-const REPEAT_BUMP: u8 = 0x22;
-const REPEAT_END: u8 = 0x23;
-const FORK: u8 = 0x30;
-const GOTO: u8 = 0x31;
-const EMIT: u8 = 0x40;
-// Tier 2's words, over the token stream (decision 0087, `stream`).
-const TOKEN: u8 = 0x50;
-const SWITCH: u8 = 0x51;
-/// `WORD` in `rir`.
-const WORD_IS: u8 = 0x52;
-// 0x53 was `CHECK`, a token's check run per token: a check is tier 1's masks (doc 18 §4).
-const OPEN: u8 = 0x54;
-const CLOSE: u8 = 0x55;
-const LEAF: u8 = 0x56;
-const NODE_FIELD: u8 = 0x57;
-const NODE_SUPER: u8 = 0x58;
-const PUSH: u8 = 0x59;
-const RETURN: u8 = 0x5a;
-const ACCEPT: u8 = 0x5b;
-const SPAN: u8 = 0x5c;
-/// Refuses unless one of tier 1's totals is zero: the fallback.
-const EMPTY: u8 = 0x5d;
-/// A mark (a token of no width) before the token: `m=k` its order, the operand its mask.
-const MARK: u8 = 0x5e;
-/// Runs the next word when the token starts at a bit of mask `operand`, else skips it: which of
-/// two rows beginning with one byte the token is.
-const ROW: u8 = 0x5f;
-/// The innermost open node becomes a node of kind `operand`: its kind decided by this token.
-const RETAG: u8 = 0x60;
-/// The token's leaf joins the grammar's leaf before it (the pending extras between are its text,
-/// dropped): one leaf of kind `operand`, to this token's end.
-const MERGE: u8 = 0x61;
-/// A node of kind `operand` around the node last made at this level, open: it takes that node's
-/// field and start; `NODE_FIELD m=1` and `RETAG m=1` then act on the moved node.
-const WRAP: u8 = 0x62;
-
-pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
-const GREEDY: u8 = 1;
-const EXTRA: u8 = 2;
-const MISSING: u8 = 4;
-const ERROR: u8 = 8;
-const SIZE_LONG: u8 = 0x80;
+// The transducer's word program and its opcodes, the compiler crate's (`rerail_compiler::program`).
+use rerail_compiler::program::*;
+pub(in crate::code_rule_dsl) use rerail_compiler::program::{NAMED, Words, word};
 const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
 const MAX_STEPS_PER_PATH: usize = 1 << 20;
 const MAX_WORK_PER_TASK: usize = 1 << 26;
@@ -860,32 +802,31 @@ enum PatternVerdict {
 
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Program {
-    words: Vec<u32>,
-    strings: Vec<Vec<u8>>,
+    /// The word program: the words and the tables they index, tier 1's and tier 2's
+    /// (`rerail_compiler::program::Words`). The fields below are the matcher's.
+    ir: Words,
     predicates: Vec<TextPredicate>,
     value_programs: Vec<value::ValueProgram>,
     capture_predicates: Vec<CapturePredicate>,
     capture_programs: Vec<value::CaptureProgram>,
-    labels: Vec<u16>,
-    longs: Vec<u64>,
     directives: Vec<Directive>,
     output_program: output::OutputProgram,
-    tree_sitter_query: bool,
-    /// Set mode (t1 spec-transducer §1, list step 14): the program's consumer reads its output
-    /// as a set of (task, label) keys, so an executor may stop a label at its first emit in a
-    /// task and drop a path whose reachable labels have all fired (`set_mode::Reach`). Its
-    /// captures are then one witness's, not every path's.
-    set_mode: bool,
     ast_pattern: Option<PackedPattern>,
-    /// Block programs, the side programs over source bytes (`block`), as `value_programs` are
-    /// the side programs over a node's text.
-    block_programs: Vec<block::BlockProgram>,
-    /// Tier 2's switch tables (`SWITCH`, decision 0087).
-    switches: Vec<stream::ByteSwitch>,
-    /// Tier 2's readings (`RETAG m=3`) and provisional fields.
-    readings: stream::Readings,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
+}
+
+impl std::ops::Deref for Program {
+    type Target = Words;
+    fn deref(&self) -> &Words {
+        &self.ir
+    }
+}
+
+impl std::ops::DerefMut for Program {
+    fn deref_mut(&mut self) -> &mut Words {
+        &mut self.ir
+    }
 }
 
 /// A program's plain digest, computed once: the CPU JIT's cache, the compilation requests and
@@ -1028,36 +969,8 @@ pub(super) fn interpreter_reference(
     packed_batch::PackedExecution::interpret_reference(programs, file, roots, limits)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum Error {
-    InvalidOpcode(usize),
-    InvalidMode(usize),
-    InvalidOperand(usize),
-    InvalidTarget(usize),
-    NonProgressingCycle(usize),
-    InvalidGreedyRegion(usize),
-    WorkLimit,
-    UnsupportedPattern,
-    UnsupportedFeature(&'static str),
-    UnknownNodeKind(String),
-    UnknownField(String),
-    UnknownCapture(String),
-    ScmParse { offset: usize, message: String },
-    InvalidAnchor,
-    UnsupportedBackend,
-    BackendCapacity,
-    /// A label run's workspace is over Metal's buffer budget (`label_passes::run` halves its lanes'
-    /// states; past the fewest it is `BackendCapacity`).
-    BackendBudget,
-    BackendLaunchLimit,
-    /// A label run's micro walk outgrew its frames, captures or steps on the device: the run
-    /// again with deep stacks, then interpreted. Not a size refusal: the batch fits; its walks'
-    /// pools do not.
-    WalkFrames,
-    BackendFailure,
-    /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
-    RefusedShape(String),
-}
+// The transducer's errors, shared with tier 1's crate.
+pub(in crate::code_rule_dsl) use rerail_compiler::Error;
 
 #[derive(Clone, Copy)]
 struct Path {
@@ -1231,9 +1144,6 @@ impl WorkItem {
     }
 }
 
-fn split(word: u32) -> (u8, u8, u16) {
-    (word as u8, (word >> 8) as u8, (word >> 16) as u16)
-}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 enum SiblingRequirement {
@@ -1429,9 +1339,6 @@ impl CaptureStateSet {
     }
 }
 
-pub(in crate::code_rule_dsl) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
-    opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
-}
 
 impl PackedPattern {
     fn lower(node: &PatternNode) -> Self {
@@ -1921,24 +1828,16 @@ impl Program {
             .map(value::CaptureProgram::lower)
             .collect();
         let program = Self {
-            words,
-            strings,
+            ir: Words { words, strings, labels, longs, ..Words::default() },
             predicates,
             value_programs,
             capture_predicates,
             capture_programs,
-            labels,
-            longs,
             directives: Vec::new(),
             output_program: output::OutputProgram {
                 instructions: Vec::new(),
             },
-            tree_sitter_query: false,
-            set_mode: false,
             ast_pattern: None,
-            block_programs: Vec::new(),
-            switches: Vec::new(),
-            readings: stream::Readings::default(),
             digest: DigestMemo::default(),
         };
         program.validate()?;
@@ -2250,8 +2149,7 @@ impl Program {
     }
 
     pub(in crate::code_rule_dsl) fn label_name(&self, label: u16) -> Option<&str> {
-        let string = *self.labels.get(usize::from(label))?;
-        std::str::from_utf8(self.strings.get(usize::from(string))?).ok()
+        rerail_compiler::rir_asm::label_name(self, label)
     }
 
     pub(in crate::code_rule_dsl) fn string_value(&self, string: u16) -> Option<&str> {
@@ -2436,25 +2334,9 @@ impl Program {
         {
             return Err(Error::InvalidOperand(0));
         }
-        // A tier-2 program (decision 0087): its own words and rules.
+        // A tier-2 program (decision 0087): its own words and rules (`stream::validate_tier2`).
         if self.words.iter().any(|&w| stream::is_stream(split(w).0)) {
-            for (pc, &w) in self.words.iter().enumerate() {
-                let (opcode, mode, operand) = split(w);
-                match opcode {
-                    STOP => {
-                        if mode != 0 || operand != 0 {
-                            return Err(Error::InvalidMode(pc));
-                        }
-                    }
-                    GOTO => {
-                        if mode != 0 || usize::from(operand) >= self.words.len() {
-                            return Err(Error::InvalidTarget(pc));
-                        }
-                    }
-                    _ => stream::validate_word(self, pc, opcode, mode, operand)?,
-                }
-            }
-            return stream::validate(self);
+            return stream::validate_tier2(self);
         }
         if !self.switches.is_empty() {
             return Err(Error::InvalidOperand(0));

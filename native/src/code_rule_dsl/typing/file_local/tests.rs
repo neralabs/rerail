@@ -383,3 +383,62 @@ finding(f, x) :- node(_, f, "decorated_definition", _, _), field(f, "decorator",
     let pushed: Vec<&str> = body.iter().filter_map(|l| l.atom()).filter(|a| made.contains(&a.rel)).map(|a| a.rel.as_str()).collect();
     assert_eq!(pushed.len(), 1, "one pushed join, not one per piece: {}", finding[0]);
 }
+
+/// Decision 0099, the factorized store: an export that joins two parts at a variable its head projects away
+/// (`outer`'s pushed join `inside(f, p), bound(p, x)`) is handed on as its parts, each reduced by the other's keys,
+/// and the cross-file reader joins them by the key where it read the product. One whose second part is a node's
+/// attribute (`text(p, s)`: one row a key) is left whole: its product is no larger than its other part.
+#[test]
+fn an_export_joined_at_a_projected_key_is_handed_on_as_its_parts() {
+    use crate::code_rule_dsl::logic::front::Literal;
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+// Any file's names: no location column, so cross-file.
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl encl(f: node, p: node)
+encl(f, p) :- node(_, p, "block", _, _), child(p, f, _).
+.decl bound(p: node, x: symbol)
+bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment", _, _), text(c, x).
+.decl outer(f: node, x: symbol)
+.output outer
+outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
+.decl named(f: node, s: symbol)
+.output named
+named(f, s) :- uses(f, _), child(p, f, _), text(p, s).
+"#;
+    let mut prog = parse(text).unwrap();
+    let pushed = push_local_joins(&mut prog);
+    assert_eq!(pushed.len(), 2, "{pushed:?}");
+    let lines = factorize_exports(&mut prog);
+    assert_eq!(lines.len(), 1, "only outer's join is factorized: {lines:?}");
+    let product = pushed.iter().find(|p| p.ends_with("_outer")).unwrap();
+    assert!(lines[0].starts_with(&format!("{product}: handed on as parts")), "{lines:?}");
+    assert!(!prog.rules.iter().any(|r| r.head.rel == *product), "the product's rule is gone");
+    // The reader reads the parts, joined by the key, where it read the product.
+    let outer: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "outer").collect();
+    assert_eq!(outer.len(), 1);
+    let parts: Vec<&str> = outer[0].body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()).filter(|r| r.starts_with("fz")).collect();
+    assert_eq!(parts.len(), 2, "{}", outer[0]);
+    let keys: Vec<_> = outer[0].body.iter().filter_map(|l| l.atom()).filter(|a| a.rel.starts_with("fz")).map(|a| a.args.last().cloned().unwrap()).collect();
+    assert_eq!(keys[0], keys[1], "the parts meet at the key: {}", outer[0]);
+    // Each part is reduced by the other's keys, and both are file-local exports.
+    for part in &parts {
+        let rule = prog.rules.iter().find(|r| r.head.rel == *part).unwrap();
+        assert!(rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.starts_with("fzk"))), "{rule}");
+    }
+    let split = programs(&prog);
+    for part in &parts {
+        assert!(split.exports.iter().any(|e| e == part), "{part} is exported: {:?}", split.exports);
+    }
+    assert!(!split.exports.iter().any(|e| e == product));
+    // The other join (`named`'s) is handed on whole.
+    let named = pushed.iter().find(|p| p.ends_with("_named")).unwrap();
+    assert!(split.exports.iter().any(|e| e == named), "{:?}", split.exports);
+}

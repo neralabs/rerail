@@ -363,6 +363,25 @@ pub(in crate::code_rule_dsl) struct Program {
     /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
     /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
     pub(in crate::code_rule_dsl) qualifiers: BTreeMap<String, BTreeSet<String>>,
+    /// A session's maintained strata, each with the rules that derive it again instead (decision 0090 §4,
+    /// `maintain::rewrite`): the run chooses per stratum, once its input deltas are known (`plan::run`).
+    pub(in crate::code_rule_dsl) again: Vec<Again>,
+}
+
+/// A maintained stratum's other form (decision 0090 §4). Both make its relations and their deltas (`r__minus`,
+/// `r__plus`), which are all that other strata read of it, so each stratum chooses alone.
+#[derive(Clone, Debug, Default)]
+pub(in crate::code_rule_dsl) struct Again {
+    /// The stratum's own relations (one fixpoint when derived again).
+    pub(in crate::code_rule_dsl) scc: BTreeSet<String>,
+    /// Every relation the maintained form makes for it: its relations, their pieces (`__del`, `__ins`, …) and deltas.
+    pub(in crate::code_rule_dsl) owned: BTreeSet<String>,
+    /// Its rules over the current inputs, then its deltas against its old rows.
+    pub(in crate::code_rule_dsl) rules: Vec<Rule>,
+    pub(in crate::code_rule_dsl) deltas: Vec<Rule>,
+    /// The input deltas its maintained form reads, and its relations' old rows: the sizes that choose.
+    pub(in crate::code_rule_dsl) reads: Vec<String>,
+    pub(in crate::code_rule_dsl) olds: Vec<String>,
 }
 
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
@@ -497,6 +516,15 @@ pub(in crate::code_rule_dsl) enum Error {
     /// A component creates values (`@cat`, …) without moving along the tree (`cycles`): `rule` is one it
     /// could not bound.
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
+}
+
+/// The `.rr` parser's error (`rerail_rr_syntax`) is a syntax error.
+impl From<rerail_rr_syntax::Error> for Error {
+    fn from(e: rerail_rr_syntax::Error) -> Self {
+        match e {
+            rerail_rr_syntax::Error::Syntax(m) => Error::Syntax(m),
+        }
+    }
 }
 
 impl Error {
@@ -1071,6 +1099,50 @@ pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, boo
 /// recursion named apart from negation, and allowed into a lattice head it is monotone in (`count`/`max` into a
 /// `max` lattice, `min` into a `min` lattice).
 pub(in crate::code_rule_dsl) fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
+    let (sccs, edges, aggs) = components(prog);
+    match first_unstratified(&sccs, &edges, &aggs, true).into_iter().next() {
+        Some(e) => Err(e),
+        None => Ok((sccs, edges)),
+    }
+}
+
+/// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each (`strata` stops at
+/// the first): a caller that drops what made each cycle (demand's split, decision 0048) drops them all in one round.
+pub(in crate::code_rule_dsl) fn unstratified(prog: &Program) -> Vec<Error> {
+    let (sccs, edges, aggs) = components(prog);
+    first_unstratified(&sccs, &edges, &aggs, false)
+}
+
+/// The first error of each component a negative edge closes a cycle in (`first`: only the first component's).
+fn first_unstratified(sccs: &[BTreeSet<String>], edges: &Edges, aggs: &BTreeSet<(String, String)>, first: bool) -> Vec<Error> {
+    let mut out = Vec::new();
+    for scc in sccs {
+        'scc: for v in scc {
+            for (w, neg) in edges.get(v).into_iter().flatten() {
+                if !*neg || !scc.contains(w) {
+                    continue;
+                }
+                out.push(if aggs.contains(&(v.clone(), w.clone())) {
+                    Error::AggregationInRecursion { head: v.clone(), aggregated: w.clone(), component: scc.clone() }
+                } else {
+                    Error::NotStratifiable {
+                        message: format!("not stratifiable: {v} depends negatively on {w} in its own component"),
+                        component: scc.clone(),
+                        negated: w.clone(),
+                    }
+                });
+                if first {
+                    return out;
+                }
+                break 'scc;
+            }
+        }
+    }
+    out
+}
+
+/// The program's components (dependencies first), its dependency edges, and its non-monotone aggregation edges.
+fn components(prog: &Program) -> (Vec<BTreeSet<String>>, Edges, BTreeSet<(String, String)>) {
     let mut derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut edges = Edges::new();
     // An answer is an edge: each produced relation reads its request (decision 0065 §2a).
@@ -1106,24 +1178,7 @@ pub(in crate::code_rule_dsl) fn strata(prog: &Program) -> Result<(Vec<BTreeSet<S
         }
     }
     let sccs = tarjan(&derived, &edges);
-    for scc in &sccs {
-        for v in scc {
-            for (w, neg) in edges.get(v).into_iter().flatten() {
-                if !*neg || !scc.contains(w) {
-                    continue;
-                }
-                if aggs.contains(&(v.clone(), w.clone())) {
-                    return Err(Error::AggregationInRecursion { head: v.clone(), aggregated: w.clone(), component: scc.clone() });
-                }
-                return Err(Error::NotStratifiable {
-                    message: format!("not stratifiable: {v} depends negatively on {w} in its own component"),
-                    component: scc.clone(),
-                    negated: w.clone(),
-                });
-            }
-        }
-    }
-    Ok((sccs, edges))
+    (sccs, edges, aggs)
 }
 
 /// Strongly connected components of `nodes` under `edges`, dependencies first, in the same order every run.

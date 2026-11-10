@@ -1,5 +1,5 @@
 [workspace]
-members = ["native", "accel"]
+members = ["native", "accel", "native/crates/compiler", "native/crates/rr_syntax", "native/crates/parser_tests"]
 # The Bitlex evaluator keeps its own workspace (its tree-sitter oracle); the engine uses its library.
 exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation", "tools/bitlex"]
 resolver = "2"
