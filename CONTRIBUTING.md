@@ -42,6 +42,17 @@ Pack data your change stages in `publish/` comes in with the ported pull request
 submit is licensed under Apache-2.0 ([Licence of contributions](#licence-of-contributions)), and
 [Third-party material](#third-party-material) applies to it like any other change.
 
+### AI tools and automated accounts
+
+You can use AI tools, coding agents included, to write a change. A person still stands behind it: they answer the
+review, can explain any part of it, and ran the checks the pull request reports.
+
+A maintainer closes a pull request from an account that looks automated when no person behind it can be reached: for
+example, a new account opening pull requests across many unrelated repositories. Maintainers don't have the capacity to
+review automated contributions at that volume. Closing it is not a judgement on the code, and a maintainer may fix the
+issue in their own pull request. If you are the person behind such an account, email
+[opensource@nera.software](mailto:opensource@nera.software) to talk about the change.
+
 ## Contributors
 
 Contributors push branches to this repository and open pull requests from them, so CI runs on their changes. Nera
