@@ -75,7 +75,9 @@ function collect(stream: PassThrough): () => string[] {
  * exists (`recordedDaemonAlive`), so the test endpoint it records is held until the test ends.
  */
 async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void> {
-  const kernelSocketPath = daemon.kernelSocketPath ?? testEngineEndpoint(home);
+  // A short folder: macOS reads a recorded socket path of at most 103 bytes, and a temp home there already takes
+  // about 90. Nothing listens on it off Windows.
+  const kernelSocketPath = daemon.kernelSocketPath ?? testEngineEndpoint("/tmp");
   if (daemon.kernelSocketPath === undefined) heldEndpoints.push(await holdEngineEndpoint(kernelSocketPath));
   await mkdir(home, { recursive: true });
   await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify({
