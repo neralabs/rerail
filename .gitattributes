@@ -1,7 +1,8 @@
 # Every text file checks out with the LF line ends it is stored with, on every platform. Git for Windows sets
-# core.autocrlf=true by default, which checked text out as CRLF: model/config.json and every pack README then failed
-# their checksums and the structure checks. A file stored with CRLF (a few test fixtures) keeps it: Git converts
-# nothing in a file whose stored form already holds a CR. Later lines win, so the -text lines below still apply.
+# core.autocrlf=true by default, which checked text out as CRLF: every pack README then failed the README and structure
+# checks, as did the tests that read a checkout's bytes. A file stored with CRLF (a few test fixtures) keeps it: Git
+# converts nothing in a file whose stored form already holds a CR. Later lines win, so the -text lines below still
+# apply, and keep the model's files byte for byte.
 * text=auto eol=lf
 
 # Binaries are stored in Git LFS: install git-lfs before cloning (CONTRIBUTING.md). CI pulls them through
