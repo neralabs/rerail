@@ -54,7 +54,7 @@ def main():
             def native(self,check,entry,files,options=None):
                 r=execute(a.engine.absolute(),ROOT/'gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr',files,dict(entryPoint=entry,**(options or {})));self.calls.append(r);return r['diagnostics']
         backend=Backend();settings=backend.native('', '_configuration',[])
-        values=lambda k:[r['parameters']['value'] for r in settings if r['parameters']['key']==k]
+        values=lambda k:[r['parameters']['value'] for r in settings if r['code']=='NGB_CONFIG' and r['parameters']['key']==k]
         module=SimpleNamespace(ALLOWED_FILES=set(values('allowed')),FORBIDDEN_PUBLIC_METHODS=set(values('method')),SQL_CONNECTION_FILE=values('sql')[0],__file__='',cli_main=None,check_no_bypass_references=None,check_no_public_grammar_methods=None)
         install(backend,module);baseline=read_json(a.baseline);assert baseline['passed'];compare(CASES,[r['input'] for r in baseline['cases']])
         assert not any(n.startswith('scripts.lint_') for n in sys.modules)

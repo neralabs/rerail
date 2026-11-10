@@ -232,7 +232,8 @@ def no_blanket_grammar_bypass(source, target, header):
     original = module(source, 'no_blanket_grammar_bypass')
     _, space, _ = classes()
     quote = json.dumps
-    text = '\n'.join('.scope include \"**/*.py\"' if line.startswith('.scope include ') else '.scope exclude \"**/.git/**\", \"**/.venv/**\", \"**/venv/**\", \"**/__pycache__/**\", \"**/tmp/**\"' if line.startswith('.scope exclude ') else line for line in header('no_blanket_grammar_bypass', target).splitlines()) + '\n'
+    from data_layer_rr_cli import api_scope
+    text=api_scope(header('no_blanket_grammar_bypass',target))
     text += '.decl bypass_allowed(p: symbol)\n'
     text += ''.join(f'bypass_allowed({quote(p)}).\n' for p in sorted(original.ALLOWED_FILES))
     text += '.decl bypass_public_name(n: symbol)\n'
@@ -242,13 +243,13 @@ def no_blanket_grammar_bypass(source, target, header):
     text += f'bypass_sql_target({quote(original.SQL_CONNECTION_FILE)}) :- !option("sqlConnectionFile", _).\n'
     text += '''// API scopes include every transported file; production uses the source root and test rules.
 .decl bypass_selected(d: number)
-bypass_selected(d) :- doc(d,_,_), option(\"entryPoint\",_).
+bypass_selected(d) :- doc(d,_,_), option(\"entryPoint\",_), !bypass_prepare().
 bypass_selected(d) :- doc(d,p,_), !option(\"entryPoint\",_), dir_entry(\".\",root,1),
     (root = \"impl\" ; root = \"data_layer\" ; root = \"_internal\" ; match_all(\"\\\\Al\\\\d{4}_.+\",root)),
     prefix(cat(root,\"/\"),p), !path_part(d,\"tests\"), !path_part(d,\"test\").
 '''
     text += '.decl bypass_scan(d: number, p: symbol, l: number, t: symbol)\n'
-    text += f'bypass_scan(d, p, l, t) :- doc(d, p, _), bypass_selected(d), split_line(d, l, t), !bypass_allowed(p), !match({quote("(?s)" + space + "*#.*")}, t).\n'
+    text += f'bypass_scan(d, p, l, t) :- bypass_doc(d,p), bypass_reference_doc(d), bypass_selected(d), split_line(d, l, t), !bypass_allowed(p), !match({quote("(?s)" + space + "*#.*")}, t).\n'
     text += '''
 .violation BypassConstant(at: span, ordinal: number) code "NGB001" "_ALLOW_DIRECT_EXECUTION reference"
 BypassConstant(@place(p, l), 0) :- bypass_scan(_, p, l, t), contains("_ALLOW_DIRECT_EXECUTION", t),
@@ -262,13 +263,15 @@ bypass_method_trigger(d) :- split_line(d, _, t),
     (contains("execute_grammar", t) ; contains("_ALLOW_DIRECT_EXECUTION", t) ; contains("allow_direct_execution", t)).
 .violation BypassPublic(at: node, name: symbol, ordinal: number) code "NGB001" "public method {name}() still exists"
 '''
-    text += 'BypassPublic(f, n, 2) :- doc(d, p, _), bypass_selected(d), bypass_sql_target(p), bypass_method_trigger(d),\n'
-    text += '    docof(f, d), kind(f, "function_definition"), def_name(f, n), bypass_public_name(n), !syntax_error(d, _, _),\n'
+    text += 'BypassPublic(f, n, 2) :- bypass_doc(d,p), bypass_method_doc(d), bypass_selected(d), bypass_sql_target(p), bypass_method_trigger(d),\n'
+    text += '    docof(f, d), kind(f, "function_definition"), def_name(f, raw), n=@nfkc(raw), bypass_public_name(n), !syntax_error(d, _, _),\n'
     text += '    !option("entryPoint", "check_no_bypass_references").\n'
     text += '\n.violation BypassMissing(at: span) code "NGB001" "file not found"\n'
-    text += 'BypassMissing(@place(p, 0)) :- option("entryPoint", "check_no_public_grammar_methods"), bypass_sql_target(p), !file(p).\n'
+    text += 'BypassMissing(@place(p, 0)) :- option("entryPoint", "check_no_public_grammar_methods"), bypass_missing(p).\n'
     from data_layer_rr_production import production
-    return production(source, 'no_blanket_grammar_bypass', (text + '\n#include "data-layer/blanket-bypass-cli.rr"\n'))
+    from dataclasses import asdict
+    text+='.decl bypass_extractor(value: symbol)\nbypass_extractor('+json.dumps(json.dumps(asdict(original.NO_BLANKET_GRAMMAR_BYPASS_EXTRACTOR)))+').\n'
+    return production(source, 'no_blanket_grammar_bypass', (text + '\n#include "data-layer/blanket-bypass-cli.rr"\n'))+'\n#include "data-layer/blanket-bypass-api.rr"\n'
 
 
 def admin_async_purity(source, target, header):

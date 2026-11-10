@@ -1,0 +1,44 @@
+// Supplied text and disk ASTs have separate identities and the same caller-owned path.
+.decl bypass_doc(d: number, path: symbol)
+bypass_doc(d,p) :- pp_doc(d,key), option_item("bypassDocs",i,key), option_item("bypassPaths",i,p).
+bypass_doc(d,p) :- pp_doc(d,p), !option_item("bypassDocs",_,_).
+.decl bypass_role(d: number, role: symbol)
+bypass_role(d,r) :- pp_doc(d,key), option_item("bypassDocs",i,key), option_item("bypassRoles",i,r).
+.decl bypass_prepare()
+bypass_prepare() :- option("entryPoint",e), prefix("_bypass_prepare",e).
+.decl bypass_reference_doc(d: number)
+bypass_reference_doc(d) :- pp_doc(d,_), !option_item("bypassDocs",_,_).
+bypass_reference_doc(d) :- bypass_role(d,"source").
+bypass_reference_doc(d) :- bypass_role(d,"disk"), option("entryPoint","_bypass_facts"), !syntax_error(d,_,_).
+.decl bypass_supplied_method(path: symbol)
+bypass_supplied_method(p) :- bypass_role(d,"source"), bypass_doc(d,p), split_line(d,_,text), bypass_public_name(n), contains(n,text).
+.decl bypass_method_doc(d: number)
+bypass_method_doc(d) :- pp_doc(d,_), !option_item("bypassDocs",_,_).
+bypass_method_doc(d) :- bypass_role(d,"disk"), option("entryPoint","check_no_public_grammar_methods").
+bypass_method_doc(d) :- bypass_role(d,"disk"), option("entryPoint","_bypass_facts").
+bypass_method_doc(d) :- bypass_role(d,"disk"), bypass_doc(d,p), bypass_supplied_method(p), option("entryPoint","scan_file_content").
+.decl bypass_missing(path: symbol)
+bypass_missing(p) :- bypass_sql_target(p), option("bypassTargetExists","false").
+bypass_missing(p) :- bypass_sql_target(p), !option("bypassTargetExists",_), !file(p).
+.decl bypass_candidate(i: number, path: symbol)
+bypass_candidate(i,p) :- option_item("bypassCandidates",i,p).
+.decl bypass_fact_candidate(i: number, path: symbol)
+bypass_fact_candidate(i,p) :- bypass_candidate(i,p), option_item("bypassIsFile",i,"true"), suffix(".py",p),
+    strlen(@replace_all(p,".*/",""))>3, !contains("/tests/",cat("/",p,"/")), !contains("/test/",cat("/",p,"/")),
+    i=min j : { bypass_candidate(j,p) }.
+.violation BypassRead(at: span, ordinal: number, path: symbol) code "NGB_READ" "read source"
+BypassRead(@place("",0),i,p) :- option("entryPoint","_bypass_prepare_refs"), bypass_candidate(i,p), suffix(".py",p), !bypass_allowed(p).
+BypassRead(@place("",0),i,p) :- option("entryPoint","_bypass_prepare_facts"), bypass_fact_candidate(i,p).
+BypassRead(@place("",0),i,p) :- option("entryPoint","_bypass_prepare_content"), bypass_candidate(i,p),
+    !bypass_allowed(p), bypass_sql_target(p), bypass_supplied_method(p), bypass_fact_candidate(i,p).
+.decl bypass_file_order(path: symbol, ordinal: number)
+bypass_file_order(p,i) :- option_item("bypassPaths",_,p), i=min j : { option_item("bypassPaths",j,p) }.
+.violation BypassFact(at: span, file_order: number, phase: number, order0: number, order1: number, value_json: symbol) code "NGB_FACT" "source fact"
+BypassFact(@place(p,l),i,a,b,c,cat("{\"file_path\":",@json_str(p),",\"line\":",to_string(l),",\"message\":\"_ALLOW_DIRECT_EXECUTION reference\"}")) :-
+    ppe_BypassConstant(p,l,a,b,c,_), bypass_file_order(p,i), (option("entryPoint","scan_file_content");option("entryPoint","_bypass_facts")).
+BypassFact(@place(p,l),i,a,b,c,cat("{\"file_path\":",@json_str(p),",\"line\":",to_string(l),",\"message\":\"allow_direct_execution reference\"}")) :-
+    ppe_BypassArgument(p,l,a,b,c,_), bypass_file_order(p,i), (option("entryPoint","scan_file_content");option("entryPoint","_bypass_facts")).
+BypassFact(@place(p,l),i,a,b,c,cat("{\"file_path\":",@json_str(p),",\"line\":",to_string(l),",\"message\":",@json_str(cat("public method ",n,"() still exists")),"}")) :-
+    ppe_BypassPublic(p,l,a,b,c,n,_,_), bypass_file_order(p,i), (option("entryPoint","scan_file_content");option("entryPoint","_bypass_facts")).
+.violation BypassExtractor(at: span, value: symbol) code "NGB_EXTRACTOR" "extractor metadata"
+BypassExtractor(@place("",0),v) :- option("entryPoint","_configuration"), bypass_extractor(v).

@@ -214,9 +214,16 @@ class Suite:
         actual_source_result = canonical(result, root)
         observation.update(expectedSourceResult=original['sourceResult'], actualSourceResult=actual_source_result)
         compare(original['sourceResult'], actual_source_result)
+        if check=='no_blanket_grammar_bypass' and original.get('retained_reason') and 'findings' not in original:
+            # The old finding normalizer cannot represent a missing-file string.
+            # Compare the complete source value and inputs instead of fabricating a finding.
+            compare_inputs(original,files,scope)
+            observation.update(expected=original['sourceResult'],actual=actual_source_result,status='passed',comparisonKind='source-value')
+            return
         # A recorded empty list fully specifies this I/O result, even when the
         # older recorder withheld its redundant normalized finding list.
-        empty_file_read=(check in {'backend_type_strings','hasattr_async'} and entry=='check_file' and not files
+        empty_file_read=((check in {'backend_type_strings','hasattr_async'} and entry=='check_file'
+                          or check=='no_blanket_grammar_bypass' and entry=='check_no_bypass_references') and not files
                          and original['sourceResult']==[] and actual_source_result==[] and original.get('findings',[])==[])
         empty_inspection=(check=='no_source_inspection' and entry=='find_violations' and not files
                           and original['sourceResult']==[] and actual_source_result==[] and original['findings']==[])
@@ -472,31 +479,8 @@ class Suite:
             return [module.Violation(file=r['path'], line=r['line'], pattern=r['parameters']['pattern'],
                                      text=r['parameters']['text']) for r in rows]
         if check == 'no_blanket_grammar_bypass':
-            root = Path(arguments.get('project_root', arguments.get('root')))
-            files = []
-            if entry == 'scan_file_content':
-                files = [dict(path=path.relative_to(root).as_posix(), source=arguments['source'])]
-            elif entry == 'check_no_public_grammar_methods':
-                target = root / module.SQL_CONNECTION_FILE
-                if target.exists():
-                    files = [dict(path=module.SQL_CONNECTION_FILE, source=target.read_text(encoding='utf-8'))]
-            else:
-                for directory, names, filenames in os.walk(root):
-                    names[:] = [name for name in names if name not in {'__pycache__', '.venv', '.git', 'tmp'}]
-                    for name in filenames:
-                        if name.endswith('.py'):
-                            item = Path(directory) / name
-                            try:
-                                source = item.read_text(encoding='utf-8')
-                            except UnicodeDecodeError:
-                                continue
-                            files.append(dict(path=item.relative_to(root).as_posix(), source=source))
-            rows = self.native(check, entry, files, dict(sqlConnectionFile=module.SQL_CONNECTION_FILE))
-            order = {f['path']: index for index, f in enumerate(files)}
-            rows.sort(key=lambda r: (order.get(r['path'], -1), r['line'], r['parameters'].get('ordinal', -1), r['at']))
-            if entry == 'scan_file_content':
-                return [dict(file_path=r['path'], line=r['line'], message=r['message']) for r in rows]
-            return [f"  {r['path']}:{r['line']}: {r['message']}" if r['line'] else f"  {r['path']}: {r['message']}" for r in rows]
+            from blanket_bypass_port import scan
+            return scan(self,module,entry,arguments)
         if check == 'permission_error':
             from permission_port import scan_file
             return scan_file(self, module, entry, path, arguments.get('source'), arguments.get('tree'))

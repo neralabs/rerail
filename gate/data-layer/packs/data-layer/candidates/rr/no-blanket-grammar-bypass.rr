@@ -4,7 +4,6 @@
 .language python
 .mode block
 .scope include "**/*.py"
-.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_no_blanket_grammar_bypass.py
 #include "python/ast.rr"
 .decl bypass_allowed(p: symbol)
@@ -51,9 +50,9 @@ bypass_sql_target(p) :- option("sqlConnectionFile", p).
 bypass_sql_target("impl/common/l2200_sql_dialect/sql_connection.py") :- !option("sqlConnectionFile", _).
 // API scopes include every transported file; production uses the source root and test rules.
 .decl bypass_selected(d: number)
-bypass_selected(d) :- pp_doc(d,_), pp_api().
+bypass_selected(d) :- pp_doc(d,_), pp_api(), !bypass_prepare().
 .decl bypass_scan(d: number, p: symbol, l: number, t: symbol)
-bypass_scan(d, p, l, t) :- pp_doc(d,p), bypass_selected(d), split_line(d, l, t), !bypass_allowed(p), !match("(?s)[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*#.*", t).
+bypass_scan(d, p, l, t) :- bypass_doc(d,p), bypass_reference_doc(d), bypass_selected(d), split_line(d, l, t), !bypass_allowed(p), !match("(?s)[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*#.*", t).
 
 .violation BypassConstant(at: span, ordinal: number, collector_order0: number, collector_order1: number, collector_order2: number) code "NGB001" "_ALLOW_DIRECT_EXECUTION reference"
 ppe_BypassConstant(p,l,0,l,0,0) :- bypass_scan(_, p, l, t), contains("_ALLOW_DIRECT_EXECUTION", t),
@@ -66,12 +65,14 @@ ppe_BypassArgument(p,l,0,l,1,1) :- bypass_scan(_, p, l, t),
 bypass_method_trigger(d) :- split_line(d, _, t),
     (contains("execute_grammar", t) ; contains("_ALLOW_DIRECT_EXECUTION", t) ; contains("allow_direct_execution", t)).
 .violation BypassPublic(at: node, name: symbol, ordinal: number, collector_order0: number, collector_order1: number, collector_order2: number) code "NGB001" "public method {name}() still exists"
-ppe_BypassPublic(ppe_path,ppe_line,1,ppe_method_order,0,n,2,f) :- pp_doc(d,p), bypass_selected(d), bypass_sql_target(p), bypass_method_trigger(d),
-    docof(f, d), kind(f, "function_definition"), def_name(f, n), bypass_public_name(n), !syntax_error(d, _, _),
-    !option("entryPoint", "check_no_bypass_references"), docof(f,ppe_doc), pp_doc(ppe_doc,ppe_path), line(f,ppe_line), visit_index(f,ppe_method_order).
+ppe_BypassPublic(ppe_path,ppe_line,1,ppe_method_order,0,n,2,f) :- bypass_doc(d,p), bypass_method_doc(d), bypass_selected(d), bypass_sql_target(p), bypass_method_trigger(d),
+    docof(f, d), kind(f, "function_definition"), def_name(f, raw), n=@nfkc(raw), bypass_public_name(n), !syntax_error(d, _, _),
+    !option("entryPoint", "check_no_bypass_references"), docof(f,ppe_doc), bypass_doc(ppe_doc,ppe_path), line(f,ppe_line), visit_index(f,ppe_method_order).
 
 .violation BypassMissing(at: span) code "NGB001" "file not found"
-BypassMissing(@place(p, 0)) :- option("entryPoint", "check_no_public_grammar_methods"), bypass_sql_target(p), !file(p).
+BypassMissing(@place(p, 0)) :- option("entryPoint", "check_no_public_grammar_methods"), bypass_missing(p).
+.decl bypass_extractor(value: symbol)
+bypass_extractor("{\"extractor_id\": \"no_blanket_grammar_bypass.violations\", \"schema_version\": \"1\", \"implementation_version\": \"no-blanket-grammar-bypass-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"_ALLOW_DIRECT_EXECUTION\", \"allow_direct_execution\", \"execute_grammar\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"1f11470eb62ea6e8\", \"node_kinds\": [\"FunctionDef\", \"AsyncFunctionDef\"]}").
 
 #include "data-layer/blanket-bypass-cli.rr"
 
@@ -121,3 +122,5 @@ sf_config("message","field").
 sf_config("code","NGB001").
 sf_config("order","message").
 sf_default("message","ServerPlan bypass mechanism found").
+
+#include "data-layer/blanket-bypass-api.rr"

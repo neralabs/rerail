@@ -131,7 +131,8 @@ def production(source, check, text):
             assert body.startswith(':-'); body = body[2:].strip()[:-1]
             if node:
                 path, line = 'ppe_path', 'ppe_line'
-                body += f', docof({terms[0]},ppe_doc), pp_doc(ppe_doc,ppe_path), line({terms[0]},ppe_line)'
+                owner='bypass_doc' if check=='no_blanket_grammar_bypass' else 'pp_doc'
+                body += f', docof({terms[0]},ppe_doc), {owner}(ppe_doc,ppe_path), line({terms[0]},ppe_line)'
             else:
                 assert terms[0].startswith('@place('), clause
                 path, line = arguments(terms[0][7:-1])
