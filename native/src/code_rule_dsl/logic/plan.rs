@@ -5001,8 +5001,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
-    // The chunk's end: pairs no seed took, and what the lanes kept for the chunk's joins.
+    // The chunk's end: pairs no seed took, and what the lanes kept for the chunk's joins; the executor's scoreboard
+    // so far, to its trace (`RERAIL_SCOREBOARD`).
     super::native::component::level_clear();
+    super::lanes::executor().note("a chunk's end");
     if let Some(path) = level_trace() {
         use std::io::Write as _;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {

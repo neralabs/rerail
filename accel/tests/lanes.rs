@@ -165,3 +165,73 @@ fn joins_keep_their_right_sides_across_batches_and_match_the_reference() {
     ex.clear();
     assert_eq!(ex.space()[Lane::Cpu.index()].entries, 0);
 }
+
+/// Jobs on every lane at once: batches begun from several threads, each launch on the cores a job of its own on the
+/// pool, each device lane's share one job beside them. Every output is the reference's, and the scoreboard counts
+/// every launch: as many jobs on the cores as launches there, more than one of them at once, nothing left queued.
+#[test]
+fn jobs_run_on_every_lane_at_once_and_the_scoreboard_counts_them() {
+    let ex = Executor::new();
+    let lanes = ex.lanes();
+    let mut rng = Rng(11);
+    let waves: Vec<_> = (0..4).map(|_| wave(&mut rng)).collect();
+    // Each wave on its pinned lanes, and again on the cores.
+    let batches: Vec<Vec<(Kernel, Lane)>> = waves
+        .iter()
+        .map(|w| w.iter().map(|(k, l)| (k.clone(), if lanes.contains(l) { *l } else { Lane::Cpu })).chain(w.iter().map(|(k, _)| (k.clone(), Lane::Cpu))).collect())
+        .collect();
+    std::thread::scope(|s| {
+        for b in &batches {
+            let ex = &ex;
+            s.spawn(move || {
+                let (done, _) = ex.run(Batch(b.iter().map(|(k, l)| Launch::on(k.clone(), *l)).collect())).unwrap();
+                for ((k, l), d) in b.iter().zip(&done) {
+                    assert_eq!(d.lane, *l);
+                    assert_eq!(d.out, cpu::run(k), "{} on {}", k.form().name(), d.lane.name());
+                }
+            });
+        }
+    });
+    let score = ex.score();
+    eprintln!("{score}");
+    let on = |l: Lane| batches.iter().flatten().filter(|(_, x)| *x == l).count() as u64;
+    let cpu = &score.units[Lane::Cpu.index()];
+    assert_eq!(cpu.jobs, on(Lane::Cpu));
+    for l in &lanes {
+        let u = &score.units[l.index()];
+        assert_eq!(u.launches, on(*l), "{}", l.name());
+        assert_eq!((u.queued, u.running, u.failed), (0, 0, 0), "{}", l.name());
+        assert!(u.outstanding < 1e-9, "{}: {}", l.name(), u.outstanding);
+    }
+    if rerail_accel::exec::threads() > 1 {
+        assert!(cpu.peak > 1, "the cores ran one job at a time: {cpu:?}");
+    }
+}
+
+/// Host jobs on the cores' pool: jobs that wait for jobs, more of them than the pool has threads, all finish (a wait
+/// on the pool runs the pool's other jobs); a panic is an error; the scoreboard counts each job by its name.
+#[test]
+fn host_jobs_wait_for_each_other_on_the_pool_and_a_panic_is_an_error() {
+    let ex = Arc::new(Executor::with(vec![Arc::new(rerail_accel::exec::CpuBackend::default())]));
+    let n = rerail_accel::exec::threads() * 3;
+    let parents: Vec<_> = (0..n)
+        .map(|i| {
+            let inner = Arc::clone(&ex);
+            ex.spawn("parent", 0.0, move || {
+                let a = inner.spawn("child", 0.0, move || 2 * i);
+                let b = inner.spawn("child", 0.0, move || 2 * i + 1);
+                a.wait().unwrap() + b.wait().unwrap()
+            })
+        })
+        .collect();
+    for (i, p) in parents.into_iter().enumerate() {
+        assert_eq!(p.wait().unwrap(), 4 * i + 1);
+    }
+    let bad = ex.spawn("bad", 0.0, || -> usize { panic!("a host job's panic, on purpose") });
+    assert!(bad.wait().unwrap_err().contains("panicked"));
+    let s = ex.score();
+    let cpu = &s.units[Lane::Cpu.index()];
+    assert_eq!((cpu.jobs, cpu.failed), (3 * n as u64 + 1, 1));
+    assert_eq!(s.forms[&(Lane::Cpu, "child")].launches, 2 * n as u64);
+    assert_eq!(s.forms[&(Lane::Cpu, "parent")].launches, n as u64);
+}

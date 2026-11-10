@@ -7,6 +7,10 @@
 //!   the first to finish.
 //!
 //! Which binding a thread's run has is the placement planner's (`plan::placement::set_device`).
+//!
+//! Both executors run the cores' jobs on one pool of `RERAIL_THREADS` threads (4 when unset), and each keeps a
+//! scoreboard of its jobs (`rerail_accel::score`): `RERAIL_SCOREBOARD=<file>` traces every job, and the strata loop
+//! appends the scoreboard at each chunk's end.
 
 use rerail_accel::Executor;
 use rerail_accel::exec::{Backend, CpuBackend};

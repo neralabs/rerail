@@ -1,7 +1,7 @@
 # 0100: One executor for a chunk's strata: levels sent to every lane at once, relations kept on the GPU
 
 Status: draft (2026-11-09). It builds 0095 §5 (device waves) on the executor of 0098 §6. The order of work is
-below; steps 1–5 are built and step 6 is measured.
+below; steps 1–5 and 7 are built, and step 6 is measured.
 
 ## Intro
 
@@ -154,6 +154,39 @@ Two kinds of work can run on the cores at once:
 Whether strata run in parallel, and with how many threads, is decided by measurement in step 6. Every stratum
 reads the shared symbol table, and new symbols take its write lock, so the gain is not known ahead.
 
+### 8. Every lane at once, every job scored
+
+The executor runs **jobs**, and each lane's jobs run beside every other lane's:
+
+- **The cores** have one pool for the process, of `RERAIL_THREADS` threads (4 when unset). Both of the engine's
+  executors (the CPU binding's and the Metal binding's) share it. Each launch placed on the cores is a job of its
+  own, so a batch's launches there run on every thread at once, beside other batches' launches. A kernel that splits
+  its work splits it over the same threads.
+- **SME, the GPU and the Neural Engine** each have one worker thread. A batch's share of such a lane is one job, one
+  submission, as in §3.
+- **Host work.** `Executor::spawn` runs a closure as a job on the cores' pool, scored like a launch. A job that
+  waits for another job, on the pool, runs the pool's other jobs while it waits, so jobs that wait for jobs cannot
+  take every thread and stall.
+
+**The scoreboard** (`rerail_accel::score`) counts every job when it is queued, started and finished. Per lane it
+keeps:
+
+- what is queued and running now, and the most that ran at once;
+- jobs, launches and failures;
+- seconds run and seconds waited in the queue;
+- the price's estimate against the time taken, per lane and per form.
+
+**Placement reads it.** A lane's starting load is the estimate the scoreboard has outstanding on it: every batch
+begun and not yet finished. So a batch begun while another runs goes to the lanes the first one left idle. A lane
+pays its submission once per batch that uses it, whatever other batches queued there.
+
+`RERAIL_SCOREBOARD=<file>` writes a line per job: its lane, thread, launches, forms, units, estimate, and its
+queued, start and end times. The strata loop adds the scoreboard's summary at each chunk's end.
+
+The variable is the engine's thread setting from the rule-syntax work, where it caps the threads the process uses
+(the machine's cores when unset). The executor reads the same variable, so the two agree once both are merged. The
+executor's default is 4, which is what was asked for.
+
 ## Order of work
 
 1. **Merge the executor's branch** and renumber its decisions to 0098 and 0099. *Done*: findings identical on the
@@ -230,7 +263,20 @@ reads the shared symbol table, and new symbols take its write lock, so the gain 
    worth taking when wall time is the target (a single user's run on an idle machine). The trace gives the bound
    for any corpus. The work queued for that case: strata of one level that read no SQL, on the rayon pool, each
    with its own interner overlay merged at the level's end.
-7. **Gates:**
+7. **Every lane at once, every job scored (§8).** *Built*:
+   - The tests run four batches from four threads, each on every lane at once and again on the cores. Every
+     output is the reference's, the scoreboard counts every launch, and up to 5 jobs ran on the cores at once (4
+     threads, one job run inside another's parallel loop). Host jobs that wait for host jobs, three times as many as
+     the threads, all finish, and a panic is an error.
+   - The pack's findings are identical on both bindings. With the level batch's floor at 0, the scoreboard shows
+     176 launches over 22 chunks: 153 joins, 10 count tables, 9 histograms, 4 closures. Up to 4 ran at once.
+   - Every one of them is placed on the cores, under the Metal binding too. The largest join is 1,057 rows, a few
+     µs of work, against the GPU's 0.2 ms a command buffer. The device lanes take work when it is larger: the
+     data layer's 9,010 files are the test (step 8).
+   - Their jobs waited 0.21 s in the queue in all, against 0.08 s run, at a machine load of 80–190 (threads woken
+     late under that load). User + sys is unchanged: 44.1 + 2.5 s on the default run, against 44.2 + 3.4 s before.
+   - The run's peak resident memory is 1.45–1.50 GB, over the 1 GB budget. It was 1.44 GB before this step.
+8. **Gates:**
    - The pack's findings are identical, and so are the data layer's at scale.
    - Host CPU (user + sys) of the device joins is below the CPU radix sort join's, on the lab's 232 joins and on
      the pack.
