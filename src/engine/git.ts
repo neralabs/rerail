@@ -487,37 +487,67 @@ export async function gitCommitsBetween(cwd: string, from: string, to: string): 
 /** A Git boolean that is true. */
 const GIT_TRUE = /^(?:true|yes|on|1)$/iu;
 
-/** The line-ending settings Git reads for one path: its `text` and `eol` attributes, and `core.autocrlf` and `core.eol`. */
-interface LineEndingSettings {
-  /** `set`, `unset`, `unspecified` or a value such as `auto`, as `git check-attr` prints it. */
+/**
+ * The rule by which a checkout writes a file's LF line breaks as CRLF, as Git's convert.c applies it (line-endings.ts
+ * writes the bytes). `auto` (`core.autocrlf=true`, `text=auto`) writes a blob that already holds a CR, or that Git takes
+ * for binary data, as it is. `text` (a `text` attribute, or `eol=crlf` without `text=auto`) writes every LF that follows
+ * no CR as CRLF, whatever else the blob holds.
+ */
+export type CrlfRule = "auto" | "text";
+
+/** The line-ending attributes Git reads for one path, each as `git check-attr` prints it: `set`, `unset`, `unspecified` or a value. */
+interface LineEndingAttributes {
   readonly text: string;
+  /** The older name of `text`, which Git reads where `text` declares nothing. */
+  readonly crlf: string;
   readonly eol: string;
+}
+
+/** `core.autocrlf` and `core.eol`, lowercased; undefined where unset. */
+interface LineEndingConfig {
   readonly autocrlf: string | undefined;
   readonly coreEol: string | undefined;
 }
 
-/**
- * Whether a checkout writes a text file's line breaks as CRLF under `settings`, as Git decides it: `-text` never; an
- * `eol` attribute as it says; a file with no `text` attribute only under `core.autocrlf=true`; a `text` or `text=auto`
- * file under `core.autocrlf=true`, never under `input`, else as `core.eol` says, whose default (`native`) is CRLF on
- * Windows alone.
- */
-function writesCrlf(settings: LineEndingSettings, platform: NodeJS.Platform): boolean {
-  const { text, eol, autocrlf, coreEol } = settings;
-  if (text === "unset") return false;
-  if (eol === "crlf" || eol === "lf") return eol === "crlf";
-  const autoCrlf = autocrlf !== undefined && GIT_TRUE.test(autocrlf);
-  if (text === "unspecified" || autoCrlf) return autoCrlf;
-  if (autocrlf === "input") return false;
-  return coreEol === "crlf" || ((coreEol === undefined || coreEol === "native") && platform === "win32");
+/** What a `text` or `crlf` attribute declares a file: text, binary, text stored and written with LF, or text if Git guesses so. */
+function declaredText(value: string): "text" | "binary" | "input" | "auto" | undefined {
+  if (value === "set") return "text";
+  if (value === "unset") return "binary";
+  return value === "input" || value === "auto" ? value : undefined;
 }
 
 /**
- * The `text` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty without
- * Git, outside a repository or past the timeout.
+ * Whether a text file with no `eol` attribute gets CRLF: under `core.autocrlf=true`, never under `input`, else as
+ * `core.eol` says, whose default (`native`) is CRLF on Windows alone.
  */
-async function lineEndingAttributes(cwd: string, paths: readonly string[]): Promise<Map<string, { text: string; eol: string }>> {
-  const attributes = new Map<string, { text: string; eol: string }>();
+function textGetsCrlf({ autocrlf, coreEol }: LineEndingConfig, platform: NodeJS.Platform): boolean {
+  if (autocrlf === "input") return false;
+  if (autocrlf !== undefined && GIT_TRUE.test(autocrlf)) return true;
+  return coreEol === "crlf" || (coreEol !== "lf" && platform === "win32");
+}
+
+/**
+ * The rule by which a checkout writes a file's line breaks as CRLF, or undefined where it writes them as stored, as Git's
+ * `convert_attrs` and `output_eol` decide it. The `text` attribute, else `crlf`, declares the file; a binary one is
+ * never converted. `eol=crlf` then makes a `text=auto` file `auto` and any other `text`, and `eol=lf` writes LF. With no
+ * `eol`, an `input` file gets LF, a `text` or `auto` file gets CRLF where a text file does ({@link textGetsCrlf}), and a
+ * file that declares nothing is `auto` under `core.autocrlf=true` alone.
+ */
+function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, platform: NodeJS.Platform): CrlfRule | undefined {
+  const declared = declaredText(attributes.text) ?? declaredText(attributes.crlf);
+  if (declared === "binary") return undefined;
+  if (attributes.eol === "crlf") return declared === "auto" ? "auto" : "text";
+  if (attributes.eol === "lf" || declared === "input") return undefined;
+  if (declared === undefined) return config.autocrlf !== undefined && GIT_TRUE.test(config.autocrlf) ? "auto" : undefined;
+  return textGetsCrlf(config, platform) ? declared : undefined;
+}
+
+/**
+ * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
+ * without Git, outside a repository or past the timeout.
+ */
+async function lineEndingAttributes(cwd: string, paths: readonly string[]): Promise<Map<string, LineEndingAttributes>> {
+  const attributes = new Map<string, { text: string; crlf: string; eol: string }>();
   let executable: string;
   try {
     executable = gitExecutable();
@@ -525,7 +555,7 @@ async function lineEndingAttributes(cwd: string, paths: readonly string[]): Prom
     return attributes;
   }
   const { promise, resolve: settle } = Promise.withResolvers<void>();
-  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "check-attr", "-z", "--stdin", "text", "eol"], {
+  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
     env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
     stdio: ["pipe", "pipe", "ignore"],
   });
@@ -539,33 +569,35 @@ async function lineEndingAttributes(cwd: string, paths: readonly string[]): Prom
   const fields = Buffer.concat(chunks).toString("utf8").split("\0");
   for (let at = 0; at + 2 < fields.length; at += 3) {
     const [path, name, value] = [fields[at]!, fields[at + 1]!, fields[at + 2]!];
-    const entry = attributes.get(path) ?? { text: "unspecified", eol: "unspecified" };
-    if (name === "text") entry.text = value;
-    else if (name === "eol") entry.eol = value;
+    const entry = attributes.get(path) ?? { text: "unspecified", crlf: "unspecified", eol: "unspecified" };
+    if (name === "text" || name === "crlf" || name === "eol") entry[name] = value;
     attributes.set(path, entry);
   }
   return attributes;
 }
 
 /**
- * The paths among `paths` (relative to `cwd`, `/`-separated) that a checkout of `cwd` writes with CRLF line breaks
- * ({@link writesCrlf}), read from the repository's attributes and configuration. Empty without Git, outside a
- * repository or past the timeout, so a file with CRLF line breaks is then never taken for Git's writing.
+ * The paths among `paths` (relative to `cwd`, `/`-separated) that a checkout of `cwd` writes with CRLF line breaks, each
+ * with the rule it writes them by ({@link crlfRule}), read from the repository's attributes and configuration. Empty
+ * without Git, outside a repository or past the timeout, so a file with CRLF line breaks is then never taken for Git's
+ * writing.
  */
-export async function gitCrlfPaths(cwd: string, paths: readonly string[], platform: NodeJS.Platform = process.platform): Promise<Set<string>> {
+export async function gitCrlfPaths(cwd: string, paths: readonly string[], platform: NodeJS.Platform = process.platform): Promise<Map<string, CrlfRule>> {
   const asked = paths.filter(path => !path.includes("\0"));
-  const crlf = new Set<string>();
-  if (asked.length === 0) return crlf;
+  const rules = new Map<string, CrlfRule>();
+  if (asked.length === 0) return rules;
   const [autocrlf, coreEol, attributes] = await Promise.all([
     gitOutput(cwd, ["config", "--get", "core.autocrlf"]),
     gitOutput(cwd, ["config", "--get", "core.eol"]),
     lineEndingAttributes(cwd, asked),
   ]);
+  const config = { autocrlf: autocrlf?.toLowerCase(), coreEol: coreEol?.toLowerCase() };
   for (const path of asked) {
     const attribute = attributes.get(path);
-    if (attribute !== undefined && writesCrlf({ ...attribute, autocrlf: autocrlf?.toLowerCase(), coreEol: coreEol?.toLowerCase() }, platform)) crlf.add(path);
+    const rule = attribute === undefined ? undefined : crlfRule(attribute, config, platform);
+    if (rule !== undefined) rules.set(path, rule);
   }
-  return crlf;
+  return rules;
 }
 
 /**

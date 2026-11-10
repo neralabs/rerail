@@ -16,7 +16,7 @@ import type {
   WalkView,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
-import { gitBranchTips, gitCommitsBetween, gitCrlfPaths, gitHead, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs } from "../git.js";
+import { gitBranchTips, gitCommitsBetween, gitCrlfPaths, gitHead, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs, type CrlfRule } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { renameWithRetry } from "../file-replace.js";
@@ -150,8 +150,8 @@ interface GitBlobs {
   readonly committed: boolean;
   /** `HEAD` as the last walk saw it, when it moved since. */
   readonly before: string | undefined;
-  /** The changes whose blobs a checkout writes with CRLF line breaks (`gitCrlfPaths`). */
-  readonly crlf: ReadonlySet<string>;
+  /** The changes whose blobs a checkout writes with CRLF line breaks, each with the rule it writes them by (`gitCrlfPaths`). */
+  readonly crlf: ReadonlyMap<string, CrlfRule>;
 }
 interface GitView extends GitBlobs {
   /** A merge, rebase or cherry-pick stopped on a conflict, having not moved `HEAD` for its work so far. */
@@ -185,7 +185,7 @@ function gitRevisions(path: string, before: string | undefined): string[] {
 /** Whether a file at `path` whose bytes have `digest` holds the blob `revision` names, in either form (`heldAs`). */
 function holdsBlob(view: GitBlobs, path: string, revision: string, digest: string): boolean {
   const blob = view.blobs.get(revision);
-  return blob !== undefined && heldAs(blob, digest, view.crlf.has(path)) !== undefined;
+  return blob !== undefined && heldAs(blob, digest, view.crlf.get(path)) !== undefined;
 }
 function heldBefore(view: GitBlobs, path: string, digest: string): boolean {
   return view.before !== undefined && holdsBlob(view, path, `${view.before}:./${path}`, digest);
@@ -209,7 +209,7 @@ function holdsGitBlob(view: GitView, path: string, after: string): boolean {
  */
 function movedFromText(view: GitBlobs, path: string, prior: string | undefined): GitVerdict | undefined {
   if (view.before === undefined) return undefined;
-  const form = heldAs(view.blobs.get(`${view.before}:./${path}`), prior, view.crlf.has(path));
+  const form = heldAs(view.blobs.get(`${view.before}:./${path}`), prior, view.crlf.get(path));
   if (form === undefined) return undefined;
   const earlier = view.committed ? undefined : view.blobs.get(`HEAD:./${path}`);
   const previous = earlier ?? view.blobs.get(`${view.before}:./${path}`);
@@ -608,7 +608,7 @@ async function recoverFromGit(
   for (const { path, inCheckout } of named) {
     const digest = uncaptured.get(path);
     for (const blob of [blobs.get(`:./${inCheckout}`), blobs.get(`HEAD:./${inCheckout}`)]) {
-      const form = heldAs(blob, digest, crlf.has(inCheckout));
+      const form = heldAs(blob, digest, crlf.get(inCheckout));
       if (blob === undefined || form === undefined) continue;
       // In the line breaks the file held it in, so the diff against the working tree lines up line by line.
       recovered.set(path, textAs(blob, form));
@@ -1584,7 +1584,7 @@ export class CodeRuleBridge {
   async #restoredFromBranches(checkout: string, view: GitBlobs, named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>): Promise<string[]> {
     // Git names a blob by the SHA-1, or in a SHA-256 repository the SHA-256, of its header and bytes; `HEAD`'s id says which.
     const algorithm = view.head.length === 64 ? "sha256" : "sha1";
-    const ids = new Map(named.map(({ edit, path }) => [edit.path, blobIds(edit.generatedText!, algorithm, view.crlf.has(path))]));
+    const ids = new Map(named.map(({ edit, path }) => [edit.path, blobIds(edit.generatedText!, algorithm, view.crlf.get(path))]));
     const known = await readGitBlobIds(checkout, [...new Set([...ids.values()].flat())]);
     const candidates = named.filter(({ edit }) => ids.get(edit.path)!.some(id => known.has(id)));
     if (candidates.length === 0) return [];

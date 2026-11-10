@@ -1166,6 +1166,31 @@ describe("CodeRuleBridge and Git's own writes under core.autocrlf", () => {
       expect(auditGeneratedEdits, setup.attributes).not.toHaveBeenCalled();
     }
   });
+
+  it("credits Git with the CRLF line breaks a text or eol=crlf attribute has it write into a blob that already holds a CR", async () => {
+    for (const setup of [
+      { attributes: "*.py eol=crlf\n", autocrlf: "false" },
+      // Git for Windows' default core.autocrlf with a text attribute.
+      { attributes: "*.py text\n", autocrlf: "true" },
+    ]) {
+      const root = await twoBranches();
+      // Committed with no attribute, so the blobs keep their CRs: a CRLF beside an LF, and a lone CR.
+      git(root, "switch", "--quiet", "other");
+      await writeFile(join(root, "src", "a.py"), "old\r\nviolation\n");
+      await writeFile(join(root, "src", "new.py"), "violation\rmore\n");
+      git(root, "commit", "--quiet", "-am", "carriage returns");
+      git(root, "switch", "--quiet", "main");
+      git(root, "config", "core.autocrlf", setup.autocrlf);
+      await writeFile(join(root, ".git", "info", "attributes"), setup.attributes);
+      await rm(join(root, "src", "a.py"));
+      git(root, "checkout", "--", "src/a.py");
+      await awaitClockAfter(join(root, "src", "a.py"));
+      const { bridge, auditGeneratedEdits } = await opened(root);
+      // A checkout writes every LF without its CR as CRLF here, whatever else the blob holds.
+      await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other")), setup.attributes).resolves.toEqual([]);
+      expect(auditGeneratedEdits, setup.attributes).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe("CodeRuleBridge and Git's own writes", () => {

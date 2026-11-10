@@ -239,20 +239,30 @@ describe("gitBehindLauncher", () => {
 });
 
 describe("gitCrlfPaths", () => {
-  it("names the files a checkout writes with CRLF line breaks, as Git's attributes and configuration decide it", async () => {
-    const root = await repository({ "a.py": "a\n", "b.bin": "b\n", "c.txt": "c\n", "d.md": "d\n" });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("names the files a checkout writes with CRLF line breaks and the rule of each, as Git's attributes and configuration decide it", async () => {
+    const root = await repository({ "a.py": "a\n", "b.bin": "b\n", "c.txt": "c\n", "d.md": "d\n", "e.ts": "e\n" });
     git(root, "config", "core.autocrlf", "false");
     git(root, "config", "core.eol", "native");
-    await writeFile(join(root, ".git", "info", "attributes"), "*.py text\n*.bin -text eol=crlf\n*.txt eol=crlf\n");
-    const paths = ["a.py", "b.bin", "c.txt", "d.md"];
+    await writeFile(join(root, ".git", "info", "attributes"), "*.py text\n*.bin -text eol=crlf\n*.txt eol=crlf\n*.ts text=auto\n");
+    const paths = ["a.py", "b.bin", "c.txt", "d.md", "e.ts"];
     // A text file takes core.eol, whose default (native) is CRLF on Windows alone; -text is never converted.
-    expect([...await gitCrlfPaths(root, paths, "win32")].sort()).toEqual(["a.py", "c.txt"]);
-    expect([...await gitCrlfPaths(root, paths, "linux")]).toEqual(["c.txt"]);
-    // core.autocrlf=true converts every file with no text attribute too; input converts none on checkout.
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, "win32"))).toEqual({ "a.py": "text", "c.txt": "text", "e.ts": "auto" });
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, "linux"))).toEqual({ "c.txt": "text" });
+    // core.autocrlf=true converts every file with no text attribute too, by Git's guess; input converts none on checkout.
     git(root, "config", "core.autocrlf", "true");
-    expect([...await gitCrlfPaths(root, paths, "linux")].sort()).toEqual(["a.py", "c.txt", "d.md"]);
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, "linux"))).toEqual({ "a.py": "text", "c.txt": "text", "d.md": "auto", "e.ts": "auto" });
     git(root, "config", "core.autocrlf", "input");
-    expect([...await gitCrlfPaths(root, paths, "win32")]).toEqual(["c.txt"]);
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, "win32"))).toEqual({ "c.txt": "text" });
+  });
+
+  it("reads core.autocrlf from the person's global settings, which tests otherwise keep from every repository", async () => {
+    const root = await repository({ "a.py": "a\n" });
+    const global = join(root, ".git", "person.gitconfig");
+    await writeFile(global, "[core]\n\tautocrlf = true\n");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", global);
+    expect(Object.fromEntries(await gitCrlfPaths(root, ["a.py"], "linux"))).toEqual({ "a.py": "auto" });
   });
 });
 
