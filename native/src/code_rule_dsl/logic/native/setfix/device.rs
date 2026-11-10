@@ -38,10 +38,14 @@ use std::time::Instant;
 
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
-/// The most bytes one binding table may take: past it the rule is refused at run time and runs on the CPU, named.
-const TABLE_MAX: usize = 512 << 20;
-/// The most bytes the relations kept on the device may take on a thread.
-const RESIDENT_MAX: usize = 384 << 20;
+/// The device's buffers share one budget of 256 MB in the process (`metal_backend`'s ledger), with the buffer pool's
+/// 64 MB and the other lanes. The device joins keep within about half of it:
+/// the most bytes one binding table may take: past it the rule is refused at run time and runs on the CPU, named;
+const TABLE_MAX: usize = 48 << 20;
+/// the most bytes one submission's tables may take: past it the rules after go into the next submission;
+const BATCH_MAX: usize = 64 << 20;
+/// the most bytes the relations kept on the device may take on a thread.
+const RESIDENT_MAX: usize = 80 << 20;
 
 /// How a stage reads.
 #[derive(Clone)]
@@ -570,6 +574,11 @@ impl<'p> Run<'p> {
         Ok(())
     }
 
+    /// The device bytes of its tables.
+    fn bytes(&self) -> usize {
+        self.tables.iter().chain(std::iter::once(&self.uniq)).flatten().map(mj::Table::bytes).sum()
+    }
+
     /// The first stage whose rows overflowed its table, with its true count; the counts of every stage before are
     /// final.
     fn overflow(&self) -> Option<(usize, usize)> {
@@ -584,20 +593,52 @@ impl<'p> Run<'p> {
     }
 }
 
-/// Runs the seed joins `rules` (each: its plan, its rule, its head relation) on the device in one batch, their head
-/// rows into `fresh` as the CPU's run would add them. Returns each rule's head rows (before the store's set).
+/// Runs the seed joins `rules` (each: its plan, its rule, its head relation) on the device, their head rows into
+/// `fresh` as the CPU's run would add them. Returns each rule's head rows (before the store's set). The rules go in
+/// as few submissions as their tables' space allows (`BATCH_MAX`): one, for most strata.
 pub(super) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
+    let mut out = Vec::with_capacity(rules.len());
+    let mut from = 0;
+    let mut cleared = false;
+    while from < rules.len() {
+        match group(&rules[from..], store, fresh, &mut rep) {
+            Ok(rows) => {
+                from += rows.len();
+                out.extend(rows);
+            }
+            // Out of device buffers: the relations kept resident give theirs back, once, and the group runs again.
+            Err(e) if !cleared && e.contains("BackendCapacity") => {
+                RESIDENT.with_borrow_mut(|r| r.entries.clear());
+                cleared = true;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu - rep.upload_cpu).max(0.0);
+    let rows: u64 = rep.rows;
+    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "head rows read back", rows);
+    LAST.with_borrow_mut(|l| *l = Some(rep));
+    Ok(out)
+}
+
+/// The first rules of `rules` that fit one submission's space, run: their head rows as `run`'s.
+fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
     let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
     let mut runs: Vec<Run<'_>> = Vec::with_capacity(rules.len());
     {
         let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "encode: uploads, sorts, stages");
+        let mut bytes = 0;
         for (plan, _, _) in rules {
             let mut r = Run::new(plan)?;
-            r.encode(0, &mut batch, &mut rep)?;
+            r.encode(0, &mut batch, rep)?;
+            bytes += r.bytes();
             runs.push(r);
+            if bytes > BATCH_MAX {
+                break;
+            }
         }
     }
     let mut pending: Vec<usize> = (0..runs.len()).collect();
@@ -630,7 +671,7 @@ pub(super) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mu
         rep.reruns += again.len() as u32;
         pending = again.iter().map(|&(k, _)| k).collect();
         for (k, s) in again {
-            runs[k].encode(s, &mut batch, &mut rep)?;
+            runs[k].encode(s, &mut batch, rep)?;
         }
     }
     // The rows into the store, and each step's counts.
@@ -693,10 +734,6 @@ pub(super) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mu
     }
     drop(_h);
     rep.decode_cpu += thread_cpu() - d0;
-    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu - rep.upload_cpu).max(0.0);
-    let rows: u64 = rep.rows;
-    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "head rows read back", rows);
-    LAST.with_borrow_mut(|l| *l = Some(rep));
     Ok(out)
 }
 
