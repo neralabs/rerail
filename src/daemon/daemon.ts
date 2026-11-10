@@ -777,7 +777,8 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
     throw new Error(`Could not read who may read ${tls.keyFile}: ${errorText(error)}`, { cause: error });
   }
   if (others !== undefined) {
-    const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", `"${tls.keyFile}"`);
+    // A function, so a `$` in the key's path is never read as a replacement pattern.
+    const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", () => `"${tls.keyFile}"`);
     throw new Error(`${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
