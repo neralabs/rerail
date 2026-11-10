@@ -530,15 +530,33 @@ pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
 
 /// A survivors rule of a maintained stratum, `h(v..) :- h__old(v..), !h__del(v..)` (decision 0077's rewrite), over
 /// native relations: the kept relation and the deleted one.
+/// Under decision 0090's levels the rows gone are `h__gone`'s, decided in level order, not `h__del`'s.
+/// A levels stratum's kept rows to check against, `h__live(v..) :- h__old(v..), !h__gone(v..)` with the negation
+/// gated (it only places `h__live` in the stratum): `(h__old, "-")`, the kept relation with no row gone.
 fn survivors(r: &Rule, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<(String, String)> {
     let h = &r.head.rel;
-    let (old, gone) = (format!("{h}__old"), format!("{h}__del"));
     let vars: Vec<&str> = r.head.args.iter().map(|t| match t { Term::Var(v) => Some(v.as_str()), _ => None }).collect::<Option<_>>()?;
     let distinct = vars.iter().collect::<BTreeSet<_>>().len() == vars.len();
     let [Literal::Atom(a), Literal::Atom(b)] = r.body.as_slice() else { return None };
-    (distinct && scc.contains(h) && !a.neg && b.neg && a.rel == old && b.rel == gone && a.args == r.head.args && b.args == r.head.args
-        && native_rels.contains(&old) && native_rels.contains(&gone))
-        .then_some((old, gone))
+    if !(distinct && scc.contains(h) && !a.neg && b.neg && a.args == r.head.args && b.args == r.head.args) {
+        return None;
+    }
+    if let Some(base) = h.strip_suffix("__live") {
+        let (old, gone) = (format!("{base}__old"), format!("{base}__gone"));
+        return (b.gated && a.rel == old && b.rel == gone && native_rels.contains(&old)).then(|| (old, "-".to_owned()));
+    }
+    let old = format!("{h}__old");
+    [format!("{h}__del"), format!("{h}__gone")]
+        .into_iter()
+        .find(|gone| a.rel == old && &b.rel == gone && native_rels.contains(&old) && native_rels.contains(gone))
+        .map(|gone| (old, gone))
+}
+
+/// A levels stratum's relations of `h`, when `scc` has all five (`native::setfix::Levels`): cand, chk, held, gone,
+/// live.
+fn levels_of(h: &str, scc: &BTreeSet<String>) -> Option<[String; 5]> {
+    let names = ["cand", "chk", "held", "gone", "live"].map(|s| format!("{h}__{s}"));
+    names.iter().all(|n| scc.contains(n)).then_some(names)
 }
 
 fn is_join(l: &Literal) -> bool {
@@ -3423,6 +3441,11 @@ impl Run<'_, '_> {
         gates.sort_by(|a, b| (a.1.level, &a.0).cmp(&(b.1.level, &b.0)));
         // A gate's rule only placed it here.
         let rules: Vec<&Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
+        // A levels stratum (decision 0090): per relation `h`, `h__chk` and `h__gone` are written by the engine's
+        // driver; their rules only placed them here.
+        let levels: Vec<[String; 5]> = scc.iter().filter_map(|r| r.strip_suffix("__cand")).filter_map(|h| levels_of(h, scc)).collect();
+        let placed: BTreeSet<&String> = levels.iter().flat_map(|l| [&l[1], &l[3]]).collect();
+        let rules: Vec<&Rule> = rules.into_iter().filter(|r| !placed.contains(&r.head.rel)).collect();
         // A maintained stratum's survivors (`h :- h__old, !h__del`, decision 0077): the relation starts as the kept
         // `h__old` with `h__del`'s rows dead in place (decision 0090 step 4), not derived row by row.
         // `RERAIL_DRED_COPY`: derive them by the rule (to measure what starting in place saves).
@@ -3471,7 +3494,7 @@ impl Run<'_, '_> {
         // Nothing left to run (every rule joined an empty relation): the stratum's relations are held with no rows,
         // and no component is specified or opened. `RERAIL_KEEP_EMPTY_JOINS` opens it as before.
         let asks = scc.iter().any(|r| prog.answers.contains_key(r) || super::answers::produced(prog).contains_key(r.as_str()));
-        if rules.is_empty() && based.is_empty() && gates.is_empty() && !asks && std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_none() {
+        if rules.is_empty() && based.is_empty() && gates.is_empty() && levels.is_empty() && !asks && std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_none() {
             for r in &rels {
                 super::native::component::hold_empty(self.db, r, types(r).into_bytes());
             }
@@ -3575,7 +3598,8 @@ impl Run<'_, '_> {
             } else if let Some((old, gone)) = based.get(*r) {
                 // Its survivors rule is gone: it starts from the kept relation, plus what facts or SQL seeds wrote.
                 let seeded = !(prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r));
-                rel_lines.push(format!("rel {r} {} base {} {}{}", types(r), hex(old), hex(gone), if seeded { " seeded" } else { "" }));
+                let gone = if gone == "-" { "-".to_owned() } else { hex(gone) };
+                rel_lines.push(format!("rel {r} {} base {} {}{}", types(r), hex(old), gone, if seeded { " seeded" } else { "" }));
             } else {
                 let empty = prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r);
                 rel_lines.push(format!("rel {r} {}{}", types(r), if empty { " empty" } else { "" }));
@@ -3628,6 +3652,9 @@ impl Run<'_, '_> {
                 probes.push((*r, ai, order));
                 sql_probe.push(false);
             }
+        }
+        for l in &levels {
+            lines.push(format!("levels {} {} {} {} {}", ri[&l[0]], ri[&l[1]], ri[&l[2]], ri[&l[3]], ri[&l[4]]));
         }
         for (g, d) in &gates {
             let idx = |rs: &[String]| {

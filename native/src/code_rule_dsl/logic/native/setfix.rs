@@ -381,7 +381,124 @@ pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
 /// `produced`: relations only the caller adds to, which the fixpoint does not write.
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool,
-                   requests: Vec<(usize, usize)>, produced: Vec<usize> }
+                   requests: Vec<(usize, usize)>, produced: Vec<usize>, levels: Levels }
+
+/// Decision 0090's levels for a recursive stratum: which of its kept rows are gone, decided in level order. Per
+/// relation `h` of the stratum, a line names five relations of the component:
+/// - `cand`: rows of `h` that lost a derivation (the rules: an old derivation with a premise gone);
+/// - `chk`: the candidates of the level being checked, which this driver writes;
+/// - `held`: those of them with a derivation from rows below them (the rules, reading `live`);
+/// - `gone`: those without, which this driver writes;
+/// - `live`: `h`'s kept rows, each with its level, of which a rule reads only those below the level checked and not
+///   gone: every other row is dead while it is checked.
+///
+/// Each time the component is quiet, the checked level's candidates not held go to `gone` (whose rules make more
+/// candidates, above them), then the lowest level with candidates is checked. A candidate at or below a level
+/// already checked lost no derivation from below (its premises from below were decided already): it stays.
+#[derive(Default)]
+struct Levels { lines: Vec<LevelLine>, cur: Option<u32>, last: Option<u32>, started: bool,
+                heap: std::collections::BinaryHeap<std::cmp::Reverse<(u32, usize, u32)>> }
+struct LevelLine { cand: usize, chk: usize, held: usize, gone: usize, live: usize,
+                   /// Candidate rows seen (a prefix of `cand`), those checked or passed, and those of the level checked.
+                   seen: usize, decided: Vec<bool>, batch: Vec<u32>,
+                   /// `live`'s rows by level, and how many of them are shown; its rows gone.
+                   order: Vec<u32>, shown: usize, gone_rows: Vec<u64> }
+
+fn revive(dead: &mut [u64], id: u32) -> bool {
+    let w = id as usize >> 6;
+    let Some(word) = dead.get_mut(w) else { return false };
+    let was = *word >> (id & 63) & 1 == 1;
+    *word &= !(1 << (id & 63));
+    was
+}
+
+impl Rel {
+    /// A row's id, dead or not.
+    fn id_of(&self, row: &[i64]) -> Option<u32> {
+        let (data, k) = (&self.data, self.k);
+        self.set.find(hash_vals(row.iter().copied()), |&id| &data[id as usize * k..][..k] == row).copied()
+    }
+}
+
+impl Levels {
+    /// Every `live` row dead until its level is below the one checked.
+    fn start(&mut self, store: &mut Store) {
+        self.started = true;
+        for ln in &mut self.lines {
+            let live = &mut store.rels[ln.live];
+            let mut order: Vec<u32> = (0..live.n as u32).collect();
+            if live.level.len() == live.n {
+                order.sort_by_key(|&i| live.level[i as usize]);
+            }
+            for id in 0..live.n as u32 {
+                if kill(&mut live.dead, id) { live.ndead += 1; }
+            }
+            ln.order = order;
+        }
+    }
+    /// One step at a quiet point: whether it gave the component more to derive.
+    fn step(&mut self, store: &mut Store) -> bool {
+        if self.lines.is_empty() { return false; }
+        if !self.started { self.start(store); }
+        if let Some(l) = self.cur.take() {
+            let mut any = false;
+            for ln in &mut self.lines {
+                let lo = store.rels[ln.gone].n;
+                for &id in &ln.batch {
+                    let row = store.rels[ln.cand].row(id as usize).to_vec();
+                    if store.rels[ln.held].contains(&row) { continue; }
+                    any |= store.rels[ln.gone].push(&row);
+                    if let Some(lid) = store.rels[ln.live].id_of(&row) { kill(&mut ln.gone_rows, lid); }
+                }
+                ln.batch.clear();
+                let hi = store.rels[ln.gone].n;
+                if hi > lo { store.rels[ln.gone].set_delta(lo, hi); }
+            }
+            self.last = Some(l);
+            if any { return true; }
+        }
+        // New candidates, by their kept level.
+        for (li, ln) in self.lines.iter_mut().enumerate() {
+            let (cand, live) = (&store.rels[ln.cand], &store.rels[ln.live]);
+            ln.decided.resize(cand.n, false);
+            for id in ln.seen..cand.n {
+                let level = live.id_of(cand.row(id)).filter(|_| live.level.len() == live.n).map(|lid| live.level[lid as usize]);
+                match level {
+                    Some(l) if self.last.is_none_or(|last| l > last) => self.heap.push(std::cmp::Reverse((l, li, id as u32))),
+                    _ => ln.decided[id] = true,
+                }
+            }
+            ln.seen = cand.n;
+        }
+        let Some(&std::cmp::Reverse((l, _, _))) = self.heap.peek() else { return false };
+        // The rows below `l` not gone are shown; the level's candidates are checked.
+        for ln in &mut self.lines {
+            let live = &mut store.rels[ln.live];
+            while ln.shown < ln.order.len() && live.level[ln.order[ln.shown] as usize] < l {
+                let id = ln.order[ln.shown];
+                if !is_dead(&ln.gone_rows, id) && revive(&mut live.dead, id) { live.ndead -= 1; }
+                ln.shown += 1;
+            }
+        }
+        let mut los: Vec<usize> = self.lines.iter().map(|ln| store.rels[ln.chk].n).collect();
+        while let Some(&std::cmp::Reverse((l2, li, id))) = self.heap.peek() {
+            if l2 != l { break; }
+            self.heap.pop();
+            let ln = &mut self.lines[li];
+            if ln.decided[id as usize] { continue; }
+            ln.decided[id as usize] = true;
+            let row = store.rels[ln.cand].row(id as usize).to_vec();
+            store.rels[ln.chk].push(&row);
+            ln.batch.push(id);
+        }
+        for (ln, lo) in self.lines.iter().zip(los.drain(..)) {
+            let hi = store.rels[ln.chk].n;
+            if hi > lo { store.rels[ln.chk].set_delta(lo, hi); }
+        }
+        self.cur = Some(l);
+        true
+    }
+}
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
@@ -463,6 +580,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let (mut name, mut rels, mut edges, mut probes, mut gates) = (String::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut write = true;
     let (mut requests, mut produced) = (Vec::new(), Vec::new());
+    let mut levels = Levels::default();
     for line in spec.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let toks: Vec<&str> = line.split_whitespace().collect();
         match toks[0] {
@@ -482,7 +600,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                         "seeded" => { seeded = true; t += 1; }
                         "base" => {
                             let (old, gone) = (toks.get(t + 1).ok_or_else(|| err("rel: base needs two tables"))?, toks.get(t + 2).ok_or_else(|| err("rel: base needs two tables"))?);
-                            based = Some((unhex(old)?, unhex(gone)?));
+                            based = Some((unhex(old)?, if *gone == "-" { "-".to_owned() } else { unhex(gone)? }));
                             kept_base = true;
                             empty = true;
                             t += 3;
@@ -546,6 +664,8 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                 let src = if toks[2] == "-" { None } else { Some(num(toks[2])?) };
                 gates.push(Gate { done: num(toks[1])?, src, quiet: list(toks[3])?, after: list(toks[4])?, passed: 0 });
             }
+            "levels" => levels.lines.push(LevelLine { cand: num(toks[1])?, chk: num(toks[2])?, held: num(toks[3])?, gone: num(toks[4])?, live: num(toks[5])?,
+                                                       seen: 0, decided: Vec::new(), batch: Vec::new(), order: Vec::new(), shown: 0, gone_rows: Vec::new() }),
             "join" => {
                 let (head, delta) = (num(toks[1])?, num(toks[2])?);
                 let whole = match toks.get(4) { Some(w) => Some(parse_join(conn, &unhex(w)?, &mut syms)?), None => None };
@@ -604,7 +724,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let mut reg = COMPONENTS.lock().unwrap();
     let key = (scope(conn), name.clone());
     reg.retain(|(k, _)| *k != key);
-    reg.push((key, Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced }))));
+    reg.push((key, Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, levels }))));
     Ok(name)
 }
 
@@ -656,6 +776,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let mut row: Vec<i64> = Vec::new();
     let wave_trace = std::env::var_os("RDL_WAVE_TRACE").is_some();
     let mut gates = std::mem::take(&mut comp.gates);
+    let mut levels = std::mem::take(&mut comp.levels);
     let gates_done: Vec<usize> = gates.iter().map(|g| g.done).collect();
     loop {
         let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
@@ -808,11 +929,14 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             gates[gi].passed = n;
         }
         for &r in &gates_done { let (lo, hi) = (lo_of[r], store.rels[r].n); store.rels[r].set_delta(lo, hi); }
+        // Quiet: a recursive stratum's levels decide the next rows gone, or check the next level (`Levels`).
+        if !any { any = levels.step(store); }
         if !any { done = true; break; }
         if max_waves > 0 && waves >= max_waves { break; }
     }
     comp.seeded = seeded;
     comp.gates = gates;
+    comp.levels = levels;
     // A symbol a wave could not intern fails the run.
     symbols.write().unwrap().check()?;
     let solve = t0.elapsed();
@@ -1614,6 +1738,10 @@ impl InRel {
     /// No rows, `k` columns.
     fn empty(k: usize) -> InRel {
         InRel { k, n: 0, rows: Vec::new(), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), level: Vec::new() }
+    }
+    /// Rows, levels held, and whether it is a view (`RERAIL_LEVELS_WHY`).
+    pub fn levels_shape(&self) -> (usize, usize, bool) {
+        (self.n, self.level.len(), self.view.is_some())
     }
     /// Whether every row has its level (a relation the native engine derived; decision 0090's levels).
     pub fn has_levels(&self) -> bool {
