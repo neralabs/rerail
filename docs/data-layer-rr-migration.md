@@ -10,8 +10,11 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
-Build and develop the engine in this repository root. Final `ec3cfe1b7` is merged.
-The registered root CLI is `74bdcc6367bdc37c…`, with cached native Python exception fields.
+Build and develop the engine in this repository root. Final `d03a0567d` is merged in `1bc6d26a8`.
+The registered root CLI is `f1c9541ced83d272…`. Dispatch acceptance on this cohort remains in progress.
+The merge splits the content store into its own crate and records execution costs across runs.
+Commit `0ac28b5ce` exports the existing metadata batch method across the new crate boundary.
+The following entries describe earlier acceptance cohorts and retain their original engine identities.
 This cohort passes 29 syntax unit tests, complete composition source contracts, and full `hasattr_async` admission.
 The earlier root cohort passed 131 engine tests, 45 accelerator checks, 245 tooling tests, and nine original Surface cases through both APIs.
 Surface's complete admission receipts remain bound to Final `04173bf00`; older nine-reporter receipts retain their stated cohorts.
@@ -99,7 +102,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory has **seven accepted ports, 88 drafts, and five absent translations**.
+The current inventory has **11 accepted ports, 85 drafts, and four absent translations**.
 `no_api_root_imports` passes its complete recorded contract on Final `ec3cfe1b7`.
 Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-complete-finalec3.json.gz) verifies 467 native executions.
 All four original tests and all 168 public cases pass through both APIs, including import and literal positives.
@@ -3048,3 +3051,32 @@ Those timeouts produced no new complete reports. The earlier reports do not cert
 CLI acceptance remains open, including direct signer coverage and production inventory I/O errors.
 Dispatch remains a draft. The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
 This commit preserves the incomplete implementation before the next Final merge.
+
+### Final d03 merge and dispatch CLI discovery repair, 2026-11-10
+
+Committed the pending CLI implementation as `bcde5cad3`, then merged Final `d03a0567d` in `1bc6d26a8`.
+A fresh fetch confirms the same published Final tip. The store now compiles as a separate crate.
+The first build failed because the local metadata batch method retained crate visibility.
+Commit `0ac28b5ce` exports that existing method. The optimized CLI build then passed in 250.549 seconds elapsed.
+The frozen executable is `f1c9541ced83d272…`. No retired engine checkout ran.
+
+The source oracle records 48 CLI cases and 31 actual signing cases.
+Signing cases use isolated public test seeds and compare complete file bytes and streams.
+The CLI harness now records each completed case, its elapsed time, and each native request time.
+An interrupted report retains `complete=false` and `passed=false`.
+The tooling suite passed 376 tests and 165 subtests before the discovery repair.
+
+Workspace testing exposed a dangling inventory symlink failure that snapshot selection hid.
+The policy eagerly included the inventory even for the scan-only API. Native discovery then opened the dangling link.
+[The red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-cli-finald03-red.json.gz) retains all 37 reports from that run.
+The first repair also exposed Final's prohibition on runtime options in a load request cone.
+[The cone receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-cli-finald03-cone-red.json.gz) retains that failure.
+
+The policy now loads the inventory for the reporter, with a gate in the export phase.
+The scan-only adapter exports its entry contract before loading. The scanner does not read the reporter's inventory.
+The dangling-link case passes. Eleven repository cases and seven persistent steps also pass on the repaired policy.
+The persistent steps include empty directories, source edits, removal, and an unchanged repeat.
+The full CLI, signing, and regression replays still need to finish on these repaired bytes.
+Production inventory I/O errors, remaining persistent sequences, scanner controls, and admission remain open.
+Dispatch remains a draft. The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+No full-repository cold benchmark ran. No Linear ticket was created.

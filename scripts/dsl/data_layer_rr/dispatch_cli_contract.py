@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 from unittest.mock import patch
 from dto import canonical
 from migration import ROOT,PIN,compare,git,read_json,write_json,sha
@@ -107,8 +108,17 @@ def main():
     if a.command=='native':
         baseline=read_json(a.baseline);compare(baseline['passed'],True);compare(baseline['sourcePin'],PIN)
         compare(baseline['sourceSha256'],sha(path.read_bytes()));compare([r['input'] for r in baseline['cases']],cases())
+    files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['migration.py','replay.py','dto.py']]]
+    if a.command=='native':files.extend(Path(__file__).with_name(n) for n in ['dispatch_cli_port.py','dispatch_cli_workspace.py'])
+    selected=sum(a.command=='source' or i%a.parts==a.part for i in range(len(cases())))
+    report=dict(format='rerail.dispatch-cli/v1',sourcePin=PIN,sourceSha256=sha(path.read_bytes()),admitted=False,oracle=a.command=='source',
+        mode=a.mode,part=a.part,parts=a.parts,cases=rows,semanticFallbacks=fallbacks,harnessFiles={f.relative_to(ROOT).as_posix():sha(f.read_bytes()) for f in files},
+        expectedCases=selected,complete=False,passed=False)
+    if a.command=='native':report.update(engineSha256=sha(a.engine.read_bytes()),baselineSha256=sha(a.baseline.read_bytes()))
+    write_json(a.out,report)
     for i,case in enumerate(cases()):
         if a.command=='native' and i%a.parts!=a.part:continue
+        started=time.monotonic()
         with tempfile.TemporaryDirectory(prefix='dispatch-cli-') as temporary:
             root=Path(temporary).resolve();fixture(root,case['files']);module,spec=load_source(source,root)
             with patch.dict(sys.modules,{NAME:module}):
@@ -124,22 +134,19 @@ def main():
                     sys.setprofile(guard)
                 try:value=exercise(module,case,root)
                 finally:sys.setprofile(None)
-        row=dict(input=case)
+        row=dict(input=case,seconds=round(time.monotonic()-started,3))
         if a.command=='source':row['expected']=value
         else:row.update(expected=baseline['cases'][i]['expected'],actual=value,native=executions,passed=value==baseline['cases'][i]['expected'])
         rows.append(row)
+        write_json(a.out,report)
+        print(dict(id=case['id'],seconds=row['seconds'],passed=row.get('passed',True)),flush=True)
     if a.command=='source':
         by_id={r['input']['id']:r['expected'] for r in rows}
         compare(by_id['real-positive']['status'],1);compare('SPD001' in by_id['real-positive']['stdout'],True)
         compare(by_id['real-base']['status'],1);compare('SPD005' in by_id['real-base']['stdout'],True)
         compare(by_id['invalid-signature-False']['status'],0);compare(by_id['invalid-signature-False']['stderr'],'')
         compare(by_id['invalid-signature-True']['status'],1);compare(bool(by_id['invalid-signature-True']['stderr']),True)
-    files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['migration.py','replay.py','dto.py']]]
-    if a.command=='native':files.append(Path(__file__).with_name('dispatch_cli_port.py'))
-    report=dict(format='rerail.dispatch-cli/v1',sourcePin=PIN,sourceSha256=sha(path.read_bytes()),admitted=False,oracle=a.command=='source',
-        mode=a.mode,part=a.part,parts=a.parts,cases=rows,semanticFallbacks=fallbacks,harnessFiles={f.relative_to(ROOT).as_posix():sha(f.read_bytes()) for f in files},
-        passed=all(r.get('passed',True) for r in rows) and not fallbacks)
-    if a.command=='native':report.update(engineSha256=sha(a.engine.read_bytes()),baselineSha256=sha(a.baseline.read_bytes()))
+    report.update(complete=len(rows)==selected,passed=len(rows)==selected and all(r.get('passed',True) for r in rows) and not fallbacks)
     write_json(a.out,report);print(dict(cases=len(rows),passed=report['passed']));raise SystemExit(0 if report['passed'] else 1)
 
 

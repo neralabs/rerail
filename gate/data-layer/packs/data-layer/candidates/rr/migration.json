@@ -2690,7 +2690,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr",
-      "sha256": "243855f8c882e21af568d81fafc32be5ffe1e034b1a318b486916df3d0c66947",
+      "sha256": "1763b8bd430909500f9666b200bc7087ff21ef08b964debbfa49e9aa4b959948",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_dispatch_architecture.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2727,7 +2727,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/dispatch-repository.rr",
-      "sha256": "d8b275eadc26788997dede6c55372d08ca3fcf15e6f592cfa294ec610ab5a0cf",
+      "sha256": "28ec8000eec15904a3ca41a11fd1de6c0d84b7bed7759605ad9ae074e6ffef9d",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
@@ -3665,7 +3665,7 @@
       "legacySha256": "690192884c5fdb2d8f3ac738d3fa7b4cddeca15072cd7cb04c161a20ae654300",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr",
-      "ruleSha256": "243855f8c882e21af568d81fafc32be5ffe1e034b1a318b486916df3d0c66947",
+      "ruleSha256": "1763b8bd430909500f9666b200bc7087ff21ef08b964debbfa49e9aa4b959948",
       "migrationProgress": {
         "status": "draft",
         "repositoryCasesPerAPI": 43,
@@ -4440,8 +4440,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "776a1e263db5d80403fafeab2fdb9ef05993718b",
-    "status": "Final 776a1e263 merged and CLI rebuilt; complete recorded dispatch regression cohort passes. Newer Final changes remain to merge before admission.",
+    "upstreamCommit": "d03a0567d62dcec4b0dfafabc02ad46605c794bb",
+    "status": "Final d03a0567d merged; CLI build and acceptance pending.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4465,11 +4465,11 @@
     "nativeExtensions": [
       {
         "path": "Cargo.lock",
-        "sha256": "9f6602e93441d0042f944dffcddbbbdb21dfb7a4eb61e62f09f1b30a906aaab8"
+        "sha256": "803e9dadfe76dc194bc7f738161b042b604bdcfd0e3ce5fccf773b187c3edc7a"
       },
       {
         "path": "native/Cargo.toml",
-        "sha256": "e6b129814ecb927f3f757a9f23dac8cc485cb762bf57ce16daba170c55ab7da1"
+        "sha256": "d8a9b120f89e96d8d55c8119ae407f76a20bb169284e43a3574f7f2ff3519bdc"
       },
       {
         "path": "native/src/code_rule_dsl/facts/core.rs",
@@ -4633,7 +4633,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/tools.rs",
-        "sha256": "1b621ba7beb812f1bcfd58161f2483d45ca4d18bd7348cfa1d4311a44615cdf6"
+        "sha256": "f5adebadb192c1c613f4f0c72ef065cf3673142bc748021208819baf2598e9c0"
       },
       {
         "path": "native/src/code_rule_dsl/tools/signing.rs",
@@ -4649,12 +4649,12 @@
       },
       {
         "path": "native/src/content_store/observe.rs",
-        "sha256": "95034aae016c04d45b016beff349c167c696767da0bb3dddd6564d69165aeeac"
+        "sha256": "dd262ece4ce3c2cb7d9f3ec0927a40b12a0c1362fba1d29a111fa47b95c74ad1"
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "cf3731c7eecc06e9a0e2da0a559a5de5306bb651",
-    "previousUpstreamCommit": "0b7fb4dbddde9385877bf6e3e317cbc9c5defac5",
+    "upstreamMerge": "1bc6d26a89ff392cbb3826e881c2edfbf0b2cb37",
+    "previousUpstreamCommit": "776a1e263db5d80403fafeab2fdb9ef05993718b",
     "artifactHistory": [
       {
         "engineCommit": "1954d7c425c81efe98232d0ef6ff1a5c270e2c1a",
@@ -4683,30 +4683,18 @@
         "seconds": 95.52
       }
     ],
-    "adoptionAudit": {
-      "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "776a1e263db5d80403fafeab2fdb9ef05993718b",
-      "engineCommit": "83c8c34f642b1e272c018d253d15af14d411a264",
-      "sourceTrees": {
-        "native": "7c89f4598a00169ccdec1364a23dd038122ca32f",
-        "accel": "f292cd0441adde75fb01bbc003c703880eb6825a",
-        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-        "Cargo.toml": "3bd1aa65c48ed0de9a279466bf527b24b5780572",
-        "Cargo.lock": "26d034f8d5d12c9faaeae61de402d0dbc19956dc"
-      }
-    },
     "cliArtifact": {
-      "engineCommit": "83c8c34f642b1e272c018d253d15af14d411a264",
-      "upstreamCommit": "776a1e263db5d80403fafeab2fdb9ef05993718b",
+      "engineCommit": "0ac28b5cef32eac191dd51703daa8215f093d545",
+      "upstreamCommit": "d03a0567d62dcec4b0dfafabc02ad46605c794bb",
       "sourceTrees": {
-        "native": "7c89f4598a00169ccdec1364a23dd038122ca32f",
-        "accel": "f292cd0441adde75fb01bbc003c703880eb6825a",
+        "native": "0d5c17066d9dc1e576beb2fd4ed1ba326cfd377d",
+        "accel": "11ec69ee72f4ca3451146cb14759cae6add596b4",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-        "Cargo.toml": "3bd1aa65c48ed0de9a279466bf527b24b5780572",
-        "Cargo.lock": "26d034f8d5d12c9faaeae61de402d0dbc19956dc"
+        "Cargo.toml": "1a4b2cc2ac147bfe52c13dba811b5b09d45312d5",
+        "Cargo.lock": "ad30dd1485d24131571b9afb9193fa9638c383d8"
       },
-      "path": ".rerail/modern-engine-alignment/cli-3de042c26abdf80f",
-      "sha256": "3de042c26abdf80fd46f642f16eac037fe16fa409643000c682fdc9c2124bd45",
+      "path": ".rerail/modern-engine-alignment/cli-f1c9541ced83d272",
+      "sha256": "f1c9541ced83d2727b87d00ef5b3afba9c500c2cb49ec0df58ce4827292d141f",
       "command": [
         "cargo",
         "build",
@@ -4719,7 +4707,19 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 182.909
+      "seconds": 250.549
+    },
+    "adoptionAudit": {
+      "format": "rerail.engine-cohort-adoption/v1",
+      "upstreamCommit": "d03a0567d62dcec4b0dfafabc02ad46605c794bb",
+      "engineCommit": "0ac28b5cef32eac191dd51703daa8215f093d545",
+      "sourceTrees": {
+        "native": "0d5c17066d9dc1e576beb2fd4ed1ba326cfd377d",
+        "accel": "11ec69ee72f4ca3451146cb14759cae6add596b4",
+        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+        "Cargo.toml": "1a4b2cc2ac147bfe52c13dba811b5b09d45312d5",
+        "Cargo.lock": "ad30dd1485d24131571b9afb9193fa9638c383d8"
+      }
     }
   },
   "engineSourceSnapshots": [

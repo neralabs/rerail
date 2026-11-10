@@ -28,7 +28,6 @@ def folded_pattern(words):
 
 def generate(source,target,header):
     original=module(source,'serverplan_dispatch_architecture');text=api_scope(header('serverplan_dispatch_architecture',target))
-    text=text.replace('.scope include "**/*.py"','.scope include "**/*.py", "scripts/allowlists/lint_serverplan_dispatch_architecture.txt"')
     text+='.scope text "scripts/allowlists/lint_serverplan_dispatch_architecture.txt"\n'
     for relation,name in [('sd_family','_BACKEND_FAMILY_ATTRS'),('sd_backend_call','_BACKEND_CALLS'),
         ('sd_step_name','_STEP_TYPE_NAMES'),('sd_nonstep','_NON_DISPATCH_STEP_TYPES'),('sd_step_suffix','_STEP_TYPE_SUFFIXES'),

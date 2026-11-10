@@ -3,6 +3,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import time
 from migration import ROOT,sha
 from replay import execute_native,execute_workspace
 
@@ -14,7 +15,9 @@ class Driver:
     def __init__(self,engine,mode,executions):self.engine=engine;self.mode=mode;self.executions=executions
     def native(self,entry,options=None,files=()):
         execute=execute_native if self.mode=='snapshot' else execute_workspace
+        started=time.monotonic()
         value=execute(self.engine,POLICY,list(files),dict(entryPoint=entry,**(options or {})))
+        value['requestTiming']=dict(entry=entry,seconds=round(time.monotonic()-started,3))
         self.executions.append(value);return value['diagnostics']
     def configuration(self):
         key=(str(self.engine),sha(POLICY.read_bytes()))

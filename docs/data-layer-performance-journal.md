@@ -11079,3 +11079,32 @@ Final advanced to `d28b2a342` during acceptance. The live alignment gate still r
 The recorded results certify the frozen `776a1e263` cohort.
 Dispatch remains a draft. CLI behavior, filesystem inventory-read errors, persistent updates, scanner controls, and admission remain open.
 The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+
+### Final d03 merge and dispatch CLI discovery repair, 2026-11-10
+
+Committed the pending CLI implementation as `bcde5cad3`, then merged Final `d03a0567d` in `1bc6d26a8`.
+A fresh fetch confirms the same published Final tip. The store now compiles as a separate crate.
+The first build failed because the local metadata batch method retained crate visibility.
+Commit `0ac28b5ce` exports that existing method. The optimized CLI build then passed in 250.549 seconds elapsed.
+The frozen executable is `f1c9541ced83d272…`. No retired engine checkout ran.
+
+The source oracle records 48 CLI cases and 31 actual signing cases.
+Signing cases use isolated public test seeds and compare complete file bytes and streams.
+The CLI harness now records each completed case, its elapsed time, and each native request time.
+An interrupted report retains `complete=false` and `passed=false`.
+The tooling suite passed 376 tests and 165 subtests before the discovery repair.
+
+Workspace testing exposed a dangling inventory symlink failure that snapshot selection hid.
+The policy eagerly included the inventory even for the scan-only API. Native discovery then opened the dangling link.
+[The red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-cli-finald03-red.json.gz) retains all 37 reports from that run.
+The first repair also exposed Final's prohibition on runtime options in a load request cone.
+[The cone receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-cli-finald03-cone-red.json.gz) retains that failure.
+
+The policy now loads the inventory for the reporter, with a gate in the export phase.
+The scan-only adapter exports its entry contract before loading. The scanner does not read the reporter's inventory.
+The dangling-link case passes. Eleven repository cases and seven persistent steps also pass on the repaired policy.
+The persistent steps include empty directories, source edits, removal, and an unchanged repeat.
+The full CLI, signing, and regression replays still need to finish on these repaired bytes.
+Production inventory I/O errors, remaining persistent sequences, scanner controls, and admission remain open.
+Dispatch remains a draft. The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+No full-repository cold benchmark ran. No Linear ticket was created.

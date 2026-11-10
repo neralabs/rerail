@@ -3,7 +3,7 @@
 .description "Backend and concrete-step dispatch zero gate"
 .language python
 .mode block
-.scope include "**/*.py", "scripts/allowlists/lint_serverplan_dispatch_architecture.txt"
+.scope include "**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_dispatch_architecture.py
 #include "python/ast.rr"
 .scope text "scripts/allowlists/lint_serverplan_dispatch_architecture.txt"

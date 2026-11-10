@@ -35,8 +35,19 @@ DispatchRepositoryReport(@place(p,l),p,l,c,m,phase,e,i,k) :- option("entryPoint"
 DispatchProduction(@place(p,l),c,message) :- !option("entryPoint",_),sdr_report(p,l,c,message,_,_,_,_).
 
 // The inventory is a text document; split_line uses Python's Unicode line breaks.
+// A scan_repository call only scans source. The plugin reporter reads the
+// inventory separately, after discovery. Do not eagerly open inventory links.
+.decl sdr_inventory_requested()
+sdr_inventory_requested() :- !option("entryPoint",_).
+sdr_inventory_requested() :- option("entryPoint","_production_contract").
+load("scripts/allowlists/lint_serverplan_dispatch_architecture.txt","dispatch-inventory","python") :-
+    !env("data-layer.api","true"),!env("data-layer.dispatch.scan-only","true"),
+    dir_metadata("scripts/allowlists","lint_serverplan_dispatch_architecture.txt",1,_,_).
+.decl sdr_inventory_doc(d: number)
+sdr_inventory_doc(d) :- sdr_inventory_requested(),doc(d,"scripts/allowlists/lint_serverplan_dispatch_architecture.txt",_).
+sdr_inventory_doc(d) :- sdr_inventory_requested(),loaded_doc(_,"dispatch-inventory","python",d),doc_role(d,"primary").
 .decl sdr_inventory_entry(ordinal: number,value: symbol)
-sdr_inventory_entry(i,e) :- pp_run(),doc(d,"scripts/allowlists/lint_serverplan_dispatch_architecture.txt",_),split_line(d,i,raw),sd_whitespace(w),
+sdr_inventory_entry(i,e) :- pp_run(),sdr_inventory_doc(d),split_line(d,i,raw),sd_whitespace(w),
     e=@replace_all(raw,cat("^",w,"|",w,"$"),""),e!="",!prefix("#",e).
 .violation DispatchRepositoryInventory(at: span,ordinal: number,value: symbol) code "SDR_INVENTORY" "dispatch inventory entry"
 DispatchRepositoryInventory(@place("",0),i,e) :- option("entryPoint","_production_contract"),sdr_inventory_entry(i,e).
