@@ -1,4 +1,5 @@
-import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, statfsSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { basename, dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
@@ -304,13 +305,71 @@ function applySchema(database: RerailDatabase, path: string, migrations: readonl
   if (refusal !== undefined) throw new Error(refusal);
   if (migrations === undefined) return;
   const stepsRun = stamp.version !== 0 && pendingMigrations(database, migrations).length > 0;
-  const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, migrations);
+  const { floor, vacuum } = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, migrations);
   if (floor !== stamp.version) database.run(sql.raw(`PRAGMA user_version = ${floor}`));
   database.run(sql.raw("COMMIT"));
   // A step can rewrite much of the file (`audit-rule-provenance-once` frees each audit's copy of its provenance), and
   // every page it writes goes through the WAL, which SQLite keeps at that size while any connection holds the file.
   // Once the steps commit, the WAL is emptied; a connection still reading from it leaves it for a later checkpoint.
-  if (stepsRun) database.$client.pragma("wal_checkpoint(TRUNCATE)");
+  if (!stepsRun) return;
+  const [checkpoint] = database.$client.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
+  if (vacuum) giveBackFreedSpace(database, path, checkpoint?.busy === 0);
+}
+
+/**
+ * After a step that freed much of the file, `VACUUM` once (`eraseFreedPages`) so the space goes back to the disk:
+ * without it a file keeps its size, mostly free pages. `VACUUM` copies the pages in use to a temporary file, then
+ * writes them through the WAL beside the database while it holds the write lock. It is skipped, and stderr says why,
+ * when another connection kept the WAL from being emptied after the steps (`walEmptied` false), when the database's
+ * folder or the temporary folder has less free disk space than the file's size, or when `VACUUM` fails (another
+ * writer past the busy timeout, a full disk), which leaves the file as it was. Never throws: the open has committed.
+ */
+function giveBackFreedSpace(database: RerailDatabase, path: string, walEmptied: boolean): void {
+  let skipped = walEmptied ? shortOfDisk(path) : "another connection was using it";
+  if (skipped === undefined) {
+    try {
+      // A read that begins while `VACUUM` runs keeps the new copy in the WAL; the file shrinks at a later checkpoint.
+      eraseFreedPages(database);
+      return;
+    } catch (error) {
+      skipped = `VACUUM failed (${errorText(error)})`;
+    }
+  }
+  let sizes = "";
+  try {
+    const pragma = (name: string): number => database.$client.pragma(name, { simple: true }) as number;
+    sizes = `, ${megabytes(pragma("freelist_count") * pragma("page_size"))} of its ${megabytes(statSync(path).size)} free for new history,`;
+  } catch {
+    // The reason matters more than the sizes.
+  }
+  process.stderr.write(`rerail: ${path} keeps its size${sizes} after this Rerail's upgrade: ${skipped}.\n`);
+}
+
+/**
+ * Why `VACUUM` may run out of disk space for the file at `path`, or undefined when it has room. It writes a copy of the
+ * pages in use to the temporary folder and another through the WAL beside the file; the file's size bounds each.
+ */
+function shortOfDisk(path: string): string | undefined {
+  try {
+    const size = statSync(path).size;
+    for (const folder of new Set([dirname(path), tmpdir()])) {
+      const { bavail, bsize } = statfsSync(folder);
+      if (bavail * bsize < size) {
+        return `${folder} has ${megabytes(bavail * bsize)} of free disk space, less than the file's size, which VACUUM may need`;
+      }
+    }
+    return undefined;
+  } catch (error) {
+    return `its free disk space could not be read (${errorText(error)})`;
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function megabytes(bytes: number): string {
+  return `${(bytes / 1e6).toFixed(1)} MB`;
 }
 
 function rollbackQuietly(database: RerailDatabase): void {

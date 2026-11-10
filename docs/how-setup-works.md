@@ -551,6 +551,11 @@ A newer Rerail that first opens the file (the daemon, `rerail start`, set-up, or
 only reads) runs the pending migration steps in one transaction. A failing step leaves the file as it was. A process
 that cannot write the file gets an error naming those steps, and the file is left as it was.
 
+A step that frees much of the file, such as moving each audit's rule provenance to one shared copy, is followed by one
+`VACUUM`, which gives that space back to the disk. Rerail skips it, and says why on stderr, when another process is
+using the database, or when the database's folder or the temporary folder has less free space than the file. The file
+then keeps its size, and new history reuses the free space.
+
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
 floor. It waits for the new version's daemon or a command that writes; until then a hook or the status line says to

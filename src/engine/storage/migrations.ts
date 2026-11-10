@@ -15,6 +15,15 @@ import { sql } from "drizzle-orm";
 import type { RerailDatabase } from "./database.js";
 import { schemaMigrations } from "./schema.js";
 
+/** What a step tells the open that ran it. */
+export interface MigrationResult {
+  /**
+   * The step left much of the file free (rows it moved or deleted), so the open rewrites the file once the steps
+   * commit (`VACUUM`), which gives that space back to the disk (`database.ts`).
+   */
+  readonly vacuum: boolean;
+}
+
 /** One change to the shape of an existing table. Ids and order never change once released. */
 export interface Migration {
   /** Unique and stable: `schema_migrations` records it once the step has run. */
@@ -29,9 +38,10 @@ export interface Migration {
    * transaction, where foreign keys are enforced and `PRAGMA foreign_keys` cannot change: a step that rebuilds a
    * table others reference keeps them valid (or sets `PRAGMA defer_foreign_keys`); `rebuildTable` is only for a
    * table nothing references. It must tolerate a table this step changes not existing yet: the generated DDL that
-   * runs after the steps creates it in its current shape. `addColumn` and `rebuildTable` do both.
+   * runs after the steps creates it in its current shape. `addColumn` and `rebuildTable` do both. A step that frees
+   * much of the file returns `{ vacuum: true }`.
    */
-  up(database: RerailDatabase): void;
+  up(database: RerailDatabase): MigrationResult | void;
 }
 
 /**
@@ -130,16 +140,17 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     // An audit names its rule provenance in `audit_rule_provenances`, which keeps each distinct one once, instead of
     // holding a copy in `rule_provenance_json` (221 KB for 767 rules, written again by every audited edit). Steps run
     // before the DDL, so the table is created here as this step introduced it; then the column, and the audits a file
-    // holds move their provenance there (`moveRuleProvenances`). No floor, by choice: builds at the baseline keep
-    // opening the file, so agent hosts on different installed versions keep sharing it. An older build writes its
-    // audits' provenance inline as before, and this build reads it there; for the audits this build wrote or moved it
-    // reads `[]`, which only its audit API and remote sink show, as its dashboard reads no provenance.
+    // holds move their provenance there (`moveRuleProvenances`). Moving any leaves most of a long history's file free
+    // (1.3 GB of 1.4 GB for 4,000 audits), so the step asks the open for one `VACUUM`. No floor, by choice: builds at
+    // the baseline keep opening the file, so agent hosts on different installed versions keep sharing it. An older
+    // build writes its audits' provenance inline as before, and this build reads it there; for the audits this build
+    // wrote or moved it reads `[]`, which only its audit API and remote sink show, as its dashboard reads no provenance.
     id: "audit-rule-provenance-once",
     up(database) {
       if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audits'`).length === 0) return;
       for (const statement of AUDIT_RULE_PROVENANCES_TABLE) database.run(sql.raw(statement));
       addColumn(database, "audits", "rule_provenance_id", "integer");
-      moveRuleProvenances(database);
+      return { vacuum: moveRuleProvenances(database) > 0 };
     },
   },
 ];
@@ -158,21 +169,24 @@ const MOVED_PER_BATCH = 100;
  * instead, stored first when no audit before it had the same text, and keeps `[]` inline. The text moves as it is, so
  * every audit reads the same provenance after. Its key is the SHA-256 of the text, as the audit store keys the
  * provenance it writes, so the store's later audits of the same rules name the copy moved here. Batches go in rowid
- * order, each from where the last one ended.
+ * order, each from where the last one ended. Returns how many audits it moved.
  */
-function moveRuleProvenances(database: RerailDatabase): void {
+function moveRuleProvenances(database: RerailDatabase): number {
   const client = database.$client;
   const inline = client.prepare<[number, number], { row: number; json: string }>(`SELECT rowid AS row, rule_provenance_json AS json
     FROM audits WHERE rowid > ? AND rule_provenance_id IS NULL AND rule_provenance_json <> '[]' ORDER BY rowid LIMIT ?`);
   const stored = client.prepare<[string], number>("SELECT provenance_id FROM audit_rule_provenances WHERE digest = ?").pluck();
   const store = client.prepare<[string, string]>("INSERT INTO audit_rule_provenances (digest, rule_provenance_json) VALUES (?, ?)");
   const name = client.prepare<[number, number]>("UPDATE audits SET rule_provenance_id = ?, rule_provenance_json = '[]' WHERE rowid = ?");
+  let moved = 0;
   for (let rows = inline.all(Number.MIN_SAFE_INTEGER, MOVED_PER_BATCH); rows.length > 0; rows = inline.all(rows.at(-1)!.row, MOVED_PER_BATCH)) {
     for (const { row, json } of rows) {
       const digest = createHash("sha256").update(json).digest("hex");
       name.run(stored.get(digest) ?? Number(store.run(digest, json).lastInsertRowid), row);
     }
+    moved += rows.length;
   }
+  return moved;
 }
 
 /**
@@ -309,21 +323,25 @@ export function rebuildTable(database: RerailDatabase, table: string, ddl: strin
 }
 
 /**
- * Brings a file a writer holds under `BEGIN IMMEDIATE` to the current shape and returns the floor to stamp.
- * A new file (`fresh`) gets the DDL and every step recorded as run without running it. An existing file
- * runs the steps it has not recorded, in order, then the DDL, which only creates what is missing.
+ * Brings a file a writer holds under `BEGIN IMMEDIATE` to the current shape and returns the floor to stamp, and
+ * whether a step that ran asked for a `VACUUM` once the steps commit. A new file (`fresh`) gets the DDL and every
+ * step recorded as run without running it. An existing file runs the steps it has not recorded, in order, then the
+ * DDL, which only creates what is missing.
  */
 export function migrate(
   database: RerailDatabase,
   { fresh, floor }: { fresh: boolean; floor: number },
   statements: readonly string[],
   migrations: readonly Migration[],
-): number {
+): { floor: number; vacuum: boolean } {
   const pending = fresh ? [] : pendingMigrations(database, migrations);
-  for (const migration of pending) migration.up(database);
+  const results = pending.map(migration => migration.up(database));
   for (const statement of statements) database.run(sql.raw(statement));
   const recorded = fresh ? migrations : pending;
   const appliedAt = Date.now();
   for (const migration of recorded) database.insert(schemaMigrations).values({ id: migration.id, appliedAt }).run();
-  return fresh ? schemaVersionOf(migrations) : Math.max(floor, schemaVersionOf(pending));
+  return {
+    floor: fresh ? schemaVersionOf(migrations) : Math.max(floor, schemaVersionOf(pending)),
+    vacuum: results.some(result => result?.vacuum === true),
+  };
 }
