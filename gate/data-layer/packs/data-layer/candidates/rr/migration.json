@@ -500,7 +500,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "eda14556d8eeba09166ce5f9f8a9efb0db73090a2c87e6d8c02aa88687c7db5d",
+      "sha256": "24acea2b32811cf40cf244eb29d25abfabb7349bb21091518eeba726fde10609",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -4576,7 +4576,7 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "ef317e108358b2107336d1dd957ef9856b721b8d",
+    "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
     "status": "Final af8fee707 merged and CLI rebuilt. Dispatch passes complete recorded contracts and fixed original-inventory admission through both APIs, with 713 validated native executions.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
@@ -4601,15 +4601,15 @@
     "nativeExtensions": [
       {
         "path": "Cargo.lock",
-        "sha256": "8b9b03d9960e8e70b1f858b419bd171c806fee003a2fe056a955d39919d8d1d6"
+        "sha256": "898115da4c35a63bd71e613d41ae410230611a4cfadfb0a1d12277474640909f"
       },
       {
         "path": "native/Cargo.toml",
-        "sha256": "f28a609b37c5d122d828f4eb5a844983acedb62430eef05752494d421d7218dc"
+        "sha256": "e76700c02857d63d8b66047779c965fb6883223f7bece20f947ef91930d7e335"
       },
       {
         "path": "native/src/code_rule_dsl/facts/core.rs",
-        "sha256": "23d9a6f93387544393be2645bf793da581d7429d1fa818e6cccb0a9157018538"
+        "sha256": "8837247f2c2ab7da4fc40eb2f4394c8ce535a34a7a985509a4ea934a21aa90b3"
       },
       {
         "path": "native/src/code_rule_dsl/facts/repository.rs",
@@ -4617,15 +4617,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "76154676cb26e79836996fbd0e0efe64f05c0edc49ecd1a0967d2a40b32acdd9"
+        "sha256": "c9293b388facb170ec127d24c264d4c90120c6aec05a8750410b8f54bcaf7f02"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "448060d0ad4e9451c0138f3f4b97117371f6411b7a0c2ccbef5a763d5a4472c9"
+        "sha256": "334948fb737176670fbf06d3dea6fd105ef761be34cf15c524df8ac7dec5fdbf"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
-        "sha256": "387a57f02a15ed421338608244cae27f480d4de6565179dfe0ca26e4da4f3ad1"
+        "sha256": "13b82d0ba854fee9ad053f2609cbabb693be06f34f7a5c06417f2034c2ba4bf3"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
@@ -4661,15 +4661,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/tests.rs",
-        "sha256": "af512a429fa54660a65f01a54d3920d08daf6bae3f9c75f623bcb90d93743278"
+        "sha256": "f70d662943d8711c7265b49cef0604d8b710f322b8411da5271efa14f67804d1"
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
-        "sha256": "b1b0d9c812199444405d69df503cbc2ce26a8a616ffd07f85e49db0e9435793b"
+        "sha256": "8e8c326a80aa188344f0abc3a8464a71d1a3445e24beb09619963931b576bdea"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
-        "sha256": "531e11cb7bb1eb297ddab8eb1b106afe5a6ce19c0b2369d3f505c3a0d3464eea"
+        "sha256": "e51fe4ac74361913558a9a20dc1272069335b7298b125d2393894bcb0063ae24"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
@@ -4685,15 +4685,20 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "770061c8c9347c9a37a30a5cfd330417816b7fc81e730fd79763c4581bb3e76a"
+        "sha256": "e0cd5d9e56986776bbb4b87d5bc04a69064e7358fbecdd15271ba45520e31dbf"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "c67ea9a27a8dda0dd8fb43d815e26ccc8a25833e5ef266c159ffb94a26c38596"
+        "sha256": "9da26c8f5e2b7ccad8329b26f028254ed8493f5981ba94c0c0d3c67059ff0d79"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "5644c21906da291bdb411333507f64f785d2f50bff16a5df7740e0d0d1d890c9"
+        "sha256": "700375540df883c2a6145cf30e82d55e1b34c3e2505ef76bdca0500d0b383f2b"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
+        "sha256": "b5e8b994bc2125c04a227e7f87e48eab8c227b4cba43fb8fd8aba742d637827f",
+        "reason": "Preserve tab, newline, CR, NUL and literal escape markers across the folded-constant output boundary; witnessed by dynamic discovery source corpus."
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -4713,7 +4718,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
-        "sha256": "a2a24a72fbeacd1ec4a4c25e0765154c5be1003a7ad1ff598be92edc091d4e42"
+        "sha256": "3abb9053c02f89a61929f8cd5b63b8750bae59a8ff5e400f6f942c5240a99158"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/check.rs",
@@ -4721,19 +4726,19 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "1337f869283dccf12c3d4095801cfb261e707883e38a711097ccc863e89253ed"
+        "sha256": "b5b9622116d89ff1bffcb16191aa4e208f87fc043574e21b4e4291a860f80278"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
-        "sha256": "258d6f86c186293071be73354e442e7183e09c36e7639f25ffef5111299c59ee"
+        "sha256": "fb8e2f13facab8dabb441bf7e33ea5ce5a7aef45fa6935d5991efe66796d4082"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "03bd1a8ec33b9cbc7d4d072ab4a899cc1421ccb7be0c5fd7cfd448d04810d63d"
+        "sha256": "4f8de3afaddcc26dbc15a1086a4ee63b8ae58a63476c9411288ce4f80fee541a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
-        "sha256": "acb623f20da5f2524bad390f4e2dc54e6545e788b7fd42d82861b27f831247c9"
+        "sha256": "9094ccd61e7ef300beb904c6fe87b8785df39fbbbf9162dcbb9aa681de79753b"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
@@ -4769,7 +4774,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/tools.rs",
-        "sha256": "484fa0ce821ba10a98f212044aa9ba5099bc18deb7201c6bcae9b50c93672991"
+        "sha256": "574f21cdbc2d8917ebe50adbf9b71e6c97929027b35902424f0f0acd3d6bb544"
       },
       {
         "path": "native/src/code_rule_dsl/tools/signing.rs",
@@ -4777,7 +4782,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/typing/file_local.rs",
-        "sha256": "236285910d6da9f9e80b3958f42a1057d37a7a7c1c699a37fd8dfabfde8e5948"
+        "sha256": "1af526dafaad29ae9aad2d9535d803ee76bfd9a1c58606d92a7d7252c67c4428"
       },
       {
         "path": "native/src/code_rule_dsl/value/python.rs",
@@ -4786,11 +4791,6 @@
       {
         "path": "native/src/content_store/observe.rs",
         "sha256": "dd262ece4ce3c2cb7d9f3ec0927a40b12a0c1362fba1d29a111fa47b95c74ad1"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
-        "sha256": "b5e8b994bc2125c04a227e7f87e48eab8c227b4cba43fb8fd8aba742d637827f",
-        "reason": "Preserve tab, newline, CR, NUL and literal escape markers across the folded-constant output boundary; witnessed by dynamic discovery source corpus."
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
@@ -4852,14 +4852,14 @@
     },
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "ef317e108358b2107336d1dd957ef9856b721b8d",
-      "engineCommit": "f7c7a37ba3d3c650f5305d45d8430e6e8f3faffc",
+      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
+      "engineCommit": "cc6daa8992c8fe0a1fb034a00f1f534af528e8fe",
       "sourceTrees": {
-        "native": "5bc9a586e642773c03b6a4547d2d8a3196041c58",
+        "native": "b9f5792c538851dcc6a0217367a0d6b6f450b895",
         "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-        "Cargo.toml": "bfce2f449c0ee137f9606200433782ccc20e69c0",
-        "Cargo.lock": "708164ac8a73f7ef6ebb46975a1f3408d263f6ec"
+        "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+        "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
       }
     }
   },
