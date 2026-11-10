@@ -1,11 +1,14 @@
 /**
- * Rules fire in a Claude Code session: the built hook, run as Claude Code runs it (`dist/harness/hook-launcher.js`
- * starting `dist/hosts/claude/claude-hook.js`, one process per event, with the session's `CLAUDE_PROJECT_DIR`), replays
- * a session's events against a daemon of this build in this file's own Rerail home. The repository runs the complexity
- * pack from this checkout, approved, so a Python function above the cyclomatic ceiling breaks
- * `complexity-cyclomatic-python`. Each session edits such a function in the session's checkout, through a subagent
- * (whose tool calls Claude Code sends under the parent's session id) and in a linked worktree outside the checkout,
- * and the test reads back what a person reads: the steer in the hook's answer, the session's rule count from
+ * Rules fire in a Claude Code session: the built hook, run as Claude Code runs it on Windows
+ * (`dist/harness/hook-launcher.js` starting `dist/hosts/claude/claude-hook.js`, one process per event, with the
+ * session's `CLAUDE_PROJECT_DIR`), replays a session's events against a daemon of this build in this file's own Rerail
+ * home. Elsewhere Claude Code starts `claude-hook.js` through a shell; the launcher, handed the node it runs on,
+ * imports the hook into its own process, so the hook runs there as `node claude-hook.js` runs it.
+ *
+ * The repository runs the complexity pack from this checkout, approved, so a Python function above the cyclomatic
+ * ceiling breaks `complexity-cyclomatic-python`. Each session edits such a function in the session's checkout, through
+ * a subagent (whose tool calls Claude Code sends under the parent's session id) and in a linked worktree outside the
+ * checkout, and the test reads back what a person reads: the steer in the hook's answer, the session's rule count from
  * `rerail session`, and the logged violation from `rerail support-bundle`.
  *
  * Two cases go red on causes that left a person's sessions with "rules unavailable" or edits unchecked: a session opened
