@@ -57,9 +57,9 @@ exports against a full run; CPU and instructions retired, cold, warm and after t
 |---|---|---|
 | 1.1 | `.cache C by K` read and checked (`front::caches`); a broken form refuses the program | built, tested |
 | 1.2 | In a session, a cache's stratum maintained by its key (`maintain::rewrite`); counting leaves it alone | built, tested |
-| 1.3 | A cache's rows kept in the store by key (`cache_rows`); a run looks up its keys, binds `K__kept` and `C__kept`, and runs the output rule for new keys only, in the file-local part and the cross-file part (0103 §2) | built, tested |
-| 1.4 | No copy while the key stands: the kept strata judge a cache's strata by `K` alone; a session keeps it as an input (0103 §3) | built, tested |
-| 1.5 | `corpus::cache_architecture`: the tables and freshness calls made before 0103, which may only shrink | built |
+| 1.3 | Without a session and in the file-local part: the same rules, `C__old` read where `C` is already kept (kept strata; the file's previous rows in the per-file memo). No storage of a cache's own | **not built.** A `cache_rows` table and lookup hook were built and removed (a cache mechanism beside the facts) |
+| 1.4 | No copy while the key stands: in a session a cache with no key delta stays an input, kept as it is | built, tested |
+| 1.5 | `corpus::cache_architecture`: the tables and freshness calls made before 0103 (may only shrink), and no cache table, store, hook or lookup anywhere | built |
 
 ### Stage 2. P3 and P2 rules (this branch, now)
 
@@ -101,7 +101,7 @@ kept relations' encoding, not a format of their own.
 
 | Step | Change | Owner |
 |---|---|---|
-| 5.1 | Caches in the file-local part: a chunk's cache kept by key across runs, so the per-file memo can be one | done (1.3) |
+| 5.1 | Caches in the file-local part: `C__old` from the file's previous rows in the per-file memo, so the per-file memo can be one | engine (1.3) |
 | 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §8) | engine |
 | 5.3 | Each other cache of 0103 §8 | its owner |
 

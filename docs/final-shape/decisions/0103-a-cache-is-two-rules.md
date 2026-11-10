@@ -1,7 +1,7 @@
 # 0103: A cache is two rules
 
-Status: accepted (2026-11-10). This is the only form a cache may take. The engine's part is built for a
-program's file-local and cross-file parts, in a session and in a new process (§6). The caches made before this
+Status: accepted (2026-11-10). This is the only form a cache may take. Cached facts are just facts (§2). The
+engine's part is built in a session; without a session and in the file-local part it is not built yet (§3). The caches made before this
 decision are listed in §8, each with its two rules; a test holds that list, and the list may only shrink.
 
 ## Intro
@@ -47,34 +47,23 @@ engine runs, such as a native relation made on demand (`parse_of`), a functor, o
 
 ## 2. What the engine does
 
-- **Kept by key.** A cache's rows live in the store by key: for each key the cache has seen, that key's rows of
-  `C` (`content_store::cache_rows`, written by the store's one writer, 0102). A key with no rows is kept too, as a
-  key seen. The cache is named by a digest of its two rules, its relations' columns and the engine's build, so a
-  changed rule is a new cache.
-- **The key is made again.** Each run derives `K` from its inputs. This run's keys are looked up in the store:
-  the keys found and their rows are bound as `K__kept` and `C__kept`. Only this run's keys are read.
+**Cached facts are just facts.** `K` and `C` are relations. They are stored, held in memory and written back the
+same way as every other fact: the kept strata in the cross-file part, the per-file memo's rows in the file-local
+part, the resident rows in a session, all written by the store's one writer (0102). There is no table, store,
+hook, lookup or read of a cache's own. The cache is only a rewrite of `C`'s rules into ordinary rules:
+
+- **The key is made again.** Each run derives `K` from its inputs. Against `K`'s previous rows (kept as `K` is
+  kept), the keys new in this run are `K__plus` and the keys gone are `K__minus`.
 - **The output follows its key.**
-  - For a key the store has, `C` takes the stored rows. The output rule does not run for it, and nothing it
+  - The rows of `C` whose key columns hold a gone key go. The output rule does not run for them.
+  - The output rule runs for the new keys only.
+  - For a key in both runs, `C` keeps its rows as they were. The output rule does not run for it, and nothing it
     reads besides `K` is looked at.
-  - The output rule runs for the new keys only (`K__plus`). Their rows are written to the store, behind the run.
-  - A key not in this run's `K` is not looked up, so its rows are not in `C`.
 - **Readers.** `C`'s change goes on to the strata that read `C`, as any relation's does. A run in which `K` did
-  not change has no change of `C`, and `C`'s readers are not run for it.
+  not change has no change of `C`.
 
-The program the engine runs, in place of the output rule:
-
-```text
-K__plus(k…) :- K(k…), !K__kept(k…).            // this run's keys the store has not seen
-C__ins(c…)  :- K__plus(k…), <the output rule's other literals>.
-C(c…)       :- C__kept(c…).                      // the stored rows of the keys found
-C(c…)       :- C__ins(c…).
-```
-
-(`k…` are `C`'s key columns among `c…`.) This is the same in each place a program runs: a chunk of the
-file-local part (the per-file memo's place), the cross-file part, a run with no session.
-
-In a session, the cache is maintained by its key's delta, with the rules a session's maintenance already uses
-(0077 §3), `C__old` being the resident rows:
+Written as the rules a session's maintenance already uses (0077 §3), with `C__old` being `C`'s previous rows as
+they are kept:
 
 ```text
 C__del(c…) :- K__minus(k…), C__old(c…).       // a gone key's rows
@@ -83,20 +72,20 @@ C(c…)      :- C__old(c…), !C__del(c…).
 C(c…)      :- C__ins(c…).
 ```
 
-A row of `C` has one key, so a deleted row is never derived again: there is no rederive step.
+(`k…` are `C`'s key columns among `c…`.) A row of `C` has one key, so a deleted row is never derived again: there
+is no rederive step.
 
-## 3. Nothing is copied while the key stands
+## 3. Where it is built
 
-A run whose `K` has the rows it had does no work for the cache:
-
-- **No session.** The kept strata (0077 §4) judge the cache's own strata (`K__plus`, `C__ins`, `C`) by `K` alone:
-  while `K`'s rows are as they were, they are not run, and `C` is the rows the last run left. Nothing is looked up
-  and nothing is copied.
-- **In a session.** A cache whose key has no delta is an input of the maintained program, kept as it is.
-- **In a chunk.** A chunk whose files did not change is read from the per-file memo. A changed chunk looks up its
-  keys: one lookup by key each, no scan of the cache.
-
-A cache's key is held in the engine, never made a view, since its rows are looked up by value.
+- **In a session:** built. `maintain::rewrite` writes the rules above. A cache whose key has no delta stays an
+  input of the maintained program, kept as it is: nothing runs and nothing is copied.
+- **Without a session, and in the file-local part:** not built yet. The cache runs as its plain rules: its
+  answers are right, but the output rule runs for every key. What is needed is the same rules, with `C__old` read
+  from where `C` is already kept: the kept strata (a new process maintaining from the kept rows, note t32 stage 4),
+  and the file's previous rows in the per-file memo. No new storage.
+- **What was removed.** A first attempt kept a cache's rows in a table of their own (`cache_rows`), read by key
+  through a hook in `plan::run`. That is a cache mechanism beside the facts, which this decision does not allow. It
+  is removed, and `corpus::cache_architecture` refuses it.
 
 ## 4. The key holds every value the result depends on
 
@@ -124,19 +113,14 @@ content digest, the program's digest when the result depends on the program.
 
 - **The form is read and checked.** `.cache C by K` is read like `.phase` (`front::Program::settings`), and
   `front::caches` checks the form of §1. A broken form refuses the program, and the message names the rule.
-- **The store's form.** `front::caches::kept_form` rewrites a cache to the program of §2, in the file-local part
-  and in the cross-file part. `plan::run` looks up `K`'s rows when the run reaches `K__kept` or `C__kept`, through
-  the run's `CacheStore` (`corpus::cache_store`, over `content_store::cache_rows`), and writes the new keys' rows
-  once `C__ins` is made.
 - **In a session.** `maintain::rewrite` maintains a cache by its key (the rules of §2), even when the output rule
   reads a relation made natively, a `nearest` literal or an aggregate: such a stratum would otherwise be derived
-  again. New keys are written to the store as in a new process.
-- **What is left open.**
-  - A key's rows are looked up one key at a time. A large key set wants one read of the keys in a range.
-  - A cache whose rules change starts empty (a new digest). Its old rows go with the store's collection.
-- **Tests.** `corpus::cache_tests`: the output rule runs only for new keys, in a run with no session, in a
-  session and in the file-local part; a gone key's rows go; a fact the key leaves out is not seen. `front::caches::tests`: a broken form is
-  refused.
+  again.
+- **Tests.** `corpus::cache_tests`: in a session, the output rule runs only for new keys, a gone key's rows go, a
+  fact the key leaves out is not seen. The same tests without a session and in the file-local part are ignored
+  until §3's missing part is built. `front::caches::tests`: a broken form is refused.
+- **The guard.** `corpus::cache_architecture` fails on a cache's own table, store or lookup API, and on any file
+  outside the rule rewrites that knows a relation is a cache.
 
 ## 7. What is not allowed
 

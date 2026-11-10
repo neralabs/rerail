@@ -9,7 +9,6 @@ mod accel_models;
 // Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
 mod bounded_insert;
-mod cache_rows;
 mod compression;
 mod collection_guard;
 pub(crate) use collection_guard::CollectionLease;
@@ -59,7 +58,6 @@ pub(crate) mod working_set;
 pub mod write_back;
 
 pub(crate) use compression::compress;
-pub use cache_rows::CachePut;
 pub use kept_strata::{KeptPut, KeptRows};
 pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;

@@ -83,6 +83,7 @@ fn has(rows: &[String], q: &str, body: &str) -> bool {
 /// Decision 0103 §2-3, a run with no session: a key the store has takes its stored rows, the output rule runs for
 /// the new keys only, and a run whose key stands runs none of the cache's strata (the kept strata).
 #[test]
+#[ignore = "decision 0103: without a session a cache runs as its plain rules until its previous rows are read where every relation is kept (kept strata, per-file memo); no cache store"]
 fn a_cache_runs_its_output_rule_only_for_new_keys() {
     let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let c = Corpus::new("cache-kept");
@@ -138,6 +139,7 @@ fn a_cache_in_a_session_runs_its_output_rule_only_for_new_keys() {
 /// Decision 0103 in the file-local part: an edited file's chunk runs again (its memo entry is stale), and reads the
 /// store's rows of its keys; the output rule runs only for a key the store has not seen.
 #[test]
+#[ignore = "decision 0103: without a session a cache runs as its plain rules until its previous rows are read where every relation is kept (kept strata, per-file memo); no cache store"]
 fn a_cache_of_the_file_local_part_runs_its_output_rule_only_for_new_keys() {
     let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let c = Corpus::of("cache-local", LOCAL);
