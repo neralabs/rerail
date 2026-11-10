@@ -1,7 +1,7 @@
 # 0100: One executor for a chunk's strata: levels sent to every lane at once, relations kept on the GPU
 
 Status: draft (2026-11-09). It builds 0095 §5 (device waves) on the executor of 0098 §6. The order of work is
-below; steps 1–5 and 7–10 are built, and step 6 is measured.
+below; steps 1–5 and 7–12 are built, and step 6 is measured.
 
 ## Intro
 
@@ -282,6 +282,45 @@ encoding and commit run while the host fills, instead of after it. The submissio
   - the slack now.
 - In the trace, a line per batch with its overlap and stall.
 
+### 11. Claims: a plan, and launches taken by whoever reaches them
+
+Placement (§9) decides once, at `begin`, from estimates. Under a load spike the estimate is wrong: the cores'
+pool is taken by other work, or the GPU's worker is still busy with an earlier batch. A launch placed there then
+waits, while another lane sits idle.
+
+So placement makes a **plan**, and the lanes **claim** launches as they reach them (`exec::Claims`):
+
+- Every launch has its planned lane, and the time by which that lane should have started it.
+- Every lane that can run a launch has it on its list. The cores' list runs largest first. A device takes all of
+  its planned launches in one submission.
+- A lane takes its own launches first. It takes another lane's only while that launch is still free, and only when
+  that lane is **behind its plan** by more than the taker's own time for the launch (at least 0.2 ms).
+- A claim is one atomic exchange, so no launch runs twice. A pinned launch stays on its lane.
+
+Who takes what:
+
+- **The cores' pool** takes its own launches, then any launch of a device whose worker has not reached the batch
+  in time.
+- **A device** takes, after each submission of its own, the cores' launches their pool has not reached. A device
+  is sent a batch only when it has launches planned in it.
+- **The waiting caller** runs free launches itself, on the cores, instead of stalling. It takes the cores' own
+  ones, and those of a lane behind its plan.
+
+With no spike the plan stands: a device starts a batch within microseconds, so its launches are never late, and
+nothing moves. The claims only move work when a lane falls behind.
+
+**Chaining levels.** A level's batch also carries the next level's seed joins whose relations are already held.
+Their launch, and the device's 1.7 ms of submit and schedule, then run under this level's strata instead of at the
+start of the next one. The next level's batch skips a join already sent. A join sent early is taken by its spec's
+digest and its relations' identity, as any other (§5). If either changed, the stratum runs without the pairs.
+
+**What the explain output adds:**
+
+- Per kind of batch: launches as planned and as run, per lane; launches moved off their planned lane; launches
+  the caller ran while it waited.
+- In the trace, the same per batch.
+- The level joins' decision line says how many of a batch's joins were the next level's.
+
 ## Order of work
 
 1. **Merge the executor's branch** and renumber its decisions to 0098 and 0099. *Done*: findings identical on the
@@ -425,7 +464,38 @@ encoding and commit run while the host fills, instead of after it. The submissio
     - In the warm loop, 46 of 10,050 batches reached their commit before the host had filled them. The device
       waited on the event for those; the rest were filled while the lane encoded.
     - In the pack, the fill takes 42 µs a batch on the caller's thread, while the lane encodes and commits.
-11. **Gates:**
+11. **The open GPU items (§9).** *Built*:
+    - **Pipelines prewarmed.** The prewarm thread now also compiles the radix sort of each width, the gathers and
+      the pair sort. A variant's source is compiled once, into one library, for all its kernels (a sort's five
+      kernels were five compiles). A job that needs a pipeline still compiling waits for it (`pipeline wait`)
+      instead of compiling it again.
+    - **Spilled probes** run again through the fused probe, all in one dispatch, into one arena of their exact
+      total. The separate one-probe kernel, whose many width variants were compiled on first use, is gone.
+    - **Pairs as views.** A probe's pairs are handed out as segments of the arena (`Output::View`, `Pairs`),
+      which the view keeps. The level batch hands each seed its pairs once, without the copy it made before.
+    - **Tile pairs sorted on the GPU,** in the scatter's command buffer: a key of (left row, right row) in 32
+      or 64 bits, the radix sort's passes alone, and a gather (`encode_sorted_pairs`, with a test of both key
+      widths).
+    - Results, the pack under `--metal`, findings identical (load 30–110):
+
+      | | Before | After |
+      |---|---|---|
+      | Unpinned: callers' stall, level joins | 169 ms | 28 ms |
+      | Unpinned: longest stall | 62 ms | 5.7 ms |
+      | GPU pinned: pipeline compiles in jobs | 12 | 0 |
+      | GPU pinned: host CPU of the joins | 25 ms | 13.4 ms |
+      | GPU pinned: callers' stall | 370 ms | 101 ms |
+
+    - Warm loop at a load of about 107: 50–53 µs a job, against 54–55 µs for the build before, back to back.
+      Reading the pairs went from 2.4 to 1.9 µs a job. The rise from 33 µs is the load.
+12. **Claims and chaining (§11).** *Built*:
+    - A test makes the GPU lane's worker busy for 300 ms and plans a batch's 12 launches on it. The caller runs
+      all 12 on the cores while it waits; the batch stalls 2 ms.
+    - In the pack, unpinned, 1 of 153 launches moved. Pinned to the cores, the waiting caller ran 38 of 153 itself,
+      and the callers' stall was 16 ms (82 ms before, with the pool alone).
+    - Chaining puts up to 13 of the next level's joins in a level's batch. The run sends 153 launches and runs 132
+      seeds from their pairs, the same as without chaining.
+13. **Gates:**
    - The pack's findings are identical, and so are the data layer's at scale.
    - Host CPU (user + sys) of the device joins is below the CPU radix sort join's, on the lab's 232 joins and on
      the pack.
@@ -433,14 +503,12 @@ encoding and commit run while the host fills, instead of after it. The submissio
 
 ## Open
 
-- **Prewarm the radix sort's pipelines.** Unpinned, the GPU's first large joins compile 12 pipelines (94 ms of
-  wall time), and that is the longest stall (62 ms). Prewarming covers the fused pipelines only.
-- **Reads as views.** A probe's pairs are copied out of the arena (1.7 µs a job, warm). Handing the caller a view
-  of the arena saves that.
-- **Tile pairs sorted on the GPU.** Tiles still sort their pairs on the host. The engine sends no tile joins
-  yet.
-- **Chaining levels.** A level's batch could wait on the event of the level before it, so the next level's
-  launches are committed before the first one's results are read.
+- **A device that had nothing planned** in a batch is not sent it, so it cannot take the cores' late launches
+  there; the waiting caller does instead. Sending it would hold its worker on a batch it may never serve.
+- **Late is measured against the plan's own model** of the cores (one queue of their estimates), so they are
+  rarely late. Whether to model the pool's threads is open.
+- **Pipelining the GPU's submissions.** The GPU's worker waits for each command buffer before it takes the next
+  batch. Chaining gives a batch more of the next level's joins instead.
 
 - **Count tables and the scalar summaries overlap.** The engine's per-key memo of scalar summaries answers a count
   once per key, and a count table answers it once per relation. Since the merge, a count the memo serves never walks
