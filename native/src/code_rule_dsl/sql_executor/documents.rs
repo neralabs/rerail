@@ -58,6 +58,7 @@ fn document(store: &ContentStore, file: FileInput) -> Result<Document> {
         facts: Arc::new(facts),
         guest: None,
         module: None,
+        tape: None,
     };
     Ok(Document {
         file,

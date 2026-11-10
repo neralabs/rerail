@@ -139,6 +139,9 @@ pub(super) fn facts_of(prepared: &Prepared) -> Facts {
             row("prepared_set_kind", vec![n(k), n(i), Value::Int(*kind)]);
         }
     }
+    for (k, (rel, matcher)) in prepared.matchers.iter().enumerate() {
+        row("prepared_matcher", vec![n(k), s(rel), s(matcher)]);
+    }
     for (k, rel) in prepared.demanded.iter().enumerate() {
         row("prepared_demanded", vec![n(k), s(rel)]);
     }
@@ -256,6 +259,12 @@ pub(super) fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prep
         sets.push((text(&r[0])?, members));
     }
     let list = |rel: &str| -> Result<Vec<String>, String> { indexed(facts, rel)?.iter().map(|(_, r)| text(&r[0])).collect() };
+    // A program kept before decision 0106 has no matchers.
+    let matchers = if facts.contains_key("prepared_matcher") {
+        indexed(facts, "prepared_matcher")?.iter().map(|(_, r)| Ok((text(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?
+    } else {
+        Vec::new()
+    };
     let ok = facts.get("prepared_located").and_then(|r| r.first()).map(|r| int(&r[0])).transpose()?.ok_or_else(|| bad("no located"))?;
     let located_rels = list("prepared_located_rel")?;
     let located = if ok == 1 { Ok(located_rels) } else { Err(located_rels) };
@@ -317,6 +326,7 @@ pub(super) fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prep
         vocabulary: Arc::new(vocabulary),
         lowered: lower::Lowered { program, domains, ops, dialect },
         sets,
+        matchers,
         demanded: list("prepared_demanded")?,
         pushed: list("prepared_pushed")?,
         factorized: list("prepared_factorized")?,

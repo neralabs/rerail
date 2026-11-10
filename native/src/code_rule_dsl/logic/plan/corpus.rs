@@ -53,6 +53,9 @@ mod world;
 mod reuse;
 pub(in crate::code_rule_dsl) mod phase0;
 mod cross_memo;
+mod matchers;
+/// The prefix of an `ast` matcher's relation (decision 0106).
+pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -554,6 +557,8 @@ struct Prepared {
     vocabulary: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
     lowered: lower::Lowered,
     sets: Vec<(String, Vec<i64>)>,
+    /// The `ast` atoms' matchers, by relation (`matchers::lower`, decision 0106).
+    matchers: Vec<(String, String)>,
     demanded: Vec<String>,
     pushed: Vec<String>,
     /// The exports handed on as parts (decision 0099, `file_local::factorize_exports`), a line each.
@@ -1856,6 +1861,8 @@ fn run_observed(
             // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
             let (mut prog, demanded) = crate::code_rule_dsl::logic::magic::demand_negated_tests(prog);
             drop(preparing);
+            // The `ast` atoms become relations the transducer's matchers fill per chunk (decision 0106).
+            let matchers = matchers::lower(&mut prog);
             // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
             let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
             let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
@@ -1891,7 +1898,7 @@ fn run_observed(
             if let Some(path) = std::env::var_os("RERAIL_SPLIT_DUMP") {
                 dump_split(std::path::Path::new(&path), &split);
             }
-            let prepared = Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, demanded, pushed, factorized, located, merged, split, interned };
+            let prepared = Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned };
             keep_prepared(prepared_key, prepared.clone());
             if let Some(source) = durable {
                 let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the prepared program in the store (decision 0073), queued".into());
@@ -1920,7 +1927,7 @@ fn run_observed(
         (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
         (false, _) => "prepared".to_owned(),
     });
-    let Prepared { prog, vocabulary, lowered, sets, demanded, pushed, factorized, located, merged: (remerged, reshared), mut split, interned: _ } = prepared;
+    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), mut split, interned: _ } = prepared;
     // A program none of whose rules reads a document runs over none: its file-local rules make only constants (which
     // both parts derive: `file_local::constant_relations`), and the cross-file part reads no base relation but the
     // run's constants (an earlier phase's exports, the options). A later phase reading only an earlier one's exports
@@ -2690,6 +2697,12 @@ fn run_observed(
         Ok(out.into_iter().map(|o| o.expect("every file resolved")).collect())
     };
     // A file's document, built from its source.
+    // The matchers a chunk runs (decision 0106), and whether its documents keep their tapes for them.
+    let chunk_matchers = matchers::compiled(&matchers, &prog.policies).map_err(Error::Plan)?;
+    let keep_tapes = !chunk_matchers.is_empty();
+    if keep_tapes {
+        crate::code_rule_dsl::logic::profile::decision("ast matchers (decision 0106)", || format!("{} matchers run by the transducer over each chunk's tapes", chunk_matchers.len()));
+    }
     let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, source: String, mut source_id: Option<memo::Content>| -> Result<(Option<memo::Content>, syntax::Document)> {
         let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
         // Its own work: the file's input made from its source (the build's parts charge their own).
@@ -2698,21 +2711,26 @@ fn run_observed(
         if crate::code_rule_dsl::language::label_of_path(path).is_none() {
             let facts = Arc::new(core::text_only(Arc::new(source)));
             let digest = core::digest(&facts);
-            return Ok((source_id, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module }));
+            return Ok((source_id, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape: None }));
         }
         let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
         let built = match &tapes {
             // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
             // tape and source frames are not linked.
             // A source collected since it was read is stored again with its tape (O95), under the id it has now.
-            Some(cache) if cfg!(feature = "tape-cache") => core::build_cached_source(&file, cache, source_id.and_then(memo::Content::stored)).map(|(built, id)| {
+            Some(cache) if cfg!(feature = "tape-cache") => core::build_cached_with_tape(&file, cache, source_id.and_then(memo::Content::stored)).map(|(built, id, tape)| {
                 if let Some(memo::Content::Stored(_)) = source_id {
                     source_id = id.map(memo::Content::Stored);
                 }
-                built
+                (built, tape)
             }),
             Some(_) => unreachable!("no tape cache without `tape-cache`"),
-            None => core::build(&file),
+            None => core::build_with_tape(&file),
+        };
+        // The tape is kept beside the facts only where the program runs matchers over it (decision 0106).
+        let (built, tape) = match built {
+            Ok((built, tape)) => (Ok(built), tape.filter(|_| keep_tapes)),
+            Err(e) => (Err(e), None),
         };
         let facts = match built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
             Built::Facts(f) => Arc::new(f),
@@ -2721,7 +2739,7 @@ fn run_observed(
         let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
         let digest = core::digest(&facts);
         drop(digest_span);
-        Ok((source_id, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module }))
+        Ok((source_id, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape }))
     };
     // Files resolved a window at a time (`resolve`), so a window's sources are all the builder holds unparsed: one
     // window at a time, in order, each a job of its own, and each file's tree and facts then built as a job.
@@ -2746,7 +2764,7 @@ fn run_observed(
         let from = thread_usage();
         let built = {
             let _batch = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
-            syntax::with_nearest(&store, docs, &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))
+            syntax::with_matchers(&store, docs, &sets, &chunk_matchers, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))
         };
         let now = thread_usage();
         (built, (now.0 - from.0, now.1 - from.1))
@@ -3307,7 +3325,7 @@ fn run_observed(
                     }
                     docs.extend(new);
                     let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
-                    sources = syntax::with_nearest(&store, docs.clone(), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
+                    sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
                 }
                 host_of = std::mem::take(&mut made.host_of);
                 askers = made.askers();

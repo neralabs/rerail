@@ -103,7 +103,7 @@ mod scm;
 #[path = "packed/compile/matcher.rs"]
 #[cfg_attr(not(test), allow(dead_code))]
 mod compile_matcher;
-pub(in crate::code_rule_dsl) use compile_matcher::{LoweredMatcher, LoweredWave};
+pub(in crate::code_rule_dsl) use compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave};
 // Label programs as node-set formulas (decision 0036).
 #[path = "packed/compile/sets.rs"]
 mod compile_sets;
