@@ -184,8 +184,14 @@ second edits:
 The findings are identical to the base binary's on cold, edit 1 and edit 2. A cold run of the base binary on the
 edited corpus (fresh cache) gives the same set of findings except for 12 B007 rows in the edited file: "loop control
 variable not used" on `x_edit1 = 1` and `x_edit2 = 1`, which are not loops, reported at lines 45 and 49 of a 13-line
-file. The base binary's own warm run does not report them either. So they come from the base's cold path on an edited
-file, not from the kept strata; they are open. The cold run's cross phase went from
+file. The base binary's own warm run does not report them either. They were not a cold-path fault but a wrong
+inlining, now fixed: when the inliner (decision 0097) replaced a read of `expr_name` by the rule
+`expr_name(n, n, x) :- ast_name(n, x)`, it equated the reader's terms through the definition's renaming. The reader's
+own variable `n` was renamed with it, so `n = n` became `t = t` and `n` was left free: `for_stored` then joined every
+stored name in the batch. The planner inlines `expr_name` only at scale. So a cold run over the whole corpus reported
+B007 at 2,668 nodes, each with the batch's loop names (15,289 rows; Ruff's fixture findings are 82). An edit run's
+one-file chunk is small, so it planned without the inlining and was right for the edited file. Every other file came
+from the memo with the cold run's wrong rows. The kept strata were never involved. The cold run's cross phase went from
 25.0 s to 28.3 s. That is the first write of every relation's rows, 2.6 M rows. It is within the noise at this
 load.
 

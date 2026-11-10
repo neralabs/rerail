@@ -128,6 +128,10 @@ memory.
   inlining makes at most 8 reader copies. A positive read becomes one reader copy per rule. A negated read is
   unfolded only into a negation of plain literals: a single atom whose own variables appear once (`!b(t, _)`), or
   literals over the head's variables alone (their disjunction, one copy per literal). Anything else stays stored.
+  A head that names a variable twice, or has a non-variable term, adds an equality to the copy. Only the head's side
+  of that equality is renamed apart; the read's side is the reader's own terms. Renaming both sides once turned
+  `expr_name(t, n, x)`, read against `expr_name(n, n, x)`, into `t = t`, which left `n` free. B007 then reported
+  15,289 rows on the fixtures instead of 82. The fix is tested by `a_head_variable_named_twice_equates_the_readers_terms`.
   Every choice is a profile line under "inline or store (decision 0097)", with the numbers.
   `RERAIL_INLINE=off` stores everything. `RERAIL_INLINE_ONLY=r,…` inlines only those, for the lab.
 
