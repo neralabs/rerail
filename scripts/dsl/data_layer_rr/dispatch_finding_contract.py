@@ -68,7 +68,7 @@ def main():
                 expected=oracle['expected'];rows.append(dict(input=c,expected=expected,actual=actual,passed=actual==expected))
         finally:sys.setprofile(None)
         compare(len(executions),1);native=executions[0]
-    files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['replay.py','migration.py','dispatch_port.py']]]
+    files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['replay.py','migration.py','dispatch_port.py','dispatch_reporter_port.py','python_value_transport.py','fact_transport.py']]]
     report=dict(format='rerail.dispatch-finding-contract/v1',sourcePin=PIN,sourceSha256=sha(path.read_bytes()),oracle=a.command=='source',
         mode=a.mode,admitted=False,cases=rows,passed=all(r.get('passed',True) for r in rows) and not fallbacks,
         semanticFallbacks=fallbacks,harnessFiles={f.relative_to(ROOT).as_posix():sha(f.read_bytes()) for f in files},native=native)

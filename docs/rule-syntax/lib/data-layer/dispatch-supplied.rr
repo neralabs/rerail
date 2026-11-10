@@ -1,0 +1,110 @@
+// Supplied facts retain case, bundle, row and field positions through coercion.
+.decl dss_case(c: number,root: symbol)
+.input dss_case(IO=json,filename="dispatch-facts.json",path="/cases/*/root",projection="python-str")
+.decl dss_bundle(c: number,b: number,path: symbol)
+.input dss_bundle(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/path",projection="python-str")
+// The generator emits literal namespace and field selectors from the pinned
+// extractor. They share one decoded document and skip unrelated fact families.
+.decl dss_container(c: number,b: number,kind: symbol)
+.decl dss_shape(c: number,b: number,r: number,kind: symbol)
+.decl dss_member(c: number,b: number,r: number,f: number,key: symbol)
+.decl dss_value(c: number,b: number,r: number,f: number,value: symbol)
+.decl dss_conversion(c: number,b: number,r: number,f: number,value: symbol,error_type: symbol,detail: symbol)
+.decl dss_column_code(c: number,b: number,r: number,value: symbol)
+dss_member(c,b,r,0,"code") :- dss_column_code(c,b,r,v).
+dss_value(c,b,r,0,v) :- dss_column_code(c,b,r,v).
+.decl dss_column_scope(c: number,b: number,r: number,value: symbol)
+dss_member(c,b,r,1,"scope") :- dss_column_scope(c,b,r,v).
+dss_value(c,b,r,1,v) :- dss_column_scope(c,b,r,v).
+.decl dss_column_expression(c: number,b: number,r: number,value: symbol)
+dss_member(c,b,r,2,"expression") :- dss_column_expression(c,b,r,v).
+dss_value(c,b,r,2,v) :- dss_column_expression(c,b,r,v).
+.decl dss_column_message(c: number,b: number,r: number,value: symbol)
+dss_member(c,b,r,3,"message") :- dss_column_message(c,b,r,v).
+dss_value(c,b,r,3,v) :- dss_column_message(c,b,r,v).
+.decl dss_column_line(c: number,b: number,r: number,value: symbol,error_type: symbol,detail: symbol)
+dss_member(c,b,r,4,"line") :- dss_column_line(c,b,r,v,t,m).
+dss_conversion(c,b,r,4,v,t,m) :- dss_column_line(c,b,r,v,t,m).
+.decl dss_column_occurrence(c: number,b: number,r: number,value: symbol,error_type: symbol,detail: symbol)
+dss_member(c,b,r,5,"occurrence") :- dss_column_occurrence(c,b,r,v,t,m).
+dss_conversion(c,b,r,5,v,t,m) :- dss_column_occurrence(c,b,r,v,t,m).
+.decl dss_inventory(c: number,text: symbol)
+.input dss_inventory(IO=json,filename="dispatch-facts.json",path="/cases/*/inventory",projection="python-str")
+.decl dss_signature_input(c: number,value: symbol)
+.input dss_signature_input(IO=json,filename="dispatch-facts.json",path="/cases/*/signature",projection="python-str")
+.decl dss_active(c: number,root: symbol)
+dss_active(c,r) :- option("entryPoint",e),(e="_dispatch_report_facts";e="_dispatch_findings"),dss_case(c,r).
+.decl dss_relative(c: number,b: number,path: symbol)
+dss_relative(c,b,p) :- dss_active(c,_),dss_bundle(c,b,p),!prefix("/",p).
+dss_relative(c,b,".") :- dss_active(c,p),dss_bundle(c,b,p),prefix("/",p).
+dss_relative(c,b,@slice(p,strlen(root)+1,strlen(p))) :- dss_active(c,root),dss_bundle(c,b,p),prefix("/",p),root!="/",root!="//",prefix(cat(root,"/"),p).
+dss_relative(c,b,@slice(p,1,strlen(p))) :- dss_active(c,"/"),dss_bundle(c,b,p),p!="/",prefix("/",p),!prefix("//",p).
+dss_relative(c,b,@slice(p,2,strlen(p))) :- dss_active(c,"//"),dss_bundle(c,b,p),p!="//",prefix("//",p).
+.decl dss_row(c: number,b: number,r: number)
+dss_row(c,b,r) :- dss_relative(c,b,p),!sd_late(p),dss_container(c,b,"array"),dss_shape(c,b,r,"object").
+.decl dss_string_key(k: symbol)
+dss_string_key("code"). dss_string_key("scope"). dss_string_key("expression"). dss_string_key("message").
+.decl dss_field(c: number,b: number,r: number,key: symbol,value: symbol)
+dss_field(c,b,r,k,v) :- dss_row(c,b,r),dss_string_key(k),dss_member(c,b,r,f,k),dss_value(c,b,r,f,v).
+dss_field(c,b,r,k,"None") :- dss_row(c,b,r),dss_string_key(k),!dss_member(c,b,r,_,k).
+.decl dss_integer_key(k: symbol,order: number)
+dss_integer_key("line",0). dss_integer_key("occurrence",1).
+.decl dss_integer(c: number,b: number,r: number,key: symbol,value: symbol,error_type: symbol,detail: symbol)
+dss_integer(c,b,r,k,v,t,m) :- dss_row(c,b,r),dss_integer_key(k,_),dss_member(c,b,r,f,k),dss_conversion(c,b,r,f,v,t,m).
+dss_integer(c,b,r,k,"1","","") :- dss_row(c,b,r),dss_integer_key(k,_),!dss_member(c,b,r,_,k).
+.decl dss_error_candidate(c: number,b: number,r: number,f: number,error_type: symbol,detail: symbol)
+dss_error_candidate(c,b,-1,-1,"ValueError",cat(@python_repr(p)," is not in the subpath of ",@python_repr(root))) :- dss_active(c,root),dss_bundle(c,b,p),!dss_relative(c,b,_).
+dss_error_candidate(c,b,r,i,t,m) :- dss_integer(c,b,r,k,_,t,m),t!="",dss_integer_key(k,i).
+.decl dss_prior_error(c: number,b: number,r: number,f: number)
+dss_prior_error(c,b,r,f) :- dss_error_candidate(c,b,r,f,_,_),dss_error_candidate(c,b2,r2,f2,_,_),
+    (b2<b;b2=b,r2<r;b2=b,r2=r,f2<f).
+.decl dss_error(c: number,error_type: symbol,detail: symbol)
+dss_error(c,t,m) :- dss_error_candidate(c,b,r,f,t,m),!dss_prior_error(c,b,r,f).
+.decl dss_success(c: number)
+dss_success(c) :- dss_active(c,_),!dss_error(c,_,_).
+.decl dss_fact(c: number,b: number,r: number,path: symbol,line: symbol,code: symbol,scope: symbol,expression: symbol,message: symbol,occurrence: symbol)
+dss_fact(c,b,r,p,l,code,s,e,m,o) :- dss_row(c,b,r),dss_success(c),dss_relative(c,b,p),
+    dss_integer(c,b,r,"line",l,"",_),dss_integer(c,b,r,"occurrence",o,"",_),
+    dss_field(c,b,r,"code",code),dss_field(c,b,r,"scope",s),dss_field(c,b,r,"expression",e),dss_field(c,b,r,"message",m).
+// Canonical integer text sorts without narrowing Python's unbounded lines.
+.decl dss_flip(digit: symbol,opposite: symbol)
+dss_flip("0","9"). dss_flip("1","8"). dss_flip("2","7"). dss_flip("3","6"). dss_flip("4","5").
+dss_flip("5","4"). dss_flip("6","3"). dss_flip("7","2"). dss_flip("8","1"). dss_flip("9","0").
+.decl dss_line(value: symbol)
+dss_line(l) :- dss_fact(_,_,_,_,l,_,_,_,_,_).
+.decl dss_negative_digit(value: symbol,ordinal: number,opposite: symbol)
+dss_negative_digit(v,i,o) :- dss_line(v),prefix("-",v),match_all("(?<digit>[0-9])",v,i,_,_),dss_flip(digit,o).
+.decl dss_line_key(value: symbol,sign: number,length: number,digits: symbol)
+dss_line_key(v,1,strlen(v),v) :- dss_line(v),!prefix("-",v).
+dss_line_key(v,0,-strlen(v),digits) :- dss_line(v),prefix("-",v),digits=join d by i sep "" : { dss_negative_digit(v,i,d) }.
+.decl dss_full(c: number,path: symbol,file: symbol)
+dss_full(c,".",root) :- dss_active(c,root).
+dss_full(c,p,p) :- dss_active(c,"."),dss_relative(c,_,p),p!=".".
+dss_full(c,p,cat(root,p)) :- dss_active(c,root),(root="/";root="//"),dss_relative(c,_,p),p!=".".
+dss_full(c,p,cat(root,"/",p)) :- dss_active(c,root),root!=".",root!="/",root!="//",dss_relative(c,_,p),p!=".".
+.decl dss_inventory_entry(c: number,ordinal: number,value: symbol)
+dss_inventory_entry(c,i,e) :- option("entryPoint","_dispatch_report_facts"),dss_success(c),dss_inventory(c,raw),match_all("(?<part>[^\\n\\r\\v\\f\\x{1c}-\\x{1e}\\x{85}\\x{2028}\\x{2029}]+)",raw,i,_,_),sd_whitespace(w),
+    e=@replace_all(part,cat("^",w,"|",w,"$"),""),e!="",!prefix("#",e).
+.decl dss_signature(c: number,value: symbol)
+dss_signature(c,s) :- option("entryPoint","_dispatch_report_facts"),dss_success(c),dss_signature_input(c,s).
+dss_signature(c,s) :- option("entryPoint","_dispatch_report_facts"),dss_success(c),!dss_signature_input(c,_),sdr_default_signature(s).
+allow_sig(cat("dispatch-supplied:",to_string(c)),"serverplan_dispatch_architecture",s) :- dss_signature(c,s),!dss_inventory_entry(c,_,_).
+.decl dss_inventory_error(c: number)
+dss_inventory_error(c) :- dss_inventory_entry(c,_,_).
+dss_inventory_error(c) :- dss_success(c),allow_status(cat("dispatch-supplied:",to_string(c)),s),s!="valid".
+.decl dss_stderr(c: number,text: symbol)
+dss_stderr(c,cat("FAIL: WARNING: Allowlist for serverplan_dispatch_architecture is ",label,". Sign with --sign-allowlist.\n")) :- dss_success(c),
+    allow_status(cat("dispatch-supplied:",to_string(c)),"unsigned"),dss_signature(c,s),(s="NEEDS_SIGNING",label="needs signing";s!="NEEDS_SIGNING",label="unsigned").
+dss_stderr(c,cat("FAIL: Allowlist signature verification failed for serverplan_dispatch_architecture: ",@ed25519_error(key,message,s),"\n")) :- dss_success(c),
+    allow_status(cat("dispatch-supplied:",to_string(c)),"invalid"),allow_message(cat("dispatch-supplied:",to_string(c)),message),dss_signature(c,s),nera_key(key).
+.violation DispatchSuppliedMeta(at: span,case_id: number,root: symbol) code "DS_META" "supplied dispatch case"
+DispatchSuppliedMeta(@place("",0),c,root) :- dss_active(c,_),workspace_root(root).
+.violation DispatchSuppliedError(at: span,case_id: number,error_type: symbol,detail: symbol) code "DS_ERROR" "supplied dispatch first error"
+DispatchSuppliedError(@place("",0),c,t,m) :- dss_error(c,t,m).
+.violation DispatchSuppliedFact(at: span,case_id: number,bundle: number,ordinal: number,phase: number,path: symbol,line_json: symbol,source_code: symbol,scope: symbol,expression: symbol,message: symbol,occurrence_json: symbol,sign: number,length: number,digits: symbol) code "DS_FACT" "supplied dispatch Finding"
+DispatchSuppliedFact(@place("",0),c,b,r,0,p,l,code,s,e,m,o,sign,n,d) :- dss_fact(c,b,r,p,l,code,s,e,m,o),dss_line_key(l,sign,n,d).
+.violation DispatchSuppliedReport(at: span,case_id: number,bundle: number,ordinal: number,phase: number,path: symbol,file: symbol,line_json: symbol,source_code: symbol,message: symbol,linter_name: symbol,severity: symbol,sign: number,length: number,digits: symbol) code "DS_REPORT" "supplied dispatch reporter result"
+DispatchSuppliedReport(@place("",0),c,b,r,0,p,full,l,code,cat(s,": ",m,": ",e),name,severity,sign,n,d) :- option("entryPoint","_dispatch_report_facts"),pp_config("name",name),pp_config("findingSeverity",severity),dss_fact(c,b,r,p,l,code,s,e,m,_),dss_line_key(l,sign,n,d),dss_full(c,p,full).
+DispatchSuppliedReport(@place("",0),c,0,0,1,"scripts/allowlists/lint_serverplan_dispatch_architecture.txt",cat(root,"/scripts/allowlists/lint_serverplan_dispatch_architecture.txt"),"1","SPD000","signed dispatch allowlist must remain empty",name,severity,1,1,"1") :- pp_config("name",name),pp_config("findingSeverity",severity),dss_inventory_error(c),workspace_root(root).
+.violation DispatchSuppliedOutput(at: span,case_id: number,channel: symbol,ordinal: number,text: symbol) code "DS_OUTPUT" "supplied dispatch output"
+DispatchSuppliedOutput(@place("",0),c,"stderr",0,text) :- dss_stderr(c,text).

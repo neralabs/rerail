@@ -93,7 +93,7 @@ def main():
     def guard(frame,event,_arg):
         if event=='call' and frame.f_code in original_codes and not original_codes[frame.f_code][2]:
             fallbacks.append(frame.f_code.co_qualname);raise AssertionError('Original semantics executed: '+frame.f_code.co_qualname)
-    files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['dispatch_port.py','migration.py','replay.py','dto.py']]]
+    files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['dispatch_port.py','dispatch_reporter_port.py','python_value_transport.py','fact_transport.py','migration.py','replay.py','dto.py']]]
     hashes={f.relative_to(ROOT).as_posix():sha(f.read_bytes()) for f in files}
     try:code=int(pytest.main(['--rootdir',str(source),'-c',str(source/'pyproject.toml'),'-q',str(source/test)],plugins=[plugin]))
     finally:

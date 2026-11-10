@@ -79,29 +79,34 @@ def main():
     path=source/'scripts/lint_serverplan_dispatch_architecture.py'
     compare(path.read_bytes(),subprocess.check_output(['git','-C',str(source),'show',PIN+':scripts/lint_serverplan_dispatch_architecture.py']))
     sys.path[:0]=[str(source),str(source/'scripts')];module=importlib.import_module('scripts.lint_serverplan_dispatch_architecture')
-    corpus=cases(module);rows=[];execution=None;fallbacks=[]
+    corpus=cases(module);rows=[];execution=None;finding_execution=None;fallbacks=[]
     if a.command=='source':rows=[dict(input=c,expected=source_case(module,c)) for c in corpus]
     else:
         baseline=read_json(a.baseline);compare(baseline['passed'],True);compare(baseline['sourcePin'],PIN);compare(baseline['sourceSha256'],sha(path.read_bytes()))
         compare(json.dumps([r['input'] for r in baseline['cases']],sort_keys=True),json.dumps(corpus,sort_keys=True))
-        from dispatch_reporter_port import execute_batch
+        from dispatch_reporter_port import execute_batch,execute_findings_batch
         from data_layer_audit.native_guard import codes
         original=codes({'serverplan_dispatch_architecture':module})
         def guard(frame,event,_arg):
             if event=='call' and frame.f_code in original and not original[frame.f_code][2]:
                 fallbacks.append(frame.f_code.co_qualname);raise AssertionError('Original semantics executed')
         sys.setprofile(guard)
-        try:actual,execution=execute_batch(a.engine.absolute(),module,corpus,a.mode)
+        try:
+            actual,execution=execute_batch(a.engine.absolute(),module,corpus,a.mode)
+            findings,finding_execution=execute_findings_batch(a.engine.absolute(),module,corpus,a.mode)
+            compare(len(findings),len(actual))
+            for row,value in zip(actual,findings):row['findings']=value
         except Exception as error:
+            execution=getattr(error,'execution',execution)
             actual=[dict(nativeFailure=dict(type=type(error).__name__,detail=str(error))) for _ in corpus]
         finally:sys.setprofile(None)
         compare(len(actual),len(corpus))
         for c,wanted,value in zip(corpus,baseline['cases'],actual):
             expected=wanted['expected'];rows.append(dict(input=c,expected=expected,actual=value,passed=json.dumps(value,sort_keys=True)==json.dumps(expected,sort_keys=True)))
     files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['migration.py','dto.py','replay.py']]]
-    if a.command=='native':files.append(Path(__file__).with_name('dispatch_reporter_port.py'))
+    if a.command=='native':files.extend(Path(__file__).with_name(n) for n in ['dispatch_reporter_port.py','dispatch_port.py','python_value_transport.py','fact_transport.py'])
     report=dict(format='rerail.dispatch-supplied-facts/v1',admitted=False,sourcePin=PIN,sourceSha256=sha(path.read_bytes()),
-        oracle=a.command=='source',mode=a.mode,cases=rows,execution=execution,semanticFallbacks=fallbacks,
+        oracle=a.command=='source',mode=a.mode,cases=rows,execution=execution,findingExecution=finding_execution,semanticFallbacks=fallbacks,
         harnessFiles={f.relative_to(ROOT).as_posix():sha(f.read_bytes()) for f in files},passed=all(r.get('passed',True) for r in rows) and not fallbacks)
     if a.command=='native':report.update(engineSha256=sha(a.engine.read_bytes()),baselineSha256=sha(a.baseline.read_bytes()))
     write_json(a.out,report);print(dict(cases=len(rows),passed=report['passed']));raise SystemExit(0 if report['passed'] else 1)

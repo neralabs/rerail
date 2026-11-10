@@ -45,6 +45,8 @@ def install(backend,module,detectors=False):
         rows=backend.native(CHECK,'unapproved_findings',[],dict(dispatchInventory=[inventory(f) for f in findings],dispatchApproved=sorted(approved_entries)))
         if any(r['code']!='DISPATCH_UNAPPROVED' for r in rows):raise AssertionError('Unexpected dispatch inventory response')
         return tuple(findings[r['parameters']['ordinal']] for r in sorted(rows,key=lambda r:r['parameters']['ordinal']))
+    from dispatch_reporter_port import findings_for_view
+    backend.replace(module,'_findings',lambda view:findings_for_view(backend,module,view))
     backend.replace(module,'scan_source',scan_source)
     backend.replace(module.Finding,'inventory_entry',property(inventory))
     backend.replace(module.Finding,'render',render)

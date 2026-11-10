@@ -79,6 +79,15 @@ sd_whitespace("[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x
 #include "data-layer/dispatch-source.rr"
 #include "data-layer/dispatch-repository.rr"
 #include "data-layer/dispatch-finding.rr"
+#include "data-layer/dispatch-supplied.rr"
+.input dss_container(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/kind",projection="python-str")
+.input dss_shape(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/kind",projection="python-str")
+.input dss_column_code(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/fields/code",projection="python-value-str")
+.input dss_column_scope(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/fields/scope",projection="python-value-str")
+.input dss_column_expression(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/fields/expression",projection="python-value-str")
+.input dss_column_message(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/fields/message",projection="python-value-str")
+.input dss_column_line(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/fields/line",projection="python-value-int")
+.input dss_column_occurrence(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/fields/occurrence",projection="python-value-int")
 pp_config("name","serverplan_dispatch_architecture").
 pp_config("enforcement","hard-fail").
 pp_config("description","Backend and concrete-step dispatch zero gate").
