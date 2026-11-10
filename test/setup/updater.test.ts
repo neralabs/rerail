@@ -439,7 +439,8 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(await readlink(updater.currentLink)).toBe(installed.current.packageRoot);
     const shim = await readFile(updater.launcherPath, "utf8");
     expect(shim).toBe(launcherShim(updater.currentLink, pinnedNodePath()));
-    // The sh launcher; on Windows the launcher is `rerail.cmd`, whose form the Windows junction test below checks.
+    // The sh launcher's form. On Windows the launcher is the `rerail.cmd` batch file, whose form the managed launcher
+    // shim tests check.
     if (process.platform !== "win32") {
       expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
       expect(shim).toContain(`'${join(updater.currentLink, "dist", "cli", "cli.js")}'`);
