@@ -387,7 +387,8 @@ impl Eval<'_> {
 }
 
 /// A rule in the evaluator's form, `None` (with why) when it uses what the spike does not evaluate.
-fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>) -> Result<Rule, String> {
+/// `fanout(rel, mask)`: the rows a probe of `rel` by the columns in `mask` finds on average (all of them for 0).
+fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>, fanout: &dyn Fn(usize, u64) -> f64) -> Result<Rule, String> {
     let mut names: BTreeMap<String, usize> = BTreeMap::new();
     let slot = |v: &str, names: &mut BTreeMap<String, usize>| {
         let n = names.len();
@@ -525,18 +526,19 @@ fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>) -> Result
                 steps.push(Step::Assign { slot, from });
                 continue;
             }
-            // A column bound to a slot (a join key) is worth more than one bound to a constant (`pv($o, 221, $k)`
-            // with `$o` free is most of `pv`); ties go to the earlier literal.
+            // The positive atom whose probe finds fewest rows, by the relation's measured rows per key (bound
+            // columns alone mislead: `pv($a, $k, $v)` by `$k, $v` finds hundreds, `cfn($c, _, $f)` by `$c` one);
+            // ties go to the earlier literal.
             let best = left
                 .iter()
                 .enumerate()
                 .filter(|(_, i)| matches!(&lits[**i], Lit::Atom { neg: false, .. }))
-                .max_by_key(|(p, i)| {
-                    let Lit::Atom { args, .. } = &lits[**i] else { unreachable!() };
-                    let slots = args.iter().filter(|a| matches!(a, Arg::Slot(s) if bound.contains(s))).count();
-                    let consts = args.iter().filter(|a| matches!(a, Arg::Const(_))).count();
-                    (slots, consts, std::cmp::Reverse(*p))
+                .map(|(p, i)| {
+                    let Lit::Atom { rel, args, .. } = &lits[*i] else { unreachable!() };
+                    let mask = args.iter().enumerate().filter(|(_, a)| matches!(a, Arg::Const(_)) || matches!(a, Arg::Slot(s) if bound.contains(s))).fold(0u64, |m, (c, _)| m | 1 << c);
+                    (p, fanout(*rel, mask))
                 })
+                .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
                 .map(|(p, _)| p)
                 .ok_or_else(|| format!("no literal can be placed in {}", rule))?;
             let i = left.remove(best);
@@ -1123,12 +1125,28 @@ impl Component<'_> {
                 let lv_ref = &lv;
                 let vis = |_: usize, r2: usize, i2: u32| if is_scc[r2] { st_ref[r2].get(i2 as usize).is_some_and(|s| s & P != 0) } else { stores[r2].io[i2 as usize] & NEW != 0 };
                 for r in (0..self.ev.rules.len()).filter(|r| self.ev.rules[*r].head_rel == rel) {
+                    let mut all: Vec<Vec<(usize, u32)>> = Vec::new();
                     self.ev.fire(r, Seed::Head(&row), &vis, &mut |_, p| {
-                        let l = p.iter().filter(|(r2, _)| is_scc[*r2]).map(|&(r2, i2)| lv_ref[r2][i2 as usize] + 1).max().unwrap_or(0);
-                        let new_input = p.iter().any(|&(r2, i2)| !is_scc[r2] && stores[r2].io[i2 as usize] & OLD == 0);
-                        found.push((l, new_input));
+                        all.push(p.to_vec());
                         true
                     });
+                    // The derivations whose negations held before too: an input row gone that matches a negation
+                    // makes the derivation new, counted by the insertion from that row.
+                    let negs: Vec<bool> = self.ev.rules[r].lits.iter().map(|l| matches!(l, Lit::Atom { neg: true, .. })).collect();
+                    let strict = |j: usize, r2: usize, i2: u32| {
+                        let io = stores[r2].io[i2 as usize];
+                        vis(j, r2, i2) || (negs[j] && !is_scc[r2] && io & OLD != 0)
+                    };
+                    let mut held: Vec<Vec<(usize, u32)>> = Vec::new();
+                    self.ev.fire(r, Seed::Head(&row), &strict, &mut |_, p| {
+                        held.push(p.to_vec());
+                        true
+                    });
+                    for p in all {
+                        let l = p.iter().filter(|(r2, _)| is_scc[*r2]).map(|&(r2, i2)| lv_ref[r2][i2 as usize] + 1).max().unwrap_or(0);
+                        let new_input = p.iter().any(|&(r2, i2)| !is_scc[r2] && stores[r2].io[i2 as usize] & OLD == 0) || !held.contains(&p);
+                        found.push((l, new_input));
+                    }
                 }
             }
             if let Some(l) = found.iter().map(|(l, _)| *l).min() {
@@ -1219,6 +1237,20 @@ impl Component<'_> {
                             lv[rel][id as usize],
                             cnt[rel][id as usize]
                         );
+                    }
+                    if wrong_counts < 2 {
+                        let row = self.ev.stores[rel].row(id).to_vec();
+                        let old_st = self.old_state();
+                        for (what, io, s2) in [("new", NEW, &st), ("old", OLD, &old_st)] {
+                            let vis = |_: usize, r: usize, i: u32| if is_scc[r] { s2[r].get(i as usize).is_some_and(|s| s & P != 0) } else { stores[r].io[i as usize] & io != 0 };
+                            for r in (0..self.ev.rules.len()).filter(|r| self.ev.rules[*r].head_rel == rel) {
+                                self.ev.fire(r, Seed::Head(&row), &vis, &mut |_, p| {
+                                    let prem: Vec<String> = p.iter().map(|&(pr, pi)| format!("{}{:?} io {}", self.ev.names[pr], self.ev.stores[pr].row(pi), stores[pr].io[pi as usize])).collect();
+                                    eprintln!("recursive spike:       {what}: {} from {prem:?}", self.ev.rules[r].text);
+                                    true
+                                });
+                            }
+                        }
                     }
                     wrong_counts += 1;
                 }
@@ -1474,7 +1506,21 @@ pub(in crate::code_rule_dsl) fn run(
             continue;
         }
         let rel_of = |r: &str| index.get(r).copied();
-        let compiled: Result<Vec<Rule>, String> = rules.iter().map(|r| compile(r, &rel_of)).collect();
+        // Rows per key, measured on the rows loaded (old and new), by (relation, mask).
+        let fan_cache: std::cell::RefCell<FxHashMap<(usize, u64), f64>> = Default::default();
+        let fanout = |rel: usize, mask: u64| -> f64 {
+            *fan_cache.borrow_mut().entry((rel, mask)).or_insert_with(|| {
+                let st = &stores[rel];
+                let n = st.len() as f64;
+                if mask == 0 || n == 0.0 {
+                    return n;
+                }
+                let cols: Vec<usize> = (0..st.width).filter(|c| mask >> c & 1 == 1).collect();
+                let keys: rustc_hash::FxHashSet<Vec<i64>> = (0..st.len()).map(|id| cols.iter().map(|&c| st.row(id)[c]).collect()).collect();
+                n / keys.len() as f64
+            })
+        };
+        let compiled: Result<Vec<Rule>, String> = rules.iter().map(|r| compile(r, &rel_of, &fanout)).collect();
         let compiled = match compiled {
             Ok(c) => c,
             Err(why) => {
