@@ -38,6 +38,8 @@
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
 mod scalars;
 mod liveness;
+/// The index-cost spike: column orders as sorted runs of row ids (`RERAIL_INDEX_SPIKE`).
+mod ordered;
 pub(in crate::code_rule_dsl) mod rowcode;
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rusqlite::ffi;
@@ -184,6 +186,36 @@ fn hash_vals(vals: impl Iterator<Item = i64>) -> u64 {
 }
 
 const NIL: u32 = u32::MAX;
+
+/// `RERAIL_INDEX_REPORT` (the index-cost spike): every probe of a relation, by its name and the key columns it binds
+/// (`+delta` for a probe of the delta alone), and the planner's reads of its per-column indexes (`[stats]`,
+/// `[postings]`, `[lead]`). Measurement only: nothing reads it but the report.
+pub(crate) mod probed {
+    use std::collections::HashMap;
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static PROBES: std::sync::Mutex<Option<HashMap<(String, Vec<usize>), u64>>> = std::sync::Mutex::new(None);
+    #[inline]
+    pub(crate) fn on() -> bool {
+        *ON.get_or_init(|| std::env::var_os("RERAIL_INDEX_REPORT").is_some())
+    }
+    #[inline]
+    pub(crate) fn note(rel: &str, cols: impl Iterator<Item = usize>) {
+        if on() {
+            add(rel, cols.collect());
+        }
+    }
+    #[cold]
+    fn add(rel: &str, mut cols: Vec<usize>) {
+        cols.sort_unstable();
+        cols.dedup();
+        let mut p = PROBES.lock().unwrap_or_else(|e| e.into_inner());
+        *p.get_or_insert_with(HashMap::new).entry((rel.to_owned(), cols)).or_insert(0) += 1;
+    }
+    /// The probes since the last `take`.
+    pub(crate) fn take() -> HashMap<(String, Vec<usize>), u64> {
+        PROBES.lock().unwrap_or_else(|e| e.into_inner()).take().unwrap_or_default()
+    }
+}
 
 /// Whether row `id` is dead in bitset `dead` (a relation started from a kept one, its deleted rows marked, not
 /// removed: decision 0090 step 4). Empty: none is.
@@ -1314,6 +1346,7 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
     let store = comp.store.read().unwrap();
     let syms = store.syms.read().unwrap();
     Ok(store.rels.iter().map(|r| {
+        probed::note(&format!("{} [stats]", r.table), std::iter::empty());
         let cols = &r.idx[..r.k];
         let mut line = std::iter::once(r.n).chain(cols.iter().map(|ix| ix.table.len()))
             .chain(cols.iter().map(|ix| ix.table.iter().map(|p| p.len as usize * p.len as usize).sum::<usize>()))
@@ -1476,6 +1509,7 @@ pub fn live(conn: &Connection, name: &str) -> Result<Vec<Live>> {
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
     Ok(store.rels.iter().map(|r| {
+        probed::note(&format!("{} [stats]", r.table), std::iter::empty());
         let cols = &r.idx[..r.k];
         let freq = cols.iter().enumerate().filter(|(_, ix)| ix.table.len() <= FREQ_NDV)
             .map(|(c, ix)| (c, ix.table.iter().map(|p| (r.row(p.head as usize)[c], i64::from(p.len))).collect())).collect();
@@ -1616,6 +1650,7 @@ unsafe impl VTabCursor for RelCursor {
             arg += 1;
             match key { Some(k) => keys.push((col, k)), None => return Ok(()) }
         }
+        if probed::on() && !keys.is_empty() { probed::note(&format!("{}{}", r.table, if self.delta { "+delta" } else { "" }), keys.iter().map(|&(c, _)| c)); }
         let Some((cands, _)) = keys.iter().map(|&(c, k)| r.postings(c, &[k], self.delta)).min_by_key(|&(_, n)| n) else { return Ok(()) };
         let ids = &mut self.ids;
         cands.any(|id| { if !r.dead(id) && keys.iter().all(|&(c, k)| r.row(id as usize)[c] == k) { ids.push(id) } false });
@@ -2003,6 +2038,291 @@ impl InRel {
     }
     /// What it holds in memory, by part: its values, its rows' levels, and its dedup set, dead bits and hash
     /// indexes (each by capacity, the bytes allocated).
+    /// The index-cost spike (`RERAIL_INDEX_SPIKE`): its probed key-column sets `shapes` answered by column orders
+    /// (`ordered`) and by today's per-column chains, timed on keys of its own rows (every `stride`th), with the
+    /// counts checked equal; and its dedup test by the set and by the order holding every column. A line, and the
+    /// orders' bytes; `None` for a view.
+    /// The index-cost spike's growth (`RERAIL_INDEX_GROW`): the relation's rows again, wave by wave (by the level each
+    /// row was pushed at; 4096 rows a wave without levels), with as many duplicates offered as its derivations had
+    /// (`RERAIL_SPIKE_DERIVATIONS`), into today's dedup set and chains (`Rel::push`, the engine's own) and into the
+    /// mixed shape grown (`Growing` for the whole row and `hot`, `Runs` for the `orders`, each wave's run its delta).
+    fn grow_spike(&self, name: &str, hot: &[Vec<usize>], orders: Vec<Vec<usize>>) -> String {
+        let (k, n, rows) = (self.k, self.n, &self.rows);
+        // Waves: runs of one level, or of 4096 rows.
+        let mut waves: Vec<(usize, usize)> = Vec::new();
+        let mut lo = 0;
+        for id in 1..=n {
+            let cut = id == n || if self.level.len() == n { self.level[id] != self.level[lo] } else { id - lo >= 4096 };
+            if cut {
+                waves.push((lo, id));
+                lo = id;
+            }
+        }
+        // Duplicates offered: (derived - new) / new of the relation's derivations, spread evenly, each a row of an
+        // earlier wave.
+        let dup = DERIVATIONS.lock().unwrap().get(name).map_or(0.0, |&(d, nw)| if nw > 0 { d.saturating_sub(nw) as f64 / nw as f64 } else { 0.0 });
+        let mut offers: Vec<Vec<u32>> = Vec::with_capacity(waves.len());
+        let mut owed = 0.0f64;
+        let mut seed = 0x9e37_79b9u64;
+        for &(lo, hi) in &waves {
+            let mut o: Vec<u32> = (lo as u32..hi as u32).collect();
+            owed += dup * (hi - lo) as f64;
+            while owed >= 1.0 && hi > 0 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                o.push(((seed >> 33) % hi as u64) as u32);
+                owed -= 1.0;
+            }
+            offers.push(o);
+        }
+        let offered: usize = offers.iter().map(Vec::len).sum();
+        // Today: a fresh relation with the kept one's composite chains, the engine's own push.
+        let t = Instant::now();
+        let mut now = Rel::new(name, &self.types);
+        now.leveled = false;
+        for ix in &self.chains {
+            if ix.cols.len() > 1 { now.add_multi(&ix.cols); }
+        }
+        let mut held_now = 0usize;
+        for o in &offers {
+            let lo = now.n;
+            now.reserve(o.len());
+            for &id in o {
+                held_now += usize::from(now.push(&rows[id as usize * k..][..k]));
+            }
+            let hi = now.n;
+            now.set_delta(lo, hi);
+        }
+        let now_ms = t.elapsed().as_secs_f64() * 1e3;
+        let now_bytes = now.set.capacity() * 5 + now.idx.iter().map(|ix| ix.next.capacity() * 4 + ix.table.capacity() * (std::mem::size_of::<Post>() + 1)).sum::<usize>();
+        drop(now);
+        // The mixed shape. Ids are the kept relation's: a duplicate offer is an earlier row's id again.
+        let id_bits = 32 - (n as u32 + 1).leading_zeros();
+        let t = Instant::now();
+        let mut set = ordered::Growing::new((0..k).collect(), id_bits);
+        let mut placed: Vec<ordered::Growing> = hot.iter().map(|c| ordered::Growing::new(c.clone(), id_bits)).collect();
+        let mut runs: Vec<ordered::Runs> = orders.into_iter().map(ordered::Runs::new).collect();
+        let mut held_new = 0usize;
+        let (mut t_set, mut t_placed, mut t_runs) = (0.0f64, 0.0f64, 0.0f64);
+        let mut seen = vec![0u64; n.div_ceil(64)];
+        for o in &offers {
+            let t0 = Instant::now();
+            // The wave's rows by hash, so the inserts walk the table forward.
+            let mut hs: Vec<(u64, u32)> = o.iter().map(|&id| (ordered::key_hash(rows[id as usize * k..][..k].iter().copied()), id)).collect();
+            hs.sort_unstable();
+            set.reserve(rows, k, hs.len());
+            let mut fresh: Vec<u32> = Vec::with_capacity(hs.len());
+            for &(h, id) in &hs {
+                // A duplicate offer names an earlier row; its own id was placed then.
+                let first = seen[id as usize / 64] & (1 << (id % 64)) == 0;
+                if first && set.insert(rows, k, id, h, true) {
+                    seen[id as usize / 64] |= 1 << (id % 64);
+                    fresh.push(id);
+                } else if !first {
+                    // Probe only: found, so not inserted (`insert` returns false before placing a duplicate).
+                    std::hint::black_box(set.insert_probe(rows, k, id, h));
+                }
+            }
+            held_new += fresh.len();
+            let t1 = Instant::now();
+            for p in &mut placed {
+                let mut hs: Vec<(u64, u32)> = fresh.iter().map(|&id| (ordered::key_hash(p.cols.iter().map(|&c| rows[id as usize * k + c])), id)).collect();
+                hs.sort_unstable();
+                p.reserve(rows, k, hs.len());
+                for &(h, id) in &hs {
+                    p.insert(rows, k, id, h, false);
+                }
+            }
+            let t2 = Instant::now();
+            for r in &mut runs {
+                r.add_wave(rows, k, fresh.clone());
+            }
+            t_runs += t2.elapsed().as_secs_f64();
+            t_placed += (t2 - t1).as_secs_f64();
+            t_set += (t1 - t0).as_secs_f64();
+        }
+        let new_ms = t.elapsed().as_secs_f64() * 1e3;
+        let new_bytes = set.bytes() + placed.iter().map(ordered::Growing::bytes).sum::<usize>() + runs.iter().map(ordered::Runs::bytes).sum::<usize>();
+        GROWN.with(|g| { let mut g = g.borrow_mut(); g.0 += now_ms; g.1 += new_ms; g.2 += offered; g.3 += held_now; g.4 += now_bytes; g.5 += new_bytes; g.6 += t_set * 1e3; g.7 += t_placed * 1e3; g.8 += t_runs * 1e3; });
+        format!(
+            "grown over {} waves, {offered} offers ({dup:.2} duplicates a row): today {now_ms:.1} ms {:.1} B/row ({held_now} held), mixed {new_ms:.1} ms = set {:.1} + {} placed {:.1} + {} orders {:.1} ms, {:.1} B/row ({held_new} held; set grew {}x, runs {:?})",
+            waves.len(),
+            now_bytes as f64 / held_now.max(1) as f64,
+            t_set * 1e3,
+            placed.len(),
+            t_placed * 1e3,
+            runs.len(),
+            t_runs * 1e3,
+            new_bytes as f64 / held_new.max(1) as f64,
+            set.grew,
+            runs.iter().map(|r| r.runs.len()).collect::<Vec<_>>()
+        )
+    }
+    /// The spike's growth totals since the last take: today's ms, the mixed ms, offers, rows held, today's bytes, the
+    /// mixed bytes, and the mixed ms by part (set, placed, orders).
+    pub fn index_spike_grown() -> (f64, f64, usize, usize, usize, usize, f64, f64, f64) {
+        GROWN.with(|g| std::mem::take(&mut *g.borrow_mut()))
+    }
+    /// The spike's mixed shape's bytes and probe-weighted ns, summed over the relations measured since the last take.
+    pub fn index_spike_mixed() -> (usize, f64) {
+        MIXED.with(|m| std::mem::take(&mut *m.borrow_mut()))
+    }
+    pub fn index_spike(&self, name: &str, shapes: &[Vec<usize>], counts: &[u64]) -> Option<(String, usize, usize, usize, f64, f64, f64)> {
+        if self.view.is_some() || self.k == 0 || self.n == 0 {
+            return None;
+        }
+        let (k, n, rows) = (self.k, self.n, &self.rows);
+        let t = Instant::now();
+        let cover = ordered::cover(shapes, k);
+        let orders: Vec<ordered::Ordered> = cover.iter().map(|o| ordered::Ordered::build(rows, k, n, |id| is_dead(&self.dead, id), o.clone(), false)).collect();
+        let build_ms = t.elapsed().as_secs_f64() * 1e3;
+        let load: f64 = std::env::var("RERAIL_PLACED_LOAD").ok().and_then(|v| v.parse().ok()).unwrap_or(0.75);
+        let t = Instant::now();
+        let mut placed_sets: Vec<Vec<usize>> = shapes.to_vec();
+        placed_sets.push((0..k).collect());
+        let placed: Vec<ordered::Placed> = placed_sets.iter().map(|c| ordered::Placed::build(rows, k, n, |id| is_dead(&self.dead, id), c.clone(), load)).collect();
+        let hashed_ms = t.elapsed().as_secs_f64() * 1e3;
+        let placed_bytes: usize = placed.iter().map(ordered::Placed::bytes).sum();
+        // Placed for dedup only, the orders for the probes.
+        let dedup_placed = placed.last().map_or(0, ordered::Placed::bytes);
+        let bytes: usize = orders.iter().map(ordered::Ordered::bytes).sum();
+        let now = self.set.capacity() * 5 + self.chains.iter().map(|ix| ix.next.capacity() * 4 + ix.table.capacity() * (std::mem::size_of::<Post>() + 1)).sum::<usize>();
+        let live: Vec<u32> = (0..n as u32).filter(|&id| !is_dead(&self.dead, id)).collect();
+        let stride = (live.len() / 4096).max(1);
+        let sample: Vec<u32> = live.iter().step_by(stride).copied().collect();
+        let mut parts = Vec::new();
+        let (mut w_now, mut w_new, mut w_hash) = (0.0f64, 0.0f64, 0.0f64);
+        let mut checks = shapes.to_vec();
+        checks.push((0..k).collect());
+        let mut measured: Vec<(Vec<usize>, bool, f64, f64, u64)> = Vec::new();
+        for (si, shape) in checks.iter().enumerate() {
+            let dedup = si == shapes.len();
+            let Some((oi, len)) = orders.iter().enumerate().find_map(|(i, o)| o.prefix(shape).map(|l| (i, l))) else { continue };
+            let o = &orders[oi];
+            // The new: the order's range on the key in the order's column order.
+            let time = |o: &ordered::Ordered| -> (f64, usize) {
+                let (mut ns, mut got) = (f64::MAX, 0usize);
+                for _ in 0..3 {
+                    let t = Instant::now();
+                    got = 0;
+                    let mut key = vec![0i64; len];
+                    for &id in &sample {
+                        let r = self.row(id as usize);
+                        for (j, &c) in o.order[..len].iter().enumerate() { key[j] = r[c]; }
+                        got += std::hint::black_box(o.range(rows, k, &key)).len();
+                    }
+                    ns = ns.min(t.elapsed().as_nanos() as f64 / sample.len() as f64);
+                }
+                (ns, got)
+            };
+            let (new_ns, got_new) = time(o);
+            let pl = &placed[si];
+            let (mut hash_ns, mut got_hash) = (f64::MAX, 0usize);
+            for _ in 0..3 {
+                let t = Instant::now();
+                got_hash = 0;
+                let mut key = vec![0i64; pl.cols.len()];
+                for &id in &sample {
+                    let r = self.row(id as usize);
+                    for (j, &c) in pl.cols.iter().enumerate() { key[j] = r[c]; }
+                    pl.each(rows, k, &key, |x| { std::hint::black_box(x); got_hash += 1 });
+                }
+                hash_ns = hash_ns.min(t.elapsed().as_nanos() as f64 / sample.len() as f64);
+            }
+            // Today's: the dedup set for the whole row; else a chain on exactly the key's columns, or the shortest
+            // single-column chain, walked and filtered on the key.
+            let (mut now_ns, mut got_now) = (f64::MAX, 0usize);
+            for _ in 0..3 {
+            let t = Instant::now();
+            got_now = 0;
+            for &id in &sample {
+                let r = self.row(id as usize);
+                if dedup {
+                    got_now += usize::from(self.set.find(hash_vals(r.iter().copied()), |&x| !is_dead(&self.dead, x) && self.row(x as usize) == r).is_some());
+                    continue;
+                }
+                let exact = self.chains.iter().find(|ix| ix.cols == *shape);
+                let pick = exact.map(|ix| (ix, ix.get(rows, k, &shape.iter().map(|&c| r[c]).collect::<Vec<_>>()))).or_else(|| {
+                    shape.iter().filter_map(|&c| self.chains.iter().find(|ix| ix.cols == [c])).map(|ix| (ix, ix.get(rows, k, &[r[ix.cols[0]]]))).min_by_key(|(_, p)| p.map_or(0, |p| p.len))
+                });
+                let Some((ix, Some(p))) = pick else { continue };
+                let mut at = p.head;
+                while at != NIL {
+                    let x = self.row(at as usize);
+                    if !is_dead(&self.dead, at) && shape.iter().all(|&c| x[c] == r[c]) { got_now += 1; }
+                    at = ix.next[at as usize];
+                }
+            }
+            now_ns = now_ns.min(t.elapsed().as_nanos() as f64 / sample.len() as f64);
+            }
+            measured.push((shape.clone(), dedup, new_ns, hash_ns, counts.get(si).copied().unwrap_or(0)));
+            let same = got_now == got_new && got_now == got_hash;
+            let w = counts.get(si).copied().unwrap_or(0) as f64;
+            (w_now, w_new, w_hash) = (w_now + w * now_ns, w_new + w * new_ns, w_hash + w * hash_ns);
+            parts.push(format!("{}{shape:?}: {now_ns:.0} ns now, {new_ns:.0} fenced, {hash_ns:.0} placed{}", if dedup { "dedup " } else { "" }, if same { String::new() } else { format!(" (COUNTS DIFFER: {got_now} vs {got_new} vs {got_hash})") }));
+        }
+        // The mixed shape: the whole row placed (dedup); each probed set probed at least once a live row a step
+        // whose placed index is faster than its order placed too; the rest covered by orders.
+        let live_n = live.len().max(1);
+        let mut mixed_bytes = dedup_placed;
+        let mut mixed_ns = 0.0f64;
+        let mut rest: Vec<Vec<usize>> = Vec::new();
+        for (shape, dedup, fenced, placed_ns, count) in &measured {
+            if *dedup {
+                continue;
+            }
+            let hot = *count as usize >= live_n && placed_ns < fenced;
+            if hot {
+                mixed_bytes += placed.iter().find(|p| p.cols == *shape).map_or(0, ordered::Placed::bytes);
+                mixed_ns += *count as f64 * placed_ns;
+            } else {
+                rest.push(shape.clone());
+                mixed_ns += *count as f64 * fenced;
+            }
+        }
+        if !rest.is_empty() {
+            let mut chains = ordered::cover(&rest, k);
+            // The whole row is placed already: an order for it alone is not needed.
+            chains.retain(|o| rest.iter().any(|s| o[..s.len()].iter().all(|c| s.contains(c))));
+            mixed_bytes += chains.len() * live_n * 4 + chains.len() * (live_n / ordered::FENCE + 1) * 8;
+        }
+        MIXED.with(|m| { let mut m = m.borrow_mut(); m.0 += mixed_bytes; m.1 += mixed_ns; });
+        if std::env::var_os("RERAIL_INDEX_GROW").is_some() {
+            let hot: Vec<Vec<usize>> = measured.iter().filter(|(_, d, f, p, c)| !*d && *c as usize >= live_n && p < f).map(|m| m.0.clone()).collect();
+            let mut chains = ordered::cover(&rest, k);
+            chains.retain(|o| rest.iter().any(|s| o[..s.len()].iter().all(|c| s.contains(c))));
+            parts.push(self.grow_spike(name, &hot, chains));
+        }
+        parts.push(format!("mixed {:.1} B/row", mixed_bytes as f64 / live_n as f64));
+        Some((
+            format!(
+                "  SPIKE {name}: {} rows, k {k}; {} orders {:?}, {:.2} MB ({:.1} B/row) vs sets and chains {:.2} MB ({:.1} B/row); built in {build_ms:.1} ms fenced, {hashed_ms:.1} ms placed; placed on every set {:.1} B/row, on the whole row {:.1} B/row; {}",
+                live.len(),
+                orders.len(),
+                orders.iter().map(|o| o.order.clone()).collect::<Vec<_>>(),
+                bytes as f64 / 1e6,
+                bytes as f64 / live.len().max(1) as f64,
+                now as f64 / 1e6,
+                now as f64 / live.len().max(1) as f64,
+                placed_bytes as f64 / live.len().max(1) as f64,
+                dedup_placed as f64 / live.len().max(1) as f64,
+                parts.join("; ")
+            ),
+            bytes,
+            placed_bytes,
+            dedup_placed,
+            w_now,
+            w_new,
+            w_hash,
+        ))
+    }
+    /// For the index-cost spike (`RERAIL_INDEX_REPORT`): its columns, its dedup set's bytes, and each kept chain
+    /// index's columns, keys and bytes; then the lazily built key indexes' columns and bytes.
+    pub fn index_detail(&self) -> (usize, usize, Vec<(Vec<usize>, usize, usize)>, Vec<(Vec<usize>, usize)>) {
+        let set = self.set.capacity() * (4 + 1) + self.dead.capacity() * 8;
+        let chains = self.chains.iter().map(|ix| (ix.cols.clone(), ix.table.len(), ix.next.capacity() * 4 + ix.table.capacity() * (std::mem::size_of::<Post>() + 1))).collect();
+        let csr = self.idx.lock().map(|m| m.values().map(|c| (c.cols.clone(), c.ids.capacity() * 4 + c.table.capacity() * (12 + 1))).collect()).unwrap_or_default();
+        (self.k, set, chains, csr)
+    }
     pub fn held_bytes(&self) -> (usize, usize, usize) {
         let values = self.rows.capacity() * 8;
         let levels = self.level.capacity() * 4;
@@ -2026,6 +2346,13 @@ impl InRel {
 pub fn prefetch_tables(conn: &Connection, wants: &std::collections::BTreeSet<(String, Vec<usize>)>) -> Result<(usize, usize)> {
     let at = scope(conn);
     table::prefetch(wants, |name| DERIVED.lock().unwrap().get(&(at, name.to_owned())).cloned()).map_err(err)
+}
+
+thread_local! {
+    /// The index-cost spike's mixed shape totals (`InRel::index_spike`).
+    static MIXED: std::cell::RefCell<(usize, f64)> = const { std::cell::RefCell::new((0, 0.0)) };
+    /// Its growth totals (`InRel::grow_spike`).
+    static GROWN: std::cell::RefCell<(f64, f64, usize, usize, usize, usize, f64, f64, f64)> = const { std::cell::RefCell::new((0.0, 0.0, 0, 0, 0, 0, 0.0, 0.0, 0.0)) };
 }
 
 /// Tests: this thread's count steps build their tables at their first probe.
@@ -2209,6 +2536,7 @@ impl InRel {
         if self.view.is_some() || c >= self.k {
             return false;
         }
+        probed::note(&format!("{} [postings]", self.name.get().map_or("?", String::as_str)), std::iter::once(c));
         let Some(ix) = self.chains.iter().find(|ix| ix.cols == [c]).filter(|ix| ix.next.len() >= self.n) else { return false };
         let (k, data) = (self.k, &self.rows);
         let mut firsts: Vec<i64> = Vec::new();
@@ -3174,6 +3502,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)]) -> (Rows<'a>, Cands<'a>) {
             match src {
                 Src::In(rel, ix) => {
+                    if !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
                     if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
                     else if let Some(i) = ix.chain {
                         let index = &rel.chains[i];
@@ -3187,6 +3516,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 }
                 Src::FullMulti(r, cols) => {
                     let rel = &store.rels[*r];
+                    probed::note(&rel.table, cols.iter().copied());
                     let ix = rel.idx.iter().position(|ix| &ix.cols == cols).expect("composite index");
                     (Rows::Comp(rel), rel.postings(ix, key, false).0)
                 }
@@ -3196,6 +3526,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     if keys.is_empty() {
                         (Rows::Comp(rel), if delta { Cands::Range(rel.lo as u32, rel.hi as u32) } else { Cands::Range(0, rel.n as u32) })
                     } else {
+                        if probed::on() { probed::note(&if delta { format!("{}+delta", rel.table) } else { rel.table.clone() }, keys.iter().map(|&(c, _)| c)); }
                         let best = keys.iter().zip(key).map(|(&(c, _), &v)| rel.postings(c, &[v], delta)).min_by_key(|&(_, n)| n);
                         (Rows::Comp(rel), best.map_or(Cands::Slice(&[]), |b| b.0))
                     }
