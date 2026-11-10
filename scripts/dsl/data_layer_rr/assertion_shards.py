@@ -59,3 +59,34 @@ def merge_production(reports):
     require(len(result['cases'])==first['totalCases'],'Production inputs omitted')
     result['shards']=reports
     return result
+
+
+def merge_modules(reports):
+    """Combine complete module runs when upstream collection forbids co-ownership."""
+    require(bool(reports),'Module reports missing')
+    first=reports[0]
+    arrays=['collected','calls','detectorObservations','assertionTranslations','hostTransfers',
+            'hostProtocolCalls','casesWithoutNativeCalls','testTargets']
+    tables=['sourceFiles','policySha256','harnessFiles']
+    result=dict(first,part=0,parts=1,cases={},configurationBindings={})
+    result.update({key:[] for key in arrays});result.update({key:{} for key in tables})
+    for i,row in enumerate(reports):
+        for key in ['sourcePin','engineSha256','originalRecordingSha256','mode','ruleRoot']:
+            require(equal(row[key],first[key]),'Module cohort differs')
+        require(row['part']==0 and row['parts']==1 and row['oracle'] is False and row['exitCode']==0
+                and not row['semanticFallbacks'] and not row['missingResults'] and not row.get('retainedCaseIds'),
+                'Module failed, delegated or incomplete')
+        require(set(row['cases'])==set(row['collected']),'Module assertions omitted')
+        for identity,phases in row['cases'].items():
+            require(identity not in result['cases'],'Module assertion repeated')
+            require({p['phase']:p['outcome'] for p in phases}==dict(setup='passed',call='passed',teardown='passed'),
+                    'Module assertion failed or skipped')
+            result['cases'][identity]=phases
+        for key in arrays:result[key].extend(row.get(key,[]))
+        for key in tables:
+            for name,value in row[key].items():
+                require(name not in result[key] or equal(result[key][name],value),'Module input differs')
+                result[key][name]=value
+        result['configurationBindings'][str(i)]=row['configurationBindings']
+    result['modules']=reports
+    return result

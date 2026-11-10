@@ -116,7 +116,7 @@ inspection_framework_hidden(d) :- path_part(d,p), (p = ".git" ; p = ".venv" ; p 
     text += ''.join(f'inspection_skip({quote(x)}).\n' for x in original.EXCLUDED_PATHS)
     text += '.decl inspection_line(d: number, l: number, t: symbol)\n'
     text += f'inspection_line(d, l, t) :- inspection_selected(d), split_line(d, l, t), !match({quote("(?s)" + space + "*#.*")}, t), !inspection_excluded(d), !option("entryPoint", "pattern_search").\n'
-    text += '.decl inspection_excluded(d: number)\ninspection_excluded(d) :- path_part(d, x), inspection_skip(x).\n'
+    text += '.decl inspection_excluded(d: number)\ninspection_excluded(d) :- doc(d,p,_), inspection_owner(d,p,owner), inspection_skip(x), contains(cat("/",x,"/"),cat("/",owner,"/")).\n'
     trim = r'\A' + space + '+|' + space + r'+\z'
     for index, (pattern, label) in enumerate(original.FORBIDDEN_PATTERNS):
         text += f'\n.violation Inspection{index}(at: span, ordinal: number, label: symbol, snippet: symbol) code "NSI001"\n    "{{label}} is forbidden in tests"\n'
@@ -125,7 +125,12 @@ inspection_framework_hidden(d) :- path_part(d,p), (p = ".git" ; p = ".venv" ; p 
         text += f'PatternProbe{index}(@place("input.py", 1), {index}) :- option("entryPoint", "pattern_search"), option("patternOrdinal", "{index}"), option("patternText", t), match({quote(search(pattern))}, t).\n'
     from data_layer_rr_cli import cli_suffix
     from data_layer_rr_production import production
-    return production(source, 'no_source_inspection', (text + cli_suffix(source, 'no_source_inspection')))
+    text=production(source, 'no_source_inspection',text+cli_suffix(source,'no_source_inspection'))
+    from dataclasses import asdict
+    text+='\n.decl inspection_config(value: symbol)\ninspection_config('+quote(json.dumps(asdict(original.NO_SOURCE_INSPECTION_EXTRACTOR)))+').\n'
+    for i in range(len(original.FORBIDDEN_PATTERNS)):
+        text+=f'inspection_finding(p,l,i,label,snippet) :- ppe_Inspection{i}(p,l,_,_,_,i,label,snippet).\n'
+    return text+'#include "data-layer/inspection-api.rr"\n'
 
 
 def serverplan_name_inference(source, target, header):

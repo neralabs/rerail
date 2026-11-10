@@ -10587,3 +10587,42 @@ All 309 migration tooling tests pass. Policy generation retains identical bytes 
 Final remains at `ec3cfe1b7`. The inventory is nine accepted ports, 86 drafts, and five absent translations.
 The full 100-rule migration remains open. Only the affected kernel ran in this acceptance cohort.
 
+# Inspection components and shared-suite audit, 2026-11-10
+
+The red commit `88adaf649` exposes duplicate document identities when scan directories overlap.
+The inspection adapter now preserves each occurrence with a distinct document key.
+One native read plan selects Python paths and excludes cache components before host file reads.
+One native scan handles the complete selected batch. Native rules construct the source-fact dictionaries.
+Explicit content APIs retain their supplied text and accept non-Python filenames, as the source does.
+Discovery also retains absolute directories outside the caller's root and source filesystem order.
+
+All 122 supplemental cases pass through both APIs. The corpus checks every regex family, Unicode boundaries, whitespace, line separators, comments, duplicate matches, excluded paths, read calls, discovery, and CLI streams.
+All 124 primary original cases pass through both APIs. The inspection assertion in the shared MCP module also passes through both APIs.
+The source recording now includes that shared positive. All 81 recorded inspection observations have complete matching results, including the previously retained empty scans.
+There are 55 finding-positive original cases in this completed component scope.
+All 72 production cases, 16 supplied-fact cases, 14 persistent steps, and eleven controls pass their intended checks.
+The receipt `rr-inspection-progress-finalec3.json.gz` verifies 1,055 native executions.
+
+This is a progress receipt. Inspection remains a draft, and its fixed inventory still requires all 132 cases.
+The other seven MCP cases remain unresolved. They call composition, dynamic-loading, signature, grammar-escape, and transaction-pattern APIs.
+A new guard rejects unselected Python linter functions. The shared native run now fails at those calls instead of silently executing them.
+It records seven failed calls and the successful inspection case. The unchanged Python oracle passes all eight MCP cases.
+Passive class definitions remain permitted; regression tests distinguish those definitions from source detector execution.
+
+The upstream pytest hook rejects collecting the primary and shared modules together because both own `ARC-010`.
+Run the modules separately. The new module merger preserves every assertion, observation, native call, host transfer, and configuration binding.
+It rejects duplicate assertions, missing phases, and differing input hashes. It does not alter the independent inventory.
+Progress receipts cannot enter the admission path or write admission reports.
+All 324 migration tooling tests pass, including checks that the seven gaps cannot be hidden or relabeled as success.
+
+Remaining work for this shared cluster:
+
+1. Install the existing modern native adapters for dynamic loading, signatures, grammar escape hatches, and transaction patterns in the shared-suite runner.
+2. Complete composition source scanning with native AST traversal and canonical annotation formatting. Compare complete ordered DTOs against the source, beyond the shared tests' rule-code assertions.
+3. Resolve the application-probe boundary. The shared composition probe executes SemanticPlanBuilder, compares two fingerprints, and checks refs from two fragment imports. The user has been asked whether an external application test should supply raw observations or whether a native application runtime is required. No Python linter or application execution has been added to native rules.
+4. Run all eight shared tests through both APIs with native providers. Preserve complete source observations for each provider and include positive mutation controls.
+5. Merge the complete primary and shared reports. Admit inspection only after all 132 independent case IDs pass through both APIs.
+
+The inventory remains nine accepted ports, 86 drafts, and five absent translations.
+The full 100-rule migration remains active. No full-repository cold benchmark was run.
+

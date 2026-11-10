@@ -60,4 +60,35 @@ class ProductionShardsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'cohort differs'):merge_production(self.reports)
 
 
+class SeparateModulesTests(unittest.TestCase):
+    def setUp(self):
+        self.rows=[dict(part=0,parts=1,collected=[name],sourcePin='pin',engineSha256='engine',
+            originalRecordingSha256='recording',mode='snapshot',oracle=False,exitCode=0,ruleRoot='rules',
+            sourceFiles={name+'.py':'hash'},policySha256={'inspection':'policy'},harnessFiles={'h':'hash'},
+            semanticFallbacks=[],missingResults=[],retainedCaseIds=[],testTargets=[name+'.py'],
+            cases={name:[dict(phase=p,outcome='passed') for p in ['setup','call','teardown']]},
+            calls=[dict(test=name)],detectorObservations=[],assertionTranslations=[],configurationBindings={},
+            hostTransfers=[],hostProtocolCalls=[],casesWithoutNativeCalls=[]) for name in ['primary','shared']]
+
+    def test_all_module_cases_and_calls_are_retained(self):
+        from assertion_shards import merge_modules
+        value=merge_modules(self.rows)
+        self.assertEqual({'primary','shared'},set(value['cases']))
+        self.assertEqual(2,len(value['calls']));self.assertEqual(2,len(value['sourceFiles']))
+
+    def test_incomplete_module_is_rejected(self):
+        from assertion_shards import merge_modules
+        self.rows[1]['cases']={}
+        with self.assertRaisesRegex(ValueError,'Module assertions omitted'):merge_modules(self.rows)
+
+    def test_duplicate_assertion_is_rejected(self):
+        from assertion_shards import merge_modules
+        with self.assertRaisesRegex(ValueError,'Module assertion repeated'):merge_modules([self.rows[0],self.rows[0]])
+
+    def test_moving_harness_is_rejected(self):
+        from assertion_shards import merge_modules
+        self.rows[1]['harnessFiles']['h']='other'
+        with self.assertRaisesRegex(ValueError,'Module input differs'):merge_modules(self.rows)
+
+
 if __name__=='__main__':unittest.main()

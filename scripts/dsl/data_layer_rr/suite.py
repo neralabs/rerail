@@ -213,7 +213,9 @@ class Suite:
         compare(original['sourceResult'], actual_source_result)
         empty_backend_read=(check=='backend_type_strings' and entry=='check_file' and not files
                             and original['sourceResult']==[] and actual_source_result==[] and original['findings']==[])
-        if original.get('retained_reason') and not empty_backend_read:
+        empty_inspection=(check=='no_source_inspection' and entry=='find_violations' and not files
+                          and original['sourceResult']==[] and actual_source_result==[] and original['findings']==[])
+        if original.get('retained_reason') and not (empty_backend_read or empty_inspection):
             observation['status'] = 'source-result-passed; legacy normalized DTO unavailable'
             return
         if check == 'backend_type_strings' and not empty_backend_read and any(row['code'] == 'BTS_SKIPPED' for row in
@@ -272,6 +274,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check=='no_source_inspection':
+            from inspection_port import scan
+            return scan(self,entry,module,arguments)
         if check=='serverplan_name_inference':
             from name_inference_port import scan
             return scan(self,entry,module,arguments)
@@ -511,34 +516,6 @@ class Suite:
             from lifecycle_port import scan_file
             return scan_file(self,module,entry,path,arguments.get('source'))
 
-        if check == 'no_source_inspection':
-            if entry == 'scan_file_content':
-                files = [dict(path=path.as_posix().lstrip('/'),
-                              source=arguments['source'])]
-                originals = {files[0]['path']: path}
-            else:
-                root = Path(arguments['root'])
-                directories = arguments.get('directories')
-                directories = module.TEST_DIRECTORIES if directories is None else directories
-                files, originals = [], {}
-                # Path discovery and I/O are host operations. No source predicate executes here.
-                for directory in directories:
-                    for item in (root / directory).rglob('*.py'):
-                        try:
-                            source = item.read_text(encoding='utf-8')
-                        except (OSError, UnicodeDecodeError):
-                            continue
-                        name = item.relative_to(root).as_posix()
-                        files.append(dict(path=name, source=source))
-                        originals[name] = item
-            rows = self.native(check, entry, files)
-            order = {f['path']: index for index, f in enumerate(files)}
-            rows.sort(key=lambda r: (order[r['path']], r['line'], r['parameters']['ordinal']))
-            if entry == 'scan_file_content':
-                return [dict(file_path=str(originals[r['path']]), line=r['line'],
-                             line_content=r['parameters']['snippet'], pattern_name=r['parameters']['label']) for r in rows]
-            return [(originals[r['path']], r['line'], r['parameters']['snippet'], r['parameters']['label']) for r in rows]
-
         raise AssertionError(f'No native assertion adapter: {check}:{entry}')
 
     def pytest_configure(self):
@@ -582,7 +559,10 @@ class Suite:
             if check == 'backend_type_strings':
                 from backend_types_port import install
                 install(self, module)
-            if check in {'backend_type_strings', 'no_source_inspection', 'hasattr_async'}:
+            if check=='no_source_inspection':
+                from inspection_port import install
+                install(self,module)
+            if check in {'backend_type_strings', 'hasattr_async'}:
                 from text_cli_port import install
                 install(self, module, check)
             if check == 'connection_caches':
@@ -614,8 +594,21 @@ class Suite:
                     return run
                 self.replace(owner, parts[-1], wrapper(check, entry, module, original, signature))
 
+        foreign_prefix=str(self.source/'scripts')+'/'
+        foreign_codes={}
         def guard(frame, event, arg):
-            if event != 'call' or frame.f_code not in originals:
+            if event != 'call':
+                return
+            if frame.f_code not in originals:
+                code=frame.f_code
+                if code not in foreign_codes:
+                    name=code.co_filename.removeprefix(foreign_prefix)
+                    foreign_codes[code]=(name[5:-3] if code.co_filename.startswith(foreign_prefix)
+                        and name.startswith('lint_') and name.endswith('.py') and '/' not in name
+                        and code.co_flags & inspect.CO_NEWLOCALS else None)
+                if foreign_codes[code]:
+                    self.semantic_fallbacks.append(foreign_codes[code]+':'+code.co_qualname)
+                    raise AssertionError('Unselected original linter executed: '+self.semantic_fallbacks[-1])
                 return
             check, name, passive = originals[frame.f_code]
             host = {'admin_async_purity': {'cli_main'},

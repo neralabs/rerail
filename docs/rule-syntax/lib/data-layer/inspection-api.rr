@@ -1,0 +1,17 @@
+// File occurrence ordinals preserve repeated and overlapping scan roots.
+.decl inspection_owner(d: number, path: symbol, owner: symbol)
+inspection_owner(d,p,owner) :- pp_doc(d,p), option_item("inspectionDocs",i,p), option_item("inspectionPaths",i,owner).
+inspection_owner(d,p,p) :- pp_doc(d,p), !option_item("inspectionDocs",_,_).
+.decl inspection_path_excluded(path: symbol)
+inspection_path_excluded(p) :- option_item("inspectionCandidates",_,p), inspection_skip(part),
+    contains(cat("/",part,"/"),cat("/",p,"/")).
+.violation InspectionRead(at: span, ordinal: number, path: symbol) code "NSI_READ" "read source"
+InspectionRead(@place("",0),i,p) :- option("entryPoint","_inspection_prepare"), option_item("inspectionCandidates",i,p),
+    suffix(".py",p), !inspection_path_excluded(p).
+.violation InspectionConfiguration(at: span, value: symbol) code "NSI_CONFIG" "extractor metadata"
+InspectionConfiguration(@place("",0),v) :- option("entryPoint","_inspection_configuration"), inspection_config(v).
+.decl inspection_finding(path: symbol, line: number, ordinal: number, label: symbol, snippet: symbol)
+.violation InspectionFact(at: span, ordinal: number, value_json: symbol) code "NSI_FACT" "source fact"
+InspectionFact(@place(p,l),i,cat("{\"file_path\":",@json_str(owner),",\"line\":",to_string(l),
+    ",\"line_content\":",@json_str(snippet),",\"pattern_name\":",@json_str(label),"}")) :-
+    option("entryPoint","scan_file_content"), inspection_finding(p,l,i,label,snippet), pp_doc(d,p), inspection_owner(d,p,owner).

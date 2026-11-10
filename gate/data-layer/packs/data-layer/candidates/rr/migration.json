@@ -1393,7 +1393,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "sha256": "99c403bc7558bd1b8afcac4539050d931dcd803d9af47a22249636cf1985ea6f",
+      "sha256": "93b6966d6832faa8c6f521025294018b1cbea4fbd860b479e9b57642efde360e",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_source_inspection.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2878,7 +2878,7 @@
       "legacySha256": "89f2000f352654e02459f7e7bef1609b0e846a46c64bb1d6606169ef7872185f",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "ruleSha256": "99c403bc7558bd1b8afcac4539050d931dcd803d9af47a22249636cf1985ea6f"
+      "ruleSha256": "93b6966d6832faa8c6f521025294018b1cbea4fbd860b479e9b57642efde360e"
     },
     {
       "check": "serverplan_name_inference",

@@ -49,6 +49,15 @@ SPECS = {
         pairs={**{'family-'+str(i):(1,0) for i in range(1,4)},'filename':(0,1),'comment':(0,1),'default-scope':(2,4)},
         cliControl='name-check-flag',extraControls=['name-fact-line'],
         scope='Recorded scanner families, filename gates, default iterable semantics, native formatting and facts, CLI, reporter, production aliases and persistent updates.'),
+    'rerail.inspection-progress/v1': dict(check='no_source_inspection',public=122,original=125,
+        originalObservations=81,positive=55,production=62,parts=6,productionParts=3,
+        originalModules=[dict(prefix='primary',parts=6),dict(prefix='inspection-mcp',parts=1)],
+        originalSource='original-source.json',prefix='',label='inspection-progress-finalec3',admissible=False,
+        productionSupplement=dict(ids=['call','lines','file','import','import-lines','spaced-off','spaced-on','other-scope','comment','cache'],
+                                  findings=[1,1,1,1,1,0,1,0,0,0]),
+        pairs={**{'family-'+str(i):(1,0) for i in range(5)},'excluded-owner':(0,1),'comment':(0,1),'read-selection':(1,2)},
+        cliControl='inspection-check-flag',extraControls=['inspection-fact-owner'],
+        scope='Inspection components only; seven shared MCP assertions still require native providers.'),
 }
 
 
@@ -243,6 +252,12 @@ def validate(value):
         elif row['name']=='name-fact-line':
             def facts(rows):return json.loads(next(r['parameters']['value_json'] for r in rows if r['code']=='NINF_FACT'))
             require(facts(a)['line']==2 and facts(b)['line']==1,'Name-inference fact line differs')
+        elif row['name']=='inspection-check-flag':
+            def statuses(rows):return [r['parameters']['value'] for r in rows if r['code']=='TEXT_CLI_EXIT']
+            require(statuses(a)==[0] and statuses(b)==[1],'Inspection CLI flag differs')
+        elif row['name']=='inspection-fact-owner':
+            def owner(rows):return json.loads(next(r['parameters']['value_json'] for r in rows if r['code']=='NSI_FACT'))['file_path']
+            require(owner(a)=='/project/tests/a.py' and owner(b)=='input.py','Inspection fact owner differs')
         else:
             def stdout(rows): return ''.join(r['parameters']['stdout'] for r in sorted(
                 (r for r in rows if r['code']=='RCS_OUTPUT'),key=lambda r:(r['parameters']['phase'],r['parameters']['ordinal'])))
@@ -260,8 +275,11 @@ def pack(work,format):
     spec=SPECS[format]; prefix=spec['prefix']
     def source(path):
         text = path.read_text(); return dict(text=text,sha256=sha(text.encode()))
-    from assertion_shards import merge,merge_production
+    from assertion_shards import merge,merge_production,merge_modules
     def original(mode):
+        if spec.get('originalModules'):
+            return merge_modules([merge([read_json(work/f'{module["prefix"]}-{mode}-{i}.json') for i in range(module['parts'])])
+                if module['parts']>1 else read_json(work/f'{module["prefix"]}-{mode}.json') for module in spec['originalModules']])
         if spec.get('originalParts'):
             return merge([read_json(work/f'{prefix}original-{mode}-{i}.json') for i in range(spec['originalParts'])])
         return read_json(work/f'{prefix}original-{mode}.json')
@@ -269,7 +287,7 @@ def pack(work,format):
                 if spec.get('productionParts') else read_json(work/f'{prefix}production.json'))
     value = dict(format=format, fullMigrationAcceptance=False,
         engineSource=read_json(ROOT/MANIFEST)['engineSource'], sources=dict(
-            public=source(work/'source-final.json'), original=source(ROOT/'.rerail/rr-batch1-final93/source.json'),
+            public=source(work/'source-final.json'), original=source(work/spec['originalSource'] if spec.get('originalSource') else ROOT/'.rerail/rr-batch1-final93/source.json'),
             production=source(ROOT/'.rerail/rr-first-ten-production/source-locked.json'),
             supplied=source(ROOT/'.rerail/rr-supplied-facts-final957/expanded-source.json')),
         publicReports=[read_json(work/f'final-{mode}-{part}.json') for mode in sorted(MODES) for part in range(spec['parts'])],
@@ -303,7 +321,7 @@ def pack(work,format):
         walk(row)
     text = Path(__file__).read_text()
     value['harness'][Path(__file__).relative_to(ROOT).as_posix()] = dict(text=text,sha256=sha(text.encode()))
-    if spec.get('originalParts') or spec.get('productionParts'):
+    if spec.get('originalParts') or spec.get('originalModules') or spec.get('productionParts'):
         path=Path(__file__).with_name('assertion_shards.py');text=path.read_text()
         value['harness'][path.relative_to(ROOT).as_posix()]=dict(text=text,sha256=sha(text.encode()))
     value['summary'] = validate(value)
@@ -313,6 +331,7 @@ def pack(work,format):
 def admit(value, checkpoint):
     summary = validate(value); manifest = read_json(ROOT/MANIFEST)
     spec=SPECS[value['format']]; check=spec['check']
+    require(spec.get('admissible',True),'Progress receipt cannot be admitted; shared assertions remain incomplete')
     compare(manifest['engineSource']['cliArtifact'],value['engineSource']['cliArtifact'])
     for name,item in value['programs'].items(): compare(item['sha256'],sha((ROOT/name).read_bytes()))
     entry = next(r for r in manifest['rules'] if r['check']==check)
