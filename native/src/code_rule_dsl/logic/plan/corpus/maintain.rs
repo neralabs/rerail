@@ -97,9 +97,10 @@ fn insert(rules: &mut Vec<Rule>, h: &str, args: &[Term], body: Vec<Literal>, gon
     rules.push(Rule { head, body: deleted });
 }
 
-/// `RERAIL_RECURSIVE=levels`: recursive strata maintained by levels (decision 0090), not delete-and-rederive.
+/// Whether recursive strata are maintained by levels (decision 0090), not delete-and-rederive.
 fn levels_wanted() -> bool {
-    std::env::var("RERAIL_RECURSIVE").is_ok_and(|v| v == "levels")
+    // The default (decision 0090, levels checked); `RERAIL_RECURSIVE=dred` keeps delete-and-rederive.
+    std::env::var("RERAIL_RECURSIVE").map_or(true, |v| v != "dred")
 }
 
 fn atom(rel: String, args: Vec<Term>, neg: bool) -> Literal {
