@@ -16,6 +16,18 @@ pub mod memory_region;
 pub mod buckets;
 #[path = "mldb/core/bucket.rs"]
 pub mod bucket;
+#[path = "mldb/plugins/jml/jml/feature.rs"]
+pub mod feature;
+#[path = "mldb/plugins/jml/jml/split.rs"]
+pub mod split;
+#[path = "mldb/plugins/jml/jml/tree.rs"]
+pub mod tree;
+/// JML (`mldb/plugins/jml/jml/`): features, splits, trees.
+pub mod jml {
+    pub use super::{feature, split, tree};
+}
+#[path = "mldb/plugins/jml/dataset_feature_space.rs"]
+pub mod dataset_feature_space;
 
 use metal::{ComputePipelineState, Library};
 use std::sync::OnceLock;
