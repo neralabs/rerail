@@ -678,3 +678,31 @@ Both runs execute 81 statements. Current VM instructions remain 785,573.
 [The checked-in reports](../../benchmark/async-family-integration/analysis/current-analysis.txt) include the current findings.
 The sibling files contain the failing-shape report, raw profiles, test logs, command environments, and source hashes.
 Normal `RERAIL_PROFILE=<directory>` runs produce the analysis automatically. No separate analysis script or experimental engine path is required.
+
+## 2026-11-10 — Input lifecycle investigation after integration merge
+
+Merged integration hub `4ab83ed5190d1af7675f6a66544f9b35b972d9b1` as `547a99099`.
+The merge preserves candidate demands before projection and accepts the hub's typed joins and parallel input construction.
+
+The prior 0.426826-second finding overstates identity-map attribution.
+It measures the parent projection span, which also contains token spans and line setup.
+Added separate spans for identity maps, token spans, projection lines, node columns, children, and postings.
+A regression test first failed because child spans disappeared from the analyzer's phase totals.
+The analyzer now sums exclusive costs across each phase's subtree and prices identity maps only from their exact span.
+
+Test-only experiments compare interval-based line lookup, counting placement for kind postings, and exact vector reservations.
+Production keeps one execution path. Measurements use the merged compiler and pin `RERAIL_THREADS=4`.
+The corpus has 5,725 files but only 182 redundant source bytes across duplicate contents.
+An intra-job content cache therefore has little opportunity on this workload.
+Results and costed opportunities follow in `input-lifecycle-opportunities.md` after the runs finish.
+
+The optimized build passed. Baseline and combined variants each passed 45 focused tests, including all 120 expected positive findings.
+All 47 corpus executions preserved findings and the 81-execution budget. The eight profiles each recorded 785,573 VM instructions.
+Warm restore/core-fact costs are 1.392–1.466 CPU seconds. Exact identity-map costs are 0.166–0.173 seconds.
+Counted kind postings and interval line lookup reduce their measured phase costs by approximately 0.19 and 0.13 seconds.
+Three adjacent combined pairs save a median 0.263 CPU seconds and 0.133 wall seconds, with one small regression.
+The earlier 0.758-second difference between nonadjacent medians is not a supported speedup claim.
+Exact reservations save 87.7 MB of cumulative capacity but show no reliable CPU gain.
+Full retention costs roughly 1.5 GB or more, while the existing result memo already bypasses unchanged-file input work.
+The costed recommendation is kind buckets, then demanded line columns, then a direct validated tape reader.
+The complete evidence, overlap limits, effort estimates, and rejected cache assumptions are in `input-lifecycle-opportunities.md`.

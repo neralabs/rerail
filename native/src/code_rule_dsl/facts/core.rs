@@ -206,6 +206,9 @@ pub(crate) fn build_cached_source(file: &FileInput, cache: &crate::content_store
     Ok((Built::Facts(facts), source_id))
 }
 
+#[cfg(test)]
+pub(crate) mod input_spike;
+
 pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {
     let tag = tape_tag(doc.file_dialect()).ok_or("the tape's dialect has no tape tag")?;
     let n = doc.transducer_len();
@@ -232,19 +235,34 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
         syntax_errors: !doc.syntax_error_ranges().is_empty(),
         python_syntax: Default::default(),
     };
+    let columns_span = crate::code_rule_dsl::logic::profile::span(|| "node columns".into());
+    #[cfg(test)]
+    let line_spike = input_spike::enabled("lines");
+    #[cfg(test)]
+    let (mut start_line, mut end_line) = (0, 0);
     for id in 0..n as u32 {
         f.kind.push(kind_atom(tag, doc.transducer_kind(id)));
         f.parent.push(doc.transducer_parent(id).unwrap_or(NONE));
         let span = doc.transducer_span(id);
         f.start.push(span.start as u32);
         f.end.push(span.end as u32);
-        f.start_line.push(f.lines.line(span.start) as u32 + 1);
-        f.end_line.push(f.lines.line(span.end) as u32 + 1);
+        #[cfg(test)]
+        let line_pair = line_spike.then(|| (
+            input_spike::line(f.lines.starts(), span.start, &mut start_line) as u32 + 1,
+            input_spike::line(f.lines.starts(), span.end, &mut end_line) as u32 + 1,
+        ));
+        #[cfg(not(test))]
+        let line_pair: Option<(u32, u32)> = None;
+        let (start, end) = line_pair.unwrap_or_else(|| (f.lines.line(span.start) as u32 + 1, f.lines.line(span.end) as u32 + 1));
+        f.start_line.push(start);
+        f.end_line.push(end);
         f.subtree_end.push(doc.transducer_descendants(id).end);
         f.flags.push(doc.transducer_flags(id));
         f.field.push(doc.transducer_field(id));
     }
+    drop(columns_span);
     index(&mut f);
+    let _classes = crate::code_rule_dsl::logic::profile::span(|| "class postings".into());
     let classes = doc.transducer_supertypes().map(|(node, class)| (kind_atom(tag, class), node)).collect();
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(classes);
     Ok(f)
@@ -253,6 +271,7 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
 /// The derived columns: the children CSR (preorder lists a parent's children in order) and the
 /// kind postings.
 fn index(f: &mut Facts) {
+    let children_span = crate::code_rule_dsl::logic::profile::span(|| "child CSR".into());
     let n = f.len();
     let mut counts = vec![0u32; n + 1];
     for &p in &f.parent {
@@ -273,6 +292,13 @@ fn index(f: &mut Facts) {
     }
     f.child_offsets = counts;
     f.children = children;
+    drop(children_span);
+    let _kinds = crate::code_rule_dsl::logic::profile::span(|| "kind postings".into());
+    #[cfg(test)]
+    if input_spike::enabled("postings") {
+        (f.kind_keys, f.kind_offsets, f.kind_nodes) = input_spike::postings(&f.kind);
+        return;
+    }
     let pairs = f.kind.iter().enumerate().map(|(i, &k)| (k, i as u32)).collect();
     (f.kind_keys, f.kind_offsets, f.kind_nodes) = postings(pairs);
 }

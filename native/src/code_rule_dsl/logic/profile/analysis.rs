@@ -94,7 +94,7 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
     let projection_cpu: f64 = i
         .spans
         .iter()
-        .filter(|s| s.path.ends_with("project and intern"))
+        .filter(|s| s.path.split('/').any(|p| p == "project and intern"))
         .map(|s| s.own_cpu)
         .sum();
     let reasons: std::collections::BTreeSet<_> = i
@@ -142,7 +142,7 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
     let construction: Vec<_> = i
         .spans
         .iter()
-        .filter(|s| s.path.ends_with("facts from tape") || s.path.ends_with("tape restore"))
+        .filter(|s| s.path.split('/').any(|p| p == "facts from tape" || p == "tape restore"))
         .collect();
     let cpu: f64 = construction.iter().map(|s| s.own_cpu).sum();
     if i.tape_hits > 0 && cpu > 0.05 {
@@ -164,12 +164,14 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
             "Measure immutable core-fact reuse keyed by source and grammar generation. Check ownership and invalidation before adding a cache; this does not prove duplicate construction.",
         );
     }
-    if nodes > 1_000_000 && scalar == 0 && projection_cpu > 0.05 {
+    // Sum exclusive child costs; parent exclusive time is not the phase total.
+    let identity_cpu: f64 = i.spans.iter().filter(|s| s.path.split('/').any(|p| p == "identity maps")).map(|s| s.own_cpu).sum();
+    if nodes > 1_000_000 && scalar == 0 && identity_cpu > 0.05 {
         add(
             "IDENTITY_PROJECTION",
             "investigate",
             "input projection".into(),
-            Some(projection_cpu),
+            Some(identity_cpu),
             format!("{nodes} node identities, zero scalar node visits, {strings} batch strings"),
             "Measure identity-map reuse or a narrower identity projection while preserving global node IDs; do not rebuild scalar facts.",
         );
@@ -302,6 +304,25 @@ mod tests {
     use super::*;
     fn codes(i: &Input) -> Vec<&'static str> {
         analyze(i).iter().map(|f| f.code).collect()
+    }
+    #[test]
+    fn finer_spans_preserve_phase_cost_without_misattributing_token_work() {
+        let mut i = Input { tape_hits: 5725, projections: vec![Projection {
+            nodes: 12_535_139, ..Default::default()
+        }], ..Default::default() };
+        for (path, own_cpu) in [
+            ("worker/facts from tape", 0.01),
+            ("worker/facts from tape/node columns", 0.6),
+            ("worker/tape restore", 0.5),
+            ("worker/project and intern", 0.01),
+            ("worker/project and intern/projected/identity maps", 0.2),
+            ("worker/project and intern/projected/token spans", 0.3),
+        ] { i.spans.push(Span { path: path.into(), own_cpu, calls: 5725 }); }
+        let fs = analyze(&i);
+        assert!((fs.iter().find(|f| f.code == "CACHED_TAPE_REBUILD").unwrap().cpu.unwrap() - 1.11).abs() < 1e-9);
+        assert_eq!(fs.iter().find(|f| f.code == "IDENTITY_PROJECTION").unwrap().cpu, Some(0.2));
+        i.spans.retain(|s| !s.path.ends_with("identity maps"));
+        assert!(!codes(&i).contains(&"IDENTITY_PROJECTION"), "legacy setup cost is not an identity-map measurement");
     }
     #[test]
     fn many_point_probes_are_an_unpriced_opportunity_not_a_speedup_claim() {

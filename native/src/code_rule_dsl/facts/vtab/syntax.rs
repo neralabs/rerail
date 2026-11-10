@@ -666,6 +666,7 @@ impl Projected {
     /// A `withheld` document (`core.rr`: one that does not parse) has no nodes and no spans: no facts. A guest's
     /// nodes are its root's subtree, placed in its host's lines (`host`).
     fn new(key: u32, facts: Arc<Facts>, dialect: &Dialect, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
+        let identity_span = crate::code_rule_dsl::logic::profile::span(|| "identity maps".into());
         let f = &*facts;
         let mut p = Projected {
             module:None, python_imports:Default::default(), python_semantics:Default::default(),
@@ -688,6 +689,15 @@ impl Projected {
             Some((g, _)) => (g.root, f.subtree_end.get(g.root as usize).copied().unwrap_or(g.root + 1).max(g.root + 1)),
             None => (0, f.len() as u32),
         };
+        #[cfg(test)]
+        if crate::code_rule_dsl::facts::core::input_spike::enabled("reserve") && !withheld {
+            let count = (first..last.min(f.len() as u32)).filter(|&id| f.named(id)).count();
+            p.core.reserve_exact(count);
+            p.parent.reserve_exact(count);
+            p.idx.reserve_exact(count);
+            p.depth.reserve_exact(count);
+            next_idx.reserve_exact(count);
+        }
         for id in first..if withheld { first } else { last.min(f.len() as u32) } {
             if !f.named(id) || (shape == Shape::T && dialect.class(f, id) == Class::Comment) {
                 continue;
@@ -724,8 +734,12 @@ impl Projected {
             let q = p.parent[i] as usize;
             p.size[q] += p.size[i] + 1;
         }
+        drop(identity_span);
         if shape == Shape::Core {
+            let lines_span = crate::code_rule_dsl::logic::profile::span(|| "projection lines".into());
             let lines = Arc::new(core_rr::Lines::new(&f.source, dialect.family == Family::Python));
+            drop(lines_span);
+            let token_span = crate::code_rule_dsl::logic::profile::span(|| "token spans".into());
             let mut spans: Vec<[u32; 2]> = Vec::new();
             let mut token_nodes: Vec<u32> = Vec::new();
             for (l, &id) in p.core.iter().enumerate() {
@@ -736,6 +750,8 @@ impl Projected {
                     }
                 }
             }
+            drop(token_span);
+            let _metadata = crate::code_rule_dsl::logic::profile::span(|| "projection metadata".into());
             if definition_ids() && guest.is_none() {
                 p.defs = DefIds::new(&p, dialect, &token_nodes);
             }
@@ -1173,6 +1189,11 @@ impl Batch {
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
             (py::CONTEXTS.map(|name| string(name) as i64), py::SPREADS.map(|name| string(name) as i64))
+        });
+        crate::code_rule_dsl::logic::profile::decision("input payload", || {
+            let identities: usize = docs.iter().map(|p| [&p.core, &p.local, &p.parent, &p.idx, &p.size, &p.depth, &p.fielded].iter().map(|v| v.capacity() * 4).sum::<usize>()).sum();
+            let extras: usize = docs.iter().filter_map(|p| p.extra.as_ref()).map(|x| x.spans.capacity() * 8).sum();
+            serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities, "extraSpanCapacityBytes": extras}).to_string()
         });
         crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"scalarNodes":if scalar_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"nodes":docs.iter().map(|p|p.core.len()).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
         let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
