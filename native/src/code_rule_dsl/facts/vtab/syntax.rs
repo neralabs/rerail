@@ -902,6 +902,15 @@ impl Batch {
         let mut errors = Vec::new();
         // `core.rr`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
+        let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
+        c.skip = core_rr::Skip {
+            ops: !wants_any(&["op", "op_at"]),
+            next_sibling: !projection.wants("next_sibling"),
+            comment: !projection.wants("comment"),
+            spread: !projection.wants("spread"),
+            name: !projection.wants("name"),
+            literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "text"]),
+        };
         let wants_text = core && projection.wants("text");
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Line);
@@ -1003,7 +1012,9 @@ impl Batch {
             let error = if core && (projection.wants("syntax_error") || guest.is_some()) { core_rr::verdict(&d.facts, dialect) } else { None };
             let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
+            let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
+            drop(new_span);
             if !rx_spans.is_empty() && guest.is_none() && !withheld {
                 c.matches(&mut p, dialect, &rx_spans, &span_ends[j], &mut string);
             }
@@ -1056,6 +1067,7 @@ impl Batch {
                 errors.push(key);
             }
             let f = &*d.facts;
+            let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
                 if !core {
@@ -1125,6 +1137,8 @@ impl Batch {
                     c.node(&p, dialect, local as u32, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
                 }
             }
+            drop(nodes_span);
+            let document_span = crate::code_rule_dsl::logic::profile::span(|| "document rows".into());
             if let Some((line, msg)) = &error {
                 let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
                 c.withheld(&p, &(line, msg.clone()), &mut string);
@@ -1135,6 +1149,7 @@ impl Batch {
                     c.digests(&p, dialect, &mut string, wants_trees, wants_units);
                 }
             }
+            drop(document_span);
             docs.push(p);
         }
         // The guests' rows, once every document is projected: a guest's host may be a guest after it. Either shape:
@@ -1157,6 +1172,7 @@ impl Batch {
             spreads: spreads.map(atom),
             rows: Default::default(),
         });
+        let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
             let mut r = Relation::new(columns);
             rows.for_each(|row| r.push(&row));
