@@ -192,3 +192,62 @@ pub(super) fn measure(func: &Function, origins: &[u32], hot: &[Block]) -> Pressu
     p.blame = blame;
     p
 }
+
+/// The values live across each call of `func`: made before it, read after it (its results
+/// left out), integer and vector apart. A call clobbers the caller-saved registers: on aarch64
+/// a value live across one is kept in one of the ten callee-saved integer registers or on the
+/// stack, and a vector always on the stack (only the low half of v8..v15 is kept), stored and
+/// reloaded where the allocator places it, often on the path that does not call.
+pub(super) fn across_calls(func: &Function) -> Vec<(cranelift_codegen::ir::Inst, usize, usize)> {
+    let dfg = &func.dfg;
+    let blocks: Vec<Block> = func.layout.blocks().collect();
+    let succs = |b: Block| -> Vec<Block> {
+        func.layout
+            .last_inst(b)
+            .map(|i| dfg.insts[i].branch_destination(&dfg.jump_tables, &dfg.exception_tables).iter().map(|c| c.block(&dfg.value_lists)).collect())
+            .unwrap_or_default()
+    };
+    let index: HashMap<Block, usize> = blocks.iter().enumerate().map(|(k, &b)| (b, k)).collect();
+    let mut live_in: Vec<std::collections::HashSet<Value>> = vec![Default::default(); blocks.len()];
+    let live_out = |live_in: &[std::collections::HashSet<Value>], b: Block| -> std::collections::HashSet<Value> {
+        succs(b).into_iter().flat_map(|s| live_in[index[&s]].iter().copied().collect::<Vec<_>>()).collect()
+    };
+    loop {
+        let mut changed = false;
+        for (k, &b) in blocks.iter().enumerate().rev() {
+            let mut live = live_out(&live_in, b);
+            for inst in func.layout.block_insts(b).collect::<Vec<_>>().into_iter().rev() {
+                for &r in dfg.inst_results(inst) {
+                    live.remove(&r);
+                }
+                live.extend(dfg.inst_values(inst));
+            }
+            for p in dfg.block_params(b) {
+                live.remove(p);
+            }
+            if live != live_in[k] {
+                live_in[k] = live;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut out = Vec::new();
+    for &b in &blocks {
+        let mut live = live_out(&live_in, b);
+        for inst in func.layout.block_insts(b).collect::<Vec<_>>().into_iter().rev() {
+            for &r in dfg.inst_results(inst) {
+                live.remove(&r);
+            }
+            // Here `live` is what is live just after `inst`, less what it makes.
+            if dfg.insts[inst].opcode().is_call() {
+                let vecs = live.iter().filter(|&&v| dfg.value_type(v).is_vector()).count();
+                out.push((inst, live.len() - vecs, vecs));
+            }
+            live.extend(dfg.inst_values(inst));
+        }
+    }
+    out
+}

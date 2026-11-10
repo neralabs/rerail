@@ -103,6 +103,10 @@ pub(super) struct PassShape {
     /// The functions it calls, made from the same program: only the hot loop is inlined
     /// (`general`).
     pub(super) outlined: Vec<Outlined>,
+    /// What is live across each region call it keeps, integer and vector (`worth_calling`).
+    pub(super) region_calls: Vec<(usize, usize)>,
+    /// The regions inlined after all: a call would have cost the hot loop.
+    pub(super) inlined_regions: usize,
 }
 
 /// A function a pass calls, made from the same program: its Cranelift IR and machine code.
@@ -128,6 +132,11 @@ impl CompiledBlock {
             t.starts_with("call ") || t.contains(" = call ")
         };
         self.passes.iter().map(|p| p.clif.lines().filter(|l| call(l)).count() + p.outlined.iter().map(|o| o.clif.lines().filter(|l| call(l)).count()).sum::<usize>()).sum()
+    }
+
+    /// The passes' own machine code, the outlined functions' left out: where the hot loops are.
+    pub(super) fn loops_disassembly(&self) -> String {
+        self.passes.iter().map(|p| p.disassembly.as_str()).collect()
     }
 
     pub(super) fn run(&self, bytes: &[u8]) -> Vec<Vec<u64>> {
@@ -428,6 +437,9 @@ pub(super) struct RegionCalls {
     ids: Vec<cranelift_module::FuncId>,
     signature: cranelift_codegen::ir::Signature,
     built: std::cell::RefCell<Vec<Option<cranelift_codegen::ir::Function>>>,
+    /// The regions inlined after all: a call of theirs would cost the hot loop more than it
+    /// saves (`worth_calling`).
+    inline: std::cell::RefCell<Vec<bool>>,
 }
 
 /// A region function's signature: its words' address (in, then out), the block's first byte,
@@ -442,15 +454,29 @@ fn region_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
 
 /// The last pass's outputs a body stores where it makes them: each output not counted (an
 /// extract's or a total's word is read after the body), cut to the stream outside full
-/// blocks, at `dst`; a delayed one's word before this one from its held word. The body gives
-/// back in its place nothing (a zero) or, delayed, the word held for the next block.
+/// blocks, at `dst`; a delayed one by `delayed_store`. The body gives back in its place
+/// nothing (a zero).
 #[derive(Clone, Copy)]
 pub(super) struct Sinks<'a> {
     pub(super) dst: Value,
     pub(super) stride: i64,
-    pub(super) held_in: &'a [Value],
-    pub(super) delayed: &'a [usize],
     pub(super) early: &'a [bool],
+}
+
+/// Output `k`'s word at delay `d > 0`, stored without holding a word across the loop. The
+/// stream's word `i - 1` is `(w[i-1] >> d) | (w[i] << (64 - d))`. Block `i - 1` stored `w[i-1]`
+/// as it is, in its own place. Block `i` reads it back from there (stored one iteration ago),
+/// stores the stream's word `i - 1` over it, and stores `w[i]` in its own place. The row's
+/// end shifts the last (`forward`). A held word would be live through the whole loop, one per
+/// delayed output: a register each, or a spill.
+fn delayed_store(f: &mut FunctionBuilder<'_>, dst: Value, stride: i64, k: usize, d: u8, word: Value) {
+    let before = 8 * k as i32 - stride as i32;
+    let last = f.ins().load(types::I64, MemFlags::trusted(), dst, before);
+    let down = f.ins().ushr_imm(last, i64::from(d));
+    let up = f.ins().ishl_imm(word, 64 - i64::from(d));
+    let joined = f.ins().bor(down, up);
+    f.ins().store(stores_flags(), joined, dst, before);
+    f.ins().store(stores_flags(), word, dst, 8 * k as i32);
 }
 
 /// One block's body: every instruction as straight-line bit operations. Gives each output's
@@ -959,7 +985,7 @@ impl Emit<'_, '_> {
         // The region computed. Its carried bits are made plain, not gathered as constants: the
         // two ways must agree.
         f.switch_to_block(active);
-        if let Some(calls) = self.calls {
+        if let Some(calls) = self.calls.filter(|c| !c.inline.borrow()[r]) {
             let args = self.call_region(&mut *f, r, &early, &outside, &words, calls);
             self.consts = consts;
             f.ins().jump(after, &args);
@@ -1241,17 +1267,12 @@ impl Emit<'_, '_> {
                 let inside = within_word(&mut *f, self.i, self.len, d);
                 f.ins().band(v, inside)
             };
-            let back = if d == 0 {
+            if d == 0 {
                 f.ins().store(stores_flags(), word, sk.dst, 8 * k as i32);
-                f.ins().iconst(types::I64, 0)
             } else {
-                let h = sk.delayed.iter().position(|&y| y == k).expect("a delayed output");
-                let up = f.ins().ishl_imm(word, 64 - i64::from(d));
-                let before = f.ins().bor(sk.held_in[h], up);
-                f.ins().store(stores_flags(), before, sk.dst, 8 * k as i32 - sk.stride as i32);
-                f.ins().ushr_imm(word, i64::from(d))
-            };
-            self.sunk[k] = Some(back);
+                delayed_store(&mut *f, sk.dst, sk.stride, k, d, word);
+            }
+            self.sunk[k] = Some(f.ins().iconst(types::I64, 0));
         }
     }
 
@@ -1369,7 +1390,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         context.func.signature = signature.clone();
         context.set_disasm(true);
         let mut hot = Vec::new();
-        let mut shape = PassShape { back: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default(), outlined: Vec::new() };
+        let mut shape = PassShape { back: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default(), outlined: Vec::new(), region_calls: Vec::new(), inlined_regions: 0 };
         match pass {
             Pass::Forward { body, stores } => {
                 // The general body, outlined (`general`): declared, built with the pass, defined
@@ -1380,7 +1401,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 general_context.func.signature = signature.clone();
                 general_context.set_disasm(true);
                 let regions;
-                (shape.ascii_branch, shape.gate_branches, shape.round_branches, regions) = forward(&mut context, &mut general_context, (general_id, signature), &mut module, &name, body, stores, passes.slots, &mut hot)?;
+                (shape.ascii_branch, shape.gate_branches, shape.round_branches, regions, shape.region_calls, shape.inlined_regions) = forward(&mut context, &mut general_context, (general_id, signature), &mut module, &name, body, stores, passes.slots, &mut hot)?;
                 shape.extracts = body.extracts.len();
                 general_context.func.srclocs.clear();
                 let clif = general_context.func.display().to_string();
@@ -1525,15 +1546,14 @@ struct Loop<'a> {
     native: &'a BlockNative,
     state: &'a State,
     counted: &'a [usize],
-    /// The outputs with a delay: each carries its word shifted down, for the store of the next.
-    delayed: &'a [usize],
     /// The outputs the body stores where it makes them (`Sinks`): all but the counted.
     early: &'a [bool],
     stride: i64,
     slot_of: &'a [u16],
     slots: u16,
     /// The loop blocks' parameters: the block index, the byte and output pointers, the state
-    /// words, the running counts, the delayed outputs' held words, the row of slots if any.
+    /// words, the running counts, the row of slots if any. No delayed output's word is held
+    /// (`delayed_store`).
     params: usize,
 }
 
@@ -1552,17 +1572,16 @@ impl Loop<'_> {
 #[allow(clippy::too_many_arguments)]
 fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value], len: Value, full: bool, scratch: Value, calls: Option<&RegionCalls>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, usize, usize) {
     let (native, state) = (lp.native, lp.state);
-    let (carried, counted, delayed, early) = (lp.carried(), lp.counted, lp.delayed, lp.early);
+    let (carried, counted, early) = (lp.carried(), lp.counted, lp.early);
     let stores = MemFlags::new().with_notrap();
     let (mut gate_branches, mut round_branches) = (0, 0);
     let (i, base, dst) = (p[0], p[1], p[2]);
     let packed_in = &p[3..3 + carried];
     let counts_in = &p[3 + carried..3 + carried + counted.len()];
-    let held_in = &p[3 + carried + counted.len()..3 + carried + counted.len() + delayed.len()];
     // The block's row of slots.
     let scratch = if lp.rowed() { p[lp.params - 1] } else { scratch };
     let (slot_of, slots) = (lp.slot_of, lp.slots);
-    let sinks = slot_of.is_empty().then_some(Sinks { dst, stride: lp.stride, held_in, delayed, early });
+    let sinks = slot_of.is_empty().then_some(Sinks { dst, stride: lp.stride, early });
     // The full body's one branch: an all-ASCII block runs a body with the values known on
     // ASCII bytes folded (`native_cpu_lanes`), the others the whole body. Both meet before
     // the sinks.
@@ -1603,26 +1622,14 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
             f.ins().band(v, inside)
         })
         .collect();
-    // The mask stores: a delayed output's word before this one, from the held word.
-    let mut held_out = Vec::with_capacity(delayed.len());
-    for k in (0..native.outputs.len()).filter(|_| slot_of.is_empty()) {
-        let d = native.output_delays[k];
-        if early[k] {
-            // Stored by the body; a delayed one's place holds its next held word.
-            if d > 0 {
-                held_out.push(values[k]);
+    // The mask stores (those the body did not make): a delayed output's by `delayed_store`.
+    for k in (0..native.outputs.len()).filter(|&k| slot_of.is_empty() && !early[k]) {
+        match native.output_delays[k] {
+            0 => {
+                f.ins().store(stores, words[k], dst, 8 * k as i32);
             }
-            continue;
+            d => delayed_store(&mut *f, dst, lp.stride, k, d, words[k]),
         }
-        if d == 0 {
-            f.ins().store(stores, words[k], dst, 8 * k as i32);
-            continue;
-        }
-        let h = delayed.iter().position(|&x| x == k).expect("a delayed output");
-        let up = f.ins().ishl_imm(words[k], 64 - i64::from(d));
-        let before = f.ins().bor(held_in[h], up);
-        f.ins().store(stores, before, dst, 8 * k as i32 - lp.stride as i32);
-        held_out.push(f.ins().ushr_imm(words[k], i64::from(d)));
     }
     // The running counts, and each extract's positions at its count.
     let mut counts_out = Vec::with_capacity(counted.len());
@@ -1644,7 +1651,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     let next = f.ins().iadd_imm(i, 1);
     let (next_base, next_dst) = (f.ins().iadd_imm(base, 64), f.ins().iadd_imm(dst, lp.stride));
     let next_row = lp.rowed().then(|| f.ins().iadd_imm(scratch, 8 * i64::from(slots)));
-    let again: Vec<Value> = [next, next_base, next_dst].into_iter().chain(packed_out).chain(counts_out).chain(held_out).chain(next_row).collect();
+    let again: Vec<Value> = [next, next_base, next_dst].into_iter().chain(packed_out).chain(counts_out).chain(next_row).collect();
     (again, gate_branches, round_branches)
 }
 
@@ -1688,7 +1695,7 @@ fn general_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
 /// the general body (`general`), built into `general_context`. Gives whether the full body
 /// branches on ASCII, the gated regions' branches and the fixed points' loops.
 #[allow(clippy::too_many_arguments)]
-fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>) -> Result<(bool, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>), Error> {
+fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>) -> Result<(bool, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>, Vec<(usize, usize)>, usize), Error> {
     let mut builder_context = FunctionBuilderContext::new();
     let counted = counted(native);
     let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
@@ -1696,8 +1703,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let state = State::of(native);
     let carried = state.words;
     let rowed = slots > 0;
-    let params = 3 + carried + counted.len() + delayed.len() + usize::from(rowed);
-    let lp = Loop { native, state: &state, counted: &counted, delayed: &delayed, early: &early, stride: 8 * native.outputs.len() as i64, slot_of, slots, params };
+    let params = 3 + carried + counted.len() + usize::from(rowed);
+    let lp = Loop { native, state: &state, counted: &counted, early: &early, stride: 8 * native.outputs.len() as i64, slot_of, slots, params };
     general(general_context, &lp)?;
     let own = cranelift_codegen::ir::UserExternalName::new(0, outlined.0.as_u32());
     // Each gated region's function, declared here and built where the body lowers it.
@@ -1705,10 +1712,17 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let ids = (0..state.plan.regions.len())
         .map(|r| module.declare_function(&format!("{name}_region{r}"), Linkage::Local, &signature).map_err(|_| Error::BackendFailure))
         .collect::<Result<Vec<_>, _>>()?;
-    let calls = RegionCalls { ids, signature, built: std::cell::RefCell::new(vec![None; state.plan.regions.len()]) };
-    let shape;
+    let n_regions = state.plan.regions.len();
+    let calls = RegionCalls { ids, signature, built: std::cell::RefCell::new(vec![None; n_regions]), inline: std::cell::RefCell::new(vec![false; n_regions]) };
+    let mut shape = Ok(());
     let ascii_branch = state.plan.ascii_branch;
-    let (gate_branches, round_branches);
+    let (mut gate_branches, mut round_branches) = (0, 0);
+    let (fname, fsig) = (context.func.name.clone(), context.func.signature.clone());
+    // Built until no region's call costs the hot loop (`worth_calling`): each round inlines
+    // the regions whose calls would.
+    for round in 0..=n_regions {
+    context.func = cranelift_codegen::ir::Function::with_name_signature(fname.clone(), fsig.clone());
+    hot.clear();
     {
         let mut f = FunctionBuilder::new(&mut context.func, &mut builder_context);
         // entry -> row (one per file) -> head -> full or general (one per block) -> head ...
@@ -1786,7 +1800,6 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             .into_iter()
             .chain(std::iter::repeat_n(zero.into(), carried))
             .chain((0..counted.len()).map(|c| extract_base.get(c).copied().unwrap_or(zero).into()))
-            .chain(std::iter::repeat_n(zero.into(), delayed.len()))
             .chain(rowed.then_some(scratch.into()))
             .collect();
         // Blocks 1 .. len / 64 are full.
@@ -1847,8 +1860,12 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         f.switch_to_block(finish);
         let p = f.block_params(finish).to_vec();
         let dst = p[2];
-        for (h, &k) in delayed.iter().enumerate() {
-            f.ins().store(stores, p[3 + carried + counted.len() + h], dst, 8 * k as i32 - lp.stride as i32);
+        for &k in delayed.iter().filter(|_| slot_of.is_empty()) {
+            // The last block's word, as it stored it: shifted down, the stream's last.
+            let at = 8 * k as i32 - lp.stride as i32;
+            let last = f.ins().load(types::I64, MemFlags::trusted(), dst, at);
+            let down = f.ins().ushr_imm(last, i64::from(native.output_delays[k]));
+            f.ins().store(stores, down, dst, at);
         }
         for c in 0..counted.len() {
             let mut v = p[3 + carried + c];
@@ -1872,20 +1889,58 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         f.ins().return_(&[]);
         f.seal_all_blocks();
         f.finalize();
-        let mut owns = vec![own];
+        let mut owns = vec![own.clone()];
         owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
         shape = super::native_cpu_shape::check(&context.func, &heads, &owns);
+    }
+    if round == n_regions || !worth_calling(&context.func, &calls) {
+        break;
+    }
     }
     shape.map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
     // The regions' functions, each checked: it calls nothing and has no loop.
     let mut regions = Vec::new();
+    let kept: Vec<(usize, usize)> = super::native_cpu_pressure::across_calls(&context.func)
+        .into_iter()
+        .filter(|&(inst, _, _)| region_called(&context.func, inst, &calls).is_some())
+        .map(|(_, ints, vecs)| (ints, vecs))
+        .collect();
+    let inline = calls.inline.into_inner();
+    let inlined = inline.iter().filter(|&&x| x).count();
     for (r, built) in calls.built.into_inner().into_iter().enumerate() {
-        if let Some(func) = built {
+        if let Some(func) = built.filter(|_| !inline[r]) {
             super::native_cpu_shape::check(&func, &[], &[]).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
             regions.push((calls.ids[r], func));
         }
     }
-    Ok((ascii_branch, gate_branches, round_branches, regions))
+    Ok((ascii_branch, gate_branches, round_branches, regions, kept, inlined))
+}
+
+/// The callee-saved integer registers on aarch64 (x19..x28): the values a call can keep.
+const CALLEE_SAVED: usize = 10;
+
+/// Whether each region's call in `func` is worth it: what is live across it stays in registers
+/// (`native_cpu_pressure::across_calls`). A vector live across a call is stored and reloaded,
+/// on the path that skips the region too: then the region is inlined (`RegionCalls::inline`),
+/// and the pass is built again. Gives whether any region was newly inlined.
+fn worth_calling(func: &cranelift_codegen::ir::Function, calls: &RegionCalls) -> bool {
+    let mut changed = false;
+    for (inst, ints, vecs) in super::native_cpu_pressure::across_calls(func) {
+        let Some(r) = region_called(func, inst, calls) else { continue };
+        if (vecs > 0 || ints > CALLEE_SAVED) && !calls.inline.borrow()[r] {
+            calls.inline.borrow_mut()[r] = true;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// The region `inst` calls, if it is a region's call.
+fn region_called(func: &cranelift_codegen::ir::Function, inst: cranelift_codegen::ir::Inst, calls: &RegionCalls) -> Option<usize> {
+    let cranelift_codegen::ir::InstructionData::Call { func_ref, .. } = func.dfg.insts[inst] else { return None };
+    let cranelift_codegen::ir::ExternalName::User(name) = func.dfg.ext_funcs[func_ref].name else { return None };
+    let index = func.params.user_named_funcs()[name].index;
+    calls.ids.iter().position(|id| id.as_u32() == index)
 }
 
 /// The flags of a pass's stores: no trap (the host laid out every word written).

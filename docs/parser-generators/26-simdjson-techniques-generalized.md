@@ -232,7 +232,7 @@ Each transformation is tested three ways:
 |---|---|---|
 | 1 | Gated regions: an accurate cost (vector work counted), any sparse gate, more regions. Done (§5) | §1.1 |
 | 2 | Values remade in each pass, never stored: constants, `within`, positions | §1.10 |
-| 3 | Delayed masks read at an offset, not shifted and held | §1.4 |
+| 3 | Delayed masks not held across the loop. Done (§7) | §1.4 |
 | 4 | The fallback's totals folded into one word | §1.5 |
 | 5 | Sparse outputs as positions | §1.6, §1.7 |
 | 6 | Local values minimized from their truth tables | §1.9 |
@@ -351,6 +351,56 @@ Measured on `.rr`, runs alternated at a load of 8 to 23:
 | CPU a 64-byte block | 316, 310, 292 ns | 275, 310, 299 ns |
 
 The CPU time does not change beyond the noise: the general body runs a block or two per
-file, and the regions are rarely taken. The gain is in the size of the hot loop. That size
-is also what the later transformations need to stay small.
+file, and the regions are rarely taken. The gain is in the size of the hot loop.
+
+A region's call is not always free. A call clobbers the caller-saved registers, and aarch64
+keeps no whole vector register across one. So a vector value live across a region's call is
+stored before the gate's branch and reloaded after it, in every block, taken or not. JSON's
+loop did 21 stack loads and stores that way, against 4 inline. So the compiler decides per
+region (`worth_calling`). It builds the pass, counts what is live across each region's call,
+and inlines a region where a vector, or more integers than the 10 callee-saved registers,
+would cross. Then it builds the pass again, until nothing changes. On `.rr`, pass 2's
+regions all cross vectors and stay inline.
+
+## 7. Transformation 3: delayed outputs, not held
+
+An output at delay `d` decides bit `p` at bit `p + d`. Its stream word `i - 1` takes bits from
+two of the program's words:
+
+```text
+stream[i-1] = (w[i-1] >> d) | (w[i] << (64 - d))
+```
+
+The loop used to hold `w[i-1] >> d` in a register from one block to the next: one value live
+through the whole loop per delayed output, 13 in `.rr`'s last pass. Now each block stores its
+`w[i]` as it is, in its own place. The next block loads it back from there (stored one
+iteration before, so the load forwards from the store), stores the joined word over it, and
+stores its own. The row's end shifts the last one. The readers see the same words as before.
+
+```text
+# Block i, output k at delay d (Cranelift IR, `delayed_store`):
+v1 = load.i64 v_dst-8*outputs+8k   ; w[i-1], as block i-1 stored it
+v2 = ushr_imm v1, d
+v3 = ishl_imm v_w, 64-d             ; w[i]
+v4 = bor v2, v3
+store v4, v_dst-8*outputs+8k        ; the stream's word i-1
+store v_w, v_dst+8k                 ; w[i], for block i+1
+```
+
+Measured on `.rr`'s last pass (pass 8), statically:
+
+| | Held | Stored |
+|---|---|---|
+| Instructions | 649 | 482 |
+| Stack loads and stores | 249 | 50 |
+| Peak live integers in the hot loop | 52 | 33 |
+
+The tests are in `delay_tests`: no word is held across the loop, and outputs at delays 1, 3 and
+7 equal the interpreter at every block's edge and in a batch.
+
+The loop-size tests now measure the whole body. They used to find the largest machine block
+that branched to itself, which was only the tail after the ASCII branch's merge. Measured
+over the whole body, JSON's loop was 564 instructions with 4 stack loads and stores before
+these changes (the old budget said 182 and 0), and stage 1's 660 with 11. Their budgets now
+start from the true numbers.
 
