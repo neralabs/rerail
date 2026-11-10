@@ -6,6 +6,8 @@ import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
 import {
   autostartDaemon,
+  autostartOff,
+  AutostartOffError,
   daemonEngineEndpoint,
   engineEndpointAt,
   HOOK_DAEMON_WAIT_MS,
@@ -105,12 +107,21 @@ function unreachable(error: unknown): unknown {
 }
 
 /**
+ * The hook found no daemon because `RERAIL_AUTOSTART=0` kept it from starting one. That is what the person asked for,
+ * so it is not a failure; `rerail status` says the daemon is not running and why (`daemonNotRunningMessage`).
+ */
+function autostartTurnedOff(error: unknown): boolean {
+  return error instanceof DaemonUnreachableError && error.cause instanceof AutostartOffError;
+}
+
+/**
  * Runs a normal package hook against the engine service, or an explicit local test runtime. Only the hook that starts
  * a session (`startsSession`) waits for a daemon to start; any other hook that finds none running answers `{}` at
  * once, so a daemon that is down never stalls a tool call or shows as a hook error (design N11), records the lost event
  * in the hook failure log and starts a daemon in the background. A daemon that cannot be reached throws
  * `DaemonUnreachableError`, so a coding agent without a footer can say so. Every failure, `event` named as the coding
- * agent names it, goes to the hook failure log (`hook-failures.ts`), which `rerail status` reads.
+ * agent names it, goes to the hook failure log (`hook-failures.ts`), which `rerail status` reads. Under
+ * `RERAIL_AUTOSTART=0` a hook that finds no daemon logs nothing and starts none, since the person runs it themselves.
  */
 export async function runHostHook(
   host: HookHost,
@@ -125,7 +136,7 @@ export async function runHostHook(
     return await runHostHookOnce(host, workspace, sessionId, startsSession, options, handle, event);
   } catch (error) {
     // The coding agent keeps a hook's stderr out of the session; the failure log is where `rerail status` finds it.
-    recordHookFailure({ host, event, reason: error instanceof Error ? error.message : String(error) });
+    if (!autostartTurnedOff(error)) recordHookFailure({ host, event, reason: error instanceof Error ? error.message : String(error) });
     throw error;
   }
 }
@@ -163,6 +174,8 @@ async function runHostHookOnce(
     // is started in the background for the next event; the start is handed to a detached process, so the tool call
     // never waits on it (design N11). A daemon that is alive is left alone: a start would find it and refuse to
     // replace it, after costing a Rerail process and, on Windows, loading the native engine to launch it.
+    // Under RERAIL_AUTOSTART=0 the person runs the daemon themselves, so finding none is no failure and starts none.
+    if (daemon.status === "absent" && autostartOff()) return {};
     recordHookFailure({ host, event, reason: lostEventReason(daemon) });
     if (daemon.status === "absent") autostartDaemon();
     return {};

@@ -19,6 +19,7 @@ import {
   DAEMON_STATE_FILE,
   daemonEngineEndpoint,
   daemonMayHold,
+  daemonNotRunningMessage,
   dashboardAccessLink,
   daemonUsesPackageRoot,
   findRunningDaemon,
@@ -458,6 +459,15 @@ describe("stopping the daemon", () => {
     expect(stillRunningMessage(123, "win32")).toContain(`tasklist /FI "PID eq 123"`);
     expect(stillRunningMessage(123, "win32")).not.toContain("ps -p");
     expect(stillRunningMessage(123, "linux")).toContain("ps -p 123");
+  });
+});
+
+describe("what rerail status says of a daemon that is not running", () => {
+  it("says RERAIL_AUTOSTART=0 keeps hooks from starting it, since hooks log nothing about a daemon the person turned off", () => {
+    expect(daemonNotRunningMessage({})).toBe("The Rerail daemon is not running. Start it with rerail daemon start.");
+    expect(daemonNotRunningMessage({ RERAIL_AUTOSTART: "0" })).toBe(
+      "The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded. Start it with rerail daemon start.",
+    );
   });
 });
 

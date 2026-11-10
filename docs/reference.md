@@ -598,7 +598,7 @@ Anything else, including `/native/*`, `/mcp`, `/healthz` and the page, gets `421
 
 ### Daemon state
 
-`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. `RERAIL_AUTOSTART=0` stops automatic daemon creation, so command hooks need an existing daemon or explicit endpoint.
+`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. `RERAIL_AUTOSTART=0` stops automatic daemon creation, so command hooks need an existing daemon or explicit endpoint. A hook that finds none records nothing and logs no failure; `rerail status` says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from starting it.
 
 <details>
 <summary>Ports, reuse and the kernel socket</summary>

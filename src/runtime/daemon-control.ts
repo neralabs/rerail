@@ -709,13 +709,34 @@ export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRo
   return runningRoot === expectedRoot;
 }
 
+/** `RERAIL_AUTOSTART=0`: the person runs the daemon themselves, and hooks start none. */
+export function autostartOff(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.RERAIL_AUTOSTART === "0";
+}
+
+/** No daemon is running, and `RERAIL_AUTOSTART=0` kept the caller from starting one. */
+export class AutostartOffError extends Error {
+  override readonly name = "AutostartOffError";
+}
+
+/**
+ * What `rerail status` says when no daemon runs. Under `RERAIL_AUTOSTART=0` it also says that nothing is recorded,
+ * since hooks then start no daemon and log nothing about the missing one: that is what the person asked for.
+ */
+export function daemonNotRunningMessage(env: NodeJS.ProcessEnv = process.env): string {
+  return autostartOff(env)
+    ? "The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded. Start it with rerail daemon start."
+    : "The Rerail daemon is not running. Start it with rerail daemon start.";
+}
+
 /**
  * The engine endpoint main host clients send events to; only the daemon evaluates them, since it alone opens
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
  * another package, which is how a hook keeps an older daemon from receiving fields it predates; a client that
  * outlives an update passes false after its first event so it keeps using the newer daemon instead of displacing
- * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon. A daemon that is alive but busy is waited for
- * (`patientLookup`), until `deadline` (epoch ms) when the caller names one, as a hook does.
+ * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon, and throws `AutostartOffError` without
+ * one. A daemon that is alive but busy is waited for (`patientLookup`), until `deadline` (epoch ms) when the caller
+ * names one, as a hook does.
  */
 export async function daemonEngineEndpoint(
   replaceOtherPackage: boolean,
@@ -725,7 +746,7 @@ export async function daemonEngineEndpoint(
   const home = defaultRerailHome(machine.env);
   const packageRoot = PACKAGE_ROOT;
   let daemon: RunningDaemon | undefined;
-  if (machine.env.RERAIL_AUTOSTART === "0") {
+  if (autostartOff(machine.env)) {
     // The lookup has already waited out a busy daemon; one that still does not answer is not waited for again.
     const lookup = await patientLookup(home, machine, deadline);
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
@@ -733,7 +754,7 @@ export async function daemonEngineEndpoint(
   } else {
     daemon = await startedDaemon({ home, packageRoot }, replaceOtherPackage, deadline, machine);
   }
-  if (daemon === undefined) throw new Error("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
+  if (daemon === undefined) throw new AutostartOffError("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, packageRoot))) {
     throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   }

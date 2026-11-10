@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
@@ -13,7 +13,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 });
 
 import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure } from "../../src/harness/hook-failures.js";
-import { runHostHook } from "../../src/harness/hook-host.js";
+import { DaemonUnreachableError, runHostHook } from "../../src/harness/hook-host.js";
 
 const homes: string[] = [];
 async function home(): Promise<string> {
@@ -74,6 +74,8 @@ describe("a hook that cannot record its event", () => {
     const rerailHome = await home();
     vi.stubEnv("RERAIL_HOME", rerailHome);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    // A person's session, where hooks may start a daemon; the test run turns that off everywhere else.
+    vi.stubEnv("RERAIL_AUTOSTART", "1");
     const handle = vi.fn(async () => ({}));
     expect(await runHostHook("claude-code", rerailHome, "s", false, { storageRoot: join(rerailHome, "sessions") }, handle, "PostToolUse")).toEqual({});
     expect(handle).not.toHaveBeenCalled();
@@ -121,6 +123,25 @@ describe("a hook that cannot record its event", () => {
       front.closeAllConnections();
       await Promise.all([front, engine].map(server => new Promise(resolve => server.close(resolve))));
     }
+  });
+
+  // RERAIL_AUTOSTART=0 asks hooks to start no daemon. A hook that then finds none did what the person asked, so it is no
+  // failure; `rerail status` says the daemon is not running and that RERAIL_AUTOSTART=0 keeps hooks from starting it.
+  it.each([
+    ["a later hook", false],
+    ["the session-start hook", true],
+  ])("logs nothing when %s finds no daemon and autostart is off", async (_name, startsSession) => {
+    const rerailHome = await home();
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    const handle = vi.fn(async () => ({}));
+    const run = runHostHook("codex", rerailHome, "s", startsSession, { storageRoot: join(rerailHome, "sessions") }, handle, "SessionStart");
+    if (startsSession) await expect(run).rejects.toBeInstanceOf(DaemonUnreachableError);
+    else expect(await run).toEqual({});
+    expect(handle).not.toHaveBeenCalled();
+    expect(autostart.calls).toBe(0);
+    expect(existsSync(join(rerailHome, HOOK_FAILURES_FILE))).toBe(false);
   });
 
   it("logs a failure inside the hook under the event's own name, then fails as before", async () => {

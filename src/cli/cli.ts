@@ -43,6 +43,7 @@ import {
   accessTokenKept,
   dashboardAccessLink,
   dashboardLink,
+  daemonNotRunningMessage,
   lookupDaemon,
   openInBrowser,
   openDashboard,
@@ -324,7 +325,7 @@ function hookHealthLines(home: string): string[] {
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
 function printDaemonStatus(lookup: DaemonLookup): number {
   if (lookup.status === "absent") {
-    process.stdout.write("The Rerail daemon is not running. Start it with rerail daemon start.\n");
+    process.stdout.write(`${daemonNotRunningMessage()}\n`);
     return 3;
   }
   if (lookup.status === "unresponsive") {
