@@ -2560,11 +2560,40 @@ struct Stored {
     /// asked and kept with the rows: a session's next run reads them for its `r__old` (0094 §4), not measured again.
     /// `None` for a stored table, whose columns load on demand.
     statistics: Option<std::sync::OnceLock<Vec<(String, i64, i64, i64, i64)>>>,
+    /// Its rows' runs by document, as `carry_sorted` reads them: made once, then read by the next run's carry.
+    runs: std::sync::OnceLock<Vec<((i64, u32), usize, usize)>>,
 }
 impl Stored {
+    /// The runs of its rows of one document: ((document, which of its runs), start, end). A row's document is the one
+    /// its first column names, as `memo::document_of` reads it: a node `d << 32 | i`, else the document key itself. A
+    /// document's rows are mostly one run; one whose rows come in several (its own node apart) has each counted.
+    fn runs(&self) -> &[((i64, u32), usize, usize)] {
+        self.runs.get_or_init(|| {
+            let first = self.col(0);
+            let mut out: Vec<((i64, u32), usize, usize)> = Vec::new();
+            let mut seen: rustc_hash::FxHashMap<i64, u32> = rustc_hash::FxHashMap::default();
+            let mut at = 0;
+            while at < first.len() {
+                let v = first[at];
+                let d = if v >= 1 << 32 { v >> 32 } else { v };
+                // The run's end: the rows of a node of `d` (`d << 32 ..= d << 32 | u32::MAX`), or of the value itself.
+                let end = if v >= 1 << 32 {
+                    let (lo, hi) = (d << 32, (d << 32) | 0xffff_ffff);
+                    at + first[at..].iter().position(|&x| !(lo..=hi).contains(&x) && x != d).unwrap_or(first.len() - at)
+                } else {
+                    at + first[at..].iter().position(|&x| x != d && !(x >= 1 << 32 && x >> 32 == d)).unwrap_or(first.len() - at)
+                };
+                let k = seen.entry(d).or_default();
+                out.push(((d, *k), at, end));
+                *k += 1;
+                at = end;
+            }
+            out
+        })
+    }
     fn new(columns: Vec<String>, values: Vec<std::sync::OnceLock<Vec<i64>>>) -> Self {
         let k = columns.len();
-        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default(), statistics: None }
+        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default(), statistics: None, runs: std::sync::OnceLock::new() }
     }
     /// `syntax::measured`'s statistics, from each column's sorted index (which joins read too): a value's rows are
     /// one run of it, in row order, and their documents (`id >> 32` of the first column) are counted within it. A
@@ -2789,7 +2818,7 @@ pub fn columns_source_measured(columns: Vec<String>, values: Vec<Option<Vec<i64>
 }
 /// Last run's sorted columns and orders of a relation held in memory (`old`), carried into this run's copy of it
 /// (`new`, `columns_source`), patched by the rows that changed (decision 0101 §5), not sorted again. Both are read
-/// run by run of one document's rows (`doc` of a row's first column): a run whose rows are the same, in the same
+/// run by run of one document's rows (`Stored::runs`): a run whose rows are the same, in the same
 /// order, keeps its rows' places in each index, and the rows of a run that changed or is new are sorted alone and
 /// merged in. Each index is then exactly the one `Sorted::of` (or `order`) would build over the rows.
 ///
@@ -2797,38 +2826,34 @@ pub fn columns_source_measured(columns: Vec<String>, values: Vec<Option<Vec<i64>
 /// first) they are laid out as the runs kept, in their old order, then the rest in `new`'s: a copy, no sort. That
 /// copy is returned (`Some`) in place of `new`. Nothing is carried when the two hold other columns, or more than a
 /// quarter of the rows changed. Also the number of indexes carried.
-pub fn carry_sorted(old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &dyn crate::code_rule_dsl::facts::vtab::Source, doc: impl Fn(i64) -> i64) -> (Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, usize) {
+pub fn carry_sorted(old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &dyn crate::code_rule_dsl::facts::vtab::Source) -> (Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, usize) {
+    carry_sorted_at(old, new, CARRY_AT)
+}
+
+/// `carry_sorted`, for a source of at least `at` rows.
+fn carry_sorted_at(old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &dyn crate::code_rule_dsl::facts::vtab::Source, at: usize) -> (Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, usize) {
     let (Some(old), Some(new)) = (old.as_any().and_then(|a| a.downcast_ref::<Stored>()), new.as_any().and_then(|a| a.downcast_ref::<Stored>())) else { return (None, 0) };
     let k = new.columns.len();
     let held = |t: &Stored| (0..k).map(|c| t.values[c].get().is_some()).collect::<Vec<_>>();
     if k == 0 || old.columns != new.columns || held(old) != held(new) || !held(new)[0] {
         return (None, 0);
     }
-    let wanted: Vec<usize> = (0..k).filter(|&c| old.index[c].get().is_some() && new.index[c].get().is_none()).collect();
+    // A source this small sorts in about what the carry costs; a column in row order is read in one pass
+    // (`Sorted::of`).
+    if new.n.get().copied().unwrap_or(0) < at {
+        return (None, 0);
+    }
+    let wanted: Vec<usize> = (0..k).filter(|&c| old.index[c].get().is_some() && new.index[c].get().is_none() && !new.col(c).is_sorted()).collect();
     let orders: Vec<(Vec<usize>, Arc<Vec<u32>>)> = old.orders.lock().unwrap().clone();
     if wanted.is_empty() && orders.is_empty() {
         return (None, 0);
     }
-    // The runs of rows of one document: ((document, which of its runs), start, end). A document's rows are mostly
-    // one run; one whose rows come in several (its own node apart) is matched run by run.
-    let runs = |t: &Stored| -> Vec<((i64, u32), usize, usize)> {
-        let first = t.col(0);
-        let mut out: Vec<((i64, u32), usize, usize)> = Vec::new();
-        let mut seen: rustc_hash::FxHashMap<i64, u32> = rustc_hash::FxHashMap::default();
-        for (r, &v) in first.iter().enumerate() {
-            let d = doc(v);
-            match out.last_mut() {
-                Some(last) if last.0.0 == d => last.2 = r + 1,
-                _ => {
-                    let k = seen.entry(d).or_default();
-                    out.push(((d, *k), r, r + 1));
-                    *k += 1;
-                }
-            }
-        }
-        out
-    };
-    let (was, now) = (runs(old), runs(new));
+    let (was, now) = (old.runs(), new.runs());
+    // Rows whose first column does not keep a document's rows together (an export keyed by a symbol): no runs to
+    // keep, and the carry would cost more than a sort.
+    if now.len() * 16 > n_new_of(new) || was.len() * 16 > n_new_of(old) {
+        return (None, 0);
+    }
     let n_old = old.n.get().copied().unwrap_or(0);
     let n_new = new.n.get().copied().unwrap_or(0);
     let at: rustc_hash::FxHashMap<(i64, u32), (usize, usize)> = was.iter().map(|&(d, a, b)| (d, (a, b))).collect();
@@ -2878,7 +2903,13 @@ pub fn carry_sorted(old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &d
     if in_order {
         for (&(_, a, b), s) in now.iter().zip(&same) {
             match s {
-                Some(oa) => (0..b - a).for_each(|i| remap[oa + i] = (a + i) as u32),
+                Some(oa) => {
+                    let mut i = 0;
+                    while i < b - a {
+                        remap[oa + i] = (a + i) as u32;
+                        i += 1;
+                    }
+                }
                 None => added.extend(a as u32..b as u32),
             }
         }
@@ -2887,7 +2918,11 @@ pub fn carry_sorted(old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &d
         kept.sort_unstable();
         let mut to = 0u32;
         for (oa, n) in kept {
-            (0..n).for_each(|i| remap[oa + i] = to + i as u32);
+            let mut i = 0;
+            while i < n {
+                remap[oa + i] = to + i as u32;
+                i += 1;
+            }
             to += n as u32;
         }
         added.extend(to..n_new as u32);
@@ -2900,31 +2935,50 @@ pub fn carry_sorted(old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &d
         let s = old.index[c].get().expect("wanted");
         let mut fresh: Vec<(i64, u32)> = added.iter().map(|&r| (col[r as usize], r)).collect();
         fresh.sort_unstable();
-        let kept = s.keys.iter().enumerate().flat_map(|(i, &v)| {
-            s.ids[s.starts[i] as usize..s.starts[i + 1] as usize].iter().filter_map(move |&r| {
-                let to = remap[r as usize];
-                (to != u32::MAX).then_some((v, to))
-            })
-        });
-        let (mut ids, mut keys, mut starts) = (Vec::with_capacity(n_new), Vec::new(), Vec::new());
-        let mut push = |(v, r): (i64, u32)| {
-            if keys.last() != Some(&v) {
-                keys.push(v);
+        // A merge by (value, row) of the old rows kept, renumbered, and the new ones: plain loops, as a debug build
+        // runs them at about a sort's cost otherwise.
+        let (mut ids, mut keys, mut starts) = (Vec::with_capacity(n_new), Vec::with_capacity(s.keys.len()), Vec::with_capacity(s.keys.len() + 1));
+        let (sk, ss, si) = (s.keys.as_slice(), s.starts.as_slice(), s.ids.as_slice());
+        let mut f = 0;
+        let mut last: Option<i64> = None;
+        let mut key = 0;
+        while key < sk.len() {
+            let v = sk[key];
+            let mut at = ss[key] as usize;
+            let end = ss[key + 1] as usize;
+            while at < end {
+                let to = remap[si[at] as usize];
+                at += 1;
+                if to == u32::MAX {
+                    continue;
+                }
+                while f < fresh.len() && fresh[f] < (v, to) {
+                    if last != Some(fresh[f].0) {
+                        last = Some(fresh[f].0);
+                        keys.push(fresh[f].0);
+                        starts.push(ids.len() as u32);
+                    }
+                    ids.push(fresh[f].1);
+                    f += 1;
+                }
+                if last != Some(v) {
+                    last = Some(v);
+                    keys.push(v);
+                    starts.push(ids.len() as u32);
+                }
+                ids.push(to);
+            }
+            key += 1;
+        }
+        while f < fresh.len() {
+            if last != Some(fresh[f].0) {
+                last = Some(fresh[f].0);
+                keys.push(fresh[f].0);
                 starts.push(ids.len() as u32);
             }
-            ids.push(r);
-        };
-        let mut fresh = fresh.into_iter().peekable();
-        for pair in kept {
-            while let Some(&f) = fresh.peek()
-                && f < pair
-            {
-                push(f);
-                fresh.next();
-            }
-            push(pair);
+            ids.push(fresh[f].1);
+            f += 1;
         }
-        fresh.for_each(&mut push);
         starts.push(ids.len() as u32);
         charge(Unit::Value, n_new as u64);
         if t.index[c].set(Sorted { ids, keys, starts }).is_ok() {
@@ -2961,6 +3015,13 @@ pub fn carry_sorted(old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &d
     }
     (laid.map(|t| Arc::new(t) as Arc<dyn crate::code_rule_dsl::facts::vtab::Source>), carried)
 }
+
+fn n_new_of(t: &Stored) -> usize {
+    t.n.get().copied().unwrap_or(0)
+}
+
+/// The rows at which a source's sorted columns are carried rather than sorted again (`carry_sorted`).
+const CARRY_AT: usize = 32_768;
 
 /// The table `schema.name` read once into memory, every column (`None`: not a table of integers).
 pub fn table_source(conn: &Connection, schema: &str, name: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
@@ -3906,9 +3967,9 @@ mod carry_sorted_tests {
         let _ = of(&old).order(&[1, 2]);
         let docs = [(1, 1000, 0), (3, 290, 5), (4, 1000, 3), (6, 40, 9)];
         let new = stored(rows(&docs));
-        let (laid, n) = carry_sorted(old.as_ref(), new.as_ref(), |v| v >> 32);
+        let (laid, n) = carry_sorted_at(old.as_ref(), new.as_ref(), 1_000);
         assert!(laid.is_none(), "the runs kept are in order: new's rows as they are");
-        assert_eq!(n, 4);
+        assert_eq!(n, 3, "the id column is in row order: read in one pass, not carried");
         let again = stored(rows(&docs));
         same_indexes(of(&new), of(&again));
     }
@@ -3923,7 +3984,7 @@ mod carry_sorted_tests {
         }
         let _ = of(&old).order(&[1, 2]);
         let new = stored(rows(&[(2, 310, 6), (4, 1000, 3), (1, 1000, 0), (3, 1000, 2)]));
-        let (laid, n) = carry_sorted(old.as_ref(), new.as_ref(), |v| v >> 32);
+        let (laid, n) = carry_sorted_at(old.as_ref(), new.as_ref(), 1_000);
         let laid = laid.expect("laid out again");
         assert_eq!(n, 4);
         let cols = |t: &Stored| (0..3).map(|c| t.col(c).to_vec()).collect::<Vec<_>>();
@@ -3941,7 +4002,7 @@ mod carry_sorted_tests {
 
     fn same_indexes(carried: &Stored, built: &Stored) {
         for c in 0..3 {
-            let (a, b) = (carried.index[c].get().expect("carried"), built.sorted(c));
+            let (a, b) = (carried.sorted(c), built.sorted(c));
             assert_eq!((&a.ids, &a.keys, &a.starts), (&b.ids, &b.keys, &b.starts), "column {c}");
         }
         assert_eq!(*carried.order(&[1, 2]).1, *built.order(&[1, 2]).1);
@@ -3950,10 +4011,10 @@ mod carry_sorted_tests {
     /// Nothing is carried when most rows changed.
     #[test]
     fn carries_nothing_when_most_rows_changed() {
-        let old = stored(rows(&[(1, 100, 0), (2, 100, 1), (3, 100, 2)]));
+        let old = stored(rows(&[(1, 1000, 0), (2, 1000, 1), (3, 1000, 2)]));
         let _ = of(&old).sorted(2);
-        let most = stored(rows(&[(1, 100, 0), (2, 100, 7), (3, 100, 8)]));
-        let (laid, n) = carry_sorted(old.as_ref(), most.as_ref(), |v| v >> 32);
+        let most = stored(rows(&[(1, 1000, 0), (2, 1000, 7), (3, 1000, 8)]));
+        let (laid, n) = carry_sorted_at(old.as_ref(), most.as_ref(), 1_000);
         assert!(laid.is_none() && n == 0);
     }
 }

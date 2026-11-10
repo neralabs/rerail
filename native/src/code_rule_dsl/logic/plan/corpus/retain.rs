@@ -426,7 +426,7 @@ pub(in crate::code_rule_dsl) fn kept_source(
         && let Some(old) = parts.values().find_map(|p| p.input_srcs.get(rel).filter(|s| s.columns() == columns))
     {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("carry {rel}'s sorted columns"));
-        let (laid, _) = crate::code_rule_dsl::logic::native::component::carry_sorted(old.as_ref(), source.as_ref(), super::memo::document_of);
+        let (laid, _) = crate::code_rule_dsl::logic::native::component::carry_sorted(old.as_ref(), source.as_ref());
         if let Some(laid) = laid {
             return laid;
         }

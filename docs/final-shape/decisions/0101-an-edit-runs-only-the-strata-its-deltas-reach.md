@@ -344,6 +344,57 @@ The sorts still made are of columns last run never indexed, and of the smaller i
 another path (35–45 k rows). Each is under 0.12 s a step.
 
 
+## The profile after §4 and §5, and what it decided (2026-11-10)
+
+**How it was taken.** A `sample` of the engine process over all of O125 steps 02 and 03 (35 s, load 100).
+Spans inflate the cross part about 2x (8.2 s with them, 4.3 s without, at step 02), so the sample
+ranks the work and the spans locate it. Two threads do the work: the run's own thread (23.5 k busy
+samples), and one worker running the file-local part's strata, which the run's thread waits for (7.8 k).
+
+| where (the run's thread) | samples | share |
+|---|---:|---:|
+| the cross part's strata (`native_stratum_`) | 11,552 | 49% |
+| — opening a stratum (`open_spec`) | 3,835 | 16% |
+| —— of which the first sort of a stored column | 1,478 | 6% |
+| —— of which a survivor's copy of its old rows (`Rel::based`) | 1,020 | 4% |
+| — joins (`run_join`) | 2,125 | 9% |
+| — planning (`plan_rule_reused`) | 924 | 4% |
+| carrying sorted columns (§5) | 1,524 | 6% |
+| counting the edited files' statistics (`keptstats::Keeper::file`) | 857 | 4% |
+
+**What it decided.**
+
+- **§5's carry and the sorts left: built (below).** Together they were 12%.
+- **`Keeper::file`: not now.** At 4% it is proportional to the edited file's rows (0096's design):
+  counting out reads the old entry back and counts it again. Remembering the last count of a file
+  edited twice would save that half, at a memory cost; not worth it at this rank.
+- **§3 (one component per base stratum): not built.** What it would remove is the fixed cost per piece:
+  part of the 16% of opening, of planning (4%) and of the spec. A survivor's copy of its rows (4%) and the
+  sorts (6%) stay, so the most it could save is about 5–8%. And it needs new engine work: a component
+  whose relations run once each, in a fixed order. The profile does not rank it first.
+- **New: the file-local part's SQL.** The worker's 7.8 k samples are nearly all one kind of work: a native
+  stratum in the file-local part running a SQL statement (`sqlite3_step`, 7.3 k) whose rows call the
+  symbol functions (`register_symbols`: `sym_text` and string copies, 2.6 k). The run's thread waits
+  for it. This is the largest single item, and the next to look at.
+
+**§5, extended.**
+
+- **The exports too.** The cross part's exports, counted by file (0096 step 3), were copied into a new
+  source every run and sorted again. They now go through `kept_source` like the base relations: reused
+  whole when unchanged, carried when not.
+- **Only where it pays.** In a debug build a merge costs about what a sort does unless it is written as
+  plain loops, so the merge loops are plain. A source under 32 k rows is sorted (`CARRY_AT`), and so is
+  a column already in row order (one pass in `Sorted::of`). Rows whose first column does not keep a
+  document's rows together are refused too: one export had 103 k runs in 141 k rows, and its carry cost
+  194 ms against about 120 ms of sorting.
+- **Runs kept.** A source's runs are computed once and kept with it (`Stored::runs`), so the next run's
+  carry reads the old ones.
+
+| sorts + carries, spans on | 01 | 02 | 03 |
+|---|---:|---:|---:|
+| sorted again | 1.50 s | 1.30 s | 0.97 s |
+| carried | 0.94 s | 0.60 s | 0.55 s |
+
 ## Open
 
 - Whether §2's base-program form keeps demand's choices identical on the rewritten program. If it does not, the

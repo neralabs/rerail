@@ -4218,6 +4218,12 @@ fn run_observed(
             continue;
         }
         let source = exports.borrow_mut().source(rel, lowered.program.decls[rel].len());
+        // As a base relation's (`retain::kept_source`): the last run's copy if its rows are the same, else this one with
+        // the last run's sorted columns carried into it (decision 0101 §5).
+        let source = {
+            let parts = session.as_ref().map(|s| s.cross.lock().expect("the session's cross-file parts"));
+            retain::kept_source(parts.as_deref(), rel, source, &mut input_digests)
+        };
         cross_inputs.push((rel.clone(), Arc::clone(&source)));
         modules.bind(&db, rel, source)?;
     }
