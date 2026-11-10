@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
+import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
@@ -194,6 +195,62 @@ describe("CheckoutCodeRuleRouter", () => {
     await stopped.openWorkspace("stopped");
     expect(stopped.acceptsPath("api/x.py")).toBe(false);
     expect([stopped.ignoresPath("scratch", true), stopped.ignoresPath("api", true)]).toEqual([true, false]);
+  });
+
+  it("looks up the checkout of a walk's files once per folder, not once per file", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await mkdir(join(session, "api", "deep"), { recursive: true });
+    for (let index = 0; index < 20; index += 1) {
+      await writeFile(join(session, "api", `f${index}.py`), "seed\n");
+      await writeFile(join(session, "api", "deep", `g${index}.py`), "seed\n");
+    }
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    const { recorder, audits } = recordingAudits();
+    const bridge = new CodeRuleBridge(session, router(session, databasePath, recorder, undefined, true));
+    cleanups.push(() => bridge.close());
+    await bridge.openWorkspace("walk");
+    await bridge.checkpoint("turn");
+    // Each lookup resolves the path's real path and looks for `.git` on disk; a walk asked two of each file.
+    const lookups = vi.spyOn(CheckoutOwners.prototype, "ownerOf");
+    cleanups.push(async () => { lookups.mockRestore(); });
+    await bridge.checkpoint("turn");
+    // The session's folder, api and api/deep.
+    expect(lookups.mock.calls.length).toBeLessThanOrEqual(3);
+
+    lookups.mockRestore();
+    await writeFile(join(session, "api", "deep", "g3.py"), "NEEDLE\n");
+    await bridge.checkpoint("turn");
+    await bridge.settle();
+    expect(violations(audits)).toEqual([{ checkout: session, path: "api/deep/g3.py", code: "SESSION", mode: "block" }]);
+  });
+
+  it("answers a walk's questions as it answers each path alone, across nested checkouts and ignored folders", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const { parent, sub } = await withSubmodule(root);
+    await writeFile(join(parent, ".gitignore"), "scratch/\n*.log\n");
+    await mkdir(join(parent, "scratch"));
+    await mkdir(join(sub, "api"), { recursive: true });
+    setUpTestRepository(parent, { library: [file(needle("test:parent", "PARENT"))] }, databasePath);
+    setUpTestRepository(sub, { library: [file(needle("test:sub", "SUB"))] }, databasePath);
+    const { recorder } = recordingAudits();
+    const auditor = router(parent, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("view");
+    const view = auditor.walkView();
+
+    const folders = ["api", "scratch", "sub", "sub/api"];
+    const files = ["README.md", "run.log", "api/a.py", "scratch/x.py", "sub/README.md", "sub/api/b.py"];
+    const answers = (judge: Pick<CheckoutCodeRuleRouter, "acceptsPath" | "ignoresPath">) => ({
+      folders: folders.map(folder => judge.ignoresPath(folder, true)),
+      files: files.map(path => [judge.ignoresPath(path, false), judge.acceptsPath(path)]),
+    });
+    expect(answers(view)).toEqual({
+      folders: [false, true, false, false],
+      files: [[false, false], [true, false], [false, true], [true, false], [false, false], [false, true]],
+    });
+    expect(answers(view)).toEqual(answers(auditor));
   });
 
   it("judges a submodule's file by no rules while the submodule's repository is not set up", async () => {
