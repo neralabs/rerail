@@ -69,7 +69,7 @@ type Result<T> = std::result::Result<T, Error>;
 pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
 mod demand;
-mod keeps;
+pub(in crate::code_rule_dsl) mod keeps;
 pub(in crate::code_rule_dsl) mod sketch;
 pub(in crate::code_rule_dsl) mod statkeep;
 pub(in crate::code_rule_dsl) mod lower;

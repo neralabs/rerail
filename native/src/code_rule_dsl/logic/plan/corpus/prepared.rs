@@ -72,6 +72,7 @@ pub(super) fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("prepared_set_kind", &["k:int", "i:int", "kind:int"]),
         ("prepared_demanded", &["k:int", "rel:sym"]),
         ("prepared_pushed", &["k:int", "rel:sym"]),
+        ("prepared_factorized", &["k:int", "line:sym"]),
         ("prepared_located", &["ok:int"]),
         ("prepared_located_rel", &["k:int", "rel:sym"]),
         ("prepared_merged", &["relations:int", "classes:int"]),
@@ -143,6 +144,9 @@ pub(super) fn facts_of(prepared: &Prepared) -> Facts {
     }
     for (k, rel) in prepared.pushed.iter().enumerate() {
         row("prepared_pushed", vec![n(k), s(rel)]);
+    }
+    for (k, line) in prepared.factorized.iter().enumerate() {
+        row("prepared_factorized", vec![n(k), s(line)]);
     }
     let (ok, located) = match &prepared.located {
         Ok(rels) => (1, rels),
@@ -315,6 +319,7 @@ pub(super) fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prep
         sets,
         demanded: list("prepared_demanded")?,
         pushed: list("prepared_pushed")?,
+        factorized: list("prepared_factorized")?,
         located,
         merged,
         split,
@@ -528,7 +533,7 @@ mod tests {
         assert_eq!(format!("{:?}", back.prog), format!("{:?}", prepared.prog), "the front program");
         assert_eq!(format!("{:?}", back.lowered.program), format!("{:?}", prepared.lowered.program), "the lowered program");
         assert_eq!(back.lowered.domains, prepared.lowered.domains);
-        assert_eq!((back.sets, back.demanded, back.pushed, back.located, back.merged, back.interned), (prepared.sets.clone(), prepared.demanded.clone(), prepared.pushed.clone(), prepared.located.clone(), prepared.merged, prepared.interned.clone()));
+        assert_eq!((back.sets, back.demanded, back.pushed, back.factorized, back.located, back.merged, back.interned), (prepared.sets.clone(), prepared.demanded.clone(), prepared.pushed.clone(), prepared.factorized.clone(), prepared.located.clone(), prepared.merged, prepared.interned.clone()));
         assert_eq!(back.vocabulary.specs, prepared.vocabulary.specs);
         assert_eq!(format!("{:?}", back.split.local), format!("{:?}", prepared.split.local), "the split's local program");
         assert_eq!(format!("{:?}", back.split.cross), format!("{:?}", prepared.split.cross), "the split's cross-file program");

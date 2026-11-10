@@ -190,7 +190,7 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     }
     if super::super::profile::on() {
         for line in factorizable(prog, &rules_of, &estimates, model) {
-            super::super::profile::decision("factorized store (decision 0097)", || line);
+            super::super::profile::decision("factorized store (decision 0097): stored flat, would shrink as parts", || line);
         }
     }
     unestimate(model, inserted);
@@ -318,10 +318,11 @@ fn refusals(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTree
 
 /// The relations that cross the chunk boundary (the local part's outputs: its exports and findings) stored as the
 /// flat join of parts that meet only at a variable they project away: `fl853_p4_outer(f, x) :- rr_inside_ks5(f, p),
-/// bound_in(p, x)` holds 777 k rows, its two parts about 100 k. Stored factorized, the parts and their key, a reader
-/// would join them where it binds its own columns. Not built (decision 0097, "Factorized store"): this names each
-/// such relation with its flat rows (observed where an earlier chunk measured them) and its parts' estimated rows,
-/// where the flat rows are over twice the parts'.
+/// bound_in(p, x)` holds 777 k rows, its two parts about 100 k. Such an export is handed on as its parts before the
+/// first chunk (`file_local::factorize_exports`, decision 0097); this names each relation still stored flat that would
+/// shrink so (one the program's test refused: a finding, a part of one row a key, a reader binding none of it), with
+/// its flat rows (observed where an earlier chunk measured them) and its parts' estimated rows, where the flat rows
+/// are over twice the parts'.
 fn factorizable(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, estimates: &BTreeMap<String, (f64, f64)>, model: &Model) -> Vec<String> {
     let mut out = Vec::new();
     for rel in &prog.outputs {
@@ -364,7 +365,7 @@ fn factorizable(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, estimates
 /// `rule`'s body split at a variable `key` the head does not name: the parts that meet only at `key`, each naming a
 /// head variable, with each comparison and negation in the part whose variables it reads. `None` where no variable
 /// splits it so, or it holds anything but atoms and comparisons.
-fn factors(rule: &Rule) -> Option<(String, Vec<Vec<Literal>>)> {
+pub(in crate::code_rule_dsl) fn factors(rule: &Rule) -> Option<(String, Vec<Vec<Literal>>)> {
     if !rule.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. })) {
         return None;
     }
