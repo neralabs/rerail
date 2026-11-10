@@ -243,7 +243,7 @@ pub(in crate::code_rule_dsl) use compilation::PlanId;
 mod native_cpu;
 mod native_cpu_capture;
 mod native_cpu_capture_pair;
-mod native_cpu_codegen;
+use rerail_tier1::native_cpu_codegen;
 mod native_cpu_lua;
 mod native_cpu_output;
 mod native_cpu_output_sort;
@@ -253,14 +253,15 @@ mod native_cpu_regex;
 mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
-mod native_cpu_block;
-// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2).
-pub(in crate::code_rule_dsl) mod native_cpu_rows;
+use rerail_tier1::native_cpu_block;
+// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), tier 1's.
+#[allow(unused_imports)]
+pub(in crate::code_rule_dsl) use rerail_tier1::native_cpu_rows;
 // Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
 pub(in crate::code_rule_dsl) mod rows_sort;
-mod native_cpu_lanes;
-mod native_cpu_pressure;
-mod native_cpu_shape;
+use rerail_tier1::native_cpu_lanes;
+use rerail_tier1::native_cpu_pressure;
+use rerail_tier1::native_cpu_shape;
 mod native_cpu_stream;
 mod native_ir;
 mod output;
@@ -277,7 +278,7 @@ pub(in crate::code_rule_dsl) mod fusion;
 pub(in crate::code_rule_dsl) mod rir;
 mod value;
 // Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
-pub(in crate::code_rule_dsl) mod block;
+pub(in crate::code_rule_dsl) use rerail_tier1::block;
 pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
 mod block_tests;
@@ -297,9 +298,9 @@ mod token_local;
 #[cfg(test)]
 mod token_local_tests;
 #[cfg(test)]
-mod gating_tests;
-#[cfg(test)]
-mod outline_tests;
+mod gating_rr_tests;
+#[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+mod regex_relocation_tests;
 #[cfg(test)]
 mod bitlex_corpus_tests;
 #[cfg(test)]
@@ -1028,36 +1029,8 @@ pub(super) fn interpreter_reference(
     packed_batch::PackedExecution::interpret_reference(programs, file, roots, limits)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum Error {
-    InvalidOpcode(usize),
-    InvalidMode(usize),
-    InvalidOperand(usize),
-    InvalidTarget(usize),
-    NonProgressingCycle(usize),
-    InvalidGreedyRegion(usize),
-    WorkLimit,
-    UnsupportedPattern,
-    UnsupportedFeature(&'static str),
-    UnknownNodeKind(String),
-    UnknownField(String),
-    UnknownCapture(String),
-    ScmParse { offset: usize, message: String },
-    InvalidAnchor,
-    UnsupportedBackend,
-    BackendCapacity,
-    /// A label run's workspace is over Metal's buffer budget (`label_passes::run` halves its lanes'
-    /// states; past the fewest it is `BackendCapacity`).
-    BackendBudget,
-    BackendLaunchLimit,
-    /// A label run's micro walk outgrew its frames, captures or steps on the device: the run
-    /// again with deep stacks, then interpreted. Not a size refusal: the batch fits; its walks'
-    /// pools do not.
-    WalkFrames,
-    BackendFailure,
-    /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
-    RefusedShape(String),
-}
+// The transducer's errors, shared with tier 1's crate.
+pub(in crate::code_rule_dsl) use rerail_tier1::Error;
 
 #[derive(Clone, Copy)]
 struct Path {
