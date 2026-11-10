@@ -9,7 +9,7 @@ import { createRerailApi } from "../../src/api/http.js";
 import { createRerailMcpHandler } from "../../src/api/mcp.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
-import { CALLER_CWD_HEADER, mergeAssistStatusSchema, recordCheckout } from "../../src/engine/index.js";
+import { CALLER_CWD_HEADER, mergeAssistSettingsSchema, mergeAssistStatusSchema, recordCheckout } from "../../src/engine/index.js";
 import { MERGE_ASSIST_ERROR_CODES, MergeAssistError } from "../../src/runtime/index.js";
 import { RecordingMergeAssistService } from "../support/merge-assist-status.js";
 import { candidate, candidateFiles, commit, forbidRule, mergeAssistWorkspaces, writeFiles } from "../runtime/merge-assist/support/merge-assist-workspace.js";
@@ -164,10 +164,43 @@ describe("the Merge Assist operations", () => {
     ]);
   });
 
+  it("reads the person's settings and changes them with on or off, the delivery and the hook", async () => {
+    const read = await request("GET", `/api/merge-assist/settings?${new URLSearchParams({ checkout })}`);
+    expect(read.status).toBe(200);
+    expect(mergeAssistSettingsSchema.parse(read.body)).toEqual({ delivery: "both", hook: null });
+
+    const hooked = await request("PUT", "/api/merge-assist/settings", { checkout, delivery: "terminal", hook: { command: ["./notify.sh", "--json"] } });
+    expect(hooked.status).toBe(200);
+    // A hook without a timeout gets the default, 10 seconds; the answer is the status, with the saved settings.
+    expect(mergeAssistStatusSchema.parse(hooked.body).settings).toEqual({ delivery: "terminal", hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } });
+    expect(mergeAssistSettingsSchema.parse((await request("GET", `/api/merge-assist/settings?${new URLSearchParams({ repository: repositoryKey })}`)).body))
+      .toEqual({ delivery: "terminal", hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } });
+
+    const both = await request("PUT", "/api/merge-assist/settings", { checkout, enabled: true, hook: null });
+    expect(mergeAssistStatusSchema.parse(both.body).settings).toEqual({ delivery: "terminal", hook: null });
+    expect((await request("PUT", "/api/merge-assist/settings", { checkout, hook: { command: ["notify"], timeoutSeconds: 60 } })).status).toBe(200);
+
+    expect(service.calls).toEqual([
+      { method: "settings", checkout },
+      { method: "updateSettings", checkout, change: { delivery: "terminal", hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } } },
+      { method: "settings", checkout },
+      { method: "setEnabled", checkout, enabled: true },
+      { method: "updateSettings", checkout, change: { hook: null } },
+      { method: "updateSettings", checkout, change: { hook: { command: ["notify"], timeoutSeconds: 60 } } },
+    ]);
+  });
+
   it("validates bodies before anything runs", async () => {
     for (const [path, body] of [
       ["/api/merge-assist/settings", { checkout, enabled: "yes" }],
       ["/api/merge-assist/settings", { checkout }],
+      ["/api/merge-assist/settings", { checkout, delivery: "email" }],
+      ["/api/merge-assist/settings", { checkout, hook: { command: [] } }],
+      ["/api/merge-assist/settings", { checkout, hook: { command: [""] } }],
+      ["/api/merge-assist/settings", { checkout, hook: { command: "./notify.sh" } }],
+      ["/api/merge-assist/settings", { checkout, hook: { command: ["./notify.sh"], timeoutSeconds: 61 } }],
+      ["/api/merge-assist/settings", { checkout, hook: { command: ["./notify.sh"], timeoutSeconds: 0 } }],
+      ["/api/merge-assist/settings", { checkout, hook: { command: ["./notify.sh"], shell: true } }],
       ["/api/merge-assist/candidates", { checkout, candidateId: "candidate:../../etc", state: "rejected" }],
       ["/api/merge-assist/candidates", { checkout, candidateId: CANDIDATE, state: "deleted" }],
       ["/api/merge-assist/findings", { checkout, findingId: "", action: "dismiss" }],
@@ -204,10 +237,15 @@ describe("the Merge Assist operations", () => {
     expect((await call("merge_assist_finding_set", { findingId: "finding-2", action: "dismiss" }, checkout)).result).toMatchObject({ checkout });
     // A verdict on a conflict reaches the service as the agent's, and the service refuses it (below, for real).
     expect((await call("merge_assist_conflict_set", { conflictId: "conflict-1", action: "theirs" }, checkout)).result).toMatchObject({ checkout });
+    expect((await call("merge_assist_settings_get", {}, checkout)).result).toEqual({ delivery: "both", hook: null });
 
     // Turning it on, restoring, adopting and undoing widen what steers the agent: the person's to do.
     expect((await call("merge_assist_settings_set", { enabled: true }, checkout)).result).toEqual(refused);
     expect((await call("merge_assist_settings_set", { enabled: false }, checkout)).result).toEqual(refused);
+    // The delivery and the hook command are the person's too: the hook runs a program as them.
+    expect((await call("merge_assist_settings_set", { delivery: "chat" }, checkout)).result).toEqual(refused);
+    expect((await call("merge_assist_settings_set", { hook: { command: ["./notify.sh"] } }, checkout)).result).toEqual(refused);
+    expect((await call("merge_assist_settings_set", { hook: null }, checkout)).result).toEqual(refused);
     expect((await call("merge_assist_candidate_set", { candidateId: CANDIDATE, state: "active" }, checkout)).result).toEqual(refused);
     expect((await call("merge_assist_finding_set", { findingId: "finding-1", action: "adopt" }, checkout)).result).toEqual(refused);
     expect((await call("merge_assist_finding_set", { findingId: "finding-1", action: "undo" }, checkout)).result).toEqual(refused);
@@ -218,6 +256,7 @@ describe("the Merge Assist operations", () => {
       { method: "setCandidateState", checkout, candidateId: CANDIDATE, state: "rejected" },
       { method: "resolveFinding", checkout, findingId: "finding-2", action: "dismiss", actor: "agent" },
       { method: "resolveConflict", checkout, conflictId: "conflict-1", action: "theirs", text: undefined, actor: "agent" },
+      { method: "settings", checkout },
     ]);
   });
 
@@ -246,10 +285,20 @@ describe("the Merge Assist operations", () => {
     const tools = (await response.json() as { result: { tools: Array<{ name: string; description: string }> } }).result.tools
       .filter(tool => tool.name.startsWith("merge_assist_"));
     expect(tools.map(tool => tool.name).sort()).toEqual([
-      "merge_assist_candidate_set", "merge_assist_conflict_set", "merge_assist_finding_set", "merge_assist_get", "merge_assist_scan", "merge_assist_settings_set",
+      "merge_assist_candidate_set", "merge_assist_conflict_set", "merge_assist_finding_set", "merge_assist_get", "merge_assist_scan",
+      "merge_assist_settings_get", "merge_assist_settings_set",
     ]);
     for (const tool of tools) expect(tool.description).toMatch(/^\[Internal testing\] /u);
     expect(tools.find(tool => tool.name === "merge_assist_settings_set")?.description).toContain("People only");
+  });
+
+  it("documents reading and changing the settings on one OpenAPI path", async () => {
+    const document = (await request("GET", "/openapi.json")).body as { paths: Record<string, Record<string, { operationId: string; requestBody?: { content: Record<string, { schema: { properties: Record<string, unknown> } }> } }>> };
+    const settings = document.paths["/api/merge-assist/settings"]!;
+    expect(settings.get?.operationId).toBe("merge_assist_settings_get");
+    expect(settings.put?.operationId).toBe("merge_assist_settings_set");
+    expect(Object.keys(settings.put!.requestBody!.content["application/json"]!.schema.properties).sort())
+      .toEqual(["checkout", "delivery", "enabled", "hook", "repository"]);
   });
 });
 
@@ -294,34 +343,58 @@ describe("a coding agent's dismissal, through the real service", { timeout: 30_0
     }
   });
 
-  it("refuses a coding agent's verdict on an in-flight conflict, and takes the person's over HTTP", async () => {
+  /** A conflict open in the workspace's checkout, and the API over a Merge Assist with the verdicts on or off. */
+  async function openConflict(conflictVerdicts: boolean) {
     const ws = await workspace({ files: { "src/api/model.ts": "a\nb\nc\nd\ne\n" } });
-    const service = ws.service();
+    const service = ws.service({ conflictVerdicts });
     await service.setEnabled(ws.repo, true);
     commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": "a\nB\nc\nd\ne\n" }, "Capitalise b");
     writeFiles(ws.repo, { "src/api/model.ts": "a\nb\nC\nd\ne\n" });
     const [conflict] = (await service.scan(ws.repo)).conflicts;
     expect(conflict).toMatchObject({ status: "open" });
-
     const stores = new DatabaseApiStores(ws.databasePath, {
       health: () => ({ pid: process.pid, database: { path: ws.databasePath, exists: true }, native: { ok: true } }),
       origin: () => "http://127.0.0.1:4737",
       mergeAssist: service,
     });
+    const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+    const resolve = async (action: string): Promise<Answer> => {
+      const response = await app.request("/api/merge-assist/conflicts", {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ checkout: ws.repo, conflictId: conflict!.id, action }),
+      });
+      return { status: response.status, body: await response.json() as Record<string, unknown> };
+    };
+    return { ws, service, conflict: conflict!, stores, resolve };
+  }
+
+  it("refuses a coding agent's verdict, and a person's while the verdicts are off, and takes the person's dismissal", async () => {
+    const { ws, service, conflict, stores, resolve } = await openConflict(false);
     try {
       const mcp = createRerailMcpHandler(stores, operations, { version: "0.0.0-test" });
       expect(mergeAssistStatusSchema.parse((await toolCall(mcp, "merge_assist_get", {}, ws.repo)).result).conflicts).toEqual([conflict]);
-      expect((await toolCall(mcp, "merge_assist_conflict_set", { conflictId: conflict!.id, action: "mine" }, ws.repo)).result)
+      expect((await toolCall(mcp, "merge_assist_conflict_set", { conflictId: conflict.id, action: "mine" }, ws.repo)).result)
         .toEqual(expect.stringMatching(/^invalid-state: The person decides in-flight conflicts/u));
+
+      for (const action of ["mine", "theirs"]) {
+        expect(await resolve(action)).toEqual({ status: 409, body: { error: "invalid-state", message: expect.stringContaining("experimental: set RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS=1") } });
+      }
       expect((await service.status(ws.repo)).conflicts[0]).toMatchObject({ status: "open" });
 
-      const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
-      const response = await app.request("/api/merge-assist/conflicts", {
-        method: "PUT", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ checkout: ws.repo, conflictId: conflict!.id, action: "theirs" }),
-      });
-      expect(response.status).toBe(200);
-      expect(mergeAssistStatusSchema.parse(await response.json()).conflicts[0]).toMatchObject({ status: "resolved", resolution: { action: "theirs", by: "person", text: "Capitalise b (src/api/model.ts:2)" } });
+      const dismissed = await resolve("dismiss");
+      expect(dismissed.status).toBe(200);
+      expect(mergeAssistStatusSchema.parse(dismissed.body).conflicts[0]).toMatchObject({ status: "dismissed", resolution: { action: "dismiss" } });
+    } finally {
+      stores.close();
+    }
+  });
+
+  it("takes a person's verdict over HTTP while the verdicts are on", async () => {
+    const { stores, resolve } = await openConflict(true);
+    try {
+      const resolved = await resolve("theirs");
+      expect(resolved.status).toBe(200);
+      expect(mergeAssistStatusSchema.parse(resolved.body).conflicts[0]).toMatchObject({ status: "resolved", resolution: { action: "theirs", text: "Capitalise b (src/api/model.ts:2)" } });
     } finally {
       stores.close();
     }

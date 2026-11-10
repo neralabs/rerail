@@ -129,6 +129,15 @@ export class FakeJudge implements AgentJudge {
   }
 }
 
+/** The quick call's answer for a conflict's status line. */
+export const SUMMARY = "They change the same lines as this branch.";
+
+/** What the default judge answers: a comparison, a summary, or a capture. */
+export function defaultAnswer(task: JudgeTask<unknown>): unknown {
+  if (task.kind === "compare") return compareAnswer(task);
+  return task.kind === "summary" ? { summary: SUMMARY } : captureVerdict();
+}
+
 export function captureVerdict(overrides: Partial<CaptureVerdict> = {}): CaptureVerdict {
   return {
     generality: "repository",
@@ -202,8 +211,11 @@ export interface Workspace {
   readonly databasePath: string;
   readonly ruleCatalog: RuleCatalog;
   readonly repositoryKey: string;
-  /** A Merge Assist over the workspace's database, with these stand-ins; the experimental decision ledger only when `decisionLedger`. */
-  service(options?: { judge?: AgentJudge; github?: GithubClient; now?: () => number; decisionLedger?: boolean }): MergeAssistRuntime;
+  /**
+   * A Merge Assist over the workspace's database, with these stand-ins; experimental conflict verdicts only when
+   * `conflictVerdicts`.
+   */
+  service(options?: { judge?: AgentJudge; github?: GithubClient; now?: () => number; conflictVerdicts?: boolean }): MergeAssistRuntime;
   /** A linked worktree of the repository at `<folder>/<name>`, on a new branch from `main`. */
   worktree(name: string, options?: { record?: boolean }): string;
   /** The rule ids on in the checkout at `path`, as a session there would load them. */
@@ -236,7 +248,10 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
     const { repositoryKey } = recordCheckout(database, repo);
     if (setUp) setUpRepository(database, repositoryKey, { packs: [] });
     setRepositoryStarted(database, repositoryKey, true);
+    const services: MergeAssistRuntime[] = [];
     cleanups.push(async () => {
+      // The conflict hook's handlers run in the background: let them finish before the database closes.
+      await Promise.all(services.map(service => service.settled()));
       database.$client.close();
       await rm(folder, { recursive: true, force: true });
     });
@@ -247,14 +262,18 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
       databasePath,
       ruleCatalog,
       repositoryKey,
-      service: (options = {}) => createMergeAssistService({
-        database,
-        ruleCatalog,
-        judge: options.judge ?? new FakeJudge(task => (task.kind === "compare" ? compareAnswer(task) : captureVerdict())),
-        github: options.github ?? new FakeGithub(),
-        ...(options.now === undefined ? {} : { now: options.now }),
-        decisionLedger: options.decisionLedger ?? false,
-      }),
+      service: (options = {}) => {
+        const service = createMergeAssistService({
+          database,
+          ruleCatalog,
+          judge: options.judge ?? new FakeJudge(defaultAnswer),
+          github: options.github ?? new FakeGithub(),
+          ...(options.now === undefined ? {} : { now: options.now }),
+          conflictVerdicts: options.conflictVerdicts ?? false,
+        });
+        services.push(service);
+        return service;
+      },
       worktree: (name, { record = false } = {}) => {
         const path = join(folder, name);
         git(repo, "worktree", "add", "-q", "-b", name, path, "main");

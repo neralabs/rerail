@@ -15,7 +15,7 @@ export const MAX_CALLERS = 200;
 export const PULL_REQUEST_HOURS = 24;
 /** The longest time to merge the dimmer assumes: two weeks. */
 export const MAX_HOURS_TO_MERGE = 336;
-/** P(this side loses) when no precedent or panel says otherwise. */
+/** P(this side loses) when nothing says otherwise. */
 export const EVEN_ODDS = 0.5;
 
 const HOUR_MS = 3_600_000;
@@ -61,7 +61,7 @@ export interface ContestedChange {
   readonly pullRequest: boolean;
   /** Other live refs that touch the contested files. */
   readonly otherRefs: number;
-  /** A verdict or precedent on the question exists. */
+  /** This checkout holds a resolution of a conflict on the same question. */
   readonly verdict: boolean;
 }
 

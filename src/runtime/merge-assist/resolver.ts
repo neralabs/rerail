@@ -1,10 +1,10 @@
 /**
  * Merge Assist's resolver: given a conflict record and the repository, it runs the policy and returns the verdict
  * with its evidence, or an escalation with the reason. Steps run in the policy's order and the first that decides
- * wins: precedent from the ledger view, hard checks (each side's checks run by a `CheckRunner`, undeclared public
- * contract breaks), measurable criteria, then the judge panel; a reserved class goes to a person before the panel, and
- * so does whatever nothing decides. The resolver reads Git and what the record carries; it never sees how the work
- * ended (merge state, comments, closing text, cross-references), so a record's intents must be sanitised.
+ * wins: hard checks (each side's checks run by a `CheckRunner`, undeclared public contract breaks), measurable
+ * criteria, then the judge panel; a reserved class goes to a person before the panel, and so does whatever nothing
+ * decides. The resolver reads Git and what the record carries; it never sees how the work ended (merge state,
+ * comments, closing text, cross-references), so a record's intents must be sanitised.
  */
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -12,9 +12,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gitExecutable } from "../../engine/git.js";
 import { baseDocs, contractBreaks, declaresBreak, reservedClassesOf, sideChanges, sideDiff, type SideChanges } from "../../engine/merge-assist/conflict-evidence.js";
-import { refLabel } from "../../engine/merge-assist/conflicts.js";
-import { DECISION_ENTRY_FORMAT, type DecisionEntry, MAX_RESULT_TEXT, type Position, sealDecisionEntry } from "../../engine/merge-assist/decision-entry.js";
-import { decidePrecedent, type LedgerView, readLedger } from "../../engine/merge-assist/ledger.js";
 import {
   type ConflictRecord,
   type DecidingStep,
@@ -64,8 +61,6 @@ export interface ResolveInput {
   readonly judge: AgentJudge | null;
   /** Null: no check runs, and every check counts as unknown. */
   readonly checks: CheckRunner | null;
-  /** The ledger view; read from the repository (`readLedger`) when absent. */
-  readonly ledger?: Pick<LedgerView, "items">;
   /** The panel's seed; 0 by default. */
   readonly seed?: number;
 }
@@ -77,7 +72,6 @@ export interface SideEvidence {
 }
 
 export interface ResolutionEvidence {
-  readonly precedent: { readonly entry: { readonly id: string } | null } | null;
   readonly sides: Readonly<Record<SideId, SideEvidence>>;
   readonly checks: Readonly<Record<SideId, SideCheckOutcome>> | null;
   readonly measures: Readonly<Record<SideId, SideMeasures>> | null;
@@ -110,70 +104,65 @@ async function sideEvidence(root: string, record: ConflictRecord, side: SideId, 
   return { changes, breaks, reserved: reservedClassesOf(changes, breaks, declared) };
 }
 
-function escalation(reason: string, steps: StepResult[], evidence: ResolutionEvidence): Resolution {
+/** What the steps have gathered so far, and each step that ran, in order, with its outcome. */
+interface Progress {
+  evidence: ResolutionEvidence;
+  readonly steps: StepResult[];
+}
+
+function escalation(reason: string, { steps, evidence }: Progress): Resolution {
   return { verdict: "escalated", step: "escalate", reason, steps, evidence };
 }
 
-/**
- * Resolves `record` under `policy`. Precedent, hard checks and criteria decide without a model; the panel runs only
- * when they don't and no reserved class applies. Escalates, with the reason, when a side's head is not in the
- * repository, the panel is needed but no judge is available, or nothing decides.
- */
-export async function resolveConflict(input: ResolveInput): Promise<Resolution> {
-  const { root, record, policy } = input;
-  const steps: StepResult[] = [];
-  const [a, b] = await Promise.all([sideEvidence(root, record, "a", policy), sideEvidence(root, record, "b", policy)]);
-  const sides = { a, b };
-  let evidence: ResolutionEvidence = { precedent: null, sides, checks: null, measures: null, reserved: [], panel: null };
-  const missing = SIDES.filter(side => sides[side].changes === null);
-  if (missing.length > 0) return escalation(`The repository does not hold side ${missing.join(" and ")}'s head or the base.`, steps, evidence);
+function decided(result: StepResult, { steps, evidence }: Progress): Resolution {
+  return { verdict: result.winner!, step: result.step, reason: result.reason, steps, evidence };
+}
 
-  if (policy.steps.includes("precedent")) {
-    const ledger = input.ledger ?? await readLedger(root);
-    // A record carries no positions: precedent matches it by its sides' refs.
-    const precedent = decidePrecedent({ question: record.question, sides: { a: { ref: record.sides.a.ref, fingerprint: null }, b: { ref: record.sides.b.ref, fingerprint: null } } }, ledger);
-    steps.push({ step: precedent.step, winner: precedent.winner, reason: precedent.reason });
-    evidence = { ...evidence, precedent: { entry: precedent.entry } };
-    if (precedent.winner !== null) return decided(precedent, steps, evidence);
-  }
-
+/** Each side's checks and benchmarks, run once when hard checks or criteria need them and a runner is given. */
+async function runChecks(input: ResolveInput, progress: Progress): Promise<void> {
+  const { record, policy, checks: runner } = input;
   const needsRuns = policy.checks.run.length > 0 || policy.criteria.benchmarks.length > 0;
-  if (needsRuns && input.checks !== null && (policy.steps.includes("hard-checks") || policy.steps.includes("criteria"))) {
-    const runner = input.checks;
-    const [left, right] = await Promise.all(SIDES.map(side => runner.run(side, record.sides[side].sha, policy)));
-    evidence = { ...evidence, checks: { a: left!, b: right! } };
-  }
-  if (policy.steps.includes("hard-checks")) {
-    const results = evidence.checks === null ? null : { a: evidence.checks.a.checks, b: evidence.checks.b.checks };
-    const hard = decideHardChecks(results, policy.contracts.enabled ? { a: a.breaks, b: b.breaks } : null);
-    steps.push(hard);
-    if (hard.winner !== null) return decided(hard, steps, evidence);
-  }
+  if (!needsRuns || runner === null || !(policy.steps.includes("hard-checks") || policy.steps.includes("criteria"))) return;
+  const [left, right] = await Promise.all(SIDES.map(side => runner.run(side, record.sides[side].sha, policy)));
+  progress.evidence = { ...progress.evidence, checks: { a: left!, b: right! } };
+}
 
-  if (policy.steps.includes("criteria")) {
-    const measures = Object.fromEntries(SIDES.map(side => {
-      const { changes, breaks } = sides[side];
-      return [side, { callersAffected: callersAffected(breaks), sourceLines: changes!.sourceLines, sourceFiles: changes!.sourceFiles, benchmarks: evidence.checks?.[side].benchmarks ?? {} }];
-    })) as Record<SideId, SideMeasures>;
-    evidence = { ...evidence, measures };
-    const criteria = decideCriteria(policy.criteria, measures);
-    steps.push(criteria);
-    if (criteria.winner !== null) return decided(criteria, steps, evidence);
-  }
+/** Hard checks: a side whose head fails a check the other passes, or alone breaks an undeclared contract, loses. */
+function hardChecksStep({ policy }: ResolveInput, progress: Progress): StepResult | null {
+  if (!policy.steps.includes("hard-checks")) return null;
+  const { checks, sides } = progress.evidence;
+  const results = checks === null ? null : { a: checks.a.checks, b: checks.b.checks };
+  const hard = decideHardChecks(results, policy.contracts.enabled ? { a: sides.a.breaks, b: sides.b.breaks } : null);
+  progress.steps.push(hard);
+  return hard;
+}
 
-  const reserved = reservedHits(policy.reserve, { a: a.reserved, b: b.reserved });
-  evidence = { ...evidence, reserved };
-  if (reserved.length > 0) return escalation(`The conflict is in a class the policy reserves for a person: ${reserved.join(", ")}.`, steps, evidence);
+/** The measurable criteria: callers left to adapt, blast radius, then the configured benchmarks. */
+function criteriaStep({ policy }: ResolveInput, progress: Progress): StepResult | null {
+  if (!policy.steps.includes("criteria")) return null;
+  const { sides, checks } = progress.evidence;
+  const measures = Object.fromEntries(SIDES.map(side => {
+    const { changes, breaks } = sides[side];
+    return [side, { callersAffected: callersAffected(breaks), sourceLines: changes!.sourceLines, sourceFiles: changes!.sourceFiles, benchmarks: checks?.[side].benchmarks ?? {} }];
+  })) as Record<SideId, SideMeasures>;
+  progress.evidence = { ...progress.evidence, measures };
+  const criteria = decideCriteria(policy.criteria, measures);
+  progress.steps.push(criteria);
+  return criteria;
+}
 
-  if (!policy.steps.includes("panel")) return escalation(`No step decided: ${steps.map(step => step.reason).join(" ")}`.trim(), steps, evidence);
-  if (input.judge === null) return escalation("The panel is needed, and no judge is available.", steps, evidence);
+/** The judge panel, last: it reads the docs at the base and each side's intent and diff. */
+async function panelStep(input: ResolveInput, progress: Progress): Promise<Resolution> {
+  const { root, record, policy } = input;
+  if (!policy.steps.includes("panel")) return escalation(`No step decided: ${progress.steps.map(step => step.reason).join(" ")}`.trim(), progress);
+  if (input.judge === null) return escalation("The panel is needed, and no judge is available.", progress);
   const docs = await baseDocs(root, record.base, {
     files: [...new Set([...record.sides.a.anchors.files, ...record.sides.b.anchors.files])],
     symbols: [...new Set([...record.sides.a.anchors.symbols, ...record.sides.b.anchors.symbols])],
   }, PANEL_DOC_CHARS);
   const designs = Object.fromEntries(SIDES.map(side => [side, {
     intent: sanitizeIntent(record.sides[side].intent),
-    diff: stripCrossReferences(sideDiff(root, record.sides[side].sha, sides[side].changes!, PANEL_DIFF_CHARS)),
+    diff: stripCrossReferences(sideDiff(root, record.sides[side].sha, progress.evidence.sides[side].changes!, PANEL_DIFF_CHARS)),
   }])) as Record<SideId, { intent: string; diff: string }>;
   const panel = await runPanel(input.judge, {
     repositoryKey: input.repositoryKey,
@@ -184,58 +173,31 @@ export async function resolveConflict(input: ResolveInput): Promise<Resolution> 
     agreement: policy.panel.agreement,
     seed: input.seed ?? 0,
   });
-  evidence = { ...evidence, panel };
-  steps.push({ step: panel.step, winner: panel.winner, reason: panel.reason });
-  if (panel.winner !== null) return decided(panel, steps, evidence);
-  return escalation(`No step decided. ${panel.reason}`, steps, evidence);
-}
-
-function decided(result: StepResult, steps: StepResult[], evidence: ResolutionEvidence): Resolution {
-  return { verdict: result.winner!, step: result.step, reason: result.reason, steps, evidence };
+  progress.evidence = { ...progress.evidence, panel };
+  progress.steps.push({ step: panel.step, winner: panel.winner, reason: panel.reason });
+  return panel.winner === null ? escalation(`No step decided. ${panel.reason}`, progress) : decided(panel, progress);
 }
 
 /**
- * The ledger entry for a resolution: the record's question and sides with their positions, the verdict, the deciding
- * step (precedent names the entry it followed), and the losing side's decision to follow the winner's design. An
- * escalation is no entry: the conflict stays open for a person.
+ * Resolves `record` under `policy`. Hard checks and criteria decide without a model; the panel runs only when they
+ * don't and no reserved class applies. Escalates, with the reason, when a side's head is not in the repository, the
+ * panel is needed but no judge is available, or nothing decides.
  */
-export function decisionEntryFor(
-  record: ConflictRecord,
-  resolution: Resolution,
-  positions: Readonly<Record<SideId, { readonly fingerprint: string; readonly at: Position }>>,
-  recordedAt: Date = new Date(),
-): DecisionEntry | null {
-  if (resolution.verdict === "escalated") return null;
-  const winner = resolution.verdict;
-  const precedent = resolution.evidence.precedent?.entry ?? null;
-  const decidedBy = resolution.step === "precedent" && precedent !== null
-    ? { kind: "precedent" as const, entry: precedent.id }
-    : resolution.step === "hard-checks" || resolution.step === "criteria" || resolution.step === "panel" ? { kind: "policy" as const, step: resolution.step } : null;
-  if (decidedBy === null) return null;
-  const side = (id: SideId) => ({ ref: record.sides[id].ref, label: refLabel(record.sides[id].ref), sha: record.sides[id].sha, author: null, ...positions[id] });
-  const intent = firstLine(record.sides[winner].intent);
-  return sealDecisionEntry({
-    format: DECISION_ENTRY_FORMAT,
-    question: record.question,
-    title: (intent || record.question).slice(0, 300),
-    base: record.base,
-    sides: { a: side("a"), b: side("b") },
-    verdict: winner,
-    decidedBy,
-    result: {
-      candidateId: null,
-      kind: "decision",
-      text: `Follow the design of ${record.sides[winner].ref} (${record.sides[winner].sha.slice(0, 12)}): ${intent || "its change"}.`.slice(0, MAX_RESULT_TEXT),
-      rule: null,
-      follows: null,
-    },
-    supersedes: null,
-    recordedAt: recordedAt.toISOString(),
-  });
-}
-
-function firstLine(text: string): string {
-  return sanitizeIntent(text).split("\n").find(line => line.trim() !== "")?.replace(/^#+\s*/u, "").trim().slice(0, 300) ?? "";
+export async function resolveConflict(input: ResolveInput): Promise<Resolution> {
+  const { root, record, policy } = input;
+  const [a, b] = await Promise.all([sideEvidence(root, record, "a", policy), sideEvidence(root, record, "b", policy)]);
+  const progress: Progress = { evidence: { sides: { a, b }, checks: null, measures: null, reserved: [], panel: null }, steps: [] };
+  const missing = SIDES.filter(side => progress.evidence.sides[side].changes === null);
+  if (missing.length > 0) return escalation(`The repository does not hold side ${missing.join(" and ")}'s head or the base.`, progress);
+  await runChecks(input, progress);
+  for (const step of [hardChecksStep, criteriaStep]) {
+    const result = step(input, progress);
+    if (result !== null && result.winner !== null) return decided(result, progress);
+  }
+  const reserved = reservedHits(policy.reserve, { a: a.reserved, b: b.reserved });
+  progress.evidence = { ...progress.evidence, reserved };
+  if (reserved.length > 0) return escalation(`The conflict is in a class the policy reserves for a person: ${reserved.join(", ")}.`, progress);
+  return await panelStep(input, progress);
 }
 
 // ------------------------------------------------------------------------------------------------- local checks

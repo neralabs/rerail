@@ -32,7 +32,6 @@ import type { CodeRule } from "../../engine/code-rule/code-rule-schema.js";
 import { candidatesInForce } from "../../engine/merge-assist/candidate.js";
 import { readWorktreeCandidates } from "../../engine/merge-assist/candidate-files.js";
 import { ruleDocumentDigest } from "../../engine/stable-json.js";
-import { provisionalResults } from "./ledger-store.js";
 import { STATE_KEYS, deleteState, readState, writeState, type StateQueries } from "./state.js";
 
 /** The id prefix of every rule Merge Assist stores; it touches no other rule. */
@@ -80,11 +79,8 @@ interface WantedRule {
   readonly rule: CodeRule;
 }
 
-/**
- * The rules the checkout's candidates call for: its own in force with a rule, and the peers' it applied, but not
- * another branch's verdict result that has not merged.
- */
-async function wantedRules(db: RerailDatabase, checkout: CheckoutContext, decisionLedger: boolean): Promise<WantedRule[]> {
+/** The rules the checkout's candidates call for: its own in force with a rule, and the peers' it applied. */
+async function wantedRules(db: RerailDatabase, checkout: CheckoutContext): Promise<WantedRule[]> {
   const root = checkout.checkoutPath;
   const own = await readWorktreeCandidates(root);
   const wanted: WantedRule[] = candidatesInForce(own.candidates)
@@ -99,11 +95,9 @@ async function wantedRules(db: RerailDatabase, checkout: CheckoutContext, decisi
     eq(mergeAssistItems.origin, "peer"),
     eq(mergeAssistItems.status, "applied"),
   )).all();
-  // Another branch's verdict that has not merged is information, never a rule here.
-  const verdicts = provisionalResults(db, root, decisionLedger);
   for (const item of applied) {
     const rule = item.candidate.rule as CodeRule | undefined;
-    if (rule === undefined || ownIds.has(item.candidateId) || (verdicts.get(item.candidateId)?.place ?? "branch") !== "branch") continue;
+    if (rule === undefined || ownIds.has(item.candidateId)) continue;
     const ruleId = peerRuleId(root, item);
     wanted.push({ ruleId, rule: { ...rule, id: ruleId } });
   }
@@ -148,10 +142,9 @@ export async function reconcileCheckout(
   ruleCatalog: RuleCatalog,
   checkout: CheckoutContext,
   now: number,
-  decisionLedger: boolean,
 ): Promise<ActivationOutcome> {
   const active = mergeAssistEnabled(db, checkout.repositoryKey) && rulesActive(db, checkout);
-  const wanted = active ? await wantedRules(db, checkout, decisionLedger) : [];
+  const wanted = active ? await wantedRules(db, checkout) : [];
   const failed: Record<string, string> = {};
   const documents: RuleDocument[] = [];
   for (const { ruleId, rule } of wanted) {
@@ -287,7 +280,7 @@ function removeUnused(db: RerailDatabase, tx: StateQueries, repositoryKey: Repos
 /**
  * Merge Assist turned off for the repository: every rule it applied in any of its checkouts is removed, and so are the
  * findings from other branches, the in-flight conflicts (their dismissals included) and each checkout's scan and
- * activation state. The checkouts' own candidate and ledger entry files, and the record of where each came from, stay.
+ * activation state. The checkouts' own candidate files, and the record of where each came from, stay.
  */
 export function deactivateRepository(db: RerailDatabase, repositoryKey: RepositoryKey): void {
   db.transaction(tx => {

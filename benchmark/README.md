@@ -251,11 +251,11 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   noticed the conflict, beside the textual and file-overlap baselines on the same replay. It also provides `ledgerAt`,
   `ledgerBuild` and `deliverForArea` to `merge-assist-replay.ts`. See
   [In-flight alignment replay](#in-flight-alignment-replay).
-- `merge-assist-resolve.ts` (`node --import tsx benchmark/merge-assist-resolve.ts build|checks|resolve|score|log-smoke
-  ...`, flags in its header) tests Merge Assist's conflict resolver offline on OSS conflict pairs: it builds a
-  conflict record per pair, runs each side's tests and type check on the build hosts, resolves every pair under
-  `fixtures/host/benchmark/merge-assist/resolve-policy.yaml` over several panel seeds and both side orders, scores the verdicts against the
-  adopted-design labels it is pointed at, and writes ledger entry files into scratch clones and reads the view back. See
+- `merge-assist-resolve.ts` (`node --import tsx benchmark/merge-assist-resolve.ts build|checks|resolve|score ...`,
+  flags in its header) tests Merge Assist's conflict resolver offline on OSS conflict pairs: it builds a conflict
+  record per pair, runs each side's tests and type check on the build hosts, resolves every pair under
+  `fixtures/host/benchmark/merge-assist/resolve-policy.yaml` over several panel seeds and both side orders, and scores
+  the verdicts against the adopted-design labels it is pointed at. See
   [Conflict resolver](#conflict-resolver).
 
 The workloads are host test data under `fixtures/host/benchmark/<kind>/`. Benchmark results are never committed. Keep
@@ -621,10 +621,10 @@ run to completion, as the session-focus comparison above did.
 ## Conflict resolver
 
 When two pieces of in-flight work conflict, can a policy pick the design the project adopted, and escalate to a person
-when it can't? The product side is `.rerail/policy.yaml` (`src/engine/merge-assist/policy.ts`), the decision ledger
-(`.rerail/decisions/` entry files, read as a view: `decision-entry.ts`, `ledger.ts`), the evidence read from Git (`conflict-evidence.ts`), and the resolver
-with its judge panel (`src/runtime/merge-assist/resolver.ts`, `panel.ts`). Steps run in order and the first that
-decides wins: precedent from the ledger view; hard checks (a side that fails a test or type check the other passes, or that
+when it can't? The product side is `.rerail/policy.yaml` (`src/engine/merge-assist/policy.ts`), the evidence read from
+Git (`conflict-evidence.ts`), and the resolver with its judge panel (`src/runtime/merge-assist/resolver.ts`,
+`panel.ts`). Steps run in order and the first that decides wins: hard checks (a side that fails a test or type check
+the other passes, or that
 alone breaks a public contract it did not declare, loses); measurable criteria (callers left to adapt, blast radius,
 configured benchmarks); a reserved class (public API, security, data model) goes to a person; then the panel: 3
 judges with distinct perspectives on the rubric (conventions and docs at the base, simplicity, compatibility, the
@@ -640,7 +640,6 @@ node --import tsx $B checks --records records.json --setups setups/ --repos repo
 node --import tsx $B resolve --records records.json --checks checks.json --repos repos/ --seeds 0,1,2 --swap \
   --provider amazon-bedrock --bedrock-token-cmd ./bedrock-token.sh --out results.json
 node --import tsx $B score --results results.json --labels labels/
-node --import tsx $B log-smoke --results results.json --records records.json --scratch /tmp/scratch
 ```
 
 - **Inputs.** Per pair: the base at the second pull request's start; the first's head as of then
@@ -685,10 +684,6 @@ preferring the later, smaller design); each judge reads both orders; a declared 
 - Against the bars: accuracy over decided passes; escalation (0.67–0.80) and wrong (1–2 of 15) do not. On these pairs
   the deterministic steps decide little and the panel's judgement of design quality disagrees with what projects
   adopted often enough that only escalating nearly everything keeps it safe.
-- Decision log smoke: an entry for each of the 15 seed-0 resolutions written to scratch clones of the 9 repositories
-  and read back whole. (That run wrote the shared ref the proof of concept had; `log-smoke` now writes an entry file
-  per decided resolution into each clone's working tree and reads the ledger view back, and an escalation is no
-  entry.)
 
 ### Held-out run: pre-registration
 

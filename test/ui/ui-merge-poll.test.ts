@@ -18,7 +18,8 @@ const json = (body: unknown, code = 200): Response => new Response(JSON.stringif
 /** Merge Assist on, with one finding needing review (`open`) or adopted (`applied`). */
 function status(findingStatus: "open" | "applied"): MergeAssistStatus {
   return {
-    repositoryKey: "A", checkout: "/work/a", branch: "mine", baseBranch: "main", enabled: true, experimental: { decisionLedger: false },
+    repositoryKey: "A", checkout: "/work/a", branch: "mine", baseBranch: "main", enabled: true,
+    experimental: { conflictVerdicts: false }, settings: { delivery: "both", hook: null },
     readiness: {
       judge: { available: true, runner: "claude", problem: null },
       github: { state: "not-github", login: null, repository: null },
@@ -32,10 +33,9 @@ function status(findingStatus: "open" | "applied"): MergeAssistStatus {
       id: "f1", tier: "review", status: findingStatus,
       candidate: { id: "candidate:x-0a0b0c", decision: "Do x.", scope: [], level: "note", author: "jbarnes", createdAt: "2026-11-02T10:00:00Z" },
       peer: { kind: "branch", ref: "jbarnes/x", commit: "abc", number: null, title: null, url: null, author: null, trusted: true },
-      reason: "r", evidence: { violations: [], conflicts: [], mine: null, judgment: null }, message: null, held: null, updatedAt: "2026-11-02T11:00:00Z",
+      reason: "r", evidence: { violations: [], conflicts: [], mine: null, judgment: null }, message: null, updatedAt: "2026-11-02T11:00:00Z",
     }],
     conflicts: [],
-    decisionLog: { questions: [], problems: [] },
   };
 }
 

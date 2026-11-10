@@ -165,20 +165,25 @@ scan: one whose author is no longer trusted, or whose rule your branch now break
 ### 5.6 CLI and MCP
 
 ```sh
-rerail merge-assist [status] [--json]      # this checkout: state, decisions, findings
+rerail merge-assist [status] [--json]      # this checkout: state, decisions, findings, conflicts
 rerail merge-assist on | off               # the person's (the CLI runs as the person; see §7)
 rerail merge-assist scan [--json]
 rerail merge-assist reject <candidate-id>  # "Not a rule" for one of your own decisions
 rerail merge-assist adopt <finding-id>     # Review → applied
 rerail merge-assist dismiss <finding-id>
 rerail merge-assist undo <finding-id>      # remove an absorbed or adopted decision
+rerail merge-assist conflicts [--json]     # in-flight conflicts (§12.4)
+rerail merge-assist resolve <conflict-id> dismiss   # "Not a conflict"; mine|theirs|new are experimental (§12.3)
+rerail merge-assist settings [--delivery chat|terminal|both] [--hook-command '<json argv>' | --no-hook] [--hook-timeout <s>] [--json]   # §12.6
 ```
 
-MCP tools (the same operations the dashboard uses): `merge_assist_get`, `merge_assist_scan`,
-`merge_assist_candidate_set`, `merge_assist_finding_set`, and the people-only `merge_assist_settings_set`. An agent may
-reject one of its own branch's candidates when the person asks, and dismiss a finding that is still open. It may not
-adopt, turn the feature on, undo a decision, or dismiss one that applies, since that has undo's effect. These limits
-hold for the MCP tools and the HTTP API; the CLI runs as the person (§7).
+MCP tools (the same operations the dashboard uses): `merge_assist_get`, `merge_assist_settings_get`,
+`merge_assist_scan`, `merge_assist_candidate_set`, `merge_assist_finding_set`, and the people-only
+`merge_assist_settings_set` and `merge_assist_conflict_set`. An agent may read the status and the settings, reject one
+of its own branch's candidates when the person asks, and dismiss a finding that is still open. It may not adopt, turn
+the feature on, change the settings, resolve or dismiss a conflict, undo a decision, or dismiss a finding that
+applies, since that has undo's effect. These limits hold for the MCP tools and the HTTP API; the CLI runs as the
+person (§7).
 
 ## 6. Candidate file format
 
@@ -216,9 +221,6 @@ hold for the MCP tools and the HTTP API; the CLI runs as the person (§7).
   the ones in force are the active ones no other active candidate supersedes; a scan reads another branch's the same
   way, so a teammate's amendment replaces the decision it amends. An amendment of a missing or rejected candidate is
   an ordinary decision, and amendments that lead back to themselves amend nothing.
-- `follows` is absent, or `{ ref, candidateId }`: the decision on another branch this one took on a conflict (§12.4).
-  `decision` keeps the text as it was then; delivery resolves the reference to that decision's latest text, carried
-  through its amendments, when the repository can read it.
 - The file never holds the correction text, code beyond its signals, paths outside `scope`, session ids or anything
   else from the transcript. The link from a candidate to the session and correction it came from stays in the local
   database.
@@ -332,22 +334,37 @@ Two developers, two branches of the same repository:
 - Do teams want candidates committed in the branch, or kept out of the diff (Git notes, a `refs/rerail/` ref) at the
   cost of `gh` not reading them?
 
-## 12. Conflicts (proof of concept)
+## 12. Conflicts
 
 Two lanes. Settled decisions steer agents: candidates, activation and the notes above, unchanged. In-flight conflicts go
 to the person: the agent gets one line of information, never an instruction to align; the person gets one line in the
-session and a card on the Merge Assist page's Conflicts tab. Not in the proof of concept: a judge or panel deciding,
-and units delivered to agents. A verdict is undone like code: its decision file is reverted on the branch.
+session, a segment on the status line, and a card on the Merge Assist page's Conflicts tab. Not built: a judge or panel
+deciding, and units delivered to agents.
 
-The decision ledger (§12.6, and everything in this section that reads or writes `.rerail/decisions/`) is experimental:
-it takes effect only where `RERAIL_EXPERIMENTAL_DECISION_LEDGER=1` is set for the process that serves Merge Assist (the
-daemon; `rerail merge-assist` for its own commands), and the status's `experimental.decisionLedger` says whether it
-is. Off (the default), a person's verdict settles the conflict as local state and writes only the decision this branch
-follows (`.rerail/candidates/`, with no `follows`); nothing reads the ledger: no merge check, no precedent across
-checkouts (§12.2), no `verdicts` conflicts, no reopening by fingerprint, no holding of other branches' verdicts
-(their candidates are absorbed like any other); the dimmer's "verdict exists" comes from this checkout's own
-resolutions; commit staging names `.rerail/candidates/` only; `decisionLog` is empty, the dashboard hides the Decision
-log tab and the CLI its ledger section. The dimmer and its levels work either way.
+**What ships.** Detection (§12.1); the dimmer's levels, with their hysteresis, budgets, checkpoint card and stop before
+an edit; delivery of each conflict when it is first detected, on the surfaces the person's delivery setting names
+(§12.6); the conflict hook (§12.5); and the Conflicts tab, `rerail merge-assist conflicts` and `merge_assist_get`,
+which list each conflict with its level, its reasons and its summary. The only thing a person does to a conflict is
+**Dismiss** ("Not a conflict"), on the dashboard, with `rerail merge-assist resolve <conflict-id> dismiss` or through
+`PUT /api/merge-assist/conflicts`; a coding agent is refused it, as before.
+
+**Experimental, off by default.** The experiment is an environment variable in the process that serves Merge Assist
+(the daemon for sessions and the dashboard; `rerail merge-assist` for its own commands), read in
+`src/engine/experimental-features.ts`, and the status's `experimental` says whether it is on:
+
+- **Verdicts**, `RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS=1` (`experimental.conflictVerdicts`): the resolve actions
+  `mine`, `theirs` and `new` on the API, the CLI and the dashboard (§12.3), the card's options, and answers from chat,
+  `later` included (§12.2). Off, the resolve route and `rerail merge-assist resolve` accept only `dismiss` and answer any
+  other action `409 invalid-state` with `experimental: set RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS=1`; the dashboard
+  shows only Dismiss; no prompt is read as an answer, so nothing snoozes a conflict; and the checkpoint card and the
+  stop offer no options: they say what the conflict is, to talk to the other side's author, and that the person can
+  dismiss it on the dashboard (§12.2). With verdicts on, a person's verdict writes only the decision this branch
+  follows (`.rerail/candidates/`) and settles the conflict as local state in this checkout; no other checkout is
+  settled by it.
+
+The experiment runs on the conflict hook: the shipped path reaches verdict and chat-answer code only through the
+hook's internal handlers (§12.5), registered only when its flag is on. The dimmer and its levels work either way. A
+verdict is undone like code: its decision file is reverted on the branch.
 
 ### 12.1 Detection
 
@@ -365,8 +382,6 @@ five minutes). Nothing is merged or written to find them.
   The rule lives in `src/engine/merge-assist/overlap.ts`; the replay benchmark imports it from there.
 - **`decisions`**: every Talk finding (a trusted teammate's decision contradicting one of this branch's) is also a
   conflict with both decisions' texts. The finding stays, as before.
-- **`verdicts`**: two provisional ledger entries on the same question (§12.6), this branch's and a live ref's, with
-  different winners. Each side shows its entry's decision; it surfaces like any conflict.
 
 The dimmer decides how loud each open conflict is, on every detection, from what Git measures
 (`src/engine/merge-assist/dimmer.ts`, pure; the signals in `conflict-signals.ts`; the pass, budgets and snooze in
@@ -381,17 +396,16 @@ The dimmer decides how loud each open conflict is, on every detection, from what
   since the fork (at least 1): a stable rate, so the same lines score the same on every pass and a conflict nobody
   builds on only grows quieter. (Not "since detection", as first specified: that window collapsed after the first pass
   and dropped queued conflicts.) Exported names for lock-in come from both sides' full hunks
-  at the contested lines, never the 40-line display. `pLose`: 0.5 (no panel runs at detection, and a precedent settles
-  a conflict before it is dimmed). `hoursToMerge`: 24 with a pull request open on theirs, else their branch's age, at
-  least 24 and at most 336.
+  at the contested lines (the base lines their overlapping change covers, kept with the stored conflict), never the
+  40-line display. `pLose`: 0.5 (no panel runs at detection). `hoursToMerge`: 24 with a pull request open on theirs,
+  else their branch's age, at least 24 and at most 336.
 - **Score**, in expected rework lines: `pLose × growthPerHour × hoursToMerge × lockIn × (1 + log2(1 + blastRadius))`.
 - **Levels**, against `interruptCost` (300 lines by default): `logged` for quiet files (every file a lockfile, a
   changelog, generated output or under `docs/`) or a score under a quarter of it; `ambient` under it; `checkpoint` at or
-  above it; `stop` only with lock-in ×4, growth over `stopGrowthPerHour` (50), no verdict or precedent on the question
-  in the ledger, and a score of at least four interruptions.
+  above it; `stop` only with lock-in ×4, growth over `stopGrowthPerHour` (50), no resolution of a conflict on the
+  question held in this checkout, and a score of at least four interruptions.
 - **Hysteresis.** An open conflict's level never drops, and rises only when its score clears the next threshold by
-  20%. A conflict seen for the first time takes its level at once. Resolving it resets the dimmer; one the ledger
-  reopens comes back at ambient and rises from there.
+  20%. A conflict seen for the first time takes its level at once. Resolving it resets the dimmer.
 - **Budgets.** At most one stop per session (the session whose boundary ran the detection; a detection from the
   dashboard or the CLI grants none) and `checkpointsPerDay` (3) prompts per person per UTC day (`toISOString` date), a
   stop counting as one, kept in `merge_assist_state` under `budget:<person>`. A conflict over budget is queued for the
@@ -406,37 +420,35 @@ The dimmer decides how loud each open conflict is, on every detection, from what
 `checkpointsPerDay`). Each conflict in the status carries `level`, `signals`, `score`, `reasons`, `queued`, `snooze`
 and a `shortId` (six hex characters the person names it by in chat).
 
-A conflict's id is `conflict:<question>:<8 hex of their ref>` (a `verdicts` conflict's question is prefixed
-`verdicts:`, so it never collides with the overlap on the same question and ref). The question is the key ledger
-entries share: for an overlap, `questionOf` over the file and the base lines their overlapping change covers, so the
-same overlap keeps its id across scans and another overlap in the same file is another question; for a contradiction,
-both decisions where their amendment chains start, sorted, with their scopes, so both branches compute the same
-question and amending a decision (Keep mine amends this branch's) does not reopen it. An overlap's title is the
+A conflict's id is `conflict:<question>:<8 hex of their ref>`. The question is what the sides disagree on: for an
+overlap, `questionOf` over the file and a content anchor of the base lines their overlapping change covers
+(`contestedAnchor`: a digest of those lines' text at the merge base, whitespace collapsed; an insertion anchors on the
+line before it). So the same overlap keeps its id across scans, and when lines are added above it, when a whitespace-only
+change touches it, or when main gains lines above it and both sides merge main: an open one is not closed and found
+again, and a dismissal holds. A change to the contested base text itself makes another question, and another overlap in
+the same file is another question. Overlaps stored before ids were anchored on content take their anchored id once, on
+the next detection pass, from the base and lines stored with them, with no hook event; one stored without its lines
+(before contested lines were kept) cannot be anchored, so it is found again under the new id once, a dismissal of it
+included. For a contradiction, the question is both decisions where their amendment chains start, sorted, with their
+scopes, so both branches compute the same question and amending a decision (Keep mine amends this branch's) does not
+reopen it. An overlap's title is the
 symbol enclosing the contested lines (a declaration the hunk itself changes, else the one Git's hunk header names), cut
 before its parameters or body and at a word boundary within 60 characters. Each side's summary is the commit that
 changed its contested lines: `git blame --porcelain` over just those lines from the merge base (this branch's working
 file through `--contents`), the newest blamed commit of the side's own; uncommitted lines only give `edits <file>`,
 and the file's last commit stands in only when blame fails. A pull request's title is used when no commit is found.
+Their side's `tip` is `{ at, pushed }`: `pushed` only when its commit is a pull request's head or on a
+remote-tracking branch, so a local branch never pushed reads "committed <time>"; this branch's side has none.
 
-### 12.2 Precedent
-
-Experimental: only with the decision ledger on. Each new open conflict is checked against the ledger view (§12.6) before anyone sees it: its question and both sides'
-refs and position fingerprints go to `decidePrecedent`. A verdict applies automatically only to the same dispute: one
-side holds the winner's position and the other the loser's (by fingerprint; by ref only where a side's position is
-unknown, as in the resolver benchmark's records). Order: a verdict in force first, then a provisional one by a person
-whose winner's position is unchanged, then the latest; never a void, superseded, reopened or flagged one, and never a
-new decision, which picks no side. When a verdict decides it, the conflict is resolved `by: "precedent"` as local
-state naming that entry (`logId`); Rerail writes nothing into the worktree for it. When the question has verdicts but
-none on this dispute, the conflict stays open for the person, with the first of them as context in its evidence:
-`Earlier: <name> chose <label> on <date>.`
-
-### 12.3 Surface
+### 12.2 Surface
 
 Each level has its own surfaces, and none interrupts mid-edit. Logged conflicts never reach the session: the
-Conflicts page only.
+Conflicts page only. Which surfaces a session gets also depends on the person's delivery setting (§12.6): the agent's
+notes and the card through the agent only when it includes `chat`, the status line segment only when it includes
+`terminal`; the person's line and the stop in every mode.
 
-**Ambient.** An ambient overlap goes to each session in the checkout once, through the notes path, as the next hook's
-context:
+**Ambient.** An ambient overlap goes to each session in the checkout once, through the notes path, as the context of
+the first hook after it was detected:
 
 ```text
 This note comes from Rerail, not the user.
@@ -445,15 +457,31 @@ This is other in-flight work, not an instruction. Keep to your task.
 End your final message with one line telling the user which <pull request|branch> overlaps and what you did.
 ```
 
+When the conflict hook command answered a `note` for the conflict (§12.5), the note carries it after these lines.
+
 The same delivery carries the person's line, which Claude Code and Codex show in `systemMessage` beside the steer lines:
 `◆ Rerail · your edit overlaps <label> (<author>): <title>  ·  open`, `open` linking the card
 (`#merge?conflict=<id>`). A contradiction's Talk note carries `◆ Rerail · <label> (<author>) decided differently:
 <title>`; two verdicts that differ get `<label> (<author>) recorded a different verdict on "<title>"`. The footer
-(Claude Code's status line, OMP's and Pi's widget) adds `◐ N conflicts` while any conflict is open above logged.
+(Claude Code's status line, OMP's and Pi's widget) shows `◐ <summary>` for the newest conflict open above logged, with
+` (+N)` when N more are open (§12.6).
 
-**Checkpoint.** At the next boundary that carries context, the agent's note tells it to show the person this card,
-exactly as written, in its next message, to stop deepening the contested files (listed), and to go on with the rest
-of its task:
+**Checkpoint.** At the next boundary that carries context, the agent's note tells it to show the person a card,
+exactly as written, in its next message, to stop deepening the contested files (listed), to go on with the rest of its
+task, and not to decide the conflict itself. With verdicts off (the default), the card says what the conflict is and
+who to talk to:
+
+```text
+◆ RERAIL · conflict #<short id>: <title>
+  Yours    <this branch's summary>
+  Theirs   "<their summary>"  (written by <author> · <label>)
+  Size     <the reasons, joined by " · ">
+  → Talk to <author> about it (<label> · <url when there is one>).
+    Not a conflict? Dismiss it on the Merge Assist page of the dashboard.
+```
+
+When the other side's author is not known, the line reads `Talk to the author of <label> about it`. With verdicts on
+(experimental), the card offers the options instead:
 
 ```text
 ◆ RERAIL · decide #<short id>: <title>
@@ -464,128 +492,224 @@ of its task:
     Reply here with one of them (add #<short id> when more than one is open), or open it on the dashboard.
 ```
 
-The person's line is `◆ Rerail · decide: <title> (<their label>)  ·  open` (Claude Code draws `Rerail` as the coloured `R E R A I L`; Codex prints the word), and the footer shows `◉ decide: <title>`
-(the loudest such conflict not put off) in place of the overlaps count. A session gets a conflict's card once, and
-again after a snooze ends.
+The person's line is `◆ Rerail · decide: <title> (<their label>)  ·  open` (Claude Code draws `Rerail` as the coloured
+`R E R A I L`; Codex prints the word), and, when the delivery includes `terminal`, the footer shows
+`◉ decide: <title>` (the loudest such conflict not put off) in place of the summary segment. With delivery `terminal`
+the card does not go through the agent: the status line and the person's line carry it. A session gets a conflict's
+card once, and, with verdicts on, again after a snooze ends.
 
 **Stop.** At `PreToolUse` of an edit (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `ast_edit`, `apply_patch`, or a shell command that writes the file: a `>`/`>>` redirection, `tee`, `sed -i`, `perl -i`, `mv`/`cp`/`install` onto it, `truncate`, `rm`, or a patch naming it) that
-names a contested file, once per conflict and session: where the coding agent's adapter can ask the person
-(`asksPerson`: Claude Code, `permissionDecision: "ask"` with the reason `Rerail: <files> is contested with <label>
-(<author>): <title>. Allow this edit, or deny it and decide first …`), the first stop of the session asks them, and the
-agent's context says Rerail asked and carries the card; elsewhere the context tells the agent not to edit those files
-and to ask the person now, with the card. Either way the person's line goes with it.
+names a contested file, once per conflict and session, in every delivery mode: where the coding agent's adapter can
+ask the person (`asksPerson`: Claude Code, `permissionDecision: "ask"` with the reason `Rerail: <files> is contested
+with <label> (<author>): <title>. Allow this edit, or deny it and talk to <author> first.`, or with verdicts on
+`… deny it and decide first (keep mine · take theirs · new decision · later).`), the first stop of the session asks
+them, and the agent's context says Rerail asked and carries the card; elsewhere the context tells the agent not to
+edit those files and to ask the person now, with the card. Either way the person's line goes with it.
 
-**Answers from chat.** When the person's prompt (the `user-prompt` event Rerail records) is plainly an answer to a card
-that session was handed, Rerail records it as that person, by the same path as the dashboard (`parseChatAnswer` in
-`src/engine/merge-assist/chat-answer.ts`). The answer is the whole message, optionally led by the conflict's name
-(`#<short id>` or its title): `keep mine`, `take theirs` or `later` (these three may instead be followed by the name: `take
-theirs #<short id>`, `keep mine (#<short id>)`), trailing punctuation allowed, or a message that
-starts with `new decision: <text>` (1–600 characters, never the card's `<text>` placeholder). Unnamed, it answers the
-one such conflict not put off. Matching is case-insensitive phrases, never a model: prose that mentions an option
-("take theirs into account", "I made a new decision: …") records nothing, and so does a message when several are open
-and it names none. A prompt in another session (a headless `claude -p` an agent runs from its shell, say) never
-answers. `later` snoozes the conflict: no card, no stop and no `◉ decide` until its level rises, a pull request opens
-on theirs, or the base branch moves (a merge). A coding agent still cannot resolve one (`merge_assist_conflict_set`
-refuses it).
+**Answers from chat.** Experimental: only with verdicts on (`RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS=1`); off, Rerail
+reads no prompt as an answer. When the person's prompt (the `user-prompt` event Rerail records) is plainly an answer
+to a card that session was handed, Rerail records it as that person, by the same path as the dashboard
+(`parseChatAnswer` in `src/engine/merge-assist/chat-answer.ts`, reached through the chat-answer handler of §12.5). The
+answer is the whole message, optionally led by the conflict's name (`#<short id>` or its title): `keep mine`, `take
+theirs` or `later` (these three may instead be followed by the name: `take theirs #<short id>`, `keep mine (#<short
+id>)`), trailing punctuation allowed, or a message that starts with `new decision: <text>` (1–600 characters, never the
+card's `<text>` placeholder). Unnamed, it answers the one such conflict not put off. Matching is case-insensitive
+phrases, never a model: prose that mentions an option ("take theirs into account", "I made a new decision: …") records
+nothing, and so does a message when several are open and it names none. A prompt in another session (a headless
+`claude -p` an agent runs from its shell, say) never answers. `later` snoozes the conflict: no card, no stop and no
+`◉ decide` until its level rises, a pull request opens on theirs, or the base branch moves (a merge). A coding agent
+still cannot resolve one (`merge_assist_conflict_set` refuses it).
 
-### 12.4 Resolve
+### 12.3 Resolve
 
 Only a person resolves a conflict: the dashboard, `rerail merge-assist resolve`, or `PUT /api/merge-assist/conflicts`.
 A coding agent reads conflicts through `merge_assist_get` and gets `409 invalid-state` from `merge_assist_conflict_set`.
 
-| Action | Ledger entry (decision ledger on) | Decision written on this branch |
-| --- | --- | --- |
-| `mine` (Keep mine) | verdict `a`; result `decision` | text defaults to this side's summary; on an overlap with its location, `<last commit subject touching the file> (<file>:<line>)`, or `The change on <branch> (<file>:<line>)` while uncommitted |
-| `theirs` (Take theirs) | verdict `b`; result `decision` | text defaults to their summary, on an overlap as for `mine`; with the ledger, follows their decision by reference |
-| `new` (New decision) | verdict `new`; result `amendment` | the person's text (1–600 characters) |
-| `dismiss` (Not a conflict) | none | none; it stays dismissed for that question and their ref |
+`dismiss` (Not a conflict) ships. The verdicts `mine`, `theirs` and `new` are experimental: only with
+`RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS=1`. Without it, each answers `409 invalid-state` with `experimental: set
+RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS=1` (a coding agent still gets its own refusal first), the CLI's listing names
+only `rerail merge-assist resolve <id> dismiss`, and the dashboard's card shows only Dismiss.
 
-The decision is a candidate in `.rerail/candidates/`, active, authored by the person (Git's `user.name`, else the
-account name), scoped to the conflict's files; for a contradiction or a verdicts conflict it amends this branch's
-decision. Taking theirs on a contradiction or a verdicts conflict gives the candidate `follows: { ref, candidateId }`,
-naming their decision, with its text as of now. The entry goes to `.rerail/decisions/<id>.json` with the candidate's
-path as its `rule`, and replaces (`supersedes`) this branch's latest entry on the question. Both files are written into
-the working tree; Rerail commits nothing. From then on lane 1 carries the decision: every session in the checkout gets
-a note of it once, a running one at its very next hook (the runtime offers pending notes at every boundary, so a
-verdict given on the dashboard or in another process reaches it), and teammates get it once the person commits it. A
-decision that follows another is delivered with the followed decision's latest text, which each detection resolves
-(`followedDecision`), and is news again when that text changes. The status's `resolution` carries the entry id and the
-rule path.
+| Action | Decision written on this branch |
+| --- | --- |
+| `mine` (Keep mine; experimental) | text defaults to this side's summary; on an overlap with its location, `<last commit subject touching the file> (<file>:<line>)`, or `The change on <branch> (<file>:<line>)` while uncommitted |
+| `theirs` (Take theirs; experimental) | text defaults to their summary, on an overlap as for `mine` |
+| `new` (New decision; experimental) | the person's text (1–600 characters) |
+| `dismiss` (Not a conflict) | none; it stays dismissed for that question and their ref |
 
-### 12.5 Storage, status, API and CLI
+A verdict's decision is a candidate in `.rerail/candidates/`, active, authored by the person (Git's `user.name`, else the
+account name), scoped to the conflict's files; for a contradiction it amends this branch's decision. It is written into
+the working tree; Rerail commits nothing. The conflict is settled as local state in this checkout. From then on lane 1
+carries the decision: every session in the checkout gets a note of it once, a running one at its very next hook (the
+runtime offers pending notes at every boundary, so a verdict given on the dashboard or in another process reaches
+it), and teammates get it once the person commits it. The status's `resolution` carries the action, the person's
+name, the decision's text and its rule path.
+
+**Commit staging.** At the agent's `git commit` tool call (PreToolUse on a shell tool), when files under
+`.rerail/candidates/` are untracked, or modified and not staged (with `-a`/`--all`, only untracked ones), the call's
+answer carries `Rerail: include these decision files in this commit: <list>`, once per commit attempt. It is context,
+never a block, and Rerail stages nothing.
+
+### 12.4 Storage, status, API and CLI
 
 Conflicts live in `merge_assist_state` under `conflicts:<checkout path>`, open, resolved and dismissed, each with its
-files, its record and both sides' positions; turning Merge Assist off for the repository clears them, dismissals
-included. The status gains `conflicts` (open ones loudest first, then the latest 20 resolved, then the latest 20
-dismissed) and
-`decisionLog`: the ledger view grouped by question (`questions`, the question with the newest entry first, at most 50
-entries), each item `{ id, question, title, status, verdict, outcome, by, source: { ref, label }, recordedAt, rule,
-text, follows }`, with the entries Rerail could not read as `problems`. The dashboard's Decision log tab shows each
-question with a status chip per entry, the branch it was read from, and a filter by status.
+files, an overlap's contested base lines and content anchor, and its record; turning Merge Assist off for the repository clears them,
+dismissals included. Each conflict carries `summary` (`{ text, via: "judge" | "fallback", at, reason }`, the quick
+call's line, §12.5) and `hook` (`{ event, ok, error, note, status, at }`, the hook command's last answer, null while
+none ran). The status gains `conflicts` (open ones loudest first, then the latest 20 resolved, then the latest 20
+dismissed), `settings` (the person's delivery and hook command, §12.6) and `experimental` (`{ conflictVerdicts }`).
 
 ```sh
-rerail merge-assist conflicts [--repo <dir>] [--json]                              # every conflict, with both hunks, and the decision ledger by question
-rerail merge-assist resolve <conflict-id> mine|theirs|new|dismiss [--text "..."]   # the person's verdict
+rerail merge-assist conflicts [--repo <dir>] [--json]                              # every conflict, with both hunks
+rerail merge-assist resolve <conflict-id> dismiss                                  # Not a conflict
+rerail merge-assist resolve <conflict-id> mine|theirs|new [--text "..."]           # experimental: the person's verdict
 ```
 
 `rerail merge-assist status` gains a Conflicts section; each conflict line shows its level (with `queued` or `later`
-when they apply) and the dimmer's reasons on a `Size:` line. Modules: `src/engine/merge-assist/{overlap,conflicts}.ts`
-(the rule, ids, the dimmer), `src/engine/merge-assist/{decision-entry,decision-files,ledger,commit-staging}.ts` (the
-ledger) and `src/runtime/merge-assist/{conflict-detect,conflict-resolve,conflict-store,ledger-store}.ts`.
+when they apply), its summary, the dimmer's reasons on a `Size:` line, and `Hook failed (<event>): <error>` when the
+hook command failed. The Conflicts tab shows the same, with "Conflict hook failed: <error>". Modules:
+`src/engine/merge-assist/{overlap,conflicts,commit-staging}.ts` (the rule, ids, the dimmer, commit staging),
+`src/runtime/merge-assist/{conflict-detect,conflict-resolve,conflict-store}.ts`, and
+`src/runtime/merge-assist/{conflict-hook,conflict-delivery}.ts` (the hook, its handlers and the delivery setting).
 
-### 12.6 The decision ledger
+### 12.5 The conflict hook
 
-Experimental: only where `RERAIL_EXPERIMENTAL_DECISION_LEDGER=1` (see the start of §12 for what happens without it).
-Entries travel with the branch whose person decided them; the ledger is a view computed from Git, never written.
+The conflict hook is the extensible point after detection (`src/runtime/merge-assist/conflict-hook.ts`). Everything
+that happens to a conflict after it is found, delivery included, is a handler on it.
 
-**Entry files.** `.rerail/decisions/<id>.json`, format `rerail.decision/v2`, mode `0644`. The id is the first 32 hex
-digits of sha256 over the canonical JSON (keys sorted) of the entry without `id`, so an edited entry no longer
-matches its name and is refused. Fields: `question`; `title`; `base` (the commit both positions are taken against);
-`sides.a` (the recording branch) and `sides.b`, each `{ ref, label, sha, author, fingerprint, at }`; `verdict` (`a`,
-`b` or `new`); `decidedBy` (`{ kind: "person", name }` in the product; the resolver benchmark also records
-`{ kind: "precedent", entry }` and `{ kind: "policy", step }`); `result` `{ candidateId, kind: "decision" | "amendment", text, rule,
-follows }`; `supersedes` (an entry id or null); `recordedAt`. A side's `fingerprint` is sha256 of its position, and `at`
-says what it is taken over: for an overlap its normalised hunk lines at the contested base lines (`-`/`+` lines,
-whitespace collapsed); for a contradiction its candidate's content hash. Escalations are not entries: an unanswered
-conflict stays open in local state.
+**Events.** Each detection pass fires these, once each per conflict:
 
-**The view** (`readLedger`) reads the base branch's tree, this branch (HEAD's tree and the working files) and every live
-ref (local and remote-tracking branches but this one and the base, and open pull request heads the repository holds),
-none the base already holds, deduplicated by id. Status comes from where an entry sits:
+- `detected`: the conflict was first seen in this checkout;
+- `level-changed`: its level rose;
+- `closed`: it was dismissed, resolved, or is no longer found (the overlap went away). A dismissal fires `closed`
+  from the dismissal itself, not from the next pass.
 
-| Status | Where |
-| --- | --- |
-| `in-force` | in the base tree, and the merge held the winner's position: checked once, at the first base commit (along first parents) holding the entry file, so later base work never changes it (side a carries the entry, so its position is expected there; side b only if its commit was in the base by then; a new decision's is its rule file) |
-| `superseded` | in the base tree, and a later base entry on the question names it in `supersedes` or is newer (a precedent copy never replaces the human verdict it followed); or, off the base, another entry from the same branch supersedes it |
-| `flagged` | in the base tree, but the merge did not hold the winner's position: it contradicted the entry |
-| `provisional` | only on this branch or a live ref |
-| `reopened` | provisional, and the winner's position at its committed tip (never a checkout's working files) has another fingerprint; never for the checkout whose branch holds the winning position, since reopening tells the side that followed |
-| `void` | seen before by this checkout, now on no live ref and not in the base: its branch merged without it, or went away |
+Handlers hear each event in the background: the pass, the session's boundary and the agent never wait for one, with
+the one exception below (a command's note joining the agent's note, held at most one second).
 
-**The merge check** runs at every scan and detection pass: the view is read with the checkout's memory of what it saw
-(`ledger:<checkout path>` in `merge_assist_state`, every entry found with where, the newest 200 gone ones kept), so an
-entry whose ref merged into the base ends `in-force`, `flagged` or `void`. A settled conflict whose entry is now
-`reopened` is open again when the pass finds it again, quietly: at `ambient`, the dimmer's state reset.
+**Internal handlers.** A handler is
+`ConflictHandler { name; on(event, conflict, context): Promise<HandlerResult | void> }`. The context carries the
+checkout (path, repository key, branch, base), the session (its id and host) when a session's boundary ran the pass
+(null for the dashboard, the CLI and the API), the delivery mode and settings, and the judge (the person's agent CLI,
+under the repository's hourly budget). A handler answers what it records on the conflict: a `summary`, or a `hook`
+outcome. A handler that throws is logged and skipped; the other handlers and the pass go on.
 
-**Cost.** Live refs come from one `git for-each-ref --no-merged=<base>`, each tip's `.rerail/decisions` tree from one
-`git cat-file --batch-check`; only a folder tree the memory has not read is listed and read (trees never change), a
-merge is checked once per entry, and a winner tip once per entry and tip. The memory also keeps the last view, which
-status reads (the dashboard's polls, `merge_assist_get`, the CLI) show without running Git; a verdict refreshes it at
-once. On this repository (426 refs, no entries) a read went from 11 s to under 0.1 s.
+Always registered, in this order:
 
-**Delivery of verdicts not in force.** Another branch's verdict that has not merged (its entry provisional or reopened)
-reaches this checkout's agents only as information, never as a rule: when the scan applies its decision, the agent
-reads `<branch> recorded a verdict on a conflict that has not merged yet.`, their decision labelled as theirs, then
-`It is provisional: information about work in flight, not a decision to follow.` While a `verdicts` conflict on its
-question is open here, neither side's decision is delivered at all: the conflict itself is the signal. Activation never
-makes such a decision a rule, whatever it carries. The status says so: its finding has `held: "provisional"` (or
-`"contested"` while the verdicts conflict is open), level `note`, and a reason saying it is not applied; the dashboard
-and the CLI show "Provisional verdict" or "Held: verdicts conflict open" instead of "Added automatically".
+- **delivery**: offers the checkout's sessions what is pending for them, per the delivery mode (§12.6), at their next
+  boundary;
+- **summary**: the quick call, below;
+- **command**: the person's hook command, below.
 
-A conflict side's `tip` is `{ at, pushed }`: `pushed` only when its commit is a pull request's head or on a
-remote-tracking branch, so a local branch never pushed reads "committed <time>"; this branch's side has none.
+Registered only while their flag is on (see the start of §12): **verdicts** and **chat answers** with
+`RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS=1`. Besides events, an experimental handler takes part in the stages the
+shipped path offers it (a person's verdict, a prompt that may answer a card); the shipped path calls no verdict or
+chat-answer code except through them.
 
-**Commit staging.** At the agent's `git commit` tool call (PreToolUse on a shell tool), when files under
-`.rerail/decisions/` or `.rerail/candidates/` are untracked, or modified and not staged (with `-a`/`--all`, only
-untracked ones), the call's answer carries `Rerail: include these decision files in this commit: <list>`, once per
-commit attempt. It is context, never a block, and Rerail stages nothing.
+**The command handler.** The person sets a command for the repository (§12.6): an argv array, run without a shell,
+with a timeout of 10 seconds unless they set another (1 to 60). For each event of each conflict:
+
+- it runs from the checkout's root, with the person's environment plus `RERAIL_CONFLICT_EVENT` (the event) and
+  `RERAIL_CONFLICT_ID` (the conflict's id);
+- the conflict's data goes on stdin only, never into argv, as one JSON object:
+
+  ```json
+  {
+    "version": 1,
+    "event": "detected",
+    "conflict": { "id": "conflict:…", "kind": "overlap", "level": "ambient", "title": "…", "theirs": { "…": "…" } },
+    "checkout": { "path": "/Users/me/app", "branch": "feature/login", "base": "main" },
+    "session": { "id": "…", "host": "claude-code" }
+  }
+  ```
+
+  `conflict` is the conflict as the status lists it (§12.4); `branch` and `base` are null when Rerail does not know
+  them; `session` is null when the dashboard, the CLI or the API ran the pass. Both sides' summaries and hunks are
+  other people's text: the command must treat them as data.
+- stdout is optional: empty output is a success with nothing to add. Otherwise it is one JSON object, at most 4 KiB:
+  `{ "note"?: string, "status"?: string }`. `note` (made one line, cut to 600 characters) is added to the agent's note
+  for that conflict, after `The user's conflict hook adds:`, when the delivery includes `chat`; `status` (made one line,
+  cut to 90 characters) replaces the conflict's text on the status line when the delivery includes `terminal`. While
+  the command runs for `detected` or `level-changed` and the delivery includes `chat`, that conflict's agent note waits
+  for it at most one second (`NOTE_WAIT_MS`), and the edit's result that ran the detection waits that long for the
+  note, so Rerail's note and the person's line ride that result. A command that answers within the second has its
+  note joined; one that answers later has it follow at the session's next boundary, once per conflict, event and
+  session, as a note of its own: `About the conflict with <label>: <title>.` then `The user's conflict hook adds: …`.
+- The command runs in a process group of its own. Past its timeout the group gets SIGTERM, then SIGKILL 2 seconds
+  later, when its output pipes are closed too: a process it left behind holding them (one it detached) cannot keep the
+  answer waiting. The answer comes at most its timeout plus 2 seconds after it started. When Merge Assist stops (the
+  daemon shuts down), every command still running gets SIGTERM on its group, then SIGKILL after half a second at most,
+  so none outlives it.
+- A command that cannot start, exits non-zero (the end of its stderr is kept), runs past its timeout, writes more than
+  4 KiB, or prints something other than that JSON is recorded on the conflict as `hook: { ok: false, error }` and shown
+  on the dashboard ("Conflict hook failed: <error>") and in the CLI (`Hook failed (<event>): <error>`). A failing
+  command never changes what is delivered: the note and the status line go out without its additions.
+
+An example: log every event, and on `detected` give the agent a note and the status line a word.
+
+```sh
+#!/bin/sh
+# ~/bin/conflict-hook.sh: the conflict arrives on stdin; Rerail reads stdout.
+log="$HOME/.local/state/conflict-hook.log"
+mkdir -p "$(dirname "$log")"
+printf '%s\n' "$(cat)" >> "$log"
+if [ "$RERAIL_CONFLICT_EVENT" = detected ]; then
+  printf '%s\n' '{"note":"The team wants overlaps raised in #eng before either side goes further.","status":"overlap: raise it in #eng"}'
+fi
+```
+
+```sh
+rerail merge-assist settings --hook-command '["/bin/sh","/Users/me/bin/conflict-hook.sh"]' --hook-timeout 5
+```
+
+For `level-changed` and `closed` it prints nothing, which is a success with nothing to add.
+
+**The quick call (summary handler).** On `detected`, in the background, one short call through the person's agent CLI
+(the same `AgentJudge` and hourly budget as every judgment) asks for at most 90 characters, in plain words, saying what
+the other side is doing and why it collides with this branch. Its inputs are both sides' summaries and hunks, clipped.
+Until it answers, and whenever it cannot, the conflict carries a deterministic line at once:
+`<their label> (<author>) is changing <symbol or file>` (without the author when none is known), stored as
+`summary: { text, via: "fallback", reason: "pending" }`. The answer replaces it as `via: "judge"`. When the budget is
+spent, the judge is unavailable or the call fails, the fallback stays, with `reason` saying why (`budget: …`,
+`unavailable: …`, `failed: …`). One pass makes at most 3 quick calls, for the newest conflicts it found; the others
+keep the fallback (`skipped: …`). A process that stops before the call answers leaves the fallback with `pending`.
+The call never delays a boundary or the hook's answer.
+
+### 12.6 The delivery setting
+
+`conflictDelivery` (`delivery` in the settings) is `chat`, `terminal` or `both`, `both` by default. It is a person's
+setting per repository, kept with Merge Assist's state in the Rerail database on this machine (`merge_assist_state`
+under `settings:<repository key>`), never in a committed file, and it applies to every checkout of the repository.
+The same settings hold the hook command (§12.5). A person changes them on the Merge Assist page's Settings section,
+with `rerail merge-assist settings`, or through `PUT /api/merge-assist/settings` (`merge_assist_settings_set`, people
+only); `GET /api/merge-assist/settings` (`merge_assist_settings_get`) reads them.
+
+```sh
+rerail merge-assist settings [--repo <dir>] [--json]               # the current settings
+rerail merge-assist settings --delivery chat|terminal|both
+rerail merge-assist settings --hook-command '<json argv>' [--hook-timeout <s>]
+rerail merge-assist settings --hook-timeout <s>                    # the current command's timeout
+rerail merge-assist settings --no-hook                             # remove the command
+```
+
+`--hook-command` takes a JSON array of non-empty strings, which is never run through a shell; `--hook-timeout` alone
+fails when no command is set.
+
+| | `chat` | `terminal` | `both` |
+| --- | --- | --- | --- |
+| The agent's note at the first boundary after `detected`, once per conflict per session (the note of §12.2, plus the hook's `note`) | yes | no | yes |
+| The status line: the conflict's summary segment, and `◉ decide:` | no | yes | yes |
+| The person's line (`systemMessage`) | yes | yes | yes |
+| The checkpoint card through the agent | yes | no: the status line and the person's line carry it | yes |
+| The stop before an edit to a contested file | always | always | always |
+
+**The status line's segment.** It shows the newest conflict open above logged as `◐ <summary>`, followed by ` (+N)`
+when N more are open. The text is the hook command's `status` when it gave one, else the conflict's `summary.text`
+(the quick call's line, or its fallback). While a checkpoint or stop waits on the person, the dimmer's
+`◉ decide: <title>` takes its place.
+
+**Hosts.** Claude Code draws the segment on its status line, and OMP and Pi on their widget. Codex has no status line,
+so whenever the delivery includes `terminal` (`terminal` or `both`) its person's line carries the summary: `<line> — <summary>`,
+read when the note is handed to the session, not when it was queued, so a status the hook command gave meanwhile is the
+one shown. When a stop and a checkpoint card for the same conflict meet at one boundary, the stop's card and line go
+out and the checkpoint's are dropped: one card and one person's line per conflict per hook answer.

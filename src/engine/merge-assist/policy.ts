@@ -1,10 +1,10 @@
 /**
  * Merge Assist's conflict policy: `.rerail/policy.yaml`, versioned and reviewed like code. When two pieces of in-flight
- * work conflict, its steps run in order and the first that decides wins: precedent (a decision in force, or an earlier
- * verdict in the log on the same question), hard checks (a side whose head fails the tests or type check, or breaks a
- * public contract it did not declare, loses), the measurable criteria (compatibility with existing callers, then blast
- * radius, then benchmarks), and the judge panel. What nothing decides goes to a person, and so does a conflict in a
- * class the policy reserves (public API, security, data model) once the first three steps have not decided it.
+ * work conflict, its steps run in order and the first that decides wins: hard checks (a side whose head fails the tests
+ * or type check, or breaks a public contract it did not declare, loses), the measurable criteria (compatibility with
+ * existing callers, then blast radius, then benchmarks), and the judge panel. What nothing decides goes to a person, and
+ * so does a conflict in a class the policy reserves (public API, security, data model) once hard checks and criteria
+ * have not decided it.
  *
  * This module parses the file and holds each step's rule as a pure function of the evidence; the resolver gathers the
  * evidence (Git, the checks, the judges). The policy that governs a conflict is the one at the base both sides start
@@ -17,7 +17,7 @@ import { otherSide, POLICY_STEPS, SIDES, type SideId, type StepResult } from "./
 
 export const POLICY_PATH = ".rerail/policy.yaml";
 
-/** Classes of conflict a policy can keep for a person once precedent, hard checks and criteria have not decided. */
+/** Classes of conflict a policy can keep for a person once hard checks and criteria have not decided. */
 export const RESERVED_CLASSES = ["public-api", "security", "data-model"] as const;
 export type ReservedClass = (typeof RESERVED_CLASSES)[number];
 
@@ -57,7 +57,7 @@ const panelSchema = z.object({
 export const policySchema = z.object({
   version: z.literal(1),
   steps: z.array(z.enum(POLICY_STEPS))
-    .refine(steps => steps.every((step, index) => index === 0 || POLICY_STEPS.indexOf(step) > POLICY_STEPS.indexOf(steps[index - 1]!)), "steps are distinct and in the order precedent, hard-checks, criteria, panel")
+    .refine(steps => steps.every((step, index) => index === 0 || POLICY_STEPS.indexOf(step) > POLICY_STEPS.indexOf(steps[index - 1]!)), "steps are distinct and in the order hard-checks, criteria, panel")
     .default([...POLICY_STEPS]),
   checks: z.object({
     /** Run once in each side's tree before its checks (an install); a failing setup makes every check unknown. */

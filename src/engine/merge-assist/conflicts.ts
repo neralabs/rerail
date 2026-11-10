@@ -47,14 +47,6 @@ export function orderConflicts(conflicts: readonly Conflict[]): Conflict[] {
   return [...latest("open"), ...latest("resolved").slice(0, SETTLED_CONFLICTS_SHOWN), ...latest("dismissed").slice(0, SETTLED_CONFLICTS_SHOWN)];
 }
 
-/** How a person knows a ref: `PR #12`, a branch name, or a short commit. */
-export function refLabel(ref: string): string {
-  const pull = /^refs\/pull\/(\d+)\/head$/u.exec(ref);
-  if (pull !== null) return `PR #${pull[1]}`;
-  if (/^[0-9a-f]{40,64}$/u.test(ref)) return ref.slice(0, 12);
-  return ref.replace(/^refs\/(?:heads|remotes)\//u, "");
-}
-
 /** A conflict's record, as the resolver reads one: both sides' refs, commits, sanitized intents and files, on `question`. */
 export function conflictRecord(
   input: { repository: string; base: string; question: string },

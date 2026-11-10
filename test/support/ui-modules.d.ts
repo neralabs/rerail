@@ -146,7 +146,9 @@ declare module "*/ui/state.js" {
   export const ui: {
     filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean;
     selectedSession: string | null; panel: object | null; mergePending: Map<string, string>; mergeOpen: Set<string>; mergeSwitching: boolean; mergeScanning: boolean;
-    mergeTab: "conflicts" | "decisions" | "log" | null; mergeLogStatus: import("../../src/engine/index.js").LedgerStatus | null; mergeDraft: { id: string; action: "mine" | "theirs" | "new"; text: string } | null;
+    mergeTab: "conflicts" | "decisions" | null; mergeDraft: { id: string; action: "mine" | "theirs" | "new"; text: string } | null;
+    mergeSettings: { delivery: import("../../src/engine/index.js").ConflictDelivery; command: string; timeout: string; problem: string | null; field: "command" | "timeout" | null } | null;
+    mergeSaving: boolean;
   };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
@@ -322,23 +324,26 @@ declare module "*/ui/merge-model.js" {
   type ConflictAction = import("../../src/engine/index.js").ConflictAction;
   export const DECISION_MAX: number;
   export function conflictSections(status: Status, pending?: Map<string, string>): { open: Array<Conflict & { busy: boolean }>; closed: Array<Conflict & { busy: boolean }> };
-  export function tabOf(status: Status, chosen: string | null, pending?: Map<string, string>): "conflicts" | "decisions" | "log";
-  export function tabsOf(status: Status): Array<"conflicts" | "decisions" | "log">;
+  export function tabOf(status: Status, chosen: string | null, pending?: Map<string, string>): "conflicts" | "decisions";
   export function hunkLines(hunk: string): Array<{ kind: "add" | "del" | "meta" | "ctx"; text: string }>;
   export function resolutionText(conflict: Conflict): {
-    badge: string; precedent: boolean; how: string | null; who: string | null; text: string | null; rule: string | null; at: string | null;
+    badge: string; how: string | null; who: string | null; text: string | null; rule: string | null; at: string | null;
   };
   export function draftText(conflict: Conflict, action: "mine" | "theirs" | "new"): string;
   export function draftProblem(text: string): string | null;
   export function resolveBody(conflictId: string, action: ConflictAction, text?: string): { conflictId: string; action: ConflictAction; text?: string };
   export function conflictToast(conflict: Conflict, action: ConflictAction, text: string, ignored: boolean): { done: string; fail: string };
-  type LedgerStatus = import("../../src/engine/index.js").LedgerStatus;
-  type DecisionLogQuestion = import("../../src/engine/index.js").DecisionLogQuestion;
-  export const LEDGER_STATUS_TEXT: Record<LedgerStatus, string>;
-  export const LEDGER_STATUS_TITLE: Record<LedgerStatus, string>;
-  export function logStatusCounts(status: Status): Record<LedgerStatus, number>;
-  export function logQuestions(status: Status, filter?: LedgerStatus | null): DecisionLogQuestion[];
-  export function logWhen(iso: string): string;
+  export function hookFailure(conflict: Conflict): string | null;
+  type ConflictDelivery = import("../../src/engine/index.js").ConflictDelivery;
+  type MergeAssistSettings = import("../../src/engine/index.js").MergeAssistSettings;
+  export interface SettingsFields { delivery: ConflictDelivery; command: string; timeout: string }
+  export const DELIVERY_MODES: ConflictDelivery[];
+  export const DELIVERY_TEXT: Record<ConflictDelivery, { label: string; text: string }>;
+  export const HOOK_TIMEOUT_DEFAULT: number;
+  export const HOOK_TIMEOUT_MAX: number;
+  export function settingsDraft(settings: MergeAssistSettings): SettingsFields;
+  export function settingsChange(fields: SettingsFields): { body: MergeAssistSettings } | { problem: string; field: "command" | "timeout" };
+  export function settingsSummary(settings: MergeAssistSettings): string;
 }
 
 declare module "*/ui/views/merge.js" {

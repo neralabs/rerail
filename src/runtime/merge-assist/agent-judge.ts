@@ -35,8 +35,11 @@ const RUNNER_NAMES: Record<JudgeRunnerId, string> = { claude: "Claude Code", cod
 const HOST_RUNNERS: Partial<Record<RerailHost, JudgeRunnerId>> = { "claude-code": "claude", codex: "codex" };
 
 export interface JudgeTask<T> {
-  /** `grade` is an evaluation's blind grading call (benchmarks only); the product never asks it. `resolve` is one conflict-panel judge's vote. */
-  readonly kind: "capture" | "compare" | "signals" | "rank" | "positions" | "resolve" | "grade";
+  /**
+   * `grade` is an evaluation's blind grading call (benchmarks only); the product never asks it. `resolve` is one
+   * conflict-panel judge's vote. `summary` is a conflict's status line (the conflict hook's quick call).
+   */
+  readonly kind: "capture" | "compare" | "signals" | "rank" | "positions" | "resolve" | "grade" | "summary";
   readonly repositoryKey: string;
   /** The complete prompt, untrusted data already fenced. */
   readonly prompt: string;

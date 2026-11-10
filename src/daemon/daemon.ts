@@ -11,7 +11,7 @@ import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, type DaemonHealth, type DaemonState, type NativeStatus } from "../runtime/daemon-control.js";
 import { startEngineService, type EngineService } from "../runtime/engine-service.js";
-import { createMergeAssistService } from "../runtime/merge-assist/service.js";
+import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
@@ -226,9 +226,11 @@ export class RerailDaemon {
   readonly #nativeToken: string;
   readonly #accessToken: string;
   #closed = false;
+  /** The Merge Assist the API and every session share: stopped before the database closes. */
+  readonly #mergeAssist: MergeAssistRuntime;
 
   private constructor({
-    server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken,
+    server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
   }: {
     server: Server;
     engineService: EngineService;
@@ -242,6 +244,7 @@ export class RerailDaemon {
     nativeServer: NativeSessionServer;
     nativeToken: string;
     accessToken: string;
+    mergeAssist: MergeAssistRuntime;
   }) {
     const address = server.address() as AddressInfo;
     this.host = address.address;
@@ -260,6 +263,7 @@ export class RerailDaemon {
     this.#nativeServer = nativeServer;
     this.#nativeToken = nativeToken;
     this.#accessToken = accessToken;
+    this.#mergeAssist = mergeAssist;
   }
 
   static async start(options: RerailDaemonOptions): Promise<RerailDaemon> {
@@ -365,7 +369,7 @@ export class RerailDaemon {
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,
-        nativeServer: sessions, nativeToken, accessToken,
+        nativeServer: sessions, nativeToken, accessToken, mergeAssist,
       });
       if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(daemon.state(), null, 2)}\n`);
       // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
@@ -441,6 +445,7 @@ export class RerailDaemon {
         await this.#nativeServer.close();
         await this.#engineService.close();
       } finally {
+        await this.#mergeAssist.stop();
         this.#stores.close();
         if (this.#options.stateFile !== undefined) await rm(this.#options.stateFile, { force: true });
       }

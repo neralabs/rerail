@@ -1,8 +1,9 @@
 /**
  * `rerail merge-assist`: Merge Assist for the checkout at `--repo` (default the current folder), run in this process
- * against the one Rerail database. It runs as the person, so turning Merge Assist on or off, adopting and undoing are
- * allowed here as they are on the dashboard's Merge Assist page. A coding agent with a shell can run it too, as it can
- * any Rerail command: the people-only guarantee covers the MCP and HTTP API. See docs/merge-assist-v1-build.md §5.6 and §7.
+ * against the one Rerail database. It runs as the person, so turning Merge Assist on or off, changing its settings,
+ * adopting and undoing are allowed here as they are on the dashboard's Merge Assist page. A coding agent with a shell can
+ * run it too, as it can any Rerail command: the people-only guarantee covers the MCP and HTTP API. See
+ * docs/merge-assist-v1-build.md §5.6 and §7.
  * Internal testing: the whole command.
  */
 import { realpathSync } from "node:fs";
@@ -11,13 +12,27 @@ import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { CANDIDATE_DIRECTORY, candidateFileName } from "../engine/merge-assist/candidate.js";
-import { CONFLICT_ACTIONS, type Conflict, type ConflictAction, type Finding, type JudgeRunnerId, type MergeAssistStatus, type OwnDecision } from "../engine/merge-assist/model.js";
+import {
+  CONFLICT_ACTIONS,
+  CONFLICT_DELIVERY_MODES,
+  conflictHookCommandSchema,
+  DEFAULT_HOOK_TIMEOUT_SECONDS,
+  MAX_HOOK_TIMEOUT_SECONDS,
+  type Conflict,
+  type ConflictAction,
+  type ConflictDelivery,
+  type Finding,
+  type JudgeRunnerId,
+  type MergeAssistSettings,
+  type MergeAssistStatus,
+  type OwnDecision,
+} from "../engine/merge-assist/model.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
-import { createMergeAssistService, MergeAssistError, type MergeAssistService } from "../runtime/merge-assist/service.js";
+import { createMergeAssistService, MergeAssistError, type MergeAssistService, type MergeAssistSettingsChange } from "../runtime/merge-assist/service.js";
 
 const ID_ACTIONS = ["reject", "adopt", "dismiss", "undo"] as const;
-const ACTIONS = ["status", "on", "off", "scan", "conflicts", "resolve", ...ID_ACTIONS] as const;
+const ACTIONS = ["status", "on", "off", "scan", "conflicts", "resolve", "settings", ...ID_ACTIONS] as const;
 type MergeAssistAction = (typeof ACTIONS)[number];
 type IdAction = (typeof ID_ACTIONS)[number];
 
@@ -35,7 +50,7 @@ interface Output {
 /** A service over an open database, closed when the command is done. */
 export interface MergeAssistCommandSession {
   readonly service: MergeAssistService;
-  close(): void;
+  close(): void | Promise<void>;
 }
 
 export interface MergeAssistCommandIo {
@@ -49,9 +64,14 @@ export interface MergeAssistCommandIo {
 
 function openDefaultService(): MergeAssistCommandSession {
   const database = openRerailDatabase(defaultRerailDatabasePath());
+  const service = createMergeAssistService({ database, ruleCatalog: loadRuleCatalog() });
   return {
-    service: createMergeAssistService({ database, ruleCatalog: loadRuleCatalog() }),
-    close: () => database.$client.close(),
+    service,
+    // The conflict hook's handlers (the quick call, the person's command) record their answers in the database.
+    close: async () => {
+      await service.settled();
+      database.$client.close();
+    },
   };
 }
 
@@ -131,16 +151,8 @@ function reviewEntry(finding: Finding): string[] {
   ];
 }
 
-/** What happens to an applied finding here: steering, or held because it is another branch's verdict not in force. */
-const HELD_TEXT: Readonly<Record<NonNullable<Finding["held"]>, string>> = {
-  provisional: "Provisional verdict, not applied: your agent gets it as information only",
-  contested: "Held: a verdicts conflict on its question is open, so it reaches no agent",
-};
-
 function addedEntry(finding: Finding): string[] {
-  const how = finding.held === null
-    ? `${finding.tier === "absorb" ? "Added automatically" : "Adopted"}; ${finding.candidate.level === "code" ? "Rerail checks it exactly" : "a note your agent was given"}`
-    : HELD_TEXT[finding.held];
+  const how = `${finding.tier === "absorb" ? "Added automatically" : "Adopted"}; ${finding.candidate.level === "code" ? "Rerail checks it exactly" : "a note your agent was given"}`;
   return [
     `${finding.id}  ${quoted(finding.candidate.decision)} (${peerText(finding)})`,
     `  ${how}. Undo: rerail merge-assist undo ${finding.id}`,
@@ -163,11 +175,10 @@ function resolutionText(conflict: Conflict): string {
   if (resolution === null) return conflict.status;
   if (resolution.action === "dismiss") return `dismissed by ${plain(resolution.name)}: not a conflict`;
   const verdict = resolution.action === "theirs" ? `took ${plain(conflict.theirs.label)}'s side` : resolution.action === "mine" ? "kept this branch's side" : "wrote a new decision";
-  const by = resolution.by === "precedent" ? "by precedent" : `by ${plain(resolution.name)}`;
-  return `${verdict}, ${by}${resolution.rule === null ? "" : `; decision ${plain(resolution.rule)}`}`;
+  return `${verdict}, by ${plain(resolution.name)}${resolution.rule === null ? "" : `; decision ${plain(resolution.rule)}`}`;
 }
 
-const KIND_WORDS: Readonly<Record<Conflict["kind"], string>> = { overlap: "overlapping work", decisions: "decided differently", verdicts: "different verdicts" };
+const KIND_WORDS: Readonly<Record<Conflict["kind"], string>> = { overlap: "overlapping work", decisions: "decided differently" };
 
 /** A conflict's level as a line says it: the level, and whether it waits over budget (queued) or was put off (later). */
 function levelWords(conflict: Conflict): string {
@@ -175,18 +186,39 @@ function levelWords(conflict: Conflict): string {
   return `${conflict.level}${conflict.queued ? ", queued" : ""}${snoozed ? ", later" : ""}`;
 }
 
+/** The conflict's line in plain words: the quick call's summary, or the fallback until it answers. */
+function summaryLines(conflict: Conflict): string[] {
+  return conflict.summary === null ? [] : [`  Summary: ${plain(conflict.summary.text)}`];
+}
+
+/** The conflict hook command's failure on the conflict's latest event, when it failed. */
+function hookLines(conflict: Conflict): string[] {
+  const { hook } = conflict;
+  if (hook === null || hook.ok) return [];
+  return [`  Hook failed (${hook.event}): ${plain(hook.error ?? "no reason recorded")}`];
+}
+
+/** How to settle an open conflict: dismiss it, or give a verdict while the experimental verdicts are on. */
+function resolveHint(conflict: Conflict, verdicts: boolean): string {
+  return verdicts
+    ? `  Resolve: rerail merge-assist resolve ${conflict.id} mine|theirs|new|dismiss [--text "..."]`
+    : `  Resolve: rerail merge-assist resolve ${conflict.id} dismiss`;
+}
+
 /** One open conflict: what, how loud and why, both sides, why it is a conflict, and how to settle it. */
-function openConflictEntry(conflict: Conflict, hunks: boolean): string[] {
+function openConflictEntry(conflict: Conflict, hunks: boolean, verdicts: boolean): string[] {
   const hunk = (side: Conflict["mine"]): string[] => (hunks && side.hunk !== null ? side.hunk.split("\n").map(line => `      ${plain(line)}`) : []);
   return [
     `${conflict.id}  #${plain(conflict.shortId)}  ${quoted(conflict.title)}  (${KIND_WORDS[conflict.kind]}; ${levelWords(conflict)})`,
+    ...summaryLines(conflict),
     ...(conflict.reasons.length === 0 ? [] : [`  Size:   ${conflict.reasons.map(plain).join(" · ")}`]),
     `  Yours:  ${sideLine(conflict.mine)}`,
     ...hunk(conflict.mine),
     `  Theirs: ${sideLine(conflict.theirs)}${conflict.theirs.url === null ? "" : ` ${plain(conflict.theirs.url)}`}`,
     ...hunk(conflict.theirs),
     ...conflict.evidence.map(line => `  ${plain(line)}`),
-    `  Resolve: rerail merge-assist resolve ${conflict.id} mine|theirs|new|dismiss [--text "..."]`,
+    ...hookLines(conflict),
+    resolveHint(conflict, verdicts),
   ];
 }
 
@@ -198,29 +230,20 @@ function settledConflictEntry(conflict: Conflict): string[] {
 function conflictSections(status: MergeAssistStatus, hunks: boolean): string[] {
   const open = status.conflicts.filter(conflict => conflict.status === "open");
   const settled = status.conflicts.filter(conflict => conflict.status !== "open");
-  return [...section("Conflicts", open.map(conflict => openConflictEntry(conflict, hunks))), ...section("Settled conflicts", settled.map(settledConflictEntry))];
-}
-
-/** One question of the decision ledger: its title, then each entry's status, outcome, who, where it was read, when and text. */
-function ledgerEntry(question: MergeAssistStatus["decisionLog"]["questions"][number]): string[] {
+  const verdicts = status.experimental.conflictVerdicts;
   return [
-    quoted(question.title),
-    ...question.items.flatMap(item => [
-      `  ${item.status}  ${plain(item.outcome)}, by ${plain(item.by.name)} · ${plain(item.source.label)} · ${timeText(item.recordedAt)}`,
-      `    ${quoted(item.text)}${item.follows === null ? "" : ` (follows ${plain(item.follows.candidateId)} on ${plain(item.follows.ref)})`}`,
-    ]),
+    ...section("Conflicts", open.map(conflict => openConflictEntry(conflict, hunks, verdicts))),
+    ...section("Settled conflicts", settled.map(settledConflictEntry)),
   ];
 }
 
-/** `rerail merge-assist conflicts`: every conflict, open ones with both sides' hunks, and the decision ledger by question. */
+/** `rerail merge-assist conflicts`: every conflict, open ones with both sides' hunks. */
 export function formatConflicts(status: MergeAssistStatus, dashboardUrl: string | null): string {
   const open = status.conflicts.filter(conflict => conflict.status === "open").length;
   return [
     `● ${count(open, "open conflict", "open conflicts")} in ${repositoryName(status.checkout)}${status.branch === null ? "" : ` (${plain(status.branch)})`}.`,
     ...(status.enabled ? [] : ["  Merge Assist is off here, so Rerail finds no conflicts. Turn it on with rerail merge-assist on."]),
     ...conflictSections(status, true),
-    ...(status.experimental.decisionLedger ? section("Decision ledger, experimental (.rerail/decisions/, by question)", status.decisionLog.questions.map(ledgerEntry)) : []),
-    ...status.decisionLog.problems.map(problem => `  ${plain(problem)}`),
     ...(dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`]),
   ].join("\n");
 }
@@ -325,12 +348,11 @@ function decisionOf(status: MergeAssistStatus, findingId: string): string {
 function resolveLine(id: string, status: MergeAssistStatus): string {
   const conflict = status.conflicts.find(entry => entry.id === id);
   if (conflict === undefined) return `● Resolved ${id}.`;
-  const logged = conflict.resolution?.logId === null || conflict.resolution === null ? "" : ` Recorded as ledger entry .rerail/decisions/${conflict.resolution.logId}.json; commit it with your work.`;
-  return `● ${quoted(conflict.title)}: ${resolutionText(conflict)}.${logged}`;
+  return `● ${quoted(conflict.title)}: ${resolutionText(conflict)}.`;
 }
 
 /** What the command prints for `step`: a line for an action, else the conflicts or the status. */
-function resultText(step: Step, status: MergeAssistStatus, dashboardUrl: string | null): string {
+function resultText(step: StatusStep, status: MergeAssistStatus, dashboardUrl: string | null): string {
   const page = dashboardUrl === null ? "" : `\n  Merge Assist page: ${dashboardUrl}`;
   if (step.action === "resolve") return `${resolveLine(step.id, status)}${page}`;
   if ("id" in step) return `${actionLine(step.action, step.id, status)}${page}`;
@@ -351,10 +373,26 @@ function actionLine(action: IdAction, id: string, status: MergeAssistStatus): st
   return `● ${decisionOf(status, id)} no longer steers your coding agent in this checkout.`;
 }
 
+/**
+ * The change `rerail merge-assist settings` asks for, each field undefined where its flags leave the setting as it is:
+ * where conflicts reach the person, the hook command's argv (null removes the hook) and its timeout.
+ */
+interface SettingsRequest {
+  readonly delivery: ConflictDelivery | undefined;
+  readonly command: string[] | null | undefined;
+  readonly timeoutSeconds: number | undefined;
+}
+
+const NO_SETTINGS_CHANGE: SettingsRequest = { delivery: undefined, command: undefined, timeoutSeconds: undefined };
+const SETTINGS_OPTIONS = ["--delivery", "--hook-command", "--hook-timeout"] as const;
+
 type Step =
-  | { readonly action: Exclude<MergeAssistAction, IdAction | "resolve"> }
+  | { readonly action: Exclude<MergeAssistAction, IdAction | "resolve" | "settings"> }
   | { readonly action: IdAction; readonly id: string }
-  | { readonly action: "resolve"; readonly id: string; readonly verdict: ConflictAction; readonly text: string | undefined };
+  | { readonly action: "resolve"; readonly id: string; readonly verdict: ConflictAction; readonly text: string | undefined }
+  | { readonly action: "settings"; readonly request: SettingsRequest };
+type SettingsStep = Extract<Step, { readonly action: "settings" }>;
+type StatusStep = Exclude<Step, SettingsStep>;
 
 interface Invocation {
   readonly step: Step;
@@ -362,25 +400,89 @@ interface Invocation {
   readonly json: boolean;
 }
 
+interface StepArguments {
+  readonly step: Step;
+  readonly rest: readonly string[];
+}
+
 /** `resolve <conflict-id> mine|theirs|new|dismiss`: the conflict and the verdict, and the arguments after them. */
-function resolveStep(rest: readonly string[], usage: () => string): { id: string; verdict: ConflictAction; rest: readonly string[] } {
+function resolveStep(rest: readonly string[], usage: () => string): StepArguments {
   const [id, verdict] = rest;
   if (id === undefined || id.startsWith("--")) throw new Error(`merge-assist resolve needs a conflict id\n\n${usage()}`);
   const known = CONFLICT_ACTIONS.find(action => action === verdict);
   if (known === undefined) throw new Error(`merge-assist resolve needs mine, theirs, new or dismiss after the conflict id\n\n${usage()}`);
-  return { id, verdict: known, rest: rest.slice(2) };
+  return { step: { action: "resolve", id, verdict: known, text: undefined }, rest: rest.slice(2) };
 }
 
-/** The step the arguments name before their options, and the arguments left. */
-function stepOf(action: MergeAssistAction, rest: readonly string[], usage: () => string): { step: Step; rest: readonly string[] } {
-  if (action === "resolve") {
-    const resolved = resolveStep(rest, usage);
-    return { step: { action, id: resolved.id, verdict: resolved.verdict, text: undefined }, rest: resolved.rest };
-  }
-  if (!takesId(action)) return { step: { action }, rest };
+/** `reject <candidate-id>`, `adopt|dismiss|undo <finding-id>`: the decision, and the arguments after it. */
+function idStep(action: IdAction, rest: readonly string[], usage: () => string): StepArguments {
   const id = rest[0];
   if (id === undefined || id.startsWith("--")) throw new Error(`merge-assist ${action} needs ${action === "reject" ? "a candidate id" : "a finding id"}\n\n${usage()}`);
   return { step: { action, id }, rest: rest.slice(1) };
+}
+
+/** The step the arguments name before their options, and the arguments left. */
+function stepOf(action: MergeAssistAction, rest: readonly string[], usage: () => string): StepArguments {
+  if (action === "resolve") return resolveStep(rest, usage);
+  if (action === "settings") return { step: { action, request: NO_SETTINGS_CHANGE }, rest };
+  if (takesId(action)) return idStep(action, rest, usage);
+  return { step: { action }, rest };
+}
+
+/** `--delivery chat|terminal|both`. */
+function deliveryOption(value: string | undefined, usage: () => string): ConflictDelivery | undefined {
+  if (value === undefined) return undefined;
+  const known = CONFLICT_DELIVERY_MODES.find(mode => mode === value);
+  if (known === undefined) throw new Error(`--delivery takes chat, terminal or both\n\n${usage()}`);
+  return known;
+}
+
+function parsedJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `--hook-command`: a JSON array of non-empty strings, the program and its arguments, never run through a shell. */
+function commandOption(value: string | undefined, usage: () => string): string[] | undefined {
+  if (value === undefined) return undefined;
+  const command = conflictHookCommandSchema.shape.command.safeParse(parsedJson(value));
+  if (!command.success) throw new Error(`--hook-command takes a JSON array of non-empty strings, such as '["./notify.sh","--json"]'\n\n${usage()}`);
+  return command.data;
+}
+
+/** `--hook-timeout`: whole seconds, 1 to {@link MAX_HOOK_TIMEOUT_SECONDS}. */
+function timeoutOption(value: string | undefined, usage: () => string): number | undefined {
+  if (value === undefined) return undefined;
+  const seconds = conflictHookCommandSchema.shape.timeoutSeconds.safeParse(/^\d+$/u.test(value) ? Number(value) : value);
+  if (!seconds.success) throw new Error(`--hook-timeout takes whole seconds from 1 to ${MAX_HOOK_TIMEOUT_SECONDS}\n\n${usage()}`);
+  return seconds.data;
+}
+
+function settingsRequest(flags: ReadonlySet<string>, options: ReadonlyMap<string, string>, usage: () => string): SettingsRequest {
+  const delivery = deliveryOption(options.get("--delivery"), usage);
+  const command = commandOption(options.get("--hook-command"), usage);
+  const timeoutSeconds = timeoutOption(options.get("--hook-timeout"), usage);
+  if (!flags.has("--no-hook")) return { delivery, command, timeoutSeconds };
+  if (command !== undefined || timeoutSeconds !== undefined) throw new Error(`--no-hook removes the hook, so it takes no --hook-command or --hook-timeout\n\n${usage()}`);
+  return { delivery, command: null, timeoutSeconds };
+}
+
+/** Options that go with another command than the step's. */
+function refuseStrayOptions(step: Step, flags: ReadonlySet<string>, options: ReadonlyMap<string, string>, usage: () => string): void {
+  if (options.has("--text") && step.action !== "resolve") throw new Error(`--text goes with merge-assist resolve\n\n${usage()}`);
+  const settings = flags.has("--no-hook") || SETTINGS_OPTIONS.some(option => options.has(option));
+  if (settings && step.action !== "settings") throw new Error(`--delivery, --hook-command, --no-hook and --hook-timeout go with merge-assist settings\n\n${usage()}`);
+}
+
+/** The step with what its options add: a resolution's text, the settings' change. */
+function withOptions(step: Step, flags: ReadonlySet<string>, options: ReadonlyMap<string, string>, usage: () => string): Step {
+  refuseStrayOptions(step, flags, options, usage);
+  if (step.action === "resolve") return { ...step, text: options.get("--text") };
+  if (step.action === "settings") return { action: "settings", request: settingsRequest(flags, options, usage) };
+  return step;
 }
 
 function invocation(args: readonly string[], usage: () => string): Invocation {
@@ -389,10 +491,11 @@ function invocation(args: readonly string[], usage: () => string): Invocation {
   const action = named ? ACTIONS.find(known => known === first) : "status";
   if (action === undefined) throw new Error(`Unknown merge-assist command: ${first}\n\n${usage()}`);
   const parsed = stepOf(action, named ? args.slice(1) : args, usage);
-  const { flags, options } = parseArguments(parsed.rest, { flags: ["--json"], options: ["--repo", "--text"] }, argument => `Unknown merge-assist option: ${argument}\n\n${usage()}`);
-  const text = options.get("--text");
-  if (text !== undefined && parsed.step.action !== "resolve") throw new Error(`--text goes with merge-assist resolve\n\n${usage()}`);
-  const step = parsed.step.action === "resolve" ? { ...parsed.step, text } : parsed.step;
+  const { flags, options } = parseArguments(parsed.rest, {
+    flags: ["--json", "--no-hook"],
+    options: ["--repo", "--text", ...SETTINGS_OPTIONS],
+  }, argument => `Unknown merge-assist option: ${argument}\n\n${usage()}`);
+  const step = withOptions(parsed.step, flags, options, usage);
   const requested = resolve(options.get("--repo") ?? process.cwd());
   let physical: string;
   try {
@@ -403,41 +506,96 @@ function invocation(args: readonly string[], usage: () => string): Invocation {
   return { step, root: repositoryIdentityLocation(physical).workspaceRoot, json: flags.has("--json") };
 }
 
-async function run(service: MergeAssistService, step: Step, root: string): Promise<MergeAssistStatus> {
+function changesSettings(request: SettingsRequest): boolean {
+  return request.delivery !== undefined || request.command !== undefined || request.timeoutSeconds !== undefined;
+}
+
+/**
+ * The hook the request sets: a new command (its timeout {@link DEFAULT_HOOK_TIMEOUT_SECONDS} unless given), none, or
+ * the current command with a new timeout, refused when there is no command to time.
+ */
+async function hookChange(service: MergeAssistService, root: string, request: SettingsRequest): Promise<Pick<MergeAssistSettingsChange, "hook">> {
+  const { command, timeoutSeconds } = request;
+  if (command === null) return { hook: null };
+  if (command !== undefined) return { hook: { command, timeoutSeconds: timeoutSeconds ?? DEFAULT_HOOK_TIMEOUT_SECONDS } };
+  if (timeoutSeconds === undefined) return {};
+  const current = (await service.settings(root)).hook;
+  if (current === null) throw new MergeAssistError("invalid-state", "No conflict hook is set here, so there is no timeout to change. Set one with rerail merge-assist settings --hook-command '<json argv>'.");
+  return { hook: { ...current, timeoutSeconds } };
+}
+
+/** The settings after the request's change; the current ones when it changes nothing. */
+async function settingsAfter(service: MergeAssistService, root: string, request: SettingsRequest): Promise<MergeAssistSettings> {
+  if (!changesSettings(request)) return await service.settings(root);
+  const delivery = request.delivery === undefined ? {} : { delivery: request.delivery };
+  return (await service.updateSettings(root, { ...delivery, ...await hookChange(service, root, request) })).settings;
+}
+
+/** An action on one decision: reject one of this branch's own, or adopt, dismiss or undo another branch's. */
+async function decide(service: MergeAssistService, step: Extract<Step, { readonly action: IdAction }>, root: string): Promise<MergeAssistStatus> {
+  if (step.action === "reject") return await service.setCandidateState(root, step.id, "rejected");
+  return await service.resolveFinding(root, step.id, step.action, "person");
+}
+
+async function run(service: MergeAssistService, step: StatusStep, root: string): Promise<MergeAssistStatus> {
   if (step.action === "resolve") return await service.resolveConflict(root, step.id, step.verdict, step.text, "person");
-  if ("id" in step) {
-    if (step.action === "reject") return await service.setCandidateState(root, step.id, "rejected");
-    return await service.resolveFinding(root, step.id, step.action, "person");
-  }
+  if ("id" in step) return await decide(service, step, root);
   if (step.action === "status" || step.action === "conflicts") return await service.status(root);
   if (step.action === "scan") return await service.scan(root);
   return await service.setEnabled(root, step.action === "on");
 }
 
+/** What a step answered: the checkout's status, or for `settings` the settings. */
+type Outcome =
+  | { readonly step: StatusStep; readonly status: MergeAssistStatus }
+  | { readonly step: SettingsStep; readonly settings: MergeAssistSettings };
+
+async function outcomeOf(service: MergeAssistService, step: Step, root: string): Promise<Outcome> {
+  if (step.action === "settings") return { step, settings: await settingsAfter(service, root, step.request) };
+  return { step, status: await run(service, step, root) };
+}
+
+/** The settings as text: where conflicts reach the person, and the conflict hook command. */
+function formatSettings(root: string, settings: MergeAssistSettings, changed: boolean, dashboardUrl: string | null): string {
+  const { hook } = settings;
+  return [
+    `● ${changed ? "Saved Merge Assist settings" : "Merge Assist settings"} for ${repositoryName(root)}:`,
+    `  Delivery: ${settings.delivery}`,
+    `  Hook: ${hook === null ? "none" : `${plain(JSON.stringify(hook.command))} (timeout ${hook.timeoutSeconds} s)`}`,
+    ...(dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`]),
+  ].join("\n");
+}
+
+function outcomeText(outcome: Outcome, root: string, dashboardUrl: string | null): string {
+  if ("settings" in outcome) return formatSettings(root, outcome.settings, changesSettings(outcome.step.request), dashboardUrl);
+  return resultText(outcome.step, outcome.status, dashboardUrl);
+}
+
 /**
  * `rerail merge-assist [status|on|off|scan|conflicts|reject <id>|adopt <id>|dismiss <id>|undo <id>|resolve <id> <verdict>
- * [--text "..."]] [--repo <dir>] [--json]`.
+ * [--text "..."]|settings [--delivery chat|terminal|both] [--hook-command '<json argv>'|--no-hook] [--hook-timeout <s>]]
+ * [--repo <dir>] [--json]`.
  */
 export async function runMergeAssistCommand(args: readonly string[], usage: () => string, io: MergeAssistCommandIo = {}): Promise<number> {
   const stdout = io.stdout ?? process.stdout;
   const { step, root, json } = invocation(args, usage);
   const session = (io.openService ?? openDefaultService)();
-  let status: MergeAssistStatus;
+  let outcome: Outcome;
   try {
-    status = await run(session.service, step, root);
+    outcome = await outcomeOf(session.service, step, root);
   } catch (error) {
     if (!(error instanceof MergeAssistError)) throw error;
     if (json) stdout.write(`${JSON.stringify({ error: error.code, message: error.message })}\n`);
     else (io.stderr ?? process.stderr).write(`● ${error.message}\n`);
     return 1;
   } finally {
-    session.close();
+    await session.close();
   }
   if (json) {
-    stdout.write(`${JSON.stringify(status)}\n`);
+    stdout.write(`${JSON.stringify("settings" in outcome ? outcome.settings : outcome.status)}\n`);
     return 0;
   }
   const dashboardUrl = await (io.dashboardUrl ?? defaultDashboardUrl)(root);
-  stdout.write(`${resultText(step, status, dashboardUrl)}\n`);
+  stdout.write(`${outcomeText(outcome, root, dashboardUrl)}\n`);
   return 0;
 }

@@ -64,7 +64,8 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
       branch: "mine",
       baseBranch: "main",
       enabled: false,
-      experimental: { decisionLedger: false },
+      experimental: { conflictVerdicts: false },
+      settings: { delivery: "both", hook: null },
       readiness: {
         judge: { available: true, runner: "claude", problem: null },
         github: { state: "not-github", login: null, repository: null },
@@ -77,7 +78,6 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
       own: [],
       findings: [],
       conflicts: [],
-      decisionLog: { questions: [], problems: [] },
     });
     expect(judge.tasks).toEqual([]);
     // A repository off GitHub never runs gh.

@@ -42,7 +42,7 @@ export interface LevelContext {
   /** The session whose boundary ran the detection; a detection with none (the dashboard, the CLI) grants no stop. */
   readonly sessionId: string | null;
   readonly pulls: readonly PullRequestSummary[];
-  /** Whether a verdict or precedent on a question exists in the decision ledger. */
+  /** Whether this checkout holds a resolution of a conflict on the question. */
   readonly verdict: (question: string) => boolean;
   /** Each contested file's live refs that change it. */
   readonly touches: ReadonlyMap<string, ReadonlySet<string>>;
@@ -64,14 +64,14 @@ function pullRequestOn(conflict: Conflict, pulls: readonly PullRequestSummary[])
   return pulls.some(pull => pull.headRefName === ref || ref.endsWith(`/${pull.headRefName}`));
 }
 
-/** Both sides' full changed lines at an overlap's contested lines, as detection fingerprinted them; null when Git cannot say. */
-function changedLines(context: LevelContext, { conflict, positions }: StoredConflict): ContestedChange["changed"] {
-  const at = positions.b.at;
-  if (conflict.kind !== "overlap" || at.kind !== "hunks") return null;
+/** Both sides' full changed lines at an overlap's contested lines; null when Git cannot say. */
+function changedLines(context: LevelContext, { conflict, files, lines }: StoredConflict): ContestedChange["changed"] {
+  const [path] = files;
+  if (conflict.kind !== "overlap" || path === undefined || lines.length === 0) return null;
   try {
     return {
-      mine: hunkLinesAt(context.root, context.start, null, at.path, at.lines).join("\n"),
-      theirs: hunkLinesAt(context.root, context.start, conflict.theirs.sha, at.path, at.lines).join("\n"),
+      mine: hunkLinesAt(context.root, context.start, null, path, lines).join("\n"),
+      theirs: hunkLinesAt(context.root, context.start, conflict.theirs.sha, path, lines).join("\n"),
     };
   } catch {
     return null;

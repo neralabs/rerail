@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Finding, MergeAssistStatus, OwnDecision } from "../../src/engine/index.js";
 import { changeScope } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
-import { actions, render } from "../../ui/views/merge.js";
+import { actions, onInput, render } from "../../ui/views/merge.js";
 import { FakeElement, FakeNode, fakeDocument, type FakeDocument } from "./support/fake-dom.js";
 
 type Request = { method: string; url: string; body: Record<string, unknown> | undefined; answer: (status: number, body?: unknown) => void };
@@ -16,7 +16,6 @@ const finding = (id: string, tier: Finding["tier"], status: Finding["status"], o
   reason: "Your branch's changes pass its rule.",
   evidence: { violations: [], conflicts: [], mine: null, judgment: null },
   message: null,
-  held: null,
   updatedAt: "2026-11-02T11:00:00Z",
   ...over,
 });
@@ -32,7 +31,8 @@ const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   branch: "tbelanger/export-api",
   baseBranch: "main",
   enabled: false,
-  experimental: { decisionLedger: false },
+  experimental: { conflictVerdicts: false },
+  settings: { delivery: "both", hook: null },
   readiness: {
     judge: { available: false, runner: null, problem: "Neither claude nor codex is on PATH." },
     github: { state: "signed-out", login: null, repository: null },
@@ -45,7 +45,6 @@ const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   own: [],
   findings: [],
   conflicts: [],
-  decisionLog: { questions: [], problems: [] },
   ...over,
 });
 
@@ -416,6 +415,102 @@ describe("the Merge Assist page", () => {
       render(root);
       expect(root.textContent).toContain("Rerail isn’t set up and started in this checkout, so decisions can’t steer yet.");
       expect(root.querySelector(`button[data-act="nav"][data-i="overview"]`)).not.toBeNull();
+    });
+
+    describe("the Settings section", () => {
+      const settings = () => root.querySelector("details.msettings")!;
+      const input = (id: string) => root.querySelector(`input[id="${id}"]`) as (FakeElement & { value: string }) | null;
+      const type = (id: string, text: string) => {
+        const el = input(id)!;
+        el.value = text;
+        onInput(el);
+        render(root);
+      };
+      const checked = () => settings().querySelectorAll("button.mopt").filter(b => b.getAttribute("aria-checked") === "true").map(b => b.dataset.i);
+      const problem = () => settings().querySelector('p[id="ma-settings-problem"]')!;
+      const saved = { delivery: "terminal" as const, hook: { command: ["./scripts/on-conflict.sh", "--quiet"], timeoutSeconds: 20 } };
+
+      it("shows the saved delivery mode, hook command and timeout, with what each mode does, folded until opened", () => {
+        data.mergeAssist = { ...onFixture(), settings: saved };
+        render(root);
+        expect(settings().hidden).toBe(false);
+        expect(settings().hasAttribute("open")).toBe(false);
+        expect(settings().querySelector("summary")!.textContent).toBe("Settings: delivery terminal, conflict hook: ./scripts/on-conflict.sh");
+        click(settings().querySelector("summary"));
+        render(root);
+        expect(settings().hasAttribute("open")).toBe(true);
+        expect(settings().querySelectorAll("button.mopt").map(b => [b.dataset.i, b.querySelector(".mopt-l")!.textContent])).toEqual([["chat", "Chat"], ["terminal", "Terminal"], ["both", "Both"]]);
+        expect(settings().querySelectorAll("button.mopt .sub").every(line => line.textContent.length > 0)).toBe(true);
+        expect(checked()).toEqual(["terminal"]);
+        expect(input("ma-hook")!.value).toBe("[\"./scripts/on-conflict.sh\",\"--quiet\"]");
+        expect(input("ma-timeout")!.value).toBe("20");
+        expect(problem().hidden).toBe(true);
+      });
+
+      it("Save sends the delivery and the hook command for the checkout, then shows the saved values", async () => {
+        expect(checked()).toEqual(["both"]);
+        expect([input("ma-hook")!.value, input("ma-timeout")!.value]).toEqual(["", "10"]);
+        click(button("madelivery", "terminal"));
+        render(root);
+        expect(checked()).toEqual(["terminal"]);
+        const field = input("ma-hook");
+        type("ma-hook", " [\"./scripts/on-conflict.sh\", \"--quiet\"] ");
+        type("ma-timeout", "20");
+        expect(input("ma-hook")).toBe(field); // typing never rebuilds the form
+
+        const saving = click(button("masettings"));
+        render(root);
+        expect([button("masettings")!.disabled, button("masettings")!.textContent]).toEqual([true, "Saving…"]);
+        await vi.waitFor(() => expect(writes()).toHaveLength(1));
+        expect(writes()[0]).toMatchObject({ method: "PUT", url: expect.stringMatching(/\/api\/merge-assist\/settings$/u) });
+        expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", delivery: "terminal", hook: saved.hook });
+
+        writes()[0]!.answer(200, { ...onFixture(), settings: saved });
+        await saving;
+        render(root);
+        expect(toastText()).toBe("Saved Merge Assist’s settings for storefront.");
+        expect(ui.mergeSettings).toBeNull();
+        expect(settings().querySelector("summary")!.textContent).toBe("Settings: delivery terminal, conflict hook: ./scripts/on-conflict.sh");
+        expect([input("ma-hook")!.value, input("ma-timeout")!.value]).toEqual(["[\"./scripts/on-conflict.sh\",\"--quiet\"]", "20"]);
+        expect([button("masettings")!.disabled, button("masettings")!.textContent]).toEqual([false, "Save"]);
+      });
+
+      it("an empty command removes the hook", async () => {
+        data.mergeAssist = { ...onFixture(), settings: saved };
+        render(root);
+        type("ma-hook", "");
+        const saving = click(button("masettings"));
+        await vi.waitFor(() => expect(writes()).toHaveLength(1));
+        expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", delivery: "terminal", hook: null });
+        writes()[0]!.answer(200, onFixture());
+        await saving;
+      });
+
+      it("refuses a hook command that is not a JSON array of non-empty strings, sending nothing, until it is fixed", async () => {
+        type("ma-hook", "./scripts/on-conflict.sh --quiet");
+        await click(button("masettings"));
+        render(root);
+        expect(writes()).toHaveLength(0);
+        expect(problem().hidden).toBe(false);
+        expect(problem().textContent).toBe("The hook command must be a JSON array of non-empty strings, like [\"./scripts/on-conflict.sh\", \"--quiet\"].");
+        expect(input("ma-hook")!.getAttribute("aria-invalid")).toBe("true");
+
+        type("ma-hook", "[\"./scripts/on-conflict.sh\"]");
+        expect(problem().hidden).toBe(true);
+        expect(input("ma-hook")!.hasAttribute("aria-invalid")).toBe(false);
+        type("ma-timeout", "90");
+        await click(button("masettings"));
+        render(root);
+        expect(writes()).toHaveLength(0);
+        expect(problem().textContent).toBe("The timeout must be a whole number of seconds from 1 to 60.");
+        expect(input("ma-timeout")!.getAttribute("aria-invalid")).toBe("true");
+      });
+
+      it("is not shown while off", () => {
+        data.mergeAssist = fixture();
+        render(root);
+        expect(settings().hidden).toBe(true);
+      });
     });
   });
 });

@@ -28,7 +28,7 @@ describe("parsePolicy", () => {
   it("fills every default from a bare version", () => {
     expect(defaultPolicy()).toEqual({
       version: 1,
-      steps: ["precedent", "hard-checks", "criteria", "panel"],
+      steps: ["hard-checks", "criteria", "panel"],
       checks: { setup: null, run: [], timeoutMinutes: 30 },
       contracts: { enabled: true, declared: [] },
       criteria: { compatibility: { enabled: true, minDifference: 1 }, blastRadius: { enabled: true, ratio: 3, minLines: 100 }, benchmarks: [] },
@@ -67,7 +67,7 @@ describe("parsePolicy", () => {
       const parsed = parsePolicy(text);
       return parsed.ok ? [] : parsed.problems;
     };
-    expect(problems("version: 1\nsteps: [panel, precedent]")).toEqual([expect.stringContaining("steps:")]);
+    expect(problems("version: 1\nsteps: [panel, criteria]")).toEqual([expect.stringContaining("steps:")]);
     expect(problems("version: 1\nreview: true")).toEqual([expect.stringContaining("review")]);
     expect(problems("version: 1\nversion: 1")[0]).toMatch(/^not YAML/u);
     expect(problems("version: 1\npanel: { judges: 3, agreement: 4 }")).toEqual([expect.stringContaining("panel")]);

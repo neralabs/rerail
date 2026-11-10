@@ -17,7 +17,7 @@ import { runGit } from "../git.js";
 export const ADJACENT_LINES = 3;
 /** The most lines of one side's change one conflict shows. */
 export const HUNK_LINES = 40;
-/** The largest untracked file whose lines a position is taken over. */
+/** The largest untracked file whose lines the dimmer reads. */
 const MAX_UNTRACKED_BYTES = 5 * 1024 * 1024;
 /** A binary file's change covers the whole file. */
 const WHOLE_FILE = 1e9;
@@ -246,6 +246,19 @@ export function hunkLinesAt(repo: string, from: string, to: string | null, path:
       return lines.some(line => Math.max(range.lo, line.lo) - Math.min(range.hi, line.hi) - 1 <= ADJACENT_LINES);
     })
     .flatMap(hunk => hunk.lines.slice(1));
+}
+
+/**
+ * What a change contests in `path`, anchored on content: a digest of the path and the text of the base lines each of
+ * `lines` covers at `base` (an insertion: the line before it), whitespace collapsed. Lines added above them, a base
+ * that moved without touching them, or a whitespace-only change keep it; a change to the text itself makes another. A
+ * file `base` does not hold anchors on no text.
+ */
+export function contestedAnchor(repo: string, base: string, path: string, lines: readonly { readonly lo: number; readonly hi: number }[]): string {
+  const shown = runGit(repo, ["show", `${base}:${path}`], { maxBuffer: 64 * 1024 * 1024 });
+  const text = shown.status === 0 ? shown.stdout.split("\n") : [];
+  const contested = lines.map(({ lo, hi }) => text.slice(Math.max(0, Math.floor(lo) - 1), Math.floor(hi)).join(" ").replace(/\s+/gu, " ").trim());
+  return createHash("sha256").update(JSON.stringify([path, contested])).digest("hex").slice(0, 24);
 }
 
 /**

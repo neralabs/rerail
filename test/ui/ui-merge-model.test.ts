@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { Finding, MergeAssistStatus, OwnDecision } from "../../src/engine/index.js";
+import type { ConflictDelivery, Finding, MergeAssistStatus, OwnDecision } from "../../src/engine/index.js";
 import {
-  authorOf, budgetText, conflictSections, conflictToast, draftProblem, draftText, githubText, hunkLines, judgeText,
-  logQuestions, logStatusCounts, readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, tabOf, tabsOf,
-  waitingCount, writeError,
+  authorOf, budgetText, conflictSections, conflictToast, draftProblem, draftText, githubText, hookFailure, hunkLines, judgeText,
+  readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf,
+  settingsChange, settingsDraft, settingsSummary, tabOf, waitingCount, writeError,
 } from "../../ui/merge-model.js";
-import { conflict, logItem, resolved, side } from "./support/merge-conflicts.js";
+import { conflict, resolved, side } from "./support/merge-conflicts.js";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const at = (minutesAgo: number) => new Date(NOW - minutesAgo * 60_000).toISOString();
@@ -17,7 +17,6 @@ const finding = (id: string, tier: Finding["tier"], status: Finding["status"], u
   reason: "Compatible with your decisions.",
   evidence: { violations: [], conflicts: [], mine: null, judgment: null },
   message: null,
-  held: null,
   updatedAt: at(updatedMinutesAgo),
 });
 
@@ -32,7 +31,8 @@ const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   branch: "tbelanger/export-api",
   baseBranch: "main",
   enabled: true,
-  experimental: { decisionLedger: false },
+  experimental: { conflictVerdicts: false },
+  settings: { delivery: "both", hook: null },
   readiness: {
     judge: { available: true, runner: "claude", problem: null },
     github: { state: "signed-in", login: "tbelanger", repository: "acme/storefront" },
@@ -45,7 +45,6 @@ const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   own: [],
   findings: [],
   conflicts: [],
-  decisionLog: { questions: [], problems: [] },
   ...over,
 });
 
@@ -226,15 +225,15 @@ describe("conflicts", () => {
   const conflicts = [
     conflict("logged-new", { level: "logged", detectedAt: at(1) }),
     conflict("ambient-old", { detectedAt: at(60) }),
-    resolved("by-precedent", "theirs", "precedent"),
+    resolved("theirs-taken", "theirs"),
     conflict("ambient-new", { detectedAt: at(5) }),
-    conflict("dismissed", { status: "dismissed", resolution: { action: "dismiss", by: "person", name: "tbelanger", logId: null, rule: null, text: null, at: at(2) } }),
+    conflict("dismissed", { status: "dismissed", resolution: { action: "dismiss", name: "tbelanger", rule: null, text: null, at: at(2) } }),
   ];
 
   it("lists open conflicts that reach the session first, then logged ones, each newest first; closed ones as the status orders them", () => {
     const { open, closed } = conflictSections(status({ conflicts }));
     expect(open.map(c => c.id)).toEqual(["ambient-new", "ambient-old", "logged-new"]);
-    expect(closed.map(c => c.id)).toEqual(["by-precedent", "dismissed"]);
+    expect(closed.map(c => c.id)).toEqual(["theirs-taken", "dismissed"]);
     expect(open.every(c => !c.busy)).toBe(true);
   });
 
@@ -244,16 +243,11 @@ describe("conflicts", () => {
     expect(open.map(c => [c.id, c.busy])).toEqual([["ambient-new", true], ["logged-new", false]]);
   });
 
-  it("opens on Conflicts while any is open, else Decisions, and keeps the tab the person chose while it is there", () => {
+  it("opens on Conflicts while any is open, else Decisions, and keeps the tab the person chose", () => {
     expect(tabOf(status({ conflicts }), null)).toBe("conflicts");
-    expect(tabOf(status({ conflicts: [resolved("r", "mine", "person")] }), null)).toBe("decisions");
+    expect(tabOf(status({ conflicts: [resolved("r", "mine")] }), null)).toBe("decisions");
     expect(tabOf(status({ conflicts }), "constructor")).toBe("conflicts");
-    // The Decision log is there only with the experimental decision ledger.
-    expect(tabsOf(status({ conflicts }))).toEqual(["conflicts", "decisions"]);
-    expect(tabOf(status({ conflicts }), "log")).toBe("conflicts");
-    const ledger = status({ conflicts, experimental: { decisionLedger: true } });
-    expect(tabsOf(ledger)).toEqual(["conflicts", "decisions", "log"]);
-    expect(tabOf(ledger, "log")).toBe("log");
+    expect(tabOf(status({ conflicts }), "decisions")).toBe("decisions");
   });
 
   it("counts every open conflict in the sidebar as the Conflicts tab does, and a decided-differently finding only when no conflict carries it", () => {
@@ -267,11 +261,11 @@ describe("conflicts", () => {
   });
 
   it("says how a closed conflict ended, who decided, and the rule it saved", () => {
-    expect(resolutionText(resolved("p", "theirs", "precedent"))).toMatchObject({
-      badge: "Resolved by precedent", precedent: true, how: "Took theirs (PR #398)", who: "by precedent", rule: ".rerail/candidates/p.json",
+    expect(resolutionText(resolved("t", "theirs"))).toMatchObject({
+      badge: "Resolved", how: "Took theirs (PR #398)", who: "by tbelanger", rule: ".rerail/candidates/t.json",
     });
-    expect(resolutionText(resolved("m", "mine", "person"))).toMatchObject({ badge: "Resolved", how: "Kept mine", who: "by tbelanger" });
-    expect(resolutionText(resolved("n", "new", "person"))).toMatchObject({ how: "New decision" });
+    expect(resolutionText(resolved("m", "mine"))).toMatchObject({ badge: "Resolved", how: "Kept mine", who: "by tbelanger" });
+    expect(resolutionText(resolved("n", "new"))).toMatchObject({ how: "New decision" });
     expect(resolutionText(conflicts[4]!)).toMatchObject({ badge: "Not a conflict", how: null, who: "by tbelanger", rule: null });
   });
 
@@ -306,12 +300,40 @@ describe("conflicts", () => {
   it("colours a hunk's added, removed and header lines", () => {
     expect(hunkLines("@@ -1 +1 @@\n-old\n+new\n same\n").map(l => l.kind)).toEqual(["meta", "del", "add", "ctx"]);
   });
+});
 
-  it("lists each question's ledger entries newest first, filtered by status, and counts them per status", () => {
-    const items = [logItem("old", at(600)), logItem("new", at(1), { status: "in-force" }), logItem("mid", at(30), { status: "void" })];
-    const decisionLog = { questions: [{ question: "q", title: "Q", items }, { question: "r", title: "R", items: [logItem("other", at(5))] }], problems: [] };
-    expect(logQuestions(status({ decisionLog })).map(q => [q.question, q.items.map(e => e.id)])).toEqual([["q", ["new", "mid", "old"]], ["r", ["other"]]]);
-    expect(logQuestions(status({ decisionLog }), "void").map(q => [q.question, q.items.map(e => e.id)])).toEqual([["q", ["mid"]]]);
-    expect(logStatusCounts(status({ decisionLog }))).toEqual({ "in-force": 1, provisional: 2, reopened: 0, flagged: 0, superseded: 0, void: 1 });
+describe("the settings", () => {
+  const draft = (command: string, timeout = "10", delivery: ConflictDelivery = "terminal") => ({ delivery, command, timeout });
+
+  it("fills the form from the saved settings: the command as JSON, the timeout, and 10 seconds without a hook", () => {
+    expect(settingsDraft({ delivery: "chat", hook: { command: ["./hook.sh", "--quiet"], timeoutSeconds: 30 } }))
+      .toEqual({ delivery: "chat", command: "[\"./hook.sh\",\"--quiet\"]", timeout: "30" });
+    expect(settingsDraft({ delivery: "both", hook: null })).toEqual({ delivery: "both", command: "", timeout: "10" });
+    expect(settingsSummary({ delivery: "terminal", hook: { command: ["./hook.sh"], timeoutSeconds: 10 } })).toBe("Settings: delivery terminal, conflict hook: ./hook.sh");
+    expect(settingsSummary({ delivery: "both", hook: null })).toBe("Settings: delivery both, no conflict hook");
+  });
+
+  it("saves the delivery and the hook command as an argv with its timeout; an empty command removes the hook", () => {
+    expect(settingsChange(draft(" [\"./hook.sh\", \"a b\"] ", "45"))).toEqual({ body: { delivery: "terminal", hook: { command: ["./hook.sh", "a b"], timeoutSeconds: 45 } } });
+    expect(settingsChange(draft("[\"./hook.sh\"]", " "))).toEqual({ body: { delivery: "terminal", hook: { command: ["./hook.sh"], timeoutSeconds: 10 } } });
+    expect(settingsChange(draft("  ", "nonsense", "chat"))).toEqual({ body: { delivery: "chat", hook: null } });
+  });
+
+  it("refuses a command that is not a JSON array of non-empty strings, and a timeout outside 1 to 60 seconds", () => {
+    const argv = "The hook command must be a JSON array of non-empty strings, like [\"./scripts/on-conflict.sh\", \"--quiet\"].";
+    for (const command of ["./hook.sh --quiet", "\"./hook.sh\"", "[]", "[\"\"]", "[\"./hook.sh\", 3]", "{\"command\":[\"x\"]}"]) {
+      expect(settingsChange(draft(command))).toEqual({ problem: argv, field: "command" });
+    }
+    expect(settingsChange(draft(JSON.stringify(Array.from({ length: 65 }, () => "x"))))).toEqual({ problem: "The hook command takes at most 64 arguments.", field: "command" });
+    for (const timeout of ["0", "61", "2.5", "ten"]) {
+      expect(settingsChange(draft("[\"./hook.sh\"]", timeout))).toEqual({ problem: "The timeout must be a whole number of seconds from 1 to 60.", field: "timeout" });
+    }
+  });
+
+  it("says a conflict hook failed with its event and why, and nothing when it ran fine or never ran", () => {
+    const hook = { event: "detected" as const, ok: false, error: "exit code 2", note: null, status: null, at: at(1) };
+    expect(hookFailure(conflict("c", { hook }))).toBe("Conflict hook failed (detected): exit code 2");
+    expect(hookFailure(conflict("c", { hook: { ...hook, ok: true, error: null } }))).toBeNull();
+    expect(hookFailure(conflict("c"))).toBeNull();
   });
 });

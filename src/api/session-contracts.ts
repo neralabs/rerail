@@ -13,7 +13,8 @@ export const sessionResponseSchema = z.object({
     mergeAssist: z.object({
       conflicts: z.number().int().nonnegative(),
       decide: z.object({ id: z.string(), title: z.string() }).nullable(),
-    }).optional().describe("Merge Assist's footer segment: absent while no conflict in the session's checkout is open above logged."),
+      summary: z.object({ id: z.string(), text: z.string() }).describe("The newest open conflict's status line text: the hook's status, else its summary."),
+    }).optional().describe("Merge Assist's footer segment: absent while no conflict in the session's checkout is open above logged, or while the person's conflict delivery is chat."),
   }),
   audit: createSelectSchema(audits)
     .pick({ workspaceRoot: true, scope: true, mode: true, status: true })

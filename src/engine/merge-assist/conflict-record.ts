@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 /** The steps a policy can run, in the only order they run in; escalation to a person always follows them. */
-export const POLICY_STEPS = ["precedent", "hard-checks", "criteria", "panel"] as const;
+export const POLICY_STEPS = ["hard-checks", "criteria", "panel"] as const;
 export type PolicyStep = (typeof POLICY_STEPS)[number];
 /** What settled a conflict: one of the steps, or escalation to a person. */
 export type DecidingStep = PolicyStep | "escalate";
@@ -47,7 +47,7 @@ export const conflictRecordSchema = z.object({
   repository: z.string().min(1).max(500),
   /** The commit both sides are judged against: the base the later side started from. */
   base: z.string().regex(SHA),
-  /** What the sides disagree on (`questionOf`): earlier verdicts on the same question are precedent. */
+  /** What the sides disagree on (`questionOf`). */
   question: z.string().min(1).max(200),
   sides: z.object({ a: recordSideSchema, b: recordSideSchema }).strict(),
 }).strict();

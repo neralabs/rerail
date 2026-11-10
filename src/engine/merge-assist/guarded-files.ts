@@ -1,6 +1,6 @@
 /**
- * Files Rerail reads from and writes to `.rerail/` folders other people's branches carry (candidates, decision
- * entries): data other people wrote. Reading follows no symlink (not `.rerail`, not the folder, not a file) and checks
+ * Files Rerail reads from and writes to `.rerail/` folders other people's branches carry (candidates): data other
+ * people wrote. Reading follows no symlink (not `.rerail`, not the folder, not a file) and checks
  * each size before reading; writing creates the folders as needed, refuses a symlink in their place, and puts a file
  * in place by rename from a new temporary file. A Git tree is listed per folder, regular-file blobs only.
  */
@@ -140,14 +140,6 @@ export function treeFolderEntries(repoRoot: string, commit: string, directory: s
   const result = runGit(repoRoot, ["ls-tree", "-l", "-z", "--full-tree", commit, "--", `${directory}/`], { maxBuffer: 16 * 1024 * 1024 });
   if (result.status !== 0 || result.error !== undefined) return undefined;
   return parseTree(result.stdout, `${directory}/`);
-}
-
-/** The entries of one tree object (`git ls-tree -l -z <tree>`), or undefined when Git fails. */
-export function treeObjectEntries(repoRoot: string, tree: string): TreeEntry[] | undefined {
-  if (!/^[0-9a-f]{40,64}$/u.test(tree)) return undefined;
-  const result = runGit(repoRoot, ["ls-tree", "-l", "-z", tree], { maxBuffer: 16 * 1024 * 1024 });
-  if (result.status !== 0 || result.error !== undefined) return undefined;
-  return parseTree(result.stdout, "");
 }
 
 /** Why a listed entry is not read: not a regular-file blob, or over `maxBytes`; undefined when it is readable. */

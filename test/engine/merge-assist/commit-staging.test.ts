@@ -40,23 +40,21 @@ describe("commit staging", () => {
     expect(gitCommitIn("git status")).toBeNull();
   });
 
-  it("lists decision and candidate files a commit would leave out: untracked, or changed and not staged unless -a takes them, ledger entries only with the ledger", async () => {
+  it("lists the decision files a commit would leave out under .rerail/candidates/: untracked, or changed and not staged unless -a takes them", async () => {
     const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-commit-staging-")));
     roots.push(root);
     git(root, "init", "--quiet", "-b", "main");
     write(root, { "README.md": "seed\n", ".rerail/candidates/kept-1a2b3c.json": "{}\n", ".rerail/candidates/edited-4d5e6f.json": "{}\n" });
     git(root, "add", "-A");
     git(root, "commit", "--quiet", "-m", "seed");
-    expect(unstagedDecisionFiles(root, false, true)).toEqual([]);
+    expect(unstagedDecisionFiles(root, false)).toEqual([]);
 
-    const entry = `.rerail/decisions/${"a".repeat(32)}.json`;
-    const staged = `.rerail/decisions/${"b".repeat(32)}.json`;
-    write(root, { [entry]: "{}\n", [staged]: "{}\n", ".rerail/candidates/edited-4d5e6f.json": "{\"x\":1}\n", ".rerail/candidates/new-7a8b9c.json": "{}\n", "src/code.ts": "x\n" });
+    const staged = ".rerail/candidates/staged-0a1b2c.json";
+    // Other files under .rerail/ are not decisions this commit should carry.
+    write(root, { [staged]: "{}\n", ".rerail/candidates/edited-4d5e6f.json": "{\"x\":1}\n", ".rerail/candidates/new-7a8b9c.json": "{}\n", ".rerail/other/x.json": "{}\n", "src/code.ts": "x\n" });
     git(root, "add", "--", staged);
-    expect(unstagedDecisionFiles(root, false, true)).toEqual([".rerail/candidates/edited-4d5e6f.json", ".rerail/candidates/new-7a8b9c.json", entry]);
-    expect(unstagedDecisionFiles(root, true, true)).toEqual([".rerail/candidates/new-7a8b9c.json", entry]);
-    // Without the experimental decision ledger, only the candidates.
-    expect(unstagedDecisionFiles(root, false, false)).toEqual([".rerail/candidates/edited-4d5e6f.json", ".rerail/candidates/new-7a8b9c.json"]);
-    expect(commitStagingNote([entry])).toBe(`Rerail: include these decision files in this commit: ${entry}`);
+    expect(unstagedDecisionFiles(root, false)).toEqual([".rerail/candidates/edited-4d5e6f.json", ".rerail/candidates/new-7a8b9c.json"]);
+    expect(unstagedDecisionFiles(root, true)).toEqual([".rerail/candidates/new-7a8b9c.json"]);
+    expect(commitStagingNote([staged])).toBe(`Rerail: include these decision files in this commit: ${staged}`);
   });
 });

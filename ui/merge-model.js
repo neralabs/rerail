@@ -1,13 +1,13 @@
 /**
  * Merge Assist's page as pure derivations of `GET /api/merge-assist` (`MergeAssistStatus` in
- * `src/engine/merge-assist/model.ts`), without the DOM: the tabs, the sections and their order, the conflicts and the
- * decision log, what the status strip and the readiness checklist say, who is behind a finding, the sidebar's count,
+ * `src/engine/merge-assist/model.ts`), without the DOM: the tabs, the sections and their order, the conflicts, what
+ * the status strip and the readiness checklist say, who is behind a finding, the sidebar's count,
  * and which pull request links are safe to open.
  *
  * Decision text, authors, branch names, titles and links come from other people's branches. Every string here is
  * plain text for a text node; `safePeerUrl` is the only way a peer's link becomes an `href`.
  */
-import { andList, clock, daysAgo, fmt, plural } from "./format.js";
+import { andList, fmt, plural } from "./format.js";
 
 /** The agent CLIs Merge Assist runs for judgment (`JUDGE_RUNNERS`), by the names people know them by. */
 export const RUNNER_NAMES = { claude: "Claude Code", codex: "Codex" };
@@ -113,7 +113,7 @@ export function waitingCount(status, pending = new Map()) {
 /** The longest decision text a person may save when resolving a conflict (the API's limit). */
 export const DECISION_MAX = 600;
 
-export const KIND_TEXT = { overlap: "Overlapping work", decisions: "Contradicting decisions", verdicts: "Different verdicts" };
+export const KIND_TEXT = { overlap: "Overlapping work", decisions: "Contradicting decisions" };
 /** What each level did in the session, as a card says it beside its age. */
 export const LEVEL_TEXT = {
   stop: "Asks you before an edit to these files",
@@ -152,14 +152,11 @@ export function conflictSections(status, pending = new Map()) {
   return { open, closed };
 }
 
-export const MERGE_TABS = ["conflicts", "decisions", "log"];
+export const MERGE_TABS = ["conflicts", "decisions"];
 
-/** The tabs this status has: the Decision log only with the experimental decision ledger. */
-export const tabsOf = status => MERGE_TABS.filter(name => name !== "log" || status.experimental.decisionLedger);
-
-/** The tab shown: the one the person chose while it is there, else Conflicts while any is open, else Decisions. */
+/** The tab shown: the one the person chose, else Conflicts while any is open, else Decisions. */
 export function tabOf(status, chosen, pending = new Map()) {
-  if (tabsOf(status).includes(chosen)) return chosen;
+  if (MERGE_TABS.includes(chosen)) return chosen;
   return conflictSections(status, pending).open.length > 0 ? "conflicts" : "decisions";
 }
 
@@ -179,17 +176,15 @@ export function hunkLines(hunk) {
 const RESOLVED_HOW = { mine: () => "Kept mine", theirs: c => `Took theirs (${c.theirs.label})`, new: () => "New decision", dismiss: () => null };
 
 /**
- * How a closed conflict ended, for its folded row: `badge` (Resolved by precedent, Resolved, Not a conflict), `how`
- * ("Took theirs (PR #398)"; `null` when the badge says it all), `who` ("by tbelanger", "by precedent"), and the
- * decision's `text` and `rule` path.
+ * How a closed conflict ended, for its folded row: `badge` (Resolved, Not a conflict), `how` ("Took theirs (PR #398)";
+ * `null` when the badge says it all), `who` ("by tbelanger"), and the decision's `text` and `rule` path.
  */
 export function resolutionText(conflict) {
   const r = conflict.resolution;
-  if (r === null) return { badge: conflict.status === "dismissed" ? "Not a conflict" : "Resolved", precedent: false, how: null, who: null, text: null, rule: null, at: null };
-  const precedent = r.by === "precedent";
+  if (r === null) return { badge: conflict.status === "dismissed" ? "Not a conflict" : "Resolved", how: null, who: null, text: null, rule: null, at: null };
   return {
-    badge: r.action === "dismiss" ? "Not a conflict" : precedent ? "Resolved by precedent" : "Resolved",
-    precedent, how: RESOLVED_HOW[r.action](conflict), who: precedent ? "by precedent" : `by ${r.name}`,
+    badge: r.action === "dismiss" ? "Not a conflict" : "Resolved",
+    how: RESOLVED_HOW[r.action](conflict), who: `by ${r.name}`,
     text: r.text, rule: r.rule, at: r.at,
   };
 }
@@ -231,47 +226,86 @@ export function conflictToast(conflict, action, text, ignored) {
   };
 }
 
-/* ---------- the decision log: the ledger view ---------- */
-
-/** Where a ledger entry stands, as its chip says it, in the order the filter lists them. */
-export const LEDGER_STATUS_TEXT = {
-  "in-force": "In force",
-  provisional: "Provisional",
-  reopened: "Reopened",
-  flagged: "Flagged",
-  superseded: "Superseded",
-  void: "Void",
-};
-
-/** What each status means, as the chip's title says it. */
-export const LEDGER_STATUS_TITLE = {
-  "in-force": "Merged into the base branch: every agent follows it.",
-  provisional: "Only on a branch that has not merged: information for other branches until it does.",
-  reopened: "The winning side changed since: the conflict is open again.",
-  flagged: "Merged, but the code in the base branch contradicts it: a person should look.",
-  superseded: "A later entry on the same question replaced it.",
-  void: "Its branch merged without it, or went away: it no longer counts.",
-};
-
-/** How many entries the ledger holds per status. */
-export function logStatusCounts(status) {
-  const counts = Object.fromEntries(Object.keys(LEDGER_STATUS_TEXT).map(name => [name, 0]));
-  for (const question of status.decisionLog.questions) for (const item of question.items) counts[item.status] += 1;
-  return counts;
+/**
+ * The line a card shows when the conflict hook command failed on its last event, or `null`: it ran fine, or none ran.
+ * The command never affects delivery, so this is the only place a failure shows.
+ */
+export function hookFailure(conflict) {
+  const hook = conflict.hook;
+  if (hook === null || hook === undefined || hook.ok) return null;
+  return `Conflict hook failed (${hook.event}): ${hook.error ?? "no reason given"}`;
 }
 
-/** The ledger's questions, each with its entries newest first, only those with `filter`'s status when one is chosen. */
-export function logQuestions(status, filter = null) {
-  return status.decisionLog.questions
-    .map(question => ({ ...question, items: question.items.filter(item => filter === null || item.status === filter).sort(newestFirst("recordedAt")) }))
-    .filter(question => question.items.length > 0);
+/* ---------- settings ---------- */
+
+/** The delivery modes in the order the Settings section offers them, as `CONFLICT_DELIVERY_MODES` names them. */
+export const DELIVERY_MODES = ["chat", "terminal", "both"];
+
+/** Each delivery mode's name and what it does, one line each (the person's line and the stop apply in every mode). */
+export const DELIVERY_TEXT = {
+  chat: { label: "Chat", text: "Your coding agent gets a note the first time it meets a conflict, and checkpoints go through it. The status line shows none." },
+  terminal: { label: "Terminal", text: "The status line shows the newest conflict and what to decide. Your coding agent gets no note and no checkpoint." },
+  both: { label: "Both", text: "The note and checkpoints through your coding agent, and the status line. The default." },
+};
+
+export const HOOK_TIMEOUT_DEFAULT = 10;
+export const HOOK_TIMEOUT_MAX = 60;
+const HOOK_ARGS_MAX = 64;
+const HOOK_ARG_MAX = 4_096;
+
+/** The Settings form's fields from the saved settings: the delivery mode, the command as JSON (empty for none), the timeout. */
+export function settingsDraft(settings) {
+  return {
+    delivery: settings.delivery,
+    command: settings.hook === null ? "" : JSON.stringify(settings.hook.command),
+    timeout: String(settings.hook?.timeoutSeconds ?? HOOK_TIMEOUT_DEFAULT),
+  };
 }
 
-/** When an entry was recorded: the time today, else the day ("Nov 3"). */
-export function logWhen(iso) {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  return daysAgo(t) === 0 ? clock(t) : new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const ARGV_PROBLEM = "The hook command must be a JSON array of non-empty strings, like [\"./scripts/on-conflict.sh\", \"--quiet\"].";
+
+/** Why `argv` is not a hook command (a JSON array of 1 to 64 non-empty strings), or `null`. */
+function argvProblem(argv) {
+  if (!Array.isArray(argv) || argv.length === 0 || argv.some(arg => typeof arg !== "string" || arg === "")) return ARGV_PROBLEM;
+  if (argv.length > HOOK_ARGS_MAX) return `The hook command takes at most ${fmt(HOOK_ARGS_MAX)} arguments.`;
+  if (argv.some(arg => arg.length > HOOK_ARG_MAX)) return `Each hook argument takes at most ${fmt(HOOK_ARG_MAX)} characters.`;
+  return null;
+}
+
+/** The command field as JSON, or `null` when it is not JSON (`argvProblem` says why). */
+function parseArgv(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** The timeout field in whole seconds (empty: the default), or `null` when it is not 1 to 60. */
+function parseTimeout(text) {
+  const seconds = text.trim() === "" ? HOOK_TIMEOUT_DEFAULT : Number(text);
+  return Number.isInteger(seconds) && seconds >= 1 && seconds <= HOOK_TIMEOUT_MAX ? seconds : null;
+}
+
+/**
+ * The body of `PUT /api/merge-assist/settings` (without the scope) from the form's fields, `{ body }`, or why it can't
+ * be saved, `{ problem, field }` (`command` or `timeout`). An empty command removes the hook, whatever the timeout says.
+ */
+export function settingsChange(draft) {
+  const text = draft.command.trim();
+  if (text === "") return { body: { delivery: draft.delivery, hook: null } };
+  const argv = parseArgv(text);
+  const problem = argvProblem(argv);
+  if (problem !== null) return { problem, field: "command" };
+  const timeoutSeconds = parseTimeout(draft.timeout);
+  if (timeoutSeconds === null) return { problem: `The timeout must be a whole number of seconds from 1 to ${fmt(HOOK_TIMEOUT_MAX)}.`, field: "timeout" };
+  return { body: { delivery: draft.delivery, hook: { command: argv, timeoutSeconds } } };
+}
+
+/** The Settings fold's summary: the saved delivery mode and whether a hook command is set. */
+export function settingsSummary(settings) {
+  const hook = settings.hook === null ? "no conflict hook" : `conflict hook: ${settings.hook.command[0]}`;
+  return `Settings: delivery ${DELIVERY_TEXT[settings.delivery].label.toLowerCase()}, ${hook}`;
 }
 
 /* ---------- the status strip ---------- */

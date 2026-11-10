@@ -4,21 +4,22 @@ import { changeScope } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
 import { actions, enter, onInput, render } from "../../ui/views/merge.js";
 import { FakeElement, FakeNode, fakeDocument, type FakeDocument } from "./support/fake-dom.js";
-import { conflict, logItem, resolved, side } from "./support/merge-conflicts.js";
+import { conflict, resolved, side } from "./support/merge-conflicts.js";
 
 type Request = { method: string; url: string; body: Record<string, unknown> | undefined; answer: (status: number, body?: unknown) => void };
 
 const HOSTILE = `<img src=x onerror="alert(1)"><b>bold</b>`;
 const OPEN_ID = "conflict:native/src/model.rs#matchers:ab12";
 
-/** On, with an ambient overlap with PR #398, a logged one, one resolved by precedent and one dismissed. */
+/** On with the experimental verdicts, with an ambient overlap with PR #398, a logged one, one resolved and one dismissed. */
 const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   repositoryKey: "remote:github.com/acme/storefront",
   checkout: "/work/a",
   branch: "tbelanger/export-api",
   baseBranch: "main",
   enabled: true,
-  experimental: { decisionLedger: true },
+  experimental: { conflictVerdicts: true },
+  settings: { delivery: "both", hook: null },
   readiness: {
     judge: { available: true, runner: "claude", problem: null },
     github: { state: "signed-in", login: "tbelanger", repository: "acme/storefront" },
@@ -33,35 +34,9 @@ const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   conflicts: [
     conflict(OPEN_ID),
     conflict("conflict:lock", { level: "logged", title: "package-lock.json", detectedAt: "2026-11-02T11:50:00Z" }),
-    resolved("conflict:retries", "theirs", "precedent", { title: "Retries in API callers" }),
-    conflict("conflict:dates", { status: "dismissed", title: "Dates", resolution: { action: "dismiss", by: "person", name: "tbelanger", logId: null, rule: null, text: null, at: "2026-11-02T11:40:00Z" } }),
+    resolved("conflict:retries", "theirs", { title: "Retries in API callers" }),
+    conflict("conflict:dates", { status: "dismissed", title: "Dates", resolution: { action: "dismiss", name: "tbelanger", rule: null, text: null, at: "2026-11-02T11:40:00Z" } }),
   ],
-  decisionLog: {
-    questions: [
-      {
-        question: "overlap:retries",
-        title: "Retries in callers",
-        items: [
-          logItem("newer", "2026-11-02T11:30:00Z", {
-            question: "overlap:retries", title: "Retries in callers", outcome: "Theirs (PR #412)", by: { kind: "precedent", name: "precedent" }, rule: null,
-            source: { ref: "refs/pull/412/head", label: "PR #412" }, follows: { ref: "refs/pull/412/head", candidateId: "candidate:retry-in-transport-1a2b3c" },
-          }),
-          logItem("oldest", "2026-10-28T09:00:00Z", { question: "overlap:retries", title: "Retries in callers", status: "void", outcome: "Mine", source: { ref: "jbarnes-retries", label: "jbarnes-retries" } }),
-        ],
-      },
-      {
-        question: "overlap:dates",
-        title: "Dates via formatDate",
-        items: [
-          logItem("older", "2026-10-30T10:00:00Z", {
-            question: "overlap:dates", title: "Dates via formatDate", status: "in-force", verdict: "new", outcome: "New decision", by: { kind: "person", name: "lfischer" },
-            source: { ref: "refs/remotes/origin/main", label: "origin/main" },
-          }),
-        ],
-      },
-    ],
-    problems: [],
-  },
   ...over,
 });
 
@@ -70,7 +45,7 @@ function resolvedStatus(id: string, action: "mine" | "theirs" | "new"): MergeAss
   const status = fixture();
   status.conflicts = status.conflicts.map((c): Conflict => (c.id !== id ? c : {
     ...c, status: "resolved",
-    resolution: { action, by: "person", name: "tbelanger", logId: "log-1", rule: ".rerail/candidates/shared-matchers.json", text: "Saved.", at: "2026-11-02T12:00:00Z" },
+    resolution: { action, name: "tbelanger", rule: ".rerail/candidates/shared-matchers.json", text: "Saved.", at: "2026-11-02T12:00:00Z" },
   }));
   return status;
 }
@@ -126,24 +101,14 @@ describe("Merge Assist's conflicts", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens on Conflicts with its open count, the other tabs' panels hidden, the Decision log marked experimental", () => {
+  it("opens on Conflicts with its open count, the Decisions panel hidden", () => {
     expect(root.querySelectorAll("button.mtab").map(b => [b.textContent, b.getAttribute("aria-pressed"), b.hidden]))
-      .toEqual([["Conflicts · 2", "true", false], ["Decisions", "false", false], ["Decision log Experimental", "false", false]]);
-    expect(button("matab", "log")!.querySelector(".badge.mexp")!.textContent).toBe("Experimental");
-    expect([panel("conflicts").hidden, panel("decisions").hidden, panel("log").hidden]).toEqual([false, true, true]);
-    click(button("matab", "log"));
+      .toEqual([["Conflicts · 2", "true", false], ["Decisions", "false", false]]);
+    expect([panel("conflicts").hidden, panel("decisions").hidden]).toEqual([false, true]);
+    click(button("matab", "decisions"));
     render(root);
-    expect([panel("conflicts").hidden, panel("log").hidden]).toEqual([true, false]);
-    expect(button("matab", "log")!.getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("hides the Decision log without the experimental decision ledger, even when it was the tab chosen", () => {
-    click(button("matab", "log"));
-    data.mergeAssist = fixture({ experimental: { decisionLedger: false }, decisionLog: { questions: [], problems: [] } });
-    render(root);
-    expect(button("matab", "log")!.hidden).toBe(true);
-    expect(panel("log").hidden).toBe(true);
-    expect(button("matab", "conflicts")!.getAttribute("aria-pressed")).toBe("true");
+    expect([panel("conflicts").hidden, panel("decisions").hidden]).toEqual([true, false]);
+    expect(button("matab", "decisions")!.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("shows an open conflict's kind, title, age, both sides with their hunks, and the evidence", () => {
@@ -313,57 +278,94 @@ describe("Merge Assist's conflicts", () => {
     expect(toastText()).toContain(`Couldn’t mark “Shared matchers ${OPEN_ID}” as not a conflict. Disk full.`);
   });
 
+  it("shows an open conflict's summary and a failed conflict hook with its event and why", () => {
+    data.mergeAssist = fixture({
+      conflicts: [conflict(OPEN_ID, {
+        summary: { text: `PR #398 (Tim) is changing matchers ${HOSTILE}`, via: "fallback", at: "2026-11-02T11:00:00Z", reason: "budget" },
+        hook: { event: "level-changed", ok: false, error: "timed out after 10 s", note: null, status: null, at: "2026-11-02T11:01:00Z" },
+      })],
+    });
+    render(root);
+    const card = cards()[0]!;
+    expect(card.querySelector(".msummary")!.textContent).toBe(`PR #398 (Tim) is changing matchers ${HOSTILE}`);
+    expect(card.querySelectorAll("img")).toHaveLength(0);
+    expect(card.querySelector(".mhookfail")!.textContent).toBe("Conflict hook failed (level-changed): timed out after 10 s");
+
+    data.mergeAssist = fixture({ conflicts: [conflict(OPEN_ID, { hook: { event: "detected", ok: true, error: null, note: "n", status: "s", at: "2026-11-02T11:01:00Z" } })] });
+    render(root);
+    expect(cards()[0]!.querySelector(".msummary")).toBeNull();
+    expect(cards()[0]!.querySelector(".mhookfail")).toBeNull();
+  });
+
+  describe("without the experimental verdicts", () => {
+    const off = (over: Partial<MergeAssistStatus> = {}) =>
+      fixture({ experimental: { conflictVerdicts: false }, ...over });
+
+    beforeEach(() => {
+      data.mergeAssist = off();
+      render(root);
+    });
+
+    it("offers Dismiss alone, and says who to talk to with a link to their pull request", () => {
+      const card = cards()[0]!;
+      expect(card.querySelectorAll(".macts button").map(b => [b.dataset.act, b.textContent])).toEqual([["manotconflict", "Dismiss"]]);
+      expect(card.querySelector(".medit")).toBeNull();
+      const talk = card.querySelector(".mtalk")!;
+      expect(talk.textContent).toBe("Talk it over with Tim (PR #398). Rerail never picks a side; dismiss it if it isn’t a conflict.");
+      expect(talk.querySelector("a")!.getAttribute("href")).toBe("https://github.com/acme/storefront/pull/398");
+      expect(panel("conflicts").querySelector(".ghead p")!.textContent).toContain("talk it over with the other side’s author");
+    });
+
+    it("names a branch without a link, and links no URL it can't trust", () => {
+      data.mergeAssist = off({
+        conflicts: [conflict(OPEN_ID, { theirs: side({ label: "jbarnes/model", author: HOSTILE, url: "javascript:alert(1)" }) })],
+      });
+      render(root);
+      const talk = cards()[0]!.querySelector(".mtalk")!;
+      expect(talk.querySelectorAll("a")).toHaveLength(0);
+      expect(talk.querySelectorAll("img")).toHaveLength(0);
+      expect(talk.textContent).toBe(`Talk it over with ${HOSTILE} (jbarnes/model). Rerail never picks a side; dismiss it if it isn’t a conflict.`);
+    });
+
+    it("Dismiss marks it as not a conflict, sending no text", async () => {
+      const dismissing = click(button("manotconflict", OPEN_ID));
+      render(root);
+      expect(cards().map(c => c.className)).toEqual(["mcard logged"]);
+      await vi.waitFor(() => expect(writes()).toHaveLength(1));
+      expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", conflictId: OPEN_ID, action: "dismiss" });
+      writes()[0]!.answer(200, off({ conflicts: fixture().conflicts.filter(c => c.id !== OPEN_ID) }));
+      await dismissing;
+      expect(toastText()).toContain(`Marked “Shared matchers ${OPEN_ID}” as not a conflict.`);
+    });
+
+    it("drops the verdict choices from a card already shown once the verdicts are turned off", () => {
+      data.mergeAssist = fixture();
+      render(root);
+      expect(cards()[0]!.querySelectorAll(".macts button")).toHaveLength(4);
+      data.mergeAssist = off();
+      render(root);
+      expect(cards()[0]!.querySelectorAll(".macts button").map(b => b.textContent)).toEqual(["Dismiss"]);
+    });
+  });
+
   it("folds resolved and dismissed conflicts with who decided, how, and the rule path", () => {
     const fold = panel("conflicts").querySelector("details.mfold")!;
     expect(fold.hasAttribute("open")).toBe(false);
     click(fold.querySelector("summary"));
     render(root);
     expect(fold.hasAttribute("open")).toBe(true);
-    const [precedent, dismissed] = fold.querySelectorAll("article.mclosed");
-    expect(precedent!.querySelector(".badge")!.textContent).toBe("Resolved by precedent");
-    expect(precedent!.querySelector(".mmeta")!.textContent).toContain("Took theirs (PR #398)by precedent");
-    expect(precedent!.querySelector("code.mrule")!.textContent).toBe(".rerail/candidates/conflict:retries.json");
-    expect(precedent!.querySelector(".mq")!.textContent).toBe("Decision for conflict:retries.");
+    const [taken, dismissed] = fold.querySelectorAll("article.mclosed");
+    expect(taken!.querySelector(".badge")!.textContent).toBe("Resolved");
+    expect(taken!.querySelector(".mmeta")!.textContent).toContain("Took theirs (PR #398)by tbelanger");
+    expect(taken!.querySelector("code.mrule")!.textContent).toBe(".rerail/candidates/conflict:retries.json");
+    expect(taken!.querySelector(".mq")!.textContent).toBe("Decision for conflict:retries.");
     expect(dismissed!.querySelector(".badge")!.textContent).toBe("Not a conflict");
     expect(dismissed!.querySelector(".mmeta")!.textContent).toContain("by tbelanger");
     expect(dismissed!.querySelector("code.mrule")).toBeNull();
   });
 
-  it("lists the decision log by question: when, status, outcome, by, branch and rule, newest first", () => {
-    click(button("matab", "log"));
-    render(root);
-    const log = panel("log");
-    expect(log.querySelectorAll("h3.mlq").map(h => h.textContent)).toEqual(["Retries in callers", "Dates via formatDate"]);
-    const tables = log.querySelectorAll("table.mlog");
-    expect(tables[0]!.querySelectorAll("th").map(th => th.textContent)).toEqual(["When", "Status", "Outcome", "By", "Branch", "Rule"]);
-    const rows = (table: FakeElement) => table.querySelectorAll("tbody tr").map(tr => tr.querySelectorAll("td").map(td => td.textContent).slice(1));
-    expect(rows(tables[0]!)).toEqual([
-      ["Provisional", "Theirs (PR #412)Text newer.Follows candidate:retry-in-transport-1a2b3c on refs/pull/412/head", "precedent", "PR #412", "—"],
-      ["Void", "MineText oldest.", "tbelanger", "jbarnes-retries", ".rerail/candidates/oldest.json"],
-    ]);
-    expect(rows(tables[1]!)).toEqual([["In force", "New decisionText older.", "lfischer", "origin/main", ".rerail/candidates/older.json"]]);
-    expect(log.querySelectorAll(".mst").map(chip => chip.className)).toEqual(["badge mst provisional", "badge mst void", "badge mst in-force"]);
-    expect(log.querySelectorAll(".mby").map(b => b.className)).toEqual(["badge mby precedent", "badge mby person", "badge mby person"]);
-    expect(tables[0]!.querySelector("time")!.getAttribute("datetime")).toBe("2026-11-02T11:30:00Z");
-  });
-
-  it("filters the decision log by status, and shows every entry again from All", () => {
-    click(button("matab", "log"));
-    render(root);
-    const filters = () => panel("log").querySelectorAll("button.mlogf").map(b => [b.textContent, b.getAttribute("aria-pressed")]);
-    expect(filters()).toEqual([["All3", "true"], ["In force1", "false"], ["Provisional1", "false"], ["Void1", "false"]]);
-    click(button("malog", "void"));
-    render(root);
-    expect(panel("log").querySelectorAll("h3.mlq").map(h => h.textContent)).toEqual(["Retries in callers"]);
-    expect(panel("log").querySelectorAll("tbody tr")).toHaveLength(1);
-    expect(filters()[3]).toEqual(["Void1", "true"]);
-    click(button("malog", "all"));
-    render(root);
-    expect(panel("log").querySelectorAll("tbody tr")).toHaveLength(3);
-  });
-
-  it("says when nothing is open or logged, and opens on Decisions then", () => {
-    data.mergeAssist = fixture({ conflicts: [], decisionLog: { questions: [], problems: ["origin/main: 3f2a.json: not JSON"] } });
+  it("says when nothing is open, and opens on Decisions then", () => {
+    data.mergeAssist = fixture({ conflicts: [] });
     render(root);
     expect(button("matab", "decisions")!.getAttribute("aria-pressed")).toBe("true");
     expect(button("matab", "conflicts")!.textContent).toBe("Conflicts");
@@ -372,12 +374,6 @@ describe("Merge Assist's conflicts", () => {
     expect(panel("conflicts").textContent).toContain("No open conflicts");
     expect(panel("conflicts").textContent).toContain("Rerail compared this branch with 2 local branches and 1 open pull request");
     expect(panel("conflicts").querySelector("details.mfold")!.hidden).toBe(true);
-    click(button("matab", "log"));
-    render(root);
-    expect(panel("log").textContent).toContain("No decisions recorded yet");
-    expect(panel("log").querySelector('[role="status"]')!.textContent).toContain("3f2a.json: not JSON");
-    expect(panel("log").querySelector("button.mlogf")).toBeNull();
-    expect(panel("log").querySelector("table")).toBeNull();
   });
 
   it("a link from the session's line opens Conflicts on that conflict, even from another tab, and a closed one's fold", () => {

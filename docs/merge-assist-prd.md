@@ -424,8 +424,7 @@ D1 and D2 weighted equally.
 #### 6.3.7 Can a policy settle a conflict objectively?
 
 A resolver runs the repository's policy (`.rerail/policy.yaml`) on a conflict and either names the design that wins or
-escalates to a person; a verdict is an entry in the decision ledger (`.rerail/decisions/`, on the branch, read as a
-view computed from Git), and an escalation stays an open conflict. Steps, in order: precedent,
+escalates to a person, whose open conflict it stays. Steps, in order, as run: precedent,
 hard checks (tests, build, public contract breaks), measurable criteria (compatibility with existing callers), a panel
 of three judges that must agree in both orders, and escalation, including for reserved classes (public API, data
 model). It never sees which pull request came first or what happened to them. Tuned on 15 open-source conflicts,
@@ -454,6 +453,12 @@ seeds × both orders.
 - Most conflicts need a person: about two thirds escalate even with the full policy. The useful shape is a decision
   log where the person decides, with the panel's verdict shown as a recommendation when it is unanimous, not a
   resolver that decides alone. Hard checks belong at merge time, when the work is finished, not in flight.
+
+A decision ledger was then built on that shape and evaluated: each verdict written as a file that travelled with its
+branch, read back as a view from Git, settling the same dispute in other checkouts by precedent and holding other
+branches' unmerged verdicts back from agents. It was removed, and with it the precedent step of the policy. A person's
+verdict now writes only the decision the branch follows (`.rerail/candidates/`) and settles the conflict in that
+checkout.
 
 #### 6.3.8 Coordination units from other pull requests, surfaced
 
@@ -801,7 +806,7 @@ decisions rather than lines, it works across coding agents, and its shared layer
 | Comparisons | One judge call per peer; any new decision invalidates all | Per pair of rule contents; exact for code rules |
 | Capture | At every turn end with a correction | Marked at turn end, judged in a batch at commit or idle; amendments |
 | Changing a decision | Capture writes an amendment of a decision in force in the checkout (its own or merged from the base): a new candidate whose `supersedes` names it, which takes it out of force there and on a branch that scans this one; rejecting the amendment restores it. Another branch triages an amendment like any other decision (being an amendment does not send it to review); `revision` is not used | Amendments, reviewed |
-| Verdicts on conflicts | Entry files in `.rerail/decisions/` on the branch whose person decided, committed with the code; the ledger is a view computed from Git: in force on the base, provisional on live refs, reopened, flagged, superseded or void; precedent from the view | Same |
+| Verdicts on conflicts | A person's verdict writes the decision the branch follows (`.rerail/candidates/`), committed with the code, and settles the conflict in that checkout only | Same |
 | Exact checks | At each scan | At landing and on demand, counted against the base |
 | Approval | Not used (library rules) | Rerail's approval, with an opt-in policy |
 | Built and carried over | Judge runner and prompts with fences and repair; `gh` client; capture validation; tier model and its tests; notes' framing and escaping; agent guards; dashboard page structure | |

@@ -2,16 +2,16 @@
  * Merge Assist (`#merge`) for the scoped checkout. Off: what turning it on does and what Rerail found (the agent CLI,
  * `gh`, whether Git ignores `.rerail/candidates/`, whether rules can steer here), then Turn on Merge Assist. On: the
  * status strip (branch and base, the judging CLI, `gh`, the last scan and its problems, the hourly judgment budget,
- * Scan now and Turn off), then three tabs:
- * - Conflicts: open conflicts as cards, loudest first (each with its level, short id, queued and snooze state, both
- *   sides, the dimmer's reasons as its size, the evidence, Keep mine, Take theirs, Write a new decision…, Not a
- *   conflict), logged ones muted, then the resolved and dismissed ones folded. Keep mine, Take theirs and a new
- *   decision open the decision text in the card; Confirm saves it. Shown first while any conflict is open.
+ * Scan now and Turn off), the Settings fold (how conflicts reach the person: chat, terminal or both; the conflict hook
+ * command and its timeout), then two tabs:
+ * - Conflicts: open conflicts as cards, loudest first (each with its level, short id, queued and snooze state, its
+ *   summary, a failed conflict hook, both sides, the dimmer's reasons as its size, the evidence), logged ones muted,
+ *   then the resolved and dismissed ones folded. A card offers Dismiss (not a conflict) and says to talk to the other
+ *   side's author. With the experimental conflict verdicts it offers Keep mine, Take theirs, Write a new decision… and
+ *   Not a conflict instead: the first three open the decision text in the card; Confirm saves it. Shown first while
+ *   any conflict is open.
  * - Decisions: Decided differently, Needs your review, Added from other branches and Decisions on this branch, with
  *   the ones marked as not a rule folded under it.
- * - Decision log (only with the experimental decision ledger, marked Experimental): the ledger view, every entry from
- *   `.rerail/decisions/` on the base branch, this branch and live refs, grouped by question, with a status chip each,
- *   the branch it was read from, and a filter by status.
  * What each shows comes from `merge-model.js`. When the status cannot be read, the page says why and shows nothing to
  * act on until a read succeeds again.
  *
@@ -22,15 +22,16 @@
  * never rebuilt for a write in flight or the passing of time, so the focus stays on the button a person used.
  */
 import { h, icon, setAttr, setClass, setContent, setText, syncChildren } from "../dom.js";
-import { ago, failed, fmt, stamp, startOfDay } from "../format.js";
+import { ago, failed, fmt, stamp } from "../format.js";
 import { data, ui, repoName } from "../state.js";
 import { captureScope, inScope, writeMergeAssist } from "../poll.js";
 import { copyText, invalidate, toast } from "../shell.js";
 import {
-  DECISION_MAX, KIND_TEXT, LEVEL_BADGE, LEVEL_TEXT, MERGE_TABS, QUEUED_TEXT, authorOf, branchText, budgetText, conflictSections, conflictToast,
-  draftProblem, draftText, githubText, hunkLines, judgeText, levelText, levelTitle, LEDGER_STATUS_TEXT, LEDGER_STATUS_TITLE, logQuestions, logStatusCounts, logWhen, peerLabel,
-  quoted, readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, sideHeading,
-  snoozeText, tabOf, tabsOf, writeError,
+  DECISION_MAX, DELIVERY_MODES, DELIVERY_TEXT, HOOK_TIMEOUT_DEFAULT, HOOK_TIMEOUT_MAX, KIND_TEXT, LEVEL_BADGE, LEVEL_TEXT, MERGE_TABS, QUEUED_TEXT,
+  authorOf, branchText, budgetText, conflictSections, conflictToast, draftProblem, draftText, githubText, hookFailure, hunkLines, judgeText,
+  levelText, levelTitle, peerLabel, quoted, readinessChecks,
+  resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, settingsChange, settingsDraft, settingsSummary, sideHeading,
+  snoozeText, tabOf, writeError,
 } from "../merge-model.js";
 
 export const needs = ["mergeAssist"];
@@ -91,6 +92,56 @@ async function scan() {
   if (!inScope(scope)) return;
   ui.mergeScanning = false;
   if (status !== null) toast(scanSummary(before, status));
+  invalidate();
+}
+
+/* ---------- settings ---------- */
+
+/** The Settings form's fields: the person's edits while there are any, else the saved values (`status.settings`). */
+const settingsFields = status => ui.mergeSettings ?? { ...settingsDraft(status.settings), problem: null, field: null };
+
+/** Change one of the Settings form's fields; a change clears the problem the last Save found. */
+function editSettings(change) {
+  const status = data.mergeAssist;
+  if (status === null || ui.mergeSaving) return;
+  ui.mergeSettings = { ...settingsFields(status), ...change, problem: null, field: null };
+  invalidate();
+}
+
+function chooseDelivery(mode) {
+  if (DELIVERY_MODES.includes(mode)) editSettings({ delivery: mode });
+}
+
+/**
+ * The settings change to save, or `null`: nothing to save while the status is unread or a save or switch is out, or
+ * the form can't be saved, which it then says why (`settingsChange`).
+ */
+function settingsToSave() {
+  const status = data.mergeAssist;
+  if (status === null || ui.mergeSaving || ui.mergeSwitching) return null;
+  const fields = settingsFields(status), change = settingsChange(fields);
+  if (change.problem === undefined) return change.body;
+  ui.mergeSettings = { ...fields, problem: change.problem, field: change.field };
+  invalidate();
+  return null;
+}
+
+/**
+ * Save the Settings form: the delivery mode, and the hook command with its timeout (none when the command is empty).
+ * A command that is not a JSON array of non-empty strings, or a timeout out of range, is refused here and says why.
+ */
+async function saveSettings() {
+  const body = settingsToSave();
+  if (body === null) return;
+  const scope = captureScope();
+  ui.mergeSaving = true; invalidate();
+  const saved = await write(scope, "PUT", SETTINGS, body, "Couldn’t save Merge Assist’s settings");
+  if (!inScope(scope)) return;
+  ui.mergeSaving = false;
+  if (saved !== null) {
+    ui.mergeSettings = null;
+    toast(`Saved Merge Assist’s settings for ${here()}.`);
+  }
   invalidate();
 }
 
@@ -167,12 +218,6 @@ function chooseTab(name) {
   invalidate();
 }
 
-/** Show only the decision log's entries with one status, or all of them again (`all`, or the status already shown). */
-function filterLog(name) {
-  ui.mergeLogStatus = name === "all" || name === ui.mergeLogStatus || !(name in LEDGER_STATUS_TEXT) ? null : name;
-  invalidate();
-}
-
 /* ---------- conflicts ---------- */
 
 const conflictOf = id => data.mergeAssist?.conflicts.find(c => c.id === id);
@@ -227,8 +272,18 @@ function confirmDraft(id) {
   return undefined;
 }
 
-/** Typing in a draft: kept in `ui.mergeDraft`, so a render patches its counter and Confirm without rebuilding it. */
+/** The Settings form's text fields, by id, and the field each one edits. */
+const SETTINGS_INPUT = { "ma-hook": "command", "ma-timeout": "timeout" };
+
+/**
+ * Typing in a draft (kept in `ui.mergeDraft`, so a render patches its counter and Confirm without rebuilding it), or in
+ * the Settings form (kept in `ui.mergeSettings` until Save).
+ */
 export function onInput(el) {
+  if (Object.hasOwn(SETTINGS_INPUT, el.id)) {
+    editSettings({ [SETTINGS_INPUT[el.id]]: el.value });
+    return;
+  }
   if (ui.mergeDraft === null || !el.matches?.("textarea.mdraft")) return;
   ui.mergeDraft.text = el.value;
   invalidate();
@@ -246,7 +301,8 @@ export const actions = {
   macopy: id => copyMessage(id),
   mafold: name => fold(name),
   matab: name => chooseTab(name),
-  malog: name => filterLog(name),
+  madelivery: mode => chooseDelivery(mode),
+  masettings: () => saveSettings(),
   mamine: id => openDraft(id, "mine"),
   matheirs: id => openDraft(id, "theirs"),
   manew: id => openDraft(id, "new"),
@@ -344,15 +400,11 @@ function reviewRow(finding) {
       button(".ghost", "madismiss", finding.id, "Dismiss", { aria: `Dismiss ${quoted(finding.candidate.decision)}` })));
 }
 
-/** Another branch's verdict that has not merged: never applied here, as its badge says. */
-const HELD_BADGE = { provisional: "Provisional verdict", contested: "Held: verdicts conflict open" };
-
 function addedRow(finding) {
   return h("article.mrow", null,
     h("p.mq", null, finding.candidate.decision),
     h("div.mmeta", null, source(finding), levelBadge(finding.candidate.level), scopeChips(finding.candidate.scope),
-      finding.held === null ? null : h("span.badge.mwarn", { title: finding.reason }, HELD_BADGE[finding.held]),
-      h("span", null, finding.held !== null ? "Not applied " : finding.tier === "absorb" ? "Added automatically " : "Adopted by you ", ageSlot())),
+      h("span", null, finding.tier === "absorb" ? "Added automatically " : "Adopted by you ", ageSlot())),
     h("p.mreason", null, finding.reason),
     h("div.macts", null,
       button("", "maundo", finding.id, "Undo", { aria: `Undo ${quoted(finding.candidate.decision)}`, title: "Stop it steering your coding agent in this checkout" })));
@@ -420,14 +472,42 @@ function whyConflict(evidence) {
     h("ul.mwhy", null, evidence.map(line => h("li", null, line)))));
 }
 
-/** The four choices, all alike: the person decides, so none is recommended. */
+/** Whether the experimental conflict verdicts are on where Merge Assist runs: Keep mine, Take theirs, a new decision. */
+const verdictsOn = () => data.mergeAssist?.experimental.conflictVerdicts === true;
+
+/**
+ * A card's choices. With the experimental verdicts, four alike: the person decides, so none is recommended. Without
+ * them, Dismiss alone: the person settles it with the other side's author (`talkTo`).
+ */
 function conflictButtons(conflict) {
   const about = quoted(conflict.title);
+  if (!verdictsOn()) {
+    return [button(".ghost", "manotconflict", conflict.id, "Dismiss", { aria: `Dismiss ${about}: not a conflict`, title: "Not a conflict: Rerail stops raising it" })];
+  }
   return [
     button("", "mamine", conflict.id, "Keep mine", { aria: `Keep mine for ${about}` }),
     button("", "matheirs", conflict.id, "Take theirs", { aria: `Take theirs for ${about}` }),
     button("", "manew", conflict.id, "Write a new decision…", { aria: `Write a new decision for ${about}` }),
     button(".ghost", "manotconflict", conflict.id, "Not a conflict", { aria: `Mark ${about} as not a conflict` }),
+  ];
+}
+
+/** Without the verdicts: who to settle it with, their branch or pull request (a link when it is safe to open). */
+function talkTo(theirs) {
+  if (verdictsOn()) return null;
+  const href = safeLink(theirs.url);
+  const where = href === null ? h("span.mono", null, theirs.label)
+    : h("a.mlink", { href, target: "_blank", rel: "noopener noreferrer", title: `Open ${theirs.label} on GitHub` }, theirs.label);
+  return h("p.mtalk", null, "Talk it over with ", theirs.author ? h("b.mauthor", null, theirs.author) : "the author", " (", where,
+    "). Rerail never picks a side; dismiss it if it isn’t a conflict.");
+}
+
+/** What the other side is doing and why it collides (the quick call's line, or its fallback), and a failed hook. */
+function conflictNotes(conflict) {
+  const failure = hookFailure(conflict);
+  return [
+    conflict.summary?.text ? h("p.msummary", null, conflict.summary.text) : null,
+    failure === null ? null : h("p.mhookfail", null, icon("logged", 14), failure),
   ];
 }
 
@@ -455,10 +535,12 @@ function conflictCard(conflict) {
       h("h3.mctitle", null, conflict.title),
       h("span.mshort", { title: `Name it in chat as #${conflict.shortId}` }, `#${conflict.shortId}`),
       h("span.mcage", null, "Open for ", ageSlot(), logged ? null : [" · ", LEVEL_TEXT[conflict.level]])),
+    conflictNotes(conflict),
     conflictState(conflict),
     h("div.mvs", null, sideBox(conflict.mine, "mine"), sideBox(conflict.theirs, "theirs")),
     conflictSize(conflict.reasons),
     whyConflict(conflict.evidence),
+    talkTo(conflict.theirs),
     h("div.meditslot"),
     h("div.macts", null, conflictButtons(conflict),
       logged ? h("span.mlogged", null, icon("logged"), LEVEL_TEXT.logged) : null));
@@ -478,9 +560,7 @@ function draftEditor(conflict, draft) {
       h("span.meditacts", null,
         h("button.btn.sm.ghost", { "data-act": "macancel", "data-i": conflict.id }, "Cancel"),
         h("button.btn.sm.solid", { "data-act": "maconfirm", "data-i": conflict.id }, "Confirm"))),
-    data.mergeAssist?.experimental.decisionLedger === true
-      ? h("p.mnote2", null, "Saved as a decision on this branch in ", h("code", null, ".rerail/candidates/"), " with a ledger entry in ", h("code", null, ".rerail/decisions/"), ". Commit both with your work.")
-      : h("p.mnote2", null, "Saved as a decision on this branch in ", h("code", null, ".rerail/candidates/"), ". Commit it with your work."));
+    h("p.mnote2", null, "Saved as a decision on this branch in ", h("code", null, ".rerail/candidates/"), ". Commit it with your work."));
 }
 
 function draftHint(text) {
@@ -488,15 +568,16 @@ function draftHint(text) {
   return draftProblem(text) ?? `${fmt(text.trim().length)} of ${fmt(DECISION_MAX)} characters.`;
 }
 
-/** A card's draft: built when it opens, then patched (counter, Confirm, busy) so typing never rebuilds it. */
-function patchDraft(node, conflict) {
-  const draft = ui.mergeDraft?.id === conflict.id ? ui.mergeDraft : null;
+/** Which choice's draft is open: `aria-expanded` on the buttons that open one (only with the verdicts). */
+function patchOpeners(node, draft) {
   for (const [action, act] of Object.entries(OPENER)) {
-    setAttr(node.querySelector(`button[data-act="${act}"]`), "aria-expanded", draft?.action === action ? "true" : "false");
+    const opener = node.querySelector(`button[data-act="${act}"]`);
+    if (opener !== null) setAttr(opener, "aria-expanded", draft?.action === action ? "true" : "false");
   }
-  const slot = node.querySelector(".meditslot");
-  setContent(slot, draft === null ? "" : draft.action, () => (draft === null ? null : draftEditor(conflict, draft)));
-  if (draft === null) return;
+}
+
+/** An open draft's counter, validity and Confirm, patched in place. */
+function patchEditor(slot, conflict, draft) {
   const area = slot.querySelector("textarea");
   const problem = draftProblem(draft.text), invalid = problem !== null && draft.text.trim() !== "";
   setText(slot.querySelector(".mhint"), draftHint(draft.text));
@@ -506,8 +587,19 @@ function patchDraft(node, conflict) {
   setAttr(slot.querySelector('button[data-act="maconfirm"]'), "disabled", problem !== null || conflict.busy || ui.mergeSwitching);
 }
 
+/** A card's draft: built when it opens, then patched (counter, Confirm, busy) so typing never rebuilds it. */
+function patchDraft(node, conflict) {
+  const draft = verdictsOn() && ui.mergeDraft?.id === conflict.id ? ui.mergeDraft : null;
+  patchOpeners(node, draft);
+  const slot = node.querySelector(".meditslot");
+  setContent(slot, draft === null ? "" : draft.action, () => (draft === null ? null : draftEditor(conflict, draft)));
+  if (draft !== null) patchEditor(slot, conflict, draft);
+}
+
 /** What a card shows, for its key: a change rebuilds the card. Its age, busy state and draft are patched. */
-const conflictContent = c => [c.status, c.level, c.queued, c.snooze, c.reasons, c.shortId, c.kind, c.title, c.mine, c.theirs, c.evidence];
+const conflictContent = c => [
+  verdictsOn(), c.status, c.level, c.queued, c.snooze, c.reasons, c.shortId, c.kind, c.title, c.mine, c.theirs, c.evidence, c.summary, c.hook,
+];
 
 function syncCards(list, items) {
   syncChildren(list, items, c => `${c.id}\u0000${JSON.stringify(conflictContent(c))}`, conflictCard, (node, conflict) => {
@@ -518,55 +610,24 @@ function syncCards(list, items) {
   });
 }
 
-/** A resolved or dismissed conflict, folded: how it ended, who decided (a person or precedent), and the rule path. */
+/** A closed conflict's meta line: how it ended, who decided, when, with whom, and the rule it saved. */
+function closedMeta(conflict, r) {
+  return h("div.mmeta", null,
+    r.how === null ? null : h("span", null, r.how),
+    r.who === null ? null : h("b.mauthor", null, r.who),
+    r.at === null ? null : ageSlot(),
+    h("span", null, `with ${sideHeading(conflict.theirs)}`),
+    r.rule === null ? null : h("code.mrule", { title: "The decision saved on this branch" }, r.rule));
+}
+
+/** A resolved or dismissed conflict, folded: how it ended, who decided, and the rule path. */
 function closedRow(conflict) {
   const r = resolutionText(conflict);
-  const tone = r.badge === "Not a conflict" ? "" : r.precedent ? ".mprec" : ".mres";
+  const tone = r.badge === "Not a conflict" ? "" : ".mres";
   return h("article.mrow.mclosed", null,
     h("div.mchead", null, h(`span.badge${tone}`, null, r.badge), h("h3.mctitle", null, conflict.title)),
     r.text === null ? null : h("p.mq", null, r.text),
-    h("div.mmeta", null,
-      r.how === null ? null : h("span", null, r.how),
-      r.who === null ? null : h("b.mauthor", null, r.who),
-      r.at === null ? null : ageSlot(),
-      h("span", null, `with ${sideHeading(conflict.theirs)}`),
-      r.rule === null ? null : h("code.mrule", { title: "The decision saved on this branch" }, r.rule)));
-}
-
-/* ---------- the decision log ---------- */
-
-const LOG_COLUMNS = ["When", "Status", "Outcome", "By", "Branch", "Rule"];
-
-function logRow(entry) {
-  const at = Date.parse(entry.recordedAt);
-  return h("tr", null,
-    h("td", { "data-label": "When" }, h("time", { datetime: entry.recordedAt, title: Number.isNaN(at) ? null : stamp(at) }, logWhen(entry.recordedAt))),
-    h("td", { "data-label": "Status" }, h(`span.badge.mst.${entry.status}`, { title: LEDGER_STATUS_TITLE[entry.status] }, LEDGER_STATUS_TEXT[entry.status])),
-    h("td", { "data-label": "Outcome" }, entry.outcome, h("span.sub", null, entry.text),
-      entry.follows === null ? null : h("span.sub", null, "Follows ", h("code", null, entry.follows.candidateId), ` on ${entry.follows.ref}`)),
-    h("td", { "data-label": "By" }, h(`span.badge.mby.${entry.by.kind}`, null, entry.by.name)),
-    h("td", { "data-label": "Branch" }, entry.source.label),
-    h("td", { "data-label": "Rule" }, entry.rule === null ? h("span.sub", { "aria-label": "None" }, "—") : h("code.mrule", null, entry.rule)));
-}
-
-/** One question: its title, then a table of its entries, newest first. */
-function logQuestion(question) {
-  return h("div.list.mlogwrap", null,
-    h("h3.mlq", null, question.title),
-    h("table.mlog", null,
-      h("caption.vh", null, `Decision log for ${question.title}, newest first`),
-      h("colgroup", null, LOG_COLUMNS.map(name => h(`col.c-${name.toLowerCase()}`))),
-      h("thead", null, h("tr", null, LOG_COLUMNS.map(name => h("th", { scope: "col" }, name)))),
-      h("tbody", null, question.items.map(logRow))));
-}
-
-/** The status filter: All, then each status the ledger holds, with its count. */
-function logFilter(counts, chosen) {
-  const button = (name, label, count) => h("button.mlogf", { "data-act": "malog", "data-i": name, "aria-pressed": (chosen ?? "all") === name ? "true" : "false" }, label, h("span.mtabn", null, fmt(count)));
-  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
-  return h("div.mlogfilter", { role: "group", "aria-label": "Show decisions by status" },
-    button("all", "All", total),
-    Object.entries(LEDGER_STATUS_TEXT).filter(([name]) => counts[name] > 0 || chosen === name).map(([name, label]) => button(name, label, counts[name])));
+    closedMeta(conflict, r));
 }
 
 /**
@@ -596,15 +657,13 @@ function foldedList(name) {
   return { root: h("details.mfold", null, summary, h("div.in", null, list)), summary, list };
 }
 
-const TAB_LABEL = { conflicts: "Conflicts", decisions: "Decisions", log: "Decision log" };
+const TAB_LABEL = { conflicts: "Conflicts", decisions: "Decisions" };
 
-/** The tabs: toggle buttons over the three panels, patched in place (`renderTabs`). */
+/** The tabs: toggle buttons over the two panels, patched in place (`renderTabs`). */
 function buildTabs() {
   const buttons = {}, panels = {};
   for (const name of MERGE_TABS) {
     buttons[name] = h("button.mtab", { "data-act": "matab", "data-i": name, "aria-controls": `ma-panel-${name}` }, TAB_LABEL[name]);
-    // The decision log is the experimental decision ledger's: shown only with it, marked as such.
-    if (name === "log") buttons[name].append(" ", h("span.badge.mexp", null, "Experimental"));
     panels[name] = h("div.mpanel", { id: `ma-panel-${name}`, role: "region", "aria-label": TAB_LABEL[name] });
   }
   const conflictCount = h("span.mtabn");
@@ -619,27 +678,27 @@ function buildConflicts(panel) {
   return { head, list, empty, closed };
 }
 
-function buildLog(panel) {
-  const head = h("div.ghead"), problems = h("div"), filter = h("div"), table = h("div"), empty = h("div");
-  panel.append(h("section.msec.mlogsec", { "data-section": "log" }, head, problems, filter, table, empty));
-  return { head, problems, filter, table, empty };
+/** The Settings fold: its summary (the saved values) and the form, built per saved settings (`renderSettings`). */
+function buildSettings() {
+  const summary = h("summary", { "data-act": "mafold", "data-i": "settings" }), form = h("div.msetform");
+  return { root: h("details.mfold.msettings", { "aria-label": "Merge Assist settings" }, summary, h("div.in", null, form)), summary, form };
 }
 
 function build() {
   const head = h("div.ghead.mhead", null,
     h("h2", null, "Merge Assist", h("span.badge.mexp", null, "Experimental")),
     h("p.pitch", null, "Decisions you make while steering your coding agent travel with your branch. Rerail compares them with other branches and open pull requests before they merge."));
-  const notice = h("div"), off = h("div"), strip = h("div");
+  const notice = h("div"), off = h("div"), strip = h("div"), settings = buildSettings();
   const tabs = buildTabs();
   const talk = slot("talk"), review = slot("review"), added = slot("added"), own = slot("own");
   const notRules = foldedList("notRules");
   own.root.append(notRules.root);
   tabs.panels.decisions.append(talk.root, review.root, added.root, own.root);
   page = {
-    root: h("div.mpage", null, head, notice, off, strip, tabs.tabs, MERGE_TABS.map(name => tabs.panels[name])),
-    notice, off, strip, tabs, talk, review, added, own,
+    root: h("div.mpage", null, head, notice, off, strip, settings.root, tabs.tabs, MERGE_TABS.map(name => tabs.panels[name])),
+    notice, off, strip, settings, tabs, talk, review, added, own,
     notRules: notRules.root, notRulesSummary: notRules.summary, notRulesList: notRules.list,
-    conflicts: buildConflicts(tabs.panels.conflicts), log: buildLog(tabs.panels.log),
+    conflicts: buildConflicts(tabs.panels.conflicts),
     // Built with the consent card and the strip; patched in place on every render.
     onButton: null, stripWhen: null, scanButton: null, offButton: null,
   };
@@ -733,6 +792,79 @@ function renderStrip(status) {
   if (page.stripWhen !== null) setText(page.stripWhen, ago(Date.parse(scan.at)));
 }
 
+/** A text field of the Settings form, holding `value` when built; typing keeps it in `ui.mergeSettings` (`onInput`). */
+function field(spec, attrs, value) {
+  const input = h(spec, { autocomplete: "off", spellcheck: "false", ...attrs });
+  input.value = value;
+  return input;
+}
+
+/** The delivery modes, one line each on what it does; the one chosen is checked (`patchSettings`). */
+const deliveryChoice = () => h("fieldset.mdeliv", null,
+  h("legend.k", null, "Where conflicts reach you"),
+  h("div.mopts", { role: "radiogroup", "aria-label": "Delivery" }, DELIVERY_MODES.map(mode =>
+    h("button.mopt", { type: "button", role: "radio", "data-act": "madelivery", "data-i": mode },
+      h("span.mopt-l", null, DELIVERY_TEXT[mode].label), h("span.sub", null, DELIVERY_TEXT[mode].text)))),
+  h("p.mnote2", null, "In every mode you are told on your own line, and your coding agent stops before it edits a contested file."));
+
+/** The form, built with `fields` (the person's edits, else the saved values); `patchSettings` keeps the rest current. */
+function settingsForm(fields) {
+  return [
+    deliveryChoice(),
+    h("div.mfieldrow", null,
+      h("label.k", { for: "ma-hook" }, "Conflict hook command"),
+      field("input.mfield.mono", { id: "ma-hook", type: "text", placeholder: "[\"./scripts/on-conflict.sh\"]", "aria-describedby": "ma-hook-hint ma-settings-problem" }, fields.command),
+      h("p.mnote2", { id: "ma-hook-hint" }, "A JSON array: the program, then its arguments. Rerail runs it without a shell from the checkout’s root when a conflict is detected, gets louder, or closes, with the conflict as JSON on stdin. Empty for none.")),
+    h("div.mfieldrow", null,
+      h("label.k", { for: "ma-timeout" }, "Timeout in seconds"),
+      field("input.mfield.mnum", { id: "ma-timeout", type: "number", min: 1, max: HOOK_TIMEOUT_MAX, step: 1, inputmode: "numeric", "aria-describedby": "ma-timeout-hint ma-settings-problem" }, fields.timeout),
+      h("p.mnote2", { id: "ma-timeout-hint" }, `1 to ${HOOK_TIMEOUT_MAX}; ${HOOK_TIMEOUT_DEFAULT} by default. A command still running then is stopped.`)),
+    h("p.msetproblem", { id: "ma-settings-problem", "aria-live": "polite" }),
+    h("div.macts", null, h("button.btn.sm.solid", { "data-act": "masettings" }, "Save")),
+  ];
+}
+
+/** Why the last Save was refused, and which field it was about (`aria-invalid`); nothing once a field changes. */
+function patchProblem(form, fields) {
+  const problem = form.querySelector('p[id="ma-settings-problem"]');
+  setText(problem, fields.problem ?? "");
+  setAttr(problem, "hidden", fields.problem === null);
+  setAttr(form.querySelector('input[id="ma-hook"]'), "aria-invalid", fields.field === "command" ? "true" : null);
+  setAttr(form.querySelector('input[id="ma-timeout"]'), "aria-invalid", fields.field === "timeout" ? "true" : null);
+}
+
+/** While a save or a switch is out: the modes and Save disabled, the fields read-only, Save saying so. */
+function patchSaving(form) {
+  const busy = ui.mergeSaving || ui.mergeSwitching;
+  for (const option of form.querySelectorAll("button.mopt")) setAttr(option, "disabled", busy);
+  for (const input of form.querySelectorAll("input.mfield")) setAttr(input, "readonly", busy);
+  const save = form.querySelector('button[data-act="masettings"]');
+  setAttr(save, "disabled", busy);
+  setAttr(save, "aria-busy", ui.mergeSaving ? "true" : null);
+  setText(save, ui.mergeSaving ? "Saving…" : "Save");
+}
+
+/** The checked mode, the problem the last Save found, and Save's busy state, patched in place. */
+function patchSettings(form, fields) {
+  for (const option of form.querySelectorAll("button.mopt")) {
+    setAttr(option, "aria-checked", option.dataset.i === fields.delivery ? "true" : "false");
+  }
+  patchProblem(form, fields);
+  patchSaving(form);
+}
+
+/** The Settings fold while on: the saved values in its summary, the form rebuilt only when they change. */
+function renderSettings(status) {
+  const s = page.settings, show = status !== null && status.enabled;
+  setAttr(s.root, "hidden", !show);
+  if (!show) return;
+  const fields = settingsFields(status);
+  setAttr(s.root, "open", ui.mergeOpen.has("settings"));
+  setText(s.summary, settingsSummary(status.settings));
+  setContent(s.form, JSON.stringify(status.settings), () => settingsForm(fields));
+  patchSettings(s.form, fields);
+}
+
 /** A section's heading with its count, and what it holds. */
 function renderHead(s, title, count, lead) {
   setContent(s.head, JSON.stringify([title, count, lead]), () => [
@@ -809,9 +941,7 @@ function renderTabs(status) {
   const { tabs, buttons, panels, conflictCount } = page.tabs;
   setAttr(tabs, "hidden", !on);
   const shown = on ? tabOf(status, ui.mergeTab, ui.mergePending) : null;
-  const available = on ? tabsOf(status) : [];
   for (const name of MERGE_TABS) {
-    setAttr(buttons[name], "hidden", !available.includes(name));
     setAttr(buttons[name], "aria-pressed", shown === name ? "true" : "false");
     setAttr(buttons[name], "disabled", ui.mergeSwitching);
     setAttr(panels[name], "hidden", shown !== name);
@@ -825,19 +955,26 @@ function conflictsEmpty(status, closed) {
   const lines = [scan === null
     ? ["Rerail looks for conflicts on every scan and after your coding agent’s edits: work on other branches and open pull requests that overlaps yours, and decisions that contradict this branch’s."]
     : [`Rerail compared this branch with ${scannedWhat(scan)} ${ago(Date.parse(scan.at))} and found nothing waiting for you.`]];
-  lines.push(["When work overlaps, it shows here and you decide: keep yours, take theirs, or write a new decision."]);
+  lines.push([verdictsOn()
+    ? "When work overlaps, it shows here and you decide: keep yours, take theirs, or write a new decision."
+    : "When work overlaps, it shows here with whose it is, so you can talk it over with them."]);
   if (closed > 0) lines.push(["Earlier ones are under Resolved and dismissed."]);
   return { title: "No open conflicts", lines };
 }
 
 const closedContent = c => [c.status, c.title, c.theirs.label, c.theirs.author, c.resolution];
 
+/** What the Conflicts tab holds: with the verdicts, what a choice saves; without them, who settles it. */
+function conflictsLead() {
+  if (!verdictsOn()) return ["Work in flight that overlaps yours. Rerail never picks a side: talk it over with the other side’s author, and dismiss one that isn’t a conflict."];
+  return ["Work in flight that overlaps yours. Rerail never picks a side: what you choose is saved as a decision on this branch for you to commit."];
+}
+
 function renderConflicts(status) {
   const on = status !== null && status.enabled;
   const { open, closed } = on ? conflictSections(status, ui.mergePending) : { open: [], closed: [] };
   const c = page.conflicts;
-  renderHead(c, "Open conflicts", open.length,
-    [`Work in flight that overlaps yours. Rerail never picks a side: what you choose is saved as a decision on this branch${status?.experimental.decisionLedger === true ? ", with an entry for the decision log," : ""} for you to commit.`]);
+  renderHead(c, "Open conflicts", open.length, conflictsLead());
   setAttr(c.list, "hidden", open.length === 0);
   syncCards(c.list, open);
   const empty = on && open.length === 0 ? conflictsEmpty(status, closed.length) : null;
@@ -846,32 +983,6 @@ function renderConflicts(status) {
   setAttr(c.closed.root, "open", ui.mergeOpen.has("closedConflicts"));
   setText(c.closed.summary, `Resolved and dismissed (${fmt(closed.length)})`);
   syncRows(c.closed.list, closed, closedRow, closedContent, x => x.resolution?.at ?? x.detectedAt);
-}
-
-const LOG_EMPTY = {
-  title: "No decisions recorded yet",
-  lines: [["When you resolve a conflict, or an earlier verdict answers one, Rerail writes an entry to ", { code: ".rerail/decisions/" }, " on this branch. Commit it with your work: every checkout reads it from there, and it is final once it merges."]],
-};
-
-function renderLogProblems(problems) {
-  setContent(page.log.problems, JSON.stringify(problems), () => (problems.length === 0 ? null
-    : h("div.welcome.warn.mnote", { role: "status" }, icon("steered", 14),
-      h("div", null, h("b", null, "Some decision entries could not be read."), h("ul.mbul", null, problems.map(p => h("li", null, p)))))));
-}
-
-function renderLog(status) {
-  const on = status !== null && status.enabled;
-  const counts = on ? logStatusCounts(status) : {};
-  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
-  const chosen = ui.mergeLogStatus;
-  const questions = on ? logQuestions(status, chosen) : [];
-  const l = page.log;
-  renderHead(l, "Decision log", total,
-    ["Every verdict on a conflict, by question: entries in ", { code: ".rerail/decisions/" }, " on the base branch, this branch and the branches in flight. In force once merged; provisional until then."]);
-  renderLogProblems(on ? status.decisionLog.problems : []);
-  setContent(l.filter, JSON.stringify([counts, chosen]), () => (total === 0 ? null : logFilter(counts, chosen)));
-  setContent(l.table, JSON.stringify([questions, startOfDay()]), () => (questions.length === 0 ? null : h("div", null, questions.map(logQuestion))));
-  setContent(l.empty, JSON.stringify(on && total === 0), () => (on && total === 0 ? emptyBlock(LOG_EMPTY) : null));
 }
 
 /** After a draft opens, its text; after one closes, the button that opened it. */
@@ -926,10 +1037,10 @@ export function render(root) {
   renderNotice(status);
   renderOff(status);
   renderStrip(status);
+  renderSettings(status);
   renderTabs(status);
   renderConflicts(status);
   renderSections(status);
-  renderLog(status);
   applyFocus();
   showConflict(linked);
 }

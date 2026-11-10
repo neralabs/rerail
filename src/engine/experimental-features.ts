@@ -22,12 +22,11 @@ export function steerStrategiesEnabled(env: NodeJS.ProcessEnv = process.env): bo
 }
 
 /**
- * Experimental: Merge Assist's decision ledger. A person's verdict on a conflict also writes a ledger entry
- * (`.rerail/decisions/<id>.json`) that travels with the branch, and every detection reads the ledger view computed from
- * Git: statuses and the merge check, precedent across checkouts, `verdicts` conflicts, reopening by fingerprint, and
- * holding other branches' unmerged verdicts. Off, a verdict settles the conflict locally and writes only the decision
- * this branch follows (`.rerail/candidates/`), and nothing reads the ledger.
+ * Experimental: Merge Assist's conflict verdicts. A person resolves a conflict with keep mine, take theirs or a new
+ * decision (the API, `rerail merge-assist resolve` and the dashboard), and answers a checkpoint card from chat (keep
+ * mine, take theirs, new decision, later). Off, a conflict can only be dismissed ("not a conflict"), chat answers read
+ * nothing, and the cards tell the person to talk to the other side's author.
  */
-export function decisionLedgerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.RERAIL_EXPERIMENTAL_DECISION_LEDGER === "1";
+export function conflictVerdictsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS === "1";
 }

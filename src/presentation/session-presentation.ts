@@ -159,9 +159,19 @@ async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origi
 const FOOTER_TITLE = 48;
 
 /**
+ * Merge Assist's footer segment, linked to the conflict's card: `◉ decide: <title>` for the loudest one waiting on the
+ * person, else `◐ <summary>` for the newest open one, with `(+N)` for the others open.
+ */
+function conflictSegment(dashboard: URL, { decide, conflicts, summary }: NonNullable<z.infer<typeof sessionResponseSchema>["hud"]["mergeAssist"]>): SessionPresentation["parts"][number] {
+  if (decide === null) return { text: `◐ ${summary.text}${conflicts > 1 ? ` (+${conflicts - 1})` : ""}`, url: conflictUrl(dashboard.href, summary.id) };
+  const title = decide.title.length <= FOOTER_TITLE ? decide.title : `${decide.title.slice(0, FOOTER_TITLE - 1).trimEnd()}…`;
+  return { text: `◉ decide: ${title}`, url: conflictUrl(dashboard.href, decide.id) };
+}
+
+/**
  * `R E R A I L ● 26 rules`, with `steered N×` only once Rerail has steered in this session (A1f), and Merge Assist's
- * segment while the checkout has a conflict open above logged: `◉ decide: <title>` for one waiting on the person,
- * else `◐ N conflicts`.
+ * segment while the checkout has a conflict open above logged and the person's conflict delivery includes the
+ * terminal (`conflictSegment`).
  */
 function onPresentation(
   origin: URL,
@@ -181,11 +191,7 @@ function onPresentation(
   if (hud.mergeAssist !== undefined) {
     const dashboard = new URL(rulesDashboardUrl(origin, scope));
     dashboard.hash = "";
-    const { decide, conflicts } = hud.mergeAssist;
-    const title = decide === null || decide.title.length <= FOOTER_TITLE ? decide?.title : `${decide.title.slice(0, FOOTER_TITLE - 1).trimEnd()}…`;
-    items.push(decide === null
-      ? { text: `◐ ${conflicts} ${conflicts === 1 ? "conflict" : "conflicts"}`, url: `${dashboard.href}#merge` }
-      : { text: `◉ decide: ${title}`, url: conflictUrl(dashboard.href, decide.id) });
+    items.push(conflictSegment(dashboard, hud.mergeAssist));
   }
   items.push(...health.map(text => ({ text, url: null })));
   return presentation({

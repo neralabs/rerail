@@ -1,7 +1,7 @@
 # The policy benchmark/merge-assist-resolve.ts resolves OSS conflict pairs under, in the format of a repository's
 # .rerail/policy.yaml. The checks themselves come from each pair's setup (the benchmark's `checks` step).
 version: 1
-steps: [precedent, hard-checks, criteria, panel]
+steps: [hard-checks, criteria, panel]
 checks:
   timeoutMinutes: 45
 contracts:

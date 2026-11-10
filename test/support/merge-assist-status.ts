@@ -2,8 +2,9 @@
  * A Merge Assist status as the service reports it, and a recording service that answers with it, for the layers that
  * only call the service (API, CLI).
  */
-import type { CandidateState, Conflict, ConflictAction, Finding, FindingAction, MergeAssistStatus } from "../../src/engine/index.js";
-import type { MergeAssistActor, MergeAssistError, MergeAssistService } from "../../src/runtime/index.js";
+import { DEFAULT_MERGE_ASSIST_SETTINGS } from "../../src/engine/index.js";
+import type { CandidateState, Conflict, ConflictAction, Finding, FindingAction, MergeAssistSettings, MergeAssistStatus } from "../../src/engine/index.js";
+import type { MergeAssistActor, MergeAssistError, MergeAssistService, MergeAssistSettingsChange } from "../../src/runtime/index.js";
 
 export function sampleFinding(overrides: Partial<Finding> & Pick<Finding, "id" | "tier" | "status">): Finding {
   return {
@@ -28,7 +29,6 @@ export function sampleFinding(overrides: Partial<Finding> & Pick<Finding, "id" |
     reason: "Jeremy has write access and your branch's changes pass its rule.",
     evidence: { violations: [], conflicts: [], mine: null, judgment: null },
     message: null,
-    held: null,
     updatedAt: "2026-11-03T14:05:00Z",
     ...overrides,
   };
@@ -60,6 +60,8 @@ export function sampleConflict(overrides: Partial<Conflict> = {}): Conflict {
     evidence: ["Both sides change native/src/model.rs within 3 lines of each other."],
     detectedAt: "2026-11-03T14:05:00Z",
     resolution: null,
+    summary: null,
+    hook: null,
     ...overrides,
   };
 }
@@ -71,7 +73,8 @@ export function sampleStatus(checkout: string, overrides: Partial<MergeAssistSta
     branch: "tbelanger/export-api",
     baseBranch: "main",
     enabled: true,
-    experimental: { decisionLedger: false },
+    experimental: { conflictVerdicts: false },
+    settings: DEFAULT_MERGE_ASSIST_SETTINGS,
     readiness: {
       judge: { available: true, runner: "claude", problem: null },
       github: { state: "signed-in", login: "tbelanger", repository: "acme/app" },
@@ -84,14 +87,14 @@ export function sampleStatus(checkout: string, overrides: Partial<MergeAssistSta
     own: [],
     findings: [],
     conflicts: [],
-    decisionLog: { questions: [], problems: [] },
     ...overrides,
   };
 }
 
 export type ServiceCall =
-  | { readonly method: "status" | "scan"; readonly checkout: string }
+  | { readonly method: "status" | "scan" | "settings"; readonly checkout: string }
   | { readonly method: "setEnabled"; readonly checkout: string; readonly enabled: boolean }
+  | { readonly method: "updateSettings"; readonly checkout: string; readonly change: MergeAssistSettingsChange }
   | { readonly method: "setCandidateState"; readonly checkout: string; readonly candidateId: string; readonly state: CandidateState }
   | { readonly method: "resolveFinding"; readonly checkout: string; readonly findingId: string; readonly action: FindingAction; readonly actor: MergeAssistActor }
   | {
@@ -103,19 +106,37 @@ export type ServiceCall =
     readonly actor: MergeAssistActor;
   };
 
-/** Records every call and answers with the status it was given, or throws `failure` when one is set. */
+/**
+ * Records every call and answers with the status it was given, or throws `failure` when one is set. Its settings are
+ * the status's, changed by each {@link updateSettings} for the statuses that follow.
+ */
 export class RecordingMergeAssistService implements MergeAssistService {
   readonly calls: ServiceCall[] = [];
   failure: MergeAssistError | undefined;
   readonly #status: (checkout: string) => MergeAssistStatus;
+  #settings: MergeAssistSettings | undefined;
 
   constructor(status: (checkout: string) => MergeAssistStatus = checkout => sampleStatus(checkout)) {
     this.#status = status;
   }
 
+  #current(checkout: string): MergeAssistStatus {
+    const status = this.#status(checkout);
+    return this.#settings === undefined ? status : { ...status, settings: this.#settings };
+  }
+
   #answer(call: ServiceCall): Promise<MergeAssistStatus> {
     this.calls.push(call);
-    return this.failure === undefined ? Promise.resolve(this.#status(call.checkout)) : Promise.reject(this.failure);
+    return this.failure === undefined ? Promise.resolve(this.#current(call.checkout)) : Promise.reject(this.failure);
+  }
+
+  settings(checkout: string): Promise<MergeAssistSettings> {
+    return this.#answer({ method: "settings", checkout }).then(status => status.settings);
+  }
+
+  updateSettings(checkout: string, change: MergeAssistSettingsChange): Promise<MergeAssistStatus> {
+    if (this.failure === undefined) this.#settings = { ...this.#current(checkout).settings, ...change };
+    return this.#answer({ method: "updateSettings", checkout, change });
   }
 
   status(checkout: string): Promise<MergeAssistStatus> {

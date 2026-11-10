@@ -198,7 +198,7 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
     const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
     commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
     writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
-    const service = ws.service();
+    const service = ws.service({ conflictVerdicts: true });
     await service.setEnabled(ws.repo, true);
     const runtime = sessionRuntime(ws, service);
     const session = { host: "claude-code" as const, sessionId: "running-session", cwd: ws.repo };
@@ -231,11 +231,11 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
     const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
     commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, "  shared 10") }, "Share compiled matchers");
     writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
-    const service = ws.service({ decisionLedger: true });
+    const service = ws.service({ conflictVerdicts: true });
     await service.setEnabled(ws.repo, true);
     const [conflict] = (await service.scan(ws.repo)).conflicts;
     const resolved = await service.resolveConflict(ws.repo, conflict!.id, "theirs");
-    const { logId, rule } = resolved.conflicts[0]!.resolution!;
+    const { rule } = resolved.conflicts[0]!.resolution!;
     const runtime = sessionRuntime(ws, service);
     const session = { host: "claude-code" as const, sessionId: "commit-session", cwd: ws.repo };
     const { sessionId } = session;
@@ -246,7 +246,7 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
       expect(staging(other)).toEqual([]);
       const attempt = await runtime.ingest({ kind: "call", eventId: "commit-1", sessionId, toolCallId: "2", toolName: "Bash", input: { command: "git add src && git commit -m 'Clone matchers'" } });
       expect(staging(attempt)).toEqual([expect.objectContaining({
-        content: `Rerail: include these decision files in this commit: ${rule}, .rerail/decisions/${logId}.json`,
+        content: `Rerail: include these decision files in this commit: ${rule}`,
         rules: [],
         strategy: "message",
       })]);

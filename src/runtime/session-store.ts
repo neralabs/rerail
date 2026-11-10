@@ -403,7 +403,7 @@ export class SqliteSessionReader {
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total
         : null;
       const session = database.select({ cwd: sessions.cwd }).from(sessions).where(eq(sessions.sessionId, sessionId)).get();
-      const mergeAssist = session === undefined ? undefined : conflictFooter(database, session.cwd);
+      const mergeAssist = session === undefined ? undefined : conflictFooter(database, session.cwd, Date.now());
       return { activeRuleCount: current ? coverage.activeRuleCount : null, steeringCount, ...(mergeAssist === undefined ? {} : { mergeAssist }) };
     });
   }

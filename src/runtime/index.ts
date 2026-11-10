@@ -26,7 +26,6 @@ export { type AgentJudge, createAgentJudge, type JudgeOutcome, type JudgeTask } 
 export {
   type CheckRunner,
   createLocalCheckRunner,
-  decisionEntryFor,
   lastNumber,
   type Resolution,
   type ResolutionEvidence,
@@ -88,6 +87,7 @@ export {
   type MergeAssistService,
   type MergeAssistServiceOptions,
   type MergeAssistSession,
+  type MergeAssistSettingsChange,
 } from "./merge-assist/service.js";
 export {
   isRerailStarted,

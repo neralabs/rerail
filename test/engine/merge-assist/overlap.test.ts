@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { conflictId, quietFiles } from "../../../src/engine/merge-assist/conflicts.js";
-import { identify, overlaps, ownBase, refHunks, workspaceRanges } from "../../../src/engine/merge-assist/overlap.js";
+import { contestedAnchor, identify, overlaps, ownBase, refHunks, workspaceRanges } from "../../../src/engine/merge-assist/overlap.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -123,5 +123,24 @@ describe("a conflict's quiet files and id", () => {
     expect(conflictId("overlap:abc", "refs/pull/398/head")).toBe(conflictId("overlap:abc", "refs/pull/398/head"));
     expect(conflictId("overlap:abc", "refs/pull/398/head")).toMatch(/^conflict:overlap:abc:[0-9a-f]{8}$/u);
     expect(conflictId("overlap:abc", "jbarnes/x")).not.toBe(conflictId("overlap:abc", "refs/pull/398/head"));
+  });
+
+  it("anchors what a change contests on the base text: lines added above or whitespace keep it, other text changes it", () => {
+    const repo = repository();
+    const start = repo.git("rev-parse", "HEAD");
+    const anchor = (base: string, lines: Array<{ lo: number; hi: number }>) => contestedAnchor(repo.root, base, "f.txt", lines);
+    const contested = anchor(start, [{ lo: 20, hi: 21 }]);
+    // Three lines added at the top move the contested lines to 23–24, and one of them is re-indented.
+    const shifted = (changes: Readonly<Record<number, string>>) => {
+      writeFileSync(join(repo.root, "f.txt"), `${["top 1", "top 2", "top 3", ...LINES.map((line, index) => changes[index + 1] ?? line)].join("\n")}\n`);
+      repo.git("commit", "-q", "-am", "Lines above");
+      return repo.git("rev-parse", "HEAD");
+    };
+    expect(anchor(shifted({ 20: "   line   20" }), [{ lo: 23, hi: 24 }])).toBe(contested);
+    expect(anchor(shifted({ 21: "line twenty-one" }), [{ lo: 23, hi: 24 }])).not.toBe(contested);
+    // An insertion after line 19 anchors on line 19; a file the base does not hold, on no text.
+    expect(anchor(start, [{ lo: 19.5, hi: 19.5 }])).toBe(anchor(start, [{ lo: 19, hi: 19 }]));
+    expect(contestedAnchor(repo.root, start, "missing.txt", [{ lo: 0.5, hi: 0.5 }])).toMatch(/^[0-9a-f]{24}$/u);
+    expect(anchor(start, [{ lo: 30, hi: 30 }])).not.toBe(contested);
   });
 });

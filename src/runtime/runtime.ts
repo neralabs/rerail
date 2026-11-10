@@ -154,6 +154,12 @@ const SLOW_TURN_END_WAIT_MS = 1_000;
 
 /** How long closing a session waits for its Merge Assist capture (a judgment can take minutes; the session end cannot). */
 const MERGE_ASSIST_CLOSE_WAIT_MS = 10_000;
+/**
+ * The most an edit's result waits for the conflict detection it ran, where the person's hook command may hold its
+ * notes (one is set, and the delivery includes chat), so Rerail's note and the person's line ride that result. The
+ * hook holds a note at most a second (`NOTE_WAIT_MS`); the rest is for the detection itself.
+ */
+const MERGE_ASSIST_DETECT_WAIT_MS = 3_000;
 
 /** Code-rule calls recorded without a matching result, in ledger order. */
 function unresolvedCodeRuleCalls(ledger: readonly LedgerEntry[]): Extract<LedgerEntry, { type: "policy-call" }>[] {
@@ -638,6 +644,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
   #mergeAssist: MergeAssistRuntime | undefined;
+  /** Whether this runtime made its Merge Assist (none was passed in), so it stops it when it is disposed. */
+  readonly #ownsMergeAssist: boolean;
+  /** Stops hearing Merge Assist's conflict changes; set once this runtime listens. */
+  #mergeAssistUnlisten: (() => void) | undefined;
   /** Where Merge Assist's capture reads the sessions' stored events; opened on its first capture. */
   #sessionEvents: SqliteSessionReader | undefined;
 
@@ -647,6 +657,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#nativeSession = options.nativeSession;
     this.#deliverBackground = options.deliverBackground;
     this.#mergeAssist = options.mergeAssist;
+    this.#ownsMergeAssist = options.mergeAssist === undefined;
     this.#beforeSessionPublish = options.beforeSessionPublish;
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#discoveryWaitMs = options.discoveryWaitMs;
@@ -756,7 +767,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (event.kind === "user-prompt") this.#answerMergeAssistFromChat(state, event.text);
     await this.#router(descriptor.host).ingest(event);
     if (event.kind === "result") {
-      if (state.mergeAssistEdits.delete(event.toolCallId)) this.#detectMergeAssistConflicts(state);
+      const detection = this.#detectAfterEditResult(state, event.toolCallId);
       const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
         const [call] = state.pendingCodeRuleCalls.splice(index, 1);
@@ -780,6 +791,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           }
         }
       }
+      await this.#awaitHeldNotes(state, detection);
     }
     // A hook host's stop hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later.
     const yields = event.kind === "turn-end" && ADAPTER_CAPABILITIES[descriptor.host].toolSurface !== "native";
@@ -1111,9 +1123,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   async dispose(): Promise<void> {
     clearInterval(this.#controlTimer);
+    // No conflict change is offered to a session that is closing.
+    this.#mergeAssistUnlisten?.();
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
     await Promise.allSettled(this.#evaluatorOpens);
     await Promise.allSettled(this.#steersInFlight);
+    // A Merge Assist this runtime made works over its database: its hook's late answers stop before that closes.
+    if (this.#ownsMergeAssist) await this.#mergeAssist?.stop();
     this.#controls.close();
     this.#audits.close();
     this.#sessionStore.close();
@@ -1720,28 +1736,65 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  /** Merge Assist for the session's checkout, or undefined while a person has not turned it on there. */
+  /**
+   * Merge Assist for the session's checkout, or undefined while a person has not turned it on there. The first time,
+   * this runtime starts listening for conflict changes, so a hook handler's late answer reaches its sessions' next
+   * boundary.
+   */
   #mergeAssistService(state: RuntimeSessionState): MergeAssistRuntime | undefined {
     const repositoryKey = this.#repositoryKey(state.checkout);
     if (repositoryKey === null || !mergeAssistEnabled(this.#catalogs.database, repositoryKey)) return undefined;
     this.#mergeAssist ??= createMergeAssistService({ database: this.#catalogs.database, ruleCatalog: () => this.#catalogs.ruleCatalog });
-    return this.#mergeAssist;
+    const service = this.#mergeAssist;
+    this.#mergeAssistUnlisten ??= service.onConflictsChanged(checkoutPath => {
+      for (const session of this.#sessions.values()) {
+        if (session.checkout.root === checkoutPath) this.#queueMergeAssistNotes(session, service);
+      }
+    });
+    return service;
   }
 
   /**
    * The agent edited files: find the checkout's in-flight conflicts again in the background (the service runs it at
-   * most every 30 s per checkout) and queue the notes they call for. No boundary waits for it; a note that is ready in
-   * time rides the edit's own boundary, else a later one.
+   * most every 30 s per checkout) and queue the notes they call for, again once the notes the person's hook command
+   * holds are released. Resolves once that is done; never rejects. The edit's result waits for it only where the hook
+   * command may hold notes ({@link awaitHeldNotes}); elsewhere a note that is ready in time rides the edit's own
+   * boundary, else a later one.
    */
-  #detectMergeAssistConflicts(state: RuntimeSessionState): void {
-    if (state.closed || this.#stopped()) return;
+  #detectMergeAssistConflicts(state: RuntimeSessionState): Promise<void> {
+    if (state.closed || this.#stopped()) return Promise.resolve();
     const running = this.#mergeAssistService(state);
-    if (running === undefined) return;
-    void running.detectAfterEdit(state.checkout.root, state.descriptor.sessionId).then(ran => {
-      if (ran) this.#queueMergeAssistNotes(state, running);
+    if (running === undefined) return Promise.resolve();
+    const root = state.checkout.root;
+    return running.detectAfterEdit(root, state.descriptor.sessionId, state.descriptor.host).then(async ran => {
+      if (!ran) return;
+      this.#queueMergeAssistNotes(state, running);
+      await running.notesReleased(root);
+      this.#queueMergeAssistNotes(state, running);
     }, (error: unknown) => {
       process.stderr.write(`rerail: Merge Assist could not find conflicts in session ${state.descriptor.sessionId}: ${error instanceof Error ? error.message : String(error)}\n`);
     });
+  }
+
+  /** The detection an edit's result runs ({@link detectMergeAssistConflicts}); none for a call that edited nothing. */
+  #detectAfterEditResult(state: RuntimeSessionState, toolCallId: string): Promise<void> | undefined {
+    return state.mergeAssistEdits.delete(toolCallId) ? this.#detectMergeAssistConflicts(state) : undefined;
+  }
+
+  /**
+   * Where the person's hook command may hold the checkout's notes, the edit's result waits for the detection it ran and
+   * the notes it released, at most {@link MERGE_ASSIST_DETECT_WAIT_MS}: Rerail's note and the person's line then ride
+   * this result, the hook's note joined when it answered within its second, else following at a later boundary.
+   */
+  async #awaitHeldNotes(state: RuntimeSessionState, detection: Promise<void> | undefined): Promise<void> {
+    if (detection === undefined || this.#mergeAssist?.hookHoldsNotes(state.checkout.root) !== true) return;
+    const bound = Promise.withResolvers<void>();
+    const timer = setTimeout(bound.resolve, MERGE_ASSIST_DETECT_WAIT_MS);
+    try {
+      await Promise.race([detection, bound.promise]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -1776,7 +1829,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if (running === undefined) return [];
       const { sessionId, host } = state.descriptor;
       const root = state.checkout.root;
-      const notes = running.stopNotes(sessionId, root, { toolName: event.toolName, input: event.input }, ADAPTER_CAPABILITIES[host].asksPerson, state.mergeAssistNotesInFlight);
+      const notes = running.stopNotes(sessionId, root, { toolName: event.toolName, input: event.input }, ADAPTER_CAPABILITIES[host].asksPerson, state.mergeAssistNotesInFlight, host);
+      this.#supersedeConflictNotes(state, new Set(notes.flatMap(note => (note.conflict === undefined ? [] : [note.conflict.id]))));
       const deliveries: AdapterDelivery[] = [];
       for (const note of notes) {
         const delivery: AdapterDelivery = {
@@ -1791,6 +1845,35 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     } catch (error) {
       process.stderr.write(`rerail: Merge Assist could not check a call against its conflicts in session ${state.descriptor.sessionId}: ${error instanceof Error ? error.message : String(error)}\n`);
       return [];
+    }
+  }
+
+  /**
+   * Drop the queued Merge Assist notes about conflicts a stop at this boundary speaks for: the stop carries the card
+   * and the person's line, so neither goes out twice. Its marks record the checkpoint as given, so none is queued again.
+   */
+  #supersedeConflictNotes(state: RuntimeSessionState, conflictIds: ReadonlySet<string>): void {
+    if (conflictIds.size === 0) return;
+    state.pendingSteers = state.pendingSteers.filter(pending => {
+      const id = pending.delivery.conflict?.id;
+      if (id === undefined || !conflictIds.has(id)) return true;
+      pending.settled?.(false);
+      return false;
+    });
+  }
+
+  /**
+   * A Merge Assist note's person's line as it reads when the note is handed over, not when it was queued: the
+   * conflict's status line text may have changed since (the conflict hook's status, the quick call's summary). Never
+   * fails the delivery.
+   */
+  #currentConflictNotice(state: RuntimeSessionState, delivery: AdapterDelivery): AdapterDelivery {
+    if (delivery.conflict === undefined || this.#mergeAssist === undefined) return delivery;
+    try {
+      return { ...delivery, conflict: this.#mergeAssist.conflictNotice(state.checkout.root, delivery.conflict, state.descriptor.host) };
+    } catch (error) {
+      process.stderr.write(`rerail: could not read a Merge Assist conflict for session ${state.descriptor.sessionId}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return delivery;
     }
   }
 
@@ -1836,7 +1919,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (state.closed || this.#stopped() || this.#sessions.get(sessionId) !== state) return;
     if (!state.codeRuleReady && !state.codeRuleOpening) return;
     const checkoutPath = state.checkout.root;
-    for (const note of service.pendingNotes(sessionId, checkoutPath, state.mergeAssistNotesInFlight)) {
+    for (const note of service.pendingNotes(sessionId, checkoutPath, state.mergeAssistNotesInFlight, host)) {
       for (const mark of note.marks) state.mergeAssistNotesInFlight.add(mark);
       const pending: PendingSteer = {
         delivery: {
@@ -1934,6 +2017,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         return undefined;
       }
       if (this.#stopped()) return undefined;
+      pending.delivery = this.#currentConflictNotice(state, pending.delivery);
       try {
         await this.persistDelivery(pending.delivery);
       } catch (error) {

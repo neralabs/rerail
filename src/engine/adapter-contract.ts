@@ -44,6 +44,10 @@ export interface AdapterCapabilityProfile {
   sampleEvents: Readonly<Record<"user" | "assistant" | "tool" | "turn", string>>;
   /** Whether its tool-call hook can ask the person before a call goes ahead (Claude Code's `permissionDecision: "ask"`). */
   asksPerson: boolean;
+  /** Whether it draws Rerail's footer: Claude Code's status line, OMP's and Pi's widget. */
+  statusLine: boolean;
+  /** Whether it shows the person a line of Rerail's own beside the agent's context (`systemMessage`). */
+  personLine: boolean;
 }
 
 export const ADAPTER_CAPABILITIES = {
@@ -53,6 +57,8 @@ export const ADAPTER_CAPABILITIES = {
     toolSurface: "native",
     persistence: "session-entries",
     asksPerson: false,
+    statusLine: true,
+    personLine: false,
     delivery: {
       log: "observe",
       steer: "native-queue",
@@ -72,6 +78,8 @@ export const ADAPTER_CAPABILITIES = {
     toolSurface: "native",
     persistence: "session-entries",
     asksPerson: false,
+    statusLine: true,
+    personLine: false,
     delivery: {
       log: "observe",
       steer: "native-queue",
@@ -91,6 +99,8 @@ export const ADAPTER_CAPABILITIES = {
     toolSurface: "event",
     persistence: "jsonl-ledger",
     asksPerson: true,
+    statusLine: true,
+    personLine: true,
     delivery: {
       log: "observe",
       steer: "additional-context",
@@ -110,6 +120,8 @@ export const ADAPTER_CAPABILITIES = {
     toolSurface: "event",
     persistence: "jsonl-ledger",
     asksPerson: false,
+    statusLine: false,
+    personLine: true,
     delivery: {
       log: "observe",
       steer: "additional-context",
@@ -129,6 +141,8 @@ export const ADAPTER_CAPABILITIES = {
     toolSurface: "event",
     persistence: "jsonl-ledger",
     asksPerson: false,
+    statusLine: false,
+    personLine: false,
     delivery: {
       log: "observe",
       steer: "deferred-context",

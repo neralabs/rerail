@@ -8,15 +8,17 @@
  * the person, so an agent with a shell can run it as it can any Rerail command.
  * Internal testing: every operation here.
  */
+import type { z } from "zod";
 import { internalTesting } from "../engine/internal-testing.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
-import type { MergeAssistStatus } from "../engine/merge-assist/model.js";
-import { MergeAssistError, type MergeAssistErrorCode } from "../runtime/merge-assist/service.js";
+import { DEFAULT_HOOK_TIMEOUT_SECONDS, type MergeAssistStatus } from "../engine/merge-assist/model.js";
+import { MergeAssistError, type MergeAssistErrorCode, type MergeAssistService, type MergeAssistSettingsChange } from "../runtime/merge-assist/service.js";
 import {
   mergeAssistCandidateBodySchema,
   mergeAssistConflictBodySchema,
   mergeAssistFindingBodySchema,
   mergeAssistSettingsBodySchema,
+  mergeAssistSettingsSchema,
   mergeAssistStatusSchema,
   mergeAssistTargetSchema,
 } from "./merge-assist-contracts.js";
@@ -31,7 +33,7 @@ const ERROR_STATUS: Record<MergeAssistErrorCode, number> = {
 };
 
 /** The service's refusals as API errors, under the service's own code. */
-async function answer(run: () => Promise<MergeAssistStatus>): Promise<MergeAssistStatus> {
+async function answer<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
@@ -55,6 +57,21 @@ function checkoutOf(stores: RerailApiStores, input: { repository?: string | unde
 
 function peopleOnly(caller: ApiCaller, message: string): void {
   if (caller.kind === "agent") throw new ApiError(403, "agent-not-permitted", message);
+}
+
+type SettingsBody = z.infer<typeof mergeAssistSettingsBodySchema>;
+
+/** The hook the body names, its timeout defaulting to {@link DEFAULT_HOOK_TIMEOUT_SECONDS}; nothing when it names none. */
+function hookChange(hook: SettingsBody["hook"]): Pick<MergeAssistSettingsChange, "hook"> {
+  if (hook === undefined) return {};
+  return { hook: hook === null ? null : { command: hook.command, timeoutSeconds: hook.timeoutSeconds ?? DEFAULT_HOOK_TIMEOUT_SECONDS } };
+}
+
+/** Turn Merge Assist on or off, then change the delivery and the hook, answering the status after the last change. */
+async function applySettings(service: MergeAssistService, checkout: string, body: SettingsBody): Promise<MergeAssistStatus> {
+  const status = body.enabled === undefined ? null : await service.setEnabled(checkout, body.enabled);
+  if (status !== null && body.delivery === undefined && body.hook === undefined) return status;
+  return await service.updateSettings(checkout, { ...(body.delivery === undefined ? {} : { delivery: body.delivery }), ...hookChange(body.hook) });
 }
 
 export const mergeAssistOperations: readonly Operation[] = [
@@ -83,16 +100,28 @@ export const mergeAssistOperations: readonly Operation[] = [
     },
   }),
   defineOperation({
+    id: "merge_assist_settings_get",
+    method: "GET",
+    path: "/api/merge-assist/settings",
+    summary: internalTesting("Show the person's Merge Assist settings for the checkout's repository: where conflicts reach them (delivery: chat, terminal or both) and the conflict hook command (null for none). Reads only."),
+    query: mergeAssistTargetSchema,
+    output: mergeAssistSettingsSchema,
+    handler: async (stores, input, caller) => {
+      const checkout = checkoutOf(stores, input, caller, false);
+      return await answer(() => stores.mergeAssist().settings(checkout));
+    },
+  }),
+  defineOperation({
     id: "merge_assist_settings_set",
     method: "PUT",
     path: "/api/merge-assist/settings",
-    summary: internalTesting("Turn Merge Assist on or off for the checkout's repository. Off removes every decision it applied. People only: it lets other branches' decisions steer the person's coding agent, and runs their agent CLI and gh."),
+    summary: internalTesting("Change the person's Merge Assist settings for the checkout's repository: turn it on or off (enabled; off removes every decision it applied), where conflicts reach them (delivery: chat, terminal or both), and the conflict hook command (hook: an argv run without a shell on each conflict event, timeoutSeconds 1-60, default 10; null removes it). Name at least one. People only: it lets other branches' decisions steer the person's coding agent, runs their agent CLI and gh, and runs the hook command as them."),
     body: mergeAssistSettingsBodySchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
-      peopleOnly(caller, "only a person turns Merge Assist on or off, on the dashboard's Merge Assist page or with rerail merge-assist on|off");
+      peopleOnly(caller, "only a person changes Merge Assist's settings, on the dashboard's Merge Assist page or with rerail merge-assist on|off|settings");
       const checkout = checkoutOf(stores, input, caller, true);
-      return await answer(() => stores.mergeAssist().setEnabled(checkout, input.enabled));
+      return await answer(() => applySettings(stores.mergeAssist(), checkout, input));
     },
   }),
   defineOperation({
@@ -127,7 +156,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_conflict_set",
     method: "PUT",
     path: "/api/merge-assist/conflicts",
-    summary: internalTesting("Resolve an in-flight conflict with another branch: keep this branch's side (mine), take theirs, write a new decision (new, with text), or dismiss it as not a conflict. A verdict writes the decision this branch follows into its working tree, for the person to commit; it steers every agent from then on. Only a person resolves a conflict: a coding agent reads them with merge_assist_get and is refused here (invalid-state)."),
+    summary: internalTesting("Settle an in-flight conflict with another branch: dismiss it as not a conflict. Experimental, with RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS=1 where Merge Assist runs (refused with invalid-state otherwise): keep this branch's side (mine), take theirs, or write a new decision (new, with text); a verdict writes the decision this branch follows into its working tree, for the person to commit, and it steers every agent from then on. Only a person settles a conflict: a coding agent reads them with merge_assist_get and is refused here (invalid-state)."),
     body: mergeAssistConflictBodySchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {

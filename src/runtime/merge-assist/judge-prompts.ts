@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { CANDIDATE_ID_PATTERN, MAX_DECISION_LENGTH, cleanDecision, scopePatternSchema } from "../../engine/merge-assist/candidate.js";
 import { MAX_SIGNAL_LENGTH, MAX_SIGNALS, signalSchema } from "../../engine/merge-assist/signals.js";
+import { MAX_CONFLICT_SUMMARY } from "../../engine/merge-assist/model.js";
 
 /** The most scope globs a captured decision names. */
 export const MAX_VERDICT_SCOPE = 8;
@@ -375,6 +376,50 @@ export function signalsPrompt(input: SignalsInput, nonce: string): string {
     parts.push(fenceData("the same code following the decision", cut(input.example.after, MAX_EDIT_SIDE_CHARS), nonce));
   }
   return parts.join("\n");
+}
+
+/** How much of each side the summary prompt carries; the rest is cut with a marker. */
+const MAX_SUMMARY_SIDE_CHARS = 300;
+const MAX_SUMMARY_HUNK_CHARS = 2_000;
+
+/** An in-flight conflict to put in one line for the person: what it is about, and both sides' summaries and hunks. */
+export interface SummaryInput {
+  title: string;
+  files: string[];
+  mine: { summary: string; hunk: string | null };
+  theirs: { label: string; author: string | null; summary: string; hunk: string | null };
+}
+
+export interface SummaryVerdict {
+  /** At most 90 characters: what the other side is doing and why it collides with this branch. */
+  summary: string;
+}
+
+export const summaryVerdictSchema: z.ZodType<SummaryVerdict> = z.object({ summary: shownText(MAX_CONFLICT_SUMMARY) }).strict();
+
+/** The summary answer as a JSON schema for the agent CLI, closed as Codex's `--output-schema` requires. */
+export const summaryJsonSchema: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["summary"],
+  properties: { summary: { type: "string", minLength: 1, maxLength: MAX_CONFLICT_SUMMARY } },
+};
+
+const SUMMARY_INSTRUCTIONS = `Two branches of this repository change the same code while both are still in progress. Below are this branch's change ("mine") and the other branch's ("theirs"). Write one line for the developer on this branch, at most ${MAX_CONFLICT_SUMMARY} characters, in plain words: what the other side is doing and why it collides with this branch. Name the other side by its label or author. No code fences, no quotes, no advice.`;
+
+/** The summary prompt for one conflict, with both sides fenced as data. */
+export function summaryPrompt(input: SummaryInput, nonce: string): string {
+  const side = (summary: string, hunk: string | null): string => [cut(summary, MAX_SUMMARY_SIDE_CHARS), ...(hunk === null ? [] : ["", cut(hunk, MAX_SUMMARY_HUNK_CHARS)])].join("\n");
+  const theirs = input.theirs.author === null ? input.theirs.label : `${input.theirs.label} (${input.theirs.author})`;
+  return [
+    framing(nonce, "When unsure, say plainly which code both sides change."),
+    "",
+    SUMMARY_INSTRUCTIONS,
+    "",
+    fenceData("what the conflict is about", [input.title, ...input.files.slice(0, MAX_TOUCHED_PATHS)].join("\n"), nonce),
+    fenceData("mine: this branch's change", side(input.mine.summary, input.mine.hunk), nonce),
+    fenceData("theirs: the other branch's change", `${theirs}\n${side(input.theirs.summary, input.theirs.hunk)}`, nonce),
+  ].join("\n");
 }
 
 /** The most decisions one ranking answer names, unless the caller asks for another limit. */

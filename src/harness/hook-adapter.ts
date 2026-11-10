@@ -38,8 +38,18 @@ function carriesText(delivery: AdapterDelivery): boolean {
   return steers(delivery.requested) && delivery.content.trim() !== "";
 }
 
+/**
+ * The deliveries one output renders: a conflict's note that a later one about the same conflict supersedes is left
+ * out (a stop's card over the checkpoint's held for the same boundary), so each conflict has one card and one person's
+ * line per output.
+ */
+function latestPerConflict(deliveries: readonly AdapterDelivery[]): AdapterDelivery[] {
+  const last = new Map(deliveries.flatMap((delivery, index) => (delivery.conflict === undefined ? [] : [[delivery.conflict.id, index] as const])));
+  return deliveries.filter((delivery, index) => delivery.conflict === undefined || last.get(delivery.conflict.id) === index);
+}
+
 export function deliveryText(deliveries: readonly AdapterDelivery[]): string | undefined {
-  const content = deliveries
+  const content = latestPerConflict(deliveries)
     .filter(carriesText)
     .map(delivery => delivery.content.trim())
     .join("\n\n");
@@ -48,17 +58,20 @@ export function deliveryText(deliveries: readonly AdapterDelivery[]): string | u
 
 /** The rules behind the deliveries `deliveryText` rendered, in order: what the person's lines are built from. */
 export function deliveryRules(deliveries: readonly AdapterDelivery[]): SteerRule[] {
-  return deliveries.filter(carriesText).flatMap(delivery => [...delivery.rules]);
+  return latestPerConflict(deliveries).filter(carriesText).flatMap(delivery => [...delivery.rules]);
 }
 
-/** The conflicts behind the deliveries `deliveryText` rendered, in order: the person's line for each, after the rules'. */
+/**
+ * The conflicts behind the deliveries, in order: the person's line for each, after the rules', one per conflict. A
+ * conflict's note in terminal delivery carries no text for the agent, only this line.
+ */
 export function deliveryConflicts(deliveries: readonly AdapterDelivery[]): ConflictNotice[] {
-  return deliveries.filter(carriesText).flatMap(delivery => (delivery.conflict === undefined ? [] : [delivery.conflict]));
+  return latestPerConflict(deliveries).filter(delivery => steers(delivery.requested)).flatMap(delivery => (delivery.conflict === undefined ? [] : [delivery.conflict]));
 }
 
 /** Distinct rule ids behind the deliveries `deliveryText` rendered, so the hook's receipt can credit them. */
 export function deliveryRuleIds(deliveries: readonly AdapterDelivery[]): string[] {
-  return [...new Set(deliveries.filter(carriesText).flatMap(delivery => [...delivery.ruleIds]))];
+  return [...new Set(latestPerConflict(deliveries).filter(carriesText).flatMap(delivery => [...delivery.ruleIds]))];
 }
 
 function sessionFile(storageRoot: string, host: HookHost, kind: "pending" | "locks", sessionId: string, extension: string): string {
@@ -152,10 +165,18 @@ export async function holdStopSteers(path: string, deliveries: readonly AdapterD
   return held;
 }
 
+/** At `Stop`, only the person's lines go out, counted as steers when they name rules. */
+function stopOutput(unseen: readonly HeldDelivery[], lines: SteerLines): HookOutput {
+  const shown = lines(unseen);
+  const ruleIds = deliveryRuleIds(unseen.filter(delivery => delivery.rules.length > 0));
+  return "systemMessage" in shown && ruleIds.length > 0 ? prepareGuidanceOutput(shown, ruleIds) : shown;
+}
+
 /**
  * Steers reach the model as `additionalContext` at a context event, after `note`, and the person as one line per rule.
  * At `Stop` only the person's lines go out; the steers wait for the next context event (design N4c), led as late steers.
  * A steer counts once, when the person sees its line (D5): at `Stop` for a late steer, whose block later goes out uncounted.
+ * A conflict's line with no text for the model (terminal delivery) goes out alone, as the person's line.
  */
 export function steerHookOutput(
   hook: string,
@@ -165,14 +186,11 @@ export function steerHookOutput(
   note?: string,
 ): HookOutput {
   const unseen = deliveries.filter(delivery => delivery.shown !== true);
-  if (hook === "Stop") {
-    const shown = lines(unseen);
-    const ruleIds = deliveryRuleIds(unseen.filter(delivery => delivery.rules.length > 0));
-    return "systemMessage" in shown && ruleIds.length > 0 ? prepareGuidanceOutput(shown, ruleIds) : shown;
-  }
+  if (hook === "Stop") return stopOutput(unseen, lines);
+  if (contextEvents[hook] !== true) return {};
   const content = deliveryText(deliveries.map(delivery => (delivery.shown === true ? { ...delivery, content: asLateSteer(delivery.content) } : delivery)));
   const context = [note, content].filter(text => text !== undefined).join("\n\n");
-  if (context === "" || contextEvents[hook] !== true) return {};
+  if (context === "") return lines(unseen);
   const output = { ...lines(unseen), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
   // A note that names no rule (a Merge Assist note) shows the person no steer line, so it is not counted as a steer.
   return deliveryRuleIds(unseen).length === 0 ? output : prepareGuidanceOutput(output, deliveryRuleIds(unseen));

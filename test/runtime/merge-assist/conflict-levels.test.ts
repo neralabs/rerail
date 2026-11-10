@@ -60,9 +60,9 @@ const byFile = (conflicts: readonly Conflict[], file: string): Conflict => {
 };
 
 describe("conflict levels", { timeout: 60_000 }, () => {
-  it("raises a growing overlap to a checkpoint: a card for the agent to show, and the person's line", async () => {
+  it("raises a growing overlap to a checkpoint: a card for the agent to show, with the verdicts when they are on, and the person's line", async () => {
     const ws = await overlaps(["src/retry.ts"], 30);
-    const service = ws.service();
+    const service = ws.service({ conflictVerdicts: true });
     await service.setEnabled(ws.repo, true);
     const [conflict] = open((await service.scan(ws.repo)).conflicts);
     expect(conflict).toMatchObject({ level: "checkpoint", queued: false, reasons: expect.arrayContaining(["+31 lines on theirs and +1 on this branch in 1 h"]) });
@@ -118,7 +118,7 @@ describe("conflict levels", { timeout: 60_000 }, () => {
 
   it("records the person's plain answer from chat as theirs, only in the session shown the card, and nothing for an ambiguous one", async () => {
     const ws = await overlaps(["src/retry.ts", "src/cache.ts"], 30);
-    const service = ws.service();
+    const service = ws.service({ conflictVerdicts: true });
     await service.setEnabled(ws.repo, true);
     const conflicts = open((await service.scan(ws.repo)).conflicts);
     expect(conflicts.map(conflict => conflict.level)).toEqual(["checkpoint", "checkpoint"]);
@@ -142,7 +142,7 @@ describe("conflict levels", { timeout: 60_000 }, () => {
     // With the other put off, a bare answer in the card's session is for the one still open.
     expect(await service.answerFromChat(ws.repo, "Take theirs.", "session-1")).toMatchObject({ kind: "answer", option: "theirs" });
     const resolved = byFile((await service.status(ws.repo)).conflicts, "src/retry.ts");
-    expect(resolved).toMatchObject({ status: "resolved", resolution: { action: "theirs", by: "person", name: "Tim Belanger" } });
+    expect(resolved).toMatchObject({ status: "resolved", resolution: { action: "theirs", name: "Tim Belanger" } });
     // Resolution resets the dimmer.
     expect(resolved).toMatchObject({ level: "logged", signals: null, score: 0, reasons: [], queued: false, snooze: null });
   });
@@ -243,7 +243,7 @@ describe("conflict levels", { timeout: 60_000 }, () => {
 
   it("shows the conflicts in the session's footer: overlaps at ambient, the decision waiting at a checkpoint", async () => {
     const ws = await overlaps(["src/retry.ts"], 30);
-    const service = ws.service();
+    const service = ws.service({ conflictVerdicts: true });
     await service.setEnabled(ws.repo, true);
     const store = new SqliteSessionStore(ws.databasePath);
     const reader = new SqliteSessionReader(ws.databasePath);
@@ -251,10 +251,10 @@ describe("conflict levels", { timeout: 60_000 }, () => {
       store.openSession({ host: "claude-code", sessionId: "session-1", cwd: join(ws.repo, "src") }, Date.now());
       expect(reader.hud("session-1")).not.toHaveProperty("mergeAssist");
       const [conflict] = open((await service.scan(ws.repo)).conflicts);
-      expect(reader.hud("session-1").mergeAssist).toEqual({ conflicts: 1, decide: { id: conflict!.id, title: conflict!.title } });
+      expect(reader.hud("session-1").mergeAssist).toEqual({ conflicts: 1, decide: { id: conflict!.id, title: conflict!.title }, summary: { id: conflict!.id, text: expect.any(String) } });
       expect(takeNotes(service, "session-1", ws.repo)).toHaveLength(1);
       await service.answerFromChat(ws.repo, "later", "session-1");
-      expect(reader.hud("session-1").mergeAssist).toEqual({ conflicts: 1, decide: null });
+      expect(reader.hud("session-1").mergeAssist).toEqual({ conflicts: 1, decide: null, summary: { id: conflict!.id, text: expect.any(String) } });
     } finally {
       store.close();
       reader.close();
@@ -264,7 +264,7 @@ describe("conflict levels", { timeout: 60_000 }, () => {
   it("in a Claude Code session: asks the person at the edit of a contested file, and records their answer from the next prompt", async () => {
     const migration = "db/migrations/users.sql";
     const ws = await overlaps([migration], 60);
-    const service = ws.service();
+    const service = ws.service({ conflictVerdicts: true });
     await service.setEnabled(ws.repo, true);
     const runtime = sessionRuntime(ws, service);
     const sessionId = "claude-session";
@@ -282,7 +282,7 @@ describe("conflict levels", { timeout: 60_000 }, () => {
 
       await runtime.ingest({ kind: "user-prompt", eventId: "answer", sessionId, text: "Take theirs." });
       await vi.waitFor(async () => expect(open((await service.status(ws.repo)).conflicts)).toEqual([]), { timeout: 20_000, interval: 100 });
-      expect((await service.status(ws.repo)).conflicts[0]).toMatchObject({ status: "resolved", resolution: { action: "theirs", by: "person", name: "Tim Belanger" } });
+      expect((await service.status(ws.repo)).conflicts[0]).toMatchObject({ status: "resolved", resolution: { action: "theirs", name: "Tim Belanger" } });
     } finally {
       await runtime.dispose();
     }
@@ -311,6 +311,33 @@ describe("conflict levels", { timeout: 60_000 }, () => {
       expect(output.hookSpecificOutput).toMatchObject({ hookEventName: "PreToolUse", additionalContext: expect.stringContaining(`Don't edit \`${migration}\` now`) });
       expect(output.hookSpecificOutput).not.toHaveProperty("permissionDecision");
       expect(output.systemMessage).toContain("decide: users.sql");
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("in a Codex session: a stop at the boundary that would also carry the checkpoint card gives one card and one person's line", async () => {
+    const migration = "db/migrations/users.sql";
+    const ws = await overlaps([migration], 60);
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    const runtime = sessionRuntime(ws, service);
+    const sessionId = "codex-once";
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "codex", sessionId, cwd: ws.repo } });
+      await vi.waitFor(async () => expect(open((await service.status(ws.repo)).conflicts)[0]).toMatchObject({ level: "stop" }), { timeout: 20_000, interval: 100 });
+      // The checkpoint card waits for the session's next boundary; that boundary is the edit of the contested file.
+      const deliveries: AdapterDelivery[] = [];
+      for (const event of codexHookEvents({ hook_event_name: "PreToolUse", session_id: sessionId, cwd: ws.repo, turn_id: "t1", tool_name: "Bash", tool_use_id: "write", tool_input: { command: `sed -i.bak 's/users/people/' ${migration}` } })) {
+        deliveries.push(...await runtime.ingest(event));
+      }
+      const output = codexHookOutput("PreToolUse", deliveries) as { systemMessage: string; hookSpecificOutput: { additionalContext: string } };
+      expect(output.systemMessage.split("\n").filter(line => line.includes("decide: users.sql"))).toHaveLength(1);
+      expect(output.hookSpecificOutput.additionalContext.match(/◆ RERAIL · conflict #/gu)).toHaveLength(1);
+      expect(output.hookSpecificOutput.additionalContext).toContain(`Don't edit \`${migration}\` now`);
+      // The stop counted as the checkpoint card: the next boundary carries neither again.
+      const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." });
+      expect(next.filter(delivery => delivery.conflict !== undefined)).toEqual([]);
     } finally {
       await runtime.dispose();
     }
