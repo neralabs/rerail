@@ -1015,6 +1015,44 @@ fn the_analysis_phase_gives_an_awaited_call_what_the_async_def_returns() {
 }
 
 #[test]
+fn the_analysis_phase_awaits_an_async_loops_next_value_and_an_async_withs_entered_value() {
+    // calls_p3 (t32 2.5): `async for x in s` binds x to the awaited `s.__aiter__().__anext__()`, `async with c as z` z
+    // to the awaited `c.__aenter__()`: the workspace's `async def`s' results, and a stub's `async def __aenter__(self)
+    // -> Self` the library instance itself. A plain `__anext__` that returns an awaitable leaves its target open.
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-async");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\nconn: 3.0-\ntyping: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int: ...\n").unwrap();
+    std::fs::write(lib.join("typing.pyi"), "class _SpecialForm: ...\nSelf: _SpecialForm\n").unwrap();
+    std::fs::write(lib.join("conn.pyi"), "from typing import Self\nclass Conn:\n    async def __aenter__(self) -> Self: ...\n    def close(self) -> None: ...\n").unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "from conn import Conn\nclass V:\n    def run(self) -> int: ...\nclass It:\n    async def __anext__(self) -> V: ...\nclass Seq:\n    def __aiter__(self) -> It: ...\nclass Cm:\n    async def __aenter__(self) -> V: ...\nclass Bare:\n    def __anext__(self): ...\nclass Raw:\n    def __aiter__(self) -> Bare: ...\nasync def f(s: Seq, c: Cm, k: Conn, r: Raw) -> None:\n    async for x in s:\n        x.run()\n    async with c as z:\n        z.run()\n    async with k as n:\n        n.close()\n    async for y in r:\n        y.run()\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
+    let starts: std::collections::HashMap<String, usize> =
+        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+    let at_line = |cell: &str| line(&src, starts[cell]);
+    let to: Vec<u64> = read("call_target").lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
+    let open: Vec<u64> = read("call_open").lines().map(|l| at_line(l.split('\t').next().unwrap())).collect();
+    assert!(to.contains(&16) && to.contains(&18), "x.run() and z.run() through the awaited values: {}", read("call_target"));
+    assert!(!open.contains(&16) && !open.contains(&18) && !open.contains(&20), "open at lines {open:?}");
+    assert!(open.contains(&22), "y's `__anext__` returns no declared class: {}", read("call_open"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_session_maintains_the_typing_phase_from_struct_s_delta() {
     // P2 (types.rr) in a session: an edit to one workspace file changes struct's rows for that file only, and the
     // typing phase's run takes that delta: it maintains the strata the delta reaches, not every stratum, and its

@@ -119,10 +119,11 @@ rdefn(s, x, f) :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x)
 .decl rasg(s: node, x: symbol, r: node, a: node)
 rasg(s, x, r, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r), nearest(a, s, scope), !py_dead_at(a).
 // `for x in it`: x is bound to the loop target's value, `it.__iter__().__next__()` (implicit calls, `icall`); `with e
-// as x`: to the alias's, `e.__enter__()`. Not their `async` forms (`__aiter__`, `__aenter__`).
-rasg(s, x, l, a) :- kind(a, "for_statement"), !op(a, "async"), field(a, "left", l), kind(l, "identifier"), text(l, x), nearest(a, s, scope),
+// as x`: to the alias's, `e.__enter__()`. Their `async` forms await `it.__aiter__().__anext__()` and `e.__aenter__()`
+// (`iawait`).
+rasg(s, x, l, a) :- kind(a, "for_statement"), field(a, "left", l), kind(l, "identifier"), text(l, x), nearest(a, s, scope),
     !py_dead_at(a).
-rasg(s, x, t, a) :- kind(a, "with_statement"), !op(a, "async"), child(a, wc, _), child(wc, w, _), kind(w, "with_item"), field(w, "value", p),
+rasg(s, x, t, a) :- kind(a, "with_statement"), child(a, wc, _), child(wc, w, _), kind(w, "with_item"), field(w, "value", p),
     kind(p, "as_pattern"), field(p, "alias", t), child(t, i, 0), kind(i, "identifier"), text(i, x), nearest(a, s, scope), !py_dead_at(a).
 .decl param(f: node, x: symbol, i: number)
 param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
@@ -136,7 +137,6 @@ patkind("parenthesized_expression"). patkind("tuple"). patkind("list"). patkind(
 tgt(l) :- kind(a, "assignment"), field(a, "left", l), !kind(l, "identifier").
 tgt(l) :- kind(a, "augmented_assignment"), field(a, "left", l).
 tgt(l) :- kind(a, "for_statement"), field(a, "left", l), !kind(l, "identifier").
-tgt(l) :- kind(a, "for_statement"), op(a, "async"), field(a, "left", l).
 tgt(l) :- kind(a, "for_in_clause"), field(a, "left", l).
 tgt(l) :- kind(a, "named_expression"), field(a, "name", l).
 tgt(l) :- kind(l, "as_pattern_target").
@@ -634,9 +634,26 @@ gcall(c, o, f) :- gfn(c, f), pfn(c, o, f).
 .decl icall(c: node, o: node, a: symbol)
 icall(c, o, "__getitem__") :- vpos(c), kind(c, "subscript"), field(c, "value", o).
 // A loop's statement holds its iterator, its target the iterator's next value; a `with` alias the value entered.
-icall(a, it, "__iter__") :- rasg(_, _, l, a), kind(a, "for_statement"), field(a, "right", it).
-icall(l, a, "__next__") :- rasg(_, _, l, a), kind(a, "for_statement").
-icall(t, e, "__enter__") :- rasg(_, _, t, a), kind(a, "with_statement"), kind(t, "as_pattern_target"), field(p, "alias", t), child(p, e, 0).
+icall(a, it, "__iter__") :- rasg(_, _, l, a), kind(a, "for_statement"), !op(a, "async"), field(a, "right", it).
+icall(l, a, "__next__") :- rasg(_, _, l, a), kind(a, "for_statement"), !op(a, "async").
+icall(t, e, "__enter__") :- rasg(_, _, t, a), kind(a, "with_statement"), !op(a, "async"), kind(t, "as_pattern_target"), field(p, "alias", t),
+    child(p, e, 0).
+// `async for`: the statement holds `it.__aiter__()`, a plain call; its target the awaited `__anext__()` of that.
+icall(a, it, "__aiter__") :- rasg(_, _, l, a), kind(a, "for_statement"), op(a, "async"), field(a, "right", it).
+// iawait(c, o, a): c's value is the result of awaiting o's method a, an implicit call: an `async for` target's
+// `__anext__()`, an `async with` alias's `__aenter__()`.
+.decl iawait(c: node, o: node, a: symbol)
+iawait(l, a, "__anext__") :- rasg(_, _, l, a), kind(a, "for_statement"), op(a, "async").
+iawait(t, e, "__aenter__") :- rasg(_, _, t, a), kind(a, "with_statement"), op(a, "async"), kind(t, "as_pattern_target"), field(p, "alias", t),
+    child(p, e, 0).
+vroot(o) :- iawait(_, o, _).
+asks(c, k, a) :- iawait(c, o, a), pv(o, "inst", k).
+// iafn(c, f): the workspace `async def` an awaited implicit call runs; c holds its coroutine's result, as `await`
+// of a call does (`awaitf`).
+.decl iafn(c: node, f: node)
+iafn(c, f) :- iawait(c, o, a), pv(o, "inst", k), fv(c, k, a, "fn", f), isasync(f), !isgen(f).
+cret(c, w, k) :- iafn(c, f), aret(f, w, k).
+pv(c, k, v) :- iafn(c, f), fret(f, k, v).
 vroot(o) :- icall(_, o, _).
 asks(c, k, a) :- icall(c, o, a), pv(o, "inst", k).
 // ifn(c, f): the method an implicit call runs.
@@ -1093,6 +1110,14 @@ lghcls(c, kb) :- lwgen(c, f, g), lwbind(f, g, kb, _, _).
 pv(c, "gen", c) :- lwgen(c, _, _).
 garg(c, j, x) :- lwgen(c, f, g), lwbind(f, g, _, j, x).
 // Implicit calls (`o[i]`, a loop, a `with`) on a library instance.
+// liawait(c, f): the library `async def` an awaited implicit call runs: c holds what f declares (a stub's
+// `async def __aenter__(self) -> Self`). A plain def that returns an awaitable (`AsyncIterator.__anext__`) is open.
+.decl liawait(c: node, f: symbol)
+liawait(c, f) :- iawait(c, o, a), lv(o, "inst", t), types__attr(t, a, f, _), f != "", struct__flag(f, "async").
+.decl laret(f: symbol)
+laret(f) :- types__rtype(f, _, t), struct__def(t, "class").
+lv(c, "inst", t) :- liawait(c, f), types__rtype(f, _, t), struct__def(t, "class").
+lv(c, "inst", t) :- liawait(c, f), lself(f), iawait(c, o, _), lv(o, "inst", t).
 .decl lical(c: node, f: symbol)
 lical(c, f) :- icall(c, o, a), lv(o, "inst", t), types__attr(t, a, f, _), f != "".
 lv(c, k, v) :- lical(c, f), lret(f, k, v).
@@ -1360,6 +1385,11 @@ vopen(c) :- vpos(c), callee(c, e), pv(e, "mod", _).
 // return is.
 vopen(c) :- vpos(c), icall(c, o, _), vopen(o).
 vopen(c) :- vpos(c), icall(c, _, _), !ifn(c, _), !lical(c, _).
+vopen(c) :- vpos(c), iawait(c, o, _), vopen(o).
+vopen(c) :- vpos(c), iawait(c, _, _), !iafn(c, _), !liawait(c, _).
+vopen(c) :- vpos(c), iafn(c, f), !aclosed(f), retval(f, r), !retparam(f, _, r), vopen(r).
+vopen(c) :- vpos(c), iafn(c, f), !aclosed(f), retparam(f, _, _).
+vopen(c) :- vpos(c), liawait(c, f), !laret(f), !lself(f).
 vopen(c) :- vpos(c), lical(c, f), !lret(f, _, _), !lself(f), !lgbound(c, _).
 vopen(c) :- vpos(c), icall(c, o, a), pv(o, "inst", k), attr_open(c, k, a).
 vopen(c) :- vpos(c), ifn(c, f), isasync(f).
