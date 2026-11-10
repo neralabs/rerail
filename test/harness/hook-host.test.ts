@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
 import { encodeRerailEventResult } from "../../src/runtime/index.js";
+import { engineEndpointAt } from "../../src/runtime/daemon-control.js";
 import {
   emitHookOutput,
   holdStopSteers,
@@ -28,6 +29,9 @@ import { runClaudeHook } from "../../src/hosts/claude/index.js";
 import { runCodexHook } from "../../src/hosts/codex/index.js";
 import { runCursorHook } from "../../src/hosts/cursor/index.js";
 import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
+
+// Every export keeps its own behaviour; a test stands in for one lookup at a time.
+vi.mock("../../src/runtime/daemon-control.js", { spy: true });
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
 
@@ -309,6 +313,40 @@ describe("hook host durable state", () => {
       await expect(Promise.all(hooks)).resolves.toEqual([{}, {}]);
     } finally {
       engine.answerFirst();
+      await Promise.allSettled(hooks);
+      await engine.close();
+    }
+  });
+
+  it("finds the daemon before it takes the session's lock, so a hook waiting on a busy daemon's probe holds up no other hook", { timeout: 20_000 }, async () => {
+    const root = await temporaryDirectory();
+    const engine = await heldEngine(root);
+    engine.answerFirst();
+    const lookupStarted = Promise.withResolvers<void>();
+    const lookupDone = Promise.withResolvers<void>();
+    // The first hook's lookup waits as one does on a daemon too busy to answer its health probe at once.
+    vi.mocked(engineEndpointAt).mockImplementationOnce(async socketPath => {
+      lookupStarted.resolve();
+      await lookupDone.promise;
+      return { socketPath };
+    });
+    const hooks: Promise<unknown>[] = [];
+    try {
+      const { embedder: _embedder, ...options } = hookOptions(root);
+      const toolCall = (agent: string) => runClaudeHook({
+        session_id: "parent-session", cwd: root, hook_event_name: "PreToolUse", agent_id: agent, agent_type: "general-purpose",
+        tool_name: "Write", tool_use_id: `${agent}-write`, tool_input: { file_path: join(root, `${agent}.py`), content: "x = 1\n" },
+      }, { ...options, kernelSocketPath: engine.socketPath });
+      hooks.push(toolCall("agent-a"));
+      await lookupStarted.promise;
+      hooks.push(toolCall("agent-b"));
+      await vi.waitFor(() => expect(engine.received).toEqual(["parent-session:tool-call:agent-b-write"]), { timeout: 5_000 });
+      lookupDone.resolve();
+      await expect(Promise.all(hooks)).resolves.toEqual([{}, {}]);
+      expect(engine.received).toEqual(["parent-session:tool-call:agent-b-write", "parent-session:tool-call:agent-a-write"]);
+    } finally {
+      lookupDone.resolve();
+      vi.mocked(engineEndpointAt).mockReset();
       await Promise.allSettled(hooks);
       await engine.close();
     }
