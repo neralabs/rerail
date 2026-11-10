@@ -78,7 +78,7 @@ def scan(suite, entry, module, arguments):
         else:
             supplied = arguments.get('parent', arguments.get('node'))
             # Tests supply Python AST values. Printing is test-input transport, never a rule callback.
-            files = [dict(path='helper.py', source='_rr_input = ' + ast.unparse(supplied) + '\n')]
+            files = [dict(path='impl/helper.py', source='_rr_input = ' + ast.unparse(supplied) + '\n')]
         rows = suite.native(CHECK, entry, files, options)
         if len(rows) > 1 or any(row['code'] != 'UF_HELPER_TRUE' for row in rows):
             raise AssertionError('Invalid native unresolved-reference helper result')
@@ -91,7 +91,9 @@ def scan(suite, entry, module, arguments):
         source = ''
     except OSError as error:
         read_error, source = error, ''
-    rows = suite.native(CHECK, entry, [dict(path='input.py', source=source)],
+    # The workspace loader applies policy scope to the synthetic buffer path.
+    # The caller's original path and suffix still govern the public API result.
+    rows = suite.native(CHECK, entry, [dict(path='impl/input.py', source=source)],
                         dict(suffix=path.suffix, isFile=str(path.is_file()).lower(),
                              relativePath=str(not path.is_absolute()).lower(),
                              readError=str(read_error is not None).lower()))
@@ -149,7 +151,7 @@ def transfer_cli(suite, module):
             except OSError:
                 scan(suite, 'analyze_file', module, dict(file_path=path))
                 raise AssertionError('Native I/O failure unexpectedly returned')
-            buffer = f'input-{i}.py'
+            buffer = f'impl/input-{i}.py'
             names[buffer] = path
             files.append(dict(path=buffer, source=source))
         rows = suite.native(CHECK, 'cli_scan', files, dict(logicalFiles=list(names),
@@ -178,7 +180,7 @@ def transfer_cli(suite, module):
     replacement = ast.parse('all_findings = _rr_cli_findings(root_dir, scan_paths)').body[0]
     body[loops[0]] = ast.copy_location(replacement, body[loops[0]])
     ast.fix_missing_locations(tree)
-    compiled = compile(tree, module.__file__, 'exec')
+    compiled = compile(tree, '<unresolved_forward_refs CLI host transfer>', 'exec')
     code = next(value for value in compiled.co_consts if isinstance(value, types.CodeType) and value.co_name == 'cli_main')
     # Keep the live module globals: upstream tests replace discovery inputs with monkeypatch.
     module.__dict__['_rr_cli_findings'] = findings

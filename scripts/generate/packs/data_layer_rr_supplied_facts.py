@@ -11,6 +11,7 @@ def supplied_facts(original, check):
     if check == 'serverplan_grammar_surface': return surface_schema()
     configs = {
         'classvar_check': dict(path_field='file',message='field',code_field='code',order='message',bundle_fallback='exact'),
+        'forwardref': dict(path_field='file',message='field',code_field='code',order='code',bundle_fallback='exact'),
         'removed_compat_surfaces': dict(path_field='path', join_root='true', message='removed', code='RCS001', order='input'),
         'versioned_lifecycle_legacy_surfaces': dict(path_field='file_path', join_root='true', message='field', code='VLL001', order='message'),
         'no_api_root_imports': dict(path_field='file_path', message='field', code='NARI001', order='message'),
@@ -23,6 +24,7 @@ def supplied_facts(original, check):
     }
     defaults = {
         'classvar_check': dict(code='CLASSVAR001',message='Unsafe ClassVar check'),
+        'forwardref': dict(code='FWDREF',message='ForwardRef handling issue'),
         'removed_compat_surfaces': dict(name='removed compatibility surface'),
         'versioned_lifecycle_legacy_surfaces': dict(message='Versioned lifecycle legacy surface violation'),
         'no_api_root_imports': dict(message='deprecated root api import'),

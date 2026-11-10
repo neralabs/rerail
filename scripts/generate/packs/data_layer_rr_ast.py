@@ -58,7 +58,7 @@ ClassVarComparison(c, ordinal, style, column, visit) :- cv_candidate(c, ordinal,
 
 
 def forwardref(source, target, header):
-    return header('forwardref', target) + r'''
+    text = header('forwardref', target) + r'''
 .decl fr_trigger(d: number)
 fr_trigger(d) :- source(d, sp), text(sp, t), (contains(".annotation", t) ; contains("ForwardRef", t)).
 .decl fr_sync(f: node)
@@ -118,14 +118,6 @@ fr_test_path(d) :- fr_scope_path(d,p),(contains("/tests/",cat("/",p));contains("
 fr_dot_file(d) :- option("entryPoint",_),fr_scope_path(d,p),(p=".py";suffix("/.py",p)).
 .decl fr_selected(d: number)
 fr_selected(d) :- doc(d, _, _), option("entryPoint", _).
-fr_selected(d) :- doc(d, p, _), !option("entryPoint", _),
-    (prefix("api/", p) ; prefix("impl/", p) ; prefix("public/", p)), !fr_hidden(d).
-.decl fr_hidden(d: number)
-fr_hidden(d) :- path_part(d, ".git").
-fr_hidden(d) :- path_part(d, ".venv").
-fr_hidden(d) :- path_part(d, "venv").
-fr_hidden(d) :- path_part(d, "__pycache__").
-fr_hidden(d) :- path_part(d, "tmp").
 .decl fr_excluded(d: number)
 fr_excluded(d) :- doc(d, p, _), option_item("logicalPaths", i, p), option_item("originalPaths", i, original),
     option_item("excludePatterns", _, pattern), contains(pattern, original).
@@ -147,3 +139,5 @@ ForwardRefSubclass(c, column, ordinal) :- fr_bad(c, "issubclass", column, ordina
     "callable(annotation) without ForwardRef handling. ForwardRef is callable but calling it produces wrong results. Consider checking for ForwardRef first."
 ForwardRefCallable(c, column, ordinal) :- fr_bad(c, "callable", column, ordinal).
 '''
+    from data_layer_rr_production import production
+    return production(source, 'forwardref', text)

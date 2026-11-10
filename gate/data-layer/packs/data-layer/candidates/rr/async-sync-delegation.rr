@@ -34,10 +34,15 @@ asdh_docstring(f) :- asdh_body(f, expr, 0), asdh_kind(expr, "Expr"), asdh_edge(e
 .decl asdh_statement(f: node, n: node, ordinal: number)
 asdh_statement(f, n, i) :- asdh_body(f, n, i), !asdh_docstring(f).
 asdh_statement(f, n, i) :- asdh_body(f, n, i), asdh_docstring(f), i > 0.
+.decl asdh_callable_part(n: node)
+asdh_callable_part(0) :- option("entryPoint", "_extract_callable_name").
+asdh_callable_part(v) :- asdh_callable_part(n), asdh_kind(n, "Attribute"), asdh_edge(n, "value", v).
+.decl asdh_callable_piece(i: number, value: symbol)
+asdh_callable_piece(i, value) :- asdh_callable_part(n), asdh_kind(n, "Name"), n = i, option_item("astIds", i, value).
+asdh_callable_piece(i, value) :- asdh_callable_part(n), asdh_kind(n, "Attribute"), n = i, option_item("astAttrs", i, value).
 .decl asdh_callable(n: node, value: symbol)
-asdh_callable(n, value) :- asdh_kind(n, "Name"), option_item("astIds", n, value).
-asdh_callable(n, cat(parent, ".", attr)) :- asdh_kind(n, "Attribute"), asdh_edge(n, "value", v), asdh_callable(v, parent), n < v, option_item("astAttrs", n, attr).
-asdh_callable(n, attr) :- asdh_kind(n, "Attribute"), asdh_edge(n, "value", v), asdh_kind(v, k), k != "Name", k != "Attribute", option_item("astAttrs", n, attr).
+asdh_callable(0, value) :- asdh_callable_piece(_, _),
+    value = join part by -i sep "." : { asdh_callable_piece(i, part) }.
 .decl asdh_decorator_leaf(n: node, value: symbol)
 asdh_decorator_leaf(n, value) :- asdh_kind(n, "Name"), option_item("astIds", n, value).
 asdh_decorator_leaf(n, value) :- asdh_kind(n, "Attribute"), option_item("astAttrs", n, value).

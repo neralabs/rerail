@@ -596,8 +596,7 @@ class Suite:
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},
                     'data_layer_facade_purity': {'cli_main', '_print_results'},
                     'backend_coupling': {'cli_main', 'get_project_root'},
-                    'connection_caches': {'cli_main'},
-                    'unresolved_forward_refs': {'cli_main'}}
+                    'connection_caches': {'cli_main'}}
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])

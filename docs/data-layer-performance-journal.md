@@ -11436,3 +11436,26 @@ Both APIs pass all 53 original assertions and 11 additional scope cases. The 48 
 
 The tooling suite passes all 409 tests. ForwardRef remains a draft pending its plugin, CLI, production, pre-read selection, update, and removal contracts.
 The fetched Final tip remains `fc6c1e0d9`. Global admission remains 13 of 100 ports.
+
+### Original assertion batches on Final fc6, 2026-11-10
+
+The source runs collected 1,697 passing original cases and three source skips across 28 direct modules.
+They captured 857 complete detector returns for 27 checks. Of these, 488 have findings and 363 have clean finding lists.
+Six calls have a full return without a normalized finding list. The transaction-pattern recorder captured another 26 normalized calls.
+
+Four first-pass snapshot shards passed 127 original cases and matched 65 complete detector returns.
+The transaction-pattern shard passed its pytest assertions but missed three recorded observations.
+Its visitor and framework observations need the existing dedicated transaction-pattern contract runner.
+The unsharded native attempts reached the 115-second limit. The bounded shards preserved individual results.
+
+- ForwardRef production uses the same detector relations as the direct API. All 18 production cases and 53 original cases pass through each API.
+  The original cases include five detector calls with two positives and 48 mocked PR-monitor assertions.
+- Async/sync boundary now collects a finite receiver chain and joins its names in order. All five original cases pass through each API, including three positives.
+- The same change resolves reader failures in async/sync delegation and grammar render methods. Their focused original helper slices pass seven and two cases.
+- Unresolved ForwardRef had two harness failures. The guard rejected the rewritten CLI, and the workspace loader rejected synthetic buffers outside the policy scope.
+  The guard still rejects the original CLI. The rewritten host CLI uses native selection and detection batches. Scoped buffers retain the original path in each returned finding.
+  Both APIs pass all 116 original cases and match 62 complete detector observations per API.
+
+All 119 policy files pass the reader, including auxiliary policies. The migration tooling passes 409 tests and 165 subtests.
+The [progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-finalfc6-shared-cohort-progress.json.gz) binds these results to Final `fc6c1e0d9` and the recorded CLI.
+The branch has 96 translations, 13 full admissions, and four missing translations. The rest of the original suites and production contracts still require acceptance.

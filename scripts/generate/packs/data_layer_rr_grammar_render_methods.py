@@ -45,9 +45,19 @@ grm_edge(to_number(p), f, n) :- option_item("astParents", n, p), p != "-1", opti
 grm_base(n, name) :- grm_kind(n, "Name"), option_item("astIds", n, name).
 grm_base(n, name) :- grm_kind(n, "Attribute"), option_item("astAttrs", n, name).
 grm_base(n, name) :- grm_kind(n, "Subscript"), grm_edge(n, "value", v), grm_base(v, name).
+.decl grm_dotted_part(n: node)
+grm_dotted_part(0) :- option("entryPoint", "RenderMethodVisitor._get_call_name_recursive").
+grm_dotted_part(v) :- grm_dotted_part(n), grm_kind(n, "Attribute"), grm_edge(n, "value", v).
+.decl grm_dotted_piece(i: number, name: symbol)
+grm_dotted_piece(i, name) :- grm_dotted_part(n), grm_kind(n, "Name"), n = i, option_item("astIds", i, name).
+grm_dotted_piece(i, name) :- grm_dotted_part(n), grm_kind(n, "Attribute"), grm_edge(n, "value", v),
+    (grm_kind(v, "Name") ; grm_kind(v, "Attribute")), n = i, option_item("astAttrs", i, name).
+// A non-name receiver leaves an empty prefix in the recursive source API.
+grm_dotted_piece(i, "") :- grm_dotted_part(n), grm_kind(n, "Attribute"), grm_edge(n, "value", v),
+    !grm_kind(v, "Name"), !grm_kind(v, "Attribute"), n = i.
 .decl grm_dotted(n: node, name: symbol)
-grm_dotted(n, name) :- grm_kind(n, "Name"), option_item("astIds", n, name).
-grm_dotted(n, cat(prefix, ".", leaf)) :- grm_kind(n, "Attribute"), grm_edge(n, "value", v), grm_dotted(v, prefix), option_item("astAttrs", n, leaf), v > n.
+grm_dotted(0, name) :- grm_dotted_part(0),
+    name = join part by -i sep "." : { grm_dotted_piece(i, part) }.
 .decl grm_literal(n: node)
 grm_literal(n) :- grm_kind(n, "Constant"), option_item("astValueTypes", n, "str").
 .decl grm_string_expr(n: node)

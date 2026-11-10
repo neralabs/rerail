@@ -8,6 +8,7 @@ from data_layer_rr_text import module, character_class, search
 
 CLAUSES = {
     'classvar_check': ['ClassVarComparison'],
+    'forwardref': ['ForwardRefInstance', 'ForwardRefSubclass', 'ForwardRefCallable'],
     'removed_compat_surfaces': ['Removed'], 'versioned_lifecycle_legacy_surfaces': ['Lifecycle'],
     'no_api_root_imports': ['RootImport', 'RootExample'],
     'backend_type_strings': ['BackendBT00'+str(i) for i in range(6)],
@@ -84,7 +85,7 @@ def production(source, check, text):
         include_tests=str(plugin.file_scope.include_tests).lower(),
         fact_kind='surface' if check == 'serverplan_grammar_surface' else 'list',
         layer_regex='l'+character_class(str.isdecimal)+r'{4}_.+(?s:.*)')
-    if check == 'permission_error': config['relative_reports'] = 'true'
+    if check in {'permission_error', 'forwardref'}: config['relative_reports'] = 'true'
     text = re.sub(r'^\.description .*$', '.description '+json.dumps(plugin.description), text, flags=re.M)
     # Preserve the root-relative file alias alongside the shared physical parse.
     text = re.sub(r'\bdoc\((\w+),\s*(\w+|_),\s*_\)', r'pp_doc(\1,\2)', text)
@@ -97,7 +98,7 @@ def production(source, check, text):
         'no_api_root_imports':'nari_file', 'backend_type_strings':'bts_doc', 'hasattr_async':'async_selected',
         'no_source_inspection':'inspection_selected', 'serverplan_name_inference':'name_selected',
         'no_blanket_grammar_bypass':'bypass_selected', 'serverplan_grammar_surface':'sgp_admitted',
-        'permission_error':'permission_selected', 'classvar_check':'cv_selected'}[check]
+        'permission_error':'permission_selected', 'classvar_check':'cv_selected', 'forwardref':'fr_selected'}[check]
     pattern = re.compile(r'(?m)^'+selector+r'\([^\n]* :- [\s\S]*?\.\n')
     text = pattern.sub(lambda m: '' if 'pp_run()' in m.group() else m.group(), text)
     text += f'\n{selector}(d) :- pp_run(), pp_doc(d,_), pp_fact_present(d).\n'
@@ -145,6 +146,7 @@ def production(source, check, text):
                 order = ['ppe_class_order','ppe_method_order','0']
             elif check == 'no_api_root_imports': order = [names['ordinal'], '-1' if clause == 'RootImport' else names['piece']+'*2+'+names['pattern'], names['occurrence']]
             elif check == 'classvar_check': order = [names['collector_visit'],names['ordinal'],'0']
+            elif check == 'forwardref': order = [names['ordinal'],'0','0']
             elif check == 'backend_type_strings': order = [line,names['pattern'],names['occurrence']]
             elif check == 'hasattr_async': order = [line,'0' if clause == 'Asynchasattr' else '1','0']
             elif check == 'no_source_inspection': order = [line,names['ordinal'],'0']
@@ -184,7 +186,7 @@ def production(source, check, text):
             suffix += 'LifecycleReport(@place(p,l),lc_message,o0,o1,o2) :- '+event+', pp_run(), pp_fact_allowed(p), pp_report_allowed(p).\n'
         pkey = '@replace_all(p,"/","\\u0000")' if check in {'hasattr_async','serverplan_name_inference'} else 'p'
         sort = [pkey,'l',message,'0']
-        if check == 'backend_type_strings': sort = ['p','l',code,'0']
+        if check in {'backend_type_strings', 'forwardref'}: sort = ['p','l',code,'0']
         elif check in {'removed_compat_surfaces','serverplan_grammar_surface'}: sort = ['p','o0','""','o1']
         elif check in {'hasattr_async','serverplan_name_inference'}: sort = [pkey,'o0','""','o1']
         elif check == 'permission_error': sort = ['p','l','""','o0']
@@ -193,6 +195,7 @@ def production(source, check, text):
         elif check == 'versioned_lifecycle_legacy_surfaces': payload = [('file_path','p','symbol'),('line','l','number'),('class_name','cls','symbol'),('method_name','method','symbol'),('message',message,'symbol')]
         elif check == 'no_api_root_imports': payload = [('file_path','full','symbol'),('line','l','number'),('message',message,'symbol')]
         elif check == 'classvar_check': payload = [('file','full','symbol'),('line','l','number'),('col','column','number'),('message',message,'symbol'),('code',code,'symbol')]
+        elif check == 'forwardref': payload = [('file','p','symbol'),('line','l','number'),('col','column','number'),('message',message,'symbol'),('code',code,'symbol')]
         elif check == 'backend_type_strings': payload = [('file','full','symbol'),('line','l','number'),('column','column','number'),('message',message,'symbol'),('code',code,'symbol'),('snippet','snippet','symbol')]
         elif check == 'hasattr_async': payload = [('line','l','number'),('pattern_type',code,'symbol'),('method_name','method','symbol')]
         elif check == 'no_source_inspection': payload = [('file_path','full','symbol'),('line','l','number'),('line_content','snippet','symbol'),('pattern_name','label','symbol')]

@@ -20,17 +20,25 @@ ReadFailure(@place("<inventory>", 1)) :- option("entryPoint", "scan_tree"), opti
 
 .decl bs_api_helper()
 bs_api_helper() :- option("entryPoint", "_get_call_name").
-.decl bs_name(n: node, name: symbol)
-bs_name(n, @nfkc(name)) :- !bs_api_helper(), unparen(n, e), kind(e, "identifier"), text(e, name).
-.decl bs_attr(n: node, obj: node, name: symbol)
-bs_attr(n, obj, @nfkc(name)) :- !bs_api_helper(), unparen(n, e), kind(e, "attribute"), field(e, "object", obj), field(e, "attribute", a), text(a, name).
-.decl bs_identifier(n: node)
-bs_identifier(n) :- !bs_api_helper(), unparen(n, e), kind(e, "identifier").
-// ast collects the attribute suffix even when its receiver is a call, subscript, or literal.
-bs_name(n, name) :- bs_attr(n, obj, name), !bs_identifier(obj), !bs_attr(obj, _, _).
-bs_name(n, cat(prefix, ".", name)) :- bs_attr(n, obj, name), n < obj, bs_name(obj, prefix).
 .decl bs_call(n: node, fn: node)
 bs_call(n, fn) :- kind(n, "call"), field(n, "function", fn).
+.decl bs_callee(n: node)
+bs_callee(n) :- !bs_api_helper(), bs_call(_, n).
+.decl bs_attr(n: node, obj: node)
+bs_attr(n, obj) :- !bs_api_helper(), unparen(n, e), kind(e, "attribute"), field(e, "object", obj).
+// Collect the finite receiver chain, then join its identifiers from the inside out.
+// A call, subscript, or literal receiver contributes no identifier.
+.decl bs_part(callee: node, part: node)
+bs_part(n, n) :- bs_callee(n).
+bs_part(n, obj) :- bs_part(n, p), bs_attr(p, obj).
+.decl bs_component(n: node, name: symbol, depth: number)
+bs_component(n, @nfkc(name), depth) :- !bs_api_helper(), unparen(n, e), kind(e, "identifier"),
+    text(e, name), ast_depth(n, depth).
+bs_component(n, @nfkc(name), depth) :- !bs_api_helper(), unparen(n, e), kind(e, "attribute"),
+    field(e, "attribute", a), text(a, name), ast_depth(n, depth).
+.decl bs_name(n: node, name: symbol)
+bs_name(n, name) :- bs_part(n, p), bs_component(p, _, _),
+    name = join piece by -depth sep "." : { bs_part(n, part), bs_component(part, piece, depth) }.
 .decl bs_context(c: node, name: symbol, async_: number)
 bs_context(c, @nfkc(name), 1) :- bs_call(c, _), def_frame(c, f), def_name(f, name), op(f, "async").
 bs_context(c, @nfkc(name), 0) :- bs_call(c, _), def_frame(c, f), def_name(f, name), !op(f, "async").
@@ -86,9 +94,10 @@ Executor(c, fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c,
 bs_graph_kind(n, k) :- bs_api_helper(), option_item("astKinds", n, k).
 .decl bs_graph_edge(p: node, field: symbol, n: node)
 bs_graph_edge(to_number(p), field, n) :- bs_api_helper(), option_item("astParents", n, p), p != "-1", option_item("astFields", n, field).
-bs_name(n, name) :- bs_graph_kind(n, "Name"), option_item("astIds", n, name).
-bs_identifier(n) :- bs_graph_kind(n, "Name").
-bs_attr(n, obj, name) :- bs_graph_kind(n, "Attribute"), bs_graph_edge(n, "value", obj), option_item("astAttrs", n, name).
+bs_callee(f) :- bs_graph_kind(0, "Call"), bs_graph_edge(0, "func", f).
+bs_attr(n, obj) :- bs_graph_kind(n, "Attribute"), bs_graph_edge(n, "value", obj).
+bs_component(n, name, i) :- bs_graph_kind(n, "Name"), option_item("astIds", i, name), n = i.
+bs_component(n, name, i) :- bs_graph_kind(n, "Attribute"), option_item("astAttrs", i, name), n = i.
 .violation CallName(at: span, name: symbol) code "BS_CALL_NAME" "{name}"
 CallName(@place("<call-name>", 1), name) :- bs_graph_kind(0, "Call"), bs_graph_edge(0, "func", f), bs_name(f, name).
 .violation Allow(at: span) code "BS_ALLOW" "allowlisted"
