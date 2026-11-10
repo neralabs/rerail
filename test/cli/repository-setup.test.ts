@@ -490,7 +490,7 @@ describe("the folder a set-up answer names", () => {
     const home = String.raw`C:\Users\me`;
     expect(folderFromAnswer(String.raw`~\code\app`, home, "win32")).toBe(String.raw`C:\Users\me\code\app`);
     expect(folderFromAnswer("~/code/app", home, "win32")).toBe(String.raw`C:\Users\me\code\app`);
-    expect(folderFromAnswer(String.raw` "C:\x y" `, home, "win32")).toBe(String.raw`C:\x y`);
+    expect(folderFromAnswer(String.raw` "C:\my app" `, home, "win32")).toBe(String.raw`C:\my app`);
     expect(folderFromAnswer("~", home, "win32")).toBe(home);
   });
 
