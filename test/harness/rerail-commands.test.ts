@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ADAPTER_CAPABILITIES } from "../../src/engine/adapter-contract.js";
+import { ADAPTER_CAPABILITIES } from "../../src/engine/index.js";
 import { commandFileText } from "../../src/harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, rerailCommandList, showMeInstructions } from "../../src/harness/rerail-commands.js";
 
