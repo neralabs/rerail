@@ -122,6 +122,10 @@ removed with nothing in its place but K1–K4.
 
 ### Step 5: the phase store (the typing branch)
 
+**Done** (investigate-bend-vs-datalog, t32 stage 3): the phase store's tables, `.owner` and `Session::phase_rows` are
+gone. A phase's exports are its nested run's outputs, kept as that run keeps every relation, and handed on as input
+rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.phases` file until step 1 moves them.
+
 | Today | Key and check today | Becomes |
 |---|---|---|
 | `phase_granules` | (phase, granule) rows as text | the phase's exports, relations of its space in K1, partitioned by granule |

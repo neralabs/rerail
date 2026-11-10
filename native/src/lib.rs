@@ -12,6 +12,9 @@ mod build_identity;
 /// so `cargo test` checks how the build validates the language registry.
 #[cfg(test)]
 mod build_languages;
+// Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
+#[cfg(test)]
+mod test_watchdog;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;

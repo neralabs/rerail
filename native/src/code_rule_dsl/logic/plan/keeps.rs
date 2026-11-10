@@ -137,6 +137,10 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     // the estimates' unless the observations are evidence against it (`settle`).
     let held = OBSERVED.with(|o| o.borrow_mut().as_mut().map(std::mem::take));
     let observed_any = held.as_ref().is_some_and(|o| !o.rules.is_empty());
+    // The statistics the cone's plans read, if they are made when first planned with (`Model::resolve`); and its
+    // readers' (the pricing below plans them).
+    let read: Vec<&str> = need.iter().flat_map(|rel| rules_of.get(rel).into_iter().flatten()).flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()).collect();
+    model.resolve(prog, read).map_err(|e| e.to_string())?;
     let (estimates, inserted) = estimate(prog, model, &rules_of, &sccs, &need, &candidates);
     let by_estimates = price_all(prog, model, &rules_of, &readers, &reasons, &estimates, &need, &sccs);
     OBSERVED.with(|o| {
@@ -1259,7 +1263,7 @@ mod tests {
         .unwrap();
         let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
         let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
-        let mut model = Model { analysis: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+        let mut model = Model { analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
         model.stats.nodes = 450_000.0;
         // Measured rows (an earlier chunk's), then distinct values by column.
         for (rel, rows, ndv) in [

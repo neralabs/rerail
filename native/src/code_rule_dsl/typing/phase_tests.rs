@@ -242,8 +242,8 @@ lib_attr(c, x) :- types__attr(c, x, _, _), types__owner(c, o), lib(o).
         for p in &r.phase_runs {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
             let rss = p.report.phases.iter().map(|x| x.3).fold(0.0, f64::max);
-            let rows: Vec<String> = p.exports.iter().map(|(rel, n, _, _)| format!("{rel} {n}")).collect();
-            println!("TYPES {what}: {} {cpu:.2} s CPU, peak RSS {rss:.0} MB, how: {}; exports: {}", p.name, p.full_because.as_deref().map_or_else(|| p.report.phases.first().map_or("", |x| x.0).to_owned(), |w| format!("in full: {w}")), rows.join(", "));
+            let rows: Vec<String> = p.exports.iter().map(|(rel, n)| format!("{rel} {n}")).collect();
+            println!("TYPES {what}: {} {cpu:.2} s CPU, peak RSS {rss:.0} MB, strata {:?}; exports: {}", p.name, p.report.cross_strata, rows.join(", "));
         }
         let all: f64 = r.phases.iter().map(|x| x.1 + x.2).sum();
         println!("TYPES {what}: the reader's run, phases included: {all:.2} s");

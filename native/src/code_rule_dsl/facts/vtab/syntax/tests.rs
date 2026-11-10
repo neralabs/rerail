@@ -33,7 +33,7 @@ pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
         .enumerate()
         .map(|(d, (path, source))| {
             let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None, module: None }
+            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None, module: None, tape: None }
         })
         .collect()
 }
@@ -247,7 +247,7 @@ fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
     let Built::Facts(facts) = core::build(&file).unwrap() else { panic!("{path} did not parse") };
     let facts = Arc::new(facts);
-    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, guest: None, module: None }
+    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, guest: None, module: None, tape: None }
 }
 
 /// `core.rr`'s relations of `docs`, each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself.
@@ -421,7 +421,7 @@ fn within_holds_exactly_the_contained_pairs() {
     for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
         let path = format!("broken{at}.py");
         let facts = facts(&path, source);
-        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None, module: None });
+        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None, module: None, tape: None });
     }
     let (batch, _, _) = Batch::build(&store, docs, &Projection::default(), false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
@@ -507,8 +507,14 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
         let ((dn, ln, _), (da, la, za)) = (at(n), at(a));
         dn == da && la < ln && ln <= la + za
     };
-    for axis in [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has] {
-        let source = within::Within::axis(Arc::clone(&batch), axis, &set);
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0105) on the CPU and on Metal.
+    let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
+    for (axis, (binding, solve)) in [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has].into_iter().flat_map(|a| ways.map(|w| (a, w))) {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding);
+        if solve {
+            source.expect_lookups(0, 1e12);
+        }
         let mut expected = BTreeSet::new();
         for n in 0..nodes {
             for a in 0..nodes {
