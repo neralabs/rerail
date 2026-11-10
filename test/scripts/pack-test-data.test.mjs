@@ -683,7 +683,7 @@ describe("an archive that is not the canonical archive of its tool directory's p
     writeFileSync(cached, "not zstd");
     const signedOut = () => ({ status: 255, stderr: "\nUnable to locate credentials\n" });
     const message = failure(() => pull({ root, aws: signedOut, log: () => {} }));
-    expect(message).toContain(relative(root, cached));
+    expect(message).toContain(shown(root, cached));
     expect(message).toContain("gh cache delete");
     expect(existsSync(cached)).toBe(false);
   });
@@ -696,7 +696,7 @@ describe("an archive that is not the canonical archive of its tool directory's p
     const printed = [];
     pull({ root, aws, dryRun: true, log: (line) => printed.push(line) });
     expect(readFileSync(cached, "utf8")).toBe("not zstd");
-    expect(printed.join("\n")).toContain(`would delete ${relative(root, cached)}`);
+    expect(printed.join("\n")).toContain(`would delete ${shown(root, cached)}`);
   });
 });
 
