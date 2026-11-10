@@ -11,6 +11,22 @@ sys.path.insert(0, str(ROOT/'scripts/dsl/data_layer_rr'))
 
 
 class PermissionPortTests(unittest.TestCase):
+    def test_scan_batch_submits_all_candidates_once(self):
+        import permission_port
+        calls = []
+        class Backend:
+            def native(self, check, entry, files, options=None):
+                calls.append((entry, files, options)); return []
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ['input.py', 'tests/a.py', 'a.txt']:
+                p = root/name; p.parent.mkdir(parents=True, exist_ok=True); p.write_text('raise PermissionError\n')
+            self.assertEqual(permission_port.scan_batch(Backend(), SimpleNamespace(), root,
+                             [Path(p) for p in ['input.py', 'input.py', 'tests/a.py', 'a.txt']]), [])
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(len(calls[0][1]), 4)
+            self.assertEqual(calls[0][2]['candidatePaths'], [str(root/p) for p in ['input.py', 'input.py', 'tests/a.py', 'a.txt']])
+
     def test_fact_helpers_require_native_conversion(self):
         import permission_port
         calls = []

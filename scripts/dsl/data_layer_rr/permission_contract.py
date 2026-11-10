@@ -43,6 +43,14 @@ def cases():
     for root in ['root', '.', '/', '//']:
         for path in ['root/a.py', 'root/../outside.py', '/absolute.py', '//network/a.py', '.', 'root']:
             rows.append(dict(kind='to-fact', id=f'to-fact-{len(rows)}', root=root, path=path))
+    for paths in [[], ['input.py'], ['input.py', 'input.py'], ['tests/a.py'], ['test/a.py'],
+                  ['test_a.py'], ['a.txt'], ['docs/a.py'], ['tmp/a.py']]:
+        for relative in [False, True]:
+            rows.append(dict(kind='batch', id=f'batch-{len(rows)}', paths=paths, relative=relative))
+    for initial in ['pass\n', 'raise PermissionError\n']:
+        for disk in ['pass\n', 'raise PermissionError\n']:
+            rows.append(dict(kind='relative-file', id=f'relative-file-{len(rows)}', initial=initial, disk=disk))
+    rows.append(dict(kind='relative-content', id='relative-content', disk='raise PermissionError\n'))
     return rows
 
 
@@ -90,8 +98,23 @@ def exercise(module, case, root):
             def invoke():
                 value = module._violation_from_fact(case['raw'], root)
                 return None if value is None else dict(path=clean(value.file_path), line=value.line_number, message=value.message)
-        else:
+        elif case['kind'] == 'to-fact':
             invoke = lambda: module._violation_to_fact(module.Violation(Path(case['path']), 2, MESSAGE), Path(case['root']))
+        else:
+            stack.enter_context(patch.object(module, 'get_project_root', lambda: root))
+            if case['kind'] == 'batch':
+                for name in case['paths']:
+                    p = root/name; p.parent.mkdir(parents=True, exist_ok=True); p.write_text('raise PermissionError\n')
+                inputs = tuple(Path(p) if case['relative'] else root/p for p in case['paths'])
+                action = lambda: module._violations_for_files(root, inputs)
+            else:
+                (root/'input.py').write_text(case['disk'])
+                if case['kind'] == 'relative-file':
+                    caller = root/'caller'; caller.mkdir(); (caller/'input.py').write_text(case['initial'])
+                    stack.enter_context(contextlib.chdir(caller))
+                    action = lambda: module.check_file(Path('input.py'))
+                else: action = lambda: module.check_file_content(Path('input.py'), 'PermissionError')
+            invoke = lambda: [dict(path=clean(v.file_path), line=v.line_number, message=v.message) for v in action()]
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try: value = dict(value=invoke())
             except BaseException as error:
@@ -106,7 +129,11 @@ def main():
     for name in ['source', 'engine', 'baseline', 'out']:
         parser.add_argument('--'+name, type=Path, required=name in ['source', 'out'])
     parser.add_argument('--mode', choices=['snapshot', 'workspace'], default='snapshot')
+    parser.add_argument('--part', type=int, default=0)
+    parser.add_argument('--parts', type=int, default=1)
+    parser.add_argument('--kind', action='append', help='Run only the specified contract kinds')
     args = parser.parse_args(); source = args.source.absolute()
+    if not 0 <= args.part < args.parts: parser.error('Expected 0 <= part < parts')
     compare(git(source, 'rev-parse', 'HEAD'), PIN)
     path = source/'scripts/lint_permission_error.py'
     compare(path.read_bytes(), subprocess.check_output(['git', '-C', str(source), 'show', PIN+':scripts/lint_permission_error.py']))
@@ -139,8 +166,10 @@ def main():
     report = dict(format='rerail.permission-contract/v1', sourcePin=PIN, mode=args.command,
                   executionMode=args.mode, passed=False, fullMigrationAcceptance=False,
                   sourceSha256=sha(path.read_bytes()), harnessFiles=hashes, cases=[])
+    report.update(part=args.part, parts=args.parts, kinds=args.kind, totalCases=len(cases()))
     if args.command == 'native': report.update(engineSha256=sha(args.engine.read_bytes()), oracle=False)
     for i, case in enumerate(cases()):
+        if i % args.parts != args.part or (args.kind and case['kind'] not in args.kind): continue
         if args.command == 'native': sys.setprofile(guard)
         try:
             with tempfile.TemporaryDirectory(prefix='permission-contract-') as temporary:
