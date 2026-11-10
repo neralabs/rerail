@@ -10,6 +10,12 @@
 pub mod fixed_point_accum;
 #[path = "mldb/arch/bit_range_ops.rs"]
 pub mod bit_range_ops;
+#[path = "mldb/block/memory_region.rs"]
+pub mod memory_region;
+#[path = "mldb/utils/buckets.rs"]
+pub mod buckets;
+#[path = "mldb/core/bucket.rs"]
+pub mod bucket;
 
 use metal::{ComputePipelineState, Library};
 use std::sync::OnceLock;

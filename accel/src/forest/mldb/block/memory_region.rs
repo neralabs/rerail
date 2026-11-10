@@ -1,710 +1,526 @@
-/** memory_region.h                                                -*- C++ -*-
-    Jeremy Barnes, 27 March 2016
-    This file is part of MLDB. Copyright 2016 mldb.ai inc. All rights reserved.
+//! memory_region.h, in Rust.
+//!
+//! Jeremy Barnes, 27 March 2016. This file is part of MLDB. Copyright 2016 mldb.ai inc. Apache-2.0 (see
+//! `../LICENSE`).
+//!
+//! Basic primitives around memory regions. Once frozen, these are the representation that covers CPU memory, device
+//! memory and remote memory and implements the primitives that allow data to be made available and brought to the
+//! compute resources required.
+//!
+//! In Rust a region is an aligned allocation shared by `Arc`, with an offset and a length. A frozen region is
+//! immutable and can be wrapped by a Metal buffer without a copy when page-aligned (the gpu lane's rule). The parts
+//! of the header that need MLDB facilities not brought over are not carried: `mapFile` (MLDB's `Url` and VFS),
+//! `getStream` and the structured serializer and reconstituter (MLDB's `filter_ostream`, `Path` and
+//! `ValueDescription`), and the `ValueDescription` of handles; the forest's training and prediction call none of
+//! them. `memory_region.cc` (not copied) held the out-of-line bodies written here.
 
-    Basic primitives around memory regions.  Once frozen, these are the
-    representation that covers CPU memory, device memory and remote
-    memory and implements the primitives that allow data to be made
-    available and brought to the compute resources required.
-*/
+use std::alloc::{Layout, alloc, alloc_zeroed, dealloc};
+use std::any::TypeId;
+use std::sync::{Arc, Weak};
 
-#pragma once
+/// A plain value a region can be viewed as: any bit pattern is a value, no padding read as data, no pointers.
+///
+/// # Safety
+/// Implementors must be `Copy`, without padding that is read, and valid for every bit pattern.
+pub unsafe trait Pod: Copy + 'static {}
+macro_rules! pod {
+    ($($t:ty),*) => {$( unsafe impl Pod for $t {} )*};
+}
+pod!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64);
 
-#include <memory>
-#include <functional>
-#include <span>
-#include "mldb/types/string.h"
-#include "mldb/base/exc_assert.h"
-#include "mldb/types/value_description_fwd.h"
-#include "mldb/arch/demangle.h"
-#include "mldb/types/path.h"
-#include "mldb/types/url.h"
-#include "memory_region_fwd.h"
+/// Handle to a memory pool, which is a set of memory attached by some kind of a bus to one or more devices.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AddressSpace;
 
-namespace MLDB {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum MemoryRegionState {
+    /// Newly created, does not yet have a size etc.
+    New,
+    /// Memory is allocated and can be written from one place.
+    Allocated,
+    /// Memory is frozen and is now immutable, cacheable.
+    Frozen,
+    /// Memory has been deleted but is still referenced.
+    Zombie,
+    /// Memory has been disposed of.
+    Deleted,
+}
 
-struct filter_ostream;
-struct filter_istream;
-struct MappedSerializer;
-struct StructuredSerializer;
+/// A handle to an abstract memory region. It can be used to refer to the memory region and to perform operations
+/// on it. In general, operations need to be queued on a device's work queue in order to run; they cannot be run
+/// imperatively. The device's runtime keeps its own state beside it (`MemoryRegionHandleInfo` is upcast by context
+/// in C++; here the runtime holds the info inside its own type).
+#[derive(Debug, Default)]
+pub struct MemoryRegionHandleInfo {
+    /// Non-CV qualified type in the array.
+    pub type_: Option<(TypeId, &'static str)>,
+    /// Is the referred to memory constant or mutable?
+    pub is_const: bool,
+    pub length_in_bytes: isize,
+    /// Parent region (if we're part of a subrange).
+    pub parent: Option<Weak<MemoryRegionHandleInfo>>,
+    /// Offset in our parent range.
+    pub owner_offset: isize,
+    /// Mnemonic name.
+    pub name: String,
+    /// Version we refer to (-1 means latest/unknown).
+    pub version: i32,
+}
 
+#[derive(Clone, Debug, Default)]
+pub struct MemoryRegionHandle {
+    /// Opaque; upcast by context.
+    pub handle: Option<Arc<MemoryRegionHandleInfo>>,
+}
 
-/*****************************************************************************/
-/* DIRECTORY                                                                 */
-/*****************************************************************************/
-
-/** This is where we define a block naming scheme.
-
-    To access a block, there is:
-    - A path schema
-    - A set of parameters to that path (for example, numbers for arrays, etc);
-      these can be ranges
-    - A version for the block
-
-    Blocks are named as follows:
-    - <scheme>://path/to/object (simple block)
-    - <scheme>://path/to/object?ver=<version> (versioned block)
-    - <scheme>://path/to/object?range=123-456 (range of bytes)
-    - <scheme1>+<scheme2>://path/in/object2#path/in/object1 (nested path)
-    - op://function(block1,block2) (output of function)
-
-    Each time a block gets created, it gets a version.  That can either be
-    a hash (deterministic) of the contents, or a guaranteed globally unique
-    identifier.
-
-*/
-
-
-/*****************************************************************************/
-/* ADDRESS SPACE                                                             */
-/*****************************************************************************/
-
-/** Handle to a memory pool, which is a set of memory attached by some kind
-    of a bus to one or more devices.
-*/
-
-struct AddressSpace {
-};
-
-
-/*****************************************************************************/
-/* MEMORY REGION HANDLE                                                      */
-/*****************************************************************************/
-
-enum MemoryRegionState : uint8_t {
-    NEW,         ///< Newly created, does not yet have a size etc
-    ALLOCATED,   ///< Memory is allocated and can be written from one place
-    FROZEN,      ///< Memory is frozen and is now immutable, cacheable
-    ZOMBIE,      ///< Memory has been deleted but is still referenced
-    DELETED      ///< Memory has been disposed of
-};
-
-
-/** This is a handle to an abstract memory region.  It can be used to refer
-    to the memory region and to perform operations on it.
-
-    Note that, in general, operations need to be queued on a device's work
-    queue in order to run; they cannot be run imperatively.
-*/
-
-struct MemoryRegionHandleInfo {
-    virtual ~MemoryRegionHandleInfo() = default;  // so we can safely upcast
-    const std::type_info * type = nullptr;  //< non-CV qualified type in the array
-    bool isConst = true;              //< Is the referred to memory constant or mutable?
-    ssize_t lengthInBytes = -1;
-    std::weak_ptr<const MemoryRegionHandleInfo> parent;  // Parent region (if we're part of a subrange)
-    ssize_t ownerOffset = -1;                   // Offset in our parent range
-    std::string name;                           // Mnenomic name
-    int version = -1;                           // Version we refer to (-1 means latest/unknown)
-};
-
-struct MemoryRegionHandle {
-    MemoryRegionHandle() = default;
-    MemoryRegionHandle(std::shared_ptr<MemoryRegionHandleInfo> handle)
-        : handle(std::move(handle))
-    {
-        ExcAssert(this->handle);
-        ExcAssertGreaterEqual(this->handle->lengthInBytes, 0);
+impl MemoryRegionHandle {
+    pub fn new(handle: Arc<MemoryRegionHandleInfo>) -> Self {
+        assert!(handle.length_in_bytes >= 0, "memory region handle: negative length");
+        MemoryRegionHandle { handle: Some(handle) }
     }
 
-    template<typename T>
-    void checkTypeAccessibleAs() const
-    {
-        if (!handle || !handle->type)
-            return;
-        if (*handle->type != typeid(std::remove_const_t<T>)) {
-            throw MLDB::Exception("Attempt to cast to wrong type: from " + demangle(handle->type->name())
-                                  + " to " + type_name<T>());
+    pub fn check_type_accessible_as<T: 'static>(&self) -> Result<(), String> {
+        let Some(h) = &self.handle else { return Ok(()) };
+        let Some((id, name)) = h.type_ else { return Ok(()) };
+        if id != TypeId::of::<T>() {
+            return Err(format!("Attempt to cast to wrong type: from {name} to {}", std::any::type_name::<T>()));
+        }
+        Ok(())
+    }
+
+    pub fn length_in_bytes(&self) -> usize {
+        let h = self.handle.as_ref().expect("memory region handle: empty");
+        assert!(h.length_in_bytes >= 0);
+        h.length_in_bytes as usize
+    }
+}
+
+/// A handle to a region known to hold `T`s.
+#[derive(Debug)]
+pub struct MemoryArrayHandleT<T> {
+    pub region: MemoryRegionHandle,
+    _t: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T> Clone for MemoryArrayHandleT<T> {
+    fn clone(&self) -> Self {
+        MemoryArrayHandleT { region: self.region.clone(), _t: Default::default() }
+    }
+}
+
+impl<T> Default for MemoryArrayHandleT<T> {
+    fn default() -> Self {
+        MemoryArrayHandleT { region: Default::default(), _t: Default::default() }
+    }
+}
+
+impl<T: 'static> MemoryArrayHandleT<T> {
+    pub fn new(handle: Arc<MemoryRegionHandleInfo>) -> Self {
+        let region = MemoryRegionHandle::new(handle);
+        region.check_type_accessible_as::<T>().unwrap_or_else(|e| panic!("{e}"));
+        MemoryArrayHandleT { region, _t: Default::default() }
+    }
+
+    /// From a handle of another type (the C++ converting constructors and assignments).
+    pub fn from_other<T2>(other: &MemoryArrayHandleT<T2>) -> Self {
+        other.region.check_type_accessible_as::<T>().unwrap_or_else(|e| panic!("{e}"));
+        MemoryArrayHandleT { region: other.region.clone(), _t: Default::default() }
+    }
+
+    pub fn length(&self) -> usize {
+        self.region.length_in_bytes() / std::mem::size_of::<T>()
+    }
+}
+
+/// The memory a region is part of: one aligned allocation.
+#[derive(Debug)]
+pub struct Allocation {
+    ptr: *mut u8,
+    layout: Layout,
+}
+
+// The allocation is plain memory; who may write it is the regions' business.
+unsafe impl Send for Allocation {}
+unsafe impl Sync for Allocation {}
+
+impl Allocation {
+    fn new(bytes: usize, alignment: usize, zeroed: bool) -> Arc<Allocation> {
+        let layout = Layout::from_size_align(bytes.max(1), alignment.max(1)).expect("memory region: bad layout");
+        let ptr = unsafe { if zeroed { alloc_zeroed(layout) } else { alloc(layout) } };
+        assert!(!ptr.is_null(), "not enough memory to allocate {bytes} bytes");
+        Arc::new(Allocation { ptr, layout })
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+}
+
+impl Drop for Allocation {
+    fn drop(&mut self) {
+        unsafe { dealloc(self.ptr, self.layout) }
+    }
+}
+
+/// An immutable region of memory.
+#[derive(Clone, Debug, Default)]
+pub struct FrozenMemoryRegion {
+    handle: Option<Arc<Allocation>>,
+    offset: usize,
+    length: usize,
+}
+
+impl FrozenMemoryRegion {
+    pub fn new(handle: Arc<Allocation>, offset: usize, length: usize) -> Self {
+        assert!(offset + length <= handle.layout.size() || length == 0);
+        FrozenMemoryRegion { handle: Some(handle), offset, length }
+    }
+
+    pub fn data(&self) -> &[u8] {
+        match &self.handle {
+            Some(h) => unsafe { std::slice::from_raw_parts(h.ptr.add(self.offset), self.length) },
+            None => &[],
         }
     }
 
-    size_t lengthInBytes() const
-    {
-        ExcAssertGreaterEqual(this->handle->lengthInBytes, 0);
-        return this->handle->lengthInBytes;        
+    pub fn length(&self) -> usize {
+        self.length
     }
 
-    std::shared_ptr<MemoryRegionHandleInfo> handle;  // opaque; upcast by context
-};
-
-template<> struct ValueDescriptionT<MemoryRegionHandle>;
-DECLARE_VALUE_DESCRIPTION(MemoryRegionHandle);
-
-template<typename T>
-struct MemoryArrayHandleT: public MemoryRegionHandle {
-    MemoryArrayHandleT() = default;
-    MemoryArrayHandleT(std::shared_ptr<MemoryRegionHandleInfo> handle)
-        : MemoryRegionHandle(std::move(handle))
-    {
+    pub fn memusage(&self) -> usize {
+        self.length()
     }
 
-    // Allow construction of const T from non-const T
-    template<typename T2, typename Enable = std::enable_if_t<std::is_same_v<T, std::remove_const_t<T2>>>>
-    MemoryArrayHandleT(const MemoryArrayHandleT<T2> & other)
-        : MemoryRegionHandle(other.handle)
-    {
+    /// Another frozen memory region that points to a subset range of the current one.
+    pub fn range(&self, start: usize, end: usize) -> FrozenMemoryRegion {
+        assert!(start <= end && end <= self.length, "frozen memory region: range {start}..{end} of {}", self.length);
+        FrozenMemoryRegion { handle: self.handle.clone(), offset: self.offset + start, length: end - start }
     }
 
-    // Allow construction of const T from non-const T
-    template<typename T2, typename Enable = std::enable_if_t<std::is_same_v<T, std::remove_const_t<T2>>>>
-    MemoryArrayHandleT(MemoryArrayHandleT<T2> && other)
-        : MemoryRegionHandle(std::move(other.handle))
-    {
-    }
-    
-    // Allow assignment of const T from non-const T
-    template<typename T2, typename Enable = std::enable_if_t<std::is_same_v<std::remove_const_t<T>, T2>>>
-    MemoryArrayHandleT & operator = (const MemoryArrayHandleT<T2> & other)
-    {
-        this->handle = other.handle;
-        return *this;
+    /// The given number of bytes at the start.
+    pub fn range_at_start(&self, length: usize) -> FrozenMemoryRegion {
+        self.range(0, length)
     }
 
-    // Allow assignment of const T from non-const T
-    template<typename T2, typename Enable = std::enable_if_t<std::is_same_v<std::remove_const_t<T>, T2>>>
-    MemoryArrayHandleT & operator = (MemoryArrayHandleT<T2> && other)
-    {
-        this->handle = std::move(other.handle);
-        return *this;
+    /// The given number of bytes at the end.
+    pub fn range_at_end(&self, length: usize) -> FrozenMemoryRegion {
+        self.range(self.length - length, self.length)
     }
 
-    size_t length() const
-    {
-        return this->lengthInBytes() / sizeof(T);
-    }
-};
-
-template<typename T>
-ValueDescriptionT<MemoryRegionHandle> *
-getDefaultDescription(MemoryArrayHandleT<T> * p);
-
-template<typename T>
-std::shared_ptr<const ValueDescriptionT<MemoryRegionHandle>>
-getDefaultDescriptionShared(MemoryArrayHandleT<T> * p);
-
-/*****************************************************************************/
-/* BLOCK CONTEXT                                                             */
-/*****************************************************************************/
-
-struct BlockContext {
-    /** Allocate a memory region for the given number of bytes. */
-    MemoryRegionHandle allocate(size_t bytes);
-
-    /** Allocate and initialize the given region from the host.  It remains
-        writeable.
-    */
-    MemoryRegionHandle fromHost(std::shared_ptr<char> data,
-                                size_t bytes);
-
-    /** Allocate and freeze the given region from the host.  It is no longer
-        writeable.
-    */
-    MemoryRegionHandle fromHost(std::shared_ptr<const char> data,
-                                size_t bytes);
-};
-
-
-/*****************************************************************************/
-/* FROZEN MEMORY REGION                                                      */
-/*****************************************************************************/
-
-struct FrozenMemoryRegion {
-    FrozenMemoryRegion() = default;
-
-#if 0
-    FrozenMemoryRegion(FrozenMemoryRegion&&) = default;
-    FrozenMemoryRegion & operator = (FrozenMemoryRegion&&) = default;
-#endif
-
-    FrozenMemoryRegion(std::shared_ptr<const void> handle,
-                       const char * data,
-                       size_t length) noexcept;
-
-    const char * data() const noexcept
-    {
-        return data_;
+    /// Whether the region is initialized (not default constructed).
+    pub fn is_some(&self) -> bool {
+        self.handle.is_some()
     }
 
-    size_t length() const noexcept
-    {
-        return length_;
-    }
-
-    size_t memusage() const noexcept
-    {
-        return length();
-    }
-
-    /** Return another frozen memory region that points to a subset
-        range of the current one.
-    */
-    FrozenMemoryRegion range(size_t start, size_t end) const;
-
-    /** Return the given number of bytes at the start. */
-    FrozenMemoryRegion rangeAtStart(size_t length) const;
-
-    /** Return the given number of bytes at the end. */
-    FrozenMemoryRegion rangeAtEnd(size_t length) const;
-    
-    /** This tests whether the region is initialized or not.  A
-        non-initialized region has either been constructed from the
-        default constructor or moved from.
-    */
-    explicit operator bool () const noexcept { return !!handle_; }
-    
-    /// Return a combined, contiguous memory region.  In the general case
-    /// this may require reallocation of a new region and copying; however
-    /// the implementation will attempt to minimise the amount of copying
-    /// required.
-    static FrozenMemoryRegion
-    combined(const FrozenMemoryRegion & region1,
-             const FrozenMemoryRegion & region2);
-
-    static FrozenMemoryRegion
-    combined(const std::vector<FrozenMemoryRegion> & regions);
-
-#if 0
-    /** Re-serialize the block to the other serializer. */
-    void reserialize(MappedSerializer & serializer) const;
-
-    /** Re-serialize the block to the structured serializer, in the root
-        of the current path. */
-    void reserialize(StructuredSerializer & serializer) const;
-#endif
-
-    std::shared_ptr<const void> handle() const { return handle_; }
-
-private:
-    const char * data_ = nullptr;
-    size_t length_ = 0;
-    std::shared_ptr<const void> handle_;
-};
-
-
-/*****************************************************************************/
-/* FROZEN MEMORY REGION TYPED                                                */
-/*****************************************************************************/
-
-template<typename T>
-struct FrozenMemoryRegionT {
-    FrozenMemoryRegionT() = default;
-    
-    FrozenMemoryRegionT(FrozenMemoryRegion raw)
-        : data_((const T *)raw.data()),
-          length_(raw.length() / sizeof(T)),
-          raw_(std::move(raw))
-    {
-    }
-
-    const T * data() const
-    {
-        return data_;
-    }
-
-    size_t length() const
-    {
-        return length_;
-    }
-    
-    size_t memusage() const
-    {
-        return length() * sizeof(T);
-    }
-
-    const FrozenMemoryRegion & raw() const
-    {
-        return raw_;
-    }
-
-    operator const FrozenMemoryRegion & () const
-    {
-        return raw();
-    }
-
-    std::span<const T> getConstSpan(size_t start = 0, ssize_t length = -1) const
-    {
-        if (start > this->length()) {
-            throw MLDB::Exception("getConstSpan: start is out of range");
+    /// A combined, contiguous memory region. Regions that already lie next to each other in one allocation are
+    /// returned as one range; otherwise a new region is allocated and the bytes copied.
+    pub fn combined(regions: &[FrozenMemoryRegion]) -> FrozenMemoryRegion {
+        let regions: Vec<&FrozenMemoryRegion> = regions.iter().filter(|r| r.length > 0).collect();
+        match regions.as_slice() {
+            [] => FrozenMemoryRegion::default(),
+            [one] => (*one).clone(),
+            [first, ..] => {
+                let adjacent = regions.windows(2).all(|w| match (&w[0].handle, &w[1].handle) {
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b) && w[0].offset + w[0].length == w[1].offset,
+                    _ => false,
+                });
+                if adjacent {
+                    let total = regions.iter().map(|r| r.length).sum();
+                    return FrozenMemoryRegion { handle: first.handle.clone(), offset: first.offset, length: total };
+                }
+                let total: usize = regions.iter().map(|r| r.length).sum();
+                let mut serializer = MemorySerializer;
+                let mut out = serializer.allocate_writable(total as u64, 4096);
+                let mut at = 0;
+                for r in &regions {
+                    out.data_mut()[at..at + r.length].copy_from_slice(r.data());
+                    at += r.length;
+                }
+                serializer.freeze(&mut out)
+            }
         }
-        if (length == -1)
-            length = this->length() - start;
-        if (length < 0 || start + length > this->length()) {
-            throw MLDB::Exception("getConstSpan: length is out of range");
+    }
+
+    pub fn combined2(region1: &FrozenMemoryRegion, region2: &FrozenMemoryRegion) -> FrozenMemoryRegion {
+        Self::combined(&[region1.clone(), region2.clone()])
+    }
+
+    pub fn handle(&self) -> Option<&Arc<Allocation>> {
+        self.handle.as_ref()
+    }
+}
+
+/// A frozen region viewed as `T`s.
+#[derive(Clone, Debug)]
+pub struct FrozenMemoryRegionT<T: Pod> {
+    raw: FrozenMemoryRegion,
+    _t: std::marker::PhantomData<T>,
+}
+
+impl<T: Pod> Default for FrozenMemoryRegionT<T> {
+    fn default() -> Self {
+        FrozenMemoryRegionT { raw: Default::default(), _t: Default::default() }
+    }
+}
+
+impl<T: Pod> FrozenMemoryRegionT<T> {
+    pub fn new(raw: FrozenMemoryRegion) -> Self {
+        assert_eq!(raw.data().as_ptr() as usize % std::mem::align_of::<T>(), 0, "frozen region not aligned for its type");
+        FrozenMemoryRegionT { raw, _t: Default::default() }
+    }
+
+    pub fn data(&self) -> &[T] {
+        let bytes = self.raw.data();
+        unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / std::mem::size_of::<T>()) }
+    }
+
+    pub fn length(&self) -> usize {
+        self.raw.length() / std::mem::size_of::<T>()
+    }
+
+    pub fn memusage(&self) -> usize {
+        self.length() * std::mem::size_of::<T>()
+    }
+
+    pub fn raw(&self) -> &FrozenMemoryRegion {
+        &self.raw
+    }
+
+    pub fn get_const_span(&self, start: usize, length: Option<usize>) -> Result<&[T], String> {
+        if start > self.length() {
+            return Err("getConstSpan: start is out of range".into());
         }
-        return { data() + start, (size_t)length };
-    }
-
-    operator std::span<const T> () const
-    {
-        return getConstSpan();
-    }
-#if 0
-    /** Re-serialize the block to the other serializer. */
-    void reserialize(MappedSerializer & serializer) const
-    {
-        raw.reserialize(serializer);
-    }
-
-    /** Re-serialize the block to the structured serializer, in the root
-        of the current path. */
-    void reserialize(StructuredSerializer & serializer) const
-    {
-        raw.reserialize(serializer);
-    }
-#endif
-
-    const T & operator [] (size_t index) const
-    {
-        ExcAssertLess(index, length_);
-        return data()[index];
-    }
-
-private:
-    const T * data_ = nullptr;
-    size_t length_ = 0;
-    FrozenMemoryRegion raw_;
-};
-
-
-FrozenMemoryRegion
-mapFile(const Url & filename, size_t startOffset = 0,
-        ssize_t length = -1);
-
-
-/*****************************************************************************/
-/* MUTABLE MEMORY REGION                                                     */
-/*****************************************************************************/
-
-struct MutableMemoryRegion {
-    MutableMemoryRegion()
-    {
-    }
-
-    MutableMemoryRegion(std::shared_ptr<const void> handle,
-                        char * data,
-                        size_t length);
-
-    char * data() const
-    {
-        return data_;
-    }
-
-    size_t length() const
-    {
-        return length_;
-    }
-
-    MutableMemoryRegion range(size_t startByte, size_t endByte) const;
-    
-    std::shared_ptr<const void> handle() const;
-
-    // Reset the region (stealing the handle) to be null.  This is mostly
-    // designed to be used by the MappedSerializer class and its descendents.
-    std::shared_ptr<const void> reset();
-
-private:
-    struct Itl;
-    std::shared_ptr<Itl> itl;
-    char * data_ = nullptr;
-    size_t length_ = 0;
-};
-
-
-/*****************************************************************************/
-/* MUTABLE MEMORY REGION TYPED                                               */
-/*****************************************************************************/
-
-template<typename T>
-struct MutableMemoryRegionT {
-    MutableMemoryRegionT()
-    {
-    }
-
-    MutableMemoryRegionT(MutableMemoryRegion raw)
-        : raw_(std::move(raw)),
-          data_(reinterpret_cast<T *>(this->raw_.data())),
-          length_(this->raw_.length() / sizeof(T))
-    {
-    }
-
-    T * data() const
-    {
-        return data_;
-    }
-
-    size_t length() const
-    {
-        return length_;
-    }
-
-    MutableMemoryRegionT<T> rangeBytes(size_t start, size_t end) const
-    {
-        MutableMemoryRegionT result(raw_.range(start, end));
-        return result;
-    }
-    
-    const MutableMemoryRegion & raw() const { return raw_; }
-
-    MutableMemoryRegion & raw() { return raw_; }
-
-    std::span<T> getSpan(size_t start = 0, ssize_t length = -1) const
-    {
-        if (start > this->length()) {
-            throw MLDB::Exception("getSpan: start is out of range");
+        let length = length.unwrap_or(self.length() - start);
+        if start + length > self.length() {
+            return Err("getConstSpan: length is out of range".into());
         }
-        if (length == -1)
-            length = this->length() - start;
-        if (length < 0 || start + length > this->length()) {
-            throw MLDB::Exception("getSpan: length is out of range");
+        Ok(&self.data()[start..start + length])
+    }
+}
+
+impl<T: Pod> std::ops::Index<usize> for FrozenMemoryRegionT<T> {
+    type Output = T;
+    fn index(&self, index: usize) -> &T {
+        &self.data()[index]
+    }
+}
+
+/// A writable region of memory. Ranges of one region share its allocation; writers of two ranges must keep to
+/// their own bytes, as in C++.
+#[derive(Debug, Default)]
+pub struct MutableMemoryRegion {
+    handle: Option<Arc<Allocation>>,
+    offset: usize,
+    length: usize,
+}
+
+impl MutableMemoryRegion {
+    pub fn new(handle: Arc<Allocation>, offset: usize, length: usize) -> Self {
+        assert!(offset + length <= handle.layout.size() || length == 0);
+        MutableMemoryRegion { handle: Some(handle), offset, length }
+    }
+
+    pub fn data(&self) -> &[u8] {
+        match &self.handle {
+            Some(h) => unsafe { std::slice::from_raw_parts(h.ptr.add(self.offset), self.length) },
+            None => &[],
         }
-        return { data() + start, (size_t)length };
     }
 
-    std::span<const T> getConstSpan(size_t start = 0, ssize_t length = -1) const
-    {
-        if (start > this->length()) {
-            throw MLDB::Exception("getConstSpan: start is out of range");
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        match &self.handle {
+            Some(h) => unsafe { std::slice::from_raw_parts_mut(h.ptr.add(self.offset), self.length) },
+            None => &mut [],
         }
-        if (length == -1)
-            length = this->length() - start;
-        if (length < 0 || start + length > this->length()) {
-            throw MLDB::Exception("getConstSpan: length is out of range");
+    }
+
+    pub fn length(&self) -> usize {
+        self.length
+    }
+
+    pub fn range(&self, start_byte: usize, end_byte: usize) -> MutableMemoryRegion {
+        assert!(start_byte <= end_byte && end_byte <= self.length, "mutable memory region: range out of bounds");
+        MutableMemoryRegion { handle: self.handle.clone(), offset: self.offset + start_byte, length: end_byte - start_byte }
+    }
+
+    pub fn handle(&self) -> Option<&Arc<Allocation>> {
+        self.handle.as_ref()
+    }
+
+    /// Reset the region (stealing the handle) to be null. This is mostly designed to be used by the
+    /// `MappedSerializer` and its descendents.
+    pub fn reset(&mut self) -> (Option<Arc<Allocation>>, usize, usize) {
+        let r = (self.handle.take(), self.offset, self.length);
+        self.offset = 0;
+        self.length = 0;
+        r
+    }
+}
+
+/// A writable region viewed as `T`s.
+#[derive(Debug)]
+pub struct MutableMemoryRegionT<T: Pod> {
+    raw: MutableMemoryRegion,
+    _t: std::marker::PhantomData<T>,
+}
+
+impl<T: Pod> Default for MutableMemoryRegionT<T> {
+    fn default() -> Self {
+        MutableMemoryRegionT { raw: Default::default(), _t: Default::default() }
+    }
+}
+
+impl<T: Pod> MutableMemoryRegionT<T> {
+    pub fn new(raw: MutableMemoryRegion) -> Self {
+        assert_eq!(raw.data().as_ptr() as usize % std::mem::align_of::<T>(), 0, "mutable region not aligned for its type");
+        MutableMemoryRegionT { raw, _t: Default::default() }
+    }
+
+    pub fn data(&self) -> &[T] {
+        let bytes = self.raw.data();
+        unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / std::mem::size_of::<T>()) }
+    }
+
+    pub fn data_mut(&mut self) -> &mut [T] {
+        let bytes = self.raw.data_mut();
+        unsafe { std::slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut T, bytes.len() / std::mem::size_of::<T>()) }
+    }
+
+    pub fn length(&self) -> usize {
+        self.raw.length() / std::mem::size_of::<T>()
+    }
+
+    pub fn range_bytes(&self, start: usize, end: usize) -> MutableMemoryRegionT<T> {
+        MutableMemoryRegionT::new(self.raw.range(start, end))
+    }
+
+    pub fn raw(&self) -> &MutableMemoryRegion {
+        &self.raw
+    }
+
+    pub fn raw_mut(&mut self) -> &mut MutableMemoryRegion {
+        &mut self.raw
+    }
+
+    pub fn get_span(&mut self, start: usize, length: Option<usize>) -> Result<&mut [T], String> {
+        let n = self.length();
+        if start > n {
+            return Err("getSpan: start is out of range".into());
         }
-        return { data() + start, (size_t)length };
+        let length = length.unwrap_or(n - start);
+        if start + length > n {
+            return Err("getSpan: length is out of range".into());
+        }
+        Ok(&mut self.data_mut()[start..start + length])
     }
 
-private:
-    MutableMemoryRegion raw_;
-    T * data_ = nullptr;
-    size_t length_ = 0;
-};
+    pub fn get_const_span(&self, start: usize, length: Option<usize>) -> Result<&[T], String> {
+        let n = self.length();
+        if start > n {
+            return Err("getConstSpan: start is out of range".into());
+        }
+        let length = length.unwrap_or(n - start);
+        if start + length > n {
+            return Err("getConstSpan: length is out of range".into());
+        }
+        Ok(&self.data()[start..start + length])
+    }
+}
 
+/// A serializer that hands out memory to write, then freezes it.
+pub trait MappedSerializer {
+    /// Commit all changes; this normally means that the current block is finished writing. It is guaranteed that no
+    /// more changes will be made to any allocated blocks after this method is called.
+    fn commit(&mut self);
 
-/*****************************************************************************/
-/* MAPPED SERIALIZER                                                         */
-/*****************************************************************************/
+    /// Allocate a writable block of memory with the given size and alignment. The memory in the block can be written
+    /// until `freeze` is called. The memory is uninitialized (zeroed here: Rust reads no uninitialized memory).
+    fn allocate_writable(&mut self, bytes_required: u64, alignment: usize) -> MutableMemoryRegion;
 
-struct MappedSerializer {
-    virtual ~MappedSerializer()
+    fn allocate_writable_t<T: Pod>(&mut self, num_items: usize, alignment: usize) -> MutableMemoryRegionT<T>
+    where
+        Self: Sized,
     {
+        MutableMemoryRegionT::new(self.allocate_writable((num_items * std::mem::size_of::<T>()) as u64, alignment.max(std::mem::align_of::<T>())))
     }
 
-    /** Commit all changes; this normally means that the current block
-        is finished writing.  It is guaranteed that no more changes
-        will be made to any allocated blocks after this method is
-        called.
-    */
-    virtual void commit() = 0;
+    /// Allocate a writable block of memory with the given size and alignment, guaranteed filled with zeros.
+    fn allocate_zero_filled_writable(&mut self, bytes_required: u64, alignment: usize) -> MutableMemoryRegion {
+        let mut r = self.allocate_writable(bytes_required, alignment);
+        r.data_mut().fill(0);
+        r
+    }
 
-    /** Allocate a writable block of memory with the given size and
-        alignment.  The memory in the block can be written until the
-        freeze() method is called.  The memory is uninitialized.
-    */
-    virtual MutableMemoryRegion
-    allocateWritable(uint64_t bytesRequired, size_t alignment) = 0;
-
-    template<typename T>
-    MutableMemoryRegionT<T>
-    allocateWritableT(size_t numItems,
-                      size_t alignment = alignof(T))
+    fn allocate_zero_filled_writable_t<T: Pod>(&mut self, num_items: usize, alignment: usize) -> MutableMemoryRegionT<T>
+    where
+        Self: Sized,
     {
-        return allocateWritable(numItems * sizeof(T), alignment);
+        MutableMemoryRegionT::new(self.allocate_zero_filled_writable((num_items * std::mem::size_of::<T>()) as u64, alignment.max(std::mem::align_of::<T>())))
     }
 
-    /** Allocate a writable block of memory with the given size and
-        alignment.  The memory in the block can be written until the
-        freeze() method is called.  It is guaranteed filled with zeros.
-    */
-    virtual MutableMemoryRegion
-    allocateZeroFilledWritable(uint64_t bytesRequired, size_t alignment);
+    /// Freeze the given block of writable memory into a fixed, frozen representation of the same data. For memory
+    /// that is backed by disk, this may also mean writing it out. All references to the given region become invalid.
+    fn freeze(&mut self, region: &mut MutableMemoryRegion) -> FrozenMemoryRegion;
 
-    template<typename T>
-    MutableMemoryRegionT<T>
-    allocateZeroFilledWritableT(size_t numItems,
-                                size_t alignment = alignof(T))
+    fn freeze_t<T: Pod>(&mut self, region: &mut MutableMemoryRegionT<T>) -> FrozenMemoryRegionT<T>
+    where
+        Self: Sized,
     {
-        return allocateZeroFilledWritable(numItems * sizeof(T), alignment);
+        FrozenMemoryRegionT::new(self.freeze(region.raw_mut()))
     }
 
-    /** Freeze the given block of writable memory into a fixed, frozen
-        representation of the same data.  For memory that is backed by
-        disk, this may also mean writing it out in whatever is its
-        customary form.  The memory may be moved around, etc.
-        
-        All references to the given region will become invalid once this is
-        completed.
-    */
-    virtual FrozenMemoryRegion
-    freeze(MutableMemoryRegion & region) = 0;
+    /// Copy the given memory region into the current serializer: a new region, the memory copied, frozen.
+    fn copy(&mut self, region: &FrozenMemoryRegion) -> FrozenMemoryRegion {
+        let mut out = self.allocate_writable(region.length() as u64, 4096);
+        out.data_mut().copy_from_slice(region.data());
+        self.freeze(&mut out)
+    }
+}
 
-    template<typename T>
-    FrozenMemoryRegionT<T>
-    freeze(MutableMemoryRegionT<T> & region)
-    {
-        auto generic = this->freeze(region.raw());
-        return FrozenMemoryRegionT<T>(std::move(generic));
+/// Mapped serializer that puts things in memory.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MemorySerializer;
+
+impl MappedSerializer for MemorySerializer {
+    fn commit(&mut self) {}
+
+    fn freeze(&mut self, region: &mut MutableMemoryRegion) -> FrozenMemoryRegion {
+        match region.reset() {
+            (Some(h), offset, length) => FrozenMemoryRegion::new(h, offset, length),
+            (None, _, _) => FrozenMemoryRegion::default(),
+        }
     }
 
-    /** Copy the given memory region into the current serializer.  In certain
-        circumstances (between two files or two memory buffers aligned on
-        page boundaries), this can be very efficient as the filsystem or
-        virtual memory subsystem can do part of the work.
-
-        Default implementation simply creates a new region, copies the
-        memory, and writes it back.
-    */
-    virtual FrozenMemoryRegion
-    copy(const FrozenMemoryRegion & region);
-    
-    /** Return a stream, that can be used to write an (unknown) number of
-        bytes to the serializer.
-
-        The stream must have close() called once it's finished being
-        written to.
-
-        Note that the filter_ostream is also a std::ostream, and so anything
-        that can be done to one of those can be done to it.
-    */
-    virtual filter_ostream getStream();
-};
-
-
-/*****************************************************************************/
-/* MEMORY SERIALIZER                                                         */
-/*****************************************************************************/
-
-/** Mapped serializer that puts things in memory. */
-
-struct MemorySerializer: public MappedSerializer {
-    virtual ~MemorySerializer()
-    {
+    fn allocate_writable(&mut self, bytes_required: u64, alignment: usize) -> MutableMemoryRegion {
+        let bytes = bytes_required as usize;
+        MutableMemoryRegion::new(Allocation::new(bytes, alignment, true), 0, bytes)
     }
+}
 
-    virtual void commit();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    virtual FrozenMemoryRegion freeze(MutableMemoryRegion & region);
-
-    virtual MutableMemoryRegion
-    allocateWritable(uint64_t bytesRequired,
-                     size_t alignment);
-};
-
-
-/*****************************************************************************/
-/* STRUCTURED SERIALIZER                                                     */
-/*****************************************************************************/
-
-/** Serializer that structures its entries (like a Zip file).  This broadly
-    corresponds to a directory (it can contain other entries, but not
-    data).
-*/
-
-struct StructuredSerializer {
-    virtual ~StructuredSerializer() = default;
-    
-    virtual std::shared_ptr<StructuredSerializer>
-    newStructure(const PathElement & name) = 0;
-
-    virtual std::shared_ptr<MappedSerializer>
-    newEntry(const PathElement & name) = 0;
-
-    virtual filter_ostream
-    newStream(const PathElement & name) = 0;
-
-    virtual void
-    addRegion(const FrozenMemoryRegion & region,
-              const PathElement & name);
-    
-    //virtual void addValue(const PathElement & name);
-
-    template<typename T>
-    void newObject(const PathElement & name,
-                   const T & val,
-                   const std::shared_ptr<const ValueDescriptionT<T> > & desc
-                       = getDefaultDescriptionSharedT<T>())
-    {
-        newObject(name, &val, *desc);
+    #[test]
+    fn memory_region_write_freeze_range() {
+        let mut s = MemorySerializer;
+        let mut w = s.allocate_writable_t::<u32>(1000, 4096);
+        assert_eq!(w.data().as_ptr() as usize % 4096, 0, "page aligned");
+        for (i, v) in w.data_mut().iter_mut().enumerate() {
+            *v = i as u32 * 3;
+        }
+        let f = s.freeze_t(&mut w);
+        assert_eq!(w.length(), 0, "frozen away");
+        assert_eq!(f.length(), 1000);
+        assert_eq!(f[999], 2997);
+        assert_eq!(f.get_const_span(10, Some(2)).unwrap(), &[30, 33]);
+        assert!(f.get_const_span(1001, None).is_err());
+        let a = f.raw().range(0, 400);
+        let b = f.raw().range(400, 4000);
+        let c = FrozenMemoryRegion::combined(&[a, b]);
+        assert_eq!(c.data().as_ptr(), f.raw().data().as_ptr(), "adjacent ranges combine without a copy");
+        let z = s.allocate_zero_filled_writable_t::<u64>(8, 8);
+        assert!(z.data().iter().all(|&x| x == 0));
     }
-
-    virtual void newObject(const PathElement & name,
-                           const void * val,
-                           const ValueDescription & desc);
-
-    virtual void commit() = 0;
-};
-
-
-/*****************************************************************************/
-/* STRUCTURED RECONSTITUTER                                                  */
-/*****************************************************************************/
-
-struct StructuredReconstituter {
-    virtual ~StructuredReconstituter();
-
-    struct Entry {
-        PathElement name;
-        std::function<FrozenMemoryRegion ()> getBlock;
-        std::function<std::shared_ptr<StructuredReconstituter> ()> getStructure;
-    };
-
-    virtual std::vector<Entry> getDirectory() const = 0;
-
-    virtual Utf8String getContext() const = 0;
-    
-    virtual filter_istream
-    getStream(const PathElement & name) const;
-
-    virtual filter_istream
-    getStreamRecursive(const Path & name) const;
-    
-    virtual std::shared_ptr<StructuredReconstituter>
-    getStructure(const PathElement & name) const = 0;
-
-    virtual std::shared_ptr<StructuredReconstituter>
-    getStructureRecursive(const Path & name) const;
-
-    template<typename T>
-    void getObject(const PathElement & name, T & obj,
-                   std::shared_ptr<const ValueDescription> desc
-                   = getDefaultDescriptionSharedT<T>()) const
-    {
-        this->getObjectHelper(name, &obj, desc);
-    }
-
-    template<typename T>
-    T getObject(const PathElement & name,
-                std::shared_ptr<const ValueDescription> desc
-                   = getDefaultDescriptionSharedT<T>()) const
-    {
-        T result;
-        this->getObjectHelper(name, &result, desc);
-        return result;
-    }
-
-    virtual FrozenMemoryRegion
-    getRegion(const PathElement & name) const = 0;
-
-    virtual FrozenMemoryRegion
-    getRegionRecursive(const Path & name) const;
-
-    template<typename T>
-    FrozenMemoryRegionT<T>
-    getRegionT(const PathElement & name) const
-    {
-        return getRegion(name);
-    }
-
-    template<typename T>
-    FrozenMemoryRegionT<T>
-    getRegionRecursiveT(const Path & name) const
-    {
-        return getRegionRecursive(name);
-    }
-
-private:
-    void
-    getObjectHelper(const PathElement & name, void * obj,
-                    const std::shared_ptr<const ValueDescription> & desc) const;
-};
-
-} // namespace MLDB
+}
