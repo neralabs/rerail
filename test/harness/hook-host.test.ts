@@ -6,8 +6,7 @@ import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
-import { encodeRerailEventResult } from "../../src/runtime/index.js";
-import { engineEndpointAt } from "../../src/runtime/daemon-control.js";
+import { encodeRerailEventResult, type EngineEndpoint } from "../../src/runtime/index.js";
 import {
   emitHookOutput,
   holdStopSteers,
@@ -30,8 +29,13 @@ import { runCodexHook } from "../../src/hosts/codex/index.js";
 import { runCursorHook } from "../../src/hosts/cursor/index.js";
 import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
 
-// Every export keeps its own behaviour; a test stands in for one lookup at a time.
-vi.mock("../../src/runtime/daemon-control.js", { spy: true });
+// The lookup of a named engine socket works as it does; a test stands in for one call of it at a time.
+const lookups = vi.hoisted(() => ({ engineEndpointAt: vi.fn<(socketPath: string) => Promise<EngineEndpoint>>() }));
+vi.mock("../../src/runtime/daemon-control.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+  lookups.engineEndpointAt.mockImplementation(socketPath => actual.engineEndpointAt(socketPath));
+  return { ...actual, engineEndpointAt: lookups.engineEndpointAt };
+});
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
 
@@ -325,7 +329,7 @@ describe("hook host durable state", () => {
     const lookupStarted = Promise.withResolvers<void>();
     const lookupDone = Promise.withResolvers<void>();
     // The first hook's lookup waits as one does on a daemon too busy to answer its health probe at once.
-    vi.mocked(engineEndpointAt).mockImplementationOnce(async socketPath => {
+    lookups.engineEndpointAt.mockImplementationOnce(async socketPath => {
       lookupStarted.resolve();
       await lookupDone.promise;
       return { socketPath };
@@ -346,7 +350,6 @@ describe("hook host durable state", () => {
       expect(engine.received).toEqual(["parent-session:tool-call:agent-b-write", "parent-session:tool-call:agent-a-write"]);
     } finally {
       lookupDone.resolve();
-      vi.mocked(engineEndpointAt).mockReset();
       await Promise.allSettled(hooks);
       await engine.close();
     }
