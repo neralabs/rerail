@@ -102,6 +102,11 @@ describe("running the registered Claude hook as Claude Code will", () => {
     expect(await runRegisteredClaudeHook(await homeRunning(undefined))).toMatch(/^Claude Code's Rerail hook exited 1: .*Cannot find module/su);
   });
 
+  it.each(["[]", "null", "not json"])("names a hook whose answer %s is not a JSON object", async answer => {
+    const home = await homeRunning(`process.stdin.resume().on('end',()=>process.stdout.write(${JSON.stringify(answer)}));`);
+    expect(await runRegisteredClaudeHook(home)).toBe("Claude Code's Rerail hook answered with no JSON object");
+  });
+
   it("names a hook that answers but reports a failure, as one rejecting Claude Code's payload does", async () => {
     const home = await homeRunning("process.stdin.resume().on('end',()=>{process.stderr.write('rerail hook: Claude hook omitted index');process.stdout.write('{}');});");
     expect(await runRegisteredClaudeHook(home)).toBe("Claude Code's Rerail hook failed: rerail hook: Claude hook omitted index");

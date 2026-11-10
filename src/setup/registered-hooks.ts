@@ -75,6 +75,16 @@ function rerailSessionStartHook(home: string): HookEntry | undefined {
 
 const HOOK_CHECK_TIMEOUT_MS = 30_000;
 
+/** Whether `text` is one JSON object, the answer a working hook writes; an array, `null` or no JSON is not. */
+function isJsonObject(text: string): boolean {
+  try {
+    const value = JSON.parse(text) as unknown;
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Runs Rerail's SessionStart hook exactly as Claude Code's user settings register it, with a session start in an empty
  * folder where Rerail is not started, and says what is wrong when it does not answer as a working hook does: exit 0, a
@@ -114,13 +124,7 @@ export async function runRegisteredClaudeHook(
     const failure = stderr.split(/\r?\n/u).find(line => line.startsWith("rerail hook:"));
     if (code !== 0) return `Claude Code's Rerail hook exited ${String(code)}: ${(failure ?? stderr.trim()) || "no output"}`;
     if (failure !== undefined) return `Claude Code's Rerail hook failed: ${failure}`;
-    try {
-      const answer = JSON.parse(stdout) as unknown;
-      if (answer === null || typeof answer !== "object" || Array.isArray(answer)) return "Claude Code's Rerail hook answered with no JSON object";
-    } catch {
-      return "Claude Code's Rerail hook answered with no JSON object";
-    }
-    return undefined;
+    return isJsonObject(stdout) ? undefined : "Claude Code's Rerail hook answered with no JSON object";
   } catch (error) {
     return `Claude Code's Rerail hook could not run: ${error instanceof Error ? error.message : String(error)}`;
   } finally {
