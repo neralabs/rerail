@@ -90,7 +90,8 @@ fn stored_tokens_are_tree_sitters_in_order() {
 }
 
 /// RER-131 census (ignored): per language, tree-sitter's nodes and tokens, and how many the tape
-/// stores. `RERAIL_TOKEN_CENSUS=<dialect>=<file list>[:<max>];...`.
+/// stores. `RERAIL_TOKEN_CENSUS=<dialect>=<file list>[:<max>];...`; with `RERAIL_TOKEN_IMPLIED=<dir>`, each
+/// dialect's implied token texts and counts to `<dir>/<dialect>.tsv`.
 #[test]
 #[ignore = "corpora: RERAIL_TOKEN_CENSUS"]
 fn token_census() {
@@ -110,6 +111,7 @@ fn token_census() {
         };
         let (mut files, mut nodes, mut tokens, mut records, mut kept) = (0usize, 0usize, 0usize, 0usize, 0usize);
         let mut by_text = std::collections::BTreeMap::<String, usize>::new();
+        let mut implied = std::collections::BTreeMap::<String, usize>::new();
         for path in std::fs::read_to_string(list).expect("a file list").lines().take(most) {
             let Ok(source) = std::fs::read_to_string(path) else { continue };
             let native = AstGrep::doc(ast_grep_core::tree_sitter::StrDoc::new(&source, lang));
@@ -117,11 +119,27 @@ fn token_census() {
             tokens += native.root().dfs().filter(|n| !n.is_named()).count();
             let doc = AstGrep::doc(tape(lang, &source));
             records += doc.root().dfs().count();
+            // Tree-sitter's token texts less the tape's, as multisets: what the grammar implied.
+            let mut held = std::collections::BTreeMap::<String, usize>::new();
+            for node in doc.root().dfs().filter(|n| !n.is_named()) {
+                *held.entry(node.text().into_owned()).or_default() += 1;
+            }
+            for node in native.root().dfs().filter(|n| !n.is_named()) {
+                let text = node.text().into_owned();
+                match held.get_mut(&text) {
+                    Some(left) if *left > 0 => *left -= 1,
+                    _ => *implied.entry(text).or_default() += 1,
+                }
+            }
             for node in doc.root().dfs().filter(|n| !n.is_named()) {
                 kept += 1;
                 *by_text.entry(node.text().into_owned()).or_default() += 1;
             }
             files += 1;
+        }
+        if let Ok(dir) = std::env::var("RERAIL_TOKEN_IMPLIED") {
+            let lines: String = implied.iter().map(|(text, count)| format!("{count}\t{}\n", text.replace('\n', "\\n"))).collect();
+            std::fs::write(std::path::Path::new(&dir).join(format!("{label}.tsv")), lines).unwrap();
         }
         let mut top: Vec<_> = by_text.into_iter().collect();
         top.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
