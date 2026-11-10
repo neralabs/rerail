@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
 import { repositoryIdentityLocation } from "../../src/engine/index.js";
 import { workspaceStartState } from "../../src/runtime/index.js";
-import { runSetupCommand, runSetupStepArgs, type SetupContext } from "../../src/cli/index.js";
+import { CARRIED_FLAG_NAMES, runSetupCommand, runSetupStepArgs, type SetupContext } from "../../src/cli/index.js";
 import { pickSetup, SETUP_CANCELLED, type SetupPickerUi } from "../../src/harness/setup-picker.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
 import { removeInstalledPacks } from "../support/installed-packs.js";
@@ -237,6 +237,18 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     const io = { lane: "agent" as const, say: (text: string) => { said.push(text); }, close: () => {} };
     expect(await runSetupCommand(["--repository", "--database", other, "--repo", worktree], setup.context, io)).toBe(0);
     expect(said.join("\n")).toContain(`setup --relay --database ${other} --repository --answer start --repo ${worktree}`);
+  });
+
+  it("carries each on-off flag of `start` into every answer, and on through the run that answer starts", async () => {
+    const setup = await machine();
+    const run = steps(setup, fakeSetupEnvironment());
+    expect(CARRIED_FLAG_NAMES).toEqual(["--powershell", "--repository"]);
+    for (const flag of CARRIED_FLAG_NAMES) {
+      const first = await run(["start", "--json", flag]);
+      const next = first.question!.options[0]!.next.args;
+      expect(next, flag).toContain(flag);
+      expect((await run(next)).question!.options[0]!.next.args, flag).toContain(flag);
+    }
   });
 
   it("writes each answer for PowerShell under `--powershell`, with the packs the agent names inside quotes", async () => {
