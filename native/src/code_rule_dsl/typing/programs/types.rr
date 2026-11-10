@@ -26,7 +26,7 @@
 #include "core.rr"
 
 .phase types
-.export binds, bases, anc, attr, sig, rtype, vtype, owner, callret, tparam, tmap, rvar, rgen, ropen, pgen, rcarg
+.export binds, bases, anc, attr, sig, rtype, vtype, owner, callret, tparam, tmap, rvar, rgen, ropen, pgen, rcarg, wgen
 
 .decl struct__def(s: symbol, k: symbol)
 .decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
@@ -131,6 +131,9 @@ resolved(m, e) :- written(m, e), !unresolved(m, e).
 // `dict_items[_KT, _VT]`); garg(m, e, a, j, x): its j-th argument is the name x.
 .decl gin(m: symbol, e: symbol, a: symbol, s: symbol)
 gin(m, e, a, s) :- alt(m, e, a), match("^[A-Za-z_.]+\\[(?<s>[^\\[\\]]*)\\]$", a).
+// A subscript whose arguments hold a union (`AbstractContextManager[_T_co, bool | None]`) is one alternative, which
+// the split at `|` above cuts in two.
+gin(m, e, e, s) :- written(m, e), contains("|", e), match("^[A-Za-z_.]+\\[(?<s>[^\\[\\]]*)\\]$", e).
 .decl grest(m: symbol, e: symbol, a: symbol, j: number, s: symbol)
 grest(m, e, a, 0, s) :- gin(m, e, a, s).
 grest(m, e, a, j, r) :- grest(m, e, a, i, s), match("^[^,]*,\\s*(?<r>.*)$", s), succ(i, j).
@@ -236,3 +239,13 @@ cbody(f, b) :- struct__ret(f, a), match("^([A-Za-z_.]*\\.)?Callable\\[[A-Za-z_0-
 written(m, b) :- cbody(f, b), owner(f, m).
 .decl callret(f: symbol, b: symbol, d: symbol)
 callret(f, b, d) :- cbody(f, b), owner(f, m), rexpr(m, b, d).
+// wgen(f, ka, i, kb, j): such a decorator's parameter is a callable returning a generic of class ka whose argument i
+// is the type variable y, and the callable it returns gives a generic of class kb whose argument j is y
+// (`contextmanager`: `Iterator[_T_co]`'s 0 is `_GeneratorContextManager[_T_co]`'s 0). A call of what it wraps binds
+// y from the wrapped function's declared return.
+.decl cfunc(f: symbol, a: symbol)
+cfunc(f, a) :- cbody(f, _), struct__param(f, 0, _, p), match("^([A-Za-z_.]*\\.)?Callable\\[[A-Za-z_0-9]+, (?<a>.*)\\]$", p).
+written(m, a) :- cfunc(f, a), owner(f, m).
+.decl wgen(f: symbol, ka: symbol, i: number, kb: symbol, j: number)
+wgen(f, ka, i, kb, j) :- cfunc(f, a), owner(f, m), galt(m, a, s, h), hexpr(m, a, h, ka), struct__def(ka, "class"), garg(m, a, s, i, x),
+    tv(m, x, y), cbody(f, b), galt(m, b, s2, h2), hexpr(m, b, h2, kb), struct__def(kb, "class"), garg(m, b, s2, j, x2), tv(m, x2, y).
