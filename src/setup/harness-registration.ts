@@ -41,6 +41,7 @@ import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profil
 import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
 import { CURRENT_LINK, VERSIONS_DIR } from "./updater.js";
+import { z } from "zod";
 
 export type Harness = RerailHost;
 
@@ -354,6 +355,35 @@ function windowsFallbackWords(command: string): string | undefined {
   return words === undefined ? undefined : `${words.node} ${words.hook}`;
 }
 
+/** The POSIX `sh` fallback `hookCommand` writes before the two words. */
+const SH_FALLBACK_PREFIX = `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' `;
+
+/** A PowerShell single-quoted literal, as `powershellLiteral` writes it. */
+const POWERSHELL_LITERAL = String.raw`('(?:[^'\u2018-\u201B]|['\u2018-\u201B]{2})*')`;
+
+/** Codex's and Cursor's PowerShell fallbacks (`powershellHookCommand`, `cursorPowershellHookCommand`): node (1), hook (2). */
+const POWERSHELL_FALLBACKS = [
+  String.raw`^\$LASTEXITCODE = 1; if \(Test-Path -LiteralPath ${POWERSHELL_LITERAL}\) \{ & \1 ${POWERSHELL_LITERAL} \} else \{ node \2 \}; exit \$LASTEXITCODE$`,
+  String.raw`^Invoke-Command -ScriptBlock \{ if \(Test-Path -LiteralPath ${POWERSHELL_LITERAL}\) \{ \$input \| & \1 ${POWERSHELL_LITERAL} \} else \{ \$input \| node \2 \} \}$`,
+].map(source => new RegExp(source, "u"));
+
+/** `command` as the two words a PowerShell fallback runs, quoted as `hookWord` writes them for cmd, or undefined when it is none. */
+function powershellFallbackWords(command: string): string | undefined {
+  const fallback = POWERSHELL_FALLBACKS.map(pattern => pattern.exec(command)).find(match => match !== null);
+  return fallback?.slice(1, 3)
+    .map(word => hookWord(word.slice(1, -1).replace(/(['\u2018-\u201B])\1/gu, "$1"), "cmd"))
+    .join(" ");
+}
+
+/**
+ * The two words a generated shell-form `command` runs, without the fallback around them: the POSIX `sh` fallback, the
+ * Windows `cmd` fallback or, on Windows, Codex's or Cursor's PowerShell fallback. `command` itself when it has none.
+ */
+function directHookWords(command: string, windows: boolean): string {
+  if (command.startsWith(SH_FALLBACK_PREFIX)) return command.slice(SH_FALLBACK_PREFIX.length);
+  return (windows ? powershellFallbackWords(command) : undefined) ?? windowsFallbackWords(command) ?? command;
+}
+
 /**
  * Every command an entry for `recorded` may hold as Rerail's: the forms this release writes and, on Windows, the forms
  * earlier releases wrote, which doubled each `%` in a path and fell back to a bare `node`. Registering replaces those.
@@ -378,19 +408,7 @@ function generatedHookCommands(recorded: HookCommandContext, executable: string)
  */
 function shellHookTarget(context: Pick<Context, "platform">, command: string, executable: string): HookTarget | undefined {
   const windows = context.platform === "win32";
-  const fallbackPrefix = `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' `;
-  const literal = String.raw`('(?:[^'\u2018-\u201B]|['\u2018-\u201B]{2})*')`;
-  const powershellFallback = [
-    String.raw`^\$LASTEXITCODE = 1; if \(Test-Path -LiteralPath ${literal}\) \{ & \1 ${literal} \} else \{ node \2 \}; exit \$LASTEXITCODE$`,
-    String.raw`^Invoke-Command -ScriptBlock \{ if \(Test-Path -LiteralPath ${literal}\) \{ \$input \| & \1 ${literal} \} else \{ \$input \| node \2 \} \}$`,
-  ].map(source => new RegExp(source, "u").exec(command)).find(match => match !== null) ?? null;
-  let direct = windowsFallbackWords(command) ?? command;
-  if (command.startsWith(fallbackPrefix)) direct = command.slice(fallbackPrefix.length);
-  if (powershellFallback !== null && windows) {
-    direct = [powershellFallback[1]!, powershellFallback[2]!]
-      .map(word => hookWord(word.slice(1, -1).replace(/(['\u2018-\u201B])\1/gu, "$1"), "cmd"))
-      .join(" ");
-  }
+  const direct = directHookWords(command, windows);
   const words = shellWords(direct, windows);
   if (words.length !== 2 || words.join(" ") !== direct) return undefined;
   const written = { nodePath: unquoteShellWord(words[0]!, windows), script: unquoteShellWord(words[1]!, windows) };
@@ -415,27 +433,35 @@ function isNodeExecutable(path: string): boolean {
   return /^node(?:\.exe)?$/iu.test(path.split(/[\\/]/u).at(-1)!);
 }
 
+/** The arguments of a generated exec-form entry: the hook launcher, the recorded node and the hook. */
+const execHookArgs = z.tuple([z.string(), z.string(), z.string()]);
+
 /** Node and hook script of a generated exec-form entry: `node <root>/<hook launcher> <recorded node> <root>/<hook>`. */
 function execHookTarget(context: Pick<Context, "platform">, command: string, args: unknown, executable: string): HookTarget | undefined {
-  if (command !== "node" || !Array.isArray(args) || args.length !== 3 || !args.every(arg => typeof arg === "string")) return undefined;
-  const [launcher, nodePath, script] = args as [string, string, string];
+  const parsed = execHookArgs.safeParse(args);
+  if (command !== "node" || !parsed.success) return undefined;
+  const [launcher, nodePath, script] = parsed.data;
   const root = registeredRoot(script, executable, context.platform);
   return root !== undefined && launcher === pathsOf(context.platform).join(root, ENTRY_POINTS.hookLauncher) ? { nodePath, script } : undefined;
 }
 
 /**
- * Recognize only generated entries — the exec-form hook launcher or a direct or fallback shell launcher — never
- * arbitrary compound shell commands.
+ * Node and hook script of `entry` when Rerail generated it: the exec-form hook launcher or a direct or fallback shell
+ * launcher, running a node binary on an absolute script. Never an arbitrary compound shell command.
  */
-async function isRerailHookEntry(context: Context, entry: JsonObject, executable: string): Promise<boolean> {
-  const { command, args } = entry;
-  if (typeof command !== "string") return false;
+function generatedEntryTarget(context: Context, { command, args }: JsonObject, executable: string): HookTarget | undefined {
+  if (typeof command !== "string") return undefined;
   const target = args === undefined ? shellHookTarget(context, command, executable) : execHookTarget(context, command, args, executable);
+  return target !== undefined && isNodeExecutable(target.nodePath) && pathsOf(context.platform).isAbsolute(target.script) ? target : undefined;
+}
+
+/** Whether `entry` is a generated entry (`generatedEntryTarget`) that registration replaces or removal takes out. */
+async function isRerailHookEntry(context: Context, entry: JsonObject, executable: string): Promise<boolean> {
+  const target = generatedEntryTarget(context, entry, executable);
   if (target === undefined) return false;
-  const { nodePath, script } = target;
-  const root = registeredRoot(script, executable, context.platform);
-  if (!isNodeExecutable(nodePath) || !pathsOf(context.platform).isAbsolute(script) || root === undefined) return false;
-  return context.mode === "unregister" ? samePath(root, context.root, context.platform) : isReplaceableScript(context, script, executable);
+  const root = registeredRoot(target.script, executable, context.platform);
+  if (root === undefined) return false;
+  return context.mode === "unregister" ? samePath(root, context.root, context.platform) : isReplaceableScript(context, target.script, executable);
 }
 
 /**
@@ -450,7 +476,7 @@ export function hookCommand(context: HookCommandContext, executable: string): st
   const node = hookWord(context.nodePath, quoting);
   const hook = hookWord(hookScript(context, executable), quoting);
   if (context.platform === "win32") return windowsCmdHookCommand(node, hook);
-  return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`;
+  return `${SH_FALLBACK_PREFIX}${node} ${hook}`;
 }
 
 /**
@@ -581,17 +607,21 @@ async function resolveWriteTarget(path: string): Promise<string> {
   }
   let target = path;
   for (let hops = 0; hops < 40; hops += 1) {
-    let link: string;
-    try {
-      if (!(await lstat(target)).isSymbolicLink()) return target;
-      link = await readlink(target);
-    } catch (error) {
-      if (isMissing(error)) return target;
-      throw error;
-    }
+    const link = await symlinkText(target);
+    if (link === undefined) return target;
     target = resolve(dirname(target), link);
   }
   throw new Error(`Too many levels of symbolic links resolving ${path}`);
+}
+
+/** The path the symlink at `path` names; undefined when `path` is missing or not a symlink. */
+async function symlinkText(path: string): Promise<string | undefined> {
+  try {
+    return (await lstat(path)).isSymbolicLink() ? await readlink(path) : undefined;
+  } catch (error) {
+    if (isMissing(error)) return undefined;
+    throw error;
+  }
 }
 
 /**
