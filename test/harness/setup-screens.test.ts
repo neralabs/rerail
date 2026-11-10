@@ -272,6 +272,18 @@ describe("answer commands for PowerShell", () => {
     const read = renderReadRepoQuestion({ repoName: "acme-web", repoPath: "/Users/me/code/acme-web", setupCommand }, "agent");
     expect(read).toContain(`2. ${launcher} --repo '<the folder they name>'`);
   });
+
+  // PowerShell ends a single-quoted value at any of the five quote characters, so `--repo 'C:\code\O'Neil'` is a parse
+  // error and nothing runs; each written twice stays in the value.
+  it("tells the agent to write each of PowerShell's five quotes twice in the folder it writes in", () => {
+    const twice = "with each ' \u2018 \u2019 \u201A \u201B in <the folder they name> written twice";
+    const read = renderReadRepoQuestion({ repoName: "acme-web", repoPath: "/Users/me/code/acme-web", setupCommand }, "agent");
+    expect(read).toContain(`2. ${launcher} --repo '<the folder they name>', ${twice}\n`);
+    expect(renderNoRepoQuestion({ setupCommand }, "agent")).toContain(`1. ${launcher} --repo '<the folder they name>', ${twice}\n`);
+    // A pack name holds no quote; a POSIX shell's agent quotes the folder as it needs.
+    expect(renderRecommendedPacks({ ...PACKS, setupCommand }, "agent")).not.toContain("written twice");
+    expect(renderNoRepoQuestion({}, "agent")).not.toContain("written twice");
+  });
 });
 
 describe("T4 / C4 recommended rule packs", () => {

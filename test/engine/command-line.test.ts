@@ -6,6 +6,7 @@ import {
   powershellLiteral,
   powershellQuotesTwice,
   shellWord,
+  textPlaceholder,
 } from "../../src/engine/command-line.js";
 
 const QUOTES = ["'", "\u2018", "\u2019", "\u201A", "\u201B"];
@@ -42,6 +43,11 @@ describe("one word in each shell", () => {
   it("leaves a placeholder bare for a POSIX shell and puts it in single quotes for PowerShell, where the agent's value goes", () => {
     expect(placeholderWord("posix", "<packs>")).toBe("<packs>");
     expect(placeholderWord("powershell", "<packs>")).toBe("'<packs>'");
+  });
+
+  it("has the agent write each quote twice in text the person types, where PowerShell's single quotes would end at one", () => {
+    expect(textPlaceholder("posix", "<the folder>")).toBe("<the folder>");
+    expect(textPlaceholder("powershell", "<the folder>")).toBe("'<the folder>', with each ' ‘ ’ ‚ ‛ in <the folder> written twice");
   });
 });
 

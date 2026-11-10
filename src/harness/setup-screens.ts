@@ -1,5 +1,5 @@
 import { ADAPTER_CAPABILITIES, type CommandSigil, type RerailHost } from "../engine/adapter-contract.js";
-import { commandLine, placeholderWord, type Shell } from "../engine/command-line.js";
+import { commandLine, placeholderWord, textPlaceholder, type Shell } from "../engine/command-line.js";
 import type { SetupOption, SetupOptionInput, SetupQuestion, SetupQuestionId } from "./setup-step.js";
 import { RERAIL_BRAND_FOREGROUND } from "../presentation/terminal-brand.generated.js";
 import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
@@ -154,6 +154,8 @@ function agentNames(agents: readonly CodingAgent[]): string[] {
 /** What an answer asks the person for, plus what the agent lane writes in its place. */
 interface ChoiceInput extends SetupOptionInput {
   readonly placeholder: string;
+  /** The person types it as they like (a folder name), so it may hold a quote; a pack name never does. */
+  readonly freeText?: true;
 }
 
 interface Choice {
@@ -190,8 +192,13 @@ const AGENT_QUESTION_OUTRO = "Do not choose for them. When they answer, run set-
 function agentCommand(form: QuestionForm, choice: Choice): string {
   const { words, shell } = form.setupCommand ?? SETUP_COMMAND;
   const line = commandLine(shell, [...words, ...choice.args]);
-  const command = choice.input === undefined ? line : `${line} ${choice.input.flag} ${placeholderWord(shell, choice.input.placeholder)}`;
+  const command = choice.input === undefined ? line : `${line} ${choice.input.flag} ${inputPlaceholder(shell, choice.input)}`;
   return choice.agentText === undefined ? command : choice.agentText(command);
+}
+
+/** Where the agent writes the person's value in `shell`; for text they type as they like, what to do to a quote in it. */
+function inputPlaceholder(shell: Shell, { placeholder, freeText }: ChoiceInput): string {
+  return freeText === true ? textPlaceholder(shell, placeholder) : placeholderWord(shell, placeholder);
 }
 
 /** Where a question sits in the set-up's main flow, shown before it in the terminal: "Step 2 of 3". */
@@ -272,7 +279,9 @@ export function setupQuestion(form: QuestionForm, baseArgs: readonly string[]): 
 }
 
 const FOLDER_PLACEHOLDER = "<the folder they name>";
-const folderInput = (example: string): ChoiceInput => ({ flag: SETUP_FLAGS.repo, prompt: "Which folder?", hint: `for example ${example}`, placeholder: FOLDER_PLACEHOLDER });
+const folderInput = (example: string): ChoiceInput => ({
+  flag: SETUP_FLAGS.repo, prompt: "Which folder?", hint: `for example ${example}`, placeholder: FOLDER_PLACEHOLDER, freeText: true,
+});
 
 // ── T1 · Banner ────────────────────────────────────────────────────────────
 

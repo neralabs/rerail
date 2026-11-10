@@ -67,3 +67,13 @@ export function placeholderWord(shell: Shell, placeholder: string): string {
 export function powershellQuotesTwice(what: string): string {
   return `each ${[...POWERSHELL_QUOTES].join(" ")} in ${what} written twice`;
 }
+
+/**
+ * {@link placeholderWord} for text the person types as they like, such as a folder name, which may hold a quote. For
+ * PowerShell it adds what the agent does to each quote in that text ({@link powershellQuotesTwice}): the single quotes
+ * around the placeholder would end at one, and the rest of the line would not parse.
+ */
+export function textPlaceholder(shell: Shell, placeholder: string): string {
+  const word = placeholderWord(shell, placeholder);
+  return shell === "powershell" ? `${word}, with ${powershellQuotesTwice(placeholder)}` : word;
+}
