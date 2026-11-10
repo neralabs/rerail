@@ -127,10 +127,14 @@ describe("Cursor plugin contract", () => {
       expect(root(form)).toBe("C:\\Users\\me\\repo");
     }
     expect(cursorWorkspace({ hook_event_name: "postToolUse", cwd: "/d/work", workspace_roots: ["C:\\repo"] }, "win32")).toBe("D:\\work");
+    // A workspace at a drive's root keeps the separator: `C:` alone would name the drive's current folder.
+    for (const form of ["file:///c:/", "/c:", "/c"]) expect(root(form)).toBe("C:\\");
     expect(root("\\\\server\\share\\repo")).toBe("\\\\server\\share\\repo");
     expect(root("/workspace")).toBe("/workspace");
     expect(cursorWorkspace({ workspace_roots: ["file:///home/me/my%20repo"] }, "linux")).toBe("/home/me/my repo");
     expect(cursorWorkspace({ workspace_roots: ["/c/repo"] }, "linux")).toBe("/c/repo");
+    // A URI that names another host has no path on this machine, so it stays as sent.
+    expect(cursorWorkspace({ workspace_roots: ["file://server/share/repo"] }, "linux")).toBe("file://server/share/repo");
   });
 
   it("maps Cursor session and assistant lifecycle hooks to the shared session event vocabulary", () => {
