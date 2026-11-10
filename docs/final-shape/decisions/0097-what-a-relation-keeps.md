@@ -180,16 +180,80 @@ bound side right), so it runs between the joins and `ann_root($a)` is a lookup:
 `RERAIL_EQUALITY_BINDS=off` restores the old reading. The test is
 `plan::tests::an_equality_binds_its_right_side_before_the_next_join`.
 
-**Observed step counts (item 1, "the estimates are the plan's on the first run").** The native strata now record,
-per rule (its head and body), the rows into and out of every step of every probe of it, and per relation its rows
-when its stratum ends (`keeps::observe`); the record is kept on the thread for the corpus run, beside its plans.
-The next chunk or part prices from it, per node of the corpus: a relation's rows and its build when all its rules
-ran; each reader term (the reader as it is, each copy) when that rule ran. A term not observed is its estimate
-scaled by observed over estimated for that reader's observed terms: unscaled, a stored reader's observed work (all
-its waves) set against its copies' first estimates read as savings that were not there. A copy's variables are now
-named apart by the unfolding pass, so a first-level copy has the text priced and its observation is found.
-It is off by default until its regression is fixed (`RERAIL_OBSERVED_STEPS=on` turns it on). The integration's statistics kept by delta (0096) are not
-read yet: they keep rows and distinct values, not step counts.
+**Observed step counts (item 1, "the estimates are the plan's on the first run").** The native strata record, per
+rule (its head and body), the rows into and out of every step of every probe of it; per step pattern (below), the
+same rows pooled over every rule; and per relation its rows and, per column, its distinct values and fanout when its
+stratum ends (`keeps::observe`, `observe_steps`). The record is kept on the thread for the corpus run, beside its
+plans, and read per node of the corpus. It is on by default; `RERAIL_OBSERVED_STEPS=off` keeps none, as the
+comparison.
+
+*The regression, profiled.* With observations first built, PYI055 + UP035 in 2 chunks did 29.4 M of native work
+against 26.0 M from estimates alone. All of it was `rr_agg56`, the one reader of `rr_ctx57(n, s, x) :- load_ref(n,
+x), look(n, x, s), rr_nearest_ks13(n, s), x != 8173, x != 8176`: inlined, its copies did 3.3 M a run where the stored
+reader did 0.2 M. `rr_ctx57` is planned under 1,024 rows, so the first parts of chunk 1 store it unpriced; it measured
+1,433 rows a chunk, so later parts price it, and the copies, which never ran, were priced by estimates that were
+wrong in opposite directions on the two sides:
+
+| Term | Step | Binding pattern | Estimated | Observed |
+|---|---|---|---:|---:|
+| stored reader | `binding($s, $x, $b, _)` after `rr_ctx57` | scope and name bound | 205 a probe | 3.0 a probe |
+| copy | `binding($s, $x, $b, _)` | scanned first | 3,288 rows | 2,870 a part |
+| copy | `$x != 8173`, `$x != 8176` | a name bound | 0.5 each | 1.0 each |
+| copy | `look($n, $x, $s)` | name and scope bound | 0.15 a probe | 4.1 a probe |
+| copy | `load_ref($n, $x)` | name bound | 1 a probe | many (a name is loaded in many places) |
+
+The first two rows are the cause. `binding` and `load_ref` are derived, and their columns' distinct values were
+guessed: the least of the body columns that bind each (4 for `binding`'s scope and name, from a column the typing
+library fills with few values), or the rows when none does (5,533 names in 5,533 `load_ref` rows). So the stored
+reader was priced 14 times high (450 k against 32 k observed) and the copies, ordered by a scan of `binding`, about
+100 times low. The old pricing then scaled the copies by the stored reader's observed over estimated (0.07), which
+made them 170 times low: inlining "saved" 100 k and cost 3.3 M. The multi-column probe (scope and name divided by
+each column's distinct values, as if independent) and the comparison's fixed one half are the planner's estimates
+everywhere; inlining only exposes them, because a copy's order is the planner's choice while a stored relation's
+reader is ordered by the relation it scans.
+
+*The scheduler.* Four parts, each a guard against one way the estimates miss:
+
+- **Measured columns.** A relation an earlier chunk or part stored keeps its measured distinct values and fanout
+  per column in the estimates (`estimate`), not guessed ones. `binding`'s scope and name then carry 1,003 and 734
+  distinct values, and fanouts of 21 and 75.
+- **Observed selectivities, per step pattern.** Every plan the choice prices (reader, copy, build) is re-priced step
+  by step in the native units (`calibrated`): the planner's order and first rows, and for each later step the share
+  of its bindings it kept, observed where an earlier chunk or part ran a step of that pattern (in that rule first,
+  else in any rule), else the planner's estimate. A pattern is an atom's relation, negation and bound columns
+  (constants by value, as the planner's `Stats::obs`), a comparison's operator, constants and bound sides, or a
+  `nearest`'s kinds and direction. A copy never ran, but its steps' patterns mostly did, in other rules.
+- **The side that ran is believed** (`weigh`). A side is observed when every term of it ran: the readers as they are
+  (stored), or the rules unfolded from each reader (inlined; the unfolding records each copy's reader and the
+  relations unfolded into it, so a copy's work is found though deeper inlining and its renaming changed its text).
+  Both observed: both are priced by what they did. Neither: both by the estimates. One: it is priced by what it did,
+  and the other by its estimate times the estimates' error on the side that ran (observed over estimated, or its
+  inverse, the larger).
+- **The estimates' choice stands unless the observations are evidence against it** (`settle`). Each candidate is
+  priced twice, by the estimates alone and with the observations. The observations change the choice in two cases
+  only: both sides ran, and the one that did less is taken (an inlining that did worse is taken back); or the
+  estimates inline a relation whose stored side ran, and its copies, priced as above and doubted, would cost more
+  than the stored side did (a veto). An alternative that never ran is never taken on estimates the estimates alone
+  would not take: with 2 chunks it would not run before the last chunk, and a wrong guess costs that chunk. Only the
+  relations whose stored side ran are priced the second time.
+
+The profile line says which side was observed and why it chose: `rr_ctx57: stored, readers would add 269299 work >=
+1 x (build 55263 + 4 x 1433 rows); stored observed (estimated 118882, did 161291), inlined estimated 276639 x 1.4`,
+or `p0_rr_ctx33: stored, …; stored observed (estimated 9590, did 31985), inlined estimated 12786 x 3.3; the estimates
+would inline it`. Calibrated, the stored reader is priced within 1.4 times of what it did (it was 14 times off) and
+the copies at 277 k (they were 10 k). Tests: `plan::keeps::tests::observed_selectivities_price_a_copy_that_never_ran`
+(the regression's shape: inlined by estimates, stored once the stored side ran and the copy's patterns were seen) and
+`plan::keeps::tests::the_side_that_ran_is_believed`.
+
+*The choice's own cost.* It estimated every derived relation, planning each of their rules (10.7 k rules on the
+pack's program), though it prices only candidates: now it estimates the cone its pricing reads (each candidate, what
+its readers read, and upstream of those every relation their rules read), plans each reader once however many of
+the relations it reads are priced, takes each build from that estimate, and gathers its refusal tests (outputs,
+inputs, demand, answers, recursion) once rather than scanning the program's lists per relation. Its span is
+"inline or store".
+
+The integration's statistics kept by delta (0096) are not read yet: they keep rows and distinct values, not step
+counts.
 
 **The factorized store across the chunk boundary (built).** The chunks hand the cross-file part each export's
 rows; moving them (holding them, attributing them to their files, writing the per-file memo) was 39 s of the
@@ -286,34 +350,50 @@ joins of the typing context (`ann_q`, `head_q`, `type_arg`, `version_cmp`, `type
 - Peak RSS is that of the setting's run, not the setting's: off and on peaked alike (1,547 and 1,579 MB); the base
   run, at lower load, at 1,097 MB.
 
-**Measured.** 8 programs that read `bound_in`, and PYI055 + UP035 (which include the typing context), on the 486
-fixture files in 2 chunks. Each pair's findings are byte-identical in all four settings. CPU is the profile's
-user + sys of the run; native work is `native.tsv`'s summed work. Load (1-minute) was 30 to 115 throughout, so
-differences under about 15% are noise.
+**Measured.** 8 programs that read `bound_in` (slice8), and PYI055 + UP035 (which include the typing context), on
+the 486 fixture files, in 2 chunks (the default) and in 6 (`--chunk 20000`), estimates only
+(`RERAIL_OBSERVED_STEPS=off`, a comparison switch) against observations (the default). Findings are byte-identical
+to the base binary's in all eight runs. Native work is `native.tsv`'s summed work; CPU is the profile's user +
+system over all spans; instructions and cycles are the process's (retired, from the run's report). The runs were
+one at a time, off then observed, with the 1-minute load at start and end as shown: 26 to 144, so CPU differences
+under about 10% are noise; instructions are steadier.
 
-| Slice | Setting | CPU s | Native work | Load |
-|---|---|---:|---:|---:|
-| 8 programs | both off | 19.5 | 7.10 M | 48 |
-| | equality only | 21.3 | 7.09 M | 30 |
-| | observed only | 19.8 | 7.26 M | 38 |
-| | both on | 18.1 | 7.25 M | 63 |
-| PYI055 + UP035 | both off | 66.1 | 38.4 M | 77 |
-| | equality only | 70.3 | 33.9 M | 62 |
-| | observed only | 76.4 | 41.8 M | 84 |
-| | both on | 78.7 | 37.4 M | 86 |
+| Slice | Chunks | Setting | Native work | CPU s | G instructions | G cycles | Choose s | Load |
+|---|---:|---|---:|---:|---:|---:|---:|---|
+| slice8 | 2 | estimates | 7,073,676 | 23.0 | 232.09 | 72.7 | 0.52 | 88 to 141 |
+| | | observed | 7,064,858 | 22.0 | 231.90 | 70.8 | 0.49 | 141 to 109 |
+| PYI055 + UP035 | 2 | estimates | 25,959,388 | 56.4 | 527.17 | 175.1 | 1.97 | 109 to 144 |
+| | | observed | 25,951,656 | 56.0 | 527.72 | 174.1 | 1.99 | 144 to 134 |
+| slice8 | 6 | estimates | 6,960,993 | 23.0 | 239.35 | 77.4 | 1.47 | 134 to 118 |
+| | | observed | 6,954,967 | 20.5 | 240.23 | 74.4 | 1.36 | 118 to 95 |
+| PYI055 + UP035 | 6 | estimates | 25,705,589 | 51.4 | 590.31 | 184.3 | 4.81 | 95 to 46 |
+| | | observed | 25,705,470 | 49.5 | 592.46 | 182.6 | 4.64 | 46 to 26 |
 
-- The equality fix takes 4.4 M of work (11%) off the typing slice and changes nothing else that is measurable.
-- Observed counts **add** work on the typing slice (+3.4 to +3.5 M). The cause is one relation: `p0_rr_ctx57`,
-  estimated under 1,024 rows (stored without pricing), observed at 1,433 a chunk, is then priced, and its copies'
-  estimates say inlining saves work; inlined, its reader `p0_rr_agg56` did 3.3 M where it did 0.2 M. The copies are
-  unobserved until they run, so with 2 chunks the misestimate is never corrected. Fixing that is the next step.
+- Observed is never worse in native work: it does less in all four (by up to 0.12%), and the regression is gone
+  (29.4 M on the pair before the fix, 25.95 M now; estimates 25.96 M). The gains are small because the observations
+  change few choices: 2 vetoes on slice8 (`p0_rr_ctx33`, `rr_in_annotation_0_asg`), 6 on the pair (`exists_11` and
+  `rr_in_annotation_0_asg` in each part), 3 with 6 chunks on the pair; with 6 chunks on slice8 both sides of
+  `rr_in_annotation_0_target_form` ran and the inlining was confirmed (no revert anywhere).
+- Instructions are within 0.4% either way (observed 0.1% lower on slice8 in 2 chunks, 0.1 to 0.4% higher on the
+  others); cycles and CPU are lower in all four. Run-to-run spread of the instruction count on this loaded machine
+  was about 2% between batches (spin waits), so neither side is measurably ahead on instructions.
+- The choice's own cost (span "inline or store", summed over its calls): with observations it was 0.93 s on slice8
+  and 3.63 s on the pair before the cone, the overlay and the narrowed second pass; it is now 0.49 s and 1.99 s,
+  level with estimates only. The equality fix (above) is unchanged by any of this.
+- The whole pack (536 programs, 2 chunks), estimates then observed, findings byte-identical between the two:
+  native work 114.13 M against 113.12 M (-0.9%); 2,658.3 against 2,654.5 G instructions (-0.1%); 803.6 against
+  761.1 G cycles; CPU 222.8 against 192.9 s, with the load falling from 80 to 10 over the second run, so most of
+  the CPU difference is load. The observations vetoed 15 inlinings and confirmed 13 where both sides ran; none
+  were reverted. The choice took 8.9 s against 8.5 s of the 10.9 and 10.4 s planning spans ("demand"); its cost
+  before the cone was not measured on the pack.
 
 **Next.**
 
-- Correct the inline side's optimism before the copies run: carry the observed fanouts (`Stats::obs`) across chunks
-  so the copies' atoms are priced by the binding patterns they read, or keep the observed choice unless the
-  alternative is estimated to win by a margin. With more than 2 chunks the record already corrects it (the third
-  chunk sees both sides).
+- Let an alternative that never ran win when the evidence for it is strong, not only veto or revert: today an
+  inlining the estimates would not choose is never tried, however the observations price it. A bounded trial (one
+  part inlined, kept if it did less) would find those; it needs a part small enough that a wrong trial costs little.
+- Use observed selectivities in the planner's own ordering, not only in the choice's pricing: a copy's order is still
+  the planner's from estimates, so a copy can be priced right and still run in a poor order.
 - Make the factorized store pay on the pack: its largest exports are not products of parts. The next step is the
   size of each export, not its shape (projection, demand from the cross part).
 - Read the observations across runs, from the kept statistics (0096), not only across a run's chunks.
