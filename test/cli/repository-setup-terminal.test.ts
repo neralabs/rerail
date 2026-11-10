@@ -21,6 +21,7 @@ import { installedPackVersion } from "../../src/setup/index.js";
 import { removeInstalledPacks } from "../support/installed-packs.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { removeFixtures, TS_PACKS, fixture, gitRepository, stripAnsi, type Recorded, agentIo, terminalIo, request, selected, enabledRules, expectUntouched, SETUP_TIMEOUT_MS, TYPESCRIPT, offerReview } from "../support/repository-setup.js";
+import { stubUserHome } from "../support/user-home.js";
 
 afterEach(async () => {
   readsRepository.mockClear();
@@ -192,7 +193,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const setup = await fixture();
     const home = join(setup.root, "user");
     mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    stubUserHome(home);
     const io = terminalIo(["1", setup.repo, "1"]);
     expect(await runSetup(io, request(setup, fakeSetupEnvironment(), { cwd: setup.root, repo: home }))).toMatchObject({ status: "started" });
     expect(io.text()).toContain("Start Rerail inside a repository, not your home folder.");
@@ -206,7 +207,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const setup = await fixture();
     const home = join(setup.root, "user");
     mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    stubUserHome(home);
     const plain = join(setup.root, "downloads");
     mkdirSync(plain);
     const environment = fakeSetupEnvironment();

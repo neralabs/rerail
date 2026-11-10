@@ -34,22 +34,20 @@ import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
 import { INSTALLED_PACKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
 import { POSIX_MODES } from "../support/file-mode.js";
+import { stubUserHome } from "../support/user-home.js";
 
 const temporaryDirectories: string[] = [];
-const previousHome = process.env.HOME;
 
 afterEach(async () => {
   daemonStop.beforeStopped = undefined;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  if (previousHome === undefined) delete process.env.HOME;
-  else process.env.HOME = previousHome;
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
 interface Fixture {
   context: SetupContext;
-  /** The host config home `install` writes into; `process.env.HOME` points here for the test. */
+  /** The host config home `install` writes into; the user home (HOME and USERPROFILE) points here for the test. */
   hostConfigHome: string;
   packageRoot: string;
 }
@@ -63,7 +61,7 @@ async function fixture(): Promise<Fixture> {
   await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
   const hostConfigHome = join(base, "home");
   await mkdir(join(hostConfigHome, ".claude"), { recursive: true });
-  process.env.HOME = hostConfigHome;
+  stubUserHome(hostConfigHome);
   vi.spyOn(process, "cwd").mockReturnValue(base);
   const home = join(base, "rerail-home");
   return {

@@ -26,6 +26,7 @@ import { MOCK_CODE_RULES, MOCK_CONVERSATION_RULES } from "../../src/cli/index.js
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import { codingAgentHome, codingAgentStates, registerHarnesses, registrationRoot } from "../../src/setup/index.js";
 import { installPack, uninstallPack } from "../support/installed-packs.js";
+import { stubUserHome } from "../support/user-home.js";
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";
@@ -569,8 +570,7 @@ describe("Rerail API over HTTP", () => {
     await mkdir(join(home, ".claude"), { recursive: true });
     await mkdir(join(home, ".cursor"), { recursive: true });
     await mkdir(join(home, ".codex"), { recursive: true });
-    const previousHome = process.env.HOME;
-    process.env.HOME = home;
+    stubUserHome(home);
     try {
       await registerHarnesses({ root: PACKAGE_ROOT, home, harnesses: ["cursor"] });
       // One coding agent whose config cannot be read must not hide the others.
@@ -583,8 +583,7 @@ describe("Rerail API over HTTP", () => {
       expect(agents.find(agent => agent.id === "omp")).toMatchObject({ found: false, connected: false });
       expect(await readdir(join(home, ".claude"))).toEqual(before);
     } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
+      vi.unstubAllEnvs();
     }
   });
 });

@@ -15,6 +15,7 @@ import { removeInstalledPacks } from "../support/installed-packs.js";
 import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
+import { stubUserHome } from "../support/user-home.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
 const TS_PACKS = ["typescript"];
@@ -166,7 +167,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     const setup = await machine();
     const home = join(setup.root, "user");
     mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    stubUserHome(home);
     const ui = fakeUi(["Type the folder…", "Yes, start Rerail"], [`  ${setup.repo}  `]);
 
     const last = await pickSetup(ui, steps(setup, fakeSetupEnvironment(), home));
@@ -233,7 +234,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     // Without a terminal, `rerail setup` prints the same answers as commands, carrying both flags.
     const other = join(setup.root, "other", "rerail.sqlite");
     const said: string[] = [];
-    vi.stubEnv("HOME", join(setup.root, "user"));
+    stubUserHome(join(setup.root, "user"));
     const io = { lane: "agent" as const, say: (text: string) => { said.push(text); }, close: () => {} };
     expect(await runSetupCommand(["--repository", "--database", other, "--repo", worktree], setup.context, io)).toBe(0);
     expect(said.join("\n")).toContain(`setup --relay --database ${other} --repository --answer start --repo ${worktree}`);
@@ -275,7 +276,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     // In the home folder, `start --json` hands over to set-up itself before any answer.
     const home = join(setup.root, "user");
     mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    stubUserHome(home);
     const other = gitRepository(join(setup.root, "acme-web"));
     const fromHome = await pickSetup(fakeUi(["Type the folder…", "Yes, start Rerail"], [other]), steps(session, fakeSetupEnvironment(), home));
 
