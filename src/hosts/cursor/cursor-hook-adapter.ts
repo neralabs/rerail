@@ -89,74 +89,73 @@ function eventId(input: CursorHookInput, suffix: string): string {
 export function cursorHookEvent(input: CursorHookInput): AdapterEvent {
   const hook = requiredText(input, "hook_event_name");
   const descriptor = cursorSession(input);
-  if (hook === "sessionStart") {
-    return { kind: "session-start", eventId: eventId(input, "session-start"), session: descriptor };
+  switch (hook) {
+    case "sessionStart":
+      return { kind: "session-start", eventId: eventId(input, "session-start"), session: descriptor };
+    case "sessionEnd":
+      return {
+        kind: "session-end",
+        eventId: eventId(input, "session-end"),
+        sessionId: descriptor.sessionId,
+        session: descriptor,
+      };
+    case "beforeSubmitPrompt":
+      return {
+        kind: "user-prompt",
+        eventId: eventId(input, "prompt"),
+        sessionId: descriptor.sessionId,
+        session: descriptor,
+        text: requiredText(input, "prompt"),
+      };
+    case "afterAgentResponse":
+      return {
+        kind: "assistant-message",
+        eventId: eventId(input, "assistant"),
+        sessionId: descriptor.sessionId,
+        session: descriptor,
+        messageId: optionalText(input, "generation_id") ?? eventId(input, "assistant-message"),
+        text: requiredText(input, "text"),
+      };
+    case "preToolUse": {
+      const toolUseId = requiredText(input, "tool_use_id");
+      const toolName = requiredText(input, "tool_name");
+      return {
+        kind: "call",
+        eventId: `${descriptor.sessionId}:tool-call:${toolUseId}:${toolName}`,
+        toolCallId: toolUseId,
+        sessionId: descriptor.sessionId,
+        session: descriptor,
+        toolName,
+        input: input.tool_input,
+      };
+    }
+    case "postToolUse":
+    case "postToolUseFailure": {
+      const toolUseId = requiredText(input, "tool_use_id");
+      const toolName = requiredText(input, "tool_name");
+      const failed = hook === "postToolUseFailure";
+      return {
+        kind: "result",
+        eventId: `${descriptor.sessionId}:tool-result:${toolUseId}:${toolName}:${failed ? "failure" : "success"}`,
+        toolCallId: toolUseId,
+        sessionId: descriptor.sessionId,
+        session: descriptor,
+        toolName,
+        output: failed ? input.error_message : input.tool_output,
+        failed,
+      };
+    }
+    case "stop":
+      return {
+        kind: "turn-end",
+        eventId: eventId(input, "turn"),
+        sessionId: descriptor.sessionId,
+        session: descriptor,
+        text: "",
+      };
+    default:
+      throw new Error(`Unsupported Cursor hook event: ${hook}`);
   }
-  if (hook === "sessionEnd") {
-    return {
-      kind: "session-end",
-      eventId: eventId(input, "session-end"),
-      sessionId: descriptor.sessionId,
-      session: descriptor,
-    };
-  }
-  if (hook === "beforeSubmitPrompt") {
-    return {
-      kind: "user-prompt",
-      eventId: eventId(input, "prompt"),
-      sessionId: descriptor.sessionId,
-      session: descriptor,
-      text: requiredText(input, "prompt"),
-    };
-  }
-  if (hook === "afterAgentResponse") {
-    return {
-      kind: "assistant-message",
-      eventId: eventId(input, "assistant"),
-      sessionId: descriptor.sessionId,
-      session: descriptor,
-      messageId: optionalText(input, "generation_id") ?? eventId(input, "assistant-message"),
-      text: requiredText(input, "text"),
-    };
-  }
-  if (hook === "preToolUse") {
-    const toolUseId = requiredText(input, "tool_use_id");
-    const toolName = requiredText(input, "tool_name");
-    return {
-      kind: "call",
-      eventId: `${descriptor.sessionId}:tool-call:${toolUseId}:${toolName}`,
-      toolCallId: toolUseId,
-      sessionId: descriptor.sessionId,
-      session: descriptor,
-      toolName,
-      input: input.tool_input,
-    };
-  }
-  if (hook === "postToolUse" || hook === "postToolUseFailure") {
-    const toolUseId = requiredText(input, "tool_use_id");
-    const toolName = requiredText(input, "tool_name");
-    const failed = hook === "postToolUseFailure";
-    return {
-      kind: "result",
-      eventId: `${descriptor.sessionId}:tool-result:${toolUseId}:${toolName}:${failed ? "failure" : "success"}`,
-      toolCallId: toolUseId,
-      sessionId: descriptor.sessionId,
-      session: descriptor,
-      toolName,
-      output: failed ? input.error_message : input.tool_output,
-      failed,
-    };
-  }
-  if (hook === "stop") {
-    return {
-      kind: "turn-end",
-      eventId: eventId(input, "turn"),
-      sessionId: descriptor.sessionId,
-      session: descriptor,
-      text: "",
-    };
-  }
-  throw new Error(`Unsupported Cursor hook event: ${hook}`);
 }
 
 /**
@@ -171,19 +170,24 @@ function relayedSteer(content: string, rules: readonly SteerRule[]): string {
 
 /** `note` is the session-start note, which only the model sees. */
 export function cursorHookOutput(hook: string, deliveries: readonly AdapterDelivery[], note?: string): CursorHookOutput {
-  if (hook === "beforeSubmitPrompt") return { continue: true };
-  if (hook === "preToolUse") return { permission: "allow" };
   const content = deliveryText(deliveries);
-  const ruleIds = deliveryRuleIds(deliveries);
-  if (hook === "sessionStart" || hook === "postToolUse") {
-    const context = [note, content === undefined ? undefined : relayedSteer(content, deliveryRules(deliveries))].filter(text => text !== undefined).join("\n\n");
-    if (context === "") return {};
-    return content === undefined ? { additional_context: context } : prepareGuidanceOutput({ additional_context: context }, ruleIds);
+  switch (hook) {
+    case "beforeSubmitPrompt":
+      return { continue: true };
+    case "preToolUse":
+      return { permission: "allow" };
+    case "sessionStart":
+    case "postToolUse": {
+      const context = [note, content === undefined ? undefined : relayedSteer(content, deliveryRules(deliveries))].filter(text => text !== undefined).join("\n\n");
+      if (context === "") return {};
+      return content === undefined ? { additional_context: context } : prepareGuidanceOutput({ additional_context: context }, deliveryRuleIds(deliveries));
+    }
+    case "stop":
+      // Cursor submits a stop hook's follow-up as the person's next message, so the agent acts on the steers before it yields.
+      return content === undefined ? {} : prepareGuidanceOutput({ followup_message: relayedSteer(content, deliveryRules(deliveries)) }, deliveryRuleIds(deliveries));
+    default:
+      return {};
   }
-  // Cursor submits a stop hook's follow-up as the person's next message, so the agent acts on the steers before it yields.
-  if (hook === "stop" && content !== undefined) return prepareGuidanceOutput({ followup_message: relayedSteer(content, deliveryRules(deliveries)) }, ruleIds);
-
-  return {};
 }
 
 /**
@@ -206,14 +210,26 @@ export async function handleCursorEvent(
   const deliveries = transcriptOwnsText && (hook === "afterAgentResponse" || hook === "stop")
     ? []
     : await eventLoop.ingest(event);
-  if (hook === "beforeSubmitPrompt") {
-    await persistPending(path, deliveries.filter(delivery => steers(delivery.requested)));
-    return cursorHookOutput(hook, []);
+  switch (hook) {
+    case "beforeSubmitPrompt":
+      await persistPending(path, deliveries.filter(delivery => steers(delivery.requested)));
+      return cursorHookOutput(hook, []);
+    case "sessionEnd":
+      await rm(path, { force: true });
+      return {};
+    default:
+      return cursorAnswer(input, { hook, descriptor, path }, deliveries);
   }
-  if (hook === "sessionEnd") {
-    await rm(path, { force: true });
-    return {};
-  }
+}
+
+/**
+ * What a hook answers Cursor with: the steers waiting for an event that can carry them, each linked to this checkout's
+ * dashboard, and at a session's start the note only the model reads.
+ */
+async function cursorAnswer(
+  input: CursorHookInput, { hook, descriptor, path }: { hook: string; descriptor: AdapterSession; path: string },
+  deliveries: readonly AdapterDelivery[],
+): Promise<CursorHookOutput> {
   const available = await routeDeliveries(path, hook, deliveries, {
     // Cursor only exposes preToolUse.agent_message when a tool is denied.
     // Preserve the steer until a post-tool result can actually carry it.
