@@ -74,17 +74,19 @@ def pack(work):
         for kind in ['original','finding','supplied']:add(work/f'demand-green-{kind}-{mode}.json',kind,mode)
         for i in range(3 if mode=='snapshot' else 2):add(work/f'demand-green-scanner-{mode}-{i}.json','scanner',mode)
         for i in range(8):
-            name=f'repository-demand-v2-workspace-{i}.json' if mode=='workspace' and i in [0,4] else f'demand-green-repository-{mode}-{i}.json'
+            name=f'demand-green-repository-{mode}-{i}.json'
+            if not (work/name).exists() and mode=='workspace' and i in [0,4]:name=f'repository-demand-v2-workspace-{i}.json'
             add(work/name,'repository',mode)
         for i in range(3):
-            name='updates-demand-v2-workspace-0.json' if mode=='workspace' and i==0 else f'demand-green-updates-{mode}-{i}.json'
+            name=f'demand-green-updates-{mode}-{i}.json'
+            if not (work/name).exists() and mode=='workspace' and i==0:name='updates-demand-v2-workspace-0.json'
             add(work/name,'updates',mode)
         for i in range(24):add(work/f'demand-green-cli-{mode}-{i}.json','cli',mode)
         for i in range(12):add(work/f'demand-green-signing-{mode}-{i}.json','signing',mode)
     names=dict(original='original-source.json',scanner='scope-scanner-source.json',finding='finding-source.json',supplied='supplied-rollup-source.json',repository='repository-full-source.json',cli='cli-source-finald03.json',signing='signing-source-finald03.json')
     sources={kind:read_json(work/name) for kind,name in names.items()}
     value=dict(format='rerail.dispatch-progress/v4',admitted=False,reports=reports,reportKinds=kinds,sourceRecordings=sources,sourceTexts={kind:(work/name).read_text() for kind,name in names.items()},sourceHashes={kind:sha((work/name).read_bytes()) for kind,name in names.items()},programs={},harness={},
-        engineSource=read_json(ROOT/MANIFEST)['engineSource'],build=read_json(ROOT/'.rerail/rr-migration-20261106/grammar-render-methods/cli-dispatch-finald03-repair-build.json'),
+        engineSource=read_json(ROOT/MANIFEST)['engineSource'],build=read_json(ROOT/MANIFEST)['engineSource']['cliArtifact'],
         pending=['Production inventory I/O error contracts','Scanner behavior-removal controls','Full original-inventory admission'])
     def collect(v):
         if isinstance(v,dict):

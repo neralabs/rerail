@@ -3675,20 +3675,17 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-dispatch-architecture.json",
       "legacySha256": "690192884c5fdb2d8f3ac738d3fa7b4cddeca15072cd7cb04c161a20ae654300",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr",
       "ruleSha256": "1763b8bd430909500f9666b200bc7087ff21ef08b964debbfa49e9aa4b959948",
       "migrationProgress": {
-        "status": "draft",
+        "status": "full-contract-passed",
         "repositoryCasesPerAPI": 43,
         "repositoryPositivesPerAPI": 30,
         "scannerCasesPerAPI": 298,
         "scannerPositivesPerAPI": 203,
         "originalTestsPerAPI": 49,
-        "remaining": [
-          "Full regression refresh on Final af8",
-          "Full original-inventory admission"
-        ],
+        "remaining": "Global migration remains open; the other drafts and absent translations require their own full admission.",
         "checkpoints": [
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-alignment-final883-progress.json.gz",
@@ -3727,7 +3724,59 @@
         "suppliedFactCasesPerAPI": 222,
         "suppliedFactPositiveCasesPerAPI": 161,
         "suppliedFactErrorCasesPerAPI": 49,
-        "suppliedFactControls": 4
+        "suppliedFactControls": 4,
+        "verifiedNativeExecutions": 713
+      },
+      "evidence": {
+        "assertions": 49,
+        "positives": 38,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "1763b8bd430909500f9666b200bc7087ff21ef08b964debbfa49e9aa4b959948",
+        "engineCommit": "a2812b53a6250c4bd6809ee77e7a9a0efad14710",
+        "engineSha256": "e881b006c25f1d9285c05bce8330ca6de67b58152a1026b7c6313de8ef6623c3",
+        "corpusSha256": "f4fe97fcb357cca0b33a568086bf65096c38bf0c6452078bb3b3e68054f1661f",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-finalaf8-native-snapshot.json",
+            "sha256": "ec0b5faf9a06f34154f86d0173f458b3c332382f4be0d523a8c7689c4df42b4f"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-finalaf8-native-workspace.json",
+            "sha256": "b38df99869f874403502f8838c25c9a656f184c5ad5292fbf2b61b1e5d9691ad"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-cli-finalaf8-progress.json.gz",
+            "sha256": "f9deddc926fc65ac733d31e4302de06e93a525f292e0eae0b5f6fc94f2ae7902"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-inventory-finalaf8-progress.json.gz",
+            "sha256": "c4e76d60e2081a1910166465c7411ed9d125cd53f9ad76902923853314c099e3"
+          }
+        ],
+        "supplemental": {
+          "nativeExecutions": 713,
+          "originalCasesPerAPI": 49,
+          "scannerCasesPerAPI": 298,
+          "findingCasesPerAPI": 47,
+          "suppliedCasesPerAPI": 222,
+          "repositoryCasesPerAPI": 43,
+          "persistentStepsPerAPI": 17,
+          "cliCasesPerAPI": 48,
+          "signingCasesPerAPI": 31,
+          "inventoryIoCasesPerAPI": 23,
+          "controlsPerAPI": 7,
+          "fullMigrationAcceptance": false
+        },
+        "scope": "All original assertions through both APIs, full source DTOs and streams, production discovery/reporting, CLI, signing, I/O failures, persistent updates, and behavior-removal controls."
       }
     },
     {
@@ -4459,7 +4508,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "af8fee707dcc82c644d9b3a78402e9292ef21b36",
-    "status": "Final af8fee707 merged and CLI rebuilt. Production inventory I/O and scanner removal controls pass through both APIs; full dispatch regression refresh is running before admission.",
+    "status": "Final af8fee707 merged and CLI rebuilt. Dispatch passes complete recorded contracts and fixed original-inventory admission through both APIs, with 713 validated native executions.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [

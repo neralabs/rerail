@@ -11197,3 +11197,26 @@ The full dispatch regression refresh is running under `.rerail/dispatch-af8-regr
 Fresh full regression evidence and original-inventory admission remain open. Dispatch remains a draft.
 The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
 No full-repository cold benchmark ran. No Linear ticket was created.
+
+### Dispatch admitted on Final af8, 2026-11-10
+
+The full regression refresh passes on the registered `e881b006c25f1d92…` CLI.
+[The complete contract receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-cli-finalaf8-progress.json.gz) validates 105 reports and 651 native executions.
+[The production I/O receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-inventory-finalaf8-progress.json.gz) validates 62 additional native executions.
+Both receipts bind the same engine artifact and agree on all shared program bytes.
+
+Each API passes 49 unchanged original tests, 298 scanner cases, 47 Finding projections, and 222 supplied-fact cases.
+Each also passes 43 repository cases, 17 persistent steps, 48 CLI cases, 31 signing cases, and 23 production I/O cases.
+Seven behavior-removal controls pass through each API. Two standalone policy probes retain exact native I/O failures.
+The receipts retain complete values, messages, streams, order, and duplicate rows. No original Python rule semantics execute.
+
+The admission tool verifies both receipts, the live consumed program bytes, and the fixed independent original-test inventory.
+Its native assertion reports retain all 49 original setup, call, and teardown results through each API.
+The fixed inventory gate accepts the resulting evidence. Admission regression tests reject omitted tests, omitted I/O cases, and conflicting program bytes.
+The native production error payload must exist; a Python preflight exception cannot substitute for it.
+
+`serverplan_dispatch_architecture` is now `full-contract-passed`. The global migration remains open.
+The inventory is 12 accepted ports, 84 drafts, and four absent translations, across the 100-port migration.
+No full-repository cold benchmark ran. No Linear ticket was created.
+
+The final tooling run passes 394 tests and 165 subtests in 12.67 seconds elapsed.

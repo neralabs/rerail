@@ -10,8 +10,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
-Build and develop the engine in this repository root. Final `d03a0567d` is merged in `1bc6d26a8`.
-The registered root CLI is `f1c9541ced83d272…`. Dispatch acceptance on this cohort remains in progress.
+Build and develop the engine in this repository root. Final `af8fee707` is merged in `a2812b53a`.
+The registered root CLI is `e881b006c25f1d92…`. Dispatch passes full recorded-contract admission on this cohort.
 The merge splits the content store into its own crate and records execution costs across runs.
 Commit `0ac28b5ce` exports the existing metadata batch method across the new crate boundary.
 The following entries describe earlier acceptance cohorts and retain their original engine identities.
@@ -102,7 +102,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory has **11 accepted ports, 85 drafts, and four absent translations**.
+The current inventory has **12 accepted ports, 84 drafts, and four absent translations**.
 `no_api_root_imports` passes its complete recorded contract on Final `ec3cfe1b7`.
 Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-complete-finalec3.json.gz) verifies 467 native executions.
 All four original tests and all 168 public cases pass through both APIs, including import and literal positives.
@@ -3169,3 +3169,26 @@ The full dispatch regression refresh is running under `.rerail/dispatch-af8-regr
 Fresh full regression evidence and original-inventory admission remain open. Dispatch remains a draft.
 The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
 No full-repository cold benchmark ran. No Linear ticket was created.
+
+### Dispatch admitted on Final af8, 2026-11-10
+
+The full regression refresh passes on the registered `e881b006c25f1d92…` CLI.
+[The complete contract receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-cli-finalaf8-progress.json.gz) validates 105 reports and 651 native executions.
+[The production I/O receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-inventory-finalaf8-progress.json.gz) validates 62 additional native executions.
+Both receipts bind the same engine artifact and agree on all shared program bytes.
+
+Each API passes 49 unchanged original tests, 298 scanner cases, 47 Finding projections, and 222 supplied-fact cases.
+Each also passes 43 repository cases, 17 persistent steps, 48 CLI cases, 31 signing cases, and 23 production I/O cases.
+Seven behavior-removal controls pass through each API. Two standalone policy probes retain exact native I/O failures.
+The receipts retain complete values, messages, streams, order, and duplicate rows. No original Python rule semantics execute.
+
+The admission tool verifies both receipts, the live consumed program bytes, and the fixed independent original-test inventory.
+Its native assertion reports retain all 49 original setup, call, and teardown results through each API.
+The fixed inventory gate accepts the resulting evidence. Admission regression tests reject omitted tests, omitted I/O cases, and conflicting program bytes.
+The native production error payload must exist; a Python preflight exception cannot substitute for it.
+
+`serverplan_dispatch_architecture` is now `full-contract-passed`. The global migration remains open.
+The inventory is 12 accepted ports, 84 drafts, and four absent translations, across the 100-port migration.
+No full-repository cold benchmark ran. No Linear ticket was created.
+
+The final tooling run passes 394 tests and 165 subtests in 12.67 seconds elapsed.

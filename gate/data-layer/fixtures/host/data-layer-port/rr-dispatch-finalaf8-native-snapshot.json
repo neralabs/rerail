@@ -1,0 +1,763 @@
+{
+  "format": "rerail.dispatch-admission-originals/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "mode": "snapshot",
+  "exitCode": 0,
+  "engineSha256": "e881b006c25f1d9285c05bce8330ca6de67b58152a1026b7c6313de8ef6623c3",
+  "policySha256": {
+    "serverplan_dispatch_architecture": "1763b8bd430909500f9666b200bc7087ff21ef08b964debbfa49e9aa4b959948"
+  },
+  "cases": {
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_backend_executor_rejects_plan_executor_only_methods": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_backend_identity_conditionals_are_blocking_findings": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_backend_presence_and_typed_capability_checks_are_not_identity_dispatch": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_closed_executor_contract_supports_real_execution_flow": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[annotated field]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[assignment expression]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[awaited typed factory]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[boolean alias]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[cast]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[closure capture]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[comprehension binding]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[conditional alias]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[executor subtype]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[helper escape]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[identity probe]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[import alias]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[loop binding]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[mapping carrier]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[match binding]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[postponed annotation]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[reflection probe]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[reflective delete]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[reflective read]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[reflective write]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[return escape]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[sequence carrier]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[static reflection]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[stored escape]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[stored field]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[subscript access]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[type alias]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[typed factory]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[yield escape]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_still_rejects_concrete_step_dispatch": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_class_pattern_dispatch_is_detected_but_data_narrowing_is_not": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[approved result object]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[backend profile data]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[destructured non-owner]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[executor factory return]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[local reassignment]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[selected non-owner mapping member]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[selected non-owner sequence member]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[sibling local shadowing]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_dialect_presence_dispatch_is_blocking_with_actionable_lowering_guidance": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_human_inventory_must_remain_empty_and_cannot_suppress_findings": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_late_backend_profile_selection_is_outside_the_generic_dispatch_boundary": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_original_base_server_plan_async_pipeline_reach_through_is_fully_reported": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_repeated_identical_conditionals_have_distinct_inventory_entries": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_step_and_strategy_type_conditionals_are_blocking_findings": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ]
+  },
+  "collected": [
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_backend_identity_conditionals_are_blocking_findings",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_backend_presence_and_typed_capability_checks_are_not_identity_dispatch",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_dialect_presence_dispatch_is_blocking_with_actionable_lowering_guidance",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_step_and_strategy_type_conditionals_are_blocking_findings",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_class_pattern_dispatch_is_detected_but_data_narrowing_is_not",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_original_base_server_plan_async_pipeline_reach_through_is_fully_reported",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[postponed annotation]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[import alias]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[executor subtype]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[type alias]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[annotated field]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[stored field]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[typed factory]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[cast]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[conditional alias]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[boolean alias]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[assignment expression]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[awaited typed factory]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[sequence carrier]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[mapping carrier]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[closure capture]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[loop binding]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[comprehension binding]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[match binding]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[reflection probe]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[subscript access]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[reflective read]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[reflective write]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[reflective delete]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[static reflection]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[helper escape]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[return escape]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[yield escape]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[stored escape]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[identity probe]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[sibling local shadowing]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[selected non-owner sequence member]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[selected non-owner mapping member]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[approved result object]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[backend profile data]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[destructured non-owner]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[local reassignment]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_closed_contract_preserves_valid_non_executor_data_flow[executor factory return]",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_still_rejects_concrete_step_dispatch",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_backend_executor_rejects_plan_executor_only_methods",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_closed_executor_contract_supports_real_execution_flow",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_late_backend_profile_selection_is_outside_the_generic_dispatch_boundary",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_human_inventory_must_remain_empty_and_cannot_suppress_findings",
+    "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_repeated_identical_conditionals_have_distinct_inventory_entries"
+  ],
+  "semanticFallbacks": [],
+  "missingResults": [],
+  "retainedCaseIds": [],
+  "checkpoints": [
+    {
+      "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-cli-finalaf8-progress.json.gz",
+      "sha256": "f9deddc926fc65ac733d31e4302de06e93a525f292e0eae0b5f6fc94f2ae7902"
+    },
+    {
+      "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-inventory-finalaf8-progress.json.gz",
+      "sha256": "c4e76d60e2081a1910166465c7411ed9d125cd53f9ad76902923853314c099e3"
+    }
+  ]
+}
