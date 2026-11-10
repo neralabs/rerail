@@ -4364,6 +4364,15 @@ fn run_observed(
                     // first relations, in stratum order, whose maintained rows differ (spike O125).
                     if let Some(vstats) = verify_stats.filter(|_| maintained.maintained > 0) {
                         let plain = cut.program(&cross);
+                        // `O125_VERIFY_RULES=<rel>`: the rules for `rel` the verifier derives with, and the maintained ones.
+                        if let Ok(r) = std::env::var("O125_VERIFY_RULES") {
+                            for x in plain.program.rules.iter().filter(|x| x.head.rel == r) {
+                                eprintln!("O125_VERIFY_RULES plain {x}");
+                            }
+                            for x in part.program.rules.iter().filter(|x| x.head.rel == r) {
+                                eprintln!("O125_VERIFY_RULES maintained {x}");
+                            }
+                        }
                         let mut vkeep = wanted.clone();
                         vkeep.extend(derived.iter().filter(|rel| !plain.program.outputs.contains(*rel)).cloned());
                         let again = super::run_atoms_native_over(&plain, &db, "main", vstats, vkeep, modes)?;
