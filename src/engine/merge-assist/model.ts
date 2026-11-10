@@ -253,6 +253,9 @@ export const mergeAssistStatusSchema = z.object({
   branch: z.string().nullable(),
   baseBranch: z.string().nullable(),
   enabled: z.boolean(),
+  experimental: z.object({
+    decisionLedger: z.boolean().describe("The experimental decision ledger (RERAIL_EXPERIMENTAL_DECISION_LEDGER=1 where Merge Assist runs): verdicts write ledger entries, and the Decision log lists them."),
+  }),
   readiness: z.object({
     judge: judgeReadinessSchema,
     github: githubReadinessSchema,

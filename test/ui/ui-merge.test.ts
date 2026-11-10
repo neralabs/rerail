@@ -32,6 +32,7 @@ const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   branch: "tbelanger/export-api",
   baseBranch: "main",
   enabled: false,
+  experimental: { decisionLedger: false },
   readiness: {
     judge: { available: false, runner: null, problem: "Neither claude nor codex is on PATH." },
     github: { state: "signed-out", login: null, repository: null },

@@ -202,8 +202,8 @@ export interface Workspace {
   readonly databasePath: string;
   readonly ruleCatalog: RuleCatalog;
   readonly repositoryKey: string;
-  /** A Merge Assist over the workspace's database, with these stand-ins. */
-  service(options?: { judge?: AgentJudge; github?: GithubClient; now?: () => number }): MergeAssistRuntime;
+  /** A Merge Assist over the workspace's database, with these stand-ins; the experimental decision ledger only when `decisionLedger`. */
+  service(options?: { judge?: AgentJudge; github?: GithubClient; now?: () => number; decisionLedger?: boolean }): MergeAssistRuntime;
   /** A linked worktree of the repository at `<folder>/<name>`, on a new branch from `main`. */
   worktree(name: string, options?: { record?: boolean }): string;
   /** The rule ids on in the checkout at `path`, as a session there would load them. */
@@ -253,6 +253,7 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
         judge: options.judge ?? new FakeJudge(task => (task.kind === "compare" ? compareAnswer(task) : captureVerdict())),
         github: options.github ?? new FakeGithub(),
         ...(options.now === undefined ? {} : { now: options.now }),
+        decisionLedger: options.decisionLedger ?? false,
       }),
       worktree: (name, { record = false } = {}) => {
         const path = join(folder, name);

@@ -323,6 +323,7 @@ declare module "*/ui/merge-model.js" {
   export const DECISION_MAX: number;
   export function conflictSections(status: Status, pending?: Map<string, string>): { open: Array<Conflict & { busy: boolean }>; closed: Array<Conflict & { busy: boolean }> };
   export function tabOf(status: Status, chosen: string | null, pending?: Map<string, string>): "conflicts" | "decisions" | "log";
+  export function tabsOf(status: Status): Array<"conflicts" | "decisions" | "log">;
   export function hunkLines(hunk: string): Array<{ kind: "add" | "del" | "meta" | "ctx"; text: string }>;
   export function resolutionText(conflict: Conflict): {
     badge: string; precedent: boolean; how: string | null; who: string | null; text: string | null; rule: string | null; at: string | null;

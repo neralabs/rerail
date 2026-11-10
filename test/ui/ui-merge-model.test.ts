@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Finding, MergeAssistStatus, OwnDecision } from "../../src/engine/index.js";
 import {
   authorOf, budgetText, conflictSections, conflictToast, draftProblem, draftText, githubText, hunkLines, judgeText,
-  logQuestions, logStatusCounts, readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, tabOf,
+  logQuestions, logStatusCounts, readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, tabOf, tabsOf,
   waitingCount, writeError,
 } from "../../ui/merge-model.js";
 import { conflict, logItem, resolved, side } from "./support/merge-conflicts.js";
@@ -32,6 +32,7 @@ const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   branch: "tbelanger/export-api",
   baseBranch: "main",
   enabled: true,
+  experimental: { decisionLedger: false },
   readiness: {
     judge: { available: true, runner: "claude", problem: null },
     github: { state: "signed-in", login: "tbelanger", repository: "acme/storefront" },
@@ -243,11 +244,16 @@ describe("conflicts", () => {
     expect(open.map(c => [c.id, c.busy])).toEqual([["ambient-new", true], ["logged-new", false]]);
   });
 
-  it("opens on Conflicts while any is open, else Decisions, and keeps the tab the person chose", () => {
+  it("opens on Conflicts while any is open, else Decisions, and keeps the tab the person chose while it is there", () => {
     expect(tabOf(status({ conflicts }), null)).toBe("conflicts");
     expect(tabOf(status({ conflicts: [resolved("r", "mine", "person")] }), null)).toBe("decisions");
-    expect(tabOf(status({ conflicts }), "log")).toBe("log");
     expect(tabOf(status({ conflicts }), "constructor")).toBe("conflicts");
+    // The Decision log is there only with the experimental decision ledger.
+    expect(tabsOf(status({ conflicts }))).toEqual(["conflicts", "decisions"]);
+    expect(tabOf(status({ conflicts }), "log")).toBe("conflicts");
+    const ledger = status({ conflicts, experimental: { decisionLedger: true } });
+    expect(tabsOf(ledger)).toEqual(["conflicts", "decisions", "log"]);
+    expect(tabOf(ledger, "log")).toBe("log");
   });
 
   it("counts every open conflict in the sidebar as the Conflicts tab does, and a decided-differently finding only when no conflict carries it", () => {

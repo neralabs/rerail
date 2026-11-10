@@ -219,7 +219,7 @@ export function formatConflicts(status: MergeAssistStatus, dashboardUrl: string 
     `● ${count(open, "open conflict", "open conflicts")} in ${repositoryName(status.checkout)}${status.branch === null ? "" : ` (${plain(status.branch)})`}.`,
     ...(status.enabled ? [] : ["  Merge Assist is off here, so Rerail finds no conflicts. Turn it on with rerail merge-assist on."]),
     ...conflictSections(status, true),
-    ...section("Decision ledger (.rerail/decisions/, by question)", status.decisionLog.questions.map(ledgerEntry)),
+    ...(status.experimental.decisionLedger ? section("Decision ledger, experimental (.rerail/decisions/, by question)", status.decisionLog.questions.map(ledgerEntry)) : []),
     ...status.decisionLog.problems.map(problem => `  ${plain(problem)}`),
     ...(dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`]),
   ].join("\n");

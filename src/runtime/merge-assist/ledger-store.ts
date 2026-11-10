@@ -81,9 +81,11 @@ export interface ProvisionalResult {
 
 /**
  * The decisions (candidate ids) that are results of provisional or reopened ledger entries, from the stored view: they
- * reach agents only as information, and not at all while their question has an open `verdicts` conflict. Reads only.
+ * reach agents only as information, and not at all while their question has an open `verdicts` conflict. None while
+ * the experimental decision ledger is off. Reads only.
  */
-export function provisionalResults(db: StateQueries, checkoutPath: string): Map<string, ProvisionalResult> {
+export function provisionalResults(db: StateQueries, checkoutPath: string, decisionLedger: boolean): Map<string, ProvisionalResult> {
+  if (!decisionLedger) return new Map();
   const contested = new Set(readConflicts(db, checkoutPath)
     .filter(({ conflict }) => conflict.status === "open" && conflict.kind === "verdicts")
     .map(({ conflict }) => conflict.question));

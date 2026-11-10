@@ -300,13 +300,14 @@ describe("rerail merge-assist", () => {
     await expect(run(["status", "--text", "x", "--repo", checkout])).rejects.toThrow(/^--text goes with merge-assist resolve/u);
   });
 
-  it("lists the decision ledger by question, with each entry's status, outcome, who, branch and text", async () => {
+  it("lists the decision ledger by question, with each entry's status, outcome, who, branch and text, only when it is on", async () => {
     const item = (id: string, over: Partial<MergeAssistStatus["decisionLog"]["questions"][number]["items"][number]>) => ({
       id, question: "overlap:q", title: "model.rs · fn compile", status: "provisional" as const, verdict: "b" as const, outcome: "Theirs (PR #398)",
       by: { kind: "person" as const, name: "Tim Belanger" }, source: { ref: "tbelanger/export-api", label: "This branch" }, recordedAt: "2026-11-03T14:10:00Z",
       rule: ".rerail/candidates/share-compiled-matchers-1a2b3c.json", text: "Share compiled matchers", follows: null, ...over,
     });
     status = path => sampleStatus(path, {
+      experimental: { decisionLedger: true },
       decisionLog: {
         questions: [{
           question: "overlap:q", title: "model.rs · fn compile", items: [
@@ -319,7 +320,7 @@ describe("rerail merge-assist", () => {
     });
     expect(await run(["conflicts", "--repo", checkout], null)).toBe(0);
     expect(stdout).toContain([
-      "  Decision ledger (.rerail/decisions/, by question) (1):",
+      "  Decision ledger, experimental (.rerail/decisions/, by question) (1):",
       "    \"model.rs · fn compile\"",
       "      provisional  Theirs (PR #398), by Tim Belanger · This branch · 2026-11-03 14:10 UTC",
       "        \"Share compiled matchers\" (follows candidate:share-compiled-matchers-9f8e7d on refs/pull/398/head)",
@@ -327,5 +328,10 @@ describe("rerail merge-assist", () => {
       "        \"Clone the matchers\"",
       "  jbarnes-model: 1234.json: not JSON",
     ].join("\n"));
+
+    stdout = "";
+    status = path => sampleStatus(path);
+    expect(await run(["conflicts", "--repo", checkout], null)).toBe(0);
+    expect(stdout).not.toContain("Decision ledger");
   });
 });

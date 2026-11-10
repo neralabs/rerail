@@ -172,13 +172,13 @@ function checkpointNotes(conflicts: readonly StoredConflict[], taken: (mark: str
  * them yet) are left out. An item's mark is `<item id>:<candidate hash>:<news>`, so an item is news again when it moves,
  * as from review to adopted. Reads only: {@link markNotesDelivered} records a note once it is handed over.
  */
-export function pendingNotes(db: StateQueries, sessionId: string, checkoutPath: string, inFlight: ReadonlySet<string>): PendingNote[] {
+export function pendingNotes(db: StateQueries, sessionId: string, checkoutPath: string, inFlight: ReadonlySet<string>, decisionLedger: boolean): PendingNote[] {
   const given = new Set(readState(db, STATE_KEYS.delivered(sessionId), deliveredSchema) ?? []);
   const taken = (mark: string): boolean => given.has(mark) || inFlight.has(mark);
   const items = db.select().from(mergeAssistItems).where(eq(mergeAssistItems.checkoutPath, checkoutPath)).all();
   const failed = activationFailures(db, checkoutPath);
   const fresh: Record<News, Array<{ item: MergeAssistItemRow; mark: string }>> = { saved: [], decided: [], applied: [], provisional: [], talk: [], review: [] };
-  const verdicts = provisionalResults(db, checkoutPath);
+  const verdicts = provisionalResults(db, checkoutPath, decisionLedger);
   for (const item of items) {
     const news = newsOf(item, sessionId, failed, verdicts);
     // A decision that follows another is news again when the followed text changes.

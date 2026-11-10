@@ -71,6 +71,7 @@ export function sampleStatus(checkout: string, overrides: Partial<MergeAssistSta
     branch: "tbelanger/export-api",
     baseBranch: "main",
     enabled: true,
+    experimental: { decisionLedger: false },
     readiness: {
       judge: { available: true, runner: "claude", problem: null },
       github: { state: "signed-in", login: "tbelanger", repository: "acme/app" },

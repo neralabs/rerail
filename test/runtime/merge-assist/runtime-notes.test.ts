@@ -231,7 +231,7 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
     const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
     commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, "  shared 10") }, "Share compiled matchers");
     writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
-    const service = ws.service();
+    const service = ws.service({ decisionLedger: true });
     await service.setEnabled(ws.repo, true);
     const [conflict] = (await service.scan(ws.repo)).conflicts;
     const resolved = await service.resolveConflict(ws.repo, conflict!.id, "theirs");

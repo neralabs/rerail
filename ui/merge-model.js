@@ -154,9 +154,12 @@ export function conflictSections(status, pending = new Map()) {
 
 export const MERGE_TABS = ["conflicts", "decisions", "log"];
 
-/** The tab shown: the one the person chose, else Conflicts while any is open, else Decisions. */
+/** The tabs this status has: the Decision log only with the experimental decision ledger. */
+export const tabsOf = status => MERGE_TABS.filter(name => name !== "log" || status.experimental.decisionLedger);
+
+/** The tab shown: the one the person chose while it is there, else Conflicts while any is open, else Decisions. */
 export function tabOf(status, chosen, pending = new Map()) {
-  if (MERGE_TABS.includes(chosen)) return chosen;
+  if (tabsOf(status).includes(chosen)) return chosen;
   return conflictSections(status, pending).open.length > 0 ? "conflicts" : "decisions";
 }
 

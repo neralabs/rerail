@@ -7,6 +7,7 @@ import type { RerailHost } from "../../engine/adapter-contract.js";
 import type { CheckoutContext, RuleCatalog } from "../../engine/catalog/repository-model.js";
 import { repositoryIdentityLocation } from "../../engine/catalog/repository-identity.js";
 import { lookupCheckout, mergeAssistEnabled, recordCheckout } from "../../engine/catalog/repository-registry.js";
+import { decisionLedgerEnabled } from "../../engine/experimental-features.js";
 import { gitText } from "../../engine/git.js";
 import { baseBranch, currentBranch, githubRepositoryOf } from "../../engine/merge-assist/branch-git.js";
 import { candidateHash, candidatesInForce, type Candidate, type CandidateState } from "../../engine/merge-assist/candidate.js";
@@ -134,6 +135,8 @@ export interface MergeAssistServiceOptions {
   readonly github?: GithubClient;
   readonly now?: () => number;
   readonly env?: NodeJS.ProcessEnv;
+  /** The experimental decision ledger; by default `RERAIL_EXPERIMENTAL_DECISION_LEDGER` in `env` (`decisionLedgerEnabled`). */
+  readonly decisionLedger?: boolean;
 }
 
 /** How long `gh`'s readiness is reused before `gh auth status` runs again; a scan always reads it afresh. */
@@ -153,6 +156,8 @@ const findingEvidenceSchema = findingSchema.shape.evidence;
 class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #options: MergeAssistServiceOptions;
   readonly #now: () => number;
+  /** Whether the experimental decision ledger is on in this process. */
+  readonly #ledger: boolean;
   readonly #judges = new Map<RerailHost | undefined, AgentJudge>();
   #database: RerailDatabase | undefined;
   #github: GithubClient | undefined;
@@ -168,6 +173,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   constructor(options: MergeAssistServiceOptions) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
+    this.#ledger = options.decisionLedger ?? decisionLedgerEnabled(options.env ?? process.env);
   }
 
   get #db(): RerailDatabase {
@@ -234,7 +240,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async #reconcile(checkout: CheckoutContext): Promise<void> {
-    await reconcileCheckout(this.#db, this.#ruleCatalog, checkout, this.#now());
+    await reconcileCheckout(this.#db, this.#ruleCatalog, checkout, this.#now(), this.#ledger);
   }
 
   /** `gh`'s readiness for the repository: the one read in the last five minutes by any process, else read now. */
@@ -329,18 +335,17 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   /** Find the checkout's in-flight conflicts for `sessionId` (null outside a session). */
   async #detect(checkout: CheckoutContext, sessionId: string | null): Promise<void> {
     const pulls = await this.#openPulls(checkout);
-    await detectConflicts({ database: this.#db, checkout, pulls, sessionId, now: this.#now });
+    await detectConflicts({ database: this.#db, checkout, pulls, sessionId, now: this.#now, decisionLedger: this.#ledger });
   }
 
   /** This branch's in-flight conflicts as the status lists them, and the ledger view grouped by question. */
   async #conflictsView(root: string): Promise<Pick<MergeAssistStatus, "conflicts" | "decisionLog">> {
     const stored = readConflicts(this.#db, root);
+    const conflicts = orderConflicts(stored.map(entry => entry.conflict));
+    if (!this.#ledger) return { conflicts, decisionLog: { questions: [], problems: [] } };
     const ledger = viewLedger(this.#db, root);
     const mine = currentBranch(root) ?? gitText(root, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]) ?? null;
-    return {
-      conflicts: orderConflicts(stored.map(entry => entry.conflict)),
-      decisionLog: { questions: ledgerLog(ledger, mine), problems: ledger.problems },
-    };
+    return { conflicts, decisionLog: { questions: ledgerLog(ledger, mine), problems: ledger.problems } };
   }
 
   async status(checkoutPath: string): Promise<MergeAssistStatus> {
@@ -375,7 +380,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       };
     });
     // Items from other branches are never `rejected` (a withdrawn candidate's item is removed); own items are not findings.
-    const verdicts = provisionalResults(db, root);
+    const verdicts = provisionalResults(db, root, this.#ledger);
     const heldOf = (item: MergeAssistItemRow): Finding["held"] => {
       const verdict = verdicts.get(item.candidateId);
       return verdict === undefined || verdict.place === "branch" ? null : verdict.contested ? "contested" : "provisional";
@@ -391,6 +396,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       branch: currentBranch(root),
       baseBranch: base?.name ?? null,
       enabled: mergeAssistEnabled(db, checkout.repositoryKey),
+      experimental: { decisionLedger: this.#ledger },
       readiness: {
         judge: judge.readiness(),
         github: await this.#githubReadiness(checkout.repositoryKey, false),
@@ -474,12 +480,12 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     if (stored === undefined) throw new MergeAssistError("not-found", `This checkout has no conflict ${conflictId}.`);
     if (stored.conflict.status !== "open") throw new MergeAssistError("invalid-state", `Conflict ${conflictId} is already ${stored.conflict.status}.`);
     if (action === "new" && (text ?? "").trim() === "") throw new MergeAssistError("invalid-state", "A new decision needs its text.");
-    const context = { database: this.#db, checkout, now: this.#now };
+    const context = { database: this.#db, checkout, now: this.#now, decisionLedger: this.#ledger };
     const answered = await answerConflict(context, stored, { action, text, name: personName(root) });
     this.#db.transaction(tx => replaceConflict(tx, root, answered, this.#now()), { behavior: "immediate" });
     if (action !== "dismiss") {
       // The verdict's entry shows in the ledger view at once, not at the next detection.
-      await refreshLedger(this.#db, root, null, this.#now());
+      if (this.#ledger) await refreshLedger(this.#db, root, null, this.#now());
       await this.#reconcile(checkout);
     }
     return await this.status(root);
@@ -548,7 +554,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   pendingNotes(sessionId: string, checkoutPath: string, inFlight: ReadonlySet<string> = new Set()): PendingNote[] {
-    return pendingNotes(this.#db, sessionId, checkoutPath, inFlight);
+    return pendingNotes(this.#db, sessionId, checkoutPath, inFlight, this.#ledger);
   }
 
   stopNotes(sessionId: string, checkoutPath: string, call: EditCall, asks: boolean, inFlight: ReadonlySet<string> = new Set()): PendingNote[] {
@@ -563,7 +569,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     const command = shellCommandOf(toolName, input);
     const commit = command === null ? null : gitCommitIn(command);
     if (commit === null) return null;
-    const files = unstagedDecisionFiles(checkoutPath, commit.all);
+    const files = unstagedDecisionFiles(checkoutPath, commit.all, this.#ledger);
     return files.length === 0 ? null : commitStagingNote(files);
   }
 }

@@ -2,11 +2,12 @@
  * Finding the checkout's in-flight conflicts (CONTRACT: Detection). Mine is this checkout's working changes, committed
  * and not, against the merge base of HEAD with the base branch. Theirs are the live branches: local branches,
  * remote-tracking branches, and open pull requests whose head this repository holds. An overlap is one conflict per
- * (their ref, file); a Talk finding (a teammate's decision contradicting one of this branch's) is one conflict too, and
- * so are two provisional ledger entries on one question, this branch's and a live ref's, with different winners. Each
- * pass reads the ledger view with the merge check (`ledger-store.ts`): new conflicts a verdict in it answers are settled
- * by precedent, and a settled one whose winner's position moved is open again. Every open one is levelled by the
- * dimmer (`conflict-level.ts`). Reads Git only and writes the working tree only when precedent decides; never merges.
+ * (their ref, file); a Talk finding (a teammate's decision contradicting one of this branch's) is one conflict too. With
+ * the experimental decision ledger, so are two provisional ledger entries on one question, this branch's and a live
+ * ref's, with different winners; each pass then reads the ledger view with the merge check (`ledger-store.ts`): new
+ * conflicts a verdict in it answers are settled by precedent, and a settled one whose winner's position moved is open
+ * again. Every open one is levelled by the dimmer (`conflict-level.ts`). Reads Git only and writes no file; never
+ * merges.
  */
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
@@ -407,26 +408,35 @@ function reopenMoved(context: DetectContext, stored: readonly StoredConflict[], 
 }
 
 /**
- * Find the checkout's conflicts and store them with the ones already settled; new ones a verdict on the same dispute
- * answers are settled by precedent (local state only), and every open one gets its level from the dimmer. A detection
- * that finishes after Merge Assist was turned off stores nothing.
+ * Find the checkout's conflicts and store them with the ones already settled, and give every open one its level from
+ * the dimmer. With the experimental decision ledger, each pass also reads the ledger view (the merge check), raises
+ * `verdicts` conflicts, reopens one whose winner moved, and settles new ones a verdict on the same dispute answers by
+ * precedent (local state only). A detection that finishes after Merge Assist was turned off stores nothing.
  */
 export async function detectConflicts(context: DetectContext): Promise<void> {
   const root = context.checkout.checkoutPath;
   const view = mineView(root);
   if (view === null) return;
-  const ledger = await refreshLedger(context.database, root, context.pulls, context.now());
-  await refreshFollowed(context.database, root, context.now());
+  // The experimental decision ledger: read only when it is on (the merge check runs with the read).
+  const ledger = context.decisionLedger ? await refreshLedger(context.database, root, context.pulls, context.now()) : null;
+  if (ledger !== null) await refreshFollowed(context.database, root, context.now());
   const touches = new Map<string, Set<string>>();
-  const detected = [...overlapConflicts(context, view, touches), ...await decisionConflicts(context, view), ...verdictConflicts(context, view, ledger)];
-  const stored = reopenMoved(context, readConflicts(context.database, root), detected, ledger);
+  const detected = [
+    ...overlapConflicts(context, view, touches),
+    ...await decisionConflicts(context, view),
+    ...(ledger === null ? [] : verdictConflicts(context, view, ledger)),
+  ];
+  const known = readConflicts(context.database, root);
+  const stored = ledger === null ? known : reopenMoved(context, known, detected, ledger);
   const merged = mergeDetected(stored, detected);
   const fresh = newConflicts(stored, merged);
-  const settled = new Map(settleByPrecedent(context, fresh, ledger).map(entry => [entry.conflict.id, entry]));
+  const settled = new Map((ledger === null ? fresh : settleByPrecedent(context, fresh, ledger)).map(entry => [entry.conflict.id, entry]));
   const result = merged.map(entry => settled.get(entry.conflict.id) ?? entry);
+  // Without the ledger, a verdict is a resolution this checkout holds.
+  const resolved = new Set(result.filter(({ conflict }) => conflict.status === "resolved").map(({ conflict }) => conflict.question));
   const levelled = levelConflicts({
     db: context.database, root, base: view.base, start: view.start, head: view.head, person: view.person, sessionId: context.sessionId,
-    pulls: context.pulls, verdict: question => hasVerdict(ledger, question), touches, now: context.now(),
+    pulls: context.pulls, verdict: question => (ledger === null ? resolved.has(question) : hasVerdict(ledger, question)), touches, now: context.now(),
   }, result);
   context.database.transaction(tx => {
     if (!mergeAssistEnabled(tx, context.checkout.repositoryKey)) return;

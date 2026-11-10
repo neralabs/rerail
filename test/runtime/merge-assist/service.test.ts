@@ -64,6 +64,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
       branch: "mine",
       baseBranch: "main",
       enabled: false,
+      experimental: { decisionLedger: false },
       readiness: {
         judge: { available: true, runner: "claude", problem: null },
         github: { state: "not-github", login: null, repository: null },

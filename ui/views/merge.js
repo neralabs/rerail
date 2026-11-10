@@ -9,8 +9,9 @@
  *   decision open the decision text in the card; Confirm saves it. Shown first while any conflict is open.
  * - Decisions: Decided differently, Needs your review, Added from other branches and Decisions on this branch, with
  *   the ones marked as not a rule folded under it.
- * - Decision log: the ledger view, every entry from `.rerail/decisions/` on the base branch, this branch and live
- *   refs, grouped by question, with a status chip each, the branch it was read from, and a filter by status.
+ * - Decision log (only with the experimental decision ledger, marked Experimental): the ledger view, every entry from
+ *   `.rerail/decisions/` on the base branch, this branch and live refs, grouped by question, with a status chip each,
+ *   the branch it was read from, and a filter by status.
  * What each shows comes from `merge-model.js`. When the status cannot be read, the page says why and shows nothing to
  * act on until a read succeeds again.
  *
@@ -29,7 +30,7 @@ import {
   DECISION_MAX, KIND_TEXT, LEVEL_BADGE, LEVEL_TEXT, MERGE_TABS, QUEUED_TEXT, authorOf, branchText, budgetText, conflictSections, conflictToast,
   draftProblem, draftText, githubText, hunkLines, judgeText, levelText, levelTitle, LEDGER_STATUS_TEXT, LEDGER_STATUS_TITLE, logQuestions, logStatusCounts, logWhen, peerLabel,
   quoted, readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, sideHeading,
-  snoozeText, tabOf, writeError,
+  snoozeText, tabOf, tabsOf, writeError,
 } from "../merge-model.js";
 
 export const needs = ["mergeAssist"];
@@ -477,7 +478,9 @@ function draftEditor(conflict, draft) {
       h("span.meditacts", null,
         h("button.btn.sm.ghost", { "data-act": "macancel", "data-i": conflict.id }, "Cancel"),
         h("button.btn.sm.solid", { "data-act": "maconfirm", "data-i": conflict.id }, "Confirm"))),
-    h("p.mnote2", null, "Saved as a decision on this branch in ", h("code", null, ".rerail/candidates/"), " with a ledger entry in ", h("code", null, ".rerail/decisions/"), ". Commit both with your work."));
+    data.mergeAssist?.experimental.decisionLedger === true
+      ? h("p.mnote2", null, "Saved as a decision on this branch in ", h("code", null, ".rerail/candidates/"), " with a ledger entry in ", h("code", null, ".rerail/decisions/"), ". Commit both with your work.")
+      : h("p.mnote2", null, "Saved as a decision on this branch in ", h("code", null, ".rerail/candidates/"), ". Commit it with your work."));
 }
 
 function draftHint(text) {
@@ -600,6 +603,8 @@ function buildTabs() {
   const buttons = {}, panels = {};
   for (const name of MERGE_TABS) {
     buttons[name] = h("button.mtab", { "data-act": "matab", "data-i": name, "aria-controls": `ma-panel-${name}` }, TAB_LABEL[name]);
+    // The decision log is the experimental decision ledger's: shown only with it, marked as such.
+    if (name === "log") buttons[name].append(" ", h("span.badge.mexp", null, "Experimental"));
     panels[name] = h("div.mpanel", { id: `ma-panel-${name}`, role: "region", "aria-label": TAB_LABEL[name] });
   }
   const conflictCount = h("span.mtabn");
@@ -804,7 +809,9 @@ function renderTabs(status) {
   const { tabs, buttons, panels, conflictCount } = page.tabs;
   setAttr(tabs, "hidden", !on);
   const shown = on ? tabOf(status, ui.mergeTab, ui.mergePending) : null;
+  const available = on ? tabsOf(status) : [];
   for (const name of MERGE_TABS) {
+    setAttr(buttons[name], "hidden", !available.includes(name));
     setAttr(buttons[name], "aria-pressed", shown === name ? "true" : "false");
     setAttr(buttons[name], "disabled", ui.mergeSwitching);
     setAttr(panels[name], "hidden", shown !== name);
@@ -830,7 +837,7 @@ function renderConflicts(status) {
   const { open, closed } = on ? conflictSections(status, ui.mergePending) : { open: [], closed: [] };
   const c = page.conflicts;
   renderHead(c, "Open conflicts", open.length,
-    ["Work in flight that overlaps yours. Rerail never picks a side: what you choose is saved as a decision on this branch, with an entry for the decision log, for you to commit."]);
+    [`Work in flight that overlaps yours. Rerail never picks a side: what you choose is saved as a decision on this branch${status?.experimental.decisionLedger === true ? ", with an entry for the decision log," : ""} for you to commit.`]);
   setAttr(c.list, "hidden", open.length === 0);
   syncCards(c.list, open);
   const empty = on && open.length === 0 ? conflictsEmpty(status, closed.length) : null;

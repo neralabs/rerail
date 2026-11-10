@@ -136,7 +136,7 @@ describe("Merge Assist activation", { timeout: 30_000 }, () => {
         ownerKind: "checkout", ownerId: ws.repo, folder: "", targetKind: "rule", targetId, on: true, mode: null, updatedAt: 1,
       }).run();
     }
-    await reconcileCheckout(ws.database, ws.ruleCatalog, lookupCheckout(ws.database, ws.repo)!, 2);
+    await reconcileCheckout(ws.database, ws.ruleCatalog, lookupCheckout(ws.database, ws.repo)!, 2, false);
     expect(ws.database.select().from(ruleSettings).all().map(row => row.targetId).sort()).toEqual(["Candidate:mine~0123abcd", "candidate:mine"]);
   });
 

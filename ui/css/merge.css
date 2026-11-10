@@ -15,6 +15,9 @@
 .mhead{display:block;margin:0 0 18px}
 .mhead h2{display:flex;align-items:center;gap:10px;font-size:20px;letter-spacing:-.01em;line-height:28px}
 .mhead .mexp{background:var(--info-subtle);color:var(--info-foreground)}
+/* The Decision log tab's mark: the experimental decision ledger; readable on the pressed tab too. */
+.mtab .mexp{margin-left:4px;background:var(--info-subtle);color:var(--info-foreground);font-size:11px}
+.mtab[aria-pressed="true"] .mexp{background:var(--background);color:var(--info-foreground)}
 .mhead p.pitch{margin:6px 0 0;max-width:var(--measure);font-size:13.5px;line-height:20px;color:var(--muted-foreground)}
 .mnote{margin:0 0 16px}
 .mnote > div{min-width:0}

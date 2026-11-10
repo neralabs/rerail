@@ -18,7 +18,7 @@ const json = (body: unknown, code = 200): Response => new Response(JSON.stringif
 /** Merge Assist on, with one finding needing review (`open`) or adopted (`applied`). */
 function status(findingStatus: "open" | "applied"): MergeAssistStatus {
   return {
-    repositoryKey: "A", checkout: "/work/a", branch: "mine", baseBranch: "main", enabled: true,
+    repositoryKey: "A", checkout: "/work/a", branch: "mine", baseBranch: "main", enabled: true, experimental: { decisionLedger: false },
     readiness: {
       judge: { available: true, runner: "claude", problem: null },
       github: { state: "not-github", login: null, repository: null },

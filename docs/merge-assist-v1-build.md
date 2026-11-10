@@ -337,7 +337,17 @@ Two developers, two branches of the same repository:
 Two lanes. Settled decisions steer agents: candidates, activation and the notes above, unchanged. In-flight conflicts go
 to the person: the agent gets one line of information, never an instruction to align; the person gets one line in the
 session and a card on the Merge Assist page's Conflicts tab. Not in the proof of concept: a judge or panel deciding,
-and units delivered to agents. A verdict is undone like code: its entry file is reverted on the branch.
+and units delivered to agents. A verdict is undone like code: its decision file is reverted on the branch.
+
+The decision ledger (§12.6, and everything in this section that reads or writes `.rerail/decisions/`) is experimental:
+it takes effect only where `RERAIL_EXPERIMENTAL_DECISION_LEDGER=1` is set for the process that serves Merge Assist (the
+daemon; `rerail merge-assist` for its own commands), and the status's `experimental.decisionLedger` says whether it
+is. Off (the default), a person's verdict settles the conflict as local state and writes only the decision this branch
+follows (`.rerail/candidates/`, with no `follows`); nothing reads the ledger: no merge check, no precedent across
+checkouts (§12.2), no `verdicts` conflicts, no reopening by fingerprint, no holding of other branches' verdicts
+(their candidates are absorbed like any other); the dimmer's "verdict exists" comes from this checkout's own
+resolutions; commit staging names `.rerail/candidates/` only; `decisionLog` is empty, the dashboard hides the Decision
+log tab and the CLI its ledger section. The dimmer and its levels work either way.
 
 ### 12.1 Detection
 
@@ -410,7 +420,7 @@ and the file's last commit stands in only when blame fails. A pull request's tit
 
 ### 12.2 Precedent
 
-Each new open conflict is checked against the ledger view (§12.6) before anyone sees it: its question and both sides'
+Experimental: only with the decision ledger on. Each new open conflict is checked against the ledger view (§12.6) before anyone sees it: its question and both sides'
 refs and position fingerprints go to `decidePrecedent`. A verdict applies automatically only to the same dispute: one
 side holds the winner's position and the other the loser's (by fingerprint; by ref only where a side's position is
 unknown, as in the resolver benchmark's records). Order: a verdict in force first, then a provisional one by a person
@@ -483,10 +493,10 @@ refuses it).
 Only a person resolves a conflict: the dashboard, `rerail merge-assist resolve`, or `PUT /api/merge-assist/conflicts`.
 A coding agent reads conflicts through `merge_assist_get` and gets `409 invalid-state` from `merge_assist_conflict_set`.
 
-| Action | Ledger entry | Decision written on this branch |
+| Action | Ledger entry (decision ledger on) | Decision written on this branch |
 | --- | --- | --- |
 | `mine` (Keep mine) | verdict `a`; result `decision` | text defaults to this side's summary; on an overlap with its location, `<last commit subject touching the file> (<file>:<line>)`, or `The change on <branch> (<file>:<line>)` while uncommitted |
-| `theirs` (Take theirs) | verdict `b`; result `decision` | text defaults to their summary, on an overlap as for `mine`; follows their decision by reference |
+| `theirs` (Take theirs) | verdict `b`; result `decision` | text defaults to their summary, on an overlap as for `mine`; with the ledger, follows their decision by reference |
 | `new` (New decision) | verdict `new`; result `amendment` | the person's text (1–600 characters) |
 | `dismiss` (Not a conflict) | none | none; it stays dismissed for that question and their ref |
 
@@ -525,6 +535,7 @@ ledger) and `src/runtime/merge-assist/{conflict-detect,conflict-resolve,conflict
 
 ### 12.6 The decision ledger
 
+Experimental: only where `RERAIL_EXPERIMENTAL_DECISION_LEDGER=1` (see the start of §12 for what happens without it).
 Entries travel with the branch whose person decided them; the ledger is a view computed from Git, never written.
 
 **Entry files.** `.rerail/decisions/<id>.json`, format `rerail.decision/v2`, mode `0644`. The id is the first 32 hex

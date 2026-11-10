@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DECISION_ENTRY_FORMAT, mergeAssistStatusSchema, readWorktreeDecisions, sealDecisionEntry, type Conflict, type ConflictAction, type DecisionDraft } from "../../../src/engine/index.js";
@@ -111,7 +111,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
   for (const expected of ACTIONS) {
     it(`resolves ${expected.action}: a decision and a ledger entry for verdict ${expected.verdict} in this branch's working tree`, async () => {
       const { ws } = await overlapping();
-      const service = ws.service();
+      const service = ws.service({ decisionLedger: true });
       await service.setEnabled(ws.repo, true);
       const { id } = modelConflict((await service.scan(ws.repo)).conflicts);
 
@@ -150,9 +150,33 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
     });
   }
 
-  it("dismisses without a ledger entry, and the dismissal holds when the overlap is found again", async () => {
+  it("with the decision ledger off (the default): a verdict writes only the decision, the status has no ledger, and no other checkout is settled by it", async () => {
     const { ws } = await overlapping();
     const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    const first = modelConflict((await service.scan(ws.repo)).conflicts);
+    const status = await service.resolveConflict(ws.repo, first.id, "theirs");
+    const resolved = status.conflicts.find(conflict => conflict.id === first.id)!;
+    expect(resolved).toMatchObject({ status: "resolved", resolution: { action: "theirs", by: "person", logId: null, rule: expect.stringMatching(/^\.rerail\/candidates\//u) } });
+    expect(JSON.parse(readFileSync(join(ws.repo, resolved.resolution!.rule!), "utf8"))).not.toHaveProperty("follows");
+    expect(existsSync(join(ws.repo, ".rerail/decisions"))).toBe(false);
+    expect(status.experimental).toEqual({ decisionLedger: false });
+    expect(status.decisionLog).toEqual({ questions: [], problems: [] });
+    expect(status.own.map(decision => decision.decision)).toEqual([`Share compiled matchers (${MODEL}:20)`]);
+    // Commit staging still names the decision, which travels with the code.
+    expect(service.commitStaging(ws.repo, "Bash", { command: "git commit -m x" })).toBe(`Rerail: include these decision files in this commit: ${resolved.resolution!.rule}`);
+
+    // The same dispute in another checkout, with this branch's decision committed: nothing settles it there.
+    git(ws.repo, "add", "--", ".rerail");
+    git(ws.repo, "commit", "-q", "-m", "Take their matchers");
+    const second = ws.worktree("mine-again", { record: true });
+    writeFiles(second, { [MODEL]: lines({ 22: "  const line22 = \"cloned\";" }) });
+    expect(modelConflict((await service.scan(second)).conflicts)).toMatchObject({ id: first.id, status: "open", resolution: null });
+  });
+
+  it("dismisses without a ledger entry, and the dismissal holds when the overlap is found again", async () => {
+    const { ws } = await overlapping();
+    const service = ws.service({ decisionLedger: true });
     await service.setEnabled(ws.repo, true);
     const { id } = modelConflict((await service.scan(ws.repo)).conflicts);
 
@@ -166,7 +190,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
 
   it("refuses a coding agent, and a new decision without its text", async () => {
     const { ws } = await overlapping();
-    const service = ws.service();
+    const service = ws.service({ decisionLedger: true });
     await service.setEnabled(ws.repo, true);
     const { id } = modelConflict((await service.scan(ws.repo)).conflicts);
 
@@ -179,7 +203,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
 
   it("settles the same dispute by precedent in another checkout once the verdict is committed, writing nothing there, and only shows it for another dispute", async () => {
     const { ws } = await overlapping();
-    const service = ws.service();
+    const service = ws.service({ decisionLedger: true });
     await service.setEnabled(ws.repo, true);
     const first = modelConflict((await service.scan(ws.repo)).conflicts);
     const answered = (await service.resolveConflict(ws.repo, first.id, "theirs")).conflicts.find(conflict => conflict.id === first.id)!;
@@ -218,7 +242,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
     // A later commit of theirs to the same file, away from the contested line, is not what their side says.
     commit(theirsPath, { [MODEL]: lines({ 20: "  const line20 = \"shared\";", 36: "  const line36 = 0;" }) }, "Tidy the tail");
     commit(ws.repo, { [MODEL]: lines({ 20: "  const line20 = \"cloned\";" }) }, "Clone matchers");
-    const service = ws.service();
+    const service = ws.service({ decisionLedger: true });
     await service.setEnabled(ws.repo, true);
     const mineOverlap = modelConflict((await service.scan(ws.repo)).conflicts);
     const theirOverlap = (await service.scan(theirsPath)).conflicts.find(conflict => conflict.kind === "overlap")!;
@@ -257,7 +281,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
 
   it("never settles another overlap in the same file by a verdict on this one", async () => {
     const { ws } = await overlapping();
-    const service = ws.service();
+    const service = ws.service({ decisionLedger: true });
     await service.setEnabled(ws.repo, true);
     const first = modelConflict((await service.scan(ws.repo)).conflicts);
     await service.resolveConflict(ws.repo, first.id, "theirs");
@@ -272,7 +296,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
 
   it("reopens a settled overlap when the winner's position moves, and the verdict no longer counts", async () => {
     const { ws, theirs } = await overlapping();
-    const service = ws.service();
+    const service = ws.service({ decisionLedger: true });
     await service.setEnabled(ws.repo, true);
     const { id } = modelConflict((await service.scan(ws.repo)).conflicts);
     await service.resolveConflict(ws.repo, id, "theirs");
@@ -286,7 +310,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
 
   it("raises a verdicts conflict when another branch decided the same question the other way, and taking theirs follows their decision", async () => {
     const { ws } = await overlapping();
-    const service = ws.service();
+    const service = ws.service({ decisionLedger: true });
     await service.setEnabled(ws.repo, true);
     const other = ws.worktree("other", { record: true });
     writeFiles(other, { [MODEL]: lines({ 22: "  const line22 = \"cloned\";" }) });
@@ -336,7 +360,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
       recordedAt: "2026-11-08T10:00:00.000Z",
     });
     commit(theirsPath, { ...candidateFiles(verdictDecision, plain), [`.rerail/decisions/${theirs.id}.json`]: `${JSON.stringify(theirs, null, 2)}\n` });
-    const service = ws.service();
+    const service = ws.service({ decisionLedger: true });
     await service.setEnabled(ws.repo, true);
 
     const held = (status: Awaited<ReturnType<typeof service.scan>>, id: string) => status.findings.find(finding => finding.candidate.id === id);

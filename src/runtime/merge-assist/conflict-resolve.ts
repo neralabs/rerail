@@ -1,9 +1,10 @@
 /**
  * Settling an in-flight conflict (CONTRACT: Resolve, Precedent). A person keeps their side, takes theirs, writes a new
- * decision, or says it is not a conflict; a verdict in the ledger view on the same dispute settles it on its own, as
- * local state only. A person's verdict writes a ledger entry (`.rerail/decisions/<id>.json`) and the decision this
- * branch now follows as a candidate, active and authored by the person, both into the working tree for the person to
- * commit: Rerail commits nothing. Lane 1 then carries the decision to every agent. Taking theirs on a contradiction follows their decision by reference. A
+ * decision, or says it is not a conflict. A person's verdict writes the decision this branch now follows as a
+ * candidate, active and authored by the person, into the working tree for the person to commit: Rerail commits nothing.
+ * Lane 1 then carries the decision to every agent. With the experimental decision ledger, the verdict also writes a
+ * ledger entry (`.rerail/decisions/<id>.json`), taking theirs on a contradiction follows their decision by reference,
+ * and a verdict in the ledger view on the same dispute settles a new conflict on its own, as local state only. A
  * dismissal writes nothing but the conflict's status.
  */
 import { existsSync } from "node:fs";
@@ -45,6 +46,8 @@ export interface SettleContext {
   readonly database: RerailDatabase;
   readonly checkout: CheckoutContext;
   readonly now: () => number;
+  /** The experimental decision ledger: verdicts write entries, and take theirs follows their decision by reference. */
+  readonly decisionLedger: boolean;
 }
 
 /** The person's answer: what they picked, the decision's text (required for `new`), and their name. */
@@ -181,25 +184,34 @@ function theirDecision(stored: StoredConflict): Follows | null {
  */
 async function decide(context: SettleContext, stored: StoredConflict, answer: ConflictAnswer & { action: Exclude<ConflictAction, "dismiss"> }): Promise<StoredConflict> {
   const { conflict } = stored;
-  const root = context.checkout.checkoutPath;
   const verdict = VERDICTS[answer.action];
   const text = answerText(stored, answer);
-  const follows = answer.action === "theirs" ? theirDecision(stored) : null;
+  const follows = context.decisionLedger && answer.action === "theirs" ? theirDecision(stored) : null;
   const planned = await decisionCandidate(context, {
     text, files: stored.files, author: answer.name, supersedes: conflict.kind === "overlap" ? null : conflict.mine.decisionId, follows,
   });
-  const previous = (await readWorktreeDecisions(root)).entries
-    .filter(entry => entry.question === conflict.question)
+  const logId = context.decisionLedger ? await writeLedgerEntry(context, stored, { verdict, text, name: answer.name, planned, follows }) : null;
+  await saveCandidate(context, planned.candidate, { conflictId: conflict.id, peer: conflict.theirs.label });
+  return settled(stored, { action: answer.action, by: "person", name: answer.name, logId, rule: planned.rule, text, at: isoSeconds(context.now()) });
+}
+
+/** The ledger entry for a person's verdict, replacing this branch's latest entry on the question. Returns its id. */
+async function writeLedgerEntry(
+  context: SettleContext,
+  stored: StoredConflict,
+  input: { verdict: DecisionVerdict; text: string; name: string; planned: { candidate: Candidate; rule: string }; follows: Follows | null },
+): Promise<string> {
+  const { verdict, text, planned, follows } = input;
+  const previous = (await readWorktreeDecisions(context.checkout.checkoutPath)).entries
+    .filter(entry => entry.question === stored.conflict.question)
     .sort((left, right) => left.recordedAt.localeCompare(right.recordedAt))
     .at(-1);
-  const logId = await writeEntry(context, stored, {
+  return await writeEntry(context, stored, {
     verdict,
-    decidedBy: { kind: "person", name: answer.name.slice(0, 200) },
+    decidedBy: { kind: "person", name: input.name.slice(0, 200) },
     result: { candidateId: planned.candidate.id, kind: verdict === "new" ? "amendment" : "decision", text, rule: planned.rule, follows },
     supersedes: previous?.id ?? null,
   });
-  await saveCandidate(context, planned.candidate, { conflictId: conflict.id, peer: conflict.theirs.label });
-  return settled(stored, { action: answer.action, by: "person", name: answer.name, logId, rule: planned.rule, text, at: isoSeconds(context.now()) });
 }
 
 /** Settle `stored` with the person's answer. The caller checks the conflict is open and that `new` carries text. */

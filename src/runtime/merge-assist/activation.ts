@@ -84,7 +84,7 @@ interface WantedRule {
  * The rules the checkout's candidates call for: its own in force with a rule, and the peers' it applied, but not
  * another branch's verdict result that has not merged.
  */
-async function wantedRules(db: RerailDatabase, checkout: CheckoutContext): Promise<WantedRule[]> {
+async function wantedRules(db: RerailDatabase, checkout: CheckoutContext, decisionLedger: boolean): Promise<WantedRule[]> {
   const root = checkout.checkoutPath;
   const own = await readWorktreeCandidates(root);
   const wanted: WantedRule[] = candidatesInForce(own.candidates)
@@ -100,7 +100,7 @@ async function wantedRules(db: RerailDatabase, checkout: CheckoutContext): Promi
     eq(mergeAssistItems.status, "applied"),
   )).all();
   // Another branch's verdict that has not merged is information, never a rule here.
-  const verdicts = provisionalResults(db, root);
+  const verdicts = provisionalResults(db, root, decisionLedger);
   for (const item of applied) {
     const rule = item.candidate.rule as CodeRule | undefined;
     if (rule === undefined || ownIds.has(item.candidateId) || (verdicts.get(item.candidateId)?.place ?? "branch") !== "branch") continue;
@@ -148,9 +148,10 @@ export async function reconcileCheckout(
   ruleCatalog: RuleCatalog,
   checkout: CheckoutContext,
   now: number,
+  decisionLedger: boolean,
 ): Promise<ActivationOutcome> {
   const active = mergeAssistEnabled(db, checkout.repositoryKey) && rulesActive(db, checkout);
-  const wanted = active ? await wantedRules(db, checkout) : [];
+  const wanted = active ? await wantedRules(db, checkout, decisionLedger) : [];
   const failed: Record<string, string> = {};
   const documents: RuleDocument[] = [];
   for (const { ruleId, rule } of wanted) {

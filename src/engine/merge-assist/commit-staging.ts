@@ -1,6 +1,6 @@
 /**
- * Commit staging: a verdict writes its ledger entry and decision into the working tree, and they ship only when the
- * person's branch commits them. At the agent's `git commit` tool call, Rerail names the decision files that commit
+ * Commit staging: a verdict writes its decision (and, with the experimental decision ledger, its ledger entry) into the
+ * working tree, and they ship only when the person's branch commits them. At the agent's `git commit` tool call, Rerail names the decision files that commit
  * would leave out, as context, once per commit attempt; it never stages anything and never blocks the commit.
  */
 import { isCommandTool } from "../code-rule/code-rule-bridge.js";
@@ -41,11 +41,13 @@ export function gitCommitIn(command: string): { readonly all: boolean } | null {
 }
 
 /**
- * The files under `.rerail/decisions/` and `.rerail/candidates/` a commit would leave out: untracked, or (unless the
- * commit takes every tracked change, `all`) modified or deleted and not staged. Empty when Git cannot say.
+ * The decision files a commit would leave out: under `.rerail/candidates/`, and `.rerail/decisions/` with the decision
+ * ledger (`ledger`); untracked, or (unless the commit takes every tracked change, `all`) modified or deleted and not
+ * staged. Empty when Git cannot say.
  */
-export function unstagedDecisionFiles(root: string, all: boolean): string[] {
-  const result = runGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", `${DECISIONS_DIRECTORY}/`, `${CANDIDATE_DIRECTORY}/`]);
+export function unstagedDecisionFiles(root: string, all: boolean, ledger: boolean): string[] {
+  const folders = ledger ? [`${DECISIONS_DIRECTORY}/`, `${CANDIDATE_DIRECTORY}/`] : [`${CANDIDATE_DIRECTORY}/`];
+  const result = runGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...folders]);
   if (result.status !== 0) return [];
   const records = result.stdout.split("\0");
   const files: string[] = [];

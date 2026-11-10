@@ -18,6 +18,7 @@ const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   branch: "tbelanger/export-api",
   baseBranch: "main",
   enabled: true,
+  experimental: { decisionLedger: true },
   readiness: {
     judge: { available: true, runner: "claude", problem: null },
     github: { state: "signed-in", login: "tbelanger", repository: "acme/storefront" },
@@ -125,14 +126,24 @@ describe("Merge Assist's conflicts", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens on Conflicts with its open count, the other tabs' panels hidden", () => {
-    expect(root.querySelectorAll("button.mtab").map(b => [b.textContent, b.getAttribute("aria-pressed")]))
-      .toEqual([["Conflicts · 2", "true"], ["Decisions", "false"], ["Decision log", "false"]]);
+  it("opens on Conflicts with its open count, the other tabs' panels hidden, the Decision log marked experimental", () => {
+    expect(root.querySelectorAll("button.mtab").map(b => [b.textContent, b.getAttribute("aria-pressed"), b.hidden]))
+      .toEqual([["Conflicts · 2", "true", false], ["Decisions", "false", false], ["Decision log Experimental", "false", false]]);
+    expect(button("matab", "log")!.querySelector(".badge.mexp")!.textContent).toBe("Experimental");
     expect([panel("conflicts").hidden, panel("decisions").hidden, panel("log").hidden]).toEqual([false, true, true]);
     click(button("matab", "log"));
     render(root);
     expect([panel("conflicts").hidden, panel("log").hidden]).toEqual([true, false]);
     expect(button("matab", "log")!.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("hides the Decision log without the experimental decision ledger, even when it was the tab chosen", () => {
+    click(button("matab", "log"));
+    data.mergeAssist = fixture({ experimental: { decisionLedger: false }, decisionLog: { questions: [], problems: [] } });
+    render(root);
+    expect(button("matab", "log")!.hidden).toBe(true);
+    expect(panel("log").hidden).toBe(true);
+    expect(button("matab", "conflicts")!.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("shows an open conflict's kind, title, age, both sides with their hunks, and the evidence", () => {
