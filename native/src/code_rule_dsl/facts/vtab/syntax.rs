@@ -594,9 +594,9 @@ struct Projected {
 
 /// Node ids per definition (decisions 0083 §3, 0094 §2; `granules`): a node's id is `document << 32 | slot << 18 |
 /// index`, its granule's slot and its index there. An edit renumbers the granules it touches and no other's.
-/// Spans that are positions (a document's text, its lines, matches) are in the top slots, in order. Slots take 13
-/// bits, so every such id stays below `SPAN` (bit 31), the mark of `Extra`'s span ids: a node by definition is never
-/// read as one of those spans, nor one of them as a node.
+/// Spans that are positions (a document's text, its lines, its tokens) are in the top slots, in order; `Extra`'s spans
+/// in the slots below them (`granules::ExtraSpan`), so a node by definition is never read as one of those spans, nor
+/// one of them as a node.
 struct DefIds {
     /// The low 32 bits of each node's and token's id, by local id.
     low: Vec<u32>,
@@ -815,18 +815,18 @@ pub(crate) struct Batch {
     made: BTreeSet<&'static str>,
 }
 
-/// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | SPAN | k`, past every node of its
-/// document, so no node view has a row of it (`Batch::node`). `k` is 0 for the whole source (`source`), `l` for
-/// physical line `l` (`src_line`), `LF | l` for `\n`-line `l` (`src_line_lf`), `TAPE | l` for the tape's line `l`
-/// (`tape_line`), `COMMENT | k` for the document's `k`-th comment from 1, in source order, of those no node is
-/// (`comment`: T's nodes leave out a grammar's `comment` kind, as Python's, but keep Rust's `line_comment`, which is
-/// then the comment's id) and `MATCH | i` for the document's `i`th match or group of a `match_all` or
-/// `match_group` regex.
-pub(crate) const SPAN: u32 = 1 << 31;
-pub(crate) const LF: u32 = 1 << 30;
-pub(crate) const TAPE: u32 = 1 << 29;
-pub(crate) const COMMENT: u32 = 1 << 28;
-pub(crate) const MATCH: u32 = 1 << 27;
+/// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
+/// its kind's past every node of its document, so no node view has a row of it (`Batch::node`). `ExtraSpan::Line` `0`
+/// is the whole source (`source`), `Line` `l` physical line `l` (`src_line`), `Lf` `l` the `\n`-line `l`
+/// (`src_line_lf`), `Tape` `l` the tape's line `l` (`tape_line`), `Comment` `k` the document's `k`-th comment from 1,
+/// in source order, of those no node is (`comment`: T's nodes leave out a grammar's `comment` kind, as Python's, but
+/// keep Rust's `line_comment`, which is then the comment's id) and `Match` `i` the document's `i`th match or group of
+/// a `match_all`, `match_group` or `rx_span` regex. A document with more of a kind than its capacity fails, named.
+fn extra_span(key: i64, kind: granules::ExtraSpan, i: u32) -> StoreResult<i64> {
+    granules::extra_low(kind, i).map(|low| key << 32 | i64::from(low)).ok_or_else(|| {
+        StoreError::Invalid(format!("document {key} has more than {} {kind:?} spans (core.rr's span ids)", kind.capacity()))
+    })
+}
 
 /// The physical lines of `source`, as byte ranges without their terminators: as Python's `str.splitlines()`
 /// splits (`splitlines`: `\r\n`, `\n`, `\r`, `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028, U+2029; W's `lines`
@@ -1203,7 +1203,8 @@ impl Extra {
         }
         self.nodes(p, string);
         let key = i64::from(p.key);
-        let span = |k: u32| key << 32 | i64::from(SPAN | k);
+        use granules::ExtraSpan;
+        let span = |kind: ExtraSpan, i: usize| extra_span(key, kind, u32::try_from(i).unwrap_or(u32::MAX));
         let source = f.source.as_str();
         if self.comment && let Some(dialect) = dialect {
             use crate::code_rule_dsl::language::adapter::is_comment_kind;
@@ -1217,7 +1218,7 @@ impl Extra {
                 let c = match p.local[id as usize] {
                     NONE => {
                         k += 1;
-                        let c = span(COMMENT | k);
+                        let c = span(ExtraSpan::Comment, k)?;
                         let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
                         let col = start - f.lines.start(f.lines.line(start));
                         self.span(c, f.start_line[id as usize] as usize, f.lines.line(end) + 1, col, whole, true, text, string);
@@ -1242,7 +1243,7 @@ impl Extra {
         // `rx_span`'s containers among them: the source's and the lines' (indexes in `made`).
         let (mut source_at, mut lines_at) = (None, 0..0);
         if self.source {
-            let sp = span(0);
+            let sp = span(ExtraSpan::Line, 0)?;
             self.sources.push([key, sp]);
             let terminated = physical.last().map_or(!source.is_empty(), |r| r.end < source.len());
             self.span(sp, 1, (physical.len() + usize::from(terminated)).max(1), 0, source, self.source_text, text, string);
@@ -1252,7 +1253,7 @@ impl Extra {
         if self.src_line {
             lines_at.start = made.len();
             for (i, r) in physical.iter().enumerate() {
-                let (l, sp) = (i + 1, span(i as u32 + 1));
+                let (l, sp) = (i + 1, span(ExtraSpan::Line, i + 1)?);
                 self.src_lines.push([key, l as i64, sp]);
                 self.span(sp, l, l, 0, &source[r.clone()], self.line_text, text, string);
                 made.push((sp, r.clone(), Some(l)));
@@ -1261,7 +1262,7 @@ impl Extra {
         }
         if self.src_line_lf {
             for (i, r) in physical_lines(source, false).into_iter().enumerate() {
-                let (l, sp) = (i + 1, span(LF | (i as u32 + 1)));
+                let (l, sp) = (i + 1, span(ExtraSpan::Lf, i + 1)?);
                 self.src_lines_lf.push([key, l as i64, sp]);
                 self.span(sp, l, l, 0, &source[r.clone()], true, text, string);
                 made.push((sp, r, Some(l)));
@@ -1269,7 +1270,7 @@ impl Extra {
         }
         if self.tape_line {
             for i in 0..f.lines.starts().len() {
-                let (l, sp) = (i + 1, span(TAPE | (i as u32 + 1)));
+                let (l, sp) = (i + 1, span(ExtraSpan::Tape, i + 1)?);
                 let r = f.lines.start(i)..f.lines.end(i);
                 self.tape_lines.push([key, l as i64, sp]);
                 self.span(sp, l, l, 0, &source[r.clone()], true, text, string);
@@ -1277,13 +1278,10 @@ impl Extra {
             }
         }
         // Each regex's matches in each span, and their named groups, numbered through the document.
-        let mut next: u32 = 0;
-        let mut id = |p: &Projected| -> StoreResult<i64> {
-            if next >= MATCH {
-                return Err(StoreError::Invalid(format!("document {} has more than {MATCH} match_all matches and groups", p.key)));
-            }
+        let mut next: usize = 0;
+        let mut id = |_: &Projected| -> StoreResult<i64> {
             next += 1;
-            Ok(span(MATCH | (next - 1)))
+            span(ExtraSpan::Match, next - 1)
         };
         // A piece of span `r` (`at` within it) placed as W places a regex's finding there: in a line (its number and
         // its start), that line and the byte column in it; else on the tape's lines.
@@ -1744,6 +1742,10 @@ impl Batch {
             let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
             let p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
             drop(new_span);
+            // Its positions (tokens, text, lines) in the top slots (`granules::span_low`): past them ids would clash.
+            if p.defs.is_some() && u64::from(p.locs() - p.len()) > granules::POSITIONS {
+                return Err(StoreError::Invalid(format!("{} has more than {} positions (tokens and lines: core.rr's span ids)", d.path, granules::POSITIONS)));
+            }
             if core && !projection.ast_patterns.is_empty() && guest.is_none() && !withheld
                 && let Some(dialect) = dialect
                 && let Some(lang) = crate::code_rule_dsl::language::from_tape_tag(tag)

@@ -19,9 +19,9 @@ use std::process::{Command, Stdio};
 const ORACLE: &str = include_str!("oracle.py");
 
 /// A corpus: its name and its files (absolute path, path to show).
-pub(super) struct Corpus {
-    pub(super) name: String,
-    pub(super) files: Vec<(PathBuf, String)>,
+pub(crate) struct Corpus {
+    pub(crate) name: String,
+    pub(crate) files: Vec<(PathBuf, String)>,
 }
 
 fn env_list(key: &str, default: &str) -> Vec<String> {
@@ -36,7 +36,7 @@ pub(super) fn pythons() -> Vec<String> {
     env_list("RERAIL_PARITY_PYTHON", "python3")
 }
 
-pub(super) fn corpora() -> Vec<Corpus> {
+pub(crate) fn corpora() -> Vec<Corpus> {
     env_list("RERAIL_PARITY_ROOTS", "fixtures")
         .into_iter()
         .map(|root| if root == "fixtures" { fixtures() } else { directory(Path::new(&root)) })

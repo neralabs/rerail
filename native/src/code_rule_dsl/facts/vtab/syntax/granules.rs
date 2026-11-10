@@ -3,8 +3,8 @@
 //! other's. `RERAIL_NODE_IDS=preorder` numbers nodes in preorder instead, to compare.
 //!
 //! ```text
-//! 31  30          18 17                 0
-//! [0][ granule slot ][ index in granule  ]
+//! 31            18 17                 0
+//! [  granule slot ][ index in granule  ]
 //!   hash of the       the granule's nodes in preorder, then its tokens
 //!   granule's key
 //! ```
@@ -32,10 +32,12 @@
 //! **Slots.** A granule's home slot is a hash of its key. Clashes are settled in key order: granules are placed by
 //! (home, key), each in the first free slot from its home. So the slots are a function of the set of keys, not of
 //! the order the definitions appear in, and adding one moves at most a granule it clashes with. Slot 0 is the
-//! document's own (its root); the top `SPAN_SLOTS` slots are its spans' (its text, lines and matches, which are
-//! positions, in order).
+//! document's own (its root); the top `SPAN_SLOTS` slots are its spans' (its text, lines and tokens, which are
+//! positions, in order), and the `EXTRA_SLOTS` below them `Extra`'s spans' (`ExtraSpan`: core.rr's source, lines,
+//! comments and matches made beside the projection), a slot range for each kind.
 //!
-//! **Overflow** never falls back to preorder: up to `SPAN_SLOTS << INDEX_BITS` spans (4 M) and any number of nodes. A granule with more than `INDEX` nodes and tokens goes on in further
+//! **Overflow** never falls back to preorder: up to `SPAN_SLOTS << INDEX_BITS` positions (4 M), each `ExtraSpan`
+//! kind's capacity (a document past either fails with a named error, never wraps) and any number of nodes. A granule with more than `INDEX` nodes and tokens goes on in further
 //! slots, keyed by its key and a count, placed after every granule's first slot (nodes first, then tokens), so a
 //! token's continuation never moves a node. A document with more granules than slots folds its statement granules
 //! into their parents, then, past that, every granule into its root.
@@ -47,21 +49,64 @@ use super::{Dialect, Projected};
 use crate::code_rule_dsl::facts::core::Facts;
 use std::collections::HashMap;
 
-pub(super) const INDEX_BITS: u32 = 18;
-/// 13 bits, not 14: every id, a span's in the top slot with its largest index too, stays below `SPAN` (bit 31), the
-/// mark of `Extra`'s span ids (`super::SPAN`), so a node is never read as one of those spans, nor one of them as a node.
-pub(super) const SLOT_BITS: u32 = 31 - INDEX_BITS;
+pub(super) const SLOT_BITS: u32 = 14;
+pub(super) const INDEX_BITS: u32 = 32 - SLOT_BITS;
 /// Indexes in one slot.
 pub(super) const INDEX: u32 = 1 << INDEX_BITS;
 const SLOTS: u32 = 1 << SLOT_BITS;
 /// The top slots, from `SLOTS - 1` down, hold a document's spans: up to `SPAN_SLOTS << INDEX_BITS` of them.
 pub(super) const SPAN_SLOTS: u32 = 16;
+/// The positions (`span_low`) a document may have: past them a run fails (`super::Batch::build`), never wraps.
+pub(super) const POSITIONS: u64 = SPAN_SLOTS as u64 * INDEX as u64;
 /// The first slot of the spans'.
 const SPAN_FIRST: u32 = SLOTS - SPAN_SLOTS;
-/// Slots granules take: `1..SPAN_FIRST`.
-const GRANULE_SLOTS: u32 = SPAN_FIRST - 1;
-// Every slot, with its largest index, stays below `SPAN` (the bound as clippy reads it: the slot under `SPAN`'s bits).
-const _: () = assert!(SLOTS - 1 < super::SPAN >> INDEX_BITS);
+/// Slots of `Extra`'s spans (`ExtraSpan`): one for each kind of line and for the comments, `MATCH_SLOTS` for the
+/// matches, below the positions'.
+const MATCH_SLOTS: u32 = 12;
+pub(super) const EXTRA_SLOTS: u32 = 4 + MATCH_SLOTS;
+const EXTRA_FIRST: u32 = SPAN_FIRST - EXTRA_SLOTS;
+/// Slots granules take: `1..EXTRA_FIRST`.
+const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
+
+/// The kinds of `Extra`'s spans (core.rr's `span`s made beside the projection: `super::Extra::document`), each in slots
+/// of its own between the granules' and the positions', so no node, position or other kind has its id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExtraSpan {
+    /// The whole source (index 0) and its physical lines (`src_line`, from 1).
+    Line,
+    /// The `\n`-lines (`src_line_lf`, from 1).
+    Lf,
+    /// The tape's lines (`tape_line`, from 1).
+    Tape,
+    /// The comments no node is, from 1.
+    Comment,
+    /// Each `match_all`/`match_group`/`rx_span` match or group, from 0.
+    Match,
+}
+
+impl ExtraSpan {
+    const fn first(self) -> u32 {
+        match self {
+            ExtraSpan::Line => 0,
+            ExtraSpan::Lf => 1,
+            ExtraSpan::Tape => 2,
+            ExtraSpan::Comment => 3,
+            ExtraSpan::Match => 4,
+        }
+    }
+    /// How many spans of the kind a document may have.
+    pub(crate) const fn capacity(self) -> u32 {
+        match self {
+            ExtraSpan::Match => MATCH_SLOTS * INDEX,
+            _ => INDEX,
+        }
+    }
+}
+
+/// The low bits of span `i` of `kind`, or `None` past the kind's capacity.
+pub(super) fn extra_low(kind: ExtraSpan, i: u32) -> Option<u32> {
+    (i < kind.capacity()).then(|| (EXTRA_FIRST + kind.first() + i / INDEX) << INDEX_BITS | i % INDEX)
+}
 
 /// What starts a granule.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
