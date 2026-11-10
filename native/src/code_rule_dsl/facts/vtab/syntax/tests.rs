@@ -565,6 +565,26 @@ fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
     assert!(std::ptr::eq(verdict, doc.facts.python_syntax.get().unwrap()), "the tape owns one shared verdict");
 }
 
+#[test]
+fn python_exception_rows_share_the_demanded_verdict_cache() {
+    let store=ContentStore::open(&temp("python-exception")).unwrap();
+    let bad=document(3,"bad.py","python","def broken(:\n");
+    let good=document(4,"good.py","python","pass\n");
+    let projection=Projection {reads:Some(["syntax_exception".into()].into()),..Projection::core()};
+    let rows=shaped(&store,vec![bad.clone(),good.clone()],&projection).unwrap();
+    let values=&rows.iter().find(|(name,_)|*name=="syntax_exception").unwrap().1;
+    assert_eq!(values.len(),1);
+    assert_eq!(values.value(0,0),3);
+    assert_eq!(store.atom_value(values.value(0,1) as u32).unwrap().unwrap(),"SyntaxError");
+    let location=store.atom_value(values.value(0,3) as u32).unwrap().unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&location).unwrap(),serde_json::json!([1,12,"def broken(:\n",1,13]));
+    let cached=bad.facts.python_syntax.get().unwrap();
+    assert!(cached.is_some());assert!(good.facts.python_syntax.get().unwrap().is_none());
+    let verdict=Projection {reads:Some(["syntax_error".into()].into()),..Projection::core()};
+    shaped(&store,vec![bad.clone()],&verdict).unwrap();
+    assert!(std::ptr::eq(cached,bad.facts.python_syntax.get().unwrap()));
+}
+
 /// Literal values and positions are one demanded producer; a names-only rule must not build either table.
 #[test]
 fn unread_python_literal_columns_are_not_materialized() {

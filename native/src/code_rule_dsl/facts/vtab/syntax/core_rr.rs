@@ -487,7 +487,7 @@ pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
 pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
     #[cfg(feature = "python-syntax-error")]
     if dialect.family == Family::Python {
-        return f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone();
+        return f.python_syntax.get_or_init(|| super::python_syntax::exception(&f.source)).as_ref().map(|e|e.verdict());
     }
     // A `.rr` file's error is the one running it gives (`logic::rr::syntax_error`).
     if dialect.family == Family::Rr {
@@ -528,6 +528,7 @@ pub(super) struct CoreRows {
     spread: Vec<i64>,
     next_sibling: Vec<[i64; 2]>,
     syntax_error: Vec<[i64; 3]>,
+    syntax_exception: Vec<[i64; 4]>,
     source: Vec<[i64; 2]>,
     src_line: Vec<[i64; 3]>,
     split_line: Vec<[i64; 3]>,
@@ -731,6 +732,13 @@ impl CoreRows {
     /// A withheld document's one row: its first error (`verdict`).
     pub(super) fn withheld(&mut self, p: &Projected, (l, msg): &(u32, String), string: &mut dyn FnMut(&str) -> usize) {
         self.syntax_error.push([i64::from(p.key), i64::from(*l), string(msg) as i64]);
+    }
+
+    pub(super) fn exception(&mut self,p:&Projected,string:&mut dyn FnMut(&str)->usize) {
+        if let Some(Some(error))=p.facts.python_syntax.get() {
+            self.syntax_exception.push([i64::from(p.key),string(&error.kind) as i64,
+                string(&error.message) as i64,string(&error.location_json()) as i64]);
+        }
     }
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
@@ -1063,6 +1071,7 @@ impl CoreRows {
             ("spread", make(&["n"], &spread, [false], atom)),
             ("next_sibling", pair(&["a", "b"], &self.next_sibling)),
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),
+            ("syntax_exception", make(&["d", "kind", "msg", "location"], &self.syntax_exception, [false,true,true,true],atom)),
             ("source", pair(&["d", "sp"], &self.source)),
             ("src_line", make(&["d", "l", "sp"], &self.src_line, [false, false, false], atom)),
             ("split_line", make(&["d", "l", "t"], &self.split_line, [false, false, true], atom)),

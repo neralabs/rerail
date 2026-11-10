@@ -1001,7 +1001,7 @@ impl Batch {
             // and `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document.
             // A guest that does not parse is withheld too, unless the policy keeps its partial tree (decision 0055 §6).
             let guest = d.guest.as_deref().filter(|_| core);
-            let error = if core && (projection.wants("syntax_error") || guest.is_some()) { core_rr::verdict(&d.facts, dialect) } else { None };
+            let error = if core && (projection.wants("syntax_error") || projection.wants("syntax_exception") || guest.is_some()) { core_rr::verdict(&d.facts, dialect) } else { None };
             let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
@@ -1129,6 +1129,9 @@ impl Batch {
             if let Some((line, msg)) = &error {
                 let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
                 c.withheld(&p, &(line, msg.clone()), &mut string);
+                if projection.wants("syntax_exception") && guest.is_none() && dialect.family==Family::Python {
+                    c.exception(&p,&mut string);
+                }
             }
             if core && (!withheld || guest.is_none()) {
                 c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none());

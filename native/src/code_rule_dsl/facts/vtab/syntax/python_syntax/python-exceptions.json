@@ -432,5 +432,281 @@
       "endOffset": 5,
       "text": "pass\n"
     }
+  },
+  {
+    "source": "é = 1; x =\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid syntax",
+      "line": 1,
+      "offset": 11,
+      "endLine": 1,
+      "endOffset": 12,
+      "text": "é = 1; x =\n"
+    }
+  },
+  {
+    "source": "é = \"😀\"\nx =\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid syntax",
+      "line": 2,
+      "offset": 4,
+      "endLine": 2,
+      "endOffset": 5,
+      "text": "x =\n"
+    }
+  },
+  {
+    "source": "def f():",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after function definition on line 1",
+      "line": 1,
+      "offset": 9,
+      "endLine": 1,
+      "endOffset": -1,
+      "text": "def f():\n"
+    }
+  },
+  {
+    "source": "def f():\n   ",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after function definition on line 1",
+      "line": 2,
+      "offset": 4,
+      "endLine": 2,
+      "endOffset": -1,
+      "text": "   \n"
+    }
+  },
+  {
+    "source": "def f(\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "'(' was never closed",
+      "line": 1,
+      "offset": 6,
+      "endLine": 1,
+      "endOffset": 0,
+      "text": "def f(\n"
+    }
+  },
+  {
+    "source": "if True:\n\tpass\n        pass\n",
+    "exception": {
+      "kind": "TabError",
+      "message": "inconsistent use of tabs and spaces in indentation",
+      "line": 3,
+      "offset": 1,
+      "endLine": 3,
+      "endOffset": 0,
+      "text": "        pass\n"
+    }
+  },
+  {
+    "source": "x = [foo.bar 2]\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid syntax. Perhaps you forgot a comma?",
+      "line": 1,
+      "offset": 6,
+      "endLine": 1,
+      "endOffset": 15,
+      "text": "x = [foo.bar 2]\n"
+    }
+  },
+  {
+    "source": "x = [f(1) 2]\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid syntax. Perhaps you forgot a comma?",
+      "line": 1,
+      "offset": 6,
+      "endLine": 1,
+      "endOffset": 12,
+      "text": "x = [f(1) 2]\n"
+    }
+  },
+  {
+    "source": "x = [\"a\" \"b\" 3]\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid syntax. Perhaps you forgot a comma?",
+      "line": 1,
+      "offset": 6,
+      "endLine": 1,
+      "endOffset": 15,
+      "text": "x = [\"a\" \"b\" 3]\n"
+    }
+  },
+  {
+    "source": "x = [\n 1)\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "closing parenthesis ')' does not match opening parenthesis '[' on line 1",
+      "line": 2,
+      "offset": 3,
+      "endLine": 2,
+      "endOffset": 3,
+      "text": " 1)"
+    }
+  },
+  {
+    "source": "x = (\n 1\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "'(' was never closed",
+      "line": 1,
+      "offset": 5,
+      "endLine": 1,
+      "endOffset": 0,
+      "text": "x = ("
+    }
+  },
+  {
+    "source": "x = 1)\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "unmatched ')'",
+      "line": 1,
+      "offset": 6,
+      "endLine": 1,
+      "endOffset": 6,
+      "text": "x = 1)"
+    }
+  },
+  {
+    "source": "x = \"é\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "unterminated string literal (detected at line 1)",
+      "line": 1,
+      "offset": 5,
+      "endLine": 1,
+      "endOffset": 5,
+      "text": "x = \"é"
+    }
+  },
+  {
+    "source": "x = f\"{value!z}\"\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "f-string: invalid conversion character 'z': expected 's', 'r', or 'a'",
+      "line": 1,
+      "offset": 14,
+      "endLine": 1,
+      "endOffset": 15,
+      "text": "x = f\"{value!z}\"\n"
+    }
+  },
+  {
+    "source": "x = f\"{value\"\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "f-string: expecting '}'",
+      "line": 1,
+      "offset": 13,
+      "endLine": 1,
+      "endOffset": 13,
+      "text": "x = f\"{value\""
+    }
+  },
+  {
+    "source": "def f(a=1, b): pass\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "parameter without a default follows parameter with a default",
+      "line": 1,
+      "offset": 12,
+      "endLine": 1,
+      "endOffset": 13,
+      "text": "def f(a=1, b): pass\n"
+    }
+  },
+  {
+    "source": "def f(**a,b): pass\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "arguments cannot follow var-keyword argument",
+      "line": 1,
+      "offset": 11,
+      "endLine": 1,
+      "endOffset": 12,
+      "text": "def f(**a,b): pass\n"
+    }
+  },
+  {
+    "source": "if True:\r\npass\r\n",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after 'if' statement on line 1",
+      "line": 2,
+      "offset": 1,
+      "endLine": 2,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  },
+  {
+    "source": "value = 1 \\ x\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "unexpected character after line continuation character",
+      "line": 1,
+      "offset": 12,
+      "endLine": 1,
+      "endOffset": 0,
+      "text": "value = 1 \\ x\n"
+    }
+  },
+  {
+    "source": "value =\u0000",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "source code string cannot contain null bytes",
+      "line": null,
+      "offset": null,
+      "endLine": null,
+      "endOffset": null,
+      "text": null
+    }
+  },
+  {
+    "source": "def f(:\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid syntax",
+      "line": 1,
+      "offset": 7,
+      "endLine": 1,
+      "endOffset": 8,
+      "text": "def f(:\n"
+    }
+  },
+  {
+    "source": "def another(α:\n",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "'(' was never closed",
+      "line": 1,
+      "offset": 12,
+      "endLine": 1,
+      "endOffset": 0,
+      "text": "def another(α:\n"
+    }
+  },
+  {
+    "source": "if True:\n    pass\n  value\n",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "unindent does not match any outer indentation level",
+      "line": 3,
+      "offset": 8,
+      "endLine": 3,
+      "endOffset": -1,
+      "text": "  value\n"
+    }
   }
 ]

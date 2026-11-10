@@ -348,7 +348,7 @@ fn close_under(vars: &mut std::collections::BTreeSet<String>, equal: &[(String, 
 /// A base relation's document column, including raw text views.
 pub(crate) fn document_column(relation: &str) -> Option<usize> {
     match relation {
-        "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" |
+        "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" | "syntax_exception" |
         "source" | "src_line" | "split_line" | "lf_line" | "line_count" | "parsed"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
         | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),

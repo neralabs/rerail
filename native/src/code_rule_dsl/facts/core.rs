@@ -77,7 +77,28 @@ pub(crate) struct Facts {
     pub class_nodes: Vec<u32>,
     pub syntax_errors: bool,
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape.
-    pub python_syntax: std::sync::OnceLock<Option<(u32, String)>>,
+    pub python_syntax: std::sync::OnceLock<Option<PythonSyntaxError>>,
+}
+
+/// Native parser exception data. A caller's filename is attached by its rule, not cached with content.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PythonSyntaxError {
+    pub kind: String,
+    pub message: String,
+    pub line: Option<i64>,
+    pub offset: Option<i64>,
+    pub end_line: Option<i64>,
+    pub end_offset: Option<i64>,
+    pub text: Option<String>,
+}
+
+impl PythonSyntaxError {
+    pub fn verdict(&self) -> (u32, String) { (self.line.unwrap_or(1) as u32, self.message.clone()) }
+    pub fn location_json(&self) -> String {
+        if self.line.is_none() { return "null".into(); }
+        serde_json::json!([self.line,self.offset,self.text,self.end_line,self.end_offset]).to_string()
+    }
 }
 
 pub(crate) enum Built {

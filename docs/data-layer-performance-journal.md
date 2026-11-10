@@ -10672,3 +10672,19 @@ Next implementation steps:
 
 Only affected kernels ran. The root engine is unchanged and remains based on Final `ec3cfe1b7`.
 
+# Native syntax exception checkpoint, 2026-11-10
+
+The composition source contract exposed a missing native exception location tuple.
+The root engine now caches exception kind, message, source text, and start/end locations.
+The existing `syntax_error` relation and the new `syntax_exception` relation use that same cached parse.
+No rule invokes Python. Python 3.13 records the offline oracle fixtures only.
+
+The TDD ladder caught incorrect indentation priority, missing implicit newlines, and incorrect expression ranges.
+All 54 complete exception fixtures now pass in the development unit artifact `unit-45ba3e23bcbf95b1`.
+The existing 31 message/line fixtures and the demanded relation/cache test also pass.
+This artifact was built from dirty sources and is development evidence only, not an acceptance artifact.
+The composition adapter still needs to consume the new relation before its syntax case can pass end to end.
+No port was admitted at this checkpoint.
+
+Fetched Final rerail shape: `ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2`.
+This commit is already an ancestor of the current branch. A merge follows this checkpoint.

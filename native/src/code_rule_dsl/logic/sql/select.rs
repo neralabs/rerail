@@ -101,6 +101,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "op" | "op_t" | "comment" | "static_value" => &["n", "s"],
         // `core.rr`'s (`facts::vtab::syntax`, decision 0046).
         "syntax_error" => &["d", "l", "msg"],
+        "syntax_exception" => &["d", "kind", "msg", "location"],
         "value_type" => &["v", "t"],
         "spread" => &["n"],
         "next_sibling" => &["a", "b"],
