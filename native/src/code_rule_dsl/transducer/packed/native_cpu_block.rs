@@ -416,6 +416,28 @@ pub(super) struct At<'a> {
     pub(super) slot_of: &'a [u16],
     /// The last pass's mask stores made where the body makes their values (`Sinks`).
     pub(super) sinks: Option<Sinks<'a>>,
+    /// The gated regions' functions, each called from its branch (`Emit::region`).
+    pub(super) calls: Option<&'a RegionCalls>,
+}
+
+/// The gated regions' functions of a pass: each region is computed by a function of its own,
+/// made from the same program, that its branch calls. Only the hot loop is inlined: a region
+/// runs in few blocks, and its code inline would sit between the loop's. A function is built
+/// where its region is first lowered; a region in both the ASCII body and the other is one.
+pub(super) struct RegionCalls {
+    ids: Vec<cranelift_module::FuncId>,
+    signature: cranelift_codegen::ir::Signature,
+    built: std::cell::RefCell<Vec<Option<cranelift_codegen::ir::Function>>>,
+}
+
+/// A region function's signature: its words' address (in, then out), the block's first byte,
+/// its row of slots, its index, the stream's length.
+fn region_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
+    let mut signature = module.make_signature();
+    for _ in 0..5 {
+        signature.params.push(AbiParam::new(types::I64));
+    }
+    signature
 }
 
 /// The last pass's outputs a body stores where it makes them: each output not counted (an
@@ -466,6 +488,7 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
         lanes,
         rounds: Vec::new(),
         row,
+        calls: at.calls,
     };
     (e.live, e.masked) = live(native, state, at.full);
     let mut grouped: Vec<Option<usize>> = vec![None; n];
@@ -697,6 +720,8 @@ struct Emit<'a, 'b> {
     rounds: Vec<cranelift_codegen::ir::Block>,
     /// The block's row of slots (`body`).
     row: Value,
+    /// The regions' functions (`RegionCalls`); none: each region inline.
+    calls: Option<&'b RegionCalls>,
 }
 
 impl Emit<'_, '_> {
@@ -934,6 +959,11 @@ impl Emit<'_, '_> {
         // The region computed. Its carried bits are made plain, not gathered as constants: the
         // two ways must agree.
         f.switch_to_block(active);
+        if let Some(calls) = self.calls {
+            let args = self.call_region(&mut *f, r, &early, &outside, &words, calls);
+            self.consts = consts;
+            f.ins().jump(after, &args);
+        } else {
         for &m in reg.members.iter().filter(|m| !early.contains(m)) {
             self.emit(&mut *f, m);
         }
@@ -951,6 +981,7 @@ impl Emit<'_, '_> {
             args.push(BlockArg::from(x.unwrap_or_else(|| f.ins().iconst(types::I64, 0))));
         }
         f.ins().jump(after, &args);
+        }
         // Skipped: the values zero, the carried words as they were.
         f.switch_to_block(skip);
         let zero = f.ins().iconst(types::I64, 0);
@@ -975,6 +1006,164 @@ impl Emit<'_, '_> {
         for &w in (0..state.words).collect::<Vec<_>>().iter().filter(|w| !words.contains(w)) {
             self.packed_out[w] = before.packed_out[w];
         }
+    }
+
+    /// Region `r`'s call, in its active block: the words in (the state carried in, the region's
+    /// carried words so far, the values it reads from outside) through a stack slot, the call,
+    /// and the words out (the values read after it but those made before the call, its carried
+    /// words). Gives the block after's arguments. The function is built on the first call.
+    #[allow(clippy::too_many_arguments)]
+    fn call_region(&mut self, f: &mut FunctionBuilder<'_>, r: usize, early: &[usize], outside: &[usize], words: &[usize], calls: &RegionCalls) -> Vec<BlockArg> {
+        let (state, native) = (self.state, self.native);
+        let plan = &state.plan;
+        let reg = &plan.regions[r];
+        let inner: Vec<usize> = reg.members.iter().copied().filter(|m| !early.contains(m)).collect();
+        // What the region reads from outside: on the vectors, a value on the vectors is made
+        // again from the bytes (`native_cpu_lanes`); any other is passed.
+        let mut inputs: Vec<usize> = Vec::new();
+        for &m in &inner {
+            for o in native.insts[m].operands() {
+                if !inner.contains(&o) && !(plan.lanes[o] && plan.lanes[m]) && !inputs.contains(&o) {
+                    inputs.push(o);
+                }
+            }
+        }
+        let out: Vec<usize> = outside.iter().copied().filter(|m| !early.contains(m)).collect();
+        let n_in = state.words + words.len() + inputs.len();
+        let n = n_in + out.len() + words.len();
+        let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * n.max(1) as u32, 3));
+        let mut k = 0;
+        let mut put = |f: &mut FunctionBuilder<'_>, v: Value| {
+            f.ins().stack_store(v, slot, 8 * k);
+            k += 1;
+        };
+        for w in 0..state.words {
+            put(&mut *f, self.packed_in[w]);
+        }
+        // The carried words so far: what came before, and the gate's own if made before the call
+        // (its constant bits as well).
+        for &w in words {
+            let k = self.consts[w];
+            let v = match self.packed_out[w] {
+                Some(v) if k != 0 => {
+                    let k = f.ins().iconst(types::I64, k as i64);
+                    f.ins().bor(v, k)
+                }
+                Some(v) => v,
+                None => f.ins().iconst(types::I64, k as i64),
+            };
+            put(&mut *f, v);
+        }
+        for &o in &inputs {
+            let v = plain(&mut *f, &self.syms, &mut self.values, o);
+            put(&mut *f, v);
+        }
+        if calls.built.borrow()[r].is_none() {
+            let func = self.build_region(r, &inner, &inputs, &out, words, calls);
+            calls.built.borrow_mut()[r] = Some(func);
+        }
+        let address = f.ins().stack_addr(types::I64, slot, 0);
+        let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, calls.ids[r].as_u32()));
+        let signature = f.import_signature(calls.signature.clone());
+        let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+        let base = self.lanes.base();
+        f.ins().call(callee, &[address, base, self.row, self.i, self.len]);
+        let mut args = Vec::with_capacity(outside.len() + words.len());
+        let mut from = n_in;
+        for &m in outside {
+            let v = if early.contains(&m) {
+                plain(&mut *f, &self.syms, &mut self.values, m)
+            } else {
+                let v = f.ins().stack_load(types::I64, slot, 8 * from as i32);
+                from += 1;
+                v
+            };
+            args.push(BlockArg::from(v));
+        }
+        for _ in words {
+            args.push(BlockArg::from(f.ins().stack_load(types::I64, slot, 8 * from as i32)));
+            from += 1;
+        }
+        args
+    }
+
+    /// Region `r`'s function (`call_region`'s layout): its values `inner` made as the body
+    /// makes them, in a full block, from its inputs and the block's bytes.
+    fn build_region(&self, r: usize, inner: &[usize], inputs: &[usize], out: &[usize], words: &[usize], calls: &RegionCalls) -> cranelift_codegen::ir::Function {
+        let (state, native) = (self.state, self.native);
+        let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, calls.ids[r].as_u32()), calls.signature.clone());
+        let mut builder_context = FunctionBuilderContext::new();
+        {
+            let mut f = FunctionBuilder::new(&mut func, &mut builder_context);
+            let entry = f.create_block();
+            f.append_block_params_for_function_params(entry);
+            f.switch_to_block(entry);
+            let p = f.block_params(entry).to_vec();
+            let (io, base, row, i, len) = (p[0], p[1], p[2], p[3], p[4]);
+            let c = Consts::make(&mut f);
+            let flags = MemFlags::trusted();
+            let mut k = 0;
+            let mut get = |f: &mut FunctionBuilder<'_>| {
+                let v = f.ins().load(types::I64, flags, io, 8 * k);
+                k += 1;
+                v
+            };
+            let packed_in: Vec<Value> = (0..state.words).map(|_| get(&mut f)).collect();
+            let so_far: Vec<Value> = words.iter().map(|_| get(&mut f)).collect();
+            let given: Vec<Value> = inputs.iter().map(|_| get(&mut f)).collect();
+            let lanes = Lanes::new(&mut f, native, &state.plan, base, i, len, false, false, None, c.nibble);
+            let n = native.insts.len();
+            let mut e = Emit {
+                sinks: None,
+                sunk: vec![None; native.outputs.len()],
+                native,
+                state,
+                full: true,
+                i,
+                len,
+                packed_in: &packed_in,
+                weights: c.weights,
+                even: c.even,
+                live: self.live.clone(),
+                masked: self.masked.clone(),
+                syms: vec![Sym::Known(0); n],
+                values: vec![None; n],
+                packed_out: vec![None; state.words],
+                consts: vec![0; state.words],
+                lanes,
+                rounds: Vec::new(),
+                row,
+                calls: None,
+            };
+            for (k, &w) in words.iter().enumerate() {
+                e.packed_out[w] = Some(so_far[k]);
+            }
+            for (k, &o) in inputs.iter().enumerate() {
+                e.set(o, Sym::Value(given[k], false));
+            }
+            for &m in inner {
+                e.emit(&mut f, m);
+            }
+            let mut at = (state.words + words.len() + inputs.len()) as i32;
+            for &m in out {
+                let v = plain(&mut f, &e.syms, &mut e.values, m);
+                f.ins().store(flags, v, io, 8 * at);
+                at += 1;
+            }
+            for &w in words {
+                let mut x = e.packed_out[w].expect("its word so far");
+                if e.consts[w] != 0 {
+                    let k = f.ins().iconst(types::I64, e.consts[w] as i64);
+                    x = f.ins().bor(x, k);
+                }
+                f.ins().store(flags, x, io, 8 * at);
+                at += 1;
+            }
+            f.ins().return_(&[]);
+            f.seal_all_blocks();
+            f.finalize();
+        }
+        func
     }
 
     /// Group `g`'s loop. The head takes each carry and the rounds so far; the members are made
@@ -1190,7 +1379,8 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 let mut general_context: Context = module.make_context();
                 general_context.func.signature = signature.clone();
                 general_context.set_disasm(true);
-                (shape.ascii_branch, shape.gate_branches, shape.round_branches) = forward(&mut context, &mut general_context, (general_id, signature), body, stores, passes.slots, &mut hot)?;
+                let regions;
+                (shape.ascii_branch, shape.gate_branches, shape.round_branches, regions) = forward(&mut context, &mut general_context, (general_id, signature), &mut module, &name, body, stores, passes.slots, &mut hot)?;
                 shape.extracts = body.extracts.len();
                 general_context.func.srclocs.clear();
                 let clif = general_context.func.display().to_string();
@@ -1198,6 +1388,17 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 let code = general_context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
                 shape.outlined.push(Outlined { clif, disassembly: code });
                 module.clear_context(&mut general_context);
+                for (id, func) in regions {
+                    let mut region_context: Context = module.make_context();
+                    region_context.func = func;
+                    region_context.set_disasm(true);
+                    region_context.func.srclocs.clear();
+                    let clif = region_context.func.display().to_string();
+                    super::native_cpu_codegen::define_function(&mut module, id, &mut region_context).map_err(|_| Error::BackendFailure)?;
+                    let code = region_context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
+                    shape.outlined.push(Outlined { clif, disassembly: code });
+                    module.clear_context(&mut region_context);
+                }
             }
             Pass::Back(fills) => {
                 backward(&mut context, fills, passes.slots)?;
@@ -1349,7 +1550,7 @@ impl Loop<'_> {
 /// full blocks, the mask stores, the running counts and the flattenings. Gives the next block's
 /// parameters, and the body's gate and round branches; the loops' heads go to `heads`.
 #[allow(clippy::too_many_arguments)]
-fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value], len: Value, full: bool, scratch: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, usize, usize) {
+fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value], len: Value, full: bool, scratch: Value, calls: Option<&RegionCalls>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, usize, usize) {
     let (native, state) = (lp.native, lp.state);
     let (carried, counted, delayed, early) = (lp.carried(), lp.counted, lp.delayed, lp.early);
     let stores = MemFlags::new().with_notrap();
@@ -1375,7 +1576,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
         f.ins().brif(ascii, fast, &[], slow, &[]);
         for (blk, ascii) in [(fast, true), (slow, false)] {
             f.switch_to_block(blk);
-            let (v, packed, gates, rounds) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, ascii, bytes: Some(bytes), scratch, slots, slot_of, sinks });
+            let (v, packed, gates, rounds) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, ascii, bytes: Some(bytes), scratch, slots, slot_of, sinks, calls });
             gate_branches += gates;
             round_branches += rounds.len();
             heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
@@ -1386,7 +1587,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
         let m = f.block_params(merge).to_vec();
         (m[..n].to_vec(), m[n..].to_vec())
     } else {
-        let (v, packed, gates, rounds) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, ascii: false, bytes: None, scratch, slots, slot_of, sinks });
+        let (v, packed, gates, rounds) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, ascii: false, bytes: None, scratch, slots, slot_of, sinks, calls });
         gate_branches += gates;
         round_branches += rounds.len();
         heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
@@ -1463,7 +1664,7 @@ fn general(context: &mut Context, lp: &Loop<'_>) -> Result<(), Error> {
     let p: Vec<Value> = (0..lp.params).map(|k| f.ins().load(types::I64, flags, at, 8 * k as i32)).collect();
     let zero = f.ins().iconst(types::I64, 0);
     let mut heads = Vec::new();
-    let (again, _, _) = step(&mut f, lp, &consts, &p, len, false, zero, &mut heads);
+    let (again, _, _) = step(&mut f, lp, &consts, &p, len, false, zero, None, &mut heads);
     for (k, &v) in again.iter().enumerate() {
         f.ins().store(flags, v, at, 8 * k as i32);
     }
@@ -1487,7 +1688,7 @@ fn general_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
 /// the general body (`general`), built into `general_context`. Gives whether the full body
 /// branches on ASCII, the gated regions' branches and the fixed points' loops.
 #[allow(clippy::too_many_arguments)]
-fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>) -> Result<(bool, usize, usize), Error> {
+fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>) -> Result<(bool, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>), Error> {
     let mut builder_context = FunctionBuilderContext::new();
     let counted = counted(native);
     let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
@@ -1499,6 +1700,12 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let lp = Loop { native, state: &state, counted: &counted, delayed: &delayed, early: &early, stride: 8 * native.outputs.len() as i64, slot_of, slots, params };
     general(general_context, &lp)?;
     let own = cranelift_codegen::ir::UserExternalName::new(0, outlined.0.as_u32());
+    // Each gated region's function, declared here and built where the body lowers it.
+    let signature = region_signature(module);
+    let ids = (0..state.plan.regions.len())
+        .map(|r| module.declare_function(&format!("{name}_region{r}"), Linkage::Local, &signature).map_err(|_| Error::BackendFailure))
+        .collect::<Result<Vec<_>, _>>()?;
+    let calls = RegionCalls { ids, signature, built: std::cell::RefCell::new(vec![None; state.plan.regions.len()]) };
     let shape;
     let ascii_branch = state.plan.ascii_branch;
     let (gate_branches, round_branches);
@@ -1607,7 +1814,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         f.switch_to_block(body_block);
         let p = f.block_params(body_block).to_vec();
         let again;
-        (again, gate_branches, round_branches) = step(&mut f, &lp, &consts, &p, len, true, scratch, &mut heads);
+        (again, gate_branches, round_branches) = step(&mut f, &lp, &consts, &p, len, true, scratch, Some(&calls), &mut heads);
         let again: Vec<BlockArg> = again.into_iter().map(BlockArg::from).collect();
         // The hot loop's back edge: to itself while the next block is full.
         hot.push(body_block);
@@ -1665,10 +1872,20 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         f.ins().return_(&[]);
         f.seal_all_blocks();
         f.finalize();
-        shape = super::native_cpu_shape::check(&context.func, &heads, &[own]);
+        let mut owns = vec![own];
+        owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
+        shape = super::native_cpu_shape::check(&context.func, &heads, &owns);
     }
     shape.map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
-    Ok((ascii_branch, gate_branches, round_branches))
+    // The regions' functions, each checked: it calls nothing and has no loop.
+    let mut regions = Vec::new();
+    for (r, built) in calls.built.into_inner().into_iter().enumerate() {
+        if let Some(func) = built {
+            super::native_cpu_shape::check(&func, &[], &[]).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
+            regions.push((calls.ids[r], func));
+        }
+    }
+    Ok((ascii_branch, gate_branches, round_branches, regions))
 }
 
 /// The flags of a pass's stores: no trap (the host laid out every word written).

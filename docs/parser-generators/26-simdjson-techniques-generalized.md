@@ -1,7 +1,7 @@
 # Parser generators: simdjson's techniques, generalized for the compiler
 
-Status: 2026-11-10. The catalog and its measurements; transformation 1 done (§5), the rest in
-progress (§4).
+Status: 2026-11-10. The catalog and its measurements; transformation 1 done (§5); only the hot
+loop inlined (§6); the rest in progress (§4).
 
 ## Intro
 
@@ -302,3 +302,55 @@ Two attempts lost, and are recorded so they are not tried again:
   values, 2,484 spills;
 - every `prev` chain and `within` on the vectors, gated or not: 436 ns a block against 317,
   without regions in both.
+
+## 6. Only the hot loop is inlined
+
+Code that runs rarely still costs where it sits. Inline, it lies between the hot loop's
+instructions and crowds the instruction cache. So each pass is now several functions, all
+made from the same program:
+
+- **The pass:** the loops over files and blocks, and the full blocks' body, inlined.
+- **The general body:** a file's first block and its last ones, where `within` is not all
+  ones. The pass calls it with the loop's parameters in a stack slot, and it writes the next
+  block's parameters back.
+- **One function per gated region:** its branch calls it when the gate has a bit. It takes the
+  carried state, its carried words so far, and the values it reads from outside, through a
+  stack slot. It gives back the values read after it and its carried words. It makes its
+  vector values again from the block's bytes.
+
+```text
+# .rr's pass 2, its hot loop: region 1, behind its gate v242 (Cranelift IR).
+block13(v241: i64, v242: i64, v243: i64, v244: i64, v245: i64):
+    brif v242, block14, block15        ; the gate: a bit, or not
+block14:                               ; taken: the words in, the call, the word out
+    stack_store.i64 v11, ss1           ; the state carried in, four words
+    stack_store.i64 v12, ss1+8
+    stack_store.i64 v13, ss1+16
+    stack_store.i64 v14, ss1+24
+    stack_store.i64 v242, ss1+32       ; a value the region reads, the gate
+    v255 = stack_addr.i64 ss1
+    call fn1(v255, v9, v15, v8, v50)   ; words, bytes, row of slots, block, length
+    v256 = stack_load.i64 ss1+40       ; the one value read after it
+    jump block16(v256)
+block15:                               ; skipped: the value is zero
+    v257 = iconst.i64 0
+    jump block16(v257)
+```
+
+The shape check allows a call only to one of the lowering's own functions. Those functions
+call nothing and have no loops, so the calls make no cycle. Host Rust and runtime helpers are
+still refused. The tests are in `outline_tests`.
+
+Measured on `.rr`, runs alternated at a load of 8 to 23:
+
+| | Inline | Called |
+|---|---|---|
+| Pass 2's function | 7,951 instructions | 1,614 |
+| Pass 2's hot loop | 2,710 points | 1,374 |
+| Pass 0's function | 2,840 instructions | 1,397 |
+| CPU a 64-byte block | 316, 310, 292 ns | 275, 310, 299 ns |
+
+The CPU time does not change beyond the noise: the general body runs a block or two per
+file, and the regions are rarely taken. The gain is in the size of the hot loop. That size
+is also what the later transformations need to stay small.
+

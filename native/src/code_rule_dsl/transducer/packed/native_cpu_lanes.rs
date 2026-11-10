@@ -662,6 +662,11 @@ impl<'a> Lanes<'a> {
         }
     }
 
+    /// The block's first byte.
+    pub(super) fn base(&self) -> Value {
+        self.base
+    }
+
     /// The bytes `lag` before chunk `c`'s, loaded once (an unaligned load: the window holds
     /// `MAX_LAG` bytes before a block, `FRONT` zeros before a file).
     fn bytes(&mut self, f: &mut FunctionBuilder<'_>, c: usize, lag: u8) -> Value {

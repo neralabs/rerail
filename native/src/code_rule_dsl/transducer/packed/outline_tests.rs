@@ -4,7 +4,8 @@
 //!
 //! The general body (the first block of a file and the last ones, where `within` is not all
 //! ones) runs a block or two per file: the pass calls it, with the loop's parameters through
-//! a stack slot.
+//! a stack slot. A gated region (`native_cpu_lanes::Region`) runs only where its gate has a
+//! bit: its branch calls it, with what it reads and gives through a stack slot.
 
 use super::block_tests::{hot_loop, opcode};
 use super::gating_tests::{ESCAPES, LATE, many, small};
@@ -21,11 +22,15 @@ fn the_general_body_is_a_call_not_a_copy() {
         let g = small(&text);
         let compiled = native_cpu_block::compile(&g.native).expect("compiles");
         for (k, pass) in compiled.passes.iter().enumerate().filter(|(_, p)| !p.back) {
-            assert_eq!(pass.outlined.len(), 1, "{name} pass {k}: the general body is not outlined");
+            assert!(!pass.outlined.is_empty(), "{name} pass {k}: the general body is not outlined");
             let calls = instructions(&pass.clif).iter().filter(|l| opcode(l) == "call").count();
-            assert_eq!(calls, 1, "{name} pass {k}: one call, the general body's");
+            // The general body's call, and each region's, once in each body that has it.
+            let bodies = 1 + usize::from(pass.ascii_branch);
+            assert_eq!(calls, 1 + bodies * (pass.outlined.len() - 1), "{name} pass {k}: a call each");
             let general = &pass.outlined[0].clif;
-            assert!(instructions(general).iter().all(|l| opcode(l) != "call"), "{name} pass {k}: the general body calls nothing");
+            for o in &pass.outlined {
+                assert!(instructions(&o.clif).iter().all(|l| opcode(l) != "call"), "{name} pass {k}: an outlined function calls nothing");
+            }
             // Outside the hot loop the pass holds only the loops' scaffolding: fewer
             // instructions than the body it calls.
             let hot: usize = hot_loop(&pass.clif).iter().map(|(_, lines)| lines.len()).sum();
@@ -49,5 +54,44 @@ fn the_called_general_body_equals_the_interpreter() {
         let files: Vec<Vec<u8>> = [3usize, 70, 130].iter().map(|&n| unit.iter().copied().cycle().skip(n % 7).take(n).collect()).collect();
         let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
         assert_eq!(compiled.run_files(&refs), g.block.run_files(&refs), "a batch");
+    }
+}
+
+#[test]
+fn a_gated_region_is_a_call() {
+    for (name, text) in [("escapes", ESCAPES.to_owned()), ("late", LATE.to_owned()), ("many", many())] {
+        let g = small(&text);
+        let compiled = native_cpu_block::compile(&g.native).expect("compiles");
+        let gated: Vec<_> = compiled.passes.iter().filter(|p| p.gate_branches > 0).collect();
+        assert!(!gated.is_empty(), "{name}: no region");
+        for pass in gated {
+            // Each region the body takes is a function of its own; its values are not in the
+            // hot loop.
+            assert!(pass.outlined.len() > 1, "{name}: the region is inline");
+            let hot: Vec<String> = hot_loop(&pass.clif).into_iter().flat_map(|(_, l)| l).collect();
+            assert!(hot.iter().any(|l| opcode(l) == "call"), "{name}: the hot loop does not call its region");
+            for o in &pass.outlined[1..] {
+                let lines = instructions(&o.clif);
+                assert!(lines.iter().any(|l| l.contains("load.i8x16") || l.contains("load.i64")), "{name}: a region's function reads nothing");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_called_region_equals_the_interpreter() {
+    // A `\u` with and without its hex, in blocks of their own and across a block's edge.
+    let unit = b"x \\u12ab z \\uzz \\\\u ab \\u0";
+    for text in [ESCAPES.to_owned(), LATE.to_owned(), many()] {
+        let g = small(&text);
+        let compiled = native_cpu_block::compile(&g.native).expect("compiles");
+        for skip in [0usize, 3, 11] {
+            for len in [64usize, 130, 260, 600] {
+                let mut file: Vec<u8> = vec![b' '; 70];
+                file.extend(unit.iter().copied().cycle().skip(skip).take(len));
+                file.extend(vec![b'z'; 70]);
+                assert_eq!(compiled.run_files(&[&file]), g.block.run_files(&[&file]), "skip {skip} length {len}");
+            }
+        }
     }
 }

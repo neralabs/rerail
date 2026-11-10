@@ -263,6 +263,8 @@ const BODY_OPCODES: &[&str] = &[
     // A `prev` of a byte-local value on the byte vectors: the chunk before and this one, shifted
     // by bytes (`ext`).
     "shuffle",
+    // A gated region's call: what it reads and gives through a stack slot.
+    "call", "stack_store", "stack_load", "stack_addr",
     // `within`: the bits below the stream's end, from its length (clamp, two shifts).
     "isub", "smin", "smax", "ishl",
     // The extract pass's size: each extract's popcount, summed as the plane is written.
