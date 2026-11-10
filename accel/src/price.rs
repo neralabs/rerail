@@ -31,7 +31,7 @@
 //!
 //! Fixed costs, measured with the smallest launch of each form:
 //!
-//! - the cores: about 2 µs a launch within a submission (one parallel pass on the rayon pool);
+//! - the cores: about 2 µs a launch (a job on the executor's pool);
 //! - SME: 1 µs a submission, 3 µs a launch;
 //! - the GPU: 0.2 ms of wall a command buffer (80–100 µs of it host CPU, 8 µs on the device), 22 µs a launch;
 //! - the Neural Engine: 0.1 ms a submission, and 0.25 ms a launch (a tile of 2,048 rows' prediction call).
@@ -70,7 +70,7 @@ pub struct Prices {
     per_unit: [[Option<f64>; 4]; 7],
     /// Per lane; for the CPU lane, wall seconds (the cores' time is `per_unit` divided by `cores`).
     pub fixed: [Fixed; 4],
-    /// The cores the CPU lane spreads a launch over.
+    /// The cores the CPU lane spreads a launch over: the executor's pool (`RERAIL_THREADS`).
     pub cores: f64,
     /// The parity band: lanes finishing within `band` × the fastest are candidates, the least energy wins.
     pub band: f64,
@@ -118,7 +118,7 @@ impl Default for Prices {
                 // The surfaces and the grouping, and a tile's prediction call.
                 Fixed { submission: 0.1e-3, launch: 0.25e-3 },
             ],
-            cores: std::thread::available_parallelism().map_or(8, |n| n.get()) as f64,
+            cores: crate::exec::threads() as f64,
             band: 3.0,
         }
     }
@@ -150,10 +150,15 @@ impl Prices {
     /// Chooses a lane for `k` among `able` lanes, given each lane's `queued` seconds: the least energy among the
     /// lanes that finish within the band of the first to finish. A lane with nothing queued yet pays its submission.
     pub fn choose(&self, k: &Kernel, able: &[Lane], queued: &[f64; 4]) -> Option<(Lane, f64)> {
+        self.choose_open(k, able, queued, &std::array::from_fn(|i| queued[i] > 0.0))
+    }
+
+    /// [`Prices::choose`], where `open` says which lanes this batch already pays a submission on: a lane not open
+    /// pays its submission, whatever other batches have queued on it.
+    pub fn choose_open(&self, k: &Kernel, able: &[Lane], queued: &[f64; 4], open: &[bool; 4]) -> Option<(Lane, f64)> {
         let finish = |l: Lane| -> Option<f64> {
-            let q = queued[l.index()];
-            let sub = if q == 0.0 { self.fixed[l.index()].submission } else { 0.0 };
-            Some(q + sub + self.wall(k, l)?)
+            let sub = if open[l.index()] { 0.0 } else { self.fixed[l.index()].submission };
+            Some(queued[l.index()] + sub + self.wall(k, l)?)
         };
         let best = able.iter().filter_map(|&l| finish(l)).fold(f64::INFINITY, f64::min);
         if !best.is_finite() {

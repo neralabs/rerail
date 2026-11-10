@@ -17,6 +17,7 @@
 //! (`run_join_in`'s `paired`). Otherwise it runs as before. The pairs are the same set the host's index walk finds,
 //! so the seed's rows are the same.
 
+use super::spec::{JoinItem, JoinSpec, Source};
 use super::{InRel, Interner, Key, Result, Src, Step, err, is_dead};
 use rerail_accel::kernel::{JoinBy, Keys};
 use rerail_accel::{Batch, Kernel, Launch, Output};
@@ -50,13 +51,13 @@ pub fn on() -> bool {
     *ON.get_or_init(|| std::env::var("RERAIL_LEVEL_JOINS").map_or(true, |v| v != "off"))
 }
 
-/// A level's batch, running until the first seed that reads it waits.
-struct Wave {
+/// A level's batch of seed joins, running until the first seed that reads it waits.
+struct LevelBatch {
     running: Mutex<Option<rerail_accel::exec::Running>>,
     outs: OnceLock<std::result::Result<Vec<Output>, String>>,
 }
 
-impl Wave {
+impl LevelBatch {
     fn out(&self, i: usize) -> Result<Vec<(u32, u32)>> {
         let outs = self.outs.get_or_init(|| {
             let running = self.running.lock().unwrap().take();
@@ -77,7 +78,7 @@ impl Wave {
 
 /// A seed's pairs, pending: the relations they were made from and its left rows.
 struct Pending {
-    wave: Arc<Wave>,
+    batch: Arc<LevelBatch>,
     at: usize,
     left: (u64, usize, usize),
     right: (u64, usize, usize),
@@ -94,7 +95,7 @@ pub struct Paired {
 }
 
 /// The digest of a join's spec: the key its pairs are kept by.
-pub fn digest(spec: &str) -> u64 {
+pub fn digest(spec: &JoinSpec) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
     spec.hash(&mut h);
@@ -128,7 +129,7 @@ fn qualifies(j: &super::JoinRule) -> Option<(&Arc<InRel>, &Arc<InRel>, &[(usize,
 }
 
 /// Sends the seed joins of a level (`specs`, each a seed's join spec) as one batch: the launches it sent.
-pub fn prefetch(conn: &rusqlite::Connection, specs: &[String]) -> Result<usize> {
+pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<usize> {
     if !on() {
         return Ok(0);
     }
@@ -138,15 +139,22 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[String]) -> Result<usize> 
     let mut pending = Vec::new();
     for spec in specs {
         // Every atom a native relation's: the spec reads nothing the level makes, nor an input not loaded yet.
-        let atoms = spec.lines().map(str::trim).filter(|l| matches!(l.split_whitespace().next(), Some("pos" | "neg" | "count" | "sum" | "min" | "max" | "strjoin")));
-        if atoms.clone().next().is_none() || !atoms.into_iter().all(|l| l.split_whitespace().nth(1).is_some_and(|t| t.starts_with("r:"))) {
+        let srcs: Vec<&Source> = spec
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                JoinItem::Atom { src, .. } | JoinItem::Count { src, .. } | JoinItem::Extreme { src, .. } | JoinItem::StrJoin { src, .. } => Some(src),
+                _ => None,
+            })
+            .collect();
+        if srcs.is_empty() || !srcs.iter().all(|s| matches!(s, Source::Native(_))) {
             continue;
         }
         let key = digest(spec);
         if pending.iter().any(|(k, _): &(u64, Pending)| *k == key) {
             continue;
         }
-        let Ok(j) = super::parse_join(conn, spec, &mut syms) else { continue };
+        let Ok(j) = super::join_rule(conn, spec, &mut syms) else { continue };
         let Some((r0, r1, b0, slot_keys)) = qualifies(&j) else { continue };
         let Step::Atom { tests: t0, .. } = &j.steps[0] else { continue };
         // The left: the first atom's live rows passing its tests; per key, the value its slot takes.
@@ -174,9 +182,14 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[String]) -> Result<usize> 
             .collect::<Vec<_>>()
             .into();
         // The right's id in the space: the relation and its key columns.
-        let right_id = digest(&format!("{} {:?}", r1.uid.0, slot_keys.iter().map(|&(c, _)| c).collect::<Vec<_>>()));
+        let right_id = {
+            use std::hash::{Hash, Hasher};
+            let mut h = rustc_hash::FxHasher::default();
+            (r1.uid.0, slot_keys.iter().map(|&(c, _)| c).collect::<Vec<_>>()).hash(&mut h);
+            h.finish()
+        };
         launches.push(Launch::new(Kernel::Join { left, right, right_id: Some(right_id), by: JoinBy::Probe }));
-        pending.push((key, Pending { wave: Arc::new(Wave { running: Mutex::new(None), outs: OnceLock::new() }), at: launches.len() - 1, left: ident(r0), right: ident(r1), lids }));
+        pending.push((key, Pending { batch: Arc::new(LevelBatch { running: Mutex::new(None), outs: OnceLock::new() }), at: launches.len() - 1, left: ident(r0), right: ident(r1), lids }));
     }
     if launches.is_empty() {
         return Ok(0);
@@ -184,10 +197,10 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[String]) -> Result<usize> 
     let n = launches.len();
     SENT.fetch_add(n as u64, Ordering::Relaxed);
     let running = crate::code_rule_dsl::logic::lanes::executor().begin(Batch(launches)).map_err(err)?;
-    let wave = Arc::new(Wave { running: Mutex::new(Some(running)), outs: OnceLock::new() });
+    let batch = Arc::new(LevelBatch { running: Mutex::new(Some(running)), outs: OnceLock::new() });
     let mut all = PENDING.lock().unwrap();
     for (key, mut p) in pending {
-        p.wave = Arc::clone(&wave);
+        p.batch = Arc::clone(&batch);
         all.insert(key, p);
     }
     Ok(n)
@@ -197,7 +210,7 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[String]) -> Result<usize> 
 pub fn take(j: &super::JoinRule) -> Result<Option<Paired>> {
     let Some(p) = PENDING.lock().unwrap().remove(&j.spec) else { return Ok(None) };
     let Some((r0, r1, ..)) = qualifies(j) else { return Ok(None) };
-    let pairs = p.wave.out(p.at)?;
+    let pairs = p.batch.out(p.at)?;
     if ident(r0) != p.left || ident(r1) != p.right {
         return Ok(None);
     }
@@ -209,7 +222,7 @@ pub fn clear() {
     let gone: Vec<Pending> = PENDING.lock().unwrap().drain().map(|(_, p)| p).collect();
     // A batch still running is waited for, so its lanes' buffers are not freed under it.
     for p in &gone {
-        let _ = p.wave.out(p.at);
+        let _ = p.batch.out(p.at);
     }
     crate::code_rule_dsl::logic::lanes::executor().clear();
 }
