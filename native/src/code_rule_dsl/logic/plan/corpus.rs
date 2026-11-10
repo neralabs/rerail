@@ -2010,6 +2010,38 @@ fn run_observed(
     // itself (decision 0046); relations no rule reads are not made.
     let projection = syntax::Projection::of(&prog, read.clone());
     crate::code_rule_dsl::logic::profile::decision("base relations", || format!("{:?} shape (decision 0046)", projection.shape));
+    // A run that reads nothing of its documents builds none: every relation its outputs need, through any rule, is
+    // derived, given as facts (an earlier phase's exports, the run's constants) or a native function. A main
+    // program over phase exports alone (`defs(q, k) :- struct__def(q, k)`) built and projected every document
+    // for nothing: a third of the documents' cost of struct and values run with such a program. Anything else that
+    // might read them (T's facts, requests' loads, guests, text or AST patterns) keeps them.
+    {
+        let p = &lowered.program;
+        let not_of_documents = |rel: &str| {
+            p.rules.iter().any(|r| r.head.rel == rel) || p.facts.contains_key(rel) || p.natives.contains_key(rel) || phased.contains_key(rel) || phase_versions.contains_key(rel)
+        };
+        let needs = front::needed(p, p.outputs.clone());
+        let why: Option<String> = if t.is_some() {
+            Some("T's facts".into())
+        } else if loading.is_some() {
+            Some("requests' loads".into())
+        } else if slice.is_some() || reads_guests {
+            Some("guests".into())
+        } else if !p.rx_spans.is_empty() || !p.ast_patterns.is_empty() {
+            Some("text or AST patterns".into())
+        } else {
+            needs.iter().find(|rel| !not_of_documents(rel)).map(|rel| format!("{rel} is read"))
+        };
+        let reads_documents = why.is_some();
+        if let Some(why) = &why {
+            crate::code_rule_dsl::logic::profile::decision("documents", || format!("built: {why}"));
+        }
+        if !reads_documents && !docs.is_empty() {
+            crate::code_rule_dsl::logic::profile::decision("documents", || format!("none built: no rule reads a relation of the {} documents", docs.len()));
+            let dropped: BTreeSet<String> = docs.drain(..).map(|(_, p)| p).collect();
+            consulted.retain(|c| !(c.0 == "doc" && dropped.contains(&c.1)));
+        }
+    }
     // T's corpus statistics, read once: each chunk plans with them and its sources' own, measured in memory, and the
     // cross-file part with them and the chunks' totals. Without T, every chunk measures its own (`Own`).
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "statistics read or measured".into()));
