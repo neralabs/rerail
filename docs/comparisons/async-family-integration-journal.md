@@ -805,3 +805,22 @@ The full workload retains 5,725 files, 19,007,630 core nodes, zero findings, 81 
 Projection sizes remain demanded for only 35 documents, depths for 25, and token spans for 34.
 The full run is profiled validation, not a paired performance comparison.
 Merge evidence and the source hashes are under `benchmark/async-family-integration/merge-b4f0aa04b/`.
+
+## 2026-11-10 — Fact admission and reuse
+
+Merged integration tip `013068e01` by fast-forward. Integration already contains this branch's previous changes.
+Sibling working changes remain untouched.
+
+The baseline reads frame metadata once per relation. Consumers then load individual frame payloads during execution.
+Both paths call `settle`, which can wait for queued writes.
+New tests count actual SQL executions and read queued empty facts while a test blocks the writer.
+
+The intended boundary is one admission per known relation demand batch, before its consumers run.
+Admission keeps compressed payloads. Consumers decode only the relations they read, without more SQL.
+Queued facts use the existing writer's pending values, including deletion markers. No separate transformation cache is added.
+The tests must preserve space, relation identity, partition, empty answers, and restarted-process reads.
+
+The first baseline test build failed because a duplicate comparison helper called removed matcher APIs.
+The query reference now uses the integration's existing native oracle helper.
+The shell's Homebrew compiler also failed to load LLVM. Builds use the installed Rust 1.97.1 toolchain directly.
+Performance measurements and test outcomes follow below when available.

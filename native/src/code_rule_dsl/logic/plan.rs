@@ -4930,6 +4930,8 @@ pub(in crate::code_rule_dsl) trait KeptStrata {
     /// Each relation of the program the run evaluates, by its identity (`identities`): what was kept of a relation
     /// is of the relation of that identity.
     fn program(&mut self, identities: &HashMap<String, [u8; 32]>);
+    /// Admit potentially consumed retained rows before scheduling. Metadata for unconsumed relations stays cheap.
+    fn admit(&mut self, _relations: &[String]) {}
     /// Input `rel`'s digest in this run (`None`: not known).
     fn input(&mut self, rel: &str) -> Option<u64>;
     /// The digest relation `rel` had when it was kept.
@@ -4960,6 +4962,13 @@ fn stratum_reads(prog: &Program, scc: &BTreeSet<String>, rules: &[&Rule]) -> BTr
         }
     }
     out
+}
+
+fn retainable_stratum(prog: &Program, scc: &BTreeSet<String>, rules: &[&Rule], views: &HashSet<String>) -> bool {
+    !rules.is_empty()
+        && !scc.iter().any(|r| prog.natives.contains_key(r) || prog.lattice.contains_key(r) || views.contains(r)
+            || prog.answers.values().any(|produced| produced.contains(r)))
+        && !rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Ast { .. })))
 }
 
 /// After a stratum ran: each of its relations' digest and rows, given to `ks` with what the stratum read
@@ -5676,7 +5685,27 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // Each evaluated stratum's reads, with the digest each had when it ran (`None`: one was not known).
     let mut stratum_read_digests: HashMap<usize, Option<Vec<(String, u64)>>> = HashMap::new();
     let input_set: BTreeSet<&str> = prog.inputs.iter().map(String::as_str).collect();
-    let produced_here = super::answers::produced(prog);
+    if let Some(ks) = strata_kept.as_deref_mut() {
+        // Prove unchanged strata from admitted metadata and input digests. Anything unproved can run.
+        // Only those consumers' retained inputs and the outputs need payloads. Early cutoff during
+        // execution can shrink this set, but cannot add a reader not covered here.
+        let mut unchanged = HashSet::new();
+        let mut demand: BTreeSet<String> = stays.iter().filter(|r| ks.has_rows(r)).cloned().collect();
+        for (scc, rules) in sccs.iter().zip(&by_stratum) {
+            let reads = stratum_reads(prog, scc, rules);
+            let clean = retainable_stratum(prog, scc, rules, &run.views) && scc.iter().all(|r| ks.has_rows(r))
+                && reads.iter().filter(|r| !scc.contains(*r)).all(|r| {
+                    let now = if unchanged.contains(r) { ks.was(r) }
+                        else if input_set.contains(r.as_str()) { ks.input(r) }
+                        else if rules_by.contains_key(r.as_str()) { None }
+                        else { Some(0) };
+                    now.is_some() && scc.iter().all(|x| ks.read_was(x, r) == now)
+                });
+            if clean { unchanged.extend(scc.iter().cloned()); }
+            else { demand.extend(reads.into_iter().filter(|r| ks.has_rows(r))); }
+        }
+        ks.admit(&demand.into_iter().collect::<Vec<_>>());
+    }
     // This run's digest of each derived relation (`None`: not known, as for a stratum SQL ran); clean relations not
     // yet held; the strata evaluated whose rows' digests are not taken yet. A stratum waiting on its device wave has
     // no rows yet: its digest is taken once its wave ran (a stratum that reads it finishes the wave first).
@@ -5820,9 +5849,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             let reads = stratum_reads(prog, scc, &rules);
             // A stratum the engine makes otherwise (a native operator, a lattice, a view, a produced request, a
             // tree pattern read off the documents) always runs.
-            let plain = !scc.iter().any(|r| prog.natives.contains_key(r) || prog.lattice.contains_key(r) || run.views.contains(r) || produced_here.contains_key(r.as_str()))
-                && !rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Ast { .. })));
-            let mut clean = plain && !rules.is_empty() && scc.iter().all(|r| ks.has_rows(r));
+            let mut clean = retainable_stratum(prog, scc, &rules, &run.views) && scc.iter().all(|r| ks.has_rows(r));
             let mut nows: Option<Vec<(String, u64)>> = Some(Vec::new());
             // A stratum's reads of its own relations (its recursion) are what it derives from its other reads.
             for r in reads.iter().filter(|r| !scc.contains(*r)) {

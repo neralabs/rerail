@@ -18,8 +18,9 @@
 //! relations its runs use: a relation is collected by the [`RUNS`]th run of its space in a row that does not use it.
 
 use super::{ContentStore, StoreResult};
-use rusqlite::{OptionalExtension as _, params};
+use rusqlite::params;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// How many runs of a space in a row may leave a relation unused before it is collected.
 pub const RUNS: i64 = 4;
@@ -62,6 +63,52 @@ pub struct Put {
     pub rows: Rows,
 }
 
+/// One admitted fact relation. Durable rows remain encoded until a consumer needs them.
+/// Queued rows share the writer's allocation. This value belongs to the run, not a separate cache.
+pub struct Admitted {
+    pub stored: Stored,
+    data: Data,
+}
+
+enum Data {
+    Encoded { types: Vec<u8>, n: usize, bytes: Vec<u8> },
+    Queued(Arc<Put>),
+    Metadata,
+}
+
+impl Admitted {
+    pub fn rows(&self) -> StoreResult<Rows> {
+        match &self.data {
+            Data::Queued(p) => Ok(p.rows.clone()),
+            Data::Encoded { types, n, bytes } => {
+                let width = types.len();
+                let mut cols = vec![Vec::new(); width];
+                super::cross_rows::decode(width, *n, bytes, &mut cols)?;
+                let mut rows = Vec::with_capacity(width * n);
+                for r in 0..if width == 0 { 0 } else { *n } {
+                    rows.extend(cols.iter().map(|c| c[r]));
+                }
+                Ok(Rows { types: types.clone(), rows, n: *n })
+            }
+            Data::Metadata => Err(super::StoreError::Invalid("frame payload was not admitted".into())),
+        }
+    }
+
+    pub fn encoded_bytes(&self) -> usize {
+        match &self.data {
+            Data::Encoded { bytes, .. } => bytes.len(),
+            Data::Queued(_) | Data::Metadata => 0,
+        }
+    }
+}
+
+// Stay below even SQLite's older 999-parameter limit. Full batches share one prepared shape.
+const READ_BATCH: usize = 128;
+
+fn frame_key(space: &[u8; 32], rel: &Rel, part: i64) -> super::write_back::Key {
+    super::write_back::Key::of(&[b"frame", space, rel.name.as_bytes(), &rel.ident, &part.to_le_bytes()])
+}
+
 impl ContentStore {
     fn frames_table(&self) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
@@ -71,51 +118,69 @@ impl ContentStore {
 
     /// The stored frames of `rels` in `space`, partition `part`, without their rows.
     pub fn frames(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Stored>> {
-        self.settle(&space_key(space));
-        if !self.frames_table()? {
-            return Ok(HashMap::new());
-        }
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let mut st = connection.prepare_cached("SELECT digest, reads FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?;
+        Ok(self.read_frames(space, rels, part, false)?.into_iter().map(|(r, f)| (r, f.stored.clone())).collect())
+    }
+
+    /// Admit requested relations before their consumers run. No consumer needs another store read.
+    pub fn admit_frames(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Arc<Admitted>>> {
+        self.read_frames(space, rels, part, true)
+    }
+
+    fn read_frames(&self, space: &[u8; 32], rels: &[Rel], part: i64, payload: bool) -> StoreResult<HashMap<Rel, Arc<Admitted>>> {
         let mut out = HashMap::new();
+        let mut missing = std::collections::BTreeSet::new();
         for rel in rels {
-            let found = st.query_row(params![&space[..], rel.name, &rel.ident[..], part], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))).optional()?;
-            if let Some((digest, reads)) = found {
-                out.insert(rel.clone(), Stored { digest: digest as u64, reads: decode_reads(&reads) });
+            // Pin pending values before SQLite can catch up and release the writer's copy.
+            // Some(None) is a queued deletion, not a reason to read an older durable row.
+            if let Some(pending) = self.pending::<Option<Arc<Admitted>>>(&frame_key(space, rel, part)) {
+                if let Some(frame) = pending.as_ref() { out.insert(rel.clone(), Arc::clone(frame)); }
+            } else {
+                missing.insert(rel.clone());
             }
+        }
+        if missing.is_empty() || !self.frames_table()? { return Ok(out); }
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let missing: Vec<_> = missing.into_iter().collect();
+        for batch in missing.chunks(READ_BATCH) {
+            let values = (0..batch.len()).map(|i| format!("(?{}, ?{})", 3 + 2*i, 4 + 2*i)).collect::<Vec<_>>().join(",");
+            let columns = if payload { ", f.rows, f.types, f.data" } else { "" };
+            let sql = format!("WITH demanded(rel, ident) AS (VALUES {values}) \
+                SELECT f.rel, f.ident, f.digest, f.reads{columns} FROM demanded d \
+                JOIN frames f ON f.space = ?1 AND f.part = ?2 AND f.rel = d.rel AND f.ident = d.ident");
+            let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), part.into()];
+            for rel in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into()]); }
+            let mut st = connection.prepare_cached(&sql)?;
+            let frames = st.query_map(rusqlite::params_from_iter(args), |row| {
+                let ident: Vec<u8> = row.get(1)?;
+                let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok((Rel { name: row.get(0)?, ident }, Arc::new(Admitted {
+                    stored: Stored { digest: row.get::<_, i64>(2)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(3)?) },
+                    data: if payload { Data::Encoded { n: row.get::<_, i64>(4)? as usize, types: row.get(5)?, bytes: row.get(6)? } } else { Data::Metadata },
+                })))
+            })?;
+            for frame in frames { let (rel, frame) = frame?; out.insert(rel, frame); }
         }
         Ok(out)
     }
 
     /// The rows of `rel`'s frame `part` in `space`.
     pub fn frame_rows(&self, space: &[u8; 32], rel: &Rel, part: i64) -> StoreResult<Option<Rows>> {
-        self.settle(&space_key(space));
-        if !self.frames_table()? {
-            return Ok(None);
-        }
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let mut st = connection.prepare_cached("SELECT width, rows, types, data FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?;
-        let found = st
-            .query_row(params![&space[..], rel.name, &rel.ident[..], part], |r| {
-                Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize, r.get::<_, Vec<u8>>(2)?, r.get::<_, Vec<u8>>(3)?))
-            })
-            .optional()?;
-        let Some((width, rows, types, data)) = found else { return Ok(None) };
-        let mut cols = vec![Vec::new(); width];
-        super::cross_rows::decode(width, rows, &data, &mut cols)?;
-        let mut flat = Vec::with_capacity(width * rows);
-        for r in 0..if width == 0 { 0 } else { rows } {
-            flat.extend(cols.iter().map(|c| c[r]));
-        }
-        Ok(Some(Rows { types, rows: flat, n: rows }))
+        self.admit_frames(space, std::slice::from_ref(rel), part)?.get(rel).map(|f| f.rows()).transpose()
     }
 
     /// `keep_frames`, queued behind the run (decision 0102): encoded and written by the store's writer.
     pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Vec<Rel>>) {
         let bytes = puts.iter().map(|p| p.rows.rows.len() * 8).sum();
-        self.write_back("frames", bytes, vec![(space_key(&space), None)], Box::new(move |store| {
+        let puts: Vec<_> = puts.into_iter().map(Arc::new).collect();
+        let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = puts.iter().map(|p| {
+            let frame = Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) });
+            (frame_key(&space, &p.rel, p.part), Some(Arc::new(Some(frame)) as Arc<dyn std::any::Any + Send + Sync>))
+        }).collect();
+        keys.extend(gone.iter().map(|(rel, part)| (frame_key(&space, rel, *part), Some(Arc::new(None::<Arc<Admitted>>) as Arc<dyn std::any::Any + Send + Sync>))));
+        self.write_back("frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
-            let _ = store.keep_frames(&space, &puts, &gone, used.as_deref());
+            let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
+            let _ = store.keep_frame_refs(&space, &refs, &gone, used.as_deref());
             Ok(())
         }));
     }
@@ -123,6 +188,10 @@ impl ContentStore {
     /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, the run is over: the
     /// space counts it, marks the relations it used, and forgets those the last [`RUNS`] runs did not use.
     pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<&[Rel]>) -> StoreResult<()> {
+        self.keep_frame_refs(space, &puts.iter().collect::<Vec<_>>(), gone, used)
+    }
+
+    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], gone: &[(Rel, i64)], used: Option<&[Rel]>) -> StoreResult<()> {
         let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
         self.immediate_transaction_once(|t| {
             t.execute_batch(SCHEMA)?;
@@ -166,11 +235,6 @@ impl ContentStore {
     }
 }
 
-/// What a write of space `space`'s frames is queued under (`write_back`).
-fn space_key(space: &[u8; 32]) -> super::write_back::Key {
-    super::write_back::Key::of(&[b"frames", space])
-}
-
 fn encode_reads(reads: &[(String, u64)]) -> Vec<u8> {
     let mut out = Vec::new();
     for (name, digest) in reads {
@@ -199,6 +263,111 @@ fn decode_reads(mut bytes: &[u8]) -> Vec<(String, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_metadata_reads_are_batched() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let rels: Vec<_> = (0..257).map(|i| rel(&format!("r{i}"), 1)).collect();
+        let puts: Vec<_> = rels.iter().map(|r| Put { rel: r.clone(), part: 0, digest: 7,
+            reads: vec![], rows: Rows { types: vec![0], rows: vec![42], n: 1 } }).collect();
+        store.keep_frames(&[1; 32], &puts, &[], None).unwrap();
+        let count = AtomicUsize::new(0);
+        unsafe extern "C" fn trace(_: u32, state: *mut std::ffi::c_void, _: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+            unsafe { &*state.cast::<AtomicUsize>() }.fetch_add(1, Ordering::Relaxed);
+            0
+        }
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
+            rusqlite::ffi::SQLITE_TRACE_STMT, Some(trace), (&count as *const AtomicUsize).cast_mut().cast()); }
+        let got = store.frames(&[1; 32], &rels, 0);
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(), 0, None, std::ptr::null_mut()); }
+        assert_eq!(got.unwrap().len(), 257);
+        assert!(count.load(Ordering::Relaxed) <= 4, "257 relations must use at most three batches plus schema admission, got {}", count.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn queued_frames_are_read_without_waiting_for_the_writer() {
+        use std::sync::mpsc;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let store = ContentStore::open(&path).unwrap();
+        let reader = ContentStore::open(&path).unwrap();
+        let (release, blocked) = mpsc::channel();
+        store.write_back("test gate", 0, vec![], Box::new(move |_| { blocked.recv().unwrap(); Ok(()) }));
+        let r = rel("empty", 1);
+        store.queue_frames([1; 32], vec![Put { rel: r.clone(), part: 0, digest: 7,
+            reads: vec![], rows: Rows { types: vec![0], rows: vec![], n: 0 } }], vec![], None);
+        let (tx, rx) = mpsc::channel();
+        let read = std::thread::spawn(move || {
+            let meta = reader.frames(&[1; 32], &[r.clone()], 0).unwrap();
+            let rows = reader.frame_rows(&[1; 32], &r, 0).unwrap();
+            tx.send((meta, rows)).unwrap();
+        });
+        let got = rx.recv_timeout(std::time::Duration::from_secs(2));
+        // Always unblock the writer, including when the old reader waits for it.
+        release.send(()).unwrap();
+        read.join().unwrap();
+        let (meta, rows) = got.expect("resident queued facts must not wait for SQLite");
+        assert_eq!(meta[&rel("empty", 1)].digest, 7);
+        assert_eq!(rows.unwrap().n, 0, "an empty answer is a completed relation");
+    }
+
+    #[test]
+    fn admitted_frames_survive_store_close_and_preserve_identity_partition_and_empty_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let r = rel("r", 1);
+        let empty = rel("empty", 1);
+        let nullary = rel("unit", 1);
+        let put = |r: &Rel, part, rows| Put { rel: r.clone(), part, digest: 7, reads: vec![("input".into(), 9)], rows };
+        {
+            let store = ContentStore::open(&path).unwrap();
+            store.queue_frames([1; 32], vec![
+                put(&r, 0, Rows { types: vec![0, 1], rows: vec![-9, 1 << 40, 2, 3], n: 2 }),
+                put(&r, 1, Rows { types: vec![0], rows: vec![99], n: 1 }),
+                put(&empty, 0, Rows { types: vec![0], rows: vec![], n: 0 }),
+                put(&nullary, 0, Rows { types: vec![], rows: vec![], n: 1 }),
+            ], vec![], None);
+        }
+        let store = ContentStore::open(&path).unwrap();
+        let frames = store.admit_frames(&[1; 32], &[r.clone(), r.clone(), rel("r", 2), empty.clone(), nullary.clone()], 0).unwrap();
+        assert_eq!(frames.len(), 3);
+        assert_eq!(store.admit_frames(&[1; 32], &[r.clone()], 1).unwrap()[&r].rows().unwrap().rows, [99]);
+        assert!(store.admit_frames(&[2; 32], &[r.clone()], 0).unwrap().is_empty());
+        drop(store);
+        // No open store or connection remains: every consumer uses admitted memory.
+        assert_eq!(frames[&r].rows().unwrap().rows, [-9, 1 << 40, 2, 3]);
+        assert_eq!(frames[&empty].rows().unwrap().n, 0);
+        assert_eq!(frames[&nullary].rows().unwrap().n, 1);
+        assert_eq!(frames[&r].stored.reads, [("input".to_owned(), 9)]);
+    }
+
+    #[test]
+    fn queued_replacement_and_deletion_override_durable_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let store = ContentStore::open(&path).unwrap();
+        let reader = ContentStore::open(&path).unwrap();
+        let r = rel("r", 1);
+        let put = |value| Put { rel: r.clone(), part: 0, digest: value as u64, reads: vec![],
+            rows: Rows { types: vec![0], rows: vec![value], n: 1 } };
+        store.keep_frames(&[1; 32], &[put(1)], &[], None).unwrap();
+        let (release, blocked) = std::sync::mpsc::channel();
+        store.write_back("test gate", 0, vec![], Box::new(move |_| { blocked.recv().unwrap(); Ok(()) }));
+        store.queue_frames([1; 32], vec![put(2)], vec![], None);
+        let replaced = reader.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        store.queue_frames([1; 32], vec![], vec![(r.clone(), 0)], None);
+        let deleted = reader.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        store.queue_frames([1; 32], vec![put(3)], vec![], None);
+        let latest = reader.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        release.send(()).unwrap();
+        store.written().unwrap();
+        assert_eq!(replaced[&r].rows().unwrap().rows, [2]);
+        assert!(deleted.is_empty());
+        assert_eq!(latest[&r].rows().unwrap().rows, [3]);
+        assert_eq!(reader.frame_rows(&[1; 32], &r, 0).unwrap().unwrap().rows, [3]);
+    }
 
     fn rel(name: &str, i: u8) -> Rel {
         Rel { name: name.into(), ident: [i; 32] }

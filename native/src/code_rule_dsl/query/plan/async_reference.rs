@@ -770,6 +770,7 @@ fn execute_sql<'t>(
 #[cfg(test)]
 mod generated_shape;
 #[cfg(test)]
+#[path = "../../findings/tests/native_oracle.rs"]
 mod native_oracle;
 #[cfg(test)]
 mod tests;
