@@ -275,7 +275,13 @@ It records:
 - per ported rule: the upstream tool and rule it reproduces, how findings compare (`line` or `line+column`), and the
   capabilities it exercises;
 - `suppressionExemptions`: ports, by `id`, whose documents need not carry their tool's suppression comment yet, each
-  with a `reason` (check 4).
+  with a `reason` (check 4);
+- `own`: the ids of the pack's own rules, written for Rerail with no upstream tool. The conformance gate judges each
+  once, on `loads` and `compact` alone, the gates that read the document by itself; `upstream-status` and
+  `conformance` need an upstream tool to compare with. Lacking a tool-pack's file types, `loads`'s in-scope check asks
+  the rule to apply to its `pack.json` examples' paths. The tool-pack run does not report them as unmapped and the
+  not-gated check does not ask for them on the frozen list. Each must ship in `pack.json` with examples, which are
+  their proof, must set no `violation.suppress` (check 2), and must have no port entry.
 
 A port whose document is under `candidates/` is scored on the fixtures, whose expected findings must cover it, and
 reported; its scores never fail a check. A port may also set:
@@ -594,7 +600,7 @@ To see every false positive and false negative of one ported rule:
 | # | Check | Fails when |
 |---|---|---|
 | 1 | Rules | A rule document or candidate is unlisted, missing, misnamed or doesn't compile (a conversation rule: doesn't parse, or has a pattern the engine refuses); an id breaks the [id rule](#packjson) |
-| 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
+| 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json`; an id in `own` isn't a rule `pack.json` ships, or its document sets `violation.suppress` |
 | 3 | Examples | An example isn't caught, or doesn't pass, as it says (a conversation rule: doesn't fire, or fires) |
 | 4 | Ports | A shipped port disagrees with its expected findings outside `divergences.json`; suppression data is missing or stale |
 | 5 | Package | `package.json` (`public` or `"private": true`), its `license` or a README's rule details are wrong |
@@ -650,7 +656,10 @@ conformance check (`npm run test:conformance`), not here.
    - Every port in the pack's `conformance.json`, and in each `conformance.json` under `candidates/` (probes), has its
      document's `id`. Check 4 loads only the root `conformance.json`, so check 1 also fails a `conformance.json` under
      `candidates/` that does not parse (`packSchema`) or has a port whose document does not exist.
-2. **Proof.** A port entry is a `conformance.json` rule whose `policy` is the rule's `document`.
+2. **Proof.** A port entry is a `conformance.json` rule whose `policy` is the rule's `document`. Every id in
+   `conformance.json`'s `own` must be a rule `pack.json` ships, whose document sets `violation.suppress` in no clause:
+   every port carries `suppress`, for its upstream tool's comments, and an own rule has no upstream tool, so one that
+   sets it is a port moved into `own`, out of the gates that compare it with its upstream.
 3. **Examples.** A `caught` example must produce a violation of its rule and a `passes` example none, for `pack.json`'s
    examples and a candidate's in `conformance.json`. Each is evaluated alone through the engine, as a one-file
    repository at its `path` (`evaluateExample` in `conformance/pack-validation.ts`). The path must be in the rule's

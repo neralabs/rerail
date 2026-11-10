@@ -41,7 +41,7 @@ then offers it from that copy.
 | Next.js | framework | 21 (21) | a `next` dependency |
 | Node.js | framework | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | 23 (21) | `*.vue` files |
-| React | framework | 40 (21) | a `react` dependency, or `*.jsx` files |
+| React | framework | 51 (32) | a `react` dependency, or `*.jsx` files |
 
 - **A project's own pack** is a `repository` pack you install from its folder with `rerail packs add <folder>`. It counts as a third party's pack.
 - **Starting values** are a pack's `mode` and `on`: what its rules start with in a repository that adds it. Repository or checkout settings override them.

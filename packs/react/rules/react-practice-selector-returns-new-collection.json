@@ -1,0 +1,667 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-practice-selector-returns-new-collection",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid selectors on the app's own store hooks that return a new object or array without a shallow comparison; the component may re-render on every store change.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.cy.*",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/e2e/**",
+      "**/__mocks__/**",
+      "**/*.stories.*",
+      "**/*.story.*",
+      "**/__stories__/**",
+      "**/__fixtures__/**",
+      "**/fixtures/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "snc-new-array-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "property",
+                    "kind": "property_identifier",
+                    "regex": "^(?:map|filter|flatMap)$"
+                  }
+                }
+              },
+              {
+                "kind": "call_expression",
+                "any": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^(?:slice|concat)$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "snc-array-shown"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "member_expression",
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^slice$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "kind": "arguments",
+                          "not": {
+                            "has": {
+                              "nthChild": {
+                                "position": 1,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "member_expression",
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^concat$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "kind": "arguments",
+                          "has": {
+                            "kind": "array"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^Object$",
+                        "resolves": {
+                          "global": [
+                            "Object"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^(?:keys|values|entries)$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^Array$",
+                        "resolves": {
+                          "global": [
+                            "Array"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^(?:from)$"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "snc-array-shown": {
+            "any": [
+              {
+                "kind": "array"
+              },
+              {
+                "matches": "snc-new-array-call"
+              }
+            ]
+          },
+          "snc-collection": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "object"
+                  },
+                  {
+                    "kind": "array"
+                  }
+                ]
+              },
+              {
+                "matches": "snc-new-array-call"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "snc-collection"
+                }
+              }
+            ]
+          },
+          "snc-has-param": {
+            "any": [
+              {
+                "has": {
+                  "field": "parameter",
+                  "kind": "identifier"
+                }
+              },
+              {
+                "has": {
+                  "field": "parameters",
+                  "kind": "formal_parameters",
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "required_parameter"
+                      },
+                      {
+                        "kind": "optional_parameter"
+                      },
+                      {
+                        "kind": "object_pattern"
+                      },
+                      {
+                        "kind": "array_pattern"
+                      },
+                      {
+                        "kind": "assignment_pattern"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "snc-selector": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "function_declaration"
+              }
+            ],
+            "all": [
+              {
+                "matches": "snc-has-param"
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "field": "body",
+                      "not": {
+                        "kind": "statement_block"
+                      },
+                      "matches": "snc-collection"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "body",
+                      "kind": "statement_block",
+                      "has": {
+                        "kind": "return_statement",
+                        "has": {
+                          "nthChild": {
+                            "position": 1,
+                            "ofRule": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            }
+                          },
+                          "matches": "snc-collection"
+                        },
+                        "nthChild": {
+                          "position": 1,
+                          "reverse": true,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "snc-react-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^react$"
+            }
+          },
+          "snc-react-object": {
+            "kind": "identifier",
+            "any": [
+              {
+                "regex": "^React$",
+                "resolves": {
+                  "global": [
+                    "React"
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "snc-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "snc-use-callback": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^useCallback$",
+                "resolves": {
+                  "global": [
+                    "useCallback"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^useCallback$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "snc-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "regex": "^useCallback$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "matches": "snc-react-object"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "snc-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^useCallback$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "snc-selector-arg": {
+            "any": [
+              {
+                "matches": "snc-selector"
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "function_declaration",
+                          "matches": "snc-selector"
+                        },
+                        {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "any": [
+                              {
+                                "matches": "snc-selector"
+                              },
+                              {
+                                "kind": "call_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "function",
+                                      "matches": "snc-use-callback"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "arguments",
+                                      "has": {
+                                        "nthChild": {
+                                          "position": 1,
+                                          "ofRule": {
+                                            "not": {
+                                              "kind": "comment"
+                                            }
+                                          }
+                                        },
+                                        "matches": "snc-selector"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "snc-redux-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^react-redux$"
+            }
+          },
+          "snc-redux-hook": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "snc-redux-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "value": {
+                      "matches": "snc-redux-hook"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "snc-hook-name": {
+            "regex": "^use[A-Za-z0-9_$]*(?:Store|Selector|StoreContext)$",
+            "not": {
+              "regex": "(?:Shallow|Equal)(?:[A-Z]|$)"
+            }
+          },
+          "snc-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "matches": "snc-hook-name",
+                "not": {
+                  "matches": "snc-redux-hook"
+                }
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "property",
+                  "kind": "property_identifier",
+                  "matches": "snc-hook-name"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "fresh-collection-selector",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "pattern": "$HOOK",
+                  "matches": "snc-callee"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "arguments",
+                  "all": [
+                    {
+                      "has": {
+                        "nthChild": {
+                          "position": 1,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
+                        "matches": "snc-selector-arg"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "nthChild": {
+                            "position": 2,
+                            "ofRule": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SELECTOR_RETURNS_NEW_COLLECTION",
+        "message": "This selector returns a new object or array on each call. Select each value with its own $HOOK call, or compare shallowly (useShallow on Zustand 5)."
+      }
+    }
+  ]
+}
