@@ -21,7 +21,7 @@
 //! (wrappers) are numbered where they open. Rows hold string indexes, as `Batch::build`'s do.
 
 use super::{Dialect, Projected, Relation};
-use crate::code_rule_dsl::facts::core::{Facts, NONE};
+use crate::code_rule_dsl::facts::core::{Facts, NONE, Part};
 use std::collections::BTreeSet;
 
 #[derive(Default)]
@@ -52,30 +52,46 @@ impl Tree {
     pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, python: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         let Some(dialect) = dialect else { return };
+        // A node's children in source order, the tokens its records leave out included (RER-131).
+        let field = |part: &Part| match part {
+            Part::Node(c) => f.field[*c as usize],
+            Part::Token(t) => t.field,
+        };
+        let span = |part: &Part| match part {
+            Part::Node(c) => (f.start[*c as usize], f.end[*c as usize]),
+            Part::Token(t) => (t.start, t.end),
+        };
         if self.op_at {
             let fields = [dialect.operator, dialect.operators];
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
-                let operators = f.children(id).iter().filter(|&&c| f.field[c as usize] != 0 && fields.contains(&Some(f.field[c as usize])));
-                for (i, &c) in operators.enumerate() {
-                    self.op_ats.push([n, i as i64, string(dialect.name(f, c)) as i64]);
+                let parts = f.parts(id);
+                let operators = parts.iter().filter(|part| field(part) != 0 && fields.contains(&Some(field(part))));
+                for (i, part) in operators.enumerate() {
+                    self.op_ats.push([n, i as i64, string(dialect.part_name(f, part)) as i64]);
                 }
             }
         }
         if self.prev_token || self.token {
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
-                let children = f.children(id);
+                let parts = f.parts(id);
+                let text = |part: &Part| {
+                    let (start, end) = span(part);
+                    &f.source[start as usize..end as usize]
+                };
                 if self.token {
-                    for (i, &c) in children.iter().enumerate() {
-                        self.tokens.push([n, i as i64, string(f.text(c)) as i64, i64::from(f.start[c as usize]), i64::from(f.end[c as usize])]);
+                    for (i, part) in parts.iter().enumerate() {
+                        let (start, end) = span(part);
+                        self.tokens.push([n, i as i64, string(text(part)) as i64, i64::from(start), i64::from(end)]);
                     }
                 }
                 if self.prev_token {
-                    for pair in children.windows(2) {
-                        let after = p.local[pair[1] as usize];
+                    for pair in parts.windows(2) {
+                        let Part::Node(after) = pair[1] else { continue };
+                        let after = p.local[after as usize];
                         if after != NONE {
-                            self.prev_tokens.push([p.global(after), string(f.text(pair[0])) as i64]);
+                            self.prev_tokens.push([p.global(after), string(text(&pair[0])) as i64]);
                         }
                     }
                 }
