@@ -1,7 +1,6 @@
 import { hookText } from "../../engine/adapter-contract.js";
 import { handleCodexEvent, supportsCodexHook } from "./codex-hook-adapter.js";
-import { launchedDirectly, serveHook, type HookInput, type HookOutput } from "../../harness/hook-adapter.js";
-import { exitWhenParentGone } from "../../harness/parent-watch.js";
+import { serveHook, serveHookEntry, type HookInput, type HookOutput } from "../../harness/hook-adapter.js";
 import { DaemonUnreachableError, hookRerailStarted, runHostHook, type HookOptions } from "../../harness/hook-host.js";
 
 export { codexHookOutput, handleCodexEvent } from "./codex-hook-adapter.js";
@@ -31,7 +30,4 @@ export async function runCodexHook(input: HookInput, options: HookOptions = {}):
   }
 }
 
-if (launchedDirectly(import.meta.url)) {
-  exitWhenParentGone();
-  await serveHook(runCodexHook);
-}
+await serveHookEntry(import.meta.url, runCodexHook);

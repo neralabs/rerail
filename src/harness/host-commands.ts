@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { spawn } from "../engine/child-process.js";
+import { commandLine } from "../engine/command-line.js";
 import { ENTRY_POINTS } from "../engine/package-root.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
@@ -147,9 +148,6 @@ async function stopFromCommand(options: HostCommandOptions, ctx: HostCommandCont
   notifyResult(ctx, "rerail-stop", result);
 }
 
-/** A POSIX single-quoted shell word, for the launcher command the coding agent runs from `/rerail-create`. */
-const shellWord = (value: string): string => "'" + value.replaceAll("'", String.raw`'\''`) + "'";
-
 const REMOVE = "Yes, remove Rerail";
 const STOP_HERE = "Only stop it in this repo";
 
@@ -204,8 +202,9 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
     ctx.ui.notify(openingNotice(page.url, await openDashboard(page.url)), "info");
   });
 
-  // The launcher, as the coding agent runs it from `/rerail-create`, `/rerail-show-me` and `/rerail-bug-report`.
-  const cli = `${shellWord(nodeExecutable())} ${shellWord(join(options.packageRoot, ENTRY_POINTS.cli))}`;
+  // The launcher, as the coding agent runs it from `/rerail-create`, `/rerail-show-me` and `/rerail-bug-report`, in a
+  // POSIX shell: OMP and Pi run Git Bash on Windows (`windowsCommandShell`).
+  const cli = commandLine("posix", [nodeExecutable(), join(options.packageRoot, ENTRY_POINTS.cli)]);
 
   register("rerail-create", async (_ctx, request) => {
     pi.sendUserMessage(createRuleInstructions({ cli, packageRoot: options.packageRoot, request: request === "" ? "(none given)" : `"${request}"` }));

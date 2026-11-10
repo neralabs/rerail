@@ -28,7 +28,6 @@ import {
   renderTips,
   renderUnsupportedPlatform,
   renderWslNote,
-  shellQuote,
   type AgentsConnection,
   type CodingAgent,
   type DashboardLink,
@@ -249,14 +248,27 @@ describe("T3 / C3 ask before reading", () => {
   });
 
   it("quotes a repo path the shell would split, and uses the given set-up command", () => {
-    const text = renderReadRepoQuestion({ repoName: "it's mine", repoPath: "/tmp/it's mine", setupCommand: "npx rerail setup" }, "agent");
+    const setupCommand = { shell: "posix", words: ["npx", "rerail", "setup"] } as const;
+    const text = renderReadRepoQuestion({ repoName: "it's mine", repoPath: "/tmp/it's mine", setupCommand }, "agent");
     expect(text).toContain("1. npx rerail setup --answer yes --repo '/tmp/it'\\''s mine'");
   });
+});
 
-  it("quotes a Windows path with double quotes, as cmd.exe runs it, and leaves a plain word alone", () => {
-    expect(shellQuote(String.raw`C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd`, "win32")).toBe(String.raw`"C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd"`);
-    expect(shellQuote("--answer", "win32")).toBe("--answer");
-    expect(shellQuote(String.raw`C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd`, "linux")).toBe(String.raw`'C:\Users\Alice O'\''Neil\.rerail\bin\rerail.cmd'`);
+describe("answer commands for PowerShell", () => {
+  const setupCommand = { shell: "powershell", words: [String.raw`C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd`, "setup", "--relay", "--powershell"] } as const;
+  const launcher = String.raw`& 'C:\Users\Alice O''Neil\.rerail\bin\rerail.cmd' setup --relay --powershell`;
+
+  it("quotes every answer's values for PowerShell, which would split two packs at their comma", () => {
+    const text = renderRecommendedPacks({ ...PACKS, repoPath: String.raw`C:\code\acme $web`, setupCommand }, "agent");
+    expect(text).toContain(`1. ${launcher} --answer start --repo 'C:\\code\\acme $web' --packs 'typescript@0.1.1,acme-api@1.2.0'\n`);
+    expect(text).toContain(`3. ${launcher} --answer not-now\n`);
+  });
+
+  it("puts the value the agent writes in single quotes, so the packs it names stay one argument", () => {
+    const text = renderRecommendedPacks({ ...PACKS, setupCommand }, "agent");
+    expect(text).toContain(`2. To choose the rule packs: ${launcher} --answer choose --repo /Users/me/code/acme-web --packs '<packs>', with`);
+    const read = renderReadRepoQuestion({ repoName: "acme-web", repoPath: "/Users/me/code/acme-web", setupCommand }, "agent");
+    expect(read).toContain(`2. ${launcher} --repo '<the folder they name>'`);
   });
 });
 

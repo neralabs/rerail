@@ -1,9 +1,23 @@
-import { join, win32 } from "node:path";
+import { posix, win32 } from "node:path";
 import { describe, expect, it } from "vitest";
 import { generatedHookTarget, hookCommand, windowsCmdHookCommand } from "../../src/setup/harness-registration.js";
 
-// Pure functions only: nothing here registers a hook or writes a coding agent's settings.
-const CURSOR_HOOK = join("dist", "hosts", "cursor", "cursor-hook.js");
+// Pure functions only: nothing here registers a hook or writes a coding agent's settings. Each takes the platform the
+// hook is for and uses its path rules, so these run on every host.
+const CURSOR_HOOK = "dist/hosts/cursor/cursor-hook.js";
+
+describe("the POSIX sh hook command", () => {
+  const node = "/usr/local/bin/node";
+  const root = "/home/me/.rerail/current";
+  const hook = posix.join(root, CURSOR_HOOK);
+
+  it("recognizes the form it writes, with the hook under the package root", () => {
+    const written = hookCommand({ platform: "linux", nodePath: node, root }, CURSOR_HOOK);
+    expect(written).toBe(`sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`);
+    expect(generatedHookTarget(written, CURSOR_HOOK, "linux")).toEqual({ nodePath: node, script: hook });
+    expect(generatedHookTarget(written.replace(hook, "/home/me/other.js"), CURSOR_HOOK, "linux")).toBeUndefined();
+  });
+});
 
 describe("the Windows cmd hook command", () => {
   const node = String.raw`C:\Program Files\nodejs\node.exe`;
@@ -24,9 +38,12 @@ describe("the Windows cmd hook command", () => {
     expect(command).not.toContain("%%");
   });
 
-  it.runIf(process.platform === "win32")("recognizes the form it writes and the forms earlier releases wrote", () => {
+  it("recognizes the form it writes and the forms earlier releases wrote", () => {
     const written = windowsCmdHookCommand(`"${node}"`, `"${hook}"`);
     expect(generatedHookTarget(written, CURSOR_HOOK, "win32")).toEqual({ nodePath: node, script: hook });
+    // Codex hands a hook's command to PowerShell.
+    const powershell = `$LASTEXITCODE = 1; if (Test-Path -LiteralPath '${node}') { & '${node}' '${hook}' } else { node '${hook}' }; exit $LASTEXITCODE`;
+    expect(generatedHookTarget(powershell, CURSOR_HOOK, "win32")).toEqual({ nodePath: node, script: hook });
     const legacy = `cmd /d /c "if exist "${node}" ("${node}" "${hook}") else (node "${hook}")"`;
     expect(generatedHookTarget(legacy, CURSOR_HOOK, "win32")).toEqual({ nodePath: node, script: hook });
     // Releases before this one doubled each `%` in a path, which only a batch file turns back into one.

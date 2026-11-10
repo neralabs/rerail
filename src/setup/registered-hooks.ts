@@ -80,9 +80,11 @@ const HOOK_CHECK_TIMEOUT_MS = 30_000;
  * folder where Rerail is not started, and says what is wrong when it does not answer as a working hook does: exit 0, a
  * JSON object on stdout and no `rerail hook:` failure on stderr. Undefined when it works, or when no Rerail hook is
  * registered. Set-up runs it after connecting Claude Code, so a registration that cannot run fails set-up instead of
- * leaving every session unrecorded.
+ * leaving every session unrecorded. A hook that has not answered within `timeoutMs` is ended and reported.
  */
-export async function runRegisteredClaudeHook(home: string, env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+export async function runRegisteredClaudeHook(
+  home: string, env: NodeJS.ProcessEnv = process.env, timeoutMs: number = HOOK_CHECK_TIMEOUT_MS,
+): Promise<string | undefined> {
   const hook = rerailSessionStartHook(home);
   if (hook === undefined) return undefined;
   const folder = await mkdtemp(join(tmpdir(), "rerail-hook-check-"));
@@ -96,9 +98,19 @@ export async function runRegisteredClaudeHook(home: string, env: NodeJS.ProcessE
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
     child.stdin.end(JSON.stringify(payload));
-    const timer = setTimeout(() => child.kill(), HOOK_CHECK_TIMEOUT_MS);
-    const [code] = await Promise.race([once(child, "exit"), once(child, "error").then(([error]) => { throw error; })]) as [number | null];
+    let timedOut = false;
+    // A process the hook started can hold its stdout open after the hook exits, so the pipes are closed here too.
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }, timeoutMs);
+    // `close`, not `exit`: Node can report the exit before it has read all of stdout, and the answer is often the last
+    // thing a hook writes.
+    const [code] = await Promise.race([once(child, "close"), once(child, "error").then(([error]) => { throw error; })]) as [number | null];
     clearTimeout(timer);
+    if (timedOut) return `Claude Code's Rerail hook did not answer within ${timeoutMs / 1000} s`;
     const failure = stderr.split(/\r?\n/u).find(line => line.startsWith("rerail hook:"));
     if (code !== 0) return `Claude Code's Rerail hook exited ${String(code)}: ${(failure ?? stderr.trim()) || "no output"}`;
     if (failure !== undefined) return `Claude Code's Rerail hook failed: ${failure}`;

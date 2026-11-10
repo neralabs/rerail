@@ -71,7 +71,10 @@ import { runShowMeCommand } from "./show-me.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
 import { runFeedbackCommand } from "./feedback-cli.js";
-import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
+import {
+  CARRIED_FLAG_NAMES, carriedFlags, errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo,
+  startStep, type CarriedFlags, type SetupContext,
+} from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { missingClaudeHookScripts } from "../setup/registered-hooks.js";
@@ -582,7 +585,7 @@ function runStopCommand(args: readonly string[], positionals: readonly string[],
 async function runStartCommand(args: readonly string[], context: SetupContext, io: ReturnType<typeof setupIo>): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: ["--repository", SETUP_FLAGS.relay, SETUP_FLAGS.powershell], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
+    { flags: [SETUP_FLAGS.relay, ...CARRIED_FLAG_NAMES], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
     argument => `Unknown start option: ${argument}\n\n${usage()}`,
   );
   const workspace = resolve(options.get("--repo") ?? process.cwd());
@@ -591,7 +594,8 @@ async function runStartCommand(args: readonly string[], context: SetupContext, i
     startForPreSetupHealthCheck(workspace, io);
     return 0;
   }
-  const report = await startRerail(workspace, io, startOptions(args, { repository: flags.has("--repository"), powershell: flags.has(SETUP_FLAGS.powershell) }, options, context, { lane: io.lane, workspace }));
+  const carried = carriedFlags(({ flag }) => flags.has(flag));
+  const report = await startRerail(workspace, io, startOptions(args, carried, options, context, { lane: io.lane, workspace }));
   // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
   if (report.setUpRan) return report.cancelled ? 1 : 0;
   const page = await readRulesDashboard({ cwd: workspace });
@@ -601,7 +605,7 @@ async function runStartCommand(args: readonly string[], context: SetupContext, i
 
 /** What `rerail start` passes to `startRerail`: the answers given so far, and how the set-up may ask for the rest. */
 function startOptions(
-  args: readonly string[], { repository, powershell }: { repository: boolean; powershell: boolean }, options: ReadonlyMap<string, string>, context: SetupContext,
+  args: readonly string[], carried: CarriedFlags, options: ReadonlyMap<string, string>, context: SetupContext,
   { lane, workspace }: { lane: ReturnType<typeof setupIo>["lane"]; workspace: string },
 ): Parameters<typeof startRerail>[2] {
   const answer = checkSetupAnswer(options.get("--answer"));
@@ -609,7 +613,7 @@ function startOptions(
   const packs = setupPacks(options.get(SETUP_FLAGS.packs), answer);
   const database = databasePathOption(options);
   const setupCommand = setupAnswerCommand(context, {
-    ...database, repository, ...(lane === "agent" ? { relay: true } : {}), ...(powershell ? { powershell } : {}), ...definedOnly({ agents }),
+    ...database, ...carried, ...(lane === "agent" ? { relay: true } : {}), ...definedOnly({ agents }),
   });
   const environment = setupEnvironment(context);
   // An update's health check (`skipsSessionsApproval`) reads no one's sessions, so it is not asked to allow it, and
@@ -620,7 +624,7 @@ function startOptions(
     ...database,
     ...definedOnly({ agents, agentsError, answer, setupCommand }),
     ...(healthCheck ? { packs: [] } : packs),
-    repository,
+    repository: carried.repository === true,
     environment: healthCheck ? { ...environment, sessionsApproved: () => true } : environment,
   };
 }

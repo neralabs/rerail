@@ -17,7 +17,7 @@ import { userInfo } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { spawnSync } from "../engine/child-process.js";
 import { windowsPowerShell } from "../engine/system-programs.js";
-import { shellQuote } from "../harness/setup-screens.js";
+import { shellWord } from "../engine/command-line.js";
 import { writeTextFile } from "./harness-registration.js";
 
 const BLOCK_START = "# >>> rerail >>>";
@@ -178,7 +178,7 @@ interface StartupFile {
 }
 
 function posixBlock(binDir: string): string {
-  const quoted = shellQuote(binDir, "linux");
+  const quoted = shellWord("posix", binDir);
   return [
     BLOCK_START,
     "# The `rerail` launcher, added by `rerail setup`; `rerail install --remove` takes it out.",
@@ -293,7 +293,7 @@ function windowsUserPath(binDir: string, mode: "check" | "add" | "check-remove" 
   const result = spawnSync(
     windowsPowerShell(env),
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(WINDOWS_SCRIPT, "utf16le").toString("base64")],
-    { cwd: home, env: { ...env, RERAIL_PATH_ENTRY: binDir, RERAIL_PATH_MODE: mode }, encoding: "utf8", timeout: 30_000, windowsHide: true },
+    { cwd: home, env: { ...env, RERAIL_PATH_ENTRY: binDir, RERAIL_PATH_MODE: mode }, encoding: "utf8", timeout: 30_000 },
   );
   const answer = (result.stdout ?? "").trim().split(/\r?\n/u).pop();
   if (result.status !== 0 || (answer !== "changed" && answer !== "unchanged")) {

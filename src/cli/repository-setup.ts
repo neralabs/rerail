@@ -75,6 +75,7 @@ import {
   type QuestionForm,
   type QuestionStep,
   type RecommendedPacksInput,
+  type SetupCommand,
 } from "../harness/setup-screens.js";
 import type { SetupQuestion, SetupQuestionId, SetupStep } from "../harness/setup-step.js";
 
@@ -176,7 +177,7 @@ export interface RepositorySetupOptions {
   /** `--answer`: the person's answer, relayed by the coding agent. */
   answer?: string;
   /** What the agent lane's answer commands run; `rerail setup` when absent. */
-  setupCommand?: string;
+  setupCommand?: SetupCommand;
   /** `--json`: what each answer's `next.args` start with; `setup --json` when absent. */
   nextArgs?: readonly string[];
   /** `--json`: the question a run stopped at. */

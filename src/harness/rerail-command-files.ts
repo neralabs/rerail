@@ -1,4 +1,5 @@
 import { ADAPTER_CAPABILITIES } from "../engine/adapter-contract.js";
+import type { Shell } from "../engine/command-line.js";
 import {
   bugReportInstructions,
   createRuleInstructions,
@@ -24,17 +25,15 @@ export interface CommandFileContext {
    */
   setupLauncher: string;
   /**
-   * The launcher as PowerShell runs it, `& '<node>' '<root>/dist/cli/cli.js'`; set on Windows, where Codex and Cursor run
-   * commands in PowerShell, which refuses a line that starts with a quoted path. Claude Code runs them in Git Bash there.
+   * The launcher as PowerShell runs it, `& '<node>' '<root>/dist/cli/cli.js'`, since PowerShell refuses a line that
+   * starts with a quoted path; set on Windows, where an agent whose profile names PowerShell (`windowsCommandShell`)
+   * gets it.
    */
   powershellCli?: string;
 }
 
-/** The shell an agent runs a command file's commands in. */
-type CommandShell = "posix" | "powershell";
-
 /** What a command's body is built from: the context, with the launcher written for the agent's shell. */
-type AgentCommandContext = CommandFileContext & { shell: CommandShell };
+type AgentCommandContext = CommandFileContext & { shell: Shell };
 
 /** Marks a Codex skill as installed by Rerail, so registration only ever replaces or removes its own. */
 export const MANAGED_SKILL_MARKER = "<!-- Managed by @neralabs/rerail -->";
@@ -63,7 +62,7 @@ function runOne(command: string, lead: string): string {
  * answer's command. `--relay` keeps set-up in the agent lane even where the coding agent runs commands in a terminal, and
  * every answer command set-up prints carries it.
  */
-function startBody(cli: string, setupLauncher: string, shell: CommandShell): CommandBody {
+function startBody(cli: string, setupLauncher: string, shell: Shell): CommandBody {
   const start = `${cli} start ${SETUP_FLAGS.relay}${shell === "powershell" ? ` ${SETUP_FLAGS.powershell}` : ""}`;
   return {
     text: [
@@ -208,7 +207,7 @@ function command(name: RerailCommandName): RerailCommand {
  */
 export function commandFileText(agent: CommandFileAgent, name: RerailCommandName, context: CommandFileContext): string {
   const { description } = command(name);
-  const powershellCli = agent === "claude-code" ? undefined : context.powershellCli;
+  const powershellCli = ADAPTER_CAPABILITIES[agent].windowsCommandShell === "powershell" ? context.powershellCli : undefined;
   const body = COMMAND_BODIES[name](agent, powershellCli === undefined ? { ...context, shell: "posix" } : { ...context, cli: powershellCli, shell: "powershell" });
   if (agent === "cursor") return `${description}.\n\n${body.text}\n`;
   if (agent === "codex") {

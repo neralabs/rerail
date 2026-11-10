@@ -10,7 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runSetup, runSetupStep, setupPacks, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
 import { workspaceStartState, type RepositorySetupIo } from "../../src/runtime/index.js";
 import { runSetupCommand, runSetupStepArgs, type SetupIo } from "../../src/cli/setup-cli.js";
-import { CONFIRM_PACKS_ANSWERS, NO_REPO_ANSWERS, READ_REPO_ANSWERS, shellQuote } from "../../src/harness/index.js";
+import { commandLine } from "../../src/engine/index.js";
+import { CONFIRM_PACKS_ANSWERS, NO_REPO_ANSWERS, READ_REPO_ANSWERS } from "../../src/harness/index.js";
 import type { SetupQuestion, SetupStep } from "../../src/harness/index.js";
 import { ManagedUpdater, type PackStore } from "../../src/setup/index.js";
 import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
@@ -91,7 +92,7 @@ function expectParity(question: SetupQuestion, agent: string, keys: readonly str
   expect(question.options.map((option, index) => `${index + 1}. ${option.label}${option.detail === null ? "" : `  ${option.detail}`}`))
     .toEqual(answers.map(answer => answer.replace(/ {2,}/gu, "  ")));
   question.options.forEach((option, index) => {
-    const command = ["rerail setup", ...option.next.args.slice(2).map(arg => shellQuote(arg))].join(" ");
+    const command = commandLine("posix", ["rerail", "setup", ...option.next.args.slice(2)]);
     expect(commands[index]).toContain(command);
     if (option.input !== null) expect(commands[index]).toContain(`${command} ${option.input.flag} <`);
   });

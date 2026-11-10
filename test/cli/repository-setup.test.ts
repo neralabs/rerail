@@ -28,6 +28,7 @@ import { repositoryPath } from "../support/oracles.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
 import { removeFixtures, TS_PACKS, type Fixture, fixture, agentIo, terminalIo, request, selected, expectUntouched, SETUP_TIMEOUT_MS, TYPESCRIPT } from "../support/repository-setup.js";
+import { shellWord } from "../../src/engine/index.js";
 
 afterEach(async () => {
   readsRepository.mockClear();
@@ -311,7 +312,8 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
       .toEqual({ status: "waiting" });
     expect(asked.text()).toContain("Set-up could not get any of Rerail’s rule packs.");
     expect(asked.text()).toContain("@neralabs/rerail-pack-typescript: npm error code E401");
-    expect(asked.text()).toContain(`--answer pick-myself --repo ${setup.repo} --packs none`);
+    // The agent runs answers in a POSIX shell, Git Bash on Windows, which needs a Windows path in quotes.
+    expect(asked.text()).toContain(`--answer pick-myself --repo ${shellWord("posix", setup.repo)} --packs none`);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
   });
 
@@ -408,7 +410,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(asked.text()).toContain("Which rule packs should Rerail start with in acme-api?");
     expect(asked.text()).toContain(`complexity@${complexity!.version}  Cyclomatic complexity`);
     expect(asked.text()).not.toContain("(limit 6)");
-    expect(asked.text()).toContain(`--answer pick-myself --repo ${setup.repo} --packs none`);
+    expect(asked.text()).toContain(`--answer pick-myself --repo ${shellWord("posix", setup.repo)} --packs none`);
     expect(readsRepository).not.toHaveBeenCalled();
     expect(packs.installs).toEqual([]);
     expectUntouched(setup);

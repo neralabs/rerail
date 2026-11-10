@@ -138,8 +138,8 @@ describe("buildSteer", () => {
     const latitude = (shell: Parameters<typeof buildSteer>[4]) =>
       buildSteer([violation()], { kind: "edit" }, undefined, undefined, shell).content.split("\n").at(-1);
     expect(latitude("posix")).toBe(FIX_IT);
-    expect(latitude("powershell")).toBe("Fix it, or tell the user in one line why you won't and run "
-      + "`$OutputEncoding = [Text.UTF8Encoding]::new(); '<that line>' | rerail feedback p -`, with each ' and ’ in the line written twice.");
+    expect(latitude("powershell")).toBe("Fix it, or tell the user in one line why you won't and record that line with three PowerShell lines: "
+      + "`$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, a space and the line, then `'@ | rerail feedback p -`.");
   });
 
   it("withholds the message and fix of a finding in a file that links to a secret, judged in its checkout", () => {

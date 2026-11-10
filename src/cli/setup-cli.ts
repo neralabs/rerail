@@ -18,6 +18,7 @@ import {
   seenCodingAgents,
 } from "../setup/coding-agents.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { commandLine, powershellLiteral } from "../engine/command-line.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
@@ -56,7 +57,7 @@ import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
-import { powershellCommand, renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
+import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
@@ -410,8 +411,8 @@ function isRerailHomeEntry(name: string): boolean {
  * and, unlike cmd's `rmdir`, expands no `%NAME%` in the path.
  */
 export function cleanupCommand(path: string, link: boolean, platform: NodeJS.Platform = process.platform): string {
-  if (platform !== "win32") return `rm -rf ${shellQuote(path, platform)}`;
-  const powershell = `'${path.replaceAll("'", "''")}'`;
+  if (platform !== "win32") return commandLine("posix", ["rm", "-rf", path]);
+  const powershell = powershellLiteral(path);
   return link ? `[System.IO.Directory]::Delete(${powershell})` : `Remove-Item -LiteralPath ${powershell} -Recurse -Force`;
 }
 
@@ -806,13 +807,42 @@ export interface SetupCarry {
   readonly powershell?: boolean;
 }
 
+/**
+ * The on-off flags a set-up run carries into every answer it prints, each with its `SetupCarry` field: one row per flag.
+ * Every parser of `rerail setup` and `rerail start` takes them (`CARRIED_FLAG_NAMES`), `carriedFlags` reads them, and
+ * `carriedArgs` writes them back. `--relay` is not a row: it picks the agent lane (`setupIo`), whose answers carry it.
+ */
+const CARRIED_FLAGS = [
+  { field: "powershell", flag: SETUP_FLAGS.powershell },
+  { field: "repository", flag: "--repository" },
+] as const satisfies readonly { field: keyof SetupCarry; flag: string }[];
+
+type CarriedFlag = (typeof CARRIED_FLAGS)[number];
+
+/** The carried on-off flags that are on, as their `SetupCarry` fields. */
+export type CarriedFlags = { [Field in CarriedFlag["field"]]?: true };
+
+/** The flags `CARRIED_FLAGS` names, for a parser's list of the flags it takes. */
+export const CARRIED_FLAG_NAMES: readonly string[] = CARRIED_FLAGS.map(({ flag }) => flag);
+
+/** The carried flags `isOn` says are on, read from a parsed command line (by `flag`) or from a carry (by `field`). */
+export function carriedFlags(isOn: (row: CarriedFlag) => boolean): CarriedFlags {
+  const on: CarriedFlags = {};
+  for (const row of CARRIED_FLAGS) if (isOn(row)) on[row.field] = true;
+  return on;
+}
+
+/** The carried on-off flags `carry` has on, as arguments. */
+function carriedFlagArgs(carry: SetupCarry): string[] {
+  return CARRIED_FLAGS.filter(({ field }) => carry[field] === true).map(({ flag }) => flag);
+}
+
 function carriedArgs(carry: SetupCarry): string[] {
   return [
     ...(carry.relay === true ? [SETUP_FLAGS.relay] : []),
-    ...(carry.powershell === true ? [SETUP_FLAGS.powershell] : []),
     ...(carry.port === undefined ? [] : ["--port", String(carry.port)]),
     ...(carry.databasePath === undefined ? [] : ["--database", carry.databasePath]),
-    ...(carry.repository === true ? ["--repository"] : []),
+    ...carriedFlagArgs(carry),
     // Ids, as `parseCodingAgents` reads them; an answer's own `--agents` comes later and wins.
     ...(carry.agents === undefined ? [] : ["--agents", carry.agents.join(",")]),
   ];
@@ -820,16 +850,15 @@ function carriedArgs(carry: SetupCarry): string[] {
 
 /**
  * What the coding agent runs to answer a set-up question: the launcher setup wrote, which stays put
- * between answers (an `npx` copy may not), with what this run carries, quoted for `platform`'s shell,
- * or for PowerShell when the run carries `--powershell`. `rerail setup` until the launcher exists.
+ * between answers (an `npx` copy may not), with what this run carries, for the shell the agent runs it in:
+ * PowerShell when the run carries `--powershell`, else a POSIX shell, Git Bash on Windows (`windowsCommandShell`).
+ * `rerail setup` until the launcher exists.
  */
-export function setupAnswerCommand(context: SetupContext, carry: SetupCarry = {}, platform: NodeJS.Platform = process.platform): string | undefined {
+export function setupAnswerCommand(context: SetupContext, carry: SetupCarry = {}): SetupCommand | undefined {
   const args = carriedArgs(carry);
   const launcher = existsSync(context.updater.launcherPath) ? context.updater.launcherPath : undefined;
   if (launcher === undefined && args.length === 0) return undefined;
-  if (carry.powershell === true) return powershellCommand([launcher ?? "rerail", "setup", ...args]);
-  const carried = args.map(arg => shellQuote(arg, platform));
-  return [launcher === undefined ? "rerail" : shellQuote(launcher, platform), "setup", ...carried].join(" ");
+  return { words: [launcher ?? "rerail", "setup", ...args], shell: carry.powershell === true ? "powershell" : "posix" };
 }
 
 /** `--json` on `rerail setup` and `rerail start`: one `SetupStep` on stdout instead of text. */
@@ -892,7 +921,7 @@ interface SetupArguments extends SetupCarry {
 function setupArguments(args: readonly string[]): SetupArguments {
   const { flags, options } = parseArguments(
     args,
-    { flags: [JSON_FLAG, SETUP_FLAGS.relay, SETUP_FLAGS.powershell, "--repository"], options: ["--answer", "--repo", "--agents", SETUP_FLAGS.packs, "--port", "--database"] },
+    { flags: [JSON_FLAG, SETUP_FLAGS.relay, ...CARRIED_FLAG_NAMES], options: ["--answer", "--repo", "--agents", SETUP_FLAGS.packs, "--port", "--database"] },
     argument => `Unknown setup option: ${argument}`,
   );
   const port = options.get("--port");
@@ -903,8 +932,7 @@ function setupArguments(args: readonly string[]): SetupArguments {
   return {
     ...(port === undefined ? {} : { port: parsePort(port) }),
     ...(database === undefined ? {} : { databasePath: resolve(database) }),
-    ...(flags.has("--repository") ? { repository: true } : {}),
-    ...(flags.has(SETUP_FLAGS.powershell) ? { powershell: true } : {}),
+    ...carriedFlags(({ flag }) => flags.has(flag)),
     ...(answer === undefined ? {} : { answer }),
     ...(repo === undefined ? {} : { repo }),
     ...setupAgents(agents, answer),
@@ -943,9 +971,8 @@ function carryOf(parsed: SetupArguments, place: SetupPlace): SetupCarry {
   return {
     ...(parsed.port === undefined ? {} : { port: parsed.port }),
     ...(databasePath === undefined ? {} : { databasePath }),
-    ...(parsed.repository === true ? { repository: true } : {}),
+    ...carriedFlags(({ field }) => parsed[field] === true),
     ...(parsed.agents === undefined ? {} : { agents: parsed.agents }),
-    ...(parsed.powershell === true ? { powershell: true } : {}),
   };
 }
 
@@ -1032,13 +1059,13 @@ export async function startStep(args: readonly string[], context: SetupContext, 
   try {
     const { flags, options } = parseArguments(
       args,
-      { flags: [JSON_FLAG, SETUP_FLAGS.relay, SETUP_FLAGS.powershell, "--repository"], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
+      { flags: [JSON_FLAG, SETUP_FLAGS.relay, ...CARRIED_FLAG_NAMES], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
       argument => `Unknown start option: ${argument}`,
     );
     const agents = options.get("--agents");
     const database = options.get("--database");
     const databasePath = database === undefined ? place.databasePath : resolve(database);
-    const repository = flags.has("--repository");
+    const carried = carriedFlags(({ flag }) => flags.has(flag));
     const answer = checkSetupAnswer(options.get("--answer"));
     const workspace = resolve(place.cwd, options.get("--repo") ?? ".");
     // A session opened in the home folder has no repository to start: the set-up asks which project (E3).
@@ -1048,16 +1075,14 @@ export async function startStep(args: readonly string[], context: SetupContext, 
         ...(agents === undefined ? [] : ["--agents", agents]),
         ...(options.has(SETUP_FLAGS.packs) ? [SETUP_FLAGS.packs, options.get(SETUP_FLAGS.packs)!] : []),
         ...(databasePath === undefined ? [] : ["--database", databasePath]),
-        ...(repository ? ["--repository"] : []),
-        ...(flags.has(SETUP_FLAGS.powershell) ? [SETUP_FLAGS.powershell] : []),
+        ...carriedFlagArgs(carried),
       ];
       return await jsonSetupStep([JSON_FLAG, ...passed], context, { ...place, cwd: workspace }, process.versions.node, "start");
     }
     const { agentsError, ...chosen } = setupAgents(agents, answer);
     const carry: SetupCarry = {
       ...(databasePath === undefined ? {} : { databasePath }),
-      ...(repository ? { repository } : {}),
-      ...(flags.has(SETUP_FLAGS.powershell) ? { powershell: true } : {}),
+      ...carried,
       ...chosen,
     };
     const setupCommand = setupAnswerCommand(context, carry);

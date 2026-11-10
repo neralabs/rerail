@@ -6,6 +6,7 @@
  */
 
 import type { CommandSigil, ObservedFileWrite } from "../engine/adapter-contract.js";
+import { powershellQuotesTwice, type Shell } from "../engine/command-line.js";
 
 export type RerailCommandName =
   | "rerail"
@@ -169,8 +170,8 @@ export interface ShowMeInstructionsInput {
   sigil: CommandSigil;
   /** How the agent writes the demo file so the hooks see it: its capability profile's `observedFileWrite`. */
   write: ObservedFileWrite;
-  /** The shell the agent runs commands in: PowerShell for Codex on Windows, which has no heredoc. */
-  shell?: "posix" | "powershell";
+  /** The shell the agent runs commands in: PowerShell for Codex on Windows (`windowsCommandShell`), which has no heredoc. */
+  shell?: Shell;
 }
 
 /**
@@ -180,7 +181,7 @@ export interface ShowMeInstructionsInput {
  */
 export function showMeInstructions({ cli, sigil, write, shell = "posix" }: ShowMeInstructionsInput): string {
   const example = shell === "powershell"
-    ? "`Set-Content -NoNewline -LiteralPath '<file>' -Value @'` … `'@`"
+    ? `\`Set-Content -NoNewline -LiteralPath '<file>' -Value @'\` … \`'@\`, with ${powershellQuotesTwice("`<file>`")}`
     : "`cat > '<file>' <<'EOF'` … `EOF`";
   const how = write === "shell"
     ? `with one shell command, not a file-change, edit, write or apply_patch tool (for example ${example})`
