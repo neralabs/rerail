@@ -532,11 +532,12 @@ function rerailHomeDirectory(context: Context): string {
 }
 
 /**
- * The launcher set-up's answer commands start with (`Updater.launcherPath`), quoted as set-up prints it for a POSIX
- * shell (`setupAnswerCommand`): only Claude Code's command files grant it, and Claude Code runs Git Bash on Windows.
+ * The launcher set-up's answer commands start with in a POSIX shell (`setupAnswerCommand`), quoted as set-up prints it:
+ * the sh launcher, on Windows too, where Git Bash runs it in place of `rerail.cmd`. Only Claude Code's command files
+ * grant it, and Claude Code runs Git Bash on Windows.
  */
 function setupLauncher(context: Context): string {
-  return shellWord("posix", join(rerailHomeDirectory(context), "bin", context.platform === "win32" ? "rerail.cmd" : "rerail"));
+  return shellWord("posix", join(rerailHomeDirectory(context), "bin", "rerail"));
 }
 
 function describe(context: Context, detail: string): string {

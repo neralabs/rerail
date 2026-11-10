@@ -6,7 +6,7 @@ import { dirname, join, win32 } from "node:path";
 import { promisify } from "node:util";
 import ignore from "ignore";
 import { sql } from "drizzle-orm";
-import { commandLine, openSqliteDatabase, shellWord } from "../../src/engine/index.js";
+import { commandLine, ENTRY_POINTS, openSqliteDatabase, shellWord } from "../../src/engine/index.js";
 import {
   CURSOR_HOOK_EVENTS,
   HARNESSES,
@@ -25,6 +25,7 @@ import {
 import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS, readRepoQuestion, renderQuestion } from "../../src/harness/index.js";
 import { runInstallCommand, setupAnswerCommand } from "../../src/cli/index.js";
 import { ManagedUpdater } from "../../src/setup/updater.js";
+import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { stubUserHome } from "../support/user-home.js";
 import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
 
@@ -993,24 +994,33 @@ describe("Claude Code commands", () => {
     expect(start).toContain("run only the one command the output gives for that answer");
   });
 
-  it("grants the answer commands set-up prints on Windows, the launcher quoted for Git Bash, where Claude Code runs them", async () => {
+  it("starts no Windows answer with rerail.cmd, whose arguments cmd.exe reads again, and grants the Git Bash one", async () => {
     const { home, root, nodePath } = await fixture();
     const rerailHome = join(home, "rerail home");
     vi.stubEnv("RERAIL_HOME", rerailHome);
     await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: options });
     const start = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
     const allowed = [...(start.match(/^allowed-tools: (.*)$/mu)?.[1] ?? "").matchAll(/Bash\((.*?)\)(?:, |$)/gu)].map(match => match[1]!);
+    // What set-up writes on Windows: rerail.cmd, the sh launcher Git Bash runs beside it, and the CLI both run.
     const updater = new ManagedUpdater({ home: rerailHome, packageRoot: root, packageVersion: "1.0.0", platform: "win32" });
-    await mkdir(dirname(updater.launcherPath), { recursive: true });
-    await writeFile(updater.launcherPath, "");
+    const shLauncher = join(rerailHome, "bin", "rerail");
+    const cli = join(updater.currentLink, ENTRY_POINTS.cli);
+    for (const path of [updater.launcherPath, shLauncher, cli]) {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, "");
+    }
+    const context = { home: rerailHome, packageRoot: root, updater };
 
-    const answer = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true })!;
+    // cmd.exe would end the command at the `&` of a folder named `C:\code\R&D` and run the rest, and expand `%NAME%`.
+    const answer = setupAnswerCommand(context, { relay: true })!;
     const command = commandLine(answer.shell, answer.words);
-    expect(command).toBe(`'${join(rerailHome, "bin", "rerail.cmd")}' setup --relay`);
+    expect(command).toBe(`${shellWord("posix", shLauncher)} setup --relay`);
     expect(allowed).toContain(`${command} *`);
     // Codex and Cursor run the answers in PowerShell, which refuses a line that starts with a quoted path.
-    const powershell = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true, powershell: true })!;
-    expect(commandLine(powershell.shell, powershell.words)).toBe(`& '${join(rerailHome, "bin", "rerail.cmd")}' setup --relay --powershell`);
+    const powershell = setupAnswerCommand(context, { relay: true, powershell: true })!;
+    expect(commandLine(powershell.shell, powershell.words))
+      .toBe(`& ${shellWord("powershell", pinnedNodePath())} ${shellWord("powershell", cli)} setup --relay --powershell`);
+    for (const { words } of [answer, powershell]) expect(words[0]).not.toMatch(/\.(?:cmd|bat)$/iu);
   });
 
   it("writes Codex's and Cursor's commands on Windows for PowerShell, and Claude Code's for Git Bash", async () => {

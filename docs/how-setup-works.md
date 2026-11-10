@@ -312,10 +312,13 @@ Each answer run starts from what it is told, so running one twice repeats no ear
 Code's, Cursor's and Codex's `/rerail-start` runs `rerail start --relay`, and every answer command carries `--relay`,
 so an agent running commands in a terminal gets these questions, not a prompt waiting on input. On Windows Codex's and
 Cursor's `/rerail-start` runs `rerail start --relay --powershell`, since they run PowerShell there: each answer
-command is then written for PowerShell (`& '<rerail.cmd>' setup ...`) and carries `--powershell` too. Every value
-PowerShell would read goes in single quotes, as `--packs 'typescript@0.1.1,complexity@0.1.1'`, since PowerShell
-passes a bare `a,b` to a program as two arguments; so does the value the agent writes in (`--packs '<packs>'`).
-Claude Code runs Git Bash on Windows, so its answer commands are written for a POSIX shell there too.
+command is then written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`) and carries
+`--powershell` too. Every value PowerShell would read goes in single quotes, as
+`--packs 'typescript@0.1.1,complexity@0.1.1'`, since PowerShell passes a bare `a,b` to a program as two arguments; so
+does the value the agent writes in (`--packs '<packs>'`). Claude Code runs Git Bash on Windows, so its answer commands
+are written for a POSIX shell there too, and start with the sh launcher `rerail`. No answer runs `rerail.cmd`: cmd.exe
+reads a batch file's arguments again, so a folder named `C:\code\R&D` would end the command at its `&` and run the
+rest, and a `%NAME%` in one would expand.
 
 </details>
 

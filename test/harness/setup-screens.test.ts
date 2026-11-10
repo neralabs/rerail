@@ -255,8 +255,10 @@ describe("T3 / C3 ask before reading", () => {
 });
 
 describe("answer commands for PowerShell", () => {
-  const setupCommand = { shell: "powershell", words: [String.raw`C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd`, "setup", "--relay", "--powershell"] } as const;
-  const launcher = String.raw`& 'C:\Users\Alice O''Neil\.rerail\bin\rerail.cmd' setup --relay --powershell`;
+  // Node and the CLI, as set-up writes a PowerShell answer (`setupAnswerCommand`).
+  const words = [String.raw`C:\Program Files\nodejs\node.exe`, String.raw`C:\Users\Alice O'Neil\.rerail\current\dist\cli\cli.js`];
+  const setupCommand = { shell: "powershell", words: [...words, "setup", "--relay", "--powershell"] } as const;
+  const launcher = String.raw`& 'C:\Program Files\nodejs\node.exe' 'C:\Users\Alice O''Neil\.rerail\current\dist\cli\cli.js' setup --relay --powershell`;
 
   it("quotes every answer's values for PowerShell, which would split two packs at their comma", () => {
     const text = renderRecommendedPacks({ ...PACKS, repoPath: String.raw`C:\code\acme $web`, setupCommand }, "agent");

@@ -15,7 +15,7 @@ import { removeInstalledPacks } from "../support/installed-packs.js";
 import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
-import { shellWord } from "../../src/engine/index.js";
+import { ENTRY_POINTS, shellWord } from "../../src/engine/index.js";
 import { stubUserHome } from "../support/user-home.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
@@ -259,9 +259,15 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     const said: string[] = [];
     vi.stubEnv("HOME", join(setup.root, "user"));
     const io = { lane: "agent" as const, say: (text: string) => { said.push(text); }, close: () => {} };
+    mkdirSync(join(setup.context.packageRoot, "dist", "cli"), { recursive: true });
+    writeFileSync(join(setup.context.packageRoot, ENTRY_POINTS.cli), "");
     expect(await runSetupCommand(["--powershell", "--answer", "yes", "--repo", setup.repo], setup.context, io)).toBe(0);
     const text = said.join("\n");
-    expect(text).toMatch(/^1\. & .*rerail(?:\.cmd)?'? setup --relay --powershell --answer start /mu);
+    // Node and the CLI the launcher runs, never `rerail.cmd`, whose arguments cmd.exe would read again.
+    const cli = shellWord("powershell", join(setup.context.updater.currentLink, ENTRY_POINTS.cli));
+    expect(text).toMatch(/^1\. & /mu);
+    expect(text).toContain(` ${cli} setup --relay --powershell --answer start `);
+    expect(text).not.toContain("rerail.cmd");
     // PowerShell hands a program `a@1,b@2` as two arguments, split at the comma, unless it is quoted.
     expect(text).toContain(` --answer choose --repo ${setup.repo} --packs '<packs>', with comma-separated packs from: `);
   });

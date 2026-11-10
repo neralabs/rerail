@@ -18,7 +18,8 @@ import {
   seenCodingAgents,
 } from "../setup/coding-agents.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
-import { commandLine, powershellLiteral } from "../engine/command-line.js";
+import { commandLine, powershellLiteral, type Shell } from "../engine/command-line.js";
+import { ENTRY_POINTS } from "../engine/package-root.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
@@ -849,16 +850,28 @@ function carriedArgs(carry: SetupCarry): string[] {
 }
 
 /**
- * What the coding agent runs to answer a set-up question: the launcher setup wrote, which stays put
- * between answers (an `npx` copy may not), with what this run carries, for the shell the agent runs it in:
- * PowerShell when the run carries `--powershell`, else a POSIX shell, Git Bash on Windows (`windowsCommandShell`).
- * `rerail setup` until the launcher exists.
+ * What starts an answer in `shell`, from what set-up wrote, which stays put between answers (an `npx` copy may not);
+ * undefined until it is there. Never `rerail.cmd`: cmd.exe reads a batch file's arguments again, so the `&` in a folder
+ * named `C:\code\R&D` would end the command and run the rest, and a `%NAME%` would expand. A POSIX shell gets the sh
+ * launcher, which Git Bash runs on Windows; PowerShell, there for Codex and Cursor on Windows, gets node and the CLI.
+ */
+function answerLauncher(updater: ManagedUpdater, shell: Shell): string[] | undefined {
+  const script = shell === "powershell" ? join(updater.currentLink, ENTRY_POINTS.cli) : join(dirname(updater.launcherPath), "rerail");
+  if (!existsSync(script)) return undefined;
+  return shell === "powershell" ? [pinnedNodePath(), script] : [script];
+}
+
+/**
+ * What the coding agent runs to answer a set-up question: the launcher (`answerLauncher`) with what this run carries,
+ * for the shell the agent runs it in: PowerShell when the run carries `--powershell`, else a POSIX shell, Git Bash on
+ * Windows (`windowsCommandShell`). `rerail setup` until the launcher exists.
  */
 export function setupAnswerCommand(context: SetupContext, carry: SetupCarry = {}): SetupCommand | undefined {
   const args = carriedArgs(carry);
-  const launcher = existsSync(context.updater.launcherPath) ? context.updater.launcherPath : undefined;
+  const shell = carry.powershell === true ? "powershell" : "posix";
+  const launcher = answerLauncher(context.updater, shell);
   if (launcher === undefined && args.length === 0) return undefined;
-  return { words: [launcher ?? "rerail", "setup", ...args], shell: carry.powershell === true ? "powershell" : "posix" };
+  return { words: [...(launcher ?? ["rerail"]), "setup", ...args], shell };
 }
 
 /** `--json` on `rerail setup` and `rerail start`: one `SetupStep` on stdout instead of text. */
