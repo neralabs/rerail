@@ -11,7 +11,7 @@
 import { ChildProcess } from "node:child_process";
 import { realpathSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FOLDER_REMOVAL_RETRIES } from "../../../src/engine/file-replace.js";
 
@@ -80,10 +80,13 @@ function names(text: string, folder: string): boolean {
   return false;
 }
 
-/** `folder` as given and with its links and short names resolved, while it exists. */
+/**
+ * `folder` as given and with the links and short names of the folders above it resolved (macOS's `/var` is
+ * `/private/var`), while they exist. A link at `folder` itself is not followed: removing it leaves its target alone.
+ */
 function spellings(folder: string): string[] {
   try {
-    return [...new Set([folder, realpathSync.native(folder)])];
+    return [...new Set([folder, join(realpathSync.native(dirname(folder)), basename(folder))])];
   } catch {
     return [folder];
   }
