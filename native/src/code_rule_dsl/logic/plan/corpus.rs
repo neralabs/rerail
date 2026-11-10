@@ -5787,6 +5787,84 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::V
     found
 }
 
+/// The files Git sees under `root`, relative, and how many of them Git's status changed (staged, untracked,
+/// deleted): `None` outside a work tree, or where Git sees none under it.
+///
+/// Decision 0105: the list is kept as the observer's record (`git-files:<root>`), with what Git read for it: the
+/// root, the `.git` file and the ignore files above the root, the work tree's `HEAD` and index, and the refs,
+/// config and info shared with other work trees. Where the journal names a change in none of those, the list is
+/// as the status found it, and the status is not read again (a status stats every file in the index).
+fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
+    use std::path::PathBuf;
+    let real = observe(|o| o.canonical(root))?;
+    let key = format!("git-files:{}", real.display());
+    // What the record read: the journal's cursor before the status, a line of the roots it was asked over, then a
+    // path a line.
+    let kept = observe(|o| {
+        let (read, files) = o.run_record(&key)?;
+        let mut lines = read.lines();
+        let cursor: u64 = lines.next()?.parse().ok()?;
+        let watched: Vec<PathBuf> = lines.next()?.split('\t').map(PathBuf::from).collect();
+        let read: Vec<PathBuf> = lines.map(PathBuf::from).collect();
+        let named = o.changed_since(&watched, cursor)?;
+        // The repository's own directories, of which only what `read` names counts (not its objects).
+        let git_dirs: Vec<PathBuf> = watched.iter().skip(2).cloned().collect();
+        Some((read, git_dirs, named, String::from_utf8(files).ok()?))
+    });
+    if let Some((read, git_dirs, named, text)) = kept {
+        let mut lines = text.lines();
+        let overlays: usize = lines.next().and_then(|l| l.parse().ok()).unwrap_or(0);
+        let under: Vec<String> = lines.map(str::to_owned).collect();
+        // A change named in what Git reads besides the files (its index, refs, ignore files), or at a directory above
+        // one, may change the list. A file named under the root leaves it as it was when it is still a file the list
+        // holds, or still absent and not in the list; a directory named, or one the list has files under, may not.
+        let listed: std::collections::BTreeSet<&str> = under.iter().map(String::as_str).collect();
+        let holds = named.iter().all(|n| {
+            if read.iter().any(|p| (n.starts_with(p) && *p != real) || (p.starts_with(n) && *p != *n)) {
+                return false;
+            }
+            if git_dirs.iter().any(|d| n.starts_with(d)) {
+                return true;
+            }
+            let Ok(relative) = n.strip_prefix(&real) else { return true };
+            let relative = relative.to_string_lossy();
+            let inside = format!("{relative}/");
+            if n.is_dir() || listed.range(inside.as_str()..).next().is_some_and(|f| f.starts_with(inside.as_str())) {
+                return false;
+            }
+            listed.contains(relative.as_ref()) == n.is_file()
+        });
+        if holds {
+            crate::code_rule_dsl::logic::profile::decision("phase 0: Git's view of the corpus (decision 0105)", || {
+                format!("{} files as the last status found them: of {} paths the journal names, none changes the list", under.len(), named.len())
+            });
+            return (!under.is_empty()).then_some((under, overlays));
+        }
+    }
+    // Watched before the status is read: a change while it reads is named to the next run.
+    let places = crate::git_workspace::locations(&real);
+    let cursor = places.as_ref().and_then(|(work, own, common)| observe(|o| o.mark(&[real.clone(), work.clone(), own.clone(), common.clone()])));
+    let found = observe(|o| o.git(root)).and_then(|g| {
+        let prefix = real.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        let under: Vec<String> = g
+            .worktree_files()
+            .into_iter()
+            .filter_map(|file| if prefix.is_empty() { Some(file) } else { file.strip_prefix(prefix.as_str()).and_then(|f| f.strip_prefix('/')).map(str::to_owned) })
+            .collect();
+        (!under.is_empty()).then(|| (under, g.overlays.len()))
+    });
+    if let (Some((work, own, common)), Some(cursor), Some((under, overlays))) = (&places, cursor, &found) {
+        let mut read: Vec<PathBuf> = vec![real.clone(), work.join(".git"), own.join("HEAD"), own.join("index")];
+        read.extend(real.ancestors().filter(|d| d.starts_with(work) && *d != real.as_path()).map(|d| d.join(".gitignore")));
+        read.extend(["HEAD", "refs", "packed-refs", "config", "info"].iter().map(|f| common.join(f)));
+        let watched = [&real, work, own, common].iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\t");
+        let read = [cursor.to_string(), watched].into_iter().chain(read.iter().map(|p| p.to_string_lossy().into_owned())).collect::<Vec<_>>().join("\n");
+        let text = std::iter::once(overlays.to_string()).chain(under.iter().cloned()).collect::<Vec<_>>().join("\n");
+        observe(|o| o.put_run_record(&key, &read, text.as_bytes()));
+    }
+    found
+}
+
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
 /// (`.rr`), skipping hidden directories and `target`.
 fn corpus_files(root: &Path) -> Result<CorpusFiles> {
@@ -5800,16 +5878,7 @@ fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     // In a Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
     // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
     // A root Git sees no file under (one it ignores, such as fetched fixtures) is not described by Git: walked.
-    let git = observe(|o| o.git(root)).and_then(|g| {
-        let canonical = std::fs::canonicalize(root).ok()?;
-        let prefix = canonical.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-        let under: Vec<String> = g
-            .worktree_files()
-            .into_iter()
-            .filter_map(|file| if prefix.is_empty() { Some(file) } else { file.strip_prefix(prefix.as_str()).and_then(|f| f.strip_prefix('/')).map(str::to_owned) })
-            .collect();
-        (!under.is_empty()).then(|| (under, g.overlays.len()))
-    });
+    let git = git_files(root);
     if let Some((under, overlays)) = git {
         let mut listed = 0;
         for relative in &under {
