@@ -10240,3 +10240,11 @@ Final advanced to `957f13520` during the frozen run. The live alignment check co
 These results certify the registered `d024fa208` cohort, not that newer commit.
 The nine rules remain drafts. The tenth supplied-fact reporter and complete first-ten refresh remain open.
 
+# ServerPlan supplied-model validation source ladder, 2026-11-09
+
+Recorded 197 supplied-fact cases from the pinned ServerPlan surface plugin.
+The corpus includes 124 expected model-validation errors and 73 successful reports or empty results.
+It covers required nested fields, ignored-but-validated model fields, tuple elements, scalar coercion, error order, and the first invalid file bundle.
+The source receipt is `rr-surface-supplied-facts-source.json.gz`. It does not certify native parity.
+The first native positive failed before the reporter was implemented. The follow-up ladder also tests Unicode integer strings and float conversion limits.
+
