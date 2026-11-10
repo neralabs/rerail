@@ -649,6 +649,16 @@
           "before": "7061a34198985b76503e86054bd6d2e66356836a1551d6084f12b45c2c542808",
           "after": "8b721fa30989334342de5980b3746d240547c78345d1845cdad0b8816d6e42b9",
           "reason": "Exact JSON signature casts and decimal ceilings for the seven remaining ratchet boundary failures"
+        },
+        {
+          "before": "8b721fa30989334342de5980b3746d240547c78345d1845cdad0b8816d6e42b9",
+          "after": "7c0dcee16e529b66fefa11b1f2f2f6517e95400a2c8fc9086cb6264846210400",
+          "reason": "Expose cached native exception DTO and construct complete composition exception arguments without Python parsing."
+        },
+        {
+          "before": "7c0dcee16e529b66fefa11b1f2f2f6517e95400a2c8fc9086cb6264846210400",
+          "after": "8b721fa30989334342de5980b3746d240547c78345d1845cdad0b8816d6e42b9",
+          "reason": "Keep complete Python exception relation in its own demanded library; preserve existing core declarations."
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -2641,6 +2651,35 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_composition_architecture.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/composition-source.rr",
+      "origin": "authored",
+      "sha256": "11929e1c6e87432ae833c141dad5fca2ab8ffad9c7670c3ed1816be4ae0791c5",
+      "repairs": [
+        {
+          "before": null,
+          "after": "5bf01d657cf2bf64528785421442a4ab3d1e2b7063d268bd8be3edc727d4a92a",
+          "reason": "Expose cached native exception DTO and construct complete composition exception arguments without Python parsing."
+        },
+        {
+          "before": "5bf01d657cf2bf64528785421442a4ab3d1e2b7063d268bd8be3edc727d4a92a",
+          "after": "11929e1c6e87432ae833c141dad5fca2ab8ffad9c7670c3ed1816be4ae0791c5",
+          "reason": "Keep complete Python exception relation in its own demanded library; preserve existing core declarations."
+        }
+      ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/syntax-exceptions.rr",
+      "origin": "authored",
+      "sha256": "8b10e9d321af0f8617ea0048261d4070e3f7d31ab894651ea8993dbbb5c58e69",
+      "repairs": [
+        {
+          "before": null,
+          "after": "8b10e9d321af0f8617ea0048261d4070e3f7d31ab894651ea8993dbbb5c58e69",
+          "reason": "Keep complete Python exception relation in its own demanded library; preserve existing core declarations."
+        }
+      ]
     }
   ],
   "rules": [
@@ -4198,7 +4237,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
-    "status": "Final ec3cfe1b7 root CLI registered. 131 focused engine tests, 39 accelerator library checks, six lane integration checks and 245 tooling tests pass. Original Surface tests pass through both APIs. Full Surface admission remains bound to Final 041.",
+    "status": "Native syntax exception source committed; replacement CLI acceptance artifact pending.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4229,16 +4268,20 @@
         "sha256": "9d012319339d53e67ff4963ee5f141d3f89d9d29f4c15a176bc884f4337a986c"
       },
       {
+        "path": "native/src/code_rule_dsl/facts/core.rs",
+        "sha256": "ace03f1a402d77b993592f377f750a461a28237aa1218ae775110c44ac9cb6b8"
+      },
+      {
         "path": "native/src/code_rule_dsl/facts/repository.rs",
         "sha256": "7ff68b070b737fb38b27f4736c687cba260151ec5c4ff8dff08f75d5ccd991b0"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "d1266bcaa02860634c3a55b58f075c60157b6aab81c77256a0d2315eaf1bec42"
+        "sha256": "47fb706225b9584a9e98334344af3a2a776f8ee09b4954a61c7afeb6bddbe9cb"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "61b66a375be81fac63a0765d2981330d0c04319f2c0a58e0e8275149007b65ea"
+        "sha256": "56d9cc1e25ea7bd2f10706f38940620429328d2dda2628a205428fa75a687f24"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -4262,7 +4305,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
-        "sha256": "cad0d536546ee5bfdfb055ea7409d9277010941516fcd756b5ea55b8be00147b"
+        "sha256": "25b649736836d4c4800347d565284b4ee3e0ae46977e16a77494ed78fc61c408"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
@@ -4271,6 +4314,14 @@
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-errors.json",
         "sha256": "7b85e2616f4f630a121112cac556c1874cafff8bbf9ce85a51d1aca6056bef15"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-exceptions.json",
+        "sha256": "8d83797508b026f9c60c88adcc3bfe6812bb83d99631a4623f78a9365d721786"
+      },
+      {
+        "path": "native/src/code_rule_dsl/facts/vtab/syntax/tests.rs",
+        "sha256": "d03ca2d66082cc06cb8b7ee4128f06f6868afc667f93d3c59c5cce144f794403"
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
@@ -4342,7 +4393,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
-        "sha256": "d0c444381314e23637acce53e764917bf01b8da1530d84cc1995eda1ff727af3"
+        "sha256": "a376496289c86f5590a04d11b9b52662a5b0cb2bb8019b0905a2515a50d9efc4"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
@@ -4374,7 +4425,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
-        "sha256": "3818945750a11eaa712e09eb7e09c5ce694eab5dabdfd56910d0888f623a3404"
+        "sha256": "5c829e13dbef529dfb2b01c8d8f20442a5d73dbd33cc88c56ce32366a5426b56"
       },
       {
         "path": "native/src/code_rule_dsl/tools.rs",
@@ -4383,6 +4434,10 @@
       {
         "path": "native/src/code_rule_dsl/tools/signing.rs",
         "sha256": "501ae4d5d86a3053b489522bcf123acc70a71017cc583dece8e69741a014333b"
+      },
+      {
+        "path": "native/src/code_rule_dsl/typing/file_local.rs",
+        "sha256": "45f45e4cf391d28fbf0e55d8a6f931705e2d931e3ca114f14c1bd886ad5cc5f1"
       },
       {
         "path": "native/src/code_rule_dsl/value/python.rs",

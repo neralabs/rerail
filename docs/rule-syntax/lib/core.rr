@@ -143,11 +143,6 @@
 // tree-sitter's ERROR and MISSING nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).
 .decl syntax_error(d: number, l: number, msg: symbol)
-.decl syntax_exception(d: number, kind: symbol, msg: symbol, location: symbol)
-// Python's exception type/message and JSON [line,offset,text,end_line,end_offset].
-// NUL source has location "null". The caller supplies its filename separately.
-// Shares the same demanded parse as syntax_error; no interpreter runs.
-.input syntax_exception
 .input source, src_line, split_line, lf_line, line_count, end_line, col, op_at, syntax_error
 // Tokens: the leaves of the parse tree, named or anonymous, in source order. Comments are not tokens, as in
 // ESLint's token store (getTokenBefore, getFirstToken, …), so rules that reason about tokens port directly.

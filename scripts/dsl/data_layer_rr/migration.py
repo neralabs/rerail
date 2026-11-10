@@ -22,8 +22,11 @@ _SOURCE_COHORTS = set()
 ENGINE_EXTENSION_BOUNDARIES = (
     'Cargo.lock', 'native/Cargo.toml',
     'native/src/code_rule_dsl/facts/repository.rs',
+    # One cached parse supplies typed syntax diagnostics to every demanded reader.
+    'native/src/code_rule_dsl/facts/core.rs',
     'native/src/code_rule_dsl/facts/vtab/syntax.rs',
     'native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs',
+    'native/src/code_rule_dsl/facts/vtab/syntax/tests.rs',
     'native/src/code_rule_dsl/facts/vtab/syntax/python_',
     'native/src/code_rule_dsl/logic/plan.rs',
     # Unconditional ground readers must seed a demanded producer.
@@ -49,6 +52,7 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/rr/tests.rs',
     'native/src/code_rule_dsl/logic/sql/select.rs',
     'native/src/code_rule_dsl/sql_executor/documents/shards.rs',
+    'native/src/code_rule_dsl/typing/file_local.rs',
     'native/src/code_rule_dsl/logic/strings.rs',
     'native/src/code_rule_dsl/logic/strings/functions.rs',
     # Public signature verification errors use the same generic decoder and verifier.

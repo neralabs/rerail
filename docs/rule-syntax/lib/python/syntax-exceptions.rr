@@ -1,0 +1,5 @@
+// Python's exception type/message and JSON [line,offset,text,end_line,end_offset].
+// NUL source has location "null". The caller supplies its filename separately.
+// Shares the same demanded parse as syntax_error; no interpreter runs.
+.decl syntax_exception(d: number, kind: symbol, msg: symbol, location: symbol)
+.input syntax_exception

@@ -1,6 +1,7 @@
 // Source traversal for scan_semantic_source. Production and API policies share this body.
 #include "python/ast-shape.rr"
 #include "python/print.rr"
+#include "python/syntax-exceptions.rr"
 .decl spc_valid(d: number)
 spc_valid(d) :- doc(d,_,_), !syntax_error(d,_,_).
 .decl spc_module_text(raw: symbol, value: symbol)
@@ -61,5 +62,13 @@ Composition(k,"SPC-003",cat("semantic builder calls runtime terminal ",name),1,o
 Composition(f,"SPC-005","fragment import must use typed exact ref remapping",1,owner,2147483647,2,0,0) :-
     spc_fragment(c,f,w), (!spc_uses(w,"RefRemap") ; !spc_uses(w,"rewrite_exact_plan_refs_payload")),
     docof(f,d), spc_valid(d), visit_index(c,owner).
-.violation CompositionSyntax(at: span, message: symbol) code "SPC_SYNTAX" "{message}"
-CompositionSyntax(@place(p,l),message) :- doc(d,p,_), syntax_error(d,l,message).
+.decl spc_filename(d: number, filename: symbol)
+spc_filename(d,p) :- doc(d,_,_), option("compositionFilename",p).
+spc_filename(d,p) :- doc(d,p,_), !option("compositionFilename",_).
+.decl spc_exception_args(d: number, args: symbol)
+spc_exception_args(d,cat("[",@json_str(message),"]")) :- syntax_exception(d,_,message,"null").
+spc_exception_args(d,cat("[",@json_str(message),",[",@json_str(p),",",@replace_all(location,"^\\[",""),"]")) :-
+    syntax_exception(d,_,message,location), location!="null", spc_filename(d,p).
+.violation CompositionSyntax(at: span, message: symbol, exception_kind: symbol, exception_args: symbol) code "SPC_SYNTAX" "{message}"
+CompositionSyntax(@place(p,l),message,kind,args) :- doc(d,p,_), syntax_error(d,l,message),
+    syntax_exception(d,kind,message,_), spc_exception_args(d,args).
