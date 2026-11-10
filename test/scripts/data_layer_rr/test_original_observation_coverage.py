@@ -51,5 +51,15 @@ class OriginalObservationCoverageTests(unittest.TestCase):
         result=dict(test='io',entry='check_file',ordinal=0,status='passed',expected=[],actual=[],actualSourceResult=['positive'])
         with self.assertRaisesRegex(ValueError,'Normalized source findings missing'):validate_original_observations([source],[result])
 
+    def test_explicit_source_protocol_compares_the_complete_return_value(self):
+        from recorded_admission import validate_original_observations
+        value=['  missing.py: file not found']
+        source=dict(test='io',entry='public',files=[],sourceResult=value,retained_reason='Output adapter: infrastructure diagnostic')
+        result=dict(test='io',entry='public',ordinal=0,status='passed',expected=value,actual=value,
+            actualSourceResult=value,comparisonKind='source-value')
+        validate_original_observations([source],[result])
+        result['actual']=[]
+        with self.assertRaisesRegex(ValueError,'complete finding'):validate_original_observations([source],[result])
+
 
 if __name__=='__main__':unittest.main()
