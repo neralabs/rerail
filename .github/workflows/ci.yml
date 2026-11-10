@@ -278,13 +278,15 @@ jobs:
               - 'packs/python/**'
               - 'packs/typescript/**'
             # The integration tests and the rule packs from npm: the suites, the test support they import, the vitest
-            # config, the OMP host they provision, the built package. The packs come from the registry, not packs/.
+            # config, the OMP host they provision, the built package. The packs come from the registry, not packs/,
+            # except the complexity pack claude-hook-rules.test.ts adds from this checkout.
             integration:
               - *common
               - *package
               - 'integration/**'
               - 'test/support/**'
               - 'vitest.config.ts'
+              - 'packs/complexity/**'
               - 'scripts/host/**'
             # The real-session runs: the host scripts and the built package, loaded by each host as its plugin. They set
             # repositories up with library rules only, so no pack.
