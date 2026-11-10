@@ -224,16 +224,25 @@ impl View {
             .and_then(|rest| rest.strip_prefix('/'))
     }
 
-    /// The path on disk of `relative`, where it lies inside the root's resolved folder: its
-    /// folder's resolved path does (`directory_inside`), and so does its own where it is a
-    /// symlink.
+    /// The path on disk of `relative`, where it lies inside the root's resolved folder: it names
+    /// only folders and a file below the root, its folder's resolved path lies inside
+    /// (`directory_inside`), and so does its own where it is a symlink. On Windows `\` separates
+    /// names too, so a `\..` or a drive in a name would leave the root.
     fn on_disk(&self, relative: &str) -> Option<PathBuf> {
         let root = self.root.as_ref()?;
         let canonical_root = self.canonical_root.as_ref()?;
         if relative.is_empty() {
             return Some(root.clone());
         }
-        let parent = relative.rfind('/').map_or("", |at| &relative[..at]);
+        if !Path::new(relative)
+            .components()
+            .all(|name| matches!(name, Component::Normal(_)))
+        {
+            return None;
+        }
+        let parent = relative
+            .rfind(std::path::is_separator)
+            .map_or("", |at| &relative[..at]);
         if !self.directory_inside(parent) {
             return None;
         }

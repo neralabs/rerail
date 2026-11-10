@@ -370,6 +370,25 @@ fn a_windows_root_resolves_the_files_on_disk_below_it() {
     }
 }
 
+/// On Windows a relative target never reads a file outside the root, through a `\..` or a drive
+/// in a name, which Windows reads as a separator and a path of its own.
+#[cfg(windows)]
+#[test]
+fn a_relative_target_never_leaves_a_windows_root() {
+    let directory = TempDir::new("windows-outside");
+    directory.write("root/a.mjs", "");
+    directory.write("outside.mjs", "");
+    let view = on_disk(&directory.0.join("root"));
+    let outside = directory.0.join("outside.mjs");
+    let outside = outside.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+    let outcomes = [
+        r"./sub\..\..\outside.mjs".to_owned(),
+        format!("./{outside}"),
+    ]
+    .map(|specifier| outcome(&view, "a.mjs", &specifier, Style::Import));
+    assert_eq!(outcomes, [(true, true), (true, true)]);
+}
+
 #[test]
 fn holding_a_file_changes_resolution_only_where_disk_below_the_root_differs() {
     let directory = TempDir::new("held");
