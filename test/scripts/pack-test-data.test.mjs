@@ -538,7 +538,8 @@ describe("upload", () => {
 });
 
 describe("pack", () => {
-  it("makes no aws call, and writes the same lock whatever the data's on-disk mode, mtime or write order", () => {
+  it("makes no aws call, and writes the same lock whatever the data's on-disk mode, mtime or write order", ({ skip }) => {
+    skip(process.platform === "win32", FAKE_AWS_NEEDS_SH);
     const { root, data, write } = withData();
     const base = dirname(root);
     const bin = join(base, "bin");
@@ -1055,6 +1056,9 @@ const SCRIPT_FILES = [
 const copyScripts = (root) => {
   for (const path of SCRIPT_FILES) putFile(join(root, path), readFileSync(join(REPOSITORY, path)));
 };
+
+/** Why a test that puts the fake `aws` first on PATH skips on Windows: it is a script with a #! line, which Windows does not start. */
+const FAKE_AWS_NEEDS_SH = "a fake aws is a script with a #! line, which Windows does not start as a program";
 
 /** setUp's fake `aws` as an executable, serving the bucket directory FAKE_BUCKET names. */
 const FAKE_AWS = `#!/usr/bin/env node
@@ -1700,7 +1704,8 @@ describe("check", () => {
     expect(calls.filter((args) => args[0] !== "sts" && args[1] !== "head-object")).toEqual([]);
   });
 
-  it("exits 0 when S3 holds everything and 1 when it lacks anything, as a command", () => {
+  it("exits 0 when S3 holds everything and 1 when it lacks anything, as a command", ({ skip }) => {
+    skip(process.platform === "win32", FAKE_AWS_NEEDS_SH);
     const { root, bucket, object, sample } = locked();
     const bin = join(dirname(root), "bin");
     putFile(join(bin, "aws"), FAKE_AWS);

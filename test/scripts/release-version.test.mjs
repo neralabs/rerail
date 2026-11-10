@@ -58,11 +58,17 @@ const commit = ({ git }, message) => {
   git("commit", "-q", "-m", message);
 };
 
+/**
+ * Whether release-version.mjs can run here: it starts `npm` as a program, and Windows has only `npm.cmd`, which starts
+ * through a shell. Releases are cut on Linux in CI.
+ */
+const NPM_RUNS = process.platform !== "win32";
+
 function releaseVersion({ root }) {
   execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe" });
 }
 
-describe("release-version.mjs, the pull request's description", () => {
+describe.runIf(NPM_RUNS)("release-version.mjs, the pull request's description", () => {
   it("ends what it releases with the checklist to tick before merging, every box unticked", () => {
     const repo = repository();
     writePack(repo, "fresh", ["fresh-one"]);
@@ -78,7 +84,7 @@ describe("release-version.mjs, the pull request's description", () => {
   });
 });
 
-describe("release-version.mjs, each released pack's rules", () => {
+describe.runIf(NPM_RUNS)("release-version.mjs, each released pack's rules", () => {
   it("lists every rule of a pack never released as added", () => {
     const repo = repository();
     writePack(repo, "fresh", ["fresh-one", "fresh-two"]);

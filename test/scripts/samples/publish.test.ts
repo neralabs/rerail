@@ -182,7 +182,8 @@ describe("checkLicenceTexts", () => {
     expect(message).toContain("someone/unknown: scripts/samples/licences.ts records no licence files for it");
   });
 
-  it("says which recorded licence file GitHub does not have at the commit", () => {
+  it("says which recorded licence file GitHub does not have at the commit", ({ skip }) => {
+    skip(process.platform === "win32", "a fake gh is a script with a #! line, which Windows does not start as a program");
     const root = tempRoot();
     const bin = join(root, "bin");
     mkdirSync(bin);

@@ -15,6 +15,9 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(async directory => await rm(directory, { recursive: true, force: true })));
 });
 
+/** The file name of a program called `name` on this platform: Windows runs only a file with an extension in PATHEXT. */
+const program = (name: string): string => (process.platform === "win32" ? `${name}.exe` : name);
+
 async function binDirectory(...files: string[]): Promise<string> {
   const bin = await mkdtemp(join(tmpdir(), "rerail-npm-"));
   temporaryDirectories.push(bin);
@@ -34,9 +37,10 @@ async function fakeNpm(body: string): Promise<string> {
 
 describe("resolveExecutable", () => {
   it("returns an absolute command unchanged and finds a bare name through PATH", async () => {
-    const bin = await binDirectory("node");
+    const bin = await binDirectory(program("node"));
     expect(resolveExecutable("/opt/x/bin/node", { PATH: "" })).toBe("/opt/x/bin/node");
-    expect(resolveExecutable("node", { PATH: `/nowhere${delimiter}${bin}` })).toBe(join(bin, "node"));
+    // PATHEXT spells the extension as the file has it on Windows; elsewhere it is not read.
+    expect(resolveExecutable("node", { PATH: `/nowhere${delimiter}${bin}`, PATHEXT: ".exe" })).toBe(join(bin, program("node")));
   });
 
   it("returns undefined when nothing on PATH carries the name", async () => {
@@ -100,7 +104,7 @@ describe("environmentForNode", () => {
     const empty = await binDirectory();
     const env = { PATH: empty };
     expect(environmentForNode("node", env)).toBe(env);
-    const bin = await binDirectory("node");
+    const bin = await binDirectory(program("node"));
     const searched = `${empty}${delimiter}${bin}`;
     expect(environmentForNode("node", { PATH: searched })).toEqual({ PATH: `${bin}${delimiter}${searched}` });
   });
