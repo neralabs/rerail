@@ -2,7 +2,7 @@
 //! (`tools/bitlex`): each named mask of the compiled block program equals the evaluator's mask on
 //! every input and every executor (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 
-use crate::block_tests::{Executors, executors, inputs};
+use crate::block_tests::{Executors, executors, inputs, runs};
 #[allow(unused_imports)]
 use rerail_compiler::*;
 use rerail_compiler::program::Words as Program;
@@ -248,6 +248,45 @@ fn numbers_equal_the_evaluator_on_every_executor() {
         for (executor, got) in Executors::new(&p).run(&bytes, false).0 {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes", bytes.len());
+            }
+        }
+    }
+}
+
+/// Values made from the position alone, read after a backward pass (stored by the first pass and
+/// loaded): `aligned(_, 3)`'s phases and `end - position`'s previous position, on every executor,
+/// Metal's forward carry and backward passes included.
+#[test]
+fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
+    let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask s = back_fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(s, 3)\n";
+    for (text, names) in [(aligned, &["a", "b"][..]), (NUMBERS, &["long", "close", "over", "far", "odd"][..])] {
+        let stmts = ::bitlex::syntax::parse(text).expect("parses");
+        let compiled = bitlex_compile::compile(&stmts, names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
+        let rows = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
+        let p = rir::assemble(&rows).unwrap_or_else(|e| panic!("{e}\n{rows}"));
+        let mut cases: Vec<Vec<u8>> = vec![b"12\"3 4567\" 8 9\"0".to_vec(), b"a````b``c`````d````e`````".to_vec()];
+        cases.extend(runs());
+        cases.push([vec![b'1'; 70_000], b"`````\"x\" ```".to_vec()].concat());
+        for bytes in cases {
+            let want = evaluated(&stmts, &bytes, names);
+            // Metal runs a backward pass in its forward carry only (`run_passes`), not in its
+            // interpreter or generated kernels.
+            #[allow(unused_mut)]
+            let mut got = Executors::new(&p).run(&bytes, false).0;
+            #[cfg(target_os = "macos")]
+            {
+                use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+                let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
+                let file = [block::BatchFile { bytes: &bytes, program: 0 }];
+                for blocks in [3, 29] {
+                    let run = run_serial_split(&[&native], &file, Segments { blocks, warm: 1 }).unwrap_or_else(|e| panic!("the forward carry runs: {e:?}"));
+                    got.push((format!("metal forward carry, segments of {blocks}"), run.run.files[0].outputs.clone()));
+                }
+            }
+            for (executor, got) in got {
+                for (k, name) in names.iter().enumerate() {
+                    assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes", bytes.len());
+                }
             }
         }
     }

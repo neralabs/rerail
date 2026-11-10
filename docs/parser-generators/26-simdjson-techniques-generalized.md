@@ -162,6 +162,21 @@ everything else.
 - **Status: partial.** Constants and `within` are remade in every pass. A byte check is
   remade in a later pass only where a gate there skips it (§5.2); elsewhere it is stored once
   and loaded at its reader, which measured cheaper than holding it.
+- **Positions: measured, not taken.** A `phase` and a `prev` of a position plane, read after a
+  backward pass, are stored by the first pass and loaded. Remaking them was tried:
+
+  | Grammar | | Slots | Instructions | Memory | CPU ms/MB |
+  |---|---|---|---|---|---|
+  | `aligned(_, 3)` after `back_fill` | stored | 7 | 564 | 40 | 0.32 |
+  | | remade | 4 | 599 | 34 | 0.34 to 0.37 |
+  | `end - position` | stored | 100 | 1637 | 261 | 1.16 to 1.23 |
+  | | remade | 66 | 1745 | 193 | 1.20 to 1.59 |
+
+  A phase is two remainders and shifts, about 12 operations; a `prev` of a plane is about 5
+  and a carried bit. Both cost more than a store and a load in order, so on the CPU they are
+  not free to remake. The test is `remade_tests::remade_positions_payoff`. Still open: Metal,
+  where the row is in device memory, and number planes from 6 on, which are the same in
+  every byte of a block and could be one word, not 26.
 
 ### 1.11 Phases with small interfaces
 
@@ -231,7 +246,7 @@ Each transformation is tested three ways:
 | Order | Transformation | Technique |
 |---|---|---|
 | 1 | Gated regions: an accurate cost (vector work counted), any sparse gate, more regions. Done (§5) | §1.1 |
-| 2 | Values remade in each pass, never stored: constants, `within`, positions | §1.10 |
+| 2 | Values remade in each pass, never stored: constants, `within` (positions measured, not taken) | §1.10 |
 | 3 | Delayed masks not held across the loop. Done (§7) | §1.4 |
 | 4 | The fallback's totals folded into one word | §1.5 |
 | 5 | Sparse outputs as positions | §1.6, §1.7 |

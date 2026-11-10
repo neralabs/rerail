@@ -43,6 +43,8 @@ pub mod stream_ir;
 pub mod token_local;
 #[cfg(test)]
 mod token_local_tests;
+#[cfg(test)]
+mod remade_tests;
 
 pub use error::Error;
 
