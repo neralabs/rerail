@@ -85,6 +85,9 @@ impl World {
                 }
             }
         }
+        // What the requests may read is watched (decision 0105): a directory listed or a file read that the
+        // journal says is unchanged is not statted.
+        super::observe(|o| o.watch(&roots));
         World { roots, root: root.to_path_buf(), budget, ..World::default() }
     }
 

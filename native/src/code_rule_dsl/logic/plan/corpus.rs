@@ -1417,8 +1417,13 @@ pub(crate) fn run_with_options(
         }
     }
     let _device = Device(super::placement::set_device(binding == Binding::Metal));
+    // The corpus root and the rule library are watched (decision 0105): what the journal says is unchanged under
+    // them is not statted.
+    let library = crate::code_rule_dsl::logic::rr::library();
+    let library = std::fs::canonicalize(&library).unwrap_or(library);
     let before = observe(|o| {
         o.begin();
+        o.watch(&[root.to_path_buf(), library]);
         o.counts
     });
     // Phase 0 first: each text's include graph, from `bootstrap.rr`'s run, before anything reads a text (the later
@@ -1457,6 +1462,10 @@ pub(crate) fn run_with_options(
             o.counts.since(&before)
         })
     };
+    // `RERAIL_OBSERVED`: what the run's observer did, on stderr (the profile is written before this).
+    if std::env::var_os("RERAIL_OBSERVED").is_some() {
+        eprintln!("rerail: files observed: {did}");
+    }
     report.map(|mut r| {
         r.files_observed = did;
         r
