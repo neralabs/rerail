@@ -147,7 +147,7 @@ pub(super) fn fuse(steps: &[Step]) -> Vec<Option<Box<Fused>>> {
     out
 }
 
-fn fused(binds: &[(usize, usize)], after: &[Step]) -> Option<Fused> {
+pub(super) fn fused(binds: &[(usize, usize)], after: &[Step]) -> Option<Fused> {
     let mut env: Vec<(usize, Val)> = binds.iter().map(|&(c, s)| (s, Val::Row(Word::Col(c)))).collect();
     let mut b = Build::default();
     let mut acc: Option<u16> = None;

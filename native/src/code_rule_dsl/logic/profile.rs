@@ -153,7 +153,72 @@ struct PlacedTotal {
     /// estimate on the CPU's index, and on the form chosen (of the steps estimated under `JOIN_ESTIMATE_CAP`), and
     /// how many were estimated over it.
     joins: [(u64, f64, f64, u64); 3],
+    /// Its runs on the device (decision 0095, step 4), summed: rules, stages, submissions, dispatches, the GPU's
+    /// time, this thread's CPU encoding, waiting and reading back, uploads, residency hits; and why the device
+    /// refused it, when it was placed there and did not run there.
+    gpu: GpuTotal,
+    refused: Option<String>,
 }
+
+#[derive(Default, Clone)]
+struct GpuTotal {
+    runs: u64,
+    rules: u64,
+    stages: u64,
+    submissions: u64,
+    dispatches: u64,
+    reruns: u64,
+    gpu: f64,
+    encode: f64,
+    upload: f64,
+    wait: f64,
+    wait_wall: f64,
+    decode: f64,
+    uploads: u64,
+    upload_bytes: u64,
+    resident: u64,
+    sorts: u64,
+    sort_hits: u64,
+    rows: u64,
+    distinct: u64,
+    bindings: u64,
+}
+
+impl GpuTotal {
+    fn add(&mut self, o: &GpuTotal) {
+        self.runs += o.runs;
+        self.rules += o.rules;
+        self.stages += o.stages;
+        self.submissions += o.submissions;
+        self.dispatches += o.dispatches;
+        self.reruns += o.reruns;
+        self.gpu += o.gpu;
+        self.encode += o.encode;
+        self.upload += o.upload;
+        self.wait += o.wait;
+        self.wait_wall += o.wait_wall;
+        self.decode += o.decode;
+        self.uploads += o.uploads;
+        self.upload_bytes += o.upload_bytes;
+        self.resident += o.resident;
+        self.sorts += o.sorts;
+        self.sort_hits += o.sort_hits;
+        self.rows += o.rows;
+        self.distinct += o.distinct;
+        self.bindings += o.bindings;
+    }
+
+    /// The host's CPU on the device's work: encoding, uploads, waiting, reading back.
+    fn host(&self) -> f64 {
+        self.encode + self.upload + self.wait + self.decode
+    }
+}
+
+/// What the device reported for a stratum (`setfix::device`).
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) type DeviceReport = crate::code_rule_dsl::logic::native::component::DeviceReport;
+#[cfg(not(target_os = "macos"))]
+pub(in crate::code_rule_dsl) type DeviceReport = ();
 
 #[derive(Default)]
 struct WaitTotal {
@@ -491,14 +556,49 @@ pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) 
 
 /// The engine stratum `key` ran on, and why (the first reason given; one loop per call).
 /// Records where native stratum `key` ran (`plan::placement`), its shape, the work it did and the CPU it took.
-pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Placement, shape: &crate::code_rule_dsl::logic::plan::placement::Shape, work: u64, cpu: f64) {
+pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Placement, shape: &crate::code_rule_dsl::logic::plan::placement::Shape, work: u64, cpu: f64, device: Option<&DeviceReport>) {
     if !on() {
         return;
     }
     let mut state = STATE.lock().unwrap();
     let t = state.placements.entry(key.to_owned()).or_default();
     t.runs += 1;
-    t.on_gpu += u64::from(p.gpu);
+    #[cfg(target_os = "macos")]
+    let ran = match device {
+        Some(d) if d.refused.is_none() => {
+            t.gpu.add(&GpuTotal {
+                runs: 1,
+                rules: u64::from(d.rules),
+                stages: u64::from(d.stages),
+                submissions: u64::from(d.submissions),
+                dispatches: u64::from(d.dispatches),
+                reruns: u64::from(d.reruns),
+                gpu: d.gpu_seconds,
+                encode: d.encode_cpu,
+                upload: d.upload_cpu,
+                wait: d.wait_cpu,
+                wait_wall: d.wait_wall,
+                decode: d.decode_cpu,
+                uploads: u64::from(d.uploads),
+                upload_bytes: d.upload_bytes,
+                resident: u64::from(d.resident_hits),
+                sorts: u64::from(d.sorts),
+                sort_hits: u64::from(d.sort_hits),
+                rows: d.rows,
+                distinct: d.distinct,
+                bindings: d.bindings,
+            });
+            true
+        }
+        Some(d) => {
+            t.refused = d.refused.clone();
+            false
+        }
+        None => false,
+    };
+    #[cfg(not(target_os = "macos"))]
+    let ran = device.is_some() && false;
+    t.on_gpu += u64::from(ran);
     t.gpu_cheaper += u64::from(p.gpu_cheaper);
     t.device |= p.device;
     t.forms = shape.forms.iter().map(|f| f.name()).collect();
@@ -526,6 +626,55 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
     }
 }
 
+/// The strata the device ran (decision 0095, step 4): in all, then the costliest; and the strata placed there that it
+/// refused, by reason (no stratum is moved from the device to the CPU without a line here).
+fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
+    let ran: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu.runs > 0).collect();
+    let refused: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.refused.is_some()).collect();
+    if ran.is_empty() && refused.is_empty() {
+        return;
+    }
+    let mut sum = GpuTotal::default();
+    for (_, t) in &ran {
+        sum.add(&t.gpu);
+    }
+    let cpu: f64 = ran.iter().map(|(_, t)| t.cpu).sum();
+    let ms = |s: f64| s * 1e3;
+    let _ = writeln!(r, "Strata run on the GPU: {} strata, {} runs, {} rules in {} stages; their CPU {:.2} s (the whole stratum: planning its replans, the store, the device's host part)",
+        ran.len(), sum.runs, sum.rules, sum.stages, cpu);
+    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow)",
+        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns);
+    let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
+        ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device)",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct);
+    let mut top = ran.clone();
+    top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
+    let _ = writeln!(r, "{:>8} {:>8} {:>8} {:>8} {:>5} {:>6} {:>6} {:>10}  stratum (costliest 25 on the GPU)", "cpu ms", "host ms", "gpu ms", "est ms", "runs", "rules", "subm", "rows");
+    for (key, t) in top.iter().take(25) {
+        let g = &t.gpu;
+        let _ = writeln!(r, "{:>8.2} {:>8.2} {:>8.3} {:>8.3} {:>5} {:>6} {:>6} {:>10}  {}", ms(t.cpu), ms(g.host()), ms(g.gpu), ms(t.gpu_estimate), g.runs, g.rules, g.submissions, g.rows, short(key, 60));
+    }
+    if !refused.is_empty() {
+        let mut by: BTreeMap<&str, (u64, f64, Vec<(f64, &str)>)> = BTreeMap::new();
+        for (key, t) in &refused {
+            let e = by.entry(t.refused.as_deref().unwrap_or("")).or_default();
+            e.0 += 1;
+            e.1 += t.cpu;
+            e.2.push((t.cpu, key.as_str()));
+        }
+        let mut by: Vec<_> = by.into_iter().collect();
+        by.sort_by(|a, b| b.1.1.total_cmp(&a.1.1));
+        let _ = writeln!(r, "Placed on the GPU and refused by it (run on the CPU), by reason (its costliest strata):");
+        let _ = writeln!(r, "{:>9} {:>7}  reason", "cpu s", "strata");
+        for (why, (n, c, mut strata)) in by {
+            strata.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let names: Vec<String> = strata.iter().take(3).map(|(c, k)| format!("{} {:.3} s", short(k, 40), c)).collect();
+            let _ = writeln!(r, "{c:>9.3} {n:>7}  {why} ({})", names.join(", "));
+        }
+    }
+}
+
 /// A join step estimated over this many seconds is a planned estimate gone wrong (a cross product priced at 10^20
 /// rows): counted, not summed.
 const JOIN_ESTIMATE_CAP: f64 = 1e3;
@@ -549,7 +698,8 @@ fn placements(r: &mut String, state: &State) {
         runs - gpu,
         if device { "Metal" } else { "CPU" }
     );
-    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU assumed (2 ns a unit, 0.15 ms a submission) but for join steps, priced on each form from the relational lab's measures.");
+    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost.");
+    device_strata(r, all);
     // The strata the GPU would run cheaper in at least one run, and did not.
     let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
     let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();

@@ -2493,6 +2493,8 @@ struct Driving<'a> {
     /// This thread's CPU the stratum has spent so far (while profiling).
     cpu_own: f64,
     lab: Option<super::native::component::lab::Capture>,
+    /// Placed on the device but a shape its run does not take: why, reported once the stratum closes.
+    not_taken: Option<&'static str>,
 }
 
 struct Run<'a, 'b> {
@@ -3818,16 +3820,33 @@ impl<'a> Run<'a, '_> {
             let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n"), lines.join("\n")));
         }
         let started = std::time::Instant::now();
-        // Where it runs (decision 0095). The device has no relational form yet, so every stratum runs here; the
-        // placement is recorded with the CPU it took, for the profile's "Placement" section.
+        // Where it runs (decision 0095 §7, §8). A stratum the placement puts on the device says so in its spec
+        // (`device`): its seed joins run there, in one submission, unless the device refuses one of them, which the
+        // profile then names. Only a stratum of seeds alone can go: recursion, gates and requests are forms the device
+        // lacks.
         let placed = placement::place(&shape);
+        // Placed there but a shape the device's run does not take: named, as a refusal.
+        let not_taken = if !placed.gpu {
+            None
+        } else if !probes.is_empty() {
+            Some("a recursive component")
+        } else if !gates.is_empty() || answering {
+            Some("a component with gates or requests")
+        } else if orders.is_empty() {
+            Some("no native seed join")
+        } else if placement::device_joins_off() {
+            Some("device joins off (RERAIL_DEVICE_JOINS=off, a measurement aid)")
+        } else {
+            lines.insert(1, "device".to_owned());
+            None
+        };
         let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s } else { 0.0 };
-        let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
+        let counted: Vec<Vec<(u64, u64)>> = Vec::new();
         // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
         let lab = super::native::component::lab::wanted(&name, shape.work)
             .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &lines.join("\n"), &path));
         // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
-        let mut timed: Vec<f64> = Vec::new();
+        let timed: Vec<f64> = Vec::new();
         self.fx().open(&lines.join("\n"))?;
         let sql_views = sql_probe.iter().any(|p| *p);
         if sql_views {
@@ -3872,6 +3891,7 @@ impl<'a> Run<'a, '_> {
             shape,
             cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
             lab,
+            not_taken,
         };
         self.drive(Box::new(d), native_rels, numbers)
     }
@@ -3882,7 +3902,7 @@ impl<'a> Run<'a, '_> {
     /// the wave ran.
     fn drive(&mut self, d: Box<Driving<'a>>, native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let prog = self.prog;
-        let Driving { scc: scc_owned, solving, name, lines, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut timed, mut chunk, started, placed, shape, cpu_own, lab } = *d;
+        let Driving { scc: scc_owned, solving, name, lines, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut timed, mut chunk, started, placed, shape, cpu_own, lab, not_taken } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         let planning = |r: &Rule, what: &str| {
@@ -3917,7 +3937,7 @@ impl<'a> Run<'a, '_> {
                 drop(rels);
                 return Ok(Native::Waiting(Box::new(Driving {
                     scc: scc_owned, solving, name, lines, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                    explained, counted, timed, chunk, started, placed, shape, lab,
+                    explained, counted, timed, chunk, started, placed, shape, lab, not_taken,
                     cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
                 })));
             }
@@ -4013,10 +4033,20 @@ impl<'a> Run<'a, '_> {
                 .collect();
             keeps::observe(&ruled, &sizes, self.model.stats.nodes);
         }
+        // What the device did, or why it refused (taken whether or not profiling, so a report never outlives its
+        // stratum).
+        #[cfg(target_os = "macos")]
+        let device = super::native::component::device_report().or_else(|| {
+            not_taken.map(|why| super::native::component::DeviceReport { refused: Some(why.to_owned()), ..Default::default() })
+        });
+        #[cfg(not(target_os = "macos"))]
+        let _ = not_taken;
+        #[cfg(not(target_os = "macos"))]
+        let device: Option<()> = None;
         if profiling {
             let (u, s) = corpus::thread_usage();
             let work: u64 = counted.iter().flatten().map(|(a, _)| *a).sum();
-            super::profile::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at);
+            super::profile::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at, device.as_ref());
         }
         if super::profile::on() {
             let empty = Vec::new();

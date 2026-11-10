@@ -258,6 +258,8 @@ launches", below). The executor took them without any change to its interface.
 3. **Placement by lanes** (§2), with the profile's per-lane report. Until a lane has kernels, it is priced but never
    chosen, as the GPU is today.
 4. **The GPU path, 0095 steps 1–8,** with the new forms' kernels placed where those steps reach them.
+   - Begun: a stratum's seed joins (equi-joins, negation, existence, the filters after an atom) run on the GPU
+     when placement chooses it, one submission per stratum (0095, order of work, step 4; "Built" below).
 5. **The SME lane:** the bit-product kernel and its worker per cluster.
 6. **The Neural Engine lane:**
    - a. the ML Program writer, with one template, checked against coremltools' output for the same graph;
@@ -381,6 +383,34 @@ All of it was checked exactly against the CPU reference. Times are from release 
     columns, and each level's device wave.
   - **Model facts:** the content store's `accel_models`.
   - **The lanes per binding:** `logic::lanes`.
+
+### Joins on the GPU from the engine (2026-11-09)
+
+The GPU lane's first engine form outside `rerail-accel`: a stratum's seed joins as stages over binding tables
+(`setfix::device`, `metal_join`; 0095's order of work, step 4, has the design). It goes through the native engine,
+not the executor, because its unit is a stratum's rules, not a launch; a dependency level's strata would be one call
+of the same function, so device waves need no new interface.
+
+- **Placement** has join, negation and comparison as the GPU's forms (`DEVICE_FORMS`), priced from the host's
+  measured cost per submission, rule, stage and sort. A stratum whose shape the device's run does not take is
+  refused and named in the profile with its CPU.
+- **Python pack** (debug build), findings identical to the base binary. Paired under the Metal binding, device
+  joins on and off at the same time (load 13–20):
+
+  | | joins on the CPU | joins on the device |
+  |---|---|---|
+  | Local phase, user + sys | 125.5 + 5.5 s | 117.4 + 6.1 s |
+  | Retired instructions (process) | 2,731 G | 2,596 G |
+  | The 345 strata the GPU ran (756 runs) | 25.7 s CPU | 15.9 s CPU, 1.0 s GPU |
+
+  - The host's part of the device's work was 5.1 s: 0.8 s encoding, 1.3 s uploads, 0.06 s waiting and 2.9 s
+    putting 30 M rows into the store. Rows back are the floor, as §"The engine's real strata" found: bandwidth
+    goes on rows written out.
+  - Aggregates' inputs gain most (`rr_agg36` 1.64 to 0.56 s, `rr_agg239` 0.49 to 0.03 s).
+  - The device's buffers share the process's 256 MB with the syntax side's tapes; the joins take what is left
+    and name a stratum refused for space.
+- **Not yet:** level batches; uploads that outlive a chunk's relations (a library relation is uploaded again each
+  time the engine rebuilds it); the host's per-rule cost.
 
 ### Where the time goes: planning, launching and execution (2026-11-09)
 
