@@ -3137,6 +3137,11 @@ fn run_observed(
         if !hits.is_empty() {
             let _replay = crate::code_rule_dsl::logic::profile::span(|| "memo replay".into());
             memo_hits += hits.len();
+            // What an edit's run restores of the files it did not change (t31 step 0.3): every hit's rows, today.
+            crate::code_rule_dsl::logic::profile::decision("memo replay", || {
+                let values: usize = hits.iter().map(|(_, e, _)| e.rows.values().map(|(_, v)| v.len()).sum::<usize>()).sum();
+                format!("{} entries replayed, {:.1} MB of values", hits.len(), values as f64 * 8.0 / 1e6)
+            });
             db.execute_batch("BEGIN")?;
             // The planner's tree counts for the files read from the memo (decision 0063): a chunk mix's measured
             // counts, scaled by the hits' nodes, as an evaluated chunk's are. Without them a run read whole from the
@@ -4150,6 +4155,27 @@ fn run_observed(
             base_held.insert(rel.clone(), columns.iter().zip(&values).map(|(c, v)| v.is_some().then(|| c.clone())).collect());
             let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
             base_sources.insert(rel.clone(), retain::kept_source(parts.as_deref(), &rel, source, &mut input_digests));
+        }
+    }
+    // What the memo entries written by this run hold (t31 A2): the largest relations, and any join pushed into the
+    // chunks (`fl<n>_<rule>`, decision 0051) that exports more rows than four per node of its files, the shape of a
+    // composition left unfiltered (F823's `outer`, 15 M rows for one 291 KB file).
+    if crate::code_rule_dsl::logic::profile::on() {
+        let (nodes, by_rel) = memo::sizes();
+        if nodes > 0 {
+            let total: u64 = by_rel.values().map(|v| v.1).sum();
+            let mut top: Vec<(&String, &(u64, u64))> = by_rel.iter().collect();
+            top.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+            crate::code_rule_dsl::logic::profile::decision("memo entries written", || {
+                let named: Vec<String> = top.iter().take(8).map(|(r, (rows, values))| format!("{r} {:.1} MB ({rows} rows, {:.0}%)", *values as f64 * 8.0 / 1e6, 100.0 * *values as f64 / total.max(1) as f64)).collect();
+                format!("{:.1} MB of values over {nodes} nodes: {}", total as f64 * 8.0 / 1e6, named.join("; "))
+            });
+            for (rel, (rows, _)) in &top {
+                let pushed = rel.strip_prefix("fl").and_then(|s| s.split_once('_')).is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+                if pushed && *rows > 4 * nodes {
+                    crate::code_rule_dsl::logic::profile::decision("pushed joins over 4 rows per node", || format!("{rel}: {rows} rows over {nodes} nodes ({:.1} per node)", *rows as f64 / nodes as f64));
+                }
+            }
         }
     }
     crate::code_rule_dsl::logic::profile::decision("held for the cross-file part", || {

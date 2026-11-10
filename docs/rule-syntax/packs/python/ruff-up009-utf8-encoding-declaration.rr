@@ -19,12 +19,10 @@
     "Delete this UTF-8 encoding declaration comment; Python 3 reads source as UTF-8 by default. Keep it only if the file must also run on Python 2."
     suppress ruff "UP009"
     fix safe remove "Remove the encoding declaration"
-UP009(c) :- declared(d, l, 0, x), l <= 2, utf8(x), (declared(d, _, 1, y), utf8(y) ; !declared(d, _, 1, _)),
+UP009(c) :- declared(d, l, 0, x), l <= 2, (x = "utf-8" ; x = "utf8"), (declared(d, _, 1, y), (y = "utf-8" ; y = "utf8") ; !declared(d, _, 1, _)),
     kind(c, "comment"), docof(c, d), line(c, l).
 // Ruff deletes the whole line: here the line's span (indentation included); see NOTES for its terminator.
 remove(c) :- docof(c, d), line(c, l), src_line(d, l, sp) => delete(sp).
-.decl utf8(x: symbol)
-utf8("utf-8"). utf8("utf8").
 
 // coding(d, l, x): line l is a comment-only line declaring encoding x. The regex is PEP 263's, greedy
 // where Python's `.*?` is lazy: they differ only on a line that says "coding" twice.

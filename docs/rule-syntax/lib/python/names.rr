@@ -384,8 +384,16 @@ ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
 // are values, not types, and are not parsed.
 //   def f(x: "List['int']"): ...      parsed_in(<List>, <"List['int']">), parsed_in(<int>, <"List['int']">)
 .decl parsed_in(e: node, s: node)
-parsed_in(e, s) :- ann_root(a), (s = a ; within(s, a)), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
-parsed_in(e, s0) :- parsed_in(s, s0), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+.decl ann_ctx(s: node)  // s is an annotation root or inside one: where a string annotation can stand
+ann_ctx(s) :- ann_root(a), (s = a ; within(s, a)).
+parsed_in(e, s) :- ann_ctx(s), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+// s is a string inside a parsed annotation (a fragment document): only those are asked to be parsed again.
+parsed_in(e, s0) :- parsed_in(s, s0), frag_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+.decl frag_str(s: node)  // a string inside a parsed annotation (a fragment document)
+frag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, "fragment").
+.decl str_node(s: node)  // a string or an implicit concatenation: what a parse request may name
+str_node(s) :- kind(s, "string").
+str_node(s) :- kind(s, "concatenated_string").
 .decl ann_str(s: node)
 ann_str(s) :- (kind(s, "string") ; kind(s, "concatenated_string")), !concat_part(s), !literal_str(s).
 .decl concat_part(s: node)  // s is one of the strings of `"a" "b"`

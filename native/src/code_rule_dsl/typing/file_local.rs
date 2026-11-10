@@ -1443,6 +1443,23 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 if iface.is_empty() {
                     continue;
                 }
+                // A composition the rule filters from outside is left (t31 A1): its atoms join on a variable the
+                // rule projects away, and a positive read the chunks do not have (a cross-file relation) binds every
+                // variable of its interface. Pushed, it is exported unfiltered: F823's
+                // `outer(f, x) :- outer_cand(f, x), inside(f, p, fscope), bound_in(p, x)` exported every function x
+                // every name bound around it, 15 M rows for one 291 KB file, 55% of the per-file memo. Left, the
+                // cross part starts from the filter and probes the two.
+                let joined_away = vars.iter().any(|v| {
+                    !iface.contains(v) && atoms.iter().filter(|a| a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))).count() >= 2
+                });
+                let filtered = rule.body.iter().enumerate().any(|(j, l)| {
+                    !lits.contains(&j)
+                        && matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(&a.rel) && !candidate(l)
+                            && iface.iter().all(|v| a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))))
+                });
+                if joined_away && filtered {
+                    continue;
+                }
                 let typed: Option<Vec<(String, String)>> = iface
                     .iter()
                     .map(|v| {

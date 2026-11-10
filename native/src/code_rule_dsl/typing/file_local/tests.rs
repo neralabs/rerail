@@ -442,3 +442,33 @@ named(f, s) :- uses(f, _), child(p, f, _), text(p, s).
     let named = pushed.iter().find(|p| p.ends_with("_named")).unwrap();
     assert!(split.exports.iter().any(|e| e == named), "{:?}", split.exports);
 }
+
+/// A composition that a cross-file read of the same rule filters stays in the cross-file part (t31 A1): pushed, the
+/// chunks would export every (function, name bound around it) pair, not the few the filter asks about.
+#[test]
+fn a_composition_filtered_by_a_cross_file_read_is_not_pushed() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.input doc, node, field, text
+// Any file's names: no location column, so cross-file; and the pairs asked about, cross-file through it.
+.decl named(x: symbol)
+named(x) :- node(_, n, "call", _, _), field(n, "function", c), text(c, x).
+.decl wanted(f: node, x: symbol)
+wanted(f, x) :- named(x), node(_, f, "function_definition", _, _).
+.decl bound_in(p: node, x: symbol)
+bound_in(p, x) :- field(p, "name", c), text(c, x).
+.decl outer(f: node, x: symbol)
+.output outer
+outer(f, x) :- wanted(f, x), field(p, "body", f), bound_in(p, x).
+"#;
+    let mut prog = parse(text).unwrap();
+    let made = push_local_joins(&mut prog);
+    assert!(!made.iter().any(|m| m.ends_with("_outer")), "{made:?}");
+    let outer: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "outer").collect();
+    let reads: Vec<&str> = outer[0].body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
+    assert_eq!(reads, ["wanted", "field", "bound_in"]);
+}
