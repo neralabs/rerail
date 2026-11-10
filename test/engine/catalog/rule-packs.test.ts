@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -418,14 +418,17 @@ describe("recommendRulePacks", () => {
       // Valid JSON that names typescript, padded past the cap.
       "big/package.json": `${typescriptManifest.slice(0, -1)}, "padding": "${"x".repeat(1024 * 1024)}"}`,
     });
+    execFileSync("git", ["init", "-q", root]);
+    execFileSync("git", ["-C", root, "add", "."]);
+    const from = await withTestPacks();
+    expect(recommendRulePacks(root, from)).toEqual([]);
+
+    // The links last, since a Windows machine that cannot make a file link skips the rest of the test here.
     mkdirSync(join(root, "linked"));
     mkdirSync(join(root, "device"));
     symlinkOrSkip(context, join(parent, "outside/package.json"), join(root, "linked/package.json"));
     symlinkOrSkip(context, "/dev/zero", join(root, "device/package.json"));
-    execFileSync("git", ["init", "-q", root]);
     execFileSync("git", ["-C", root, "add", "."]);
-
-    const from = await withTestPacks();
     expect(recommendRulePacks(root, from)).toEqual([]);
     writeFileSync(join(root, "package.json"), typescriptManifest);
     expect(recommendRulePacks(root, from).map(({ pack: found, reason }) => [found.id, reason])).toEqual([["lang-ts", "matches the typescript dependency in package.json"]]);

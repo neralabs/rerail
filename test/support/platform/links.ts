@@ -13,7 +13,7 @@ export function symlinkOrSkip(context: Pick<TestContext, "skip">, target: string
   try {
     symlinkSync(target, path, type);
   } catch (error) {
-    if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") context.skip(NO_SYMLINKS);
+    if (process.platform === "win32" && error instanceof Error && "code" in error && error.code === "EPERM") context.skip(NO_SYMLINKS);
     throw error;
   }
 }
