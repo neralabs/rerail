@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -87,6 +87,27 @@ function shWords(command: string, env: Readonly<Record<string, string>>): string
   return words;
 }
 
+/** Every `command` string anywhere in a hooks manifest. */
+function commandsIn(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(commandsIn);
+  if (value === null || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([key, item]) => key === "command" && typeof item === "string" ? [item] : commandsIn(item));
+}
+
+/** The files an npm script's esbuild runs write: each `--outfile`, or each entry point's own name in `--outdir`. */
+function esbuildOutputs(script: string): string[] {
+  return script.split("&&").flatMap(command => {
+    const [program, ...words] = command.trim().split(/\s+/u);
+    if (program !== "esbuild") return [];
+    const option = (name: string): string | undefined => words.find(word => word.startsWith(`${name}=`))?.slice(name.length + 1);
+    const outfile = option("--outfile");
+    if (outfile !== undefined) return [outfile];
+    const outdir = option("--outdir");
+    if (outdir === undefined) return [];
+    return words.filter(word => !word.startsWith("-")).map(entry => `${outdir}/${basename(entry, ".ts")}.js`);
+  });
+}
+
 describe("supported host plugin manifests", () => {
   it("publishes native OMP and Pi extension manifests", async () => {
     const manifest = PackageSchema.parse(await json("package.json"));
@@ -138,7 +159,11 @@ describe("supported host plugin manifests", () => {
       expect(packageManifest.files).toContain(directory);
       expect(manifest).not.toHaveProperty("mcpServers");
       expect(manifest.hooks).toBe(`./hooks/${host}.json`);
-      expect(packageManifest.scripts[`build:${host}`]).toContain(`--outfile=dist/hosts/${host}/${host}-hook.js`);
+      // Every hook the plugin registers runs the one bundle its host's build writes.
+      const hook = `dist/hosts/${host}/${host}-hook.js`;
+      const run = commandsIn(await json(`hooks/${host}.json`)).map(command => /dist\/[\w./-]+\.js/u.exec(command)?.[0]);
+      expect(new Set(run)).toEqual(new Set([hook]));
+      expect(esbuildOutputs(packageManifest.scripts[`build:${host}`] ?? "")).toContain(hook);
     }
     expect(packageManifest.files).toContain("hooks");
   });
