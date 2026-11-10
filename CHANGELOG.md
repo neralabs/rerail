@@ -6,7 +6,7 @@ Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-0.1.4 steers an agent only for its own work. A file that another session, your editor or a background process changed no longer counts as its edit, so an agent that only read code is not told about code it never wrote, and a shell edit to a file that already had unstaged changes is steered only on the lines it changed. A steer found as a turn ends now reaches Claude Code as the turn ends rather than at your next prompt, the dashboard shows each violation under the tool call its audit followed, and set-up runs on a Linux image with no compiler. Before you update: bring Claude Code to 2.1.196 or newer, since on an older version Rerail records no prompts or turn ends. If your own code passes an event loop to `serveRerailEventStream`, have it report an inactive session by throwing `InactiveSessionError` or any error whose `code` is `inactive-session`; one whose message only starts with `Inactive session:` is now answered as `invalid-event`.
+0.1.4 stops steering an agent for changes it did not make: a file changed by another session, your editor or a background process no longer counts as its edit. A steer found as a turn ends now reaches Claude Code then, not at your next prompt. The dashboard shows each violation under the tool call it followed, and set-up works on Linux images with no compiler. Before you update: Claude Code 2.1.196 or newer is required, and if your own code calls `serveRerailEventStream`, see its entry under Changed.
 
 ## 0.1.3 (2026-11-06)
 
