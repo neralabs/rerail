@@ -2738,7 +2738,13 @@ fn run_observed(
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
                     let measured = syntax::statistics(source.as_ref());
-                    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (source.len() * source.columns().len()) as u64);
+                    // Counted only when profiling, and a source made per looked-up node (an axis, `within`) by its
+                    // estimate: its `len` makes every row, every node's ancestors in the chunk (8 s of the pack's
+                    // cold run, profiled or not), which its statistics, read off the tree, never needed.
+                    if crate::code_rule_dsl::logic::profile::on() {
+                        let rows = if source.made_on_lookup() { source.estimated_len() } else { source.len() };
+                        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (rows * source.columns().len()) as u64);
+                    }
                     measured_once.insert(key, (source.estimated_len(), measured.clone()));
                     measured
                 }
