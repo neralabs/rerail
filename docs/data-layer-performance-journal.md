@@ -11047,3 +11047,35 @@ These results certify the recorded `87396ebb3` cohort. They do not certify the n
 Dispatch remains a draft. CLI contracts, filesystem inventory-read errors, persistent updates, scanner controls, and admission remain open.
 The supplied-fact fixtures control inventory text and signatures; they do not certify filesystem read failures.
 The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+
+### Final 776 integration and approval batching, 2026-11-10
+
+Merged Final `776a1e263` in merge commit `83c8c34f6`.
+The merge includes the latest ergonomic syntax, node-ordering changes, scheduling, and statistics work available at that point.
+Both sets of regression tests survive the merge. Shard domains retain the local syntax facts and add Final's `node_order` location.
+The merged test file passes syntax parsing with rustfmt.
+
+Following the new AGENTS.md guidance, this cohort builds only the CLI needed by the integration replay.
+The optimized build took 182.909 seconds elapsed. The library test target was not rebuilt for this merge.
+The earlier primitive-reader unit results remain attached to their recorded source cohort.
+
+On the new CLI, both APIs pass 222 supplied-fact cases, 49 unchanged original tests, 298 scanner cases,
+43 repository cases, and 47 Finding projections. Supplied facts include 161 finding-positive cases and 49 error cases.
+Scanner and repository coverage retain 203 and 30 positive cases per API.
+Four supplied-fact controls and five shared production alias cases pass.
+All native runs retain the semantic-fallback guard. The tooling suite passes 376 tests.
+
+A new batching test exposed separate projection requests for uncached approval inputs.
+The adapter now prepares missing values in one batch before its one filtering request.
+Equal values share preparation, while result ordinals retain distinct original objects.
+A second red test caught a consumed generator. The adapter now retains one stable sequence before its two passes.
+Both red and green results are retained.
+
+[The current receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-supplied-final776-progress.json.gz)
+retains 21 reports, 26 program snapshots, 18 harness snapshots, source recordings, and build provenance.
+No full-repository cold benchmark ran. No Linear issue was created.
+
+Final advanced to `d28b2a342` during acceptance. The live alignment gate still requires that newer work before fresh admission.
+The recorded results certify the frozen `776a1e263` cohort.
+Dispatch remains a draft. CLI behavior, filesystem inventory-read errors, persistent updates, scanner controls, and admission remain open.
+The inventory remains 11 accepted ports, 85 drafts, and four absent translations.

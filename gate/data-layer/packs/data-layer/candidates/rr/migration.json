@@ -3695,6 +3695,10 @@
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-supplied-final873-progress.json.gz",
             "sha256": "46f7251648582dc9e23e2668674f1310a7dfec28bbdb8a03af0540a85cbe35a2"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-supplied-final776-progress.json.gz",
+            "sha256": "87aac76e8aa65a13818289ef1879325d17fbccbc16bdadadf0ac00333d986114"
           }
         ],
         "findingProjectionCasesPerAPI": 47,
@@ -4432,8 +4436,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "87396ebb32b9f790c295361980bf93c1539e3d4a",
-    "status": "Final 87396 rollup merged and compiled; complete dispatch regression cohort passes. Newer Final work remains to merge before admission.",
+    "upstreamCommit": "776a1e263db5d80403fafeab2fdb9ef05993718b",
+    "status": "Final 776a1e263 merged and CLI rebuilt; complete recorded dispatch regression cohort passes. Newer Final changes remain to merge before admission.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4457,11 +4461,11 @@
     "nativeExtensions": [
       {
         "path": "Cargo.lock",
-        "sha256": "6372e7b87166ed7added99c95f3324ab01d1cd80b1297c42603db7d073a28a76"
+        "sha256": "9f6602e93441d0042f944dffcddbbbdb21dfb7a4eb61e62f09f1b30a906aaab8"
       },
       {
         "path": "native/Cargo.toml",
-        "sha256": "9d012319339d53e67ff4963ee5f141d3f89d9d29f4c15a176bc884f4337a986c"
+        "sha256": "e6b129814ecb927f3f757a9f23dac8cc485cb762bf57ce16daba170c55ab7da1"
       },
       {
         "path": "native/src/code_rule_dsl/facts/core.rs",
@@ -4473,11 +4477,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "be653bc32c3ada33ecec431cdf9d91aea0ec76b00ab60a484c3ae2cf4d55ed9a"
+        "sha256": "faf64ebbf883a4c4e7ae44681c08866330c1b6aa62ceb0b08fe4719f84725695"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "bf01290b90cb7cb2c4f036ac94bf103e90e5890d6ef77014bb30da4f99a47e20"
+        "sha256": "448060d0ad4e9451c0138f3f4b97117371f6411b7a0c2ccbef5a763d5a4472c9"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -4517,11 +4521,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/tests.rs",
-        "sha256": "d03ca2d66082cc06cb8b7ee4128f06f6868afc667f93d3c59c5cce144f794403"
+        "sha256": "8c1842e53648696a790cfb91c651fe101ab43ac886b9712c58b35c865ac936ac"
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
-        "sha256": "8d85480bc5095317758add928991a46ca717be2944f517ef9879a2a5385d35b8"
+        "sha256": "51889f845c81e8bf6e9e121a6fa1e26e7c2f9ddbf7f8e6318899ba52a80bd065"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
@@ -4541,15 +4545,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "3d6e2bc434bf4660c1560f9cf005f37e6e6f910a1a1d865f492a586a9038f5df"
+        "sha256": "1b321b217dbc47b5616ba58a9d2cb16d1301368a4ac046897d4dad497c121197"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "be74ff36440ec66b1d7cbac831e1d74c26174e94b38e0176ea6715768dfba636"
+        "sha256": "d1be60a02fc665686fbf5ac623a1f91f9ddddeb4bf3486ffa86bfe90c09168e0"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "b2ec11fd8bd8032b70b4a22ae9abfbb8d4d55c8bb1fabf614f6d7b97f7a5da12"
+        "sha256": "ff401876972f1f8b3eafd68ec71757e0822dff67f5c25bcfcbc1efeb5c440a23"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -4577,7 +4581,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "b2665a1f78c7ff89ba5b1128a6b1174c7102e3531ae7b6f9900e88113cfcc43f"
+        "sha256": "6cd911d53d80df787af287a4bd2119b1aaa4c0961c3078cbd1068616193caa5a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
@@ -4585,11 +4589,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "9c26ee7193c0a67cc888bd4a34e06fb290b0a40a3619973f589d19faa071d651"
+        "sha256": "27a5b81ed75136314d4af6a38ca83b0a0dc498c02739ae95d3ecfe20eba2dee6"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
-        "sha256": "a376496289c86f5590a04d11b9b52662a5b0cb2bb8019b0905a2515a50d9efc4"
+        "sha256": "c37454b54202b23e41fc9f109cbf852ca6b64982303cad4f8f333f65ca66aa6d"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
@@ -4621,7 +4625,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
-        "sha256": "5c829e13dbef529dfb2b01c8d8f20442a5d73dbd33cc88c56ce32366a5426b56"
+        "sha256": "ad552b71db6aff0f39bc3d0345ee84373481cc7292192b6f3220044e883ac679"
       },
       {
         "path": "native/src/code_rule_dsl/tools.rs",
@@ -4633,7 +4637,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/typing/file_local.rs",
-        "sha256": "45f45e4cf391d28fbf0e55d8a6f931705e2d931e3ca114f14c1bd886ad5cc5f1"
+        "sha256": "07b775a93ae4afeb299513b7286d4fe1888986a81bf9c2b354fde950f3f03953"
       },
       {
         "path": "native/src/code_rule_dsl/value/python.rs",
@@ -4677,28 +4681,28 @@
     ],
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "87396ebb32b9f790c295361980bf93c1539e3d4a",
-      "engineCommit": "6f128f3f2e94c60f27d0a03c851f12a1d4812843",
+      "upstreamCommit": "776a1e263db5d80403fafeab2fdb9ef05993718b",
+      "engineCommit": "83c8c34f642b1e272c018d253d15af14d411a264",
       "sourceTrees": {
-        "native": "135b141236a14ff87a0ee09fe8cd572eed8262b5",
-        "accel": "860da0ad8c49ae31fd4bb93494d4f123e83fe957",
+        "native": "7c89f4598a00169ccdec1364a23dd038122ca32f",
+        "accel": "f292cd0441adde75fb01bbc003c703880eb6825a",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-        "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
-        "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
+        "Cargo.toml": "3bd1aa65c48ed0de9a279466bf527b24b5780572",
+        "Cargo.lock": "26d034f8d5d12c9faaeae61de402d0dbc19956dc"
       }
     },
     "cliArtifact": {
-      "engineCommit": "6f128f3f2e94c60f27d0a03c851f12a1d4812843",
-      "upstreamCommit": "87396ebb32b9f790c295361980bf93c1539e3d4a",
+      "engineCommit": "83c8c34f642b1e272c018d253d15af14d411a264",
+      "upstreamCommit": "776a1e263db5d80403fafeab2fdb9ef05993718b",
       "sourceTrees": {
-        "native": "135b141236a14ff87a0ee09fe8cd572eed8262b5",
-        "accel": "860da0ad8c49ae31fd4bb93494d4f123e83fe957",
+        "native": "7c89f4598a00169ccdec1364a23dd038122ca32f",
+        "accel": "f292cd0441adde75fb01bbc003c703880eb6825a",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-        "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
-        "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
+        "Cargo.toml": "3bd1aa65c48ed0de9a279466bf527b24b5780572",
+        "Cargo.lock": "26d034f8d5d12c9faaeae61de402d0dbc19956dc"
       },
-      "path": ".rerail/modern-engine-alignment/cli-924404cd848625ee",
-      "sha256": "924404cd848625ee5dcba73ed8904a37917b812e1708bb8380df4c527a989fdc",
+      "path": ".rerail/modern-engine-alignment/cli-3de042c26abdf80f",
+      "sha256": "3de042c26abdf80fd46f642f16eac037fe16fa409643000c682fdc9c2124bd45",
       "command": [
         "cargo",
         "build",
@@ -4711,7 +4715,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 332.716
+      "seconds": 182.909
     }
   },
   "engineSourceSnapshots": [
