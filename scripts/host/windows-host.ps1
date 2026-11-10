@@ -210,14 +210,15 @@ function Get-RerailUserPath {
 }
 
 # Splits a raw Path value into its entries in $Folder or under it (`Under`) and the value without them (`Rest`), where
-# every other entry, empty ones too, keeps its place and spelling. Entries compare as Windows reads them: %VAR%
-# expanded, case ignored, a trailing backslash dropped.
+# every other entry, empty ones too, keeps its place and spelling. Entries compare as written, case and a trailing
+# backslash aside, never with %VAR% expanded: set-up writes its folder out in full, and the smoke has pointed
+# USERPROFILE into its sandbox, so a person's `%USERPROFILE%\...` entry would expand to a folder there.
 function Split-RerailPathUnder([string]$Path, [string]$Folder) {
-  $root = [Environment]::ExpandEnvironmentVariables($Folder).Trim().TrimEnd('\')
+  $root = $Folder.Trim().TrimEnd('\')
   if ($root -eq "") { throw "no folder to look for in the Path" }
   $under = @(); $rest = @()
   foreach ($entry in $Path -split ";") {
-    $full = [Environment]::ExpandEnvironmentVariables($entry).Trim().TrimEnd('\')
+    $full = $entry.Trim().TrimEnd('\')
     if ($full -ieq $root -or $full.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase)) { $under += $entry } else { $rest += $entry }
   }
   return @{ Under = $under; Rest = $rest -join ";" }

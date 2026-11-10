@@ -53,14 +53,27 @@ $run = Invoke-RerailCaptured $env:RERAIL_TEST_NODE @("-e", "process.stdout.write
     expect(answer).toBe("stdout True, stderr True");
   }, 60_000);
 
-  it("split the user Path entries inside a sandbox folder, however each is written, from the rest, which stays in place", async () => {
+  it("split the user Path entries inside a sandbox folder, in any case and with a trailing backslash, from the rest, which stays in place", async () => {
     const answer = await hostPowerShell(String.raw`
 $sandbox = $env:RERAIL_TEST_SANDBOX
 $path = '%SystemRoot%\system32;' + $sandbox + ';C:\Tools;' + $sandbox.ToUpperInvariant() + '\profile\.rerail\bin\;;%RERAIL_TEST_SANDBOX%\other;' + $sandbox + '-sibling\bin'
 $split = Split-RerailPathUnder $path $sandbox
 "$($split.Under -join '|')>$($split.Rest)"
 `, { RERAIL_TEST_SANDBOX: String.raw`C:\Temp\rerail-windows-smoke-1` });
-    expect(answer).toBe(String.raw`C:\Temp\rerail-windows-smoke-1|C:\TEMP\RERAIL-WINDOWS-SMOKE-1\profile\.rerail\bin\|%RERAIL_TEST_SANDBOX%\other>%SystemRoot%\system32;C:\Tools;;C:\Temp\rerail-windows-smoke-1-sibling\bin`);
+    expect(answer).toBe(String.raw`C:\Temp\rerail-windows-smoke-1|C:\TEMP\RERAIL-WINDOWS-SMOKE-1\profile\.rerail\bin\>%SystemRoot%\system32;C:\Tools;;%RERAIL_TEST_SANDBOX%\other;C:\Temp\rerail-windows-smoke-1-sibling\bin`);
+  }, 60_000);
+
+  it("keep a person's entry written with %USERPROFILE% while the smoke points USERPROFILE into its sandbox", async () => {
+    // A new Windows account's user Path is `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps`; the smoke sets
+    // USERPROFILE to its sandbox profile before set-up, and clears the sandbox's entries with it still set.
+    const answer = await hostPowerShell(String.raw`
+$sandbox = $env:RERAIL_TEST_SANDBOX
+$env:USERPROFILE = "$sandbox\profile"
+$path = '%USERPROFILE%\AppData\Local\Microsoft\WindowsApps;' + $sandbox + '\profile\.rerail\bin'
+$split = Split-RerailPathUnder $path $sandbox
+"$($split.Under -join '|')>$($split.Rest)"
+`, { RERAIL_TEST_SANDBOX: String.raw`C:\Temp\rerail-windows-smoke-1` });
+    expect(answer).toBe(String.raw`C:\Temp\rerail-windows-smoke-1\profile\.rerail\bin>%USERPROFILE%\AppData\Local\Microsoft\WindowsApps`);
   }, 60_000);
 });
 
