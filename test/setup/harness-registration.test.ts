@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -26,6 +26,7 @@ import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS, readRepoQuestion, renderQuestion
 import { runInstallCommand, setupAnswerCommand } from "../../src/cli/index.js";
 import { ManagedUpdater } from "../../src/setup/updater.js";
 import { stubUserHome } from "../support/user-home.js";
+import { linkFolder, symlinkOrSkip } from "../support/links.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -1223,18 +1224,18 @@ describe("legacy package-root cutover", () => {
     await seed(mcpPath, { mcpServers: { previous: { command: "/old/node", args: [join(bridge, "dist", "cli", "cli.js"), "mcp-bridge"] } } });
     const extensions = join(options.home, ".omp", "agent", "extensions");
     await mkdir(extensions, { recursive: true });
-    await symlink(bridge, join(extensions, "previous"));
+    linkFolder(bridge, join(extensions, "previous"));
     // Installs that are gone: a deleted default home, a deleted custom RERAIL_HOME (the review's /old/home/current), a
     // custom home whose `current` outlived its versions, and a cleaned npx cache.
     const deleted = join(dirname(options.home), "deleted-home", ".rerail", "current");
     const custom = join(dirname(options.home), "old", "home", "current");
     const stale = join(dirname(options.home), "stale-home", "current");
     await mkdir(dirname(stale), { recursive: true });
-    await symlink(join(dirname(stale), "versions", "0.0.8"), stale);
+    linkFolder(join(dirname(stale), "versions", "0.0.8"), stale);
     const npxCache = join(dirname(options.home), "npx-cache", "node_modules", "@neralabs", "rerail");
-    await symlink(deleted, join(extensions, "deleted"));
-    await symlink(custom, join(extensions, "custom"));
-    await symlink(stale, join(extensions, "stale"));
+    linkFolder(deleted, join(extensions, "deleted"));
+    linkFolder(custom, join(extensions, "custom"));
+    linkFolder(stale, join(extensions, "stale"));
     await seed(join(options.home, ".pi", "agent", "settings.json"), { packages: [bridge, deleted, custom, stale, npxCache] });
 
     await registerHarnesses(options);
@@ -1259,8 +1260,8 @@ describe("legacy package-root cutover", () => {
     const scoped = join(volume, "node_modules", "@acme", "rerail");
     const extensions = join(options.home, ".omp", "agent", "extensions");
     await mkdir(extensions, { recursive: true });
-    await symlink(tool, join(extensions, "tool"));
-    await symlink(scoped, join(extensions, "scoped"));
+    linkFolder(tool, join(extensions, "tool"));
+    linkFolder(scoped, join(extensions, "scoped"));
     const piPath = join(options.home, ".pi", "agent", "settings.json");
     const packages = ["npm:@acme/current", "git:github.com/acme/dotfiles/.rerail/current", tool, scoped];
     await seed(piPath, { packages });
@@ -1284,7 +1285,7 @@ describe("legacy package-root cutover", () => {
     await writeFile(file, "export default function single() {}\n");
     const extensions = join(options.home, ".omp", "agent", "extensions");
     await mkdir(extensions, { recursive: true });
-    await symlink(folder, join(extensions, "mytool"));
+    linkFolder(folder, join(extensions, "mytool"));
     const piPath = join(options.home, ".pi", "agent", "settings.json");
     await seed(piPath, { packages: [folder, file] });
 
@@ -1637,7 +1638,7 @@ describe("OMP plugin install of Rerail", () => {
 
     const copy = join(home, ".omp", "plugins", "node_modules", "@neralabs", "rerail");
     await rm(copy, { recursive: true });
-    await symlink(root, copy);
+    linkFolder(root, copy);
     await rm(join(home, ".omp", "plugins", "omp-plugins.lock.json"));
     expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
   });
@@ -1747,8 +1748,8 @@ describe("OMP extensions symlink", () => {
     await seed(path, { mcpServers: { previous: otherBridge, foreign: foreignBridge } });
     const extensions = join(home, ".omp", "agent", "extensions");
     await mkdir(extensions, { recursive: true });
-    await symlink(otherInstall, join(extensions, "previous"));
-    await symlink(foreign, join(extensions, "foreign"));
+    linkFolder(otherInstall, join(extensions, "previous"));
+    linkFolder(foreign, join(extensions, "foreign"));
 
     await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] });
     expect(await readJson(path)).toEqual({
@@ -1796,13 +1797,13 @@ describe("OMP extensions symlink", () => {
 });
 
 describe("symlinked configs", () => {
-  it("writes through a symlink to its target and keeps the link intact", async () => {
+  it("writes through a symlink to its target and keeps the link intact", async context => {
     const { home, root, nodePath } = await fixture();
     const link = join(home, ".claude", "settings.json");
     const target = join(home, "dotfiles", "claude.json");
     await seed(target, { theme: "dark" });
     await mkdir(dirname(link), { recursive: true });
-    await symlink(target, link);
+    symlinkOrSkip(context, target, link);
 
     const report = await registerHarnesses({ root, home, nodePath, harnesses: ["claude-code"] });
     expect(change(report.changes, "claude-code", "settings.json").action).toBe("updated");
@@ -1815,12 +1816,12 @@ describe("symlinked configs", () => {
     expect(await readdir(dirname(link))).toEqual(["commands", "settings.json"]);
   });
 
-  it("creates the target of a dangling symlink instead of replacing the link", async () => {
+  it("creates the target of a dangling symlink instead of replacing the link", async context => {
     const { home, root, nodePath } = await fixture();
     const link = join(home, ".cursor", "hooks.json");
     const target = join(home, "dotfiles", "cursor-hooks.json");
     await mkdir(dirname(link), { recursive: true });
-    await symlink(target, link);
+    symlinkOrSkip(context, target, link);
 
     const report = await registerHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
     expect(change(report.changes, "cursor", "hooks.json").action).toBe("created");
@@ -1858,7 +1859,7 @@ describe("dry run", () => {
     const claude = join(home, ".claude", "settings.json");
     const original = await seed(claude, { theme: "dark" });
     await mkdir(join(home, ".omp", "agent", "extensions"), { recursive: true });
-    await symlink(join(home, "elsewhere"), join(home, ".omp", "agent", "extensions", "rerail"));
+    linkFolder(join(home, "elsewhere"), join(home, ".omp", "agent", "extensions", "rerail"));
     const project = join(home, "project");
 
     const report = await registerHarnesses({

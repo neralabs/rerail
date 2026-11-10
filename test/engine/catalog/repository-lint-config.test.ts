@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,6 +12,7 @@ import {
   readRepositoryLintConfig,
   ruffSelects,
 } from "../../../src/engine/catalog/lint-config/repository-lint-config.js";
+import { symlinkOrSkip } from "../../support/links.js";
 
 const TYPE_DEFINITIONS = "typescript-eslint-consistent-type-definitions";
 const TSLINT_COMMENT = "typescript-eslint-ban-tslint-comment";
@@ -185,7 +186,7 @@ describe("readLintConfigFiles", () => {
     expect(readLintConfigFiles(data).eslint).toEqual({ file: "eslint.config.ts", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map() });
   });
 
-  it("reports a flat config it cannot parse or that exports nothing it can find as not read", async () => {
+  it("reports a flat config it cannot parse or that exports nothing it can find as not read", async context => {
     const broken = await repository({ "eslint.config.js": "export default [\n" });
     expect(readLintConfigFiles(broken).notes.map(note => note.text)).toEqual([
       expect.stringMatching(/^eslint\.config\.js is not statically readable: it does not parse: .+\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u),
@@ -197,7 +198,7 @@ describe("readLintConfigFiles", () => {
     ]);
     // A flat config Rerail cannot load (a link, or one over 1 MiB) is not statically readable either.
     const linked = await repository({ "real.mjs": "export default [];\n" });
-    symlinkSync(join(linked, "real.mjs"), join(linked, "eslint.config.mjs"));
+    symlinkOrSkip(context, join(linked, "real.mjs"), join(linked, "eslint.config.mjs"));
     expect(readLintConfigFiles(linked)).toMatchObject({
       eslint: { file: "eslint.config.mjs", unreadable: "it is not a regular file of at most 1 MiB in the repository" },
       notes: [{ text: "eslint.config.mjs is not statically readable: it is not a regular file of at most 1 MiB in the repository. Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off." }],
@@ -228,9 +229,9 @@ describe("readLintConfigFiles", () => {
     expect(readLintConfigFiles(root).eslint).toEqual({ file: "package.json eslintConfig", rules: { "no-console": 0 }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), eslintrc: true });
   });
 
-  it("does not follow a symlinked config", async () => {
+  it("does not follow a symlinked config", async context => {
     const root = await repository({ "elsewhere.json": "{ \"rules\": {} }" });
-    symlinkSync(join(root, "elsewhere.json"), join(root, ".oxlintrc.json"));
+    symlinkOrSkip(context, join(root, "elsewhere.json"), join(root, ".oxlintrc.json"));
     expect(readLintConfigFiles(root).oxlint).toBeUndefined();
     expect(readLintConfigFiles(root).notes.map(note => note.text)).toEqual([".oxlintrc.json is not read: it is not a regular file of at most 1 MiB in the repository."]);
   });

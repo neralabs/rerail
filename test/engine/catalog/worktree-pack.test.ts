@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -24,6 +24,7 @@ import {
   temporaryDirectory,
   testBundle,
 } from "../../support/rule-configuration-builders.js";
+import { symlinkOrSkip } from "../../support/links.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -52,7 +53,7 @@ function git(cwd: string, ...args: string[]): void {
 }
 
 describe("a worktree's own rules", () => {
-  it("load as the worktree pack beside the installed packs, each document checked on its own", async () => {
+  it("load as the worktree pack beside the installed packs, each document checked on its own", async context => {
     const root = await temporaryDirectory();
     const installed = testBundle();
     const directory = writeRules(root, {
@@ -62,7 +63,6 @@ describe("a worktree's own rules", () => {
       "d.json": { format: "rerail.policy/v1", id: "no-clauses", revision: 1, mode: "steer", clauses: [] },
       "e.json": needle("no-console", "CLASH"),
     });
-    symlinkSync(join(directory, "a.json"), join(directory, "f.json"));
     writeFileSync(join(directory, "notes.md"), "not a rule");
 
     const catalog = worktreeRuleCatalog(installed, root);
@@ -76,13 +76,18 @@ describe("a worktree's own rules", () => {
     expect(catalog.packs.get("lint")).toBe(installed.packs.get("lint"));
     expect(catalog.documents.get("no-console")).toBe(installed.documents.get("no-console"));
     expect(catalog.digest).not.toBe(installed.digest);
-    expect(catalog.skipped.map(({ path, reason }) => ({ file: path.slice(directory.length + 1), reason }))).toEqual([
+    const skipped = [
       { file: "b.json", reason: "rule worktree-needle is already in a.json" },
       { file: "c.json", reason: expect.any(String) as string },
       { file: "d.json", reason: expect.stringMatching(/^clauses /u) as string },
       { file: "e.json", reason: "rule no-console is already in the installed pack lint" },
-      { file: "f.json", reason: "it is not a regular file" },
-    ]);
+    ];
+    const skippedFiles = (read: typeof catalog) => read.skipped.map(({ path, reason }) => ({ file: path.slice(directory.length + 1), reason }));
+    expect(skippedFiles(catalog)).toEqual(skipped);
+
+    // A link among the documents is skipped too; last, since a Windows machine that cannot make one skips the rest.
+    symlinkOrSkip(context, join(directory, "a.json"), join(directory, "f.json"));
+    expect(skippedFiles(worktreeRuleCatalog(installed, root))).toEqual([...skipped, { file: "f.json", reason: "it is not a regular file" }]);
   });
 
   it("are read again when a file changes, and leave the installed catalog itself when there are none", async () => {

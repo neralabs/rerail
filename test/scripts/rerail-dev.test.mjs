@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ import {
   stopDevCheckout,
   validateDevInstance,
 } from "../../scripts/dev/rerail-dev.mjs";
+import { linkFolder } from "../support/links.ts";
 
 const cleanups = [];
 afterEach(async () => {
@@ -106,7 +107,7 @@ describe("dev instance", () => {
     const { env, checkout } = await sandbox();
     const bridged = await checkout("bridged");
     await mkdir(env.RERAIL_HOME, { recursive: true });
-    await symlink(bridged, join(env.RERAIL_HOME, "current"));
+    linkFolder(bridged, join(env.RERAIL_HOME, "current"));
 
     expect(devHome(bridged, env)).toBe(env.RERAIL_HOME);
     expect((await setupDevInstance(bridged, { env, isFree: alwaysFree })).home).toBe(env.RERAIL_HOME);

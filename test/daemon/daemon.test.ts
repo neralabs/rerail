@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
-import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -26,6 +26,7 @@ import {
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { openRerailDatabase, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
+import { linkFolder } from "../support/links.js";
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
 
@@ -270,7 +271,7 @@ describe("Rerail daemon", () => {
   it("resolves canonical presentation overrides in precedence order and falls through after deletion", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const alias = join(root, "alias");
-    await symlink(root, alias);
+    linkFolder(root, alias);
     const daemon = await start();
     const repository = await realpath(root);
     const query = new URLSearchParams({ repository: alias, host: "omp" });

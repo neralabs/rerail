@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { setImmediate as queueHostTurn } from "node:timers";
 import { tmpdir } from "node:os";
@@ -26,6 +26,7 @@ import type {
   NativeCodeRuleDslWorkspace,
   NativeRepositoryIndexOptions,
 } from "../../../src/engine/native/native.js";
+import { linkFolder } from "../../support/links.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";
@@ -1209,8 +1210,8 @@ describe("mechanical code rule regressions", () => {
     roots.push(plain, checkout, links);
     await writeAuditTree(plain, false);
     await writeAuditTree(checkout, true);
-    await symlink(plain, join(links, "plain"));
-    await symlink(checkout, join(links, "checkout"));
+    linkFolder(plain, join(links, "plain"));
+    linkFolder(checkout, join(links, "checkout"));
     const walked = await repositoryAuditPaths(plain);
     expect(walked).toContain("api/a.py");
     expect(await repositoryAuditPaths(join(links, "plain"))).toEqual(walked);

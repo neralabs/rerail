@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ import {
   stripPiSettings,
 } from "../../scripts/dev/rerail-nuke.mjs";
 import { loadSqlite, timestamp } from "../../scripts/dev/rerail-restore.mjs";
+import { linkFolder } from "../support/links.ts";
 
 const NUKE_SCRIPT = fileURLToPath(new URL("../../scripts/dev/rerail-nuke.mjs", import.meta.url));
 const { DatabaseSync } = await loadSqlite();
@@ -143,7 +144,7 @@ function installFixture(home) {
     mcpServers: { rerail: { command: "node", args: [cli, "mcp-bridge"] }, other: { command: "other" } },
   });
   mkdirSync(join(home, ".omp", "agent", "extensions"), { recursive: true });
-  symlinkSync(join(rerailHome, "current"), join(home, ".omp", "agent", "extensions", "rerail"));
+  linkFolder(join(rerailHome, "current"), join(home, ".omp", "agent", "extensions", "rerail"));
   writeJson(join(home, ".pi", "agent", "settings.json"), { packages: [join(rerailHome, "current"), "npm:other"], theme: "dark" });
   mkdirSync(join(home, ".claude", "commands"), { recursive: true });
   // `rerail-ui.md` is the name `rerail-manage.md` had before it was renamed; nuke backs up both.

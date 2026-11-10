@@ -4,7 +4,7 @@
 // git checkout with a fake `aws` whose bucket is a local directory.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,6 +56,7 @@ import { SAMPLE_ID } from "../../scripts/samples/format.ts";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, readArchive, sha256 } from "../../scripts/s3/test-data-archive.mjs";
 import { provenanceFiles, restaged } from "./support/provenance.mjs";
 import { cacheLicence } from "../support/samples.ts";
+import { linkFolder, symlinkOrSkip } from "../support/links.ts";
 
 /** A tool's UPSTREAM.md listing `files` (pack-relative) as Rerail's. */
 const record = (files) => `# cases Rerail wrote\n\n| File | Origin |\n|---|---|\n${files.map((file) => `| \`${file}\` | written by Rerail |\n`).join("")}`;
@@ -362,7 +363,7 @@ describe("pull", () => {
     const outside = join(dirname(root), "outside");
     mkdirSync(outside);
     rmSync(join(root, "packs/p/upstream/t/fixtures"), { recursive: true });
-    symlinkSync(outside, join(root, "packs/p/upstream/t/fixtures"));
+    linkFolder(outside, join(root, "packs/p/upstream/t/fixtures"));
     expect(failure(() => pull({ root, aws, log: () => {} }))).toContain("packs/p/upstream/t/fixtures is a symlink");
     expect(files(outside)).toEqual([]);
     expect(tree(root, true)).toEqual({});
@@ -373,7 +374,7 @@ describe("pull", () => {
     fresh(root);
     const elsewhere = join(dirname(root), "elsewhere");
     renameSync(join(root, "packs/q/upstream"), elsewhere);
-    symlinkSync(elsewhere, join(root, "packs/q/upstream"));
+    linkFolder(elsewhere, join(root, "packs/q/upstream"));
     const before = files(elsewhere);
     expect(failure(() => pull({ root, aws, pack: "q", log: () => {} }))).toContain("packs/q/upstream is a symlink");
     expect(files(elsewhere)).toEqual(before);
@@ -566,11 +567,11 @@ describe("pack", () => {
     }
   });
 
-  it("refuses a symlink among the pack test data rather than leave it out, before writing any lock", () => {
+  it("refuses a symlink among the pack test data rather than leave it out, before writing any lock", (context) => {
     const { root } = withData();
     const outside = join(dirname(root), "outside.expected.json");
     writeFileSync(outside, "{}\n");
-    symlinkSync(outside, join(root, "packs/q/upstream/u/linked.expected.json"));
+    symlinkOrSkip(context, outside, join(root, "packs/q/upstream/u/linked.expected.json"));
     expect(failure(() => pack({ root, log: () => {} }))).toContain("packs/q/upstream/u/linked.expected.json is a symlink");
     expect(LOCKS.filter((lock) => existsSync(join(root, lock)))).toEqual([]);
   });
@@ -1254,9 +1255,10 @@ describe("pack --from (the publish workflow's prep)", () => {
     const context = published();
     const pr = join(dirname(context.root), "link");
     git(context.root, "worktree", "add", "-q", "-b", "link", pr);
-    mkdirSync(join(pr, "packs/p/upstream/t/publish"), { recursive: true });
-    symlinkSync("../../../../../../etc/passwd", join(pr, "packs/p/upstream/t/publish/cases.json"));
-    git(pr, "add", "--", "packs/p/upstream/t/publish");
+    // The link goes into Git's index as a mode 120000 entry, so no file system link is made: Windows makes one only in
+    // Developer Mode.
+    const target = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: pr, input: "../../../../../../etc/passwd", encoding: "utf8" }).trim();
+    git(pr, "update-index", "--add", "--cacheinfo", `120000,${target},packs/p/upstream/t/publish/cases.json`);
     git(pr, "commit", "-qm", "link");
     expect(await packFailure(context, "link")).toContain("packs/p/upstream/t/publish/cases.json (mode 120000: not a regular file)");
   });

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -21,6 +21,7 @@ import {
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { installPack } from "../support/installed-packs.js";
+import { linkFolder, symlinkOrSkip } from "../support/links.js";
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
 installPack("complexity");
@@ -423,15 +424,15 @@ describe("rerail rules test", () => {
     expect(report.repository).toMatchObject({ matches: [{ path: "app.json" }, { path: "local.json" }], leftOut: 6 });
   });
 
-  it("never follows a symlink out of the checkout, to a file or a folder", async () => {
+  it("never follows a symlink out of the checkout, to a file or a folder", async context => {
     const outside = await mkdtemp(join(tmpdir(), "rerail-rule-draft-outside-"));
     directories.push(outside);
     mkdirSync(join(outside, "folder"));
     writeFileSync(join(outside, "secret.ts"), "console.log('outside');\n");
     writeFileSync(join(outside, "folder", "b.ts"), "console.log('outside folder');\n");
     const repo = await repository({ "src/a.ts": "console.log('inside');\n" });
-    symlinkSync(join(outside, "secret.ts"), join(repo, "src", "linked.ts"));
-    symlinkSync(join(outside, "folder"), join(repo, "src", "linked"), "dir");
+    symlinkOrSkip(context, join(outside, "secret.ts"), join(repo, "src", "linked.ts"));
+    linkFolder(join(outside, "folder"), join(repo, "src", "linked"));
     const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
 
     const { exit, report } = await testReport(file, repo);

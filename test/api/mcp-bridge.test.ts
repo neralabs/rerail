@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE } from "../../src/runtime/index.js";
 import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
+import { linkFolder } from "../support/links.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
 /** The Rerail home and which daemon pid answers on each local port; a step may change either to stage a restart. */
@@ -249,7 +250,7 @@ describe("Rerail MCP bridge", () => {
       const checkout = join(root, "dépôt 項目");
       await mkdir(checkout);
       const link = join(root, "link");
-      await symlink(checkout, link);
+      linkFolder(checkout, link);
       const headers: string[] = [];
       const bodies: string[] = [];
       const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });

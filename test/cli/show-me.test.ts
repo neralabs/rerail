@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -29,6 +29,7 @@ import {
 } from "../../src/cli/show-me.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { symlinkOrSkip } from "../support/links.js";
 
 const directories: string[] = [];
 const fileRerailHome = process.env.RERAIL_HOME;
@@ -164,11 +165,11 @@ describe("rerail show-me", () => {
     expect(readFileSync(file, "utf8")).toBe("export const mine = 1;\n");
   });
 
-  it("never writes through a dangling symlink at the demo path", async () => {
+  it("never writes through a dangling symlink at the demo path", async context => {
     const repo = await repository();
     setUpTestRepository(repo);
     const file = join(repo, SHOW_ME_FILE);
-    symlinkSync(join(dirname(repo), "outside.js"), file);
+    symlinkOrSkip(context, join(dirname(repo), "outside.js"), file, "file");
 
     const start = run(["--repo", repo]);
     expect(start.exit).toBe(1);

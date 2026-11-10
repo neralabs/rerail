@@ -6,6 +6,7 @@ import { RerailRuntime } from "../../src/runtime/index.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { resolveSessionPaths } from "../../src/runtime/session-paths.js";
+import { symlinkOrSkip } from "../support/links.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-session-records-gitignore-");
 
@@ -46,12 +47,12 @@ describe("session records in a checkout", () => {
     expect(execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: checkout, encoding: "utf8" })).toBe("");
   });
 
-  it("replace a .gitignore that is a symlink instead of writing through it", async () => {
+  it("replace a .gitignore that is a symlink instead of writing through it", async context => {
     const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
     const outside = join(dirname(checkout), "outside.txt");
     await writeFile(outside, "kept\n");
     await mkdir(storageRoot, { recursive: true });
-    await symlink(outside, join(storageRoot, ".gitignore"));
+    symlinkOrSkip(context, outside, join(storageRoot, ".gitignore"));
     await openOneSession(checkout, storageRoot, databasePath);
     expect(await readFile(outside, "utf8")).toBe("kept\n");
     expect((await lstat(join(storageRoot, ".gitignore"))).isFile()).toBe(true);

@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { NpmOptions, NpmRunner } from "../../src/runtime/npm.js";
 import { ensureSqlite, sqliteInstallPrefix } from "../../src/runtime/sqlite-repair.js";
+import { linkFolder } from "../support/links.js";
 
 const WORKING_BINDING = "module.exports = function Database() { this.close = () => {}; };";
 const ABI_MISMATCH =
@@ -64,7 +65,7 @@ describe("SQLite binding repair", () => {
     // ~/.rerail/current -> ~/.rerail/versions/<v>/node_modules/@neralabs/rerail: resolution must start from the target.
     const { prefix, packageRoot } = await managedInstall(root, WORKING_BINDING);
     const current = join(root, "current");
-    await symlink(packageRoot, current, "dir");
+    linkFolder(packageRoot, current);
     expect(sqliteInstallPrefix(current)).toBe(prefix);
     await expect(ensureSqlite(current, { npm: recordingNpm([], async () => {}) })).resolves.toEqual({ prefix, rebuilt: false });
   });

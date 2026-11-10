@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { rewriteAppendedFile, runScrubCommand, scrubHintOnce } from "../../src/cli/scrub-cli.js";
 import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { withPendingFileLock } from "../../src/harness/index.js";
+import { linkFolder } from "../support/links.js";
 
 /** Set to make `eraseFreedPages` fail as a busy database or a full disk makes it fail. */
 const erase = vi.hoisted(() => ({ failure: undefined as Error | undefined }));
@@ -149,7 +150,7 @@ describe("rerail scrub", () => {
     mkdirSync(checkout);
     // A Git checkout keeps its identity in .git, so the planted .rerail link is only where its ledgers would be.
     spawnSync("git", ["init", "-q", checkout]);
-    symlinkSync(elsewhere, join(checkout, ".rerail"));
+    linkFolder(elsewhere, join(checkout, ".rerail"));
     const database = openRerailDatabase(join(home, "rerail.sqlite"));
     try {
       recordCheckout(database, checkout);

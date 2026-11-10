@@ -3,11 +3,12 @@
 // reaches that comparison. `version:packs` is a stub that bumps every pack, as `changeset version` does for the packs a
 // changeset names.
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { linkFolder } from "../support/links.ts";
 
 const REPOSITORY = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BUMP = `import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -38,7 +39,7 @@ function repository() {
   write("package.json", `${JSON.stringify({ name: "core", version: "1.0.0", type: "module", scripts: { "version:packs": "node bump.mjs" } }, null, 2)}\n`);
   write("bump.mjs", BUMP);
   // The scripts' dependencies; ignored, so no commit below takes the link.
-  symlinkSync(join(REPOSITORY, "node_modules"), join(root, "node_modules"));
+  linkFolder(join(REPOSITORY, "node_modules"), join(root, "node_modules"));
   write(".gitignore", "node_modules\n");
   write(".changeset/changed-release.md", '---\n"@neralabs/rerail-pack-any": patch\n---\n');
   git("init", "-q");
