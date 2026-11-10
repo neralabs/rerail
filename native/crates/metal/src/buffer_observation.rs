@@ -13,13 +13,13 @@ thread_local! {
     static ACTIVE: RefCell<Vec<Weak<State>>> = const { RefCell::new(Vec::new()) };
 }
 
-pub(in super::super) struct BufferObservation {
+pub struct BufferObservation {
     state: Arc<State>,
     _owner_thread: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
 impl BufferObservation {
-    pub(in super::super) fn enter() -> Self {
+    pub fn enter() -> Self {
         let state = Arc::new(State::default());
         ACTIVE.with_borrow_mut(|active| active.push(Arc::downgrade(&state)));
         Self {
@@ -28,13 +28,13 @@ impl BufferObservation {
         }
     }
 
-    pub(in super::super) fn live_bytes(&self) -> usize {
+    pub fn live_bytes(&self) -> usize {
         *self.state.bytes.lock().unwrap()
     }
 
     /// Metal completion can precede driver resource retirement. Observe actual
     /// ownership release, with a bounded failure if the operation leaks scratch.
-    pub(in super::super) fn wait_for_live_bytes(&self, expected: usize) -> usize {
+    pub fn wait_for_live_bytes(&self, expected: usize) -> usize {
         let (bytes, _) = self
             .state
             .retired
@@ -55,12 +55,12 @@ impl Drop for BufferObservation {
     }
 }
 
-pub(super) struct ReservationObservation {
+pub struct ReservationObservation {
     state: Arc<State>,
     bytes: usize,
 }
 
-pub(super) fn reserve(bytes: usize) -> Vec<ReservationObservation> {
+pub fn reserve(bytes: usize) -> Vec<ReservationObservation> {
     ACTIVE.with_borrow(|active| {
         active
             .iter()

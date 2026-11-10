@@ -21,14 +21,21 @@
 //!    class strategy) gives the CPU interpreter's outputs, bit for bit;
 //! 2. the CPU interpreter gives the evaluator's masks.
 
-use super::*;
+#[allow(unused_imports)]
+use rerail_compiler::*;
+use rerail_compiler::program::Words as Program;
+use rerail_compiler::rir_asm as rir;
+use rerail_compiler::bitlex_masks as bitlex_compile;
+#[cfg(target_os = "macos")]
+use rerail_metal as metal_program_backend;
 use ::bitlex::syntax::{Stmt, parse};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
-const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/code_rule_dsl/transducer/packed/bitlex_corpus");
+const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_corpus");
 
 // The seeded xorshift and the ids by name are the compiler crate's (`rerail_compiler::ladder`).
-pub(super) use rerail_compiler::ladder::{Ids, Rng};
+pub use rerail_compiler::ladder::{Ids, Rng};
 
 /// The classes most programs read: bytes the inputs hold often, a high range, `0x00`.
 const CLASSES: &str = "class quote = '\"'
@@ -438,7 +445,7 @@ fn corpus_inputs() -> Vec<Vec<u8>> {
             out.push(make(len));
         }
     }
-    out.extend(super::block_tests::runs());
+    out.extend(crate::block_tests::runs());
     out
 }
 
@@ -553,7 +560,7 @@ fn corpus_equals_the_evaluator() {
     let t = std::time::Instant::now();
     let cases = compiled_corpus();
     let inputs = corpus_inputs();
-    let blocks: Vec<&block::BlockProgram> = cases.iter().map(|c| &c.program.block_programs()[0]).collect();
+    let blocks: Vec<&block::BlockProgram> = cases.iter().map(|c| &c.program.block_programs[0]).collect();
     let files = batch(&cases, &inputs);
     let runs = block::run_batch(&blocks, &files);
     eprintln!("compiled and interpreted in {:.1} s", seconds(t));
@@ -595,10 +602,10 @@ fn executors_equal_the_interpreter(metal: bool) {
     let t = std::time::Instant::now();
     let cases = compiled_corpus();
     let inputs = corpus_inputs();
-    let blocks: Vec<&block::BlockProgram> = cases.iter().map(|c| &c.program.block_programs()[0]).collect();
+    let blocks: Vec<&block::BlockProgram> = cases.iter().map(|c| &c.program.block_programs[0]).collect();
     let files = batch(&cases, &inputs);
     let want: Vec<Vec<Vec<u64>>> = block::run_batch(&blocks, &files).into_iter().map(|r| r.outputs).collect();
-    let natives: Vec<native_ir::BlockNative> = cases.iter().map(|c| native_ir::lower(&c.program).expect("lowers").block_programs.remove(0)).collect();
+    let natives: Vec<block_native::BlockNative> = cases.iter().map(|c| native_ir::lower(&c.program, 0, 0).expect("lowers").block_programs.remove(0)).collect();
     let compiled: Vec<native_cpu_block::CompiledBlock> =
         natives.iter().zip(&cases).map(|(n, c)| native_cpu_block::compile(n).unwrap_or_else(|e| panic!("{}: cranelift: {e:?}", c.name))).collect();
     let refs: Vec<&native_cpu_block::CompiledBlock> = compiled.iter().collect();
@@ -608,7 +615,7 @@ fn executors_equal_the_interpreter(metal: bool) {
     #[cfg(target_os = "macos")]
     if metal {
         use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-        let forms: Vec<&native_ir::BlockNative> = natives.iter().collect();
+        let forms: Vec<&block_native::BlockNative> = natives.iter().collect();
         for width in LaneWidth::ALL {
             let mut executors = vec![(format!("metal interpreter, {}-byte lanes", width.bytes()), Executor::Interpreter)];
             for s in ClassStrategy::ALL {
@@ -765,7 +772,7 @@ fn reference_nodes(stmts: &[Stmt], bytes: &[u8], ids: &Ids) -> Option<Vec<IdNode
 /// Tier 1 on the interpreter, then tier 2's words on theirs: the nodes, or `None` where the
 /// file goes to tree-sitter (a fallback bit, or a word that refuses).
 fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
-    let run = p.block_programs()[0].run_files(&[bytes]).remove(0);
+    let run = p.block_programs[0].run_files(&[bytes]).remove(0);
     let nodes = stream::run(p, bytes, &run).ok()?;
     Some(
         nodes
@@ -845,11 +852,11 @@ fn corpus_trees_compiled_equal_the_interpreters() {
         let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
         let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: {e}"));
         let program = rir::assemble(&compiled.text()).unwrap_or_else(|e| panic!("{name}: assembles: {e}"));
-        let native = native_ir::lower(&program).expect("lowers");
+        let native = native_ir::lower(&program, 0, 0).expect("lowers");
         let tier1 = native_cpu_block::compile(&native.block_programs[0]).unwrap_or_else(|e| panic!("{name}: tier 1: {e:?}"));
         let tier2 = native_cpu_stream::compile(&native).unwrap_or_else(|e| panic!("{name}: tier 2: {e:?}"));
         for bytes in tree_inputs(p, k as u64) {
-            let want1 = program.block_programs()[0].run_files(&[&bytes]).remove(0);
+            let want1 = program.block_programs[0].run_files(&[&bytes]).remove(0);
             let got1 = tier1.extract(&bytes);
             let want = stream::run(&program, &bytes, &want1).map_err(|r| r.pc);
             let got = tier2.run(&bytes, &got1).map_err(|r| r.pc);
@@ -875,13 +882,13 @@ fn a_file_on_every_executor() {
     // A `.rir` file is a program as it is, each output by its number.
     let case = if path.ends_with(".rir") {
         let program = rir::assemble(&source).unwrap_or_else(|e| panic!("{e}"));
-        let checked = (0..program.block_programs()[0].outputs.len()).map(|k| (format!("out {k}"), k)).collect();
+        let checked = (0..program.block_programs[0].outputs.len()).map(|k| (format!("out {k}"), k)).collect();
         Case { name: path.clone(), stmts: Vec::new(), program, checked, fallbacks: Vec::new(), counts: false }
     } else {
         compile_case(&path, &source).unwrap_or_else(|e| panic!("{e}"))
     };
-    let want = case.program.block_programs()[0].interpret(&bytes);
-    let native = native_ir::lower(&case.program).expect("lowers").block_programs.remove(0);
+    let want = case.program.block_programs[0].interpret(&bytes);
+    let native = native_ir::lower(&case.program, 0, 0).expect("lowers").block_programs.remove(0);
     for (name, k) in &case.checked {
         eprintln!("{name:>8} interpreter {:x?}", want[*k]);
     }

@@ -1,22 +1,21 @@
 //! Charge every compute dispatch before encoding it. Refuse submission after exhaustion.
-use super::Error;
+use crate::Error;
 use metal::foreign_types::ForeignTypeRef;
 use metal::{BufferRef, CommandBufferRef, ComputeCommandEncoderRef, MTLSize};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-#[path = "metal_launch_budget.rs"]
-mod budget;
+use crate::launch_budget as budget;
 use budget::LaunchBudget;
-pub(crate) use budget::KERNEL_LAUNCH_LIMIT;
+pub use budget::KERNEL_LAUNCH_LIMIT;
 
 thread_local! {
     static EVALUATION: RefCell<Option<Rc<RefCell<Evaluation>>>> = const { RefCell::new(None) };
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub(crate) struct DispatchRecord {
+pub struct DispatchRecord {
     pub command: u64,
     pub kernel: String,
     pub grid: [u64; 3],
@@ -41,7 +40,7 @@ struct Evaluation {
     peak_application_buffer_bytes: usize,
 }
 
-pub(crate) fn record_buffer_allocation(bytes: usize) {
+pub fn record_buffer_allocation(bytes: usize) {
     EVALUATION.with_borrow(|slot| {
         if let Some(evaluation) = slot {
             let mut evaluation = evaluation.borrow_mut();
@@ -52,13 +51,13 @@ pub(crate) fn record_buffer_allocation(bytes: usize) {
 }
 
 /// Nested commands, ranges, replay, and pages share the outer evaluation budget.
-pub(crate) struct LaunchScope {
+pub struct LaunchScope {
     owner: bool,
     _budget: Rc<RefCell<Evaluation>>,
 }
 
 impl LaunchScope {
-    pub(crate) fn enter() -> Self {
+    pub fn enter() -> Self {
         EVALUATION.with_borrow_mut(|slot| {
             let owner = slot.is_none();
             let budget = slot.get_or_insert_with(|| Rc::new(RefCell::new(Evaluation::default())));
@@ -69,7 +68,7 @@ impl LaunchScope {
         })
     }
 
-    pub(crate) fn snapshot(&self) -> Vec<DispatchRecord> {
+    pub fn snapshot(&self) -> Vec<DispatchRecord> {
         self._budget.borrow().records.clone()
     }
 }
@@ -82,14 +81,15 @@ impl Drop for LaunchScope {
     }
 }
 
-fn reserve() -> bool {
+/// Takes one launch from the evaluation's budget: false past it, or with no evaluation.
+pub fn reserve() -> bool {
     EVALUATION.with_borrow(|slot| {
         slot.as_ref()
             .is_some_and(|budget| budget.borrow_mut().budget.reserve())
     })
 }
 
-pub(crate) fn check_submission() -> Result<(), Error> {
+pub fn check_submission() -> Result<(), Error> {
     EVALUATION.with_borrow(|slot| {
         let budget = slot.as_ref().ok_or(Error::BackendFailure)?;
         if budget.borrow().budget.refused() {
@@ -100,7 +100,7 @@ pub(crate) fn check_submission() -> Result<(), Error> {
     })
 }
 
-pub(crate) fn commit_checked(command: &CommandBufferRef) -> Result<(), Error> {
+pub fn commit_checked(command: &CommandBufferRef) -> Result<(), Error> {
     check_submission()?;
     command.commit();
     mark_command(command, false);
@@ -110,13 +110,13 @@ pub(crate) fn commit_checked(command: &CommandBufferRef) -> Result<(), Error> {
 /// Releases a command buffer whose submission `commit_checked` refused: it still holds a place in its queue (a queue
 /// holds 64) until it completes, so it is committed and waited for. Its dispatches were refused when encoded
 /// (`checked_dispatch_thread_groups`), and its results are not read.
-pub(crate) fn release_refused(command: &CommandBufferRef) {
+pub fn release_refused(command: &CommandBufferRef) {
     command.commit();
     command.wait_until_completed();
 }
 
 /// A completed command buffer's time on the GPU, in seconds (`GPUEndTime - GPUStartTime`).
-pub(crate) fn gpu_seconds(command: &CommandBufferRef) -> f64 {
+pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     unsafe extern "C" {
         fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
         fn objc_msgSend();
@@ -130,7 +130,7 @@ pub(crate) fn gpu_seconds(command: &CommandBufferRef) -> f64 {
 }
 
 /// The host clock Metal's command-buffer times are in (`CACurrentMediaTime`: mach absolute time), in seconds.
-pub(crate) fn host_seconds() -> f64 {
+pub fn host_seconds() -> f64 {
     #[repr(C)]
     struct Timebase {
         numer: u32,
@@ -152,7 +152,7 @@ pub(crate) fn host_seconds() -> f64 {
 
 /// A completed command buffer's host-clock times, in seconds: `kernelStartTime` (the system began scheduling
 /// it), `GPUStartTime`, `GPUEndTime`.
-pub(crate) fn command_times(command: &CommandBufferRef) -> [f64; 3] {
+pub fn command_times(command: &CommandBufferRef) -> [f64; 3] {
     unsafe extern "C" {
         fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
         fn objc_msgSend();
@@ -170,7 +170,7 @@ pub(crate) fn command_times(command: &CommandBufferRef) -> [f64; 3] {
     }
 }
 
-pub(crate) fn wait_checked(command: &CommandBufferRef) -> Result<(), Error> {
+pub fn wait_checked(command: &CommandBufferRef) -> Result<(), Error> {
     command.wait_until_completed();
     if command.status() != metal::MTLCommandBufferStatus::Completed {
         return Err(Error::BackendFailure);
@@ -229,7 +229,7 @@ fn record_attempt(
             .bindings
             .remove(&(pointer, encoder.as_ptr() as usize))
             .unwrap_or_default();
-        let (application_buffer_bytes, private_buffer_bytes) = super::buffer_usage();
+        let (application_buffer_bytes, private_buffer_bytes) = crate::runtime::buffer_usage();
         evaluation.peak_application_buffer_bytes = evaluation
             .peak_application_buffer_bytes
             .max(application_buffer_bytes);
@@ -252,7 +252,7 @@ fn record_attempt(
     })
 }
 
-pub(crate) trait CheckedComputeEncoder {
+pub trait CheckedComputeEncoder {
     fn checked_set_buffers(&self, command: &CommandBufferRef, buffers: &[&BufferRef]);
     fn checked_dispatch_threads(&self, command: &CommandBufferRef, grid: MTLSize, group: MTLSize);
     fn checked_dispatch_thread_groups(
@@ -358,95 +358,8 @@ mod tests {
     }
 
     #[test]
-    fn production_entry_preserves_the_outer_budget_and_returns_launch_limit() {
-        use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
-        use crate::code_rule_dsl::transducer::packed::{Program, metal_program_backend};
-        use ast_grep_core::tree_sitter::StrDoc;
-        use crate::code_rule_dsl::language::GrammarDialect;
-        use ast_grep_core::tree_sitter::LanguageExt;
-        use std::sync::Arc;
-
-        let _evaluation = LaunchScope::enter();
-        for _ in 0..KERNEL_LAUNCH_LIMIT {
-            assert!(reserve());
-        }
-        assert!(!reserve());
-        let source = "name\n";
-        let grammar = Grammar::new(GrammarDialect::Python).unwrap();
-        let native = StrDoc::new(source, GrammarDialect::Python);
-        let image =
-            TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        let doc =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-        let anchors = vec![vec![(0..doc.transducer_len() as u32).collect()]];
-        let program = Program::compile_tree_sitter_query_pattern(
-            "(identifier) @name",
-            &GrammarDialect::Python.get_ts_language(),
-        )
-        .unwrap();
-        let result = metal_program_backend::execute_packed_with_result_limits(
-            &metal_program_backend::compile_interpreter().unwrap(),
-            &[program],
-            &[doc],
-            &anchors,
-            None,
-        );
-        assert!(
-            matches!(result, Err(Error::BackendLaunchLimit)),
-            "production must preserve the evaluation budget"
-        );
-        assert_eq!(check_submission(), Err(Error::BackendLaunchLimit));
-    }
-
-    #[test]
-    fn production_encoders_cannot_bypass_the_launch_guard() {
-        let directory =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer/packed");
-        for entry in std::fs::read_dir(directory).unwrap() {
-            let path = entry.unwrap().path();
-            let name = path.file_name().unwrap().to_str().unwrap();
-            // `*_tests.rs` files are test modules (mounted under `#[cfg(test)]`), not encoders.
-            if !name.starts_with("metal")
-                || !name.ends_with(".rs")
-                || name.ends_with("_tests.rs")
-                || name == "metal_launch.rs"
-            {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path).unwrap();
-            let source = source.split("#[cfg(test)]\nmod ").next().unwrap();
-            for forbidden in [
-                ".dispatch_threads(",
-                ".dispatch_thread_groups(",
-                ".dispatch_thread_groups_indirect(",
-            ] {
-                assert!(
-                    !source.contains(forbidden),
-                    "{name} bypasses the launch guard: {forbidden}"
-                );
-            }
-            if name != "metal_backend.rs" {
-                assert!(
-                    !source.contains(".commit()"),
-                    "{name} bypasses checked submission"
-                );
-            } else {
-                // Only the upload/readback blit commands can submit without a launch check.
-                for prefix in source.split(".commit()").collect::<Vec<_>>().windows(2) {
-                    let before = prefix[0];
-                    assert!(
-                        before.rfind("new_blit_command_encoder")
-                            > before.rfind("new_compute_command_encoder"),
-                        "unchecked compute submission in {name}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
     fn gpu_launch_guard_counts_all_dispatch_apis_and_refuses_submission() {
-        use crate::code_rule_dsl::transducer::packed::metal_backend::{
+        use crate::runtime::{
             MappedBuffer, metal_execution_guard, pipeline_named,
         };
         let _guard = metal_execution_guard().unwrap();
@@ -506,7 +419,7 @@ mod tests {
 
     #[test]
     fn an_over_budget_command_does_not_run_its_allowed_prefix() {
-        use crate::code_rule_dsl::transducer::packed::metal_backend::{
+        use crate::runtime::{
             MappedBuffer, metal_execution_guard, pipeline_named,
         };
         let _guard = metal_execution_guard().unwrap();

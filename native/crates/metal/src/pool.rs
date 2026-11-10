@@ -15,11 +15,15 @@
 //! - **What is kept** is bounded by `SHARE` bytes of the Metal buffer budget. A block returned
 //!   past it is released.
 //! - **Everything is dropped** with the residency slabs, two minutes after the last execution
-//!   (`residency::slabs::drop_all`).
+//!   (the engine's `residency::slabs::drop_all`).
 //! - **One command queue** is kept for the solves that lease blocks (`queue`).
 //!
 //! A lease's holder waits for every command that reads the block before dropping the lease.
-use super::*;
+use crate::Error;
+use crate::runtime::MappedBuffer;
+use metal::Device;
+use std::mem::size_of;
+
 
 /// The smallest block: one 16 KiB page.
 const SMALLEST: usize = 16 << 10;
@@ -44,28 +48,28 @@ fn class(bytes: usize) -> usize {
 
 /// A leased block: at least the bytes asked for. `made` says whether it was made for this lease
 /// (else it was reused).
-pub(in crate::code_rule_dsl) struct Block {
+pub struct Block {
     buffer: Option<MappedBuffer>,
     pool: &'static Shared,
     class: usize,
-    pub(in crate::code_rule_dsl) made: bool,
+    pub made: bool,
 }
 
 impl Block {
-    pub(in crate::code_rule_dsl) fn buffer(&self) -> &metal::BufferRef {
+    pub fn buffer(&self) -> &metal::BufferRef {
         &self.buffer.as_ref().expect("a leased block").buffer
     }
 
-    pub(in crate::code_rule_dsl) fn host(&self) -> *mut u8 {
+    pub fn host(&self) -> *mut u8 {
         self.buffer.as_ref().expect("a leased block").host()
     }
 
-    pub(in crate::code_rule_dsl) fn byte_length(&self) -> usize {
+    pub fn byte_length(&self) -> usize {
         SMALLEST << self.class
     }
 
     /// The first `count` values of type `T`.
-    pub(in crate::code_rule_dsl) fn read<T: Copy>(&self, count: usize) -> Vec<T> {
+    pub fn read<T: Copy>(&self, count: usize) -> Vec<T> {
         assert!(count * size_of::<T>() <= self.byte_length());
         // SAFETY: in bounds; the device is done with the block (the holder waited).
         unsafe { std::slice::from_raw_parts(self.host().cast::<T>(), count).to_vec() }
@@ -89,7 +93,7 @@ impl Drop for Block {
 }
 
 /// A block of at least `bytes`, its contents whatever its last lease left.
-pub(in crate::code_rule_dsl) fn lease(bytes: usize) -> Result<Block, Error> {
+pub fn lease(bytes: usize) -> Result<Block, Error> {
     lease_in(&POOL, bytes)
 }
 
@@ -111,7 +115,7 @@ fn lease_in(shared: &'static Shared, bytes: usize) -> Result<Block, Error> {
 }
 
 /// A block holding `values` (at least one byte long).
-pub(in crate::code_rule_dsl) fn upload<T: Copy>(values: &[T]) -> Result<Block, Error> {
+pub fn upload<T: Copy>(values: &[T]) -> Result<Block, Error> {
     fill(lease(size_of_val(values).max(1))?, values)
 }
 
@@ -122,7 +126,7 @@ fn fill<T: Copy>(block: Block, values: &[T]) -> Result<Block, Error> {
 }
 
 /// A block whose first `count` values of `T` are zero.
-pub(in crate::code_rule_dsl) fn zeroed<T>(count: usize) -> Result<Block, Error> {
+pub fn zeroed<T>(count: usize) -> Result<Block, Error> {
     let bytes = count.checked_mul(size_of::<T>()).ok_or(Error::BackendCapacity)?;
     clear(lease(bytes.max(1))?, bytes)
 }
@@ -135,7 +139,7 @@ fn clear(block: Block, bytes: usize) -> Result<Block, Error> {
 
 /// The command queue for solves over blocks: the process's one (`rerail_accel::gpu::shared`, decision 0100 §2), so
 /// the engine's programs and the executor's lanes submit in one order; a queue of its own only without it.
-pub(in crate::code_rule_dsl) fn queue(device: &Device) -> Result<metal::CommandQueue, Error> {
+pub fn queue(device: &Device) -> Result<metal::CommandQueue, Error> {
     if let Some(shared) = rerail_accel::gpu::shared::get() {
         return Ok(shared.queue.clone());
     }
@@ -144,12 +148,12 @@ pub(in crate::code_rule_dsl) fn queue(device: &Device) -> Result<metal::CommandQ
 }
 
 /// The bytes of idle blocks kept.
-pub(in crate::code_rule_dsl) fn held() -> usize {
+pub fn held() -> usize {
     POOL.lock().map(|p| p.held).unwrap_or(0)
 }
 
 /// Releases every idle block and the queue.
-pub(in crate::code_rule_dsl) fn drop_all() {
+pub fn drop_all() {
     if let Ok(mut pool) = POOL.lock() {
         pool.idle.clear();
         pool.held = 0;
@@ -160,6 +164,7 @@ pub(in crate::code_rule_dsl) fn drop_all() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::METAL_DEVICE;
 
     /// A returned block serves the next lease of its size class, written over in place; past the share, a
     /// returned block is released.

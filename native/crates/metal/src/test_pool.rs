@@ -41,22 +41,22 @@ static HELD: Mutex<usize> = Mutex::new(0);
 static RELEASED: Condvar = Condvar::new();
 
 /// This thread's pool ledger.
-pub(super) fn pool() -> &'static AtomicUsize {
+pub fn pool() -> &'static AtomicUsize {
     LEDGERS.with(|ledgers| ledgers.pool)
 }
 
 /// The most this thread's pool ledger has held.
-pub(super) fn pool_peak() -> &'static AtomicUsize {
+pub fn pool_peak() -> &'static AtomicUsize {
     LEDGERS.with(|ledgers| ledgers.peak)
 }
 
 /// Left out in a test build: the driver's figure is the process's, every test's buffers.
-pub(super) fn driver_bytes(_device: &metal::DeviceRef) -> u64 {
+pub fn driver_bytes(_device: &metal::DeviceRef) -> u64 {
     0
 }
 
 /// Waits (bounded) until `bytes` fit beside what the other tests hold, then counts them.
-pub(super) fn admit(bytes: usize) {
+pub fn admit(bytes: usize) {
     let held = HELD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut held, _) = RELEASED
         .wait_timeout_while(held, ADMISSION_WAIT, |held| {
@@ -67,7 +67,7 @@ pub(super) fn admit(bytes: usize) {
 }
 
 /// Returns `bytes` to the tests' total.
-pub(super) fn release(bytes: usize) {
+pub fn release(bytes: usize) {
     let mut held = HELD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     *held = held.saturating_sub(bytes);
     drop(held);

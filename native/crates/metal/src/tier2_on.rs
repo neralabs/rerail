@@ -1,14 +1,15 @@
-//! Tier 2 on the CPU JIT is the compiler crate's (`rerail_compiler::native_cpu_stream`); this is
-//! its one tie to the engine: tier 2 run on tier 1's buffers as the Metal backend left them.
+//! Tier 2 on tier 1's buffers as the Metal backend left them: the compiled words (the compiler
+//! crate's `native_cpu_stream`) read a file's bytes, positions, mask words and totals in the
+//! device's shared memory, where tier 1 wrote them.
 
-pub(super) use rerail_compiler::native_cpu_stream::*;
+use crate::block_program::serial::Resident;
+use rerail_compiler::native_cpu_stream::{Columns, Parser, Tier1View};
 use rerail_compiler::stream::Refused;
 
 /// File `i`'s node table from tier 1's buffers as the device left them (`Resident`): tier 2
 /// reads the file's bytes, positions, mask words and totals in the device's shared memory,
 /// where tier 1 wrote them. Or the word that refused it.
-#[cfg(target_os = "macos")]
-pub(super) fn columns_on(parser: &Parser, run: &super::metal_program_backend::block_program::serial::Resident, i: usize) -> Result<Columns, Refused> {
+pub fn columns_on(parser: &Parser, run: &Resident, i: usize) -> Result<Columns, Refused> {
     let f = run.files[i];
     let source = &run.sources[i];
     let (pos, tot, out) = (run.positions.host().cast::<u32>(), run.tot.host().cast::<u32>(), run.out.host().cast::<u64>());

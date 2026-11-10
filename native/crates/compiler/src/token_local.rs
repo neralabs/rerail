@@ -21,11 +21,11 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::block::{BlockOp, BlockProgram};
+use crate::block::{BlockOp, BlockProgram};
 
 /// One operation's facts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Fact {
+pub struct Fact {
     /// `None` for a carried value.
     pub local: Option<Local>,
     /// Each `(anchor, shift)`: wherever this value's bit `q` is set, anchor `anchor`'s bit
@@ -39,7 +39,7 @@ pub(super) struct Fact {
 
 /// A local value's window.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Local {
+pub struct Local {
     /// Each `(leaf, offset)`: the leaf's bit `q + offset` is read for this value's bit `q`.
     pub leaves: BTreeSet<(u16, i32)>,
     /// The local operations from the leaves to this value, itself included.
@@ -48,20 +48,20 @@ pub(super) struct Local {
 
 /// Whether operation `x` is carried: its bit depends on bytes any distance away. A fixed
 /// point's members are: their words are the settled rounds'.
-pub(super) fn carried(program: &BlockProgram, members: &[bool], x: usize) -> bool {
+pub fn carried(program: &BlockProgram, members: &[bool], x: usize) -> bool {
     members[x] || matches!(program.ops[x], BlockOp::Toggle(_) | BlockOp::Escaped(_) | BlockOp::Fill(..) | BlockOp::BackFill(..) | BlockOp::Carry(_))
 }
 
 /// Whether operation `x` is a leaf of position alone: a byte test, a constant, or a value of
 /// the position (`within`, a phase, a plane of the position).
-pub(super) fn positional(op: &BlockOp) -> bool {
+pub fn positional(op: &BlockOp) -> bool {
     matches!(op, BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_))
 }
 
 /// Each fixed point's members (`BlockProgram::rounds`).
-pub(super) fn members(program: &BlockProgram) -> Vec<bool> {
+pub fn members(program: &BlockProgram) -> Vec<bool> {
     let mut m = vec![false; program.ops.len()];
-    for g in super::block::groups(&program.ops, &program.rounds).expect("a verified program") {
+    for g in crate::block::groups(&program.ops, &program.rounds).expect("a verified program") {
         for x in g.members {
             m[x] = true;
         }
@@ -70,7 +70,7 @@ pub(super) fn members(program: &BlockProgram) -> Vec<bool> {
 }
 
 /// The facts of every operation of `program`, with `anchors` (operations) as the anchors.
-pub(super) fn facts(program: &BlockProgram, anchors: &[u16]) -> Vec<Fact> {
+pub fn facts(program: &BlockProgram, anchors: &[u16]) -> Vec<Fact> {
     let n = program.ops.len();
     let members = members(program);
     let mut out: Vec<Fact> = vec![Fact::default(); n];
@@ -139,7 +139,7 @@ pub(super) fn facts(program: &BlockProgram, anchors: &[u16]) -> Vec<Fact> {
 /// Local value `x`'s bit `q`, made from its leaves alone: `leaf(y, q)` is leaf `y`'s bit `q`.
 /// A `prev` reads zero before the stream's first byte, as every executor's does. Reading a
 /// leaf that `fact`'s window does not hold is an error: the window is wrong.
-pub(super) fn eval(program: &BlockProgram, fact: &Local, x: u16, q: i64, leaf: &dyn Fn(u16, i64) -> bool) -> Result<bool, String> {
+pub fn eval(program: &BlockProgram, fact: &Local, x: u16, q: i64, leaf: &dyn Fn(u16, i64) -> bool) -> Result<bool, String> {
     fn go(program: &BlockProgram, fact: &Local, x: u16, q: i64, base: i64, leaf: &dyn Fn(u16, i64) -> bool, memo: &mut HashMap<(u16, i64), bool>) -> Result<bool, String> {
         if let Some(&b) = memo.get(&(x, q)) {
             return Ok(b);
@@ -170,7 +170,7 @@ pub(super) fn eval(program: &BlockProgram, fact: &Local, x: u16, q: i64, leaf: &
 
 /// What `check` found: the claims tested, and each one that failed.
 #[derive(Debug, Default)]
-pub(super) struct Checked {
+pub struct Checked {
     pub anchored: usize,
     pub local: usize,
     pub bits: usize,
@@ -180,7 +180,7 @@ pub(super) struct Checked {
 /// Test `facts`' claims on `files` against the interpreter: each operation's every anchor
 /// (its set bits all on the anchor's, shifted), and each local operation's window: made from
 /// its leaves' words alone (`eval`'s rule, a word at a time), it equals the interpreter's.
-pub(super) fn check(program: &BlockProgram, anchors: &[u16], facts: &[Fact], files: &[&[u8]]) -> Checked {
+pub fn check(program: &BlockProgram, anchors: &[u16], facts: &[Fact], files: &[&[u8]]) -> Checked {
     let (values, spans) = program.all_values(files);
     let mut c = Checked::default();
     for (x, fact) in facts.iter().enumerate() {

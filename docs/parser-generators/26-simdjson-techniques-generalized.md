@@ -162,6 +162,39 @@ everything else.
 - **Status: partial.** Constants and `within` are remade in every pass. A byte check is
   remade in a later pass only where a gate there skips it (§5.2); elsewhere it is stored once
   and loaded at its reader, which measured cheaper than holding it.
+- **Positions: measured, not taken.** A `phase` and a `prev` of a position plane, read after a
+  backward pass, are stored by the first pass and loaded. Remaking them was tried:
+
+  | Grammar | | Slots | Instructions | Memory | CPU ms/MB |
+  |---|---|---|---|---|---|
+  | `aligned(_, 3)` after `back_fill` | stored | 7 | 564 | 40 | 0.32 |
+  | | remade | 4 | 599 | 34 | 0.34 to 0.37 |
+  | `end - position` | stored | 100 | 1637 | 261 | 1.16 to 1.23 |
+  | | remade | 66 | 1745 | 193 | 1.20 to 1.59 |
+
+  A phase is two remainders and shifts, about 12 operations; a `prev` of a plane is about 5
+  and a carried bit. Both cost more than a store and a load in order, so on the CPU they are
+  not free to remake. The test is `remade_tests::remade_positions_payoff`.
+
+  On Metal, in the forward carry with its backward passes, remaking is no faster either: GPU
+  time per MB, best of 5, stored against remade.
+
+  | Grammar | Stored | Remade |
+  |---|---|---|
+  | `aligned(_, 3)` after `back_fill` | 7 slots, 0.20 ms | 4 slots, 0.20 ms |
+  | The numbers grammar, 1 MB | 101 slots, 2.08 ms | 67 slots, 2.16 ms |
+
+  What remaking saves is room: the numbers grammar's row is 13 bytes for each byte of input,
+  and at 8 MB it is over the device's capacity. No grammar that ships uses numbers (JSON and
+  `.rr` do not, and Python's lexer does not compile yet), so room is not worth the time now.
+  The test is `compile_tests::positions_after_a_backward_pass_metal_payoff`.
+
+  A position's planes from 6 on are the same in every byte of a block, but they are already
+  made from the block's index and never stored. What is stored is their `prev`, the previous
+  byte's planes, read by `end - position`; making those from the index is the remaking
+  measured above. Holding a number's upper planes as one word would change the arithmetic
+  itself, and `end - position` would stay bit-sliced, since `end` differs from byte to byte.
+  That waits for a grammar that ships with numbers.
 
 ### 1.11 Phases with small interfaces
 
@@ -231,7 +264,7 @@ Each transformation is tested three ways:
 | Order | Transformation | Technique |
 |---|---|---|
 | 1 | Gated regions: an accurate cost (vector work counted), any sparse gate, more regions. Done (§5) | §1.1 |
-| 2 | Values remade in each pass, never stored: constants, `within`, positions | §1.10 |
+| 2 | Values remade in each pass, never stored: constants, `within` (positions measured, not taken) | §1.10 |
 | 3 | Delayed masks not held across the loop. Done (§7) | §1.4 |
 | 4 | The fallback's totals folded into one word | §1.5 |
 | 5 | Sparse outputs as positions | §1.6, §1.7 |
