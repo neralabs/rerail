@@ -1289,8 +1289,12 @@ async function piSourceKind(context: Context, agentDir: string, source: string):
   if (isRerailNpmSource(source)) return "npm";
   const root = resolve(agentDir, source);
   if (root === context.root) return "own";
-  if (context.mode === "unregister") return undefined;
-  return await isRerailPackageRoot(context, root) || (isAbsolute(source) && await isGoneInstallRoot(root)) ? "other" : undefined;
+  return context.mode === "register" && await isOtherInstall(context, source, root) ? "other" : undefined;
+}
+
+/** Whether a Pi package `source` at `root` is another install of this package, or one that is gone (`isGoneInstallRoot`). */
+async function isOtherInstall(context: Context, source: string, root: string): Promise<boolean> {
+  return await isRerailPackageRoot(context, root) || (isAbsolute(source) && await isGoneInstallRoot(root));
 }
 
 /**
@@ -1316,7 +1320,7 @@ function planPi(context: Context): Promise<Plan> {
   const agentDir = join(context.home, ".pi", "agent");
   const path = join(agentDir, "settings.json");
   let replaced: string | undefined;
-  const removed: string[] = [];
+  let removed: string[] = [];
   const detail = (): string => {
     if (context.mode === "unregister") return "remove rerail from Pi packages";
     return [
@@ -1329,30 +1333,61 @@ function planPi(context: Context): Promise<Plan> {
     const packages = value.packages ?? [];
     if (!Array.isArray(packages))
       throw new Error(`Cannot register rerail package: "packages" in ${path} is not an array`);
-    const entries: Array<{ entry: unknown; source: string | undefined; kind: PiSourceKind }> = [];
-    for (const entry of packages as unknown[]) {
-      const source = piPackageSource(entry);
-      entries.push({ entry, source, kind: source === undefined ? undefined : await piSourceKind(context, agentDir, source) });
-    }
-    const kept: unknown[] = [];
+    const entries = await piPackageEntries(context, agentDir, packages);
     if (context.mode === "unregister") {
-      for (const { entry, kind } of entries) if (kind === undefined || (kind === "npm" && !context.managed)) kept.push(entry);
-    } else {
-      const ownSlot = entries.findIndex(({ kind }) => kind === "own");
-      const slot = ownSlot === -1 ? entries.findIndex(({ kind }) => kind !== undefined) : ownSlot;
-      entries.forEach(({ entry, source, kind }, index) => {
-        if (kind === undefined) kept.push(entry);
-        else if (index === slot) kept.push(isObject(entry) ? { ...entry, source: context.root } : context.root);
-        else if (kind !== "own" && source !== undefined) removed.push(source);
-      });
-      if (slot === -1) kept.push(context.root);
-      else if (entries[slot]!.kind !== "own") replaced = entries[slot]!.source;
+      const kept = entries.filter(({ kind }) => kind === undefined || (kind === "npm" && !context.managed));
+      return withPiPackages(value, kept.map(({ entry }) => entry));
     }
-    const next = { ...value };
-    if (kept.length > 0 || (Array.isArray(value.packages) && value.packages.length === 0)) next.packages = kept;
-    else delete next.packages;
-    return next;
+    const registered = registeredPiPackages(context.root, entries);
+    ({ replaced, removed } = registered);
+    return withPiPackages(value, registered.kept);
   });
+}
+
+/** A Pi `packages` entry, its source, and what that source is to this registration (`piSourceKind`). */
+interface PiPackageEntry {
+  entry: unknown;
+  source: string | undefined;
+  kind: PiSourceKind;
+}
+
+async function piPackageEntries(context: Context, agentDir: string, packages: readonly unknown[]): Promise<PiPackageEntry[]> {
+  const entries: PiPackageEntry[] = [];
+  for (const entry of packages) {
+    const source = piPackageSource(entry);
+    entries.push({ entry, source, kind: source === undefined ? undefined : await piSourceKind(context, agentDir, source) });
+  }
+  return entries;
+}
+
+/**
+ * Pi's packages with `root` in Rerail's one slot: its own entry, else the first other Rerail entry with `root` as its
+ * source, else `root` appended. The other Rerail entries go (`removed`); `replaced` is the source the slot held when it
+ * was not this install's.
+ */
+function registeredPiPackages(
+  root: string, entries: readonly PiPackageEntry[],
+): { kept: unknown[]; replaced: string | undefined; removed: string[] } {
+  const ownSlot = entries.findIndex(({ kind }) => kind === "own");
+  const slot = ownSlot === -1 ? entries.findIndex(({ kind }) => kind !== undefined) : ownSlot;
+  const kept: unknown[] = [];
+  const removed: string[] = [];
+  entries.forEach(({ entry, source, kind }, index) => {
+    if (kind === undefined) kept.push(entry);
+    else if (index === slot) kept.push(isObject(entry) ? { ...entry, source: root } : root);
+    else if (kind !== "own" && source !== undefined) removed.push(source);
+  });
+  if (slot === -1) return { kept: [...kept, root], replaced: undefined, removed };
+  const { kind, source } = entries[slot]!;
+  return { kept, replaced: kind === "own" ? undefined : source, removed };
+}
+
+/** `value` with `packages` set to `kept`, or without it once Rerail's entries were all it held; an empty list stays. */
+function withPiPackages(value: JsonObject, kept: unknown[]): JsonObject {
+  const next = { ...value };
+  if (kept.length > 0 || (Array.isArray(value.packages) && value.packages.length === 0)) next.packages = kept;
+  else delete next.packages;
+  return next;
 }
 
 const OMP_EXTENSION_NAME = "rerail";
@@ -1373,22 +1408,31 @@ async function planOmpPackageDuplicates(context: Context): Promise<Plan[]> {
   for (const name of names) {
     if (name === OMP_EXTENSION_NAME) continue;
     const path = join(directory, name);
-    if (!(await lstat(path)).isSymbolicLink()) continue;
-    let target: string;
-    let gone = false;
-    try {
-      target = await realpath(path);
-    } catch (error) {
-      if (!isAbsent(error)) continue;
-      target = resolve(directory, await readlink(path));
-      gone = true;
-    }
-    if (!(await (gone ? isGoneInstallRoot(target) : isRerailPackageRoot(context, target)))) continue;
-    const detail = gone ? `remove symlink to an install that is gone at ${target}` : `remove symlink to another install at ${target}`;
-    plans.push(planMutation(context, "omp", path, "updated", detail, () => unlink(path)));
+    const detail = await otherInstallLink(context, path);
+    if (detail !== undefined) plans.push(planMutation(context, "omp", path, "updated", detail, () => unlink(path)));
   }
   return plans;
 }
+
+/**
+ * Why the extension at `path` goes, when it is a symlink to another install of this package or to an install that is
+ * gone (`isGoneInstallRoot`); undefined for anything else, which stays.
+ */
+async function otherInstallLink(context: Context, path: string): Promise<string | undefined> {
+  if (!(await lstat(path)).isSymbolicLink()) return undefined;
+  let target: string;
+  try {
+    target = await realpath(path);
+  } catch (error) {
+    if (!isAbsent(error)) return undefined;
+    const gone = resolve(dirname(path), await readlink(path));
+    return await isGoneInstallRoot(gone) ? `remove symlink to an install that is gone at ${gone}` : undefined;
+  }
+  return await isRerailPackageRoot(context, target) ? `remove symlink to another install at ${target}` : undefined;
+}
+
+/** The part of OMP's plugin lockfile that says whether Rerail's plugin install is turned off. */
+const ompPluginLock = z.object({ plugins: z.object({ [RERAIL_PACKAGE_NAME]: z.object({ enabled: z.unknown() }) }) });
 
 /**
  * Whether OMP loads its own plugin install of this package (`omp plugin install @neralabs/rerail`, in
@@ -1408,50 +1452,60 @@ async function hasOmpPluginCopy(context: Context): Promise<boolean> {
   } catch {
     return true;
   }
-  const state = isObject(lock) && isObject(lock.plugins) ? lock.plugins[RERAIL_PACKAGE_NAME] : undefined;
-  return !(isObject(state) && state.enabled === false);
+  return ompPluginLock.safeParse(lock).data?.plugins[RERAIL_PACKAGE_NAME].enabled !== false;
 }
 
 /** The note a registration of OMP carries while OMP's plugin install of Rerail loads too (`hasOmpPluginCopy`). */
 export const OMP_PLUGIN_NOTE =
   `OMP also loads Rerail from its plugin install, so two copies run: remove that one with omp plugin uninstall ${RERAIL_PACKAGE_NAME}.`;
 
+/** What is at the path of OMP's extension link: nothing, something that is no symlink, or a symlink and where it leads. */
+type OmpExtension = { kind: "missing" } | { kind: "other" } | { kind: "symlink"; target: string };
+
+async function ompExtension(path: string): Promise<OmpExtension> {
+  let link: boolean;
+  try {
+    link = (await lstat(path)).isSymbolicLink();
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+    return { kind: "missing" };
+  }
+  if (!link) return { kind: "other" };
+  return { kind: "symlink", target: await realpath(path).catch(async () => resolve(dirname(path), await readlink(path))) };
+}
+
+function unchangedOmp(path: string, detail: string): Plan {
+  return { change: { harness: "omp", path, action: "unchanged", detail } };
+}
+
 async function planOmp(context: Context): Promise<Plan> {
   const path = join(context.home, ".omp", "agent", "extensions", OMP_EXTENSION_NAME);
   assertInside(path, context.home, "home");
-  let kind: "missing" | "symlink" | "other";
-  try {
-    kind = (await lstat(path)).isSymbolicLink() ? "symlink" : "other";
-  } catch (error) {
-    if (!isMissing(error)) throw error;
-    kind = "missing";
-  }
+  const extension = await ompExtension(path);
   const canonicalRoot = await realpath(context.root).catch(() => context.root);
-  let target: string | undefined;
-  if (kind === "symlink") {
-    try {
-      target = await realpath(path);
-    } catch {
-      target = resolve(dirname(path), await readlink(path));
-    }
-  }
-  const unchanged = (detail: string): Plan => ({ change: { harness: "omp", path, action: "unchanged", detail } });
+  return context.mode === "register"
+    ? linkOmpExtension(context, path, extension, canonicalRoot)
+    : unlinkOmpExtension(context, path, extension, canonicalRoot);
+}
 
-  if (context.mode === "register") {
-    if (kind === "other") throw new Error(`Refusing to replace ${path}: it exists and is not a symlink`);
-    if (target === canonicalRoot) return unchanged(`symlink to ${context.root}: already in place`);
-    const detail =
-      kind === "symlink" ? `repoint symlink from ${target} to ${context.root}` : `symlink to ${context.root}`;
-    return planMutation(context, "omp", path, kind === "symlink" ? "updated" : "created", detail, async () => {
-      await mkdir(dirname(path), { recursive: true });
-      if (kind === "symlink") await unlink(path);
-      await symlink(context.root, path, context.platform === "win32" ? "junction" : undefined);
-    });
-  }
+/** Links the extension to this install: a new link, or one repointed from where it leads; anything else is refused. */
+function linkOmpExtension(context: Context, path: string, extension: OmpExtension, canonicalRoot: string): Plan {
+  if (extension.kind === "other") throw new Error(`Refusing to replace ${path}: it exists and is not a symlink`);
+  const repoint = extension.kind === "symlink";
+  if (repoint && extension.target === canonicalRoot) return unchangedOmp(path, `symlink to ${context.root}: already in place`);
+  const detail = repoint ? `repoint symlink from ${extension.target} to ${context.root}` : `symlink to ${context.root}`;
+  return planMutation(context, "omp", path, repoint ? "updated" : "created", detail, async () => {
+    await mkdir(dirname(path), { recursive: true });
+    if (repoint) await unlink(path);
+    await symlink(context.root, path, context.platform === "win32" ? "junction" : undefined);
+  });
+}
 
-  if (kind === "missing") return unchanged("no symlink: nothing to remove");
-  if (kind === "other") return unchanged("not a symlink: left in place");
-  if (target !== canonicalRoot) return unchanged(`symlink points at ${target}: left in place`);
+/** Removes the extension link when it leads to this install; anything else stays. */
+function unlinkOmpExtension(context: Context, path: string, extension: OmpExtension, canonicalRoot: string): Plan {
+  if (extension.kind === "missing") return unchangedOmp(path, "no symlink: nothing to remove");
+  if (extension.kind === "other") return unchangedOmp(path, "not a symlink: left in place");
+  if (extension.target !== canonicalRoot) return unchangedOmp(path, `symlink points at ${extension.target}: left in place`);
   // The extensions folder goes too once it is empty: registration made it for the link when OMP had none.
   return planMutation(context, "omp", path, "updated", `remove symlink to ${context.root}`, async () => {
     await unlink(path);
@@ -1467,11 +1521,25 @@ export const RERAIL_MCP_SERVER_NAME = "rerail";
  * name. Only the shape setup writes counts, `<node> <root>/dist/cli/cli.js mcp-bridge` (`ENTRY_POINTS.cli`), so a gone
  * entry of another tool (an `npx` command, or a script outside `dist/cli/`) stays.
  */
+/** The bridge entry set-up writes: `<node> <root>/dist/cli/cli.js mcp-bridge`. */
+const mcpBridgeEntry = z.object({ command: z.string(), args: z.tuple([z.string(), z.literal("mcp-bridge")]) });
+/** An MCP server entry with a list of arguments, the first of which names a bridge's script. */
+const mcpServerArgs = z.object({ args: z.array(z.unknown()) });
+
 async function isPackageMcpBridge(context: Context, server: unknown): Promise<boolean> {
-  if (!isObject(server) || typeof server.command !== "string" || !Array.isArray(server.args) || server.args.length !== 2) return false;
-  const [script, command] = server.args as unknown[];
-  if (command !== "mcp-bridge" || typeof script !== "string" || !isAbsolute(script) || !isNodeExecutable(server.command)) return false;
-  return await isReplaceableScript(context, script, ENTRY_POINTS.cli);
+  const bridge = mcpBridgeEntry.safeParse(server);
+  if (!bridge.success) return false;
+  const [script] = bridge.data.args;
+  return isAbsolute(script) && isNodeExecutable(bridge.data.command) && await isReplaceableScript(context, script, ENTRY_POINTS.cli);
+}
+
+/** `servers` without the bridges another install of this package wrote, or one that is gone (`isPackageMcpBridge`). */
+async function withoutPackageMcpBridges(context: Context, servers: JsonObject): Promise<JsonObject> {
+  const kept: JsonObject = {};
+  for (const [name, server] of Object.entries(servers)) {
+    if (!(await isPackageMcpBridge(context, server))) kept[name] = server;
+  }
+  return kept;
 }
 
 function planOmpMcp(context: Context): Promise<Plan> {
@@ -1485,26 +1553,13 @@ function planOmpMcp(context: Context): Promise<Plan> {
     if (!isObject(servers))
       throw new Error(`Cannot register rerail MCP server: "mcpServers" in ${path} is not an object`);
     const { [RERAIL_MCP_SERVER_NAME]: previous, ...others } = servers;
-    // Removal takes out only this installation's bridge: a `rerail` entry naming another install or checkout stays.
-    const ours = isObject(previous) && Array.isArray(previous.args) && previous.args[0] === join(context.root, ENTRY_POINTS.cli);
-    if (context.mode === "unregister" && !ours) return value;
-    const kept: JsonObject = {};
-    for (const [name, server] of Object.entries(others)) {
-      if (context.mode === "register" && await isPackageMcpBridge(context, server)) continue;
-      kept[name] = server;
+    if (context.mode === "register") {
+      const bridge = { command: context.nodePath, args: [join(context.root, ENTRY_POINTS.cli), "mcp-bridge"] };
+      return { ...value, mcpServers: { ...await withoutPackageMcpBridges(context, others), [RERAIL_MCP_SERVER_NAME]: bridge } };
     }
-    const next: JsonObject =
-      context.mode === "register"
-        ? {
-          ...kept,
-          [RERAIL_MCP_SERVER_NAME]: {
-            command: context.nodePath,
-            args: [join(context.root, ENTRY_POINTS.cli), "mcp-bridge"],
-          },
-        }
-        : kept;
-    if (Object.keys(next).length === 0 && !isObject(value.mcpServers)) return value;
-    return { ...value, mcpServers: next };
+    // Removal takes out only this installation's bridge: a `rerail` entry naming another install or checkout stays.
+    const ours = mcpServerArgs.safeParse(previous).data?.args[0] === join(context.root, ENTRY_POINTS.cli);
+    return ours ? { ...value, mcpServers: others } : value;
   });
 }
 
@@ -1582,25 +1637,43 @@ async function planPromptCommand(context: Context, harness: PromptCommandHarness
   if (existing.exists && existing.text === text) return { change: { harness, path, action: "unchanged", detail: `/${name} command: already in place` } };
   // A command file of this package (`runsPackageCli`) is generated whole; anyone else's is backed up before it goes.
   const backup = existing.exists && !(await runsPackageCli(context, existing.text));
-  return planMutation(context, harness, path, existing.exists ? "updated" : "created", `register the /${name} command`,
+  return planMutation(context, harness, path, writeAction(existing), `register the /${name} command`,
     () => writeTextFile(path, text, existing, backup));
+}
+
+/** How one coding agent takes Rerail's commands: Codex as skills, Claude Code and Cursor as prompt command files. */
+interface AgentCommandFiles {
+  plan: (context: Context, name: RerailCommandName) => Promise<Plan>;
+  /** The names earlier versions installed and this one no longer does. */
+  retired: readonly string[];
+  path: (context: Context, name: string) => string;
+  planRemoval: (context: Context, name: string, path: string, existing: TextFile) => Promise<Plan>;
+}
+
+function agentCommandFiles(harness: PromptCommandHarness | "codex"): AgentCommandFiles {
+  if (harness === "codex") {
+    return { plan: planCodexSkill, retired: RETIRED_CODEX_SKILLS, path: codexSkillPath, planRemoval: planCodexSkillRemoval };
+  }
+  return {
+    plan: (context, name) => planPromptCommand(context, harness, name),
+    retired: RETIRED_PROMPT_COMMANDS,
+    path: (context, name) => promptCommandPath(context, harness, name),
+    planRemoval: (context, name, path, existing) => planPromptCommandRemoval(context, harness, name, path, existing),
+  };
 }
 
 /** The Rerail commands of one coding agent, plus removal of the ones earlier versions installed. */
 async function planAgentCommands(context: Context, harness: PromptCommandHarness | "codex"): Promise<Plan[]> {
+  const files = agentCommandFiles(harness);
   const plans: Plan[] = [];
-  for (const { name } of RERAIL_COMMANDS) {
-    plans.push(harness === "codex" ? await planCodexSkill(context, name) : await planPromptCommand(context, harness, name));
-  }
+  for (const { name } of RERAIL_COMMANDS) plans.push(await files.plan(context, name));
   // A retired file of this installation goes in either mode, and on registration one of another install of this package
   // or of one that is gone; absent or foreign files produce no plan at all.
-  for (const name of harness === "codex" ? RETIRED_CODEX_SKILLS : RETIRED_PROMPT_COMMANDS) {
-    const path = harness === "codex" ? codexSkillPath(context, name) : promptCommandPath(context, harness, name);
+  for (const name of files.retired) {
+    const path = files.path(context, name);
     const existing = await readTextFile(path);
     if (!existing.exists) continue;
-    const plan = harness === "codex"
-      ? await planCodexSkillRemoval(context, name, path, existing)
-      : await planPromptCommandRemoval(context, harness, name, path, existing);
+    const plan = await files.planRemoval(context, name, path, existing);
     if (plan.change.action !== "unchanged") plans.push(plan);
   }
   return plans;
