@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -156,8 +157,12 @@ async function fakeDaemon(home, packageRoot) {
     process.on("SIGTERM", () => { rmSync(stateFile, { force: true }); process.exit(0); });
   `;
   const child = spawn(process.execPath, ["-e", source, stateFile, packageRoot], { stdio: "ignore" });
-  cleanups.push(() => {
-    if (child.exitCode === null) child.kill("SIGKILL");
+  // Waits for the exit too: a fake daemon still running holds its home, which the next cleanup removes.
+  cleanups.push(async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = once(child, "exit");
+    child.kill("SIGKILL");
+    await exited;
   });
   for (let attempt = 0; !existsSync(stateFile); attempt += 1) {
     if (attempt > 100) throw new Error("fake daemon did not start");
