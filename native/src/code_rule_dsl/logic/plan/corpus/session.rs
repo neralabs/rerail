@@ -240,6 +240,10 @@ mod tests {
     #[test]
     fn a_session_maintains_a_recursive_cross_file_stratum() {
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        recursive_cross_file_stratum();
+    }
+
+    fn recursive_cross_file_stratum() {
         let base = std::env::temp_dir().join(format!("rerail-session-reach-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
         std::fs::create_dir_all(&src).unwrap();
@@ -407,6 +411,33 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     #[test]
     fn a_session_maintains_a_cross_file_aggregate() {
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        cross_file_aggregate();
+    }
+
+    /// Decision 0090 §4: every maintained stratum whose inputs changed derived again instead (no θ, no floor). Its
+    /// relations and their deltas are what the strata above read, maintained or not, so the findings stay a full
+    /// run's: over recursion, counting's supports and aggregates.
+    #[test]
+    fn a_session_derives_again_the_strata_its_deltas_outgrow() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        unsafe {
+            std::env::set_var("RERAIL_AGAIN_THETA", "0");
+            std::env::set_var("RERAIL_AGAIN_MIN", "0");
+        }
+        let run = std::panic::catch_unwind(|| {
+            recursive_cross_file_stratum();
+            cross_file_aggregate();
+        });
+        unsafe {
+            std::env::remove_var("RERAIL_AGAIN_THETA");
+            std::env::remove_var("RERAIL_AGAIN_MIN");
+        }
+        if let Err(e) = run {
+            std::panic::resume_unwind(e);
+        }
+    }
+
+    fn cross_file_aggregate() {
         let base = std::env::temp_dir().join(format!("rerail-session-count-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
         std::fs::create_dir_all(&src).unwrap();

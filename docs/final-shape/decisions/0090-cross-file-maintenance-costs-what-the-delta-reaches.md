@@ -630,21 +630,6 @@ more than delete-and-rederive. That is not row work: a support per rule makes ab
 pays a fixed cost. Decision 0101 is the work that removes it: skip a stratum whose deltas are empty, make the
 whole-program passes once, and run a stratum's pieces as one component.
 
-## Merged: levels opt-in on the integration branch (2026-11-10)
-
-Merged with counting (above) and the other branches, *levels, checked* is exact on the session tests but not on
-the whole O125 replay: steps 01–07 equal a full run, and step 08 keeps 1 `type_of` row and 2 `possible_type` rows
-a full run does not (`l2050_transaction/transaction.py:12851.83`). Delete-and-rederive is 8 of 8 on the same
-binary. The difference is the same with counting or delete-and-rederive below, with the closure form off, and on
-one thread. So on the integration branch levels is opt-in (`RERAIL_RECURSIVE=levels`), until that row is found.
-
-Two faults of the merge are fixed:
-- **A closure's rows have no levels.** The closure form (0098 §1) adds a walk's rows at once, not in waves, so no
-  row's level is above its premises'. Its relation now holds no levels, and is maintained by delete-and-rederive.
-  Before, a cycle broken by an edit was kept (`a_session_maintains_a_recursive_cross_file_stratum`).
-- **An output is read back from the engine only when levels maintained it.** Any relation the engine derived has
-  levels, so the check `has_levels` also took a copy left by an earlier run, when this run's stratum ran in SQL.
-
 ## What the prior work says
 
 - **Target architecture (03):**

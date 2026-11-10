@@ -66,6 +66,14 @@ fn relations_hold_t_exporters_rows() {
     let store = ContentStore::open(&temp("store")).unwrap();
     let db = Connection::open_in_memory().unwrap();
     let modules = Modules::default();
+    // T numbers nodes in preorder: an id's low bits map back to its local id (they differ per definition).
+    let projected: HashMap<i64, Projected> = documents()
+        .into_iter()
+        .map(|d| {
+            let dialect = Dialect::new(core::facts_tag(&d.facts)).unwrap();
+            (i64::from(d.key), Projected::new(d.key, Arc::clone(&d.facts), &dialect, Shape::T, false, None))
+        })
+        .collect();
     for (name, source) in sources(&store, documents()).unwrap() {
         modules.bind(&db, name, source).unwrap();
     }
@@ -90,7 +98,7 @@ fn relations_hold_t_exporters_rows() {
                     match ty {
                         Ty::Int => v.to_string(),
                         Ty::Node if v == -1 => "-1".to_owned(),
-                        Ty::Node => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
+                        Ty::Node => (first[&(v >> 32)] + i64::from(projected[&(v >> 32)].local_of((v & 0xffff_ffff) as u32).unwrap())).to_string(),
                         Ty::Kind => {
                             assert_eq!(crate::code_rule_dsl::facts::core::kind_tag(v as u32), tag);
                             catalog.kind_name(crate::code_rule_dsl::facts::core::kind_code(v as u32)).unwrap().to_owned()
@@ -613,4 +621,215 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
         assert_eq!(has_text(relation("source").value(0, 1)), source_needed, "source: {body}");
         assert_eq!(has_text(relation("src_line").value(0, 2)), line_needed, "line: {body}");
     }
+}
+
+/// Each node's text and its id, under `granules`' numbering (the default): `(text, id)` pairs.
+fn leaf_ids(label: &str, path: &str, source: &str) -> (BTreeSet<(String, i64)>, Projected) {
+    let d = document(7, path, label, source);
+    let dialect = Dialect::new(core::facts_tag(&d.facts)).unwrap();
+    let p = Projected::new(d.key, Arc::clone(&d.facts), &dialect, Shape::Core, false, None);
+    let f = &*d.facts;
+    let leaves = (0..p.len()).map(|l| (f.text(p.core[l as usize]).to_owned(), p.global(l))).collect();
+    (leaves, p)
+}
+
+/// Decision 0094 §2, per language: an edit inside one definition renumbers that definition's nodes and no other's,
+/// and moving definitions keeps their ids (slots follow keys, not order). Each case: the text before, the text after,
+/// and leaves that are in untouched granules (each must keep its id).
+#[test]
+fn definition_ids_follow_granules_in_every_language() {
+    // The scheme is the process's: under `RERAIL_NODE_IDS=preorder` there are no granules to check.
+    if !definition_ids() {
+        return;
+    }
+    let cases: &[(&str, &str, &str, &str, &[&str])] = &[
+        // An edit in `f`'s body; `C.m`, `g`, the import and the module constant keep theirs.
+        ("python", "a.py",
+         "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n\ndef g():\n    return os.path.join('gx', 'gy')\n",
+         "import os\nLIMIT = 3\n\ndef f(a):\n    y = 2\n    return a + y\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n\ndef g():\n    return os.path.join('gx', 'gy')\n",
+         &["os", "LIMIT", "'gx'", "'gy'", "size", "x", "self"]),
+        // Moving `g` above `f`: both keep their ids.
+        ("python", "a.py",
+         "def f():\n    return 'fa'\n\ndef g():\n    return 'ga'\n",
+         "def g():\n    return 'ga'\n\ndef f():\n    return 'fa'\n",
+         &["'fa'", "'ga'", "f", "g"]),
+        // A TSX component edited in its JSX; the other component, the hook and the type keep theirs.
+        ("tsx", "a.tsx",
+         "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1 className=\"hd\">{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\nfunction useCount() { return 41; }\n",
+         "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <div><h1 className=\"hd\">{title}</h1><p>sub</p></div>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\nfunction useCount() { return 41; }\n",
+         &["'react'", "Props", "ft", "useCount", "41"]),
+        // A class method edited; the other method, the field and the free function keep theirs.
+        ("typescript", "a.ts",
+         "class Store {\n  items: number[] = [];\n  add(n: number) { this.items.push(n); }\n  size() { return this.items.length; }\n}\nfunction helper() { return 'hp'; }\n",
+         "class Store {\n  items: number[] = [];\n  add(n: number) { if (n > 0) { this.items.push(n); } }\n  size() { return this.items.length; }\n}\nfunction helper() { return 'hp'; }\n",
+         &["'hp'", "length", "helper"]),
+        // SQL: one statement edited, the others keep theirs.
+        ("sql", "a.sql",
+         "CREATE TABLE users (id INT, name TEXT);\nCREATE VIEW active AS SELECT id FROM users WHERE id > 7;\nSELECT name FROM users;\n",
+         "CREATE TABLE users (id INT, name TEXT, email TEXT);\nCREATE VIEW active AS SELECT id FROM users WHERE id > 7;\nSELECT name FROM users;\n",
+         &["active", "7"]),
+        // PHP: a method edited; the other method and the function keep theirs.
+        ("php", "a.php",
+         "<?php\nclass A {\n  public $v = 1;\n  function one() { return 'po'; }\n  function two() { return 'pt'; }\n}\nfunction free() { return 'pf'; }\n",
+         "<?php\nclass A {\n  public $v = 1;\n  function one() { $x = 2; return 'po' . $x; }\n  function two() { return 'pt'; }\n}\nfunction free() { return 'pf'; }\n",
+         &["'pt'", "'pf'", "two", "free"]),
+        // Rust: a function in an impl edited; the struct, the other method and the free function keep theirs.
+        ("rust", "a.rs",
+         "struct S { n: u32 }\nimpl S {\n    fn get(&self) -> u32 { self.n }\n    fn put(&mut self, v: u32) { self.n = v; }\n}\nfn main() { let s = S { n: 5 }; }\n",
+         "struct S { n: u32 }\nimpl S {\n    fn get(&self) -> u32 { self.n + 1 }\n    fn put(&mut self, v: u32) { self.n = v; }\n}\nfn main() { let s = S { n: 5 }; }\n",
+         &["put", "v", "main", "5"]),
+    ];
+    for (label, path, before, after, kept) in cases {
+        let (a, pa) = leaf_ids(label, path, before);
+        let (b, pb) = leaf_ids(label, path, after);
+        let id_of = |set: &BTreeSet<(String, i64)>, t: &str| set.iter().filter(|(x, _)| x == t).map(|(_, i)| *i).collect::<BTreeSet<i64>>();
+        for t in *kept {
+            let (x, y) = (id_of(&a, t), id_of(&b, t));
+            assert!(!x.is_empty(), "{label}: no leaf {t}");
+            assert_eq!(x, y, "{label}: {t} was renumbered");
+        }
+        // Ids are unique, and each maps back to its node.
+        for p in [&pa, &pb] {
+            let ids: BTreeSet<i64> = (0..p.locs()).map(|l| p.global(l)).collect();
+            assert_eq!(ids.len(), p.locs() as usize, "{label}: ids clash");
+            assert!((0..p.locs()).all(|l| p.local_of((p.global(l) & 0xffff_ffff) as u32) == Some(l)), "{label}: an id does not map back");
+        }
+    }
+}
+
+/// Overflow never falls back to preorder: more granules than slots fold statements into their parents, and a
+/// granule past an index's reach goes on in further slots; ids stay unique and map back.
+#[test]
+fn definition_ids_fold_and_continue_past_their_fields() {
+    // 17,000 module-level statements: more than the granules' slots.
+    let many: String = (0..17_000).map(|i| format!("x{i} = {i}\n")).collect();
+    // One function of 300,000 nodes: past one slot's indexes.
+    let big = format!("def f():\n    return [{}]\n", (0..100_000).map(|i| format!("a{i}.b")).collect::<Vec<_>>().join(", "));
+    for source in [many, big] {
+        let (_, p) = leaf_ids("python", "big.py", &source);
+        let ids: BTreeSet<i64> = (0..p.locs()).map(|l| p.global(l)).collect();
+        assert_eq!(ids.len(), p.locs() as usize, "ids clash");
+        assert!((0..p.locs()).all(|l| p.local_of((p.global(l) & 0xffff_ffff) as u32) == Some(l)), "an id does not map back");
+    }
+}
+
+/// The bit widths from data (decision 0094 §2): over every source file under `DEFIDS_DIRS` (`:`-separated; files by
+/// suffix, `node_modules` and virtualenvs left out), per language: files, the most granules in a document and its
+/// 99th percentile, the most nodes and tokens in one granule, documents folded or continued, and the numbering's CPU.
+#[test]
+#[ignore]
+fn definition_ids_census() {
+    let dirs = std::env::var("DEFIDS_DIRS").expect("DEFIDS_DIRS");
+    let label = |p: &Path| match p.extension()?.to_str()? {
+        "py" => Some("python"),
+        "ts" | "mts" | "cts" => Some("typescript"),
+        "tsx" => Some("tsx"),
+        "js" | "mjs" | "cjs" | "jsx" => Some("javascript"),
+        "sql" => Some("sql"),
+        "php" => Some("php"),
+        "rs" => Some("rust"),
+        "vue" => Some("vue"),
+        _ => None,
+    };
+    let mut files: Vec<(PathBuf, &str)> = Vec::new();
+    for dir in dirs.split(':') {
+        let mut stack = vec![PathBuf::from(dir)];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                let name = e.file_name().to_string_lossy().into_owned();
+                if p.is_dir() {
+                    if !matches!(name.as_str(), "node_modules" | ".venv" | "venv" | ".git" | "target" | "dist" | "build" | "site-packages" | "tmp") {
+                        stack.push(p);
+                    }
+                } else if let Some(l) = label(&p) {
+                    files.push((p, l));
+                }
+            }
+        }
+    }
+    files.sort();
+    #[derive(Default, Clone)]
+    struct Row { parse: f64, files: usize, failed: usize, granules: Vec<usize>, biggest: u32, biggest_at: String, most_at: String, folded: usize, continued: usize, nodes: usize, cpu: f64 }
+    let threads = 4;
+    let rows: Vec<HashMap<&str, Row>> = std::thread::scope(|s| {
+        (0..threads)
+            .map(|t| {
+                let files = &files;
+                s.spawn(move || {
+                    let mut by: HashMap<&str, Row> = HashMap::new();
+                    for (path, l) in files.iter().skip(t).step_by(threads) {
+                        let row = by.entry(*l).or_default();
+                        row.files += 1;
+                        let Ok(src) = std::fs::read_to_string(path) else { row.failed += 1; continue };
+                        let Ok(file) = FileInput::new(path.display().to_string(), (*l).to_owned(), Arc::new(src), None, None, "core") else { row.failed += 1; continue };
+                        let t_parse = cpu_now();
+                        let Ok(Built::Facts(facts)) = core::build(&file) else { row.failed += 1; continue };
+                        let facts = Arc::new(facts);
+                        let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+                        let p = Projected::new(1, Arc::clone(&facts), &dialect, Shape::Core, false, None);
+                        row.parse += cpu_now() - t_parse;
+                        let f = &*facts;
+                        let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize]).map(move |_| l as u32)).collect();
+                        let t0 = cpu_now();
+                        let _ = granules::number(&p, &dialect, &tokens);
+                        row.cpu += cpu_now() - t0;
+                        let (g, cont, biggest, fold) = granules::census(&p, &dialect, &tokens);
+                        row.nodes += p.core.len() + tokens.len();
+                        if g > row.granules.iter().copied().max().unwrap_or(0) {
+                            row.most_at = path.display().to_string();
+                        }
+                        row.granules.push(g);
+                        if biggest > row.biggest {
+                            row.biggest = biggest;
+                            row.biggest_at = path.display().to_string();
+                        }
+                        row.folded += usize::from(fold > 0);
+                        row.continued += usize::from(cont > 0);
+                    }
+                    by
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect()
+    });
+    let mut all: HashMap<&str, Row> = HashMap::new();
+    for by in rows {
+        for (l, r) in by {
+            let a = all.entry(l).or_default();
+            a.files += r.files;
+            a.failed += r.failed;
+            a.granules.extend(r.granules);
+            if r.biggest > a.biggest {
+                a.biggest = r.biggest;
+                a.biggest_at = r.biggest_at;
+            }
+            a.most_at = if a.most_at.is_empty() { r.most_at } else { a.most_at.clone() };
+            a.folded += r.folded;
+            a.continued += r.continued;
+            a.nodes += r.nodes;
+            a.cpu += r.cpu;
+            a.parse += r.parse;
+        }
+    }
+    let mut langs: Vec<_> = all.into_iter().collect();
+    langs.sort_by_key(|(l, _)| *l);
+    for (l, mut r) in langs {
+        r.granules.sort_unstable();
+        let pct = |q: f64| r.granules.get(((r.granules.len() as f64 - 1.0) * q) as usize).copied().unwrap_or(0);
+        eprintln!(
+            "census {l}: {} files ({} failed), granules p50 {} p99 {} max {}, biggest granule {} nodes+tokens ({}), folded {}, continued {}, {} nodes+tokens, numbering {:.2} s CPU (parse and project, numbering included, {:.2} s)",
+            r.files, r.failed, pct(0.5), pct(0.99), r.granules.last().copied().unwrap_or(0), r.biggest, r.biggest_at, r.folded, r.continued, r.nodes, r.cpu, r.parse
+        );
+    }
+}
+
+/// This thread's CPU seconds.
+fn cpu_now() -> f64 {
+    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
 }

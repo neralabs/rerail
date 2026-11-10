@@ -693,7 +693,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             Some(_) => true,
         };
         match a.rel.as_str() {
-            "docof" | "visit_index" | "kind" | "text" | "name" | "line" | "op" => on(0),
+            "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" => on(0),
             "node" => on(1),
             "field" => on(2),
             "child" => on(1),
@@ -860,7 +860,7 @@ fn rename_all(l: &Literal, to: &BTreeMap<String, String>) -> Literal {
 
 /// A base relation a negation may test inside a filter: the functional lookups' relations.
 fn base_lookup(rel: &str) -> bool {
-    matches!(rel, "docof" | "visit_index" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
+    matches!(rel, "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
 }
 
 /// A relation of several rules each `node(_, $n, _, _, _), !x_i($n)` (the converter's `not` of an `all`: every node

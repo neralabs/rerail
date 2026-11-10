@@ -4098,8 +4098,12 @@ fn run_observed(
                     // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare.
                     let mut stored = cross.clone();
                     let inline_too = std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on");
+                    // The relations the program declares `inline`: inlined in a session as in a full run. The session
+                    // keeps no rows of theirs (the run's `Outcome::inlined` names them), and the strata over them are
+                    // derived again each run: the cost the author chose by writing `inline`.
+                    let declared_inline: BTreeSet<String> = cross.program.decls.keys().filter(|r| cross.program.qualified(r, "inline")).cloned().collect();
                     for rel in cross.program.rules.iter().map(|r| r.head.rel.clone()).collect::<std::collections::BTreeSet<_>>() {
-                        if !inline_too && !cross.program.qualified(&rel, "inline") {
+                        if !inline_too && !declared_inline.contains(&rel) {
                             stored.program.qualifiers.entry(rel).or_default().insert("no_inline".to_owned());
                         }
                     }
@@ -4248,10 +4252,11 @@ fn run_observed(
                         eprintln!("O125 input deltas: {} documents changed ({read} rows in their entries), {from_entries} from entries ({from_entries_rows} rows), by hashing {hashed:?}", changes.as_ref().map_or(0, Vec::len));
                     }
                     drop(s);
-                    // What the session keeps for the next run is stored, never inlined into its readers (decision
-                    // 0099): its rows are read back to be kept, and maintained from next run as `r__old` ("no such
-                    // table: py_f", inlined into `py_true` and `py_false`). So are the measurement aids' deltas.
-                    // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare (as above).
+                    // What the session keeps for the next run is stored, not inlined into its readers (decision
+                    // 0099): its rows are read back to be kept, and maintained from next run as `r__old`. So are the
+                    // measurement aids' deltas. A relation the program declares `inline` is the exception (above): it
+                    // stays inlined, and is not read back (`Outcome::inlined`). `RERAIL_SESSION_INLINE=on` inlines as a
+                    // full run does, to compare (as above).
                     if !std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on") {
                         let aids = ["RERAIL_SPIKE_DELTA", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_CROSS_VERIFY"].iter().any(|v| std::env::var_os(v).is_some());
                         let program = &mut maintained.program.program;
@@ -4259,10 +4264,20 @@ fn run_observed(
                         if aids {
                             stored.extend(program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
                         }
-                        for rel in stored {
+                        for rel in stored.into_iter().filter(|r| !declared_inline.contains(r)) {
                             let q = program.qualifiers.entry(rel).or_default();
                             q.remove("inline");
                             q.insert("no_inline".to_owned());
+                        }
+                    }
+                    // RERAIL_DUMP_MAINTAINED=<file>: the maintained program's rules, appended each run (a debugging aid).
+                    if let Ok(path) = std::env::var("RERAIL_DUMP_MAINTAINED") {
+                        use std::io::Write as _;
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                            let _ = writeln!(f, "=== run");
+                            for r in &maintained.program.program.rules {
+                                let _ = writeln!(f, "{r}");
+                            }
                         }
                     }
                     let part = &maintained.program;
@@ -4352,7 +4367,7 @@ fn run_observed(
                     }
                     step("bound; running");
                     if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() || std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
-                        keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
+                        keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus", "__cand", "__chk", "__gone", "__held", "__redo"].iter().any(|x| r.ends_with(x))).cloned());
                     }
                     // `RERAIL_CROSS_DEMAND_SPLIT`: keep the demand split in a session (to measure what dropping it costs).
                     let _whole = std::env::var_os("RERAIL_CROSS_DEMAND_SPLIT").is_none().then(super::demand::whole_relations);
@@ -4433,6 +4448,8 @@ fn run_observed(
                     // A relation the engine holds is kept as it is, with its indexes (decision 0090 step 3); one the
                     // run left in a table (an output) is read from there. One the run recomputed in its readers
                     // (decision 0099) has neither: it is not kept, as one past the budget, and the next run derives it.
+                    // The relations of the strata the native engine ran this run (each a key `a/b/…`).
+                    let ran_native: BTreeSet<&str> = got.native.iter().flat_map(|k| k.split('/')).collect();
                     let rows = derived
                         .iter()
                         .filter(|rel| !got.inlined.contains(rel.as_str()))
@@ -4443,9 +4460,9 @@ fn run_observed(
                             // table does not keep: taken from the engine too.
                             let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten()
                                 .or_else(|| {
-                                    // Only a relation this run maintained by levels (it has `h__gone`): any other the engine
+                                    // Only one a native stratum of this run made (`Outcome::native`): any other the engine
                                     // holds may be a copy left by an earlier run (a stratum that ran in SQL this time).
-                                    part.program.decls.contains_key(&format!("{rel}__gone")).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten().filter(|h| h.has_levels())
+                                    ran_native.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten().filter(|h| h.has_levels())
                                 });
                             let held = match held {
                                 Some(h) => h,
@@ -4474,6 +4491,13 @@ fn run_observed(
                                 counts[3] += rows_of(rel).len();
                             } else if rel.ends_with("__ins") {
                                 counts[1] += rows_of(rel).len();
+                            } else if part.program.decls.contains_key(&format!("{rel}__gone")) && part.program.decls.contains_key(&format!("{rel}__cand")) {
+                                // Levels (decision 0090): candidates, those checked, gone, rederived and inserted.
+                                let n = |s: &str| rows_of(&format!("{rel}__{s}")).len();
+                                if std::env::var("RERAIL_CROSS_DELTA_COUNTS").is_ok_and(|v| v == "each") {
+                                    eprintln!("O125 levels rows {rel}: old {}, candidates {}, checked {}, gone {}, rederived {}, inserted {}", olds.get(format!("{rel}__old").as_str()).copied().unwrap_or(0), n("cand"), n("chk"), n("gone"), n("redo"), n("ins"));
+                                }
+                                counts[0] += n("gone");
                             } else if !rel.ends_with("__del") && part.program.decls.contains_key(&format!("{rel}__del")) {
                                 let after: std::collections::HashSet<Vec<i64>> = rows_of(rel).into_iter().collect();
                                 let del = rows_of(&format!("{rel}__del"));
@@ -4519,6 +4543,15 @@ fn run_observed(
                     // first relations, in stratum order, whose maintained rows differ (spike O125).
                     if let Some(vstats) = verify_stats.filter(|_| maintained.maintained > 0) {
                         let plain = cut.program(&cross);
+                        // `O125_VERIFY_RULES=<rel>`: the rules for `rel` the verifier derives with, and the maintained ones.
+                        if let Ok(r) = std::env::var("O125_VERIFY_RULES") {
+                            for x in plain.program.rules.iter().filter(|x| x.head.rel == r) {
+                                eprintln!("O125_VERIFY_RULES plain {x}");
+                            }
+                            for x in part.program.rules.iter().filter(|x| x.head.rel == r) {
+                                eprintln!("O125_VERIFY_RULES maintained {x}");
+                            }
+                        }
                         let mut vkeep = wanted.clone();
                         vkeep.extend(derived.iter().filter(|rel| !plain.program.outputs.contains(*rel)).cloned());
                         let again = super::run_atoms_native_over(&plain, &db, "main", vstats, vkeep, modes)?;
@@ -4625,6 +4658,11 @@ fn run_observed(
                             next.bytes() as f64 / 1e6
                         )
                     });
+                    if std::env::var_os("RERAIL_KEPT_BYTES").is_some() {
+                        for (kind, rows, values, levels, index) in next.held() {
+                            eprintln!("KEPT {kind}: {rows} rows, values {:.2} MB, levels {:.2} MB, sets and indexes {:.2} MB", values as f64 / 1e6, levels as f64 / 1e6, index as f64 / 1e6);
+                        }
+                    }
                     cross_strata = Some(cut.strata);
                     cross_maintained = maintained.maintained;
                     cross_recursive = maintained.recursive;

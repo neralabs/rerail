@@ -105,6 +105,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "spread" => &["n"],
         "next_sibling" => &["a", "b"],
         "visit_index" => &["n", "i"],
+        "node_order" => &["n", "k"],
         "ast_depth" => &["n", "k"],
         "line_count" => &["d", "k"],
         "end_line" => &["n", "l"],

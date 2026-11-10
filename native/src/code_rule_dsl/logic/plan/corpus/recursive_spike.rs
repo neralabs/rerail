@@ -1959,6 +1959,9 @@ pub(in crate::code_rule_dsl) fn run(
                 let kept = c.ev.stores[rel].io[id as usize] & OLD != 0;
                 kept_extra += usize::from(derived && !kept);
                 kept_missing += usize::from(kept && !derived);
+                if kept && !derived && kept_missing <= 6 && std::env::var_os("RERAIL_SPIKE_RECURSIVE_DIFF").is_some() {
+                    eprintln!("recursive spike:     kept, not derived over the old inputs: {}{:?}", c.ev.names[rel], c.ev.stores[rel].row(id as u32));
+                }
             }
         }
         c.old_p = old_p;
