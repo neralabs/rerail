@@ -75,6 +75,11 @@ export interface SetupContext {
   updater: ManagedUpdater;
   /** Where rule packs come from and go to; npm, into `home`, unless given. */
   packs?: PackStore;
+  /**
+   * The machine whose processes and named pipes say whether another Rerail daemon still holds the cache the uninstall
+   * would remove (`cacheHolder`); this one unless a test names another.
+   */
+  machine?: DaemonMachine;
 }
 
 interface RegistrationArguments {
@@ -258,7 +263,10 @@ function sessionLedger(checkout: string): string | undefined {
  * databases, every `~/.rerail-clean-*` backup, and the content store `RERAIL_CONTENT_STORE_PATH` names. The machine-wide
  * cache folder goes with the installation (`removeInstallation`), unless another daemon holds it.
  */
-function planDataDeletion(home: string): { remove: Array<{ path: string; what: string; ledger?: true }>; notes: string[] } {
+function planDataDeletion(
+  home: string,
+  machine: DaemonMachine | undefined,
+): { remove: Array<{ path: string; what: string; ledger?: true }>; notes: string[] } {
   const remove: Array<{ path: string; what: string; ledger?: true }> = [];
   const notes: string[] = [];
   const database = join(home, RERAIL_DATABASE_FILE);
@@ -272,7 +280,7 @@ function planDataDeletion(home: string): { remove: Array<{ path: string; what: s
   const fromMainCache = store === undefined ? "" : relative(mainContentStoreDirectory(), store);
   // A store inside the machine-wide cache folder goes with that folder in `removeInstallation`, under its guard.
   if (store !== undefined && (fromMainCache === ".." || fromMainCache.startsWith(`..${sep}`) || isAbsolute(fromMainCache))) {
-    const holder = cacheHolder(dirname(store));
+    const holder = cacheHolder(dirname(store), machine);
     const files = ["", "-wal", "-shm", "-journal"].map(suffix => `${store}${suffix}`).filter(pathExists);
     if (holder !== undefined && files.length > 0) notes.push(`Kept ${store} (the content cache): another Rerail daemon, pid ${holder}, still uses it.`);
     else for (const path of files) remove.push({ path, what: "the content cache" });
@@ -299,10 +307,10 @@ function planDataDeletion(home: string): { remove: Array<{ path: string; what: s
  * after the stop and before the database goes. A checkout's `.rerail` goes too once the ledgers were all it held.
  * Links are removed, never followed (`fs.rm` does not follow them inside a folder either).
  */
-async function deleteRulesAndHistory(home: string, dryRun: boolean): Promise<void> {
+async function deleteRulesAndHistory(home: string, dryRun: boolean, machine: DaemonMachine | undefined): Promise<void> {
   if (dryRun) process.stdout.write("Would stop the Rerail daemon.\n");
   else process.stdout.write(await stopDaemon(home) === "stopped" ? "Stopped the Rerail daemon.\n" : "The Rerail daemon was not running.\n");
-  const { remove, notes } = planDataDeletion(home);
+  const { remove, notes } = planDataDeletion(home, machine);
   if (dryRun) {
     for (const { path, what } of remove) process.stdout.write(`Would delete ${path} (${what}).\n`);
     for (const note of notes) process.stdout.write(`${note}\n`);
@@ -454,7 +462,7 @@ function planRemoval(context: SetupContext): { remove: Array<{ path: string; wha
   const keep: Array<{ path: string; what: string; why: string }> = [];
   for (const { path, what, ours } of installedFiles(context)) {
     if (!pathExists(path)) continue;
-    const holder = isContentCache(path) ? cacheHolder(path) : undefined;
+    const holder = isContentCache(path) ? cacheHolder(path, context.machine) : undefined;
     if (holder !== undefined) {
       keep.push({ path, what, why: `another Rerail daemon, pid ${holder}, still uses it` });
       continue;
@@ -633,7 +641,7 @@ async function applyInstallPlan({ parsed, root, remove, managed }: InstallPlan, 
 
 /** What only the uninstall takes out: the data (or a backup of it), the launcher on PATH and the installation. */
 async function finishUninstall({ parsed, deleteData }: InstallPlan, context: SetupContext): Promise<void> {
-  if (deleteData) await deleteRulesAndHistory(context.home, parsed.dryRun);
+  if (deleteData) await deleteRulesAndHistory(context.home, parsed.dryRun, context.machine);
   else await backUpRulesAndHistory(context.home, parsed.dryRun);
   const binDir = dirname(context.updater.launcherPath);
   const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);

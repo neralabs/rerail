@@ -17,6 +17,7 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, symlink, 
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { CONSENT_FILE, cleanupCommand, runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
+import { fakeMachine } from "../support/platform/daemon-machine.js";
 import {
   CLAUDE_STATUS_DATABASE_FILE,
   CURRENT_LINK,
@@ -73,6 +74,14 @@ async function fixture(): Promise<Fixture> {
     hostConfigHome,
     packageRoot,
   };
+}
+
+/**
+ * A Windows machine where every pid is a live process and `pipes` are the named pipes that exist: whether the cache's
+ * holder counts is the machine's answer, never whether this one runs a Rerail daemon.
+ */
+function windows(pipes: readonly string[]) {
+  return fakeMachine("win32", { kill: () => true, pipes: () => pipes });
 }
 
 /** The database a stopped daemon leaves, recording one repository's `checkouts`. */
@@ -321,14 +330,16 @@ describe("rerail install --root", () => {
     const cache = contentCache(hostConfigHome);
     await mkdir(cache, { recursive: true });
     await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: process.ppid }));
+    // On Windows that daemon's engine pipe exists too.
+    const removal = { ...context, machine: windows(["rerail-0123456789abcdef01234567"]) };
     const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 
-    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--dry-run"], context)).toBe(0);
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--dry-run"], removal)).toBe(0);
     expect(output.mock.calls.join("")).toContain(`Would keep ${cache} (the cache): another Rerail daemon, pid ${process.ppid}, still uses it.`);
     expect(output.mock.calls.join("")).not.toContain(`Would remove ${cache}`);
     output.mockClear();
 
-    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], removal)).toBe(0);
 
     for (const path of [join(bin, "deploy"), join(updater.versionsRoot, "notes"), join(context.home, "packs", "list.txt"), cache]) {
       expect(existsSync(path), path).toBe(true);
@@ -343,6 +354,21 @@ describe("rerail install --root", () => {
     // Never "delete it" for a home that holds the person's own files.
     expect(text).toContain(`Kept ${context.home}, which also holds files that are not Rerail's. Rerail's settings, logs and records in it: coding-agents.json; delete those if you will not install Rerail again.`);
     expect(text).not.toContain("delete it if you will not install Rerail again");
+  });
+
+  it("removes the cache a daemon Windows ended still names, once no Rerail engine pipe is left on the machine", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    // Windows ended the daemon without its cleanup (logoff, reboot) and gave its pid to a process that is alive.
+    const cache = join(hostConfigHome, ".cache", "rerail");
+    await mkdir(cache, { recursive: true });
+    await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: process.ppid }));
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--dry-run"], { ...context, machine: windows(["other-pipe"]) })).toBe(0);
+    // On Windows this folder is where an earlier release kept the cache, which the uninstall removes all the same.
+    expect(output.mock.calls.join("")).toContain(`Would remove ${cache} (the cache`);
+    expect(output.mock.calls.join("")).not.toContain(`Would keep ${cache}`);
   });
 
   it("counts the access token a loopback daemon keeps as Rerail's, so a home only Rerail uses may still go as a whole", async () => {
