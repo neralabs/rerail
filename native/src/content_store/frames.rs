@@ -1,4 +1,4 @@
-//! Facts as stored: every relation of every fact space, as frames (decision 0103; docs/final-shape/notes/t33 K1).
+//! Facts as stored: every relation of every fact space, as frames (decision 0104; docs/final-shape/notes/t33 K1).
 //!
 //! A frame is the rows of one relation of one fact space, or of one partition of it (a document, a granule; `0` is
 //! the whole relation), each column as zigzag varints of its differences (`cross_rows::encode`). It is keyed by:

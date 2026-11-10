@@ -136,6 +136,15 @@ read from the memo.
     head the engine could not form was blamed on the body's first step ("read of input
     fl842_up_unbound"). Prefixes are now probed with a bare head, and a head with no native form is
     reported as "a head term".
+- **Outputs written to a table to be read back.** A run's outputs that were not kept were inserted
+  into SQL tables, then read with `SELECT … sym_text(…)`. The guests' embed requests went this way,
+  so the guests' wave waited on it. An output the engine holds is now read where it is, and the
+  readers after the run (exports, held rows, hop rows) read the engine's relation. Only a SQL
+  stratum's relation is read from its table. On the slice nothing is materialized now, and SQLite's
+  time fell from 0.06 s to 0.01 s. The findings are unchanged.
+  - `finding` still goes through SQL, because it joins the nodes' and the documents' inputs.
+  - A program's own stated facts (`builtin`, `py_keyword`, …) are still loaded through in-memory
+    temp tables at a run's start. That is set-up within a run, not a wait between waves.
 
 The statistics keeper's counting is about 0.9 s on the slice. It is in memory, and it does no reading
 of SQLite on a cold run.

@@ -1,11 +1,11 @@
-# t33: Every cache moved to facts, one by one (decision 0103's moves)
+# t33: Every cache moved to facts, one by one (decision 0104's moves)
 
-Status: plan (2026-11-10). Built so far: K1 for the cross-file strata (step 4, below). It takes decision 0103's eight steps and says, for each
-table and map that 0103's checks (`logic::facts_only`) list as "not yet facts", what replaces it.
+Status: plan (2026-11-10). Built so far: K1 for the cross-file strata (step 4, below). It takes decision 0104's eight steps and says, for each
+table and map that 0104's checks (`logic::facts_only`) list as "not yet facts", what replaces it.
 
 ## Intro
 
-**What a cache becomes.** 0103's rule, with nothing added: a cache is two rules in a `.rr` file.
+**What a cache becomes.** 0104's rule, and 0103's form, with nothing added: a cache is two rules in a `.rr` file.
 
 ```text
 // The key: what decides whether the result still holds. Here, a file's content and the grammar.
@@ -22,7 +22,7 @@ but only as the in-memory copy of facts. What it holds is written as rows of the
 by 0102's writer, and a new process reads it back from them.
 
 **How to read this note.** First the four shared pieces that every move needs (K1–K4), since none of the moves
-can finish without them. Then each step of 0103, with each of its tables and maps. Then the order of work, the
+can finish without them. Then each step of 0104, with each of its tables and maps. Then the order of work, the
 checks, and what needs a decision.
 
 ## The shared pieces
@@ -141,7 +141,7 @@ removed with nothing in its place but K1–K4.
 
 ## Checks
 
-- `logic::facts_only` (0103): every table and map listed; the not-yet lists may only shrink. Each move lowers
+- `logic::facts_only` (0104): every table and map listed; the not-yet lists may only shrink. Each move lowers
   its pins.
 - **An unchanged rerun asks no answer and runs no stratum.** A test on a small corpus counts answers made and
   strata run in a second process: both must be 0.

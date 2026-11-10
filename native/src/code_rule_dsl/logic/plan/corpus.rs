@@ -2643,6 +2643,9 @@ fn run_observed(
     // reads its input deltas from the documents whose content changed.
     let run_docs_held: std::sync::Mutex<input_delta::Docs> = std::sync::Mutex::new(HashMap::new());
     let run_docs = &run_docs_held;
+    // The run's waves: from its first chunk to the cross-file part's last stratum. SQL a wave's thread runs or waits on
+    // meanwhile is a hazard in the profile (decision 0104); before is the run's beginning, after its end.
+    let mut waves = Some(crate::code_rule_dsl::logic::profile::waves());
     let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, crate::content_store::SourceId)>)> {
     let worker = spawn_chunks(scope, || {
         let (mut parse, mut batch) = ((0.0, 0.0), (0.0, 0.0));
@@ -3381,7 +3384,8 @@ fn run_observed(
             // export goes from the engine to `x` in one statement and is measured in place; one a SQL stratum
             // derived is in its table.
             let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
-            if kept.contains(rel) {
+            // A relation the engine holds is read from it (an output is not written to a table to be read back).
+            if kept.contains(rel) || crate::code_rule_dsl::logic::native::component::derived(&db, rel).is_some() {
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                 let inserted = { let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the export".into()); exports.borrow_mut().add(rel, types.len(), rows.as_ref()) };
                 { let _s = crate::code_rule_dsl::logic::profile::span(|| "totals".into()); totals.add_rows(rel, inserted, rows.as_ref(), &types); }
@@ -4850,6 +4854,7 @@ fn run_observed(
         }
     }
     phase("cross", statements.count());
+    drop(waves.take());
     let mut cross_counts = (0, 0);
     if let (Some(plan), Some((components, found))) = (&cross_plan, &cross_state) {
         cross_counts = (found.hits.len(), found.misses.len());
@@ -5046,8 +5051,11 @@ fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::
 
 fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<Vec<Vec<i64>>> {
     use crate::code_rule_dsl::logic::native::component;
-    let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
-        component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?
+    // What the engine holds is read from it; only a SQL stratum's relation is in a table.
+    let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if let Some(held) = component::derived(db, rel) {
+        held
+    } else if got.kept.contains(rel) {
+        return Err(Error::Plan(format!("{rel} is not held")));
     } else {
         Arc::new(Rows::read(db, &crate::code_rule_dsl::logic::sql::ident(rel))?)
     };
@@ -5103,8 +5111,10 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
         let mut sources: Vec<(&String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::with_capacity(hops.len());
         for rel in hops {
             let width = types(rel).len();
-            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
-                component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?
+            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if let Some(held) = component::derived(db, rel) {
+                held
+            } else if got.kept.contains(rel) {
+                return Err(Error::Plan(format!("{rel} is not held")));
             } else {
                 Arc::new(Rows::read(db, &crate::code_rule_dsl::logic::sql::ident(rel))?)
             };
@@ -5229,6 +5239,7 @@ impl Statements {
             };
             if profiled {
                 crate::code_rule_dsl::logic::profile::sql(text.clone(), ns, vm, scan, sort, auto);
+                crate::code_rule_dsl::logic::profile::sql_in_wave("run", &text, ns);
             }
             let Some(costs) = &state.costs else { return 0 };
             let phase = *state.phase.lock();
