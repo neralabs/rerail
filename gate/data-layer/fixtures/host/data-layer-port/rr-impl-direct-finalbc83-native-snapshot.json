@@ -1,0 +1,2633 @@
+{
+  "format": "rerail.impl-direct-admission-originals/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "mode": "snapshot",
+  "oracle": false,
+  "exitCode": 0,
+  "engineSha256": "193ba7fd4d9bf3e895d3e328dbf8eaa06e85959a3196f80c08e23f40addf09cc",
+  "policySha256": {
+    "impl_direct_execution": "cc1c6a8ee318f23dca90bc68912ea945fb2ea5255d15447c8782b0c609fd9f10"
+  },
+  "collected": [
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/browser/sqljs_sqlite3.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l1000_cache/backends/sqlite.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/base_server_plan.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/execution_guard.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/operations.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/sql_server_plan.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2200_sql_dialect/sql_connection.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2510_delta_storage/manager.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3150_schema_diff/permission_validation.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3150_schema_diff/versioning_validation.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3250_migrations/data_validation.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3250_migrations/executor.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_aggregation.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_pagination.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_read_ops.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_write_ops.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7050_backend_operations/sql_backend_operations.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7100_versioned_operations/versioned_operations.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7248_sparse_versioned_transactions/sql_sparse_versioned_write_query.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_cross_branch/sql_cross_branch_query.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_sql_versioned_transactions/sql_raw_exec_mixin.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_sql_versioned_transactions/sql_read_transaction.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7350_revision_graph/revision_graph.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l9700_sql_graph_query/sql_graph_query.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/l1595_llm_cache/write_back_queue.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/sqlite/native_async_wrapper.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_file_matches_even_with_absolute_prefix",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/connection.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/connection.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/tests/test_something.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/common/l7300_sql_versioned_transactions/tests/test_x.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/introspector.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/validator.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/fts/native.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/vector/native.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/mariadb/sql_batch.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/transaction.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/versioned_write_transaction.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/query.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/graph_query.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/deferred.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/doltdb/merge_strategy.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/backend_operations.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/query_instrumentation.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/mongodb/test_something.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/sqlite/some_random_module.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/postgres/fts_manager.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/sqlite/helpers.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/postgres/foo/bar.py]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[row = self._fetchone()-True]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[rows = self._fetchall()-True]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[row = cursor.fetchone()-True]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[rows = cursor.fetchall()-True]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn.execute_grammar_fetchone(g)-True]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn.execute_grammar_fetchall(g)-True]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn._execute_direct_internal(stmt)-True]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[await conn._execute_direct_internal_async(stmt)-True]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn.execute_grammar(g)-False]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn.execute_grammar_fetchall_raw(g)-False]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[result.fetch_row()-False]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_exports_expected_entries",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_execution_patterns_exported",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_connection_execution_detected[conn._execute_direct_internal(stmt)-True]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_connection_execution_detected[await conn._execute_direct_internal_async(stmt)-True]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_connection_execution_detected[conn._execute_direct_internal_safely(stmt)-False]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_connection_execution_detected[conn.execute_grammar(stmt)-False]",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_flags_direct_connection_execution_outside_fts",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_reports_line_and_pattern",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_skips_comment_lines",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_catches_only_once_per_line",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_tolerates_nonutf8",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_handles_unreadable_file",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_respects_allowlist",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_empty_when_all_allowed",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_flags_direct_connection_execution_in_fts_manager",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_finds_multiple_files",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_skips_test_files",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_dataclass_fields",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_is_nontrivial",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_is_set",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_valid_regex",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_all_valid_regex",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_has_impl_prefix",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_python",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_signature_is_str",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_nonmatching_file",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_empty_path",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_empty_file",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_trailing_comment_still_flagged",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_flags_call_on_line_that_also_contains_string_literal",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_flags_direct_call_inside_f_string_expression",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_fts_manager_direct_execution_requires_impl_boundary",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_flags_multiline_direct_call",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_ignores_pattern_inside_inline_comment",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_ignores_pattern_inside_f_string_literal_text",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_pattern_matches_execute_grammar_fetch",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_violation_stores_path",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_violation_stores_exact_line_stripped",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_line_number_fidelity",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_on_empty_dir",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_non_py_files_ignored",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_nested_subdirs",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_is_callable",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_entries_are_unique",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_use_forward_slash",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_is_list",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_is_list_of_str",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_escape_open_paren",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_start_with_dot",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_contain_anchor_or_slash",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_equality_and_inequality",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_is_mutable",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_regex_pattern_match_on_full_path",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_partial_name_inside_allowed_pattern",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_requires_impl_path_boundary",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_impl_common_tests_pattern",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_test_prefix_pattern",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_multiple_fetchall_on_separate_lines",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_pattern_field_is_the_matched_pattern",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_whitespace_only_lines_not_flagged",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_comment_with_leading_spaces_skipped",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_ignores_allowlisted_anywhere",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_violation_order_deterministic",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_allowlist_verification_failure_returns_one",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_missing_impl_dir_returns_one",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_exports_main",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_module_docstring_present",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_dataclass_fields_extra",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_equality_by_value",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_mutable_by_default",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_is_list",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_nonempty",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_strings",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_compile",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_unique",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_is_set_type",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_all_strings",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_all_end_py",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_use_forward_slash_extra",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_all_under_impl",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_is_list_type",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_all_compile",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_all_start_with_impl",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_returns_bool",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_false_for_random_impl_file",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_connection_py",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_tests_subdir",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_test_prefix",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_fts_dir",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_vector_dir",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_introspector",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_false_for_non_impl_path",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_missing_file_returns_empty",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_unicode_error_returns_empty",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_ignores_hash_comments",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_matches_cursor_fetchone",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_matches_cursor_fetchall",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_matches_execute_grammar_fetchone",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_matches_execute_grammar_fetchall",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_one_violation_per_line",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_returns_list",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_line_numbers_one_indexed",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_strips_line_whitespace",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_returns_list",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_ignores_non_py_files",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_help_exits_zero",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_returns_int",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_clean_prints_success",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_violations_print_summary",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_verbose_prints_line_details",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_check_with_violations_returns_nonzero",
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_update_baseline_returns_zero"
+  ],
+  "cases": {
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn.execute_grammar_fetchall(g)-True]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_all_start_with_impl": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_is_nontrivial": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_unique": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/common/l7300_sql_versioned_transactions/tests/test_x.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/query.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/browser/sqljs_sqlite3.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3150_schema_diff/permission_validation.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7050_backend_operations/sql_backend_operations.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7350_revision_graph/revision_graph.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_connection_execution_detected[conn._execute_direct_internal(stmt)-True]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_empty_path": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_introspector": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_is_callable": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_returns_int": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_module_docstring_present": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/postgres/fts_manager.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_ignores_pattern_inside_f_string_literal_text": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_matches_execute_grammar_fetchall": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_pattern_field_is_the_matched_pattern": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_tolerates_nonutf8": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_equality_and_inequality": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn._execute_direct_internal(stmt)-True]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_entries_are_unique": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_is_set": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_is_set_type": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/graph_query.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/introspector.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l1000_cache/backends/sqlite.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3150_schema_diff/versioning_validation.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7100_versioned_operations/versioned_operations.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l9700_sql_graph_query/sql_graph_query.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_connection_execution_detected[await conn._execute_direct_internal_async(stmt)-True]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_false_for_non_impl_path": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_returns_bool": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_clean_prints_success": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/sqlite/helpers.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_empty_file": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_handles_unreadable_file": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_one_violation_per_line": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_pattern_matches_execute_grammar_fetch": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_whitespace_only_lines_not_flagged": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_dataclass_fields_extra": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_is_mutable": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[await conn._execute_direct_internal_async(stmt)-True]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_all_strings": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_use_forward_slash": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_valid_regex": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/deferred.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/validator.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/base_server_plan.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3250_migrations/data_validation.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/l1595_llm_cache/write_back_queue.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_connection_execution_detected[conn._execute_direct_internal_safely(stmt)-False]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_false_for_random_impl_file": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_regex_pattern_match_on_full_path": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_violations_print_summary": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/postgres/foo/bar.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_respects_allowlist": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_comment_with_leading_spaces_skipped": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_missing_file_returns_empty": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_returns_list": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_trailing_comment_still_flagged": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_violation_stores_path": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_equality_by_value": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn.execute_grammar(g)-False]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[row = self._fetchone()-True]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_all_valid_regex": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_is_list": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_all_end_py": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/doltdb/merge_strategy.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/fts/native.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/execution_guard.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l3250_migrations/executor.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7248_sparse_versioned_transactions/sql_sparse_versioned_write_query.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/sqlite/native_async_wrapper.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_connection_execution_detected[conn.execute_grammar(stmt)-False]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_partial_name_inside_allowed_pattern": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_connection_py": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_verbose_prints_line_details": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_empty_when_all_allowed": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_ignores_allowlisted_anywhere": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_flags_call_on_line_that_also_contains_string_literal": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_line_numbers_one_indexed": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_unicode_error_returns_empty": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_violation_stores_exact_line_stripped": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_mutable_by_default": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn.execute_grammar_fetchall_raw(g)-False]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[rows = self._fetchall()-True]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_file_matches_even_with_absolute_prefix": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_use_forward_slash_extra": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_is_list": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_is_list_of_str": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/vector/native.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/backend_operations.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_has_impl_prefix": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/operations.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_aggregation.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_cross_branch/sql_cross_branch_query.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_requires_impl_path_boundary": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_tests_subdir": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_check_with_violations_returns_nonzero": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_flags_direct_connection_execution_in_fts_manager": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_flags_direct_connection_execution_outside_fts": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_violation_order_deterministic": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_flags_direct_call_inside_f_string_expression": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_ignores_hash_comments": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_line_number_fidelity": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_strips_line_whitespace": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[result.fetch_row()-False]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[row = cursor.fetchone()-True]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_all_under_impl": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_escape_open_paren": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_nonempty": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/mariadb/sql_batch.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/connection.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/query_instrumentation.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2070_server_plan/sql_server_plan.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_pagination.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_sql_versioned_transactions/sql_raw_exec_mixin.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_python": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_impl_common_tests_pattern": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_test_prefix": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_allowlist_verification_failure_returns_one": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_update_baseline_returns_zero": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_finds_multiple_files": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_on_empty_dir": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_returns_list": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_matches_cursor_fetchone": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_reports_line_and_pattern": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_fts_manager_direct_execution_requires_impl_boundary": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[rows = cursor.fetchall()-True]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_is_list_type": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_files_signature_is_str": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_start_with_dot": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_strings": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_exports_expected_entries": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/mongodb/test_something.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/postgres/connection.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/transaction.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2200_sql_dialect/sql_connection.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_read_ops.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_sql_versioned_transactions/sql_read_transaction.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_test_prefix_pattern": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_fts_dir": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_missing_impl_dir_returns_one": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_ignores_non_py_files": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_non_py_files_ignored": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_skips_test_files": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_flags_multiline_direct_call": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_matches_cursor_fetchall": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_skips_comment_lines": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn.execute_grammar_fetchone(g)-True]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_all_compile": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_allowed_dir_patterns_contain_anchor_or_slash": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_direct_execution_patterns_all_compile": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/tests/test_something.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_directory_pattern_allowlist_hits[impl/sqlite/versioned_write_transaction.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l2510_delta_storage/manager.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l5200_sql_query/_write_ops.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_every_allowed_file_is_allowed[impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_fts_manager_direct_execution_patterns_exported": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_nonmatching_file": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_is_allowed_file_true_for_vector_dir": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_exports_main": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_main_help_exits_zero": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_nonallowlisted_files_are_not_allowed[impl/sqlite/some_random_module.py]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_nested_subdirs": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_catches_only_once_per_line": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_ignores_pattern_inside_inline_comment": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_matches_execute_grammar_fetchone": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_multiple_fetchall_on_separate_lines": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_impl_direct_execution.py::test_violation_dataclass_fields": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ]
+  },
+  "semanticFallbacks": [],
+  "missingResults": [],
+  "retainedCaseIds": [],
+  "completeCheckpoint": {
+    "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-complete-finalbc83-checkpoint.json.gz",
+    "sha256": "654405a8215a6b46a6177cd64dc144d64a766fda9ce7aa2aa0dbc859428b6826"
+  },
+  "note": "All raw source calls, native calls, harness hashes, and program inputs are in the referenced checkpoint."
+}

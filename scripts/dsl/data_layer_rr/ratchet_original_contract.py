@@ -4,7 +4,10 @@ import contextlib
 import importlib
 import inspect
 import io
+import json
+import os
 from pathlib import Path
+import select
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -13,7 +16,6 @@ import pytest
 
 from migration import ROOT, PIN, compare, git, read_json, sha, write_json
 from policy_routes import policy_filename
-from replay import execute_native, execute_workspace
 
 
 def normalize(value, root):
@@ -31,10 +33,22 @@ class Contract:
         self.original=self.module.check_ratchet
         self.codes={f.__code__:n for n,f in vars(self.module).items() if inspect.isfunction(f) and f.__module__==self.module.__name__}
         self.signature=inspect.signature(self.original)
+        self.worker=None
+        if args.command=='native':
+            self.worker=subprocess.Popen([sys.executable,str(Path(__file__).with_name('replay.py')),
+                '--workspace-worker' if args.mode=='workspace' else '--worker',str(args.engine)],
+                cwd=ROOT,env=dict(os.environ),text=True,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 
     def native(self,check,entry,files=(),options=None):
-        execute=execute_native if self.args.mode=='snapshot' else execute_workspace
-        result=execute(self.args.engine,ROOT/'gate/data-layer/packs/data-layer/candidates/rr'/policy_filename(check,entry),list(files),dict(entryPoint=entry,**(options or {})))
+        request=dict(rule=str(ROOT/'gate/data-layer/packs/data-layer/candidates/rr'/policy_filename(check,entry)),files=list(files),options=dict(entryPoint=entry,**(options or {})))
+        self.worker.stdin.write(json.dumps(request)+'\n');self.worker.stdin.flush()
+        if not select.select([self.worker.stdout],[],[],110)[0]:
+            self.worker.kill();raise RuntimeError('Native shared-ratchet assertion exceeded 110 seconds')
+        line=self.worker.stdout.readline()
+        if not line:raise RuntimeError('Native worker exited: '+self.worker.stderr.read())
+        reply=json.loads(line)
+        if 'error' in reply:raise RuntimeError(reply['error'])
+        compare(reply['executionMode'],self.args.mode);result=reply['result']
         self.native_calls.append(dict(result,entry=entry));return result['diagnostics']
 
     def replace(self,owner,name,value):setattr(owner,name,value)
@@ -85,6 +99,8 @@ def main():
     harness={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in paths}
     sys.path[:0]=[str(a.source),str(a.source/'scripts')];contract=Contract(a)
     code=pytest.main(['-q','-p','no:cacheprovider','-o','addopts=',str(a.source/'scripts/tests/test_ratchet_lib.py')],plugins=[contract])
+    if contract.worker:
+        contract.worker.stdin.close();contract.worker.wait(timeout=10)
     report=dict(format='rerail.ratchet-original-contract/v1',sourcePin=PIN,mode=a.command,executionMode=a.mode,
         fullMigrationAcceptance=False,exitCode=int(code),collected=contract.collected,cases=contract.cases,calls=contract.calls,
         native=contract.native_calls,semanticFallbacks=contract.fallbacks,harnessFiles=harness,sourceFiles={n:sha((a.source/n).read_bytes()) for n in files})

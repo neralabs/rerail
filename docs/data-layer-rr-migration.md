@@ -2635,3 +2635,28 @@ The wider focused suite and optimized CLI build are in progress.
 The next acceptance covers all 50 recorded ratchet cases through both APIs and the complete original linter suite.
 The migration inventory remains one accepted rule, 94 drafts, and five absent translations.
 The direct-execution rule remains a draft; the original corpus and boundary coverage do not establish arbitrary Python helper equivalence.
+
+### 2026-11-10 — Final bc83 direct-execution acceptance
+
+The [complete checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-complete-finalbc83-checkpoint.json.gz) validates 1,277 native rule executions.
+All 174 original linter tests pass through snapshot and workspace APIs. Both APIs retain 35 positive original scanner observations.
+All three original shared-ratchet tests pass through both APIs, including the check that obsolete baseline keys do not affect the summary.
+The shared-test adapter uses the existing prestarted native worker. It preserves the upstream repository scan guard and rejects calls to original semantic functions.
+Its first transport attempt failed under that guard; the failed logs remain in a separate red receipt.
+
+All 50 ratchet CLI cases pass through both APIs. This includes the twelve boundary failures recorded earlier.
+Checks cover complete streams, status, exception data, signature behavior, and baseline bytes before and after each action.
+All 63 API cases, 20 production cases, eight mutation controls, 15 persistent steps, and 38 allowlist-signing cases pass too.
+There are no failed, skipped, omitted, or source-fallback assertions in the accepted corpus.
+The controls run successfully and detect changed detector behavior. The persistent sequence retains its unchanged repeat.
+
+The [focused engine receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-finalbc83-focused-engine-validation.json.gz) records 165 passing tests and two existing ignored file-writing helpers.
+All 205 tooling tests pass. The optimized CLI artifact is `193ba7fd4d9bf3e8…`.
+Its source includes Final `bc83f6ae8`, native tree `260daf34bdc84c51eedadc9225871c434f68c385`, and acceleration tree `bef82f014cb20e05ea0c03f5c4178b828760c7d5`.
+The optimized build took 137.082 seconds. Compilation remains separate from execution measurements.
+No full-repository cold benchmark or whole-rule-set cold run was performed.
+
+The admission tool revalidates every corpus family before writing evidence. It also checks the independent original-case inventory through the fixed migration gate.
+`impl_direct_execution` is now `full-contract-passed` for this recorded contract. The global migration remains unfinished: two accepted ports, 93 drafts, and five absent translations.
+The earlier authority acceptance remains bound to its recorded Final 04e3 cohort; it has not been refreshed on this newest engine.
+The complete checkpoint does not claim equivalence for arbitrary Python runtime inputs outside the recorded linter contract.

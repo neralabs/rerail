@@ -3062,14 +3062,14 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-impl-direct-execution.json",
       "legacySha256": "4ad1f0cebda73e992103ba98361b5c80b5caf2099cc65078e40df6b732961b4a",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr",
       "ruleSha256": "cc1c6a8ee318f23dca90bc68912ea945fb2ea5255d15447c8782b0c609fd9f10",
       "migrationProgress": {
         "originalTestsPerAPI": 174,
         "positiveOriginalScannerObservations": 35,
-        "status": "draft",
-        "remaining": "Ratchet checks partially implemented; fix Boolean-join regression, complete JSON conversions/diagnostics, and implement baseline writes.",
+        "status": "full-contract-passed",
+        "remaining": "Global migration remains open; 93 drafts and 5 absent translations remain.",
         "checkpoints": [
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-final04e3-checkpoint.json.gz",
@@ -3086,8 +3086,61 @@
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-ratchet-checks-first-ladder.json.gz",
             "sha256": "cf0f902bece95a5383263cc0e842dffcaecdd0f1550ba48cf7ccd4a1d807f4e7"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-complete-finalbc83-checkpoint.json.gz",
+            "sha256": "654405a8215a6b46a6177cd64dc144d64a766fda9ce7aa2aa0dbc859428b6826"
           }
-        ]
+        ],
+        "verifiedNativeExecutions": 1277
+      },
+      "evidence": {
+        "assertions": 174,
+        "positives": 35,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "cc1c6a8ee318f23dca90bc68912ea945fb2ea5255d15447c8782b0c609fd9f10",
+        "engineCommit": "b67dd188e8d6f68029e4328971920ffa1f61fdc1",
+        "corpusSha256": "9c5ceef9ad9d053e5b36c1534c70705ba1fb26b8e74f06890105cdcf020d523b",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "193ba7fd4d9bf3e895d3e328dbf8eaa06e85959a3196f80c08e23f40addf09cc",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory.json",
+          "sha256": "b5b76fa604931179d976db422044913943860448aa6edb2898f9470d688a4e5b"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-finalbc83-native-snapshot.json",
+            "sha256": "44ca4e35174cb4fe05509e13724df55d0f68426b38e6bdf190313dc052991200"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-finalbc83-native-workspace.json",
+            "sha256": "5d07ee3f9b33ae2cb6fca518b80158a63f93572f50181c0ec32df5365790ac52"
+          }
+        ],
+        "acceptanceCheckpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-complete-finalbc83-checkpoint.json.gz",
+          "sha256": "654405a8215a6b46a6177cd64dc144d64a766fda9ce7aa2aa0dbc859428b6826"
+        },
+        "supplemental": {
+          "originalTestsPerAPI": 174,
+          "sharedRatchetTestsPerAPI": 3,
+          "positiveOriginalScannerObservationsPerAPI": 35,
+          "ratchetCLICasesPerAPI": 50,
+          "apiCases": 63,
+          "productionCases": 20,
+          "controls": 8,
+          "persistentSteps": 15,
+          "signingCases": 38,
+          "verifiedNativeExecutions": 1277,
+          "supplementalSigningBatches": 38,
+          "failures": 0,
+          "skippedSelectedAssertions": 0,
+          "semanticFallbacks": 0
+        },
+        "comparison": "Complete values and streams. Only unspecified whole-file API completion groups may permute; order within each file remains exact.",
+        "scope": "Recorded linter contract, all original shared-ratchet assertions, and supplemental corpora. This does not claim equivalence for arbitrary Python runtime inputs."
       }
     },
     {
@@ -3785,17 +3838,17 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "ee4332501c7d6629a7c409a15b69028dc7a4324c",
-      "upstreamCommit": "07bba2f69102a09a7a66e0c0119905d7807d0af9",
+      "engineCommit": "b67dd188e8d6f68029e4328971920ffa1f61fdc1",
+      "upstreamCommit": "bc83f6ae8cf7bf363f9e27f33dfac90a4250726b",
       "sourceTrees": {
-        "native": "90cf10f4274705411675b2f8f26b9ed1f157330f",
+        "native": "260daf34bdc84c51eedadc9225871c434f68c385",
         "accel": "bef82f014cb20e05ea0c03f5c4178b828760c7d5",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-cd39a3ea0e09589d",
-      "sha256": "cd39a3ea0e09589d484b3203246d6c8465366a910acbc8b699d500c6b52a6071",
+      "path": ".rerail/modern-engine-alignment/cli-193ba7fd4d9bf3e8",
+      "sha256": "193ba7fd4d9bf3e895d3e328dbf8eaa06e85959a3196f80c08e23f40addf09cc",
       "command": [
         "cargo",
         "build",
@@ -3808,7 +3861,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 527.395
+      "seconds": 137.082
     }
   },
   "engineSourceSnapshots": [
