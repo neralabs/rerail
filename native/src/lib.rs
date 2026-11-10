@@ -21,6 +21,8 @@ pub mod git_workspace;
 mod main_instance;
 mod model;
 pub mod process;
+/// The most threads the process uses (`RERAIL_THREADS`).
+pub mod threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
 #[cfg(target_family = "wasm")]
 pub mod reactor;
@@ -64,6 +66,8 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
+    // And, as the addon loads, before any pool is made: the most threads the process uses (`RERAIL_THREADS`).
+    threads::configure();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // SAFETY: jemalloc's malloc accepts any size.
@@ -105,7 +109,7 @@ fn install_tree_sitter_allocator() {
 pub(crate) const WORKER_THREADS: usize = 4;
 pub(crate) static WORK_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
     rayon::ThreadPoolBuilder::new()
-        .num_threads(WORKER_THREADS)
+        .num_threads(WORKER_THREADS.min(threads::max()))
         .thread_name(|index| format!("rerail-worker-{index}"))
         .build()
         .expect("build Rerail worker pool")
@@ -221,7 +225,7 @@ pub fn native_memory_profile() -> String {
     serde_json::json!({
         "allocator": allocator,
         "workerPool": {
-            "threads": WORKER_THREADS,
+            "threads": WORKER_THREADS.min(threads::max()),
         },
     })
     .to_string()
