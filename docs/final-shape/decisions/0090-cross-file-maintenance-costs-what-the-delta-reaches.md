@@ -474,6 +474,47 @@ The caveats:
 - Emitted rows stand in for derivations.
 - The witness is built from scratch here; how it is kept across runs (with the kept rows, under 0096) is not built.
 
+## Built: counting the default (2026-11-09)
+
+A session now maintains its cross-file part by counting. `RERAIL_MAINTAIN=dred` keeps delete-and-rederive, to
+compare with.
+
+- **Supports** (`corpus/supports.rs`, unchanged): each rule of a non-recursive stratum has its own relation of
+  derivations, one row per derivation, so its deletes are exact.
+- **A head is exact too** (`maintain`). A head whose rules each project one support (`h(x) :- h__sup0(x, _)`) is
+  a count of its supports:
+  - a row that lost a support goes to `h__lost`;
+  - `h__held` keeps the lost rows that still have a support in the new rows;
+  - `h__del` is lost and not held, with no rederive.
+
+  A row that keeps a support is no longer deleted and appended again. So the survivors start from the old rows
+  with only the truly gone ones dead (step 4's in-place start), and compaction sees only real garbage.
+- **Recursive strata** have no supports. They are maintained by delete-and-rederive under counting, where the
+  comparison derived them again. `RERAIL_COUNT_RECURSIVE=again` restores that. The levels witness from the spike
+  above is the exact form, not built.
+- **A session stores its cross-file relations** (`no_inline`, decision 0099), except one the program declares
+  `inline`. An inlined relation leaves no rows for the next run, so every stratum over it was derived again: 98–118
+  strata a step. `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare.
+- **An inlined relation is not copied out** of the cross part (`Outcome::inlined`). Before this, copying one out
+  failed ("no such table: py_f"). Its stratum runs again next time. Over unchanged reads it leaves its readers
+  clean (`retain::cut`).
+
+**Measured.** O125 steps 01–04, paired and alternated twice on one binary, at load 15–30. Each figure is session
+CPU, and every step's outputs equal a full run's.
+
+| mode | 01 (1 file) | 02 (2) | 03 (1) | 04 (4) | strata maintained, derived again |
+|---|---:|---:|---:|---:|---|
+| counting, stored (default) | 1.5–1.7 s | 1.7–1.8 s | 1.0 s | 1.3–1.4 s | 715–783, 0 |
+| delete-and-rederive, stored | 1.0–1.3 s | 1.2–1.8 s | 0.7–0.9 s | 1.0–1.3 s | 190–210, 0 |
+| counting, inlined | 1.3 s | 1.2–1.4 s | 1.0–1.2 s | 1.2–1.3 s | 616–672, 99–118 |
+
+Steps 01–08 under counting, stored: 8 of 8 equal a full run, as under delete-and-rederive.
+
+**What it says.** Counting derives nothing again and deletes only what is gone. But today it costs 0.2–0.5 s a step
+more than delete-and-rederive. That is not row work: a support per rule makes about 3.7× the strata, and each
+pays a fixed cost. Decision 0101 is the work that removes it: skip a stratum whose deltas are empty, make the
+whole-program passes once, and run a stratum's pieces as one component.
+
 ## What the prior work says
 
 - **Target architecture (03):**

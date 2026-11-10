@@ -2552,7 +2552,7 @@ fn join_rule(conn: &Connection, spec: &JoinSpec, syms: &mut Interner) -> Result<
     let counts = steps.iter().map(|_| Default::default()).collect();
     let fused = if env_set!("RERAIL_NO_ROW_PROGRAMS") { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
     let forms = (0..steps.len()).map(|_| table::StepForm::default()).collect();
-    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, spec: level::digest(&spec.to_text()) })
+    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, spec: level::digest(spec) })
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
@@ -2572,7 +2572,7 @@ fn run_seed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
 }
 
 /// Sends a level's seed joins as one batch (decision 0100 §5): the launches sent.
-pub fn prefetch_joins(conn: &Connection, specs: &[String]) -> Result<usize> {
+pub fn prefetch_joins(conn: &Connection, specs: &[Arc<JoinSpec>]) -> Result<usize> {
     level::prefetch(conn, specs)
 }
 

@@ -48,6 +48,7 @@ mod world;
 mod reuse;
 pub(in crate::code_rule_dsl) mod phase0;
 mod cross_memo;
+mod ordered;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -2428,8 +2429,7 @@ fn run_observed(
         // A window's files resolved together (`resolve`): stat each, look the ones the stat index knows up in one
         // statement, read and hash the others, find their contents in one statement and look those up in one more.
         // What is left is built (`build`). A few statements a window, not several a file.
-        let mut resolve = |window: &[(i64, String, Option<Arc<str>>)]| -> Result<Vec<(Option<memo::Content>, std::result::Result<memo::Entry, (String, Option<memo::Content>)>)>> {
-            worker_doing.set("parse");
+        let resolve = |window: &[(i64, String, Option<Arc<str>>)]| -> Result<Vec<(Option<memo::Content>, std::result::Result<memo::Entry, (String, Option<memo::Content>)>)>> {
             let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
             // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
             // source, and on a memo hit is neither read nor hashed.
@@ -2500,7 +2500,7 @@ fn run_observed(
             Ok(out.into_iter().map(|o| o.expect("every file resolved")).collect())
         };
         // A file's document, built from its source.
-        let build = |d: &i64, path: &String, module: Option<Arc<str>>, source: String, mut source_id: Option<memo::Content>| -> Result<(Option<memo::Content>, syntax::Document)> {
+        let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, source: String, mut source_id: Option<memo::Content>| -> Result<(Option<memo::Content>, syntax::Document)> {
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             // Its own work: the file's input made from its source (the build's parts charge their own).
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
@@ -2533,30 +2533,101 @@ fn run_observed(
             drop(digest_span);
             Ok((source_id, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module }))
         };
-        // Files resolved a window at a time (`resolve`), so a window's sources are all a worker holds unparsed.
+        // Files resolved a window at a time (`resolve`), so a window's sources are all a worker holds unparsed. The
+        // windows are resolved in order by whichever thread first asks for one of their files (the worker or a
+        // builder), under one lock; the files' trees and facts are then built on the asking thread.
         const WINDOW: usize = 256;
+        let resolver = parking_lot::Mutex::new(resolve);
+        type Resolved = (Option<memo::Content>, std::result::Result<memo::Entry, (String, Option<memo::Content>)>);
+        // The documents are built on the run's builders (`threads::document_builders`), and taken here in order.
+        let builders = crate::threads::document_builders();
+        // A chunk on its way to the main thread: handed on in the order cut, once its projection is done.
+        enum Out<M, P> {
+            Ready(M),
+            Projecting(usize, P),
+        }
         'batches: for asked in docs_in {
-        let mut resolved = std::collections::VecDeque::new();
-        let mut next = 0;
-        let mut at = asked.iter().peekable();
-        while let Some((d, path, module)) = at.next() {
-            if resolved.is_empty() {
-                let end = (next + WINDOW).min(asked.len());
-                match resolve(&asked[next..end]) {
-                    Ok(r) => resolved.extend(r),
-                    Err(e) => {
-                        let _ = send.send(Err(e));
-                        break 'batches;
-                    }
+        let helpers = if asked.len() > 1 { builders.min(asked.len()) } else { 0 };
+        // At most two chunks projected at once beside the one the main thread runs (each is sized to `CHUNK_MB`).
+        let in_flight = helpers.min(2);
+        let ordered = ordered::Ordered::new(asked.len(), helpers * 8);
+        let helper_cpu = parking_lot::Mutex::new((0.0, 0.0));
+        let batch_before = batch;
+        // The batch's windows resolved so far: the next file to resolve, and each resolved file not yet built.
+        let windows = parking_lot::Mutex::new((0usize, std::collections::BTreeMap::<usize, Resolved>::new()));
+        // A document: its file resolved (with its window, if that is not yet), then a hit, or built from its source.
+        let build = |i: usize| -> Result<(Option<memo::Content>, std::result::Result<memo::Entry, syntax::Document>)> {
+            let (content, outcome) = {
+                let mut w = windows.lock();
+                while w.0 <= i {
+                    let start = w.0;
+                    let end = (start + WINDOW).min(asked.len());
+                    let r = (&mut *resolver.lock())(&asked[start..end])?;
+                    w.0 = end;
+                    w.1.extend((start..end).zip(r));
                 }
-                next = end;
-            }
-            let (content, outcome) = resolved.pop_front().expect("a window resolves each of its files");
-            let result = match outcome {
-                Ok(entry) => Ok((content, Ok(entry))),
-                Err((source, source_id)) => build(d, path, module.clone(), source, source_id).map(|(c, doc)| (c, Err(doc))),
+                w.1.remove(&i).expect("a window resolves each of its files once")
             };
-            match result {
+            let (d, path, module) = &asked[i];
+            match outcome {
+                Ok(entry) => Ok((content, Ok(entry))),
+                Err((source, source_id)) => build_doc(d, path, module.clone(), source, source_id).map(|(c, doc)| (c, Err(doc))),
+            }
+        };
+        let project = |docs: Vec<syntax::Document>| {
+            let from = thread_usage();
+            let built = {
+                let _batch = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
+                syntax::with_nearest(&store, docs, &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))
+            };
+            let now = thread_usage();
+            (built, (now.0 - from.0, now.1 - from.1))
+        };
+        let stopped = std::thread::scope(|helpers_scope| -> bool {
+        for _ in 0..helpers {
+            helpers_scope.spawn(|| {
+                let from = thread_usage();
+                ordered.help(
+                    &build,
+                    &project,
+                );
+                add(&mut helper_cpu.lock(), from);
+            });
+        }
+        let _stop = ordered.stopper();
+        let mut out = std::collections::VecDeque::new();
+        // Hands on what is ready at the front, in order; waits for the front's projection while more than `keep`
+        // are projecting. False when the main thread has gone.
+        let flush = |out: &mut std::collections::VecDeque<Out<_, _>>, keep: usize, batch: &mut (f64, f64)| -> bool {
+            loop {
+                let projecting = out.iter().filter(|o| matches!(o, Out::Projecting(..))).count();
+                let hand = match out.front() {
+                    None => return true,
+                    Some(Out::Ready(_)) => match out.pop_front() {
+                        Some(Out::Ready(hand)) => hand,
+                        _ => unreachable!("the front is ready"),
+                    },
+                    Some(Out::Projecting(id, _)) => {
+                        worker_doing.set("wait for a chunk's projection");
+                        let Some((built, (user, sys))) = ordered.result(*id, projecting > keep) else { return true };
+                        batch.0 += user;
+                        batch.1 += sys;
+                        let Some(Out::Projecting(_, (n, docs_of, hits_of, kept_docs))) = out.pop_front() else { unreachable!("the front is projecting") };
+                        built.map(|sources| (n, sources, docs_of, hits_of, kept_docs))
+                    }
+                };
+                worker_doing.set("hand on (a chunk)");
+                if crate::code_rule_dsl::logic::profile::wait("the main thread (a channel of one chunk)", &main_doing, || send.send(hand.map(Some))).is_err() {
+                    return false;
+                }
+            }
+        };
+        let stopped = 'docs: {
+        for (i, (d, path, module)) in asked.iter().enumerate() {
+            let last = i + 1 == asked.len();
+            worker_doing.set("parse");
+            let made = if helpers > 0 { ordered.take(i) } else { build(i) };
+            match made {
                 Ok((source_id, Ok(entry))) => {
                     read_sources.extend(source_id.and_then(memo::Content::stored));
                     if let Some(c) = source_id {
@@ -2575,43 +2646,63 @@ fn run_observed(
                 }
                 Err(e) => {
                     let _ = send.send(Err(e));
-                    break 'batches;
+                    break 'docs true;
                 }
             }
             if pending.is_empty() {
                 // Only hits so far: handed on in batches, and at the end.
-                if !hits.is_empty() && (hits.len() >= 1024 || at.peek().is_none()) {
+                if !hits.is_empty() && (hits.len() >= 1024 || last) {
                     // Reading, hashing and looking files up is the worker's parse time.
                     add(&mut parse, t);
                     t = thread_usage();
-                    let hand = Ok((0, Vec::new(), Vec::new(), std::mem::take(&mut hits), Vec::new()));
-                    worker_doing.set("hand on (memo hits)");
-                    if crate::code_rule_dsl::logic::profile::wait("the main thread (a channel of one chunk)", &main_doing, || send.send(hand.map(Some))).is_err() {
-                        break 'batches;
+                    out.push_back(Out::Ready(Ok((0, Vec::new(), Vec::new(), std::mem::take(&mut hits), Vec::new()))));
+                    if !flush(&mut out, in_flight, &mut batch) {
+                        break 'docs true;
                     }
+                    t = thread_usage();
                 }
                 continue;
             }
-            if pending_nodes < worker_target.load(std::sync::atomic::Ordering::Relaxed) && at.peek().is_some() {
+            if pending_nodes < worker_target.load(std::sync::atomic::Ordering::Relaxed) && !last {
+                if !out.is_empty() && !flush(&mut out, in_flight, &mut batch) {
+                    break 'docs true;
+                }
                 continue;
             }
             add(&mut parse, t);
             t = thread_usage();
-            worker_doing.set("batch");
-            let batch_span = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
             // A chunk whose rules ask for guests keeps its documents: the guests are made from them (decision 0055).
             let kept_docs = if slice.is_some() { pending.clone() } else { Vec::new() };
-            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()));
-            drop(batch_span);
-            add(&mut batch, t);
             let n = std::mem::take(&mut pending_nodes);
             let (docs_of, hits_of) = (std::mem::take(&mut pending_docs), std::mem::take(&mut hits));
-            let hand = built.map(|sources| (n, sources, docs_of, hits_of, kept_docs));
-            worker_doing.set("hand on (a chunk)");
-            if crate::code_rule_dsl::logic::profile::wait("the main thread (a channel of one chunk)", &main_doing, || send.send(hand.map(Some))).is_err() {
-                break 'batches;
+            if helpers > 0 {
+                out.push_back(Out::Projecting(ordered.post(std::mem::take(&mut pending)), (n, docs_of, hits_of, kept_docs)));
+            } else {
+                worker_doing.set("batch");
+                let (built, (user, sys)) = project(std::mem::take(&mut pending));
+                batch.0 += user;
+                batch.1 += sys;
+                out.push_back(Out::Ready(built.map(|sources| (n, sources, docs_of, hits_of, kept_docs))));
+            }
+            if !flush(&mut out, in_flight, &mut batch) {
+                break 'docs true;
             }
             t = thread_usage();
+        }
+        ordered.finish();
+        !flush(&mut out, 0, &mut batch)
+        };
+        stopped
+        });
+        // The helpers' time: projecting chunks is batch time (counted as each is handed on), the rest, building
+        // documents, parse time.
+        if helpers > 0 {
+            let (user, sys) = helper_cpu.into_inner();
+            parse.0 += user - (batch.0 - batch_before.0);
+            parse.1 += sys - (batch.1 - batch_before.1);
+        }
+        if stopped {
+            break 'batches;
         }
         // The batch's end: its documents are all handed on.
         if send.send(Ok(None)).is_err() {
@@ -2620,6 +2711,8 @@ fn run_observed(
         }
         drop(send);
         worker_doing.set("done");
+        // The resolver holds the run's stat reads (`stats_read`) until here.
+        drop(resolver);
         (parse, batch, read_sources, stats_read)
     });
     // A chunk's file-local part: its memo hits replayed, its documents evaluated, its exports written to `x`.
@@ -3792,8 +3885,21 @@ fn run_observed(
             match session.as_ref().map(|s| &s.cross) {
                 // A session's run evaluates the strata whose inputs changed, the others' rows kept (decision 0077).
                 Some(cell) => {
-                    // `RERAIL_MAINTAIN=count`: exact maintenance by counting, each rule's derivations held as its
-                    // support relation (`supports`), to compare with delete-and-rederive.
+                    // A session maintains its cross-file part from the rows the last run kept: each relation is
+                    // stored, not recomputed in its readers (decision 0099), so the next run has its old rows. An
+                    // inlined one left none, and every stratum over it was derived again (about 100 a step at O125,
+                    // against none stored). A relation the program declares `inline` stays so;
+                    // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare.
+                    let mut stored = cross.clone();
+                    let inline_too = std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on");
+                    for rel in cross.program.rules.iter().map(|r| r.head.rel.clone()).collect::<std::collections::BTreeSet<_>>() {
+                        if !inline_too && !cross.program.qualified(&rel, "inline") {
+                            stored.program.qualifiers.entry(rel).or_default().insert("no_inline".to_owned());
+                        }
+                    }
+                    let cross = stored;
+                    // Exact maintenance by counting (the default), each rule's derivations held as its support
+                    // relation (`supports`); `RERAIL_MAINTAIN=dred` compares with delete-and-rederive.
                     let counted;
                     let cross = if supports::counting() {
                         let (c, through, kept) = supports::supports(&cross);
@@ -4032,6 +4138,11 @@ fn run_observed(
                     let spike = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
                     let probes: Vec<String> = if spike { part.program.decls.keys().filter(|r| r.ends_with("__del") || r.ends_with("__ins")).cloned().collect() } else { Vec::new() };
                     keep.extend(probes.iter().cloned());
+                    // A delta made in the run: what a stratum's maintenance reads besides old rows.
+                    let in_run_delta = |r: &str| ["__plus", "__minus", "__del", "__ins", "__redo", "__lost", "__held"].iter().any(|x| r.ends_with(x)) || r.contains("__grp");
+                    if spike {
+                        keep.extend(part.program.decls.keys().filter(|r| in_run_delta(r)).cloned());
+                    }
                     step("bound; running");
                     if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() || std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
                         keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
@@ -4048,6 +4159,36 @@ fn run_observed(
                     if spike {
                         for (rel, why) in &maintained.again {
                             eprintln!("O125 derived-again {rel}: {why}");
+                        }
+                        // The strata an early cutoff would skip: every delta a stratum reads (`__plus`, `__minus`, its
+                        // own `__del`, `__ins`, an aggregate's groups, …) came out empty. "Given": a delta bound as an
+                        // input (an earlier phase's, or found by its documents). "No delta": derived again.
+                        let delta_rows: HashMap<&str, Option<usize>> = part
+                            .program
+                            .decls
+                            .keys()
+                            .filter(|r| in_run_delta(r))
+                            .map(|r| (r.as_str(), got.kept.contains(r.as_str()).then(|| held_rows(&db, &got, r, part.program.decls[r].len()).map(|v| v.len()).unwrap_or(0))))
+                            .collect();
+                        if let Ok((sccs, _)) = crate::code_rule_dsl::logic::front::strata(&part.program) {
+                            let (mut quiet, mut moving, mut none, mut given) = (0, 0, 0, 0);
+                            for scc in &sccs {
+                                let reads: BTreeSet<&str> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).flat_map(|r| r.body.iter().filter_map(|l| match l {
+                                    crate::code_rule_dsl::logic::front::Literal::Atom(a) | crate::code_rule_dsl::logic::front::Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
+                                    _ => None,
+                                })).filter(|r| delta_rows.contains_key(r)).collect();
+                                if reads.is_empty() {
+                                    none += 1;
+                                } else if reads.iter().any(|r| delta_rows[r].is_none()) {
+                                    given += 1;
+                                } else if reads.iter().all(|r| delta_rows[r] == Some(0)) {
+                                    quiet += 1;
+                                } else {
+                                    moving += 1;
+                                }
+                            }
+                            let empty = delta_rows.values().filter(|n| **n == Some(0)).count();
+                            eprintln!("O125 cutoff: {} strata: {quiet} read only empty deltas, {moving} a non-empty one, {given} a given delta, {none} no delta; {empty} of {} deltas empty", sccs.len(), delta_rows.len());
                         }
                         let (mut tdel, mut tins, mut tgone, mut tnew) = (0usize, 0usize, 0usize, 0usize);
                         let mut lines = Vec::new();
@@ -4083,9 +4224,11 @@ fn run_observed(
                     }
                     // A relation of no columns is a flag its rows' count holds, which columns do not: derived again.
                     // A relation the engine holds is kept as it is, with its indexes (decision 0090 step 3); one the
-                    // run left in a table (an output) is read from there.
+                    // run left in a table (an output) is read from there. One the run recomputed in its readers
+                    // (decision 0099) has neither: it is not kept, as one past the budget, and the next run derives it.
                     let rows = derived
                         .iter()
+                        .filter(|rel| !got.inlined.contains(rel.as_str()))
                         .map(|rel| (rel, part.program.decls[rel].len()))
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| {

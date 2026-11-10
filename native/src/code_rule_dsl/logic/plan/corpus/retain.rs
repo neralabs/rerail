@@ -11,7 +11,9 @@
 //!
 //! A stratum is clean when none of its reads changed (an input whose digest differs, or a relation of a stratum that
 //! runs) and its relations were kept. Kept relations are bounded by a byte budget (`RERAIL_CROSS_RETAIN_MB`, 256 MB):
-//! past it, a relation is not kept and its stratum runs again next time.
+//! past it, a relation is not kept and its stratum runs again next time. Nor is one the run recomputed in its readers
+//! (decision 0099: it has no rows to keep). Run again over unchanged reads, such a stratum derives the rows it did,
+//! so it leaves its readers clean.
 //!
 //! Stage 2 (decision 0077 §3, `maintain`) maintains a changed stratum's rows from the deltas (DRed) instead of deriving
 //! them again; it reads the old rows of what changed, so inputs' sources are kept too.
@@ -274,10 +276,14 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let whole = kept.is_none() || (!prog.gates.is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
     for scc in &sccs {
-        let runs = whole || reads(prog, scc).iter().any(|r| dirty.contains(r)) || !scc.iter().all(|r| kept.is_some_and(|k| k.rels.contains_key(r)));
-        if runs {
+        let stale = whole || reads(prog, scc).iter().any(|r| dirty.contains(r));
+        if stale {
             ran += 1;
             dirty.extend(scc.iter().cloned());
+        } else if !scc.iter().all(|r| kept.is_some_and(|k| k.rels.contains_key(r))) {
+            // Not kept (past the budget, or recomputed in its readers, decision 0099) but of unchanged reads: run
+            // again, its rows as before, so its readers stay clean.
+            ran += 1;
         } else {
             clean.extend(scc.iter().cloned());
         }
