@@ -2043,10 +2043,6 @@ impl InRel {
         let k = types.len();
         Arc::new(InRel { k, n, rows, view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() })
     }
-    /// Its columns' value types (the engine's codes).
-    pub fn types(&self) -> &[u8] {
-        &self.types
-    }
     /// Its rows, as a source of columns `names`.
     pub fn source(self: &Arc<Self>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
         Derived::new(Arc::clone(self), Some(names))
@@ -3194,6 +3190,18 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     }
     fn composite(&self) -> bool { true }
     fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        // Omitted columns read as zero, just as `value` does. They have no array to sort or probe.
+        // Remove their satisfied predicates before using an order over the columns that are held.
+        if equal.iter().any(|&(c, _)| self.values[c].get().is_none()) {
+            if equal.iter().any(|&(c, v)| self.values[c].get().is_none() && v != 0) {
+                return Some(Vec::new());
+            }
+            let held: Vec<_> = equal.iter().copied().filter(|&(c, _)| self.values[c].get().is_some()).collect();
+            return self.lookup_all(&held);
+        }
+        if equal.is_empty() {
+            return Some((0..self.len()).collect());
+        }
         let cols: Vec<usize> = equal.iter().map(|e| e.0).collect();
         let (on, order) = self.order(&cols);
         let by: Vec<(&[i64], i64)> = on[..cols.len()].iter().map(|&c| (self.col(c), equal.iter().find(|e| e.0 == c).map_or(0, |e| e.1))).collect();
@@ -3208,14 +3216,17 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     /// (`sorted_rows`), or builds its own over a filtered view.
     fn indexed(&self, _: usize) -> bool { true }
     fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+        if self.values[c].get().is_none() {
+            return Some(if values.contains(&0) { (0..self.len()).collect() } else { Vec::new() });
+        }
         let mut out: Vec<usize> = values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect();
         out.sort_unstable();
         Some(out)
     }
     /// A column held nowhere (no rule names it, `columns_source`) reads as 0.
     fn value(&self, row: usize, c: usize) -> i64 { self.col(c).get(row).copied().unwrap_or(0) }
-    fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { Some(self.rows_of(c, v)) }
-    fn sorts_rows(&self, _: usize) -> bool { true }
+    fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { self.values[c].get().map(|_| self.rows_of(c, v)) }
+    fn sorts_rows(&self, c: usize) -> bool { self.values[c].get().is_some() }
 }
 /// A relation held in memory as columns (`None`: a column no rule reads, which reads as 0), read in place: a
 /// probe on a column is a slice of its sorted index, built on first use.
@@ -4305,6 +4316,21 @@ mod posted_tests {
         let mut want = crate::code_rule_dsl::facts::vtab::syntax::measured(&Unknown(plain));
         want.push(("x".to_owned(), 60, 60, 60, 60));
         assert_eq!(held.statistics().expect("held rows keep statistics"), want);
+    }
+
+    #[test]
+    fn omitted_columns_obey_zero_semantics_in_indexed_probes() {
+        for values in [vec![3], vec![3, 1, 3], vec![]] {
+            let source = columns_source(vec!["key".into(), "omitted".into()], vec![Some(values), None]);
+            for equal in [vec![], vec![(1, 0)], vec![(1, 7)], vec![(0, 3), (1, 0)], vec![(0, 3), (1, 7)]] {
+                let want: Vec<usize> = source.filter_eq(&equal).into_iter().map(|r| r as usize).collect();
+                assert_eq!(source.lookup_all(&equal), Some(want), "{equal:?}");
+            }
+            assert_eq!(source.lookup(1, &[0]), Some((0..source.len()).collect()));
+            assert_eq!(source.lookup(1, &[7]), Some(Vec::new()));
+            assert!(!source.sorts_rows(1));
+            assert_eq!(source.sorted_rows(1, 0), None);
+        }
     }
 
     /// A source with no statistics of its own, so `measured` measures it.

@@ -287,10 +287,11 @@ pub(crate) fn build_cached_with_tape(
         use sha2::Digest as _;
         let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
         if let Some(held) = cache.pending::<Vec<u8>>(&queued_tape(&digest, tag, gv, fv)) {
-            let grammar = tape::Grammar::new(language)?;
+            let grammar = Arc::new(tape::Grammar::new(language)?);
             let primary = TapeImage::from_bytes(&held, &grammar)?;
             let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
-            return Ok((Built::Facts(from_image(Arc::clone(&file.source), &grammar, &primary, lines)?), known));
+            let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
+            return Ok((Built::Facts(from_image(Arc::clone(&file.source), &grammar, &primary, lines)?), known, doc));
         }
     }
     let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());

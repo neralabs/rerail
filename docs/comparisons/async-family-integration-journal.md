@@ -1130,3 +1130,97 @@ These counts exclude storage SQL, including the incoming per-frame reads identif
 
 Build logs and regression artifacts are under `merge-c59e669ec` in the comparison artifact directory.
 Final test and workload results are in its `fixed` directory.
+
+
+## Integration merge: 010a04276 (2026-11-10)
+
+Merged the local integration hub tip, `010a04276`, into `jeremy/async-family-integration-comparison`.
+The published hub tip was still `1add64b22` when fetched.
+The merge commit is `0d60a443e`.
+The conflicts moved duplicate test blocks. Each test remains present once.
+The loading-answer invalidation fix remains in the cross-file input path.
+Unfinished admission and identity regression tests remain separate from this merge.
+
+The incoming work moves tape and memo reads before execution waves and sends their writes to the background writer.
+It also removes native execution tables that SQL never reads and adds filesystem journal support.
+These changes preserve the direction: ordinary facts in memory, bulk storage admission, and shared maintenance.
+They do not remove the per-relation `frame_rows` calls in `kept_strata::load`.
+
+The first merged test build found four compatibility errors.
+There were duplicate `InRel::types` methods and duplicate `Document::tape` fields.
+A planner test lacked the new `Model::input_set` field.
+The pending-tape read returned the old two-field result instead of the new three-field result.
+The fixes retain one accessor and field, initialize the planner field, and return the requested tape from pending storage.
+
+### Next work, in order
+
+1. Apply bulk admission to the default K4 path, `Retained::from_frames/load`, and the older `kept_strata::load` path.
+   K4 now restores input digests, demanded derived relations, and changed inputs partitioned into granules.
+   Its loops still call `frame_rows` for each relation or granule.
+   Admit the required frame keys together, then check payload metadata against the admission snapshot before accepting rows.
+   Use one admission contract for both paths and remove the older path after parity checks.
+   Count actual store SQL separately from core execution SQL.
+   The unfinished older-path regression uses 257 inputs and 257 derived frames, including one stale frame.
+   It must expand to cover the new default path and mixed frame partitions.
+2. Reproduce the O125 step-07 join amplification on this merged revision.
+   The recorded profile shows 526 delta rows probing a 201,000-row relation before `icall` rejects every result.
+   Compare early `icall` filtering with a demanded-key semijoin, using rows, probes, CPU, and output parity.
+   Fix the planner from those measurements, without a rule-name override.
+3. Compare fresh and restored program identities in separate processes.
+   The integration journal reports one extra phase recomputation in the second process.
+   Existing serialization tests pass, so they do not establish the cause or close this issue.
+   Check both relation identities and actual phase reuse across three processes.
+
+These tasks remain open. Historical timings and statement counts are not measurements of this merged revision.
+Build and test artifacts are under `async-family-comparison/merge-010a04276`.
+
+
+### Merge qualification found an indexed-probe regression
+
+The merged build passed all 13 native session checks and the 15 focused merge checks.
+The 5,725-file workload passed cold, warm, profiled warm, edit, and warmed-edit conditions.
+Core SQL counts were 8, 20, 20, 10, and 20 respectively, below the unchanged ceiling of 100.
+These counts exclude storage SQL.
+
+Five composed session checks aborted in `Stored::lookup_all`.
+An omitted column has no value array, but `Source::value` defines its value as zero.
+The composite lookup indexed that empty array instead of applying the same semantics.
+The fix removes satisfied zero predicates on omitted columns and rejects nonzero predicates before indexing.
+Single-column lookups use the same semantics. Omitted columns advertise no borrowed sorted index.
+The focused regression compares indexed results with a scan for empty, one-row, and multi-row sources.
+The failed composed runs remain in the artifact directory as the baseline for this fix.
+
+
+### The merged warm profile makes the next target concrete
+
+The profiled 5,725-file warm run records 79 SQL executions inside execution waves.
+Of these, 66 read the store and 13 perform other connection operations.
+This is a different scope from the 20 core executions reported by the job budget.
+
+K4 restoration accounts for 44 store executions:
+
+- One metadata batch and seven schema checks, plus six individual input-digest payload reads: 14 executions.
+- Fifteen individual derived-payload reads and fifteen schema checks: 30 executions.
+
+Those fifteen derived relations contain only 22 rows.
+For this workload, three bulk reads with one schema check each give a concrete target of at most six executions.
+Larger admissions must scale by bounded key batches, not by relations or granules.
+The remaining hazards include memo replay and planning-choice lookups.
+The profile reports 0.0 ms for these short statements, so these counts do not establish a CPU saving.
+The evidence is `full-native/warm-profile/profile/profile.txt` in the merge artifact directory.
+
+
+### Final qualification
+
+The fixed binary passes all 13 native and all 13 composed session/cache checks.
+The five composed checks that aborted now pass, as does the focused omitted-column regression.
+The positive fixture still produces all 120 findings.
+The final 5,725-file run passes all five conditions, with core counts of 8, 20, 20, 10, and 20.
+Its warm profile repeats the 79 wave executions and the 44 K4 storage executions.
+SQLite attributes 1.0 ms to the 79 executions in this final run.
+These measurements establish the excessive query count, not a large recoverable CPU cost on this fixture.
+
+The probe-fix build required a retry after an out-of-space failure.
+Only obsolete object files in this task's build cache were removed, freeing 37.8 GiB.
+The source, test logs, and benchmark results remain intact.
+Final artifacts use `final-tests`, `final-native-sessions`, `final-composed-sessions`, and `final-full-native` under the merge artifact directory.
