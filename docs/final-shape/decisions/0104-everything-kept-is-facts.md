@@ -129,8 +129,24 @@ warm and after an edit), CPU (user + sys, with the load) and the pins of `facts_
 | 1 | The tapes as the two rules above, for a run's files and its guests; contents by digest; the tape and source writes are the writer's | no tape or source statement among the hazards; the 4.2 s wait is gone |
 | 2 | The memo's entries read before the first wave; a lookup writes nothing | no memo statement among the hazards |
 | 3 | The constants, the statistics and the choices read before the first wave, written by the writer | no store statement among the hazards |
-| 4 | A program's stated facts and `rdl_int` bound in the engine, not loaded through SQL tables; inputs read from where they are held | no statement on the run's connection among the hazards, except `finding` after the last wave |
+| 4 | A program's stated facts and `rdl_int` bound in the engine, not loaded through SQL tables; inputs read from where they are held | **built**: on the slice, one statement is left on the run's connection (below) |
 | 5 | A test runs a small corpus with the profile on and fails on any hazard | the test passes with none |
+
+**Step 4, as built.** Within a native run, the run's connection makes nothing in SQL that SQL
+does not read:
+
+- a relation of stated facts alone is held in the engine. A relation with rules and stated facts
+  has its facts apart (`rel__stated`), read by one rule;
+- a native run makes no views. A projection of an input is a stratum like any, run from the input
+  where it is held;
+- a range read computes a document's node-id interval from its key, when the run's documents are
+  numbered by key (the corpus runner's). The guests and the loaded documents write no intervals;
+- `rdl_int` is a series in the statement that reads it;
+- a connection's state (what its runs left in SQL, its settings, how its documents are numbered)
+  is kept with the connection and dropped when it closes. A run asks SQL nothing it knows.
+
+On the slice, the run's connection went from 208 table statements, 91 inserts, 11 input reads and
+one rule run in SQLite, to one `PRAGMA` on the first run of a guests' connection.
 
 How relations are stored and read back is shared work. rr-align's frames (one stored form, each
 relation by its identity, written only by the writer) are that form. As each of the stores above
@@ -157,7 +173,7 @@ Each cache is listed with its step in `facts_only.rs`.
 | 1 | the run's constants, the whole-run cutoff, the observer's record, the derivation tables (7 tables, 2 maps) | the observer's base facts and rules over them | final-rerail-shape-rr-align, which owns it |
 | 2 | rule files and programs: parsed files, libraries, phase 0's graph, the combined and prepared programs, the planning choices (7 maps) | phase 0's facts. A rule file is loaded on a `load` request. The combined program, the prepared program and the choices are answers keyed by the program's facts (0074) and the build | this branch |
 | 3 | a document's facts: the per-file memo, manifests, the cross-file memo, the first slice's kept matches, guest parses, the session's held rows (21 tables, 2 maps) | a document's facts in its phase's space, keyed by its content facts and the program's facts | this branch |
-| 4 | the kept strata (2 tables, 1 map) | the cross program's own relations, kept and maintained from the delta of its input facts | final-rerail-shape-rr-align: the 2 tables are moved to the store's frames (notes/t33, K1); maintaining from the delta is K4, next there |
+| 4 | the kept strata (2 tables, 1 map) | the cross program's own relations, kept and maintained from the delta of its input facts | final-rerail-shape-rr-align: the 2 tables are moved to the store's frames (notes/t33, K1); K4 is built (fe23a4986): a new process loads the session's retained state from the frames, maintains it from the delta of its inputs, and writes back what changed. The cone of requests still reruns as whole strata |
 | 5 | the phase store (5 tables) | a phase's exports as its space's facts | the typing branch (investigate-bend-vs-datalog), as its plan already says |
 | 6 | planning: kept plans, derived values, observed steps, the tables a chunk builds ahead, compiled plans, the statistics (14 tables, 7 maps) | planner facts. Statistics are maintained aggregates over the base facts. A plan is an answer keyed by its rule's facts and the statistics it read | this branch |
 | 7 | text patterns and indexes: stored automata, compiled matchers, the prefilter and vocabulary indexes (10 tables, 5 maps) | answers keyed by the pattern's facts. An index is a derived relation over tapes | this branch |

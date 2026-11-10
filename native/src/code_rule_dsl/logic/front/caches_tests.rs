@@ -1,6 +1,6 @@
 //! The lint of a cache (decision 0103): what `.cache C by K` refuses.
 
-use super::{Cache, caches};
+use super::caches;
 
 fn refused(text: &str) -> String {
     match crate::code_rule_dsl::logic::rr::parse(text) {
