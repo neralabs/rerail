@@ -45,6 +45,8 @@ pub struct Compiled {
     pub rows: String,
     /// Tier 2's words and its state machine as text, for the profile.
     pub words: String,
+    /// Spike: the program, for the interpreter.
+    pub program: rerail_compiler::program::Words,
     pub machine: String,
 }
 
@@ -80,7 +82,7 @@ fn compile() -> Result<Compiled, String> {
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program })
 }
 
 /// `src`'s node table, as tier 2 writes it: from the compiled grammar, or, for a file the grammar
@@ -336,6 +338,47 @@ pub mod tests {
         eprintln!("tapes: {} files in {:?} CPU", refs.len(), cpu() - t);
         let differ = refs.iter().zip(&got).filter(|(src, g)| super::tape(src) != **g).count();
         assert_eq!(differ, 0);
+    }
+
+    /// Spike: the words the interpreter runs over the corpus, by opcode and mode, per token.
+    #[test]
+    #[ignore = "a spike's measurement"]
+    fn rr_words_run() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let c = super::compiled().expect("compiles");
+        let program = &c.program;
+        let block = &program.block_programs[0];
+        let files = corpus();
+        let mut tokens = 0usize;
+        let mut ok = 0usize;
+        rerail_compiler::stream::COUNTING.store(true, Relaxed);
+        for src in &files {
+            let run = block.run(src.as_bytes());
+            tokens += run.positions.first().map_or(0, |e| e.len());
+            ok += usize::from(rerail_compiler::stream::run(program, src.as_bytes(), &run).is_ok());
+        }
+        rerail_compiler::stream::COUNTING.store(false, Relaxed);
+        let names = |op: u8| rerail_compiler::rir_asm::OPCODES.iter().find(|n| n.0 == op).map_or("?", |n| n.1);
+        let mut rows: Vec<(u64, String)> = (0..256 * 8).filter_map(|i| {
+            let n = rerail_compiler::stream::COUNTS[i].load(Relaxed);
+            (n > 0).then(|| (n, format!("{} m={}", names((i / 8) as u8), i % 8)))
+        }).collect();
+        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        // Distinct words, by opcode: those whose operand only steers (targets, tables) apart.
+        let mut distinct: std::collections::BTreeMap<&str, std::collections::BTreeSet<(u8, u16)>> = Default::default();
+        for &w in &program.words {
+            let (op, mode, operand) = rerail_compiler::program::split(w);
+            distinct.entry(names(op)).or_default().insert((mode, operand));
+        }
+        eprintln!("{} words; distinct (mode, operand) by opcode:", program.words.len());
+        for (k, v) in &distinct {
+            eprintln!("  {k:<10} {:>5}", v.len());
+        }
+        let total: u64 = rows.iter().map(|r| r.0).sum();
+        eprintln!("{} files ({ok} parsed), {tokens} tokens, {total} words run: {:.2} a token, {} kinds", files.len(), total as f64 / tokens as f64, rows.len());
+        for (n, k) in rows {
+            eprintln!("  {k:<14} {n:>10} {:>6.2} a token", n as f64 / tokens as f64);
+        }
     }
 
     /// Tier 2's words by operation, and its state machine's size: what makes the function big.

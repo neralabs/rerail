@@ -224,6 +224,10 @@ fn next_bit(words: &[u64], from: usize) -> Option<u32> {
 /// arm reads it (taken in order: the next set bit after the last one taken), and `EMPTY` reads
 /// the totals. It executes the words only; the tables it reads
 /// are the program's switches, strings and checks.
+/// Spike: the words run, by opcode and mode (`COUNTING` on).
+pub static COUNTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static COUNTS: [std::sync::atomic::AtomicU64; 256 * 8] = [const { std::sync::atomic::AtomicU64::new(0) }; 256 * 8];
+
 pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Result<Vec<Node>, Refused> {
     let words = &program.words;
     let stream = |op: u8, m: u8| words.iter().map(|&w| split(w)).find(|&(o, mm, _)| o == op && mm == m).map(|(_, _, x)| usize::from(x));
@@ -272,8 +276,12 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
     // The level's flags (`FLAG`), a bit each: the caller's come back where a call returns.
     let mut flags: u16 = 0;
     let refuse = |pc: usize, why: &'static str| Err(Refused { pc, why });
+    let counting = COUNTING.load(std::sync::atomic::Ordering::Relaxed);
     loop {
         let (opcode, mode, operand) = split(words[pc]);
+        if counting {
+            COUNTS[usize::from(opcode) * 8 + usize::from(mode.min(7))].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         pc += 1;
         match opcode {
             TOKEN if !need => {}

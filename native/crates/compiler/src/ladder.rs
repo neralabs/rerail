@@ -531,6 +531,8 @@ pub fn check_shape(name: &str, c: &Compiled) {
     for (b, step) in heads {
         let ok = match step {
             Step::Token | Step::Block | Step::Return => true,
+            // Spike: a dispatched tier 2's words (`RERAIL_TIER2_DISPATCH`).
+            Step::Word => true,
             // The table's final pass (parents, extras), and the wraps' placing.
             Step::Node => true,
             Step::File | Step::Bits | Step::Round => false,

@@ -35,6 +35,9 @@ pub enum Step {
     Round,
     Node,
     Return,
+    /// Spike (dispatched tier 2): a word's handler, or the dispatch on the word's place. The
+    /// stream verifier refuses a cycle of words without a `TOKEN` or `RETURN`.
+    Word,
 }
 
 /// Why a function was refused.
