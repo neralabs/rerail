@@ -1,0 +1,64 @@
+Stratum rr_agg59  [engine: native set engine]  (loops=391, planning 0.006 s CPU)
+  why: every rule has a native step: component prog_rr_agg59, 1 seed joins, 0 delta probes, 0 gates; inputs read in place, derived relations held in memory
+  -> rule #0218 (seed rr_agg59)  (est work=34798 rows=21869.6) (loops=391 replans=0)  search: 0 subsets, 4 candidates; planning 0.006 s
+        1. rr_inside_ks7($s, $p)                        scan                           input                est      310380  actual 391 -> 24793868
+        2. $p < 6917529027641081856                     filter                                              est      155190  actual 24793868 -> 24793868
+        3. $s < 6917529027641081856                     filter                                              est       77595  actual 24793868 -> 24793868
+        4. bound_in($p, $x)                             lookup on (c0)                 derived              est    23387396  actual 24793868 -> 1342302187
+Stratum rr_in_annotation_1_rr_agg59  [engine: native set engine]  (loops=391, planning 0.008 s CPU)
+  why: every rule has a native step: component prog_rr_in_annotation_1_rr_agg59, 1 seed joins, 0 delta probes, 0 gates; inputs read in place, derived relations held in memory
+  -> rule #0345 (seed rr_in_annotation_1_rr_agg59)  (est work=108163 rows=87478.5) (loops=391 replans=0)  search: 0 subsets, 2 candidates; planning 0.008 s
+        1. rr_inside_ks7($s, $p)                        scan                           input                est      310380  actual 391 -> 24793868
+        2. rr_in_annotation_0_bound_in($p, $x)          lookup on (c0)                 derived              est    93549585  actual 24793868 -> 1342302187
+Stratum unbound_ref  [engine: native set engine]  (loops=391, planning 0.045 s CPU)
+  why: every rule has a native step: component prog_unbound_ref, 6 seed joins, 0 delta probes, 0 gates; inputs read in place, derived relations held in memory
+  -> rule #0219 (seed unbound_ref)  (est work=149 rows=5.3) (loops=391 replans=0)  search: 0 subsets, 11 candidates; planning 0.010 s
+        1. kind($s, 1132)                               lookup on (c1)                 view of an input     est          40  actual 391 -> 5725
+        2. look($n, $x, $s)                             lookup on (c2)                 derived              est       35008  actual 5725 -> 839700
+        3. $x != 120                                    filter                                              est       17504  actual 839700 -> 839700
+        4. $x != 117                                    filter                                              est        8752  actual 839700 -> 839700
+        5. $rr_agg55 = count { rr_agg56(_, $n, $s, $x) … aggregate                                           est        8752  actual 839700 -> 839700
+        6. 0 = $rr_agg55                                assign or test                                      est        8752  actual 839700 -> 794035
+        7. $rr_agg58 = count { rr_agg59(_, $s, $x) }    aggregate                                           est        8752  actual 794035 -> 794035
+        8. 0 = $rr_agg58                                assign or test                                      est        8752  actual 794035 -> 794035
+        9. !annotated_on_chain($n, $x)                  anti-join on (c0, c1)          derived              est        4376  actual 794035 -> 793856
+       10. load_ref($n, $x)                             membership on (c0, c1)         derived              est        2649  actual 793856 -> 661051
+       11. rr_nearest_ks14($n, $s)                      membership on (n, a)           input                est        1779  actual 661051 -> 22
+  -> rule #0306 (seed unbound_ref)  (est work=149 rows=5.3) (loops=391 replans=0)  search: 0 subsets, 11 candidates; planning 0.008 s
+        1. kind($s, 1132)                               lookup on (c1)                 view of an input     est          40  actual 391 -> 5725
+        2. rr_in_annotation_2_look($n, $x, $s)          lookup on (c2)                 derived              est       35008  actual 5725 -> 839700
+        3. $x != 120                                    filter                                              est       17504  actual 839700 -> 839700
+        4. $x != 117                                    filter                                              est        8752  actual 839700 -> 839700
+        5. $rr_agg55 = count { rr_agg56(_, $n, $s, $x) … aggregate                                           est        8752  actual 839700 -> 839700
+        6. 0 = $rr_agg55                                assign or test                                      est        8752  actual 839700 -> 794035
+        7. $rr_agg58 = count { rr_in_annotation_1_rr_ag… aggregate                                           est        8752  actual 794035 -> 794035
+        8. 0 = $rr_agg58                                assign or test                                      est        8752  actual 794035 -> 794035
+        9. !annotated_on_chain($n, $x)                  anti-join on (c0, c1)          derived              est        4376  actual 794035 -> 793856
+       10. rr_in_annotation_0_load_ref($n, $x)          membership on (c0, c1)         derived              est        2649  actual 793856 -> 661051
+       11. rr_nearest_rr_in_annotation_ks14($n, $s)     membership on (n, a)           input                est        1779  actual 661051 -> 22
+  -> rule #0220 (seed unbound_ref)  (est work=862 rows=0.7) (loops=391 replans=0)  search: 0 subsets, 11 candidates; planning 0.007 s
+        1. load_ref($n, $x)                             scan                           derived              est        8331  actual 391 -> 2448355
+        2. $x != 120                                    filter                                              est        4166  actual 2448355 -> 2448339
+        3. $x != 117                                    filter                                              est        2083  actual 2448339 -> 2448283
+        4. !annotated_on_chain($n, $x)                  anti-join on (c0, c1)          derived              est        1041  actual 2448283 -> 2447310
+        5. look($n, $x, $s)                             lookup on (c0, c1)             derived              est          10  actual 2447310 -> 1701620
+        6. $rr_agg55 = count { rr_agg56(_, $n, $s, $x) … aggregate                                           est          10  actual 1701620 -> 1701620
+        7. 0 = $rr_agg55                                assign or test                                      est          10  actual 1701620 -> 730380
+        8. $rr_agg58 = count { rr_agg59(_, $s, $x) }    aggregate                                           est          10  actual 730380 -> 730380
+        9. 0 = $rr_agg58                                assign or test                                      est          10  actual 730380 -> 725605
+       10. rr_nearest_ks14($n, $s)                      membership on (n, a)           input                est        7.15  actual 725605 -> 96
+       11. kind($s, 1178)                               membership on (c0, c1)         view of an input     est        7.15  actual 96 -> 0
+  -> rule #0215 (seed unbound_ref)  (est work=333 rows=52.0) (loops=391 replans=0)  search: 0 subsets, 3 candidates; planning 0.008 s
+        1. miss($n, $x)                                 scan                           derived              est        3094  actual 391 -> 554901
+        2. !annotated_on_chain($n, $x)                  anti-join on (c0, c1)          derived              est        1547  actual 554901 -> 541230
+        3. load_ref($n, $x)                             membership on (c0, c1)         derived              est         913  actual 541230 -> 360037
+  -> rule #0303 (seed unbound_ref)  (est work=333 rows=52.0) (loops=391 replans=0)  search: 0 subsets, 3 candidates; planning 0.004 s
+        1. miss($n, $x)                                 scan                           derived              est        3094  actual 391 -> 554901
+        2. !annotated_on_chain($n, $x)                  anti-join on (c0, c1)          derived              est        1547  actual 554901 -> 541230
+        3. rr_in_annotation_0_load_ref($n, $x)          membership on (c0, c1)         derived              est         913  actual 541230 -> 360037
+  -> rule #0307 (seed unbound_ref)  (est work=862 rows=0.7) (loops=391 replans=0)  search: 0 subsets, 11 candidates; planning 0.007 s
+        1. rr_in_annotation_0_load_ref($n, $x)          scan                           derived              est        8331  actual 391 -> 2448355
+        2. $x != 120                                    filter                                              est        4166  actual 2448355 -> 2448339
+        3. $x != 117                                    filter                                              est        2083  actual 2448339 -> 2448283
+        4. !annotated_on_chain($n, $x)                  anti-join on (c0, c1)          derived              est        1041  actual 2448283 -> 2447310
+        5. rr_in_annotation_2_look($n, $x, $s)          lookup on (c0, c1)             derived              est          10  actual 2447310 -> 1701620

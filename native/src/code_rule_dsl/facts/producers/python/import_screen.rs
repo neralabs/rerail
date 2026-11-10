@@ -62,10 +62,11 @@ impl Imports {
             Fact::Unknown(_) | Fact::Unsupported(_) => return true,
             Fact::Known(chain) => chain,
         };
-        if self.opaque {
-            return true;
-        }
-        let (head, tail) = (chain.head, chain.attributes);
+        self.may_qualify_parts(chain.head,chain.attributes,wanted_imports,wanted_globals,module)
+    }
+    pub(crate) fn may_qualify_parts(&self,head:String,tail:Vec<String>,wanted_imports:&BTreeSet<String>,wanted_globals:&BTreeSet<String>,module:Option<&ModulePath>)->bool {
+        if self.opaque { return true; }
+
         if tail.is_empty()
             && (wanted_globals.contains(&head)
                 || wanted_globals
@@ -304,6 +305,10 @@ mod tests {
                 imports.observe(&node, module);
             }
         }
+        let facts=crate::code_rule_dsl::facts::core::from_tape(root.root().get_doc(),Arc::new(crate::code_rule_dsl::lines::LineTable::new(root.root().get_doc().file_source(),crate::code_rule_dsl::lines::Terminators::of(GrammarDialect::Python)))).unwrap();
+        let core=Imports::from_core(&facts,&GrammarDialect::Python.kinds(),module);
+        assert_eq!(core.bindings,imports.bindings,"core/tape import facts differ");
+        assert_eq!(core.opaque,imports.opaque,"core/tape uncertainty differs");
         imports
     }
     fn assert_necessary(
@@ -495,5 +500,70 @@ mod tests {
             ),
             "native prefix options are overadmitted"
         );
+    }
+}
+
+/// The same conservative import screen over existing core facts. No tape restoration or scope table.
+impl Imports {
+    pub(crate) fn from_core(f: &crate::code_rule_dsl::facts::core::Facts, catalog: &crate::code_rule_dsl::language::KindCatalog, module: Option<&ModulePath>) -> Self {
+        use crate::code_rule_dsl::facts::core::{kind_atom, kind_code, facts_tag};
+        let kind = |n: u32| catalog.kind_name(kind_code(f.kind[n as usize])).unwrap_or("");
+        let named = |n: u32| f.flags[n as usize] & 1 != 0 && !matches!(kind(n), "comment" | "line_continuation");
+        let field = |n: u32, name: &str| catalog.field_id(name).and_then(|id| f.children(n).iter().copied().find(|&c| f.field[c as usize] == id));
+        let ident = |n: u32| (kind(n)=="identifier").then(|| crate::code_rule_dsl::identifier::python_name(f.text(n).into()).into_owned());
+        let dotted = |n: u32| -> Option<String> {
+            if kind(n)!="dotted_name" { return None; }
+            let parts=f.children(n).iter().copied().filter(|&c|named(c)).map(ident).collect::<Option<Vec<_>>>()?;
+            (!parts.is_empty()).then(||parts.join("."))
+        };
+        let binding = |n:u32| -> Option<(String,String)> {
+            match kind(n) {
+                "dotted_name" => dotted(n).map(|s|(s.clone(),s)),
+                "aliased_import" => Some((dotted(field(n,"name")?)?,ident(field(n,"alias")?)?)),
+                _=>None,
+            }
+        };
+        let mut out=Self::default();
+        out.opaque=f.syntax_errors;
+        for name in ["import_statement","import_from_statement","future_import_statement"] {
+            let code=catalog.kind_id(name); if code==0 {continue;}
+            for &n in f.of_kind(kind_atom(facts_tag(f),code)) {
+                if name=="import_statement" {
+                    for c in f.children(n).iter().copied().filter(|&c|named(c)) {
+                        match kind(c) {
+                            "dotted_name" => match dotted(c).and_then(|s|s.split('.').next().map(str::to_owned)) {
+                                Some(head)=>out.add(head.clone(),Prefix::Qualified(head)), None=>out.opaque=true,
+                            },
+                            "aliased_import"=>match binding(c) {Some((q,a))=>out.add(a,Prefix::Qualified(q)),None=>out.opaque=true},
+                            _=>out.opaque=true,
+                        }
+                    }
+                    continue;
+                }
+                let module_node=field(n,"module_name");
+                let prefix=match module_node {
+                    Some(m) if kind(m)=="dotted_name"=>dotted(m).map(Prefix::Qualified),
+                    Some(m) if kind(m)=="relative_import"=> {
+                        let level=f.text(m).chars().take_while(|c|*c=='.'||c.is_whitespace()).filter(|c|*c=='.').count();
+                        let rest=f.children(m).iter().copied().find(|&c|kind(c)=="dotted_name").map(dotted).unwrap_or(Some(String::new()));
+                        rest.filter(|_|level!=0).map(|rest|Prefix::Relative{level,rest})
+                    },
+                    None=>Some(Prefix::Qualified("__future__".into())), _=>None,
+                };
+                let Some(prefix)=prefix else {out.opaque=true;continue;};
+                for c in f.children(n).iter().copied().filter(|&c|named(c)&&Some(c)!=module_node) {
+                    let Some((q,a))=binding(c) else {out.opaque=true;continue;};
+                    let imported=match &prefix {
+                        Prefix::Qualified(p)=>Prefix::Qualified(join(p,&[q])),
+                        Prefix::Relative{level,rest}=> {
+                            if module.is_none(){out.opaque=true;}
+                            Prefix::Relative{level:*level,rest:if rest.is_empty(){q}else{format!("{rest}.{q}")}}
+                        }
+                    };
+                    out.add(a,imported);
+                }
+            }
+        }
+        out
     }
 }

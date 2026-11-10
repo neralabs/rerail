@@ -29,6 +29,8 @@ use std::{
 };
 pub(in crate::code_rule_dsl) mod schema;
 pub(in crate::code_rule_dsl) mod syntax;
+mod python;
+pub(crate) mod demand;
 
 /// `idx_num` of a filter on several `=` columns, listed in `idx_str`.
 const MULTI: c_int = 1 << 22;
@@ -49,6 +51,7 @@ pub(crate) trait RowCells: Send+Sync {
 pub(crate) struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub(crate) trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
 pub(crate) trait Source: Send + Sync {
+    fn python_batch(&self) -> Option<Arc<syntax::Batch>> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
     fn direct_all(&self,_equal:&[(usize,i64)])->Option<Vec<ReadRow>> {None}
     fn direct_one(&self,_column:usize,_values:&[i64])->Option<Vec<ReadRow>> {None}
@@ -278,6 +281,7 @@ impl Modules {
             stats: Arc::new(Counters::default()),
         };
         register(db, name, binding.clone(), restored)?;
+        if name == "node" { python::register(db, &binding)?; demand::register(db)?; }
         BOUND.lock().insert((connection_scope(db), name.to_owned()), binding.clone());
         bindings.insert(name.into(), binding);
         Ok(())
@@ -339,6 +343,18 @@ static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Bi
 /// The source bound now to the table `name` on `db`'s connection, if one is.
 pub(crate) fn bound_source(db: &Connection, name: &str) -> Option<Arc<dyn Source>> {
     BOUND.lock().get(&(unsafe { db.handle() } as usize, name.to_owned())).map(Binding::current)
+}
+
+/// Rebind through the existing cell so its owning Modules and prepared cursors agree.
+pub(crate) fn replace_bound_source(db:&Connection,name:&str,source:Arc<dyn Source>)->Result<bool>{
+    let binding=BOUND.lock().get(&(unsafe{db.handle()} as usize,name.to_owned())).cloned();
+    if let Some(binding)=binding{binding.set(source)?;Ok(true)}else{Ok(false)}
+}
+
+/// SQL cursor work, by bound input. Snapshot differences attribute fused query work to its leaves.
+pub(crate) fn counters(db:&Connection)->BTreeMap<String,[u64;4]> {
+    let scope=unsafe{db.handle()} as usize;
+    BOUND.lock().iter().filter(|((s,_),_)|*s==scope).map(|((_,name),b)|(name.clone(),[b.stats.scans.load(Ordering::Relaxed),b.stats.batches.load(Ordering::Relaxed),b.stats.candidates.load(Ordering::Relaxed),b.stats.columns.load(Ordering::Relaxed)])).collect()
 }
 
 #[repr(C)]
@@ -814,6 +830,8 @@ unsafe impl VTabCursor for Cursor {
             let column = (index / 2 - 1) as usize;
             let mut values = Vec::new();
             if batch {
+                #[cfg(test)]
+                let _span=crate::code_rule_dsl::logic::profile::span(|| "SQL IN key decode".into());
                 stats.batches.fetch_add(1, Ordering::Relaxed);
                 let mut iter = args.in_values(0)?;
                 while let Some(value) = iter.next()? {
@@ -824,6 +842,8 @@ unsafe impl VTabCursor for Cursor {
             } else {
                 values.extend(integer(&args.get::<Value>(0)?));
             }
+            #[cfg(test)]
+            let _span=batch.then(||crate::code_rule_dsl::logic::profile::span(|| "SQL IN index lookup".into()));
             self.direct=self.source.direct_one(column,&values);
             if self.direct.is_none() {self.selected = self.source.lookup(column, &values);}
         }
@@ -945,6 +965,8 @@ impl Source for Relation {
         Some(rows[self.between(column, lo, hi)].iter().map(|&r| r as usize).collect())
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        #[cfg(test)]
+        if let Some(rows) = lookup_spike::selected(self, column, values) { return Some(rows); }
         let rows = &self.index(column).rows;
         Some(values.iter().flat_map(|&v| rows[self.between(column, v, v)].iter().map(|&r| r as usize)).collect())
     }
@@ -962,3 +984,6 @@ mod s_relation;
 mod p_table;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod lookup_spike;

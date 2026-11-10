@@ -1858,6 +1858,7 @@ fn run_observed(
             prog = front::prune(prog);
             // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
             crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
+            prog = front::prune(prog);
             // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
             let (mut prog, demanded) = crate::code_rule_dsl::logic::magic::demand_negated_tests(prog);
             drop(preparing);
@@ -3540,7 +3541,7 @@ fn run_observed(
                 entries.get_mut(&f).expect("checked").rows.entry(rel.to_owned()).or_insert_with(|| (width, Vec::new())).1.extend(values);
             }
         };
-        db.execute_batch("BEGIN")?;
+        // Exports remain in native memory; this boundary performs no SQL writes.
         for rel in split.exports.iter().filter(|r| !handed.contains(*r)) {
             // Rows another chunk wrote too (a file-local relation without a location column) are kept once. A kept
             // export goes from the engine to `x` in one statement and is measured in place; one a SQL stratum
@@ -3565,7 +3566,6 @@ fn run_observed(
                 }
             }
         }
-        db.execute_batch("COMMIT")?;
         // The semi-join: of each deferred base relation, the rows whose node an export row holds.
         for (rel, source, pairs) in std::mem::take(&mut deferred) {
             let have = source.columns();
@@ -5447,7 +5447,7 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
 /// `RDL_STMTS=<file>`: also each statement's cost at its end (`SQLITE_TRACE_PROFILE`): its time and SQLite's own
 /// counters (VM steps, full-scan steps, sorts, automatic-index rows), summed by statement text and written to `<file>`
 /// as tab-separated rows (phase, runs, ms, vm steps, full-scan steps, sorts, autoindex rows, text).
-struct Statements {
+pub(super) struct Statements {
     db: *mut rusqlite::ffi::sqlite3,
     state: Box<StatementState>,
     /// The profile's span of the phase entered last (`logic::profile`).
@@ -5460,7 +5460,7 @@ struct StatementState {
     costs: Option<parking_lot::Mutex<HashMap<(&'static str, String), [u64; 6]>>>,
 }
 impl Statements {
-    fn on(db: &Connection) -> Self {
+    pub(super) fn on(db: &Connection) -> Self {
         use rusqlite::ffi;
         unsafe extern "C" fn trace(event: u32, state: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
             // SAFETY: the state outlives the callback (removed on drop).
@@ -5511,7 +5511,7 @@ impl Statements {
         unsafe { ffi::sqlite3_trace_v2(db, mask, Some(trace), std::ptr::from_ref(&*state).cast_mut().cast()) };
         Statements { db, state, span: Default::default() }
     }
-    fn count(&self) -> usize {
+    pub(super) fn count(&self) -> usize {
         self.state.count.load(std::sync::atomic::Ordering::Relaxed)
     }
     /// The phase the statements from now on are charged to.

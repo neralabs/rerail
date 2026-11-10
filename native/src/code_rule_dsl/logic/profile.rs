@@ -33,6 +33,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
+mod analysis;
+mod analysis_report;
 mod kinds;
 mod memory;
 mod roofline;
@@ -1273,6 +1275,11 @@ pub(in crate::code_rule_dsl) fn open_spans() -> String {
     r
 }
 
+/// Record why expensive input relations are requested, before projection planning.
+pub(in crate::code_rule_dsl) fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads: &std::collections::BTreeSet<String>) {
+    if on() { analysis_report::projection(prog, reads); }
+}
+
 /// The report, and the tables, into `dir`. `header`: what was run (lines put first).
 pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
@@ -1313,6 +1320,11 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     // The report.
     let mut r = String::new();
     r.push_str(header);
+    let (analysis_text, analysis_json) = analysis_report::report(&state);
+    std::fs::write(dir.join("analysis.txt"), &analysis_text)?;
+    std::fs::write(dir.join("analysis.json"), serde_json::to_vec_pretty(&analysis_json)?)?;
+    r.push('\n');
+    r.push_str(&analysis_text);
     fallbacks(&mut r, &state);
     hazards(&mut r, &state);
     placements(&mut r, &state);
@@ -1503,7 +1515,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     }
     for ((p, text), s) in &sql {
         if s.autoindex > 0 {
-            let _ = writeln!(r, "- automatic index ({} rows) built for a statement in {p}: an index is missing.\n    {}", s.autoindex, short(text, 300));
+            let _ = writeln!(r, "- automatic index ({} rows) built for a statement in {p}: inspect demand selectivity and join order before adding an index.\n    {}", s.autoindex, short(text, 300));
             warned += 1;
         }
         if s.vm > 0 && s.scan * 2 > s.vm && s.vm > 1_000_000 {

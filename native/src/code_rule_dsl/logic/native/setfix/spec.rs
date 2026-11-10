@@ -101,7 +101,7 @@ pub struct JoinSpec {
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
 /// (`base`), plus its table's rows when `seeded`. A `base` with no relation gone (`-`) is a copy of the kept
 /// relation, its levels with it (decision 0090's `h__live`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Start {
     Rows,
     Empty,
@@ -111,7 +111,7 @@ pub enum Start {
 }
 
 /// An edge rule (`rule …`): see the module's spec.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EdgeSpec {
     pub head: usize,
     pub src: usize,
@@ -124,7 +124,7 @@ pub struct EdgeSpec {
 }
 
 /// One spec line, after `name`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Line {
     Rel { name: String, types: String, start: Start },
     NoWrite,
@@ -146,14 +146,14 @@ pub enum Line {
 }
 
 /// A component: its name, then its lines in order (relations are numbered in order, probes are numbered in order).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ComponentSpec {
     pub name: String,
     pub lines: Vec<Line>,
 }
 
 /// A probe's new body (`reprobe`): SQL, a join, or the join it runs in the wave whose delta is the whole relation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Reprobe {
     Sql(String),
     Join(Arc<JoinSpec>),

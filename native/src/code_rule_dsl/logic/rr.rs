@@ -11,6 +11,7 @@
 //! A file read with `parse_file` has `core.rr` before it, included or not.
 
 mod check;
+mod aggregate_demand;
 mod from_tape;
 mod lower;
 mod print;

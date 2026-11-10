@@ -49,6 +49,11 @@ impl Family {
 
 /// A document's lines: where each starts and where its text ends (before its terminator).
 pub(super) struct Lines {
+    source: std::sync::Arc<String>,
+    python: bool,
+    index: std::sync::OnceLock<LineIndex>,
+}
+struct LineIndex {
     starts: Vec<u32>,
     ends: Vec<u32>,
 }
@@ -84,6 +89,19 @@ impl Lines {
     /// line's text. A last line without a terminator counts when it is not empty (Python) or always (the others,
     /// so an empty file has one empty line, as `split('\n')` gives).
     pub(super) fn new(src: &str, python: bool) -> Self {
+        // A borrowed, one-shot source is indexed immediately without copying its text.
+        Self { source: std::sync::Arc::new(String::new()), python, index: std::sync::OnceLock::from(Self::build(src, python)) }
+    }
+    pub(super) fn shared(source: std::sync::Arc<String>, python: bool) -> Self {
+        Self { source, python, index: Default::default() }
+    }
+    fn index(&self) -> &LineIndex {
+        self.index.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "projection lines".into());
+            Self::build(&self.source, self.python)
+        })
+    }
+    fn build(src: &str, python: bool) -> LineIndex {
         let b = src.as_bytes();
         let (mut starts, mut ends) = (vec![0u32], Vec::new());
         let mut i = 0;
@@ -117,25 +135,25 @@ impl Lines {
         if starts.is_empty() {
             starts.push(0);
         }
-        Lines { starts, ends }
+        LineIndex { starts, ends }
     }
     /// Physical lines, as `src_line` numbers them.
     pub(super) fn count(&self) -> usize {
-        self.ends.len()
+        self.index().ends.len()
     }
     /// Line `l`'s text, `[start, end)`, from 1.
     pub(super) fn span(&self, l: usize) -> [u32; 2] {
-        [self.starts[l - 1], self.ends[l - 1]]
+        [self.index().starts[l - 1], self.index().ends[l - 1]]
     }
     /// The 1-based line holding byte `at`.
     pub(super) fn line(&self, at: u32) -> u32 {
-        self.starts.partition_point(|&s| s <= at).max(1) as u32
+        self.index().starts.partition_point(|&s| s <= at).max(1) as u32
     }
     /// A span's first line, last line (of its last character) and 0-based start column (bytes).
     pub(super) fn place(&self, [start, end]: [u32; 2]) -> (u32, u32, u32) {
         let line = self.line(start);
         let last = if end > start { self.line(end - 1) } else { line };
-        (line, last, start - self.starts[line as usize - 1])
+        (line, last, start - self.index().starts[line as usize - 1])
     }
 }
 
@@ -479,7 +497,7 @@ pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
     if dialect.family == Family::Rr {
         return f.syntax_errors.then(|| crate::code_rule_dsl::logic::rr::syntax_error(&f.source)).flatten().map(|(line, message)| (line as u32, message));
     }
-    first_error(f, &Lines::new(&f.source, dialect.family == Family::Python), &|id| dialect.name(f, id))
+    first_error(f, &Lines::shared(std::sync::Arc::clone(&f.source), dialect.family == Family::Python), &|id| dialect.name(f, id))
 }
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
@@ -692,18 +710,18 @@ impl CoreRows {
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
     /// its tokens.
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool) {
+    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
             let source = p.len() + x.tokens;
-            self.source.push([key, p.global(source)]);
-            for l in 1..=x.lines.count() {
-                self.src_line.push([key, l as i64, p.global(source + l as u32)]);
+            if projection.wants("source") { self.source.push([key, p.global(source)]); }
+            if projection.wants("src_line") {
+                for l in 1..=x.lines.count() { self.src_line.push([key, l as i64, p.global(source + l as u32)]); }
             }
-            self.line_count.push([key, x.lines.count() as i64]);
+            if projection.wants("line_count") { self.line_count.push([key, x.lines.count() as i64]); }
             if wants_split_lines {
                 for (i, line) in Lines::split_python(&f.source).enumerate() {
                     self.split_line.push([key, (i + 1) as i64, string(line) as i64]);
@@ -718,10 +736,11 @@ impl CoreRows {
         drop(lines_span);
         let text_span = crate::code_rule_dsl::logic::profile::span(|| "span text".into());
         if wants_text {
-            for (i, &[a, b]) in x.spans.iter().enumerate() {
+            for i in 0..(p.locs() - p.len()) as usize {
+                let [a, b] = p.span(p.len() + i as u32);
                 let requested_container = (wants_source_text && i == x.tokens as usize)
                     || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
-                if requested_container || i < x.tokens as usize || i >= x.matched as usize || (b - a) as usize <= TEXT_INLINE {
+                if requested_container || i < x.tokens as usize || i >= x.matched() as usize || (b - a) as usize <= TEXT_INLINE {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }
@@ -740,7 +759,7 @@ impl CoreRows {
             })
             .collect();
         toks.extend((0..x.tokens).map(|i| {
-            let [a, b] = x.spans[i as usize];
+            let [a, b] = p.span(p.len() + i);
             (a, b, p.global(p.len() + i))
         }));
         toks.sort_unstable();
@@ -821,8 +840,8 @@ impl CoreRows {
                 progressed = true;
                 let pat = string(pattern) as i64;
                 let (containers, memo): (Vec<([u32; 2], u32)>, bool) = match within {
-                    SpanIn::Source => (vec![(x.spans[source as usize], base + source)], false),
-                    SpanIn::Line => ((1..=x.lines.count() as u32).map(|l| (x.spans[(source + l) as usize], base + source + l)).collect(), true),
+                    SpanIn::Source => (vec![([0, src.len() as u32], base + source)], false),
+                    SpanIn::Line => ((1..=x.lines.count() as u32).map(|l| (x.lines.span(l as usize), base + source + l)).collect(), true),
                     SpanIn::Comment => (comments.clone(), true),
                     SpanIn::Kind(k) => (of_kind.get(k.as_str()).cloned().unwrap_or_default(), true),
                     SpanIn::Capture(from, g) => (captured.get(&(from.as_str(), g.as_str())).cloned().unwrap_or_default(), true),
@@ -856,8 +875,8 @@ impl CoreRows {
                     };
                     for &(j, g, s0, e0) in found.iter() {
                         let name = names[g as usize].expect("a named group");
-                        let id = base + x.spans.len() as u32;
-                        x.spans.push([a + s0, a + e0]);
+                        let id = base + x.matched() + x.matches.len() as u32;
+                        x.matches.push([a + s0, a + e0]);
                         self.rx_span.push([pat, cid, i64::from(j), string(name) as i64, Projected::id(p.key, &p.defs, id)]);
                         captured.entry((pattern, name)).or_default().push(([a + s0, a + e0], id));
                     }
