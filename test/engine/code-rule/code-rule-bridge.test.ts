@@ -1137,6 +1137,28 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(await gitReads(bothWalks)).toEqual({ heads: 3, entries: 0 });
   });
 
+  it("audits a shell edit of a file a modify/delete conflict left as it was, in a checkout inside a session folder that another worktree's folder holds", async () => {
+    // The session is in a worktree kept inside the main checkout, which is then one of its other worktrees.
+    const main = await twoBranches();
+    git(main, "worktree", "add", "--quiet", "wt", "other");
+    const root = await realpath(join(main, "wt"));
+    const nested = join(root, "lib");
+    await modifyDeleteBranches(nested, false);
+    await awaitClockAfter(join(nested, "src", "gone.py"));
+    const within = (folder: string, path: string) => resolve(root, path).startsWith(`${folder}${sep}`);
+    const { bridge, auditGeneratedEdits } = await opened(root, {
+      sourceRoot: path => within(nested, path) ? nested : within(root, path) ? root : main,
+      worktreeRoots: () => [main],
+    });
+    // The checkout is the session folder's walk's, though it lies in the main checkout's folder too.
+    await shellInWorktree(bridge, stopMerge(nested));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shellInWorktree(bridge, () => writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path: "lib/src/gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], undefined],
+    ]);
+  });
+
   it("audits a shell write in a worktree in a folder the session's checkout ignores", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(root, ".ignored", "w"));
