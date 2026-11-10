@@ -101,6 +101,11 @@ fn native_records(
 }
 
 fn tape_records(tape: &TapeDoc) -> Vec<NodeRecord> {
+    // Node ids are record indexes or token ids (RER-131); the native side numbers nodes by their
+    // place in preorder, so ids are mapped to it.
+    let order: std::collections::HashMap<usize, usize> =
+        tape.root_node().dfs().enumerate().map(|(at, node)| (node.node_id(), at)).collect();
+    let at = |node: TapeNode<'_>| order[&node.node_id()];
     tape.root_node()
         .dfs()
         .map(|node| NodeRecord {
@@ -110,7 +115,7 @@ fn tape_records(tape: &TapeDoc) -> Vec<NodeRecord> {
             extra: node.is_extra(),
             error: node.is_error(),
             missing: node.is_missing(),
-            field: tape.transducer_field(node.node_id() as u32),
+            field: node.field_id(),
             range: node.range(),
             start: {
                 let position = node.start_pos();
@@ -122,10 +127,10 @@ fn tape_records(tape: &TapeDoc) -> Vec<NodeRecord> {
                 let (line, column) = position.byte_point();
                 (line, column, node.range().end)
             },
-            parent: node.parent().map(|parent| parent.node_id()),
-            children: node.children().map(|child| child.node_id()).collect(),
-            next: node.next_sibling().map(|next| next.node_id()),
-            prev: node.prev().map(|prev| prev.node_id()),
+            parent: node.parent().map(at),
+            children: node.children().map(at).collect(),
+            next: node.next_sibling().map(at),
+            prev: node.prev().map(at),
             text: tape.get_node_text(&node).into_owned(),
         })
         .collect()

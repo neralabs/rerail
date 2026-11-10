@@ -1,7 +1,5 @@
 //! Test-only decision experiment. This module is absent from production builds.
 use super::*;
-use crate::code_rule_dsl::tape::{Grammar, TapeImage};
-use ast_grep_core::tree_sitter::StrDoc;
 use crate::code_rule_dsl::language::GrammarDialect as SupportLang;
 use std::time::Instant;
 
@@ -219,11 +217,10 @@ fn non_query_multiplicity_and_operand_errors_remain_observable() {
     }
 }
 
+/// The spike compares tree-sitter queries with native tree-sitter, anonymous nodes included: a
+/// tape that keeps every token as a record.
 fn document(source: &str) -> TapeDoc {
-    let grammar = Grammar::new(SupportLang::Python).unwrap();
-    let native = StrDoc::new(source, SupportLang::Python);
-    let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+    TapeDoc::every_node_for_test(SupportLang::Python, source)
 }
 
 fn repeated(words: Vec<u32>) -> Program {

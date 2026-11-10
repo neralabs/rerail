@@ -51,7 +51,8 @@ fn value_index_is_case_exact_grammar_agnostic_and_survives_edits_and_reopen() {
         .unwrap()
     };
     let indexed = rows(&store);
-    for term in ["Target", "target", "const", "42", "// spaced residue"] {
+    // `const` is a keyword the records leave out (RER-131): no value row.
+    for term in ["Target", "target", "42", "// spaced residue"] {
         assert!(
             indexed.iter().any(|(t, _, _)| t == term),
             "missing value {term}"
@@ -439,7 +440,7 @@ fn parallel_connections_do_not_share_a_global_page_cache_mutex() {
 fn incremental_reads_cover_overflows_without_full_columns_or_stale_cursors() {
     let store = store::Store::temporary().unwrap();
     let lang = GrammarDialect::TypeScript;
-    let source = "other(value);\n".repeat(12000) + "target(value);\n";
+    let source = "other(value);\n".repeat(14000) + "target(value);\n";
     let doc = document(&source, lang);
     let fid = store.put("a.ts", &doc).unwrap();
     assert!(doc.transducer_len() > 65535);

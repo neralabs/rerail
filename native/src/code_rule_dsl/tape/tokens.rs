@@ -990,7 +990,9 @@ pub(in crate::code_rule_dsl) fn fold(
 }
 
 /// The full tree of a named-only tree `nodes` (preorder, parents set): every default gap's tokens
-/// rebuilt from `source`. Sizes are unset; supertype memberships renumbered.
+/// rebuilt from `source`. Sizes are unset; supertype memberships renumbered. Tests only: it
+/// proves `fold` loses nothing; documents are never unfolded (t30 §1).
+#[cfg(test)]
 pub(in crate::code_rule_dsl) fn unfold(
     nodes: &[Pending],
     supertypes: &[(u32, u16)],

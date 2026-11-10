@@ -222,13 +222,15 @@ fn a_union_with_a_superset_of_every_branch_is_that_superset() {
 }
 
 /// The preorders the matcher accepts on `doc`, by a full walk.
+/// The records `matcher` matches, by preorder record index (rows' node ids; roots are named
+/// nodes, so a recognized token is never one).
 fn matches(doc: &TapeDoc, matcher: &AstMatcher) -> Vec<u32> {
     let root = AstGrep::doc(doc.clone());
     root.root()
         .dfs()
-        .enumerate()
-        .filter(|(_, node)| matcher.match_node(node.clone()).is_some())
-        .map(|(pre, _)| pre as u32)
+        .filter(|node| !node.get_inner_node().is_token())
+        .filter(|node| matcher.match_node(node.clone()).is_some())
+        .map(|node| node.node_id() as u32)
         .collect()
 }
 
@@ -389,7 +391,8 @@ fn regex_vocabulary_fills_once_follows_new_terms_and_dies_with_its_terms() {
     assert_eq!(count("SELECT count(*) FROM vocabulary_pending"), 0);
     // A new tape's new terms are pending until the next statement matches them.
     let second = put(&store, "let tarp = gamma;", lang);
-    assert_eq!(count("SELECT count(*) FROM vocabulary_pending WHERE term IN (SELECT atom FROM atoms WHERE value IN ('tarp','gamma','let'))"), 3);
+    // `let` is a keyword the records leave out (RER-131): no term.
+    assert_eq!(count("SELECT count(*) FROM vocabulary_pending WHERE term IN (SELECT atom FROM atoms WHERE value IN ('tarp','gamma','let'))"), 2);
     let tapes = [first, second];
     let selected = select_each(&store, lang, &tapes, &rules);
     for per_tape in &selected {

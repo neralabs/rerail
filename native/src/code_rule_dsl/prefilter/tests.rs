@@ -79,9 +79,12 @@ fn terms_are_case_exact_grammar_agnostic_and_die_with_their_tape() {
             .unwrap()
     };
     let indexed = rows(&store);
-    for term in ["Target", "target", "const", "42", "// spaced residue"] {
+    for term in ["Target", "target", "42", "// spaced residue"] {
         assert!(indexed.iter().any(|(t, _, _)| t == term), "missing value {term}");
     }
+    // A keyword the records leave out (RER-131) has no row: rules reach tokens through `tokens`,
+    // which the prefilter leaves unrestricted.
+    assert!(!indexed.iter().any(|(t, _, _)| t == "const"));
     assert!(!indexed.iter().any(|(t, _, _)| t == "TARGET"));
     for (text, kind, pre) in indexed {
         assert_eq!(text, doc.transducer_text_str(pre));
@@ -200,7 +203,7 @@ fn no_relation_stores_a_row_per_node() {
         nodes += doc.transducer_len();
     }
     for source in ["import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n"] {
-        nodes += put(&store, &source.repeat(50), GrammarDialect::Python).1.transducer_len();
+        nodes += put(&store, &source.repeat(500), GrammarDialect::Python).1.transducer_len();
     }
     assert!(nodes > 50_000, "{nodes}");
     let tables = store

@@ -664,8 +664,9 @@ fn named_only_documents_project_as_full_ones() {
         assert!(image.primary.is_named_only(), "{path}");
         let source = Arc::new(source.clone());
         let lines = || Arc::new(LineTable::new(&source, Terminators::of(lang)));
-        let full = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &image.primary, &|| false).unwrap();
-        let named = TapeDoc::restore_named(Arc::clone(&source), grammar, &image.primary, &|| false).unwrap();
+        let every = TapeImage::every_node_for_test(native.tree.root_node(), &grammar, &source).unwrap();
+        let full = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &every, &|| false).unwrap();
+        let named = TapeDoc::restore(Arc::clone(&source), grammar, &image.primary, &|| false).unwrap();
         assert!(named.transducer_len() < full.transducer_len(), "{path}: the records leave tokens out");
         for (doc, out) in [(full, &mut full_docs), (named, &mut named_docs)] {
             let facts = Arc::new(core::from_tape(&doc, lines()).unwrap());

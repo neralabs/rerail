@@ -18,8 +18,9 @@ const FILE: &str = "CREATE TABLE file (
 
 #[test]
 fn children_ancestors_and_spans_match_the_tape() {
-    // More than 65,535 nodes below the root, so sizes and parent deltas overflow to `sizb`/`parb`.
-    let source = format!("def f():\n    return [{}]\n", "x, ".repeat(40_000));
+    // More than 65,535 nodes below the root, so sizes and parent deltas overflow to `sizb`/`parb`
+    // (named nodes: the commas are not records, RER-131).
+    let source = format!("def f():\n    return [{}]\n", "x, ".repeat(70_000));
     let (doc, _) = document(&source, GrammarDialect::Python);
     let image = doc.index_image(&|| false).unwrap();
     assert!(!image.sizb.is_empty() && !image.parb.is_empty());

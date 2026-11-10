@@ -248,9 +248,6 @@ mod tests {
             let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
             let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
             let tape = TapeDoc::restore(Arc::new(source.to_owned()), Arc::clone(&grammar), &image, &|| false).unwrap();
-            // What the device reads: the document's full image (a tree-sitter tape is stored
-            // named-only and restored whole, RER-131).
-            assert!(image.is_named_only() == tape.restored_from_named_only());
             let bytes = tape.resident_parts().unwrap().0;
             let layout = layout(&bytes).unwrap();
             for column in [layout.code, layout.size, layout.base, layout.off, layout.tail] {

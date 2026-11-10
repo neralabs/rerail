@@ -271,8 +271,8 @@ fn node_answers<D: ast_grep_core::Doc>(root: ast_grep_core::Node<'_, D>, fields:
         .collect()
 }
 
-/// The first answer that differs between the full document (every node in its records, what
-/// readers read today) and the named-only one, if any; `None` where the source does not encode
+/// The first answer that differs between tree-sitter's tree as records (every node a record,
+/// `every_node_for_test`) and the named-only document, if any; `None` where the source does not encode
 /// named-only. (The full document is checked against tree-sitter's tree elsewhere; it differs in
 /// one way on purpose: tree-sitter also finds a hidden child's fields on its parent.)
 fn view_difference(lang: GrammarDialect, source: &str, field_stride: usize) -> Option<String> {
@@ -287,8 +287,9 @@ fn view_difference(lang: GrammarDialect, source: &str, field_stride: usize) -> O
     let language = grammar.kinds.grammar().unwrap().clone();
     let fields: Vec<&str> = (1..=language.field_count() as u16).filter_map(|id| language.field_name_for_id(id)).collect();
     let source = Arc::new(source.to_owned());
-    let full = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &image.primary, &|| false).unwrap();
-    let tape = TapeDoc::restore_named(source, grammar, &image.primary, &|| false).unwrap();
+    let every = TapeImage::every_node_for_test(native.tree.root_node(), &grammar, &source).unwrap();
+    let full = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &every, &|| false).unwrap();
+    let tape = TapeDoc::restore(source, grammar, &image.primary, &|| false).unwrap();
     assert!(tape.is_named_only_in_memory() && !full.is_named_only_in_memory());
     drop(native);
     let (native, tape) = (AstGrep::doc(full), AstGrep::doc(tape));

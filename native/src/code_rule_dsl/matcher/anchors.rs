@@ -45,13 +45,15 @@ impl<'tree> AnchorCursor<'tree> for tree_sitter::TreeCursor<'tree> {
 
 pub(in crate::code_rule_dsl) struct TapeCursor<'tree>(crate::code_rule_dsl::tape::TapeNode<'tree>);
 
+// The tape's records only: rules root at named nodes, and a named-only tape's tokens are not
+// records (RER-131), so the index never recognizes them.
 impl<'tree> AnchorCursor<'tree> for TapeCursor<'tree> {
     type Node = crate::code_rule_dsl::tape::TapeNode<'tree>;
     fn current(&self) -> Self::Node {
         self.0
     }
     fn first_child(&mut self) -> bool {
-        if let Some(child) = self.0.child(0) {
+        if let Some(child) = self.0.first_record() {
             self.0 = child;
             true
         } else {
@@ -59,7 +61,7 @@ impl<'tree> AnchorCursor<'tree> for TapeCursor<'tree> {
         }
     }
     fn next_sibling(&mut self) -> bool {
-        if let Some(next) = self.0.next_sibling() {
+        if let Some(next) = self.0.next_record() {
             self.0 = next;
             true
         } else {
@@ -100,7 +102,7 @@ impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
         TapeCursor(self)
     }
     fn child_count(self) -> usize {
-        self.children().len()
+        self.record_count()
     }
 }
 
@@ -803,45 +805,55 @@ where
                 return index;
             }
             let kind = node.kind_id();
-            let ordinal = index.entries.len();
-            let previous = last_children.last().and_then(|(last, _)| *last);
-            index.walked_siblings |= node.range().is_empty()
-                || previous.is_some_and(|previous| {
-                    index.entries[previous.get() - 1].node.range().end > node.range().start
-                });
-            index.entries.push(Entry {
-                node,
-                kind,
-                parent: ancestors.last().copied(),
-                previous,
-                subtree_end: ordinal + 1,
-            });
-            if kind_utils::is_error_kind(kind) {
-                index.errors.push(ordinal);
+            // An anonymous leaf is not a root: rules range over named nodes (RER-131), and a
+            // named-only tape keeps few tokens as records. It is walked and charged; no entry.
+            let mut close = true;
+            if !node.is_named() && AnchorNode::child_count(node) == 0 {
+                close = false;
             } else {
-                if usize::from(kind) >= index.kinds.len() {
-                    index.kinds.resize_with(usize::from(kind) + 1, Vec::new);
+                let ordinal = index.entries.len();
+                let previous = last_children.last().and_then(|(last, _)| *last);
+                index.walked_siblings |= node.range().is_empty()
+                    || previous.is_some_and(|previous| {
+                        index.entries[previous.get() - 1].node.range().end > node.range().start
+                    });
+                index.entries.push(Entry {
+                    node,
+                    kind,
+                    parent: ancestors.last().copied(),
+                    previous,
+                    subtree_end: ordinal + 1,
+                });
+                if kind_utils::is_error_kind(kind) {
+                    index.errors.push(ordinal);
+                } else {
+                    if usize::from(kind) >= index.kinds.len() {
+                        index.kinds.resize_with(usize::from(kind) + 1, Vec::new);
+                    }
+                    index.kinds[usize::from(kind)].push(ordinal);
                 }
-                index.kinds[usize::from(kind)].push(ordinal);
-            }
-            let current = NonZeroUsize::new(ordinal + 1).expect("inserted node");
-            if let Some((last_child, _)) = last_children.last_mut() {
-                *last_child = Some(current);
-            }
-            ancestors.push(current);
-            last_children.push((None, 0));
-            if cursor.first_child() {
-                last_children.last_mut().expect("current frame").1 = node.child_count() - 1;
-                continue;
+                let current = NonZeroUsize::new(ordinal + 1).expect("inserted node");
+                if let Some((last_child, _)) = last_children.last_mut() {
+                    *last_child = Some(current);
+                }
+                ancestors.push(current);
+                last_children.push((None, 0));
+                if cursor.first_child() {
+                    last_children.last_mut().expect("current frame").1 = node.child_count() - 1;
+                    continue;
+                }
             }
             loop {
-                let closed = ancestors.pop().expect("current node is open");
-                last_children.pop();
-                index.entries[closed.get() - 1].subtree_end = index.entries.len();
-                closed_nodes += 1;
-                if closed_nodes & 255 == 0 && budget_exhausted() {
-                    return index;
+                if close {
+                    let closed = ancestors.pop().expect("current node is open");
+                    last_children.pop();
+                    index.entries[closed.get() - 1].subtree_end = index.entries.len();
+                    closed_nodes += 1;
+                    if closed_nodes & 255 == 0 && budget_exhausted() {
+                        return index;
+                    }
                 }
+                close = true;
                 if ancestors.is_empty() {
                     break 'preorder;
                 }

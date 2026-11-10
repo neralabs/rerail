@@ -496,8 +496,9 @@ pub(super) fn execute_batch(
 }
 
 /// Version 3: kind tokens are kind atoms (the prefilter's `kind_token`), as Pulling-it-all-together's
-/// `ftsk` spelled them, so dialects never share a token.
-pub(crate) const POSITIONAL_INDEX_VERSION: i64 = 3;
+/// `ftsk` spelled them, so dialects never share a token. Version 4: the stream is a named-only
+/// document's records (RER-131), so anonymous tokens are not in it and positions renumber.
+pub(crate) const POSITIONAL_INDEX_VERSION: i64 = 4;
 
 /// The token of `lang`'s kind `kind` in the positional kind stream: its atom (`tape tag · 1024 +
 /// kind code`) in the prefilter's spelling. `None` for a dialect without a tape tag.

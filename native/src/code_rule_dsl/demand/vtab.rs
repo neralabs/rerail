@@ -137,7 +137,7 @@ fn terminal_structure_key(tape: &TapeDoc, node: u32) -> String {
     let root = structure_document.root();
     let semantic = (|| {
         let node = structure_document.adopt(root.get_doc().node(node));
-        let mut remaining = root.get_doc().transducer_len().saturating_add(1);
+        let mut remaining = root.get_doc().tree_nodes_bound().saturating_add(1);
         let mut spend = || {
             let available = remaining > 0;
             remaining = remaining.saturating_sub(1);
@@ -1124,7 +1124,7 @@ impl PackedDemand {
                                                             .adopt(root.get_doc().node(node));
                                                         let mut remaining = root
                                                             .get_doc()
-                                                            .transducer_len()
+                                                            .tree_nodes_bound()
                                                             .saturating_add(1);
                                                         let mut spend = || {
                                                             let available = remaining > 0;

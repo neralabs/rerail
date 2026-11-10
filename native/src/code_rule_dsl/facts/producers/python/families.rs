@@ -23,7 +23,7 @@ use crate::code_rule_dsl::facts::core::{Facts, NONE, kind_atom};
 use crate::code_rule_dsl::language::KindCatalog;
 
 /// The rows' version: a change to what they hold changes the families' producer (`families::py_producer`).
-pub(crate) const VERSION: u32 = 1;
+pub(crate) const VERSION: u32 = 2;
 
 /// `py_exec_context.kind`'s names, by `ContextKind` order.
 pub(crate) const CONTEXTS: [&str; 5] = ["module", "sync_function", "async_function", "class", "lambda"];

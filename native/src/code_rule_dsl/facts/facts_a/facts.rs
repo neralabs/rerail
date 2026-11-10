@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 
 pub const NONE: u32 = u32::MAX;
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Process-wide interner for kind and field names (the contract's `sym`).
 pub struct Symbols {

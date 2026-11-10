@@ -1412,6 +1412,17 @@ impl TapeImage {
         Self::finish(nodes, supertypes, grammar, source, budget)
     }
 
+    /// Tests: tree-sitter's tree of `source` with every node a record, no token left out (no
+    /// `tokens::fold`), the reference a named-only document's node API is checked against.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn every_node_for_test(root: TsNode<'_>, grammar: &Grammar, source: &str) -> Result<Self, String> {
+        let language = grammar.kinds.grammar().ok_or("a grammar tree-sitter parses")?;
+        let mut nodes = Vec::<Pending>::new();
+        let mut supertypes = Vec::new();
+        encode_tree(&mut nodes, &mut supertypes, root, language, None, &|| false)?;
+        Self::finish(nodes, supertypes, grammar, source, &|| false)
+    }
+
     /// The documents of a Blade template, parsed with Rerail's port of Forte (`encode_blade`).
     pub(super) fn encode_template(
         grammar: &Grammar,
@@ -1725,17 +1736,9 @@ impl TapeImage {
     }
 
     /// Whether this image is named-only (`tokens::fold`): its default tokens are not stored.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::code_rule_dsl) fn is_named_only(&self) -> bool {
         self.widths[0] & NAMED_ONLY != 0
-    }
-
-    /// The full image of a named-only one over `source` (RER-131 stage A: a reader of stored
-    /// bytes that needs the full tree's preorder, as the SQL fallback's structure does).
-    pub(in crate::code_rule_dsl) fn unfolded(&self, grammar: &Arc<Grammar>, source: &str) -> Result<TapeImage, String> {
-        let source = Arc::new(source.to_owned());
-        let lines = Arc::new(LineTable::new(&source, Terminators::of(grammar.lang)));
-        let doc = TapeDoc::restore_tree(source, Arc::clone(grammar), self, lines, &|| false)?;
-        Ok((*doc.image).clone())
     }
 
     pub(super) fn node_count(&self) -> usize {
@@ -1758,15 +1761,6 @@ impl TapeImage {
             + self.kind_aliases.iter().map(|(name, _)| name.capacity()).sum::<usize>()
             + std::mem::size_of::<Self>()
     }
-}
-
-/// How a restored tree is held in memory (RER-131).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Shape {
-    /// Every node in the records (a named-only image is unfolded).
-    Full,
-    /// Named nodes and kept tokens in the records; the other tokens recognized on demand.
-    Named,
 }
 
 #[derive(Clone, Copy)]
@@ -1838,9 +1832,6 @@ pub(super) struct TapeDoc {
     /// (`residency::slabs::admit_docs`, decision 0032): what the device reads in place.
     image: Arc<TapeImage>,
     digest: Arc<std::sync::OnceLock<[u8; 32]>>,
-    /// Restored from a named-only image (RER-131): `image` is the full tree re-packed, not the
-    /// bytes the store holds, so the device takes it from the host.
-    named_only: bool,
     /// Named-only in memory (RER-131 option B): the records hold the named nodes and the tokens
     /// the fold kept, and the node API recognizes the other tokens from the source on demand
     /// (`tokens::TokenGrammar::sequence`). `None`: the records hold every node.
@@ -2044,6 +2035,9 @@ impl TapeDoc {
     }
 
     /// The document of `image`'s own tree over `source`.
+    /// A named-only image (one with token automata, `tokens::fold`) is restored as stored: the
+    /// records hold its named nodes and the tokens the fold kept, and the node API recognizes the
+    /// others from the source (RER-131, t30 §1). There is one node space.
     fn restore_tree(
         source: Arc<String>,
         grammar: Arc<Grammar>,
@@ -2051,26 +2045,8 @@ impl TapeDoc {
         lines: Arc<LineTable>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
-        // Test builds only, while readers move (t30 §3): `RERAIL_TEST_NAMED_IN_MEMORY=1` restores every named-only
-        // image named-only, to see what a whole run reads.
-        #[cfg(test)]
-        if std::env::var_os("RERAIL_TEST_NAMED_IN_MEMORY").is_some() {
-            return Self::restore_tree_as(source, grammar, image, lines, Shape::Named, budget);
-        }
-        Self::restore_tree_as(source, grammar, image, lines, Shape::Full, budget)
-    }
-
-    /// The document of `image`'s own tree, in memory as `shape` asks.
-    fn restore_tree_as(
-        source: Arc<String>,
-        grammar: Arc<Grammar>,
-        image: &TapeImage,
-        lines: Arc<LineTable>,
-        shape: Shape,
-        budget: &impl Fn() -> bool,
-    ) -> Result<Self, String> {
         checked(budget)?;
-        if image.widths[0] & NAMED_ONLY != 0 && shape == Shape::Named {
+        if image.widths[0] & NAMED_ONLY != 0 {
             let mut plain = image.clone();
             plain.widths[0] &= !NAMED_ONLY;
             let language = grammar.kinds.grammar().ok_or("a named-only tape of a grammar tree-sitter does not parse")?;
@@ -2079,21 +2055,6 @@ impl TapeDoc {
             doc.image = Arc::new(image.clone());
             doc.tokens = Some(automata);
             doc.parts_cache = Arc::default();
-            return Ok(doc);
-        }
-        if image.widths[0] & NAMED_ONLY != 0 {
-            // RER-131: stored named-only, restored whole (option A), so every reader, and the
-            // device, which reads `image`, sees the full tree.
-            let mut plain = image.clone();
-            plain.widths[0] &= !NAMED_ONLY;
-            let named = Self::restore_tree(Arc::clone(&source), Arc::clone(&grammar), &plain, Arc::clone(&lines), budget)?;
-            let language = grammar.kinds.grammar().ok_or("a named-only tape of a grammar tree-sitter does not parse")?;
-            let automata = tokens::TokenGrammar::of(grammar.lang, language).ok_or("a named-only tape without its grammar's automata")?;
-            let (nodes, classes) = named.pending(&plain);
-            let (full, classes) = tokens::unfold(&nodes, &classes, &automata, language, &source)?;
-            let full = TapeImage::finish(full, classes, &grammar, &source, budget)?;
-            let mut doc = Self::restore_tree(source, grammar, &full, lines, budget)?;
-            doc.named_only = true;
             return Ok(doc);
         }
         let digest = source_digest(&source, budget)?;
@@ -2259,39 +2220,9 @@ impl TapeDoc {
             host: None,
             image: Arc::new(image.clone()),
             digest: Arc::default(),
-            named_only: false,
             tokens: None,
             parts_cache: Arc::default(),
         })
-    }
-
-    /// The encoder's nodes of this document, restored from `image`: what `tokens::unfold` reads.
-    fn pending(&self, image: &TapeImage) -> (Vec<Pending>, Vec<(u32, u16)>) {
-        let nodes = self
-            .data
-            .iter()
-            .enumerate()
-            .map(|(index, rec)| {
-                let alias = self
-                    .kind_overrides
-                    .binary_search_by_key(&(index as u32), |&(at, _)| at)
-                    .ok()
-                    .map(|slot| self.kind_aliases[usize::from(self.kind_overrides[slot].1)].clone());
-                Pending {
-                    kf: if rec.error() { ERROR_CODE } else { rec.kind } | (rec.field << 10),
-                    parent: (rec.parent != NONE).then_some(rec.parent),
-                    start: rec.start,
-                    length: rec.end - rec.start,
-                    size: 1,
-                    extra: rec.extra(),
-                    error: rec.error(),
-                    missing: rec.missing(),
-                    kind_alias: alias,
-                    tokens_kept: image.codes[usize::from(image.code_at(index))].flags & CODE_TOKENS != 0,
-                }
-            })
-            .collect();
-        (nodes, self.supertypes.to_vec())
     }
 
     /// Ranges of ERROR nodes and MISSING tokens that no ERROR node contains, as
@@ -2380,20 +2311,18 @@ impl TapeDoc {
             .map_or(self.grammar.lang, |link| link.host.grammar.lang)
     }
 
-    /// Named-only in memory (RER-131 option B), restored from a named-only image without unfolding:
-    /// the records hold named nodes and kept tokens; the node API serves the others.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn restore_named(
-        source: Arc<String>,
-        grammar: Arc<Grammar>,
-        image: &TapeImage,
-        budget: &impl Fn() -> bool,
-    ) -> Result<Self, String> {
-        let lines = Arc::new(LineTable::new(&source, Terminators::of(grammar.lang)));
-        Self::restore_tree_as(source, grammar, image, lines, Shape::Named, budget)
+    /// Tests: `source` as a tape whose records hold every node of tree-sitter's tree, as a dialect
+    /// without token automata stores it: the documents tree-sitter-query programs (`compile/scm`)
+    /// and walks over anonymous nodes run on.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn every_node_for_test(lang: GrammarDialect, source: &str) -> Self {
+        let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
+        let grammar = Grammar::new(lang).unwrap();
+        let image = TapeImage::every_node_for_test(native.tree.root_node(), &grammar, source).unwrap();
+        Self::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
     }
 
-    /// Tests: `source` parsed and restored named-only in memory (`restore_named`); `None` where its
+    /// Tests: `source` parsed and restored named-only in memory; `None` where its
     /// image keeps every token (a grammar without automata) or it does not encode.
     #[cfg(test)]
     pub(in crate::code_rule_dsl) fn named_only_for_test(lang: GrammarDialect, source: &str) -> Option<Self> {
@@ -2403,7 +2332,7 @@ impl TapeDoc {
         if !image.primary.is_named_only() {
             return None;
         }
-        Self::restore_named(Arc::new(source.to_owned()), grammar, &image.primary, &|| false).ok()
+        Self::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).ok()
     }
 
     /// Whether the records leave tokens out (RER-131 option B): readers of preorder records see
@@ -2476,6 +2405,13 @@ impl TapeDoc {
         &self.lines
     }
 
+    /// At most how many nodes the node API serves: the records, and on a named-only document the
+    /// tokens it recognizes, at most one a byte of source (zero-width ones are kept as records).
+    /// A walk over nodes, not records, is bounded by this, not by [`Self::transducer_len`].
+    pub(in crate::code_rule_dsl) fn tree_nodes_bound(&self) -> usize {
+        self.transducer_len() + if self.tokens.is_some() { self.source.len() } else { 0 }
+    }
+
     pub(super) fn transducer_len(&self) -> usize {
         self.data.len()
     }
@@ -2499,12 +2435,6 @@ impl TapeDoc {
     /// The SHA-256 of this document's stored bytes, the residency's key (decision 0032).
     pub(crate) fn resident_key(&self) -> Result<[u8; 32], String> {
         self.tape_digest()
-    }
-
-    /// Whether this document was restored from a named-only image (its `image` is not the
-    /// stored bytes).
-    pub(crate) fn restored_from_named_only(&self) -> bool {
-        self.named_only
     }
 
     /// This document's image as stored, its source and its grammar: what residency admits.
@@ -2540,6 +2470,8 @@ impl TapeDoc {
             | (u8::from(rec.extra()) << 1)
             | (u8::from(rec.missing()) << 2)
             | (u8::from(rec.error()) << 3)
+            // A named-only record that kept its tokens, as the device's codes mark it.
+            | if self.tokens.is_some() && rec.tokens_kept() { resident::DEVICE_TOKENS_KEPT } else { 0 }
     }
 
     pub(super) fn transducer_span(&self, node: u32) -> Range<usize> {
@@ -2613,19 +2545,31 @@ impl TapeDoc {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_is_named_leaf(&self, node: u32) -> bool {
-        self.node_is_named(node) && self.data[node as usize].first == NONE
+        // No children at all, as tree-sitter's tree has them: on a named-only document, no
+        // recognized tokens either (RER-131).
+        self.node_is_named(node)
+            && self.data[node as usize].first == NONE
+            && (self.tokens.is_none() || self.transducer_parts(node).is_empty())
     }
 
     /// A collision-free encoding of the recursive kind and child structure used by ast-grep's
     /// repeated-capture equality when neither side is a named leaf.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_structural_key(&self, node: u32) -> String {
+        // Every part, as tree-sitter's tree has them: a recognized token (RER-131) is its kind
+        // with no children, where a record of that token would be.
         fn encode(tape: &TapeDoc, node: u32, bytes: &mut Vec<u8>) {
             bytes.extend_from_slice(&tape.transducer_kind(node).to_le_bytes());
-            let children = tape.transducer_children(node).collect::<Vec<_>>();
-            bytes.extend_from_slice(&(children.len() as u32).to_le_bytes());
-            for child in children {
-                encode(tape, child, bytes);
+            let parts = tape.transducer_parts(node);
+            bytes.extend_from_slice(&(parts.len() as u32).to_le_bytes());
+            for part in parts {
+                match part {
+                    tokens::Item::Child(child) => encode(tape, child, bytes),
+                    tokens::Item::Token { kind, .. } => {
+                        bytes.extend_from_slice(&kind.to_le_bytes());
+                        bytes.extend_from_slice(&0_u32.to_le_bytes());
+                    }
+                }
             }
         }
         let mut bytes = Vec::new();
@@ -2784,8 +2728,33 @@ impl<'a> TapeNode<'a> {
     }
 
     /// Whether this is the first direct child in `field`, as `child_by_field_id` selects it.
+    /// Whether this is a token the records leave out, recognized from the source (RER-131).
+    pub(in crate::code_rule_dsl) fn is_token(&self) -> bool {
+        self.token.is_some()
+    }
+    /// The first of this record's stored children: a walk over records alone, which a reader
+    /// that never needs tokens takes (t30 §1). `None` for a token.
+    pub(in crate::code_rule_dsl) fn first_record(&self) -> Option<Self> {
+        self.token.is_none().then(|| self.records().next()).flatten()
+    }
+    /// The next stored sibling record; `None` for a token.
+    pub(in crate::code_rule_dsl) fn next_record(&self) -> Option<Self> {
+        (self.token.is_none() && self.rec().next != NONE).then(|| self.at(self.rec().next))
+    }
+    /// How many stored children this record has (0 for a token).
+    pub(in crate::code_rule_dsl) fn record_count(&self) -> usize {
+        if self.token.is_some() { 0 } else { self.rec().children as usize }
+    }
     pub(super) fn is_first_field(&self, field: u16) -> bool {
-        self.token.is_none() && field != 0 && self.rec().field == field && self.rec().first_field()
+        if field == 0 || self.field_id() != field {
+            return false;
+        }
+        // Where the parent recognizes tokens, a token may hold the field too (Python's
+        // `operator`): the first is the first part with it.
+        if let Some((parent, parts, slot)) = self.place() {
+            return parts.items[..slot].iter().all(|&item| parent.part(0, item).field_id() != field);
+        }
+        self.token.is_none() && self.rec().first_field()
     }
 
     fn rec(&self) -> &Rec {
@@ -2889,6 +2858,13 @@ impl<'a> TapeNode<'a> {
     /// The part `step` places from this one among its parent's (`Some(None)` past either end);
     /// `None` where the parent does not recognize.
     fn beside(&self, step: isize) -> Option<Option<Self>> {
+        let (parent, parts, slot) = self.place()?;
+        let Some(next) = slot.checked_add_signed(step) else { return Some(None) };
+        Some(parts.items.get(next).map(|&item| parent.part(next, item)))
+    }
+    /// This part's parent, the parent's parts and its slot among them; `None` where the parent
+    /// does not recognize tokens.
+    fn place(&self) -> Option<(Self, Arc<Recognized>, usize)> {
         let parent = self.parent()?;
         let parts = parent.recognized()?;
         let slot = match self.token {
@@ -2899,8 +2875,7 @@ impl<'a> TapeNode<'a> {
                 parts.children[at].1 as usize
             }
         };
-        let Some(next) = slot.checked_add_signed(step) else { return Some(None) };
-        Some(parts.items.get(next).map(|&item| parent.part(next, item)))
+        Some((parent, parts, slot))
     }
     /// The structurally adjacent sibling, for traversal; `SgNode::next` follows Tree-sitter.
     pub(super) fn next_sibling(&self) -> Option<Self> {

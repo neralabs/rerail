@@ -4610,7 +4610,7 @@ pub(super) fn execute_production_corpus_pages(
     }
 }
 
-pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 3;
+pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 4;
 const VALUE_INDEX_LIMIT: usize = 96;
 
 pub(in crate::code_rule_dsl) fn execute_many(
@@ -4715,7 +4715,8 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(",")
         );
-        let file = tape(&source);
+        // Mode 0 edges reach the `(` and `)` tokens: a tape that keeps them as records.
+        let file = TapeDoc::every_node_for_test(SupportLang::Python, &source);
         let arguments = SupportLang::Python
             .get_ts_language()
             .id_for_node_kind("argument_list", true);

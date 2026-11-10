@@ -277,11 +277,15 @@ impl StopBy {
                 .find(|| None, || listed.into_iter(), related, env)
                 .is_some();
         }
-        // A neighbour is the next named sibling, as every walk passes over tokens (RER-131).
+        // A neighbour is the next named sibling, as every walk passes over tokens (RER-131); it is
+        // stepped to from the node itself, as ast-grep's `next`, so the root has none (`next_all`
+        // starts a root's walk among its children).
         if forward {
-            self.reaches(node, || node.next_all().find(Node::is_named), || node.next_all().filter(Node::is_named), related, env)
+            let neighbour = || std::iter::successors(node.next(), Node::next).find(Node::is_named);
+            self.reaches(node, neighbour, || node.next_all().filter(Node::is_named), related, env)
         } else {
-            self.reaches(node, || node.prev_all().find(Node::is_named), || node.prev_all().filter(Node::is_named), related, env)
+            let neighbour = || std::iter::successors(node.prev(), Node::prev).find(Node::is_named);
+            self.reaches(node, neighbour, || node.prev_all().filter(Node::is_named), related, env)
         }
     }
 }

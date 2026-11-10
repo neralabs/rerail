@@ -477,7 +477,39 @@ fn cases() -> Vec<ContractCase> {
             case.name
         );
     }
+    for case in &mut cases {
+        rooted_at_named_nodes(case);
+    }
     cases
+}
+
+/// The oracles were recorded when a rule's roots were every node; they are named nodes now
+/// (RER-131): a violation reported at its root (`witness.span`) whose span is no named node of
+/// tree-sitter's tree was a token's, and is not a finding any more.
+fn rooted_at_named_nodes(case: &mut ContractCase) {
+    let clause = &case.policy["clauses"][0];
+    if clause["violation"]["anchor"] != "witness.span" || case.workspace.files.len() != 1 {
+        return;
+    }
+    let file = &case.workspace.files[0];
+    // Only a dialect with token automata leaves tokens out of its records.
+    let Some(lang) = crate::code_rule_dsl::language::dialect_by_label(&file.language)
+        .filter(|&lang| crate::code_rule_dsl::tape::tokens::grammar_json(lang).is_some())
+    else {
+        return;
+    };
+    let native = ast_grep_core::AstGrep::doc(ast_grep_core::tree_sitter::StrDoc::new(&file.source, lang));
+    let named: BTreeSet<(u64, u64)> = native
+        .root()
+        .dfs()
+        .filter(|node| node.is_named())
+        .map(|node| (node.range().start as u64, node.range().end as u64))
+        .collect();
+    case.expected.oracle.violations.retain(|violation| {
+        let span = &violation["span"];
+        span.is_null()
+            || named.contains(&(span["startByte"].as_u64().unwrap_or(u64::MAX), span["endByte"].as_u64().unwrap_or(u64::MAX)))
+    });
 }
 
 #[test]
@@ -3222,8 +3254,9 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
                 row(1, (0, 18), None, 14, 0, 1, 0, None, None),
                 row(1, (0, 18), Some((0, 5)), 17, 0, 0, 1, Some(1), Some("S")),
                 row(1, (0, 18), Some((13, 14)), 17, 0, 0, 1, Some(2), Some("A")),
-                row(1, (0, 18), Some((14, 15)), 17, 0, 1, 1, Some(2), Some("A")),
-                row(1, (0, 18), Some((16, 17)), 17, 0, 2, 1, Some(2), Some("A")),
+                // `$$$A` holds the arguments `a` and `b`: the `,` is a token the records leave out,
+                // and captures are records (RER-131).
+                row(1, (0, 18), Some((16, 17)), 17, 0, 1, 1, Some(2), Some("A")),
             ],
             "semantic-format-missing-fields" => vec![
                 row(1, (0, 25), None, 0, 0, 0, 1, Some(1), None),
@@ -3234,14 +3267,13 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
                 row(1, (0, 25), Some((0, 11)), 17, 0, 0, 1, Some(1), Some("S")),
                 row(1, (0, 25), Some((19, 24)), 17, 0, 0, 1, Some(2), Some("A")),
             ],
+            // Layout is a record's: the `(` and `)` are tokens no root or capture can be (RER-131).
             "semantic-layout" => vec![
                 row(1, (0, 1), None, 0, 0, 0, 1, None, None),
                 row(1, (0, 8), None, 0, 0, 0, 1, None, None),
                 row(1, (0, 8), None, 0, 0, 0, 1, None, None),
-                row(1, (1, 2), None, 0, 0, 0, 1, None, None),
                 row(1, (1, 8), None, 0, 0, 0, 1, None, None),
                 row(1, (2, 7), None, 0, 0, 0, 1, None, None),
-                row(1, (7, 8), None, 0, 0, 0, 1, None, None),
             ],
             "semantic-calls-direct" => vec![
                 row(2, (23, 31), None, 0, 0, 0, 1, None, None),

@@ -1043,10 +1043,11 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
         "encode must poll before the final source digest"
     );
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    // A named-only image restores the whole tree (RER-131).
+    // A named-only image is restored as stored: a record per stored node (RER-131).
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
     assert_eq!(doc.data.len(), doc.image.node_count());
-    assert!(image.primary.node_count() < doc.data.len());
+    assert_eq!(image.primary.node_count(), doc.data.len());
+    assert!(doc.data.len() < native.tree.root_node().descendant_count());
 }
 
 #[test]
@@ -1157,9 +1158,16 @@ fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
                 (b.kind_id(), b.range(), b.text(), b.start_pos(), b.end_pos()),
                 "comment length {length} node {index}"
             );
-            assert_eq!(image.start_at(index) as usize, a.range().start, "comment length {length} node {index}");
+            // The image holds records only (named nodes and kept tokens): a recognized token has
+            // no column of its own.
+            let inner = b.get_inner_node();
+            if inner.token.is_some() {
+                continue;
+            }
+            let record = inner.index as usize;
+            assert_eq!(image.start_at(record) as usize, a.range().start, "comment length {length} node {index}");
             if a.is_extra() {
-                assert_eq!(image.tail_at(index) as usize, a.range().len(), "comment length {length}");
+                assert_eq!(image.tail_at(record) as usize, a.range().len(), "comment length {length}");
                 saw_comment = true;
             }
         }

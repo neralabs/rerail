@@ -79,21 +79,9 @@ impl StoreTapes {
                 grammar
             }
         };
-        let mut image = TapeImage::from_bytes(&bytes, &grammar).map_err(invalid)?;
-        if image.is_named_only() {
-            // RER-131 stage A: the node ids are the full tree's, so the structure is too.
-            let (codec, frame) = db.query_row(
-                "SELECT s.codec_id, s.frame FROM tape_objects t JOIN source_objects s USING (source_id) WHERE t.tape_id=?1",
-                [fid],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-            )?;
-            if codec != CODEC_ZSTD {
-                return Err(invalid(format!("unsupported source codec {codec}")));
-            }
-            let source = crate::content_store::decompress(&frame, 0).map_err(|error| invalid(format!("source frame: {error}")))?;
-            let source = String::from_utf8(source).map_err(|_| invalid("a source that is not UTF-8"))?;
-            image = image.unfolded(&grammar, &source).map_err(invalid)?;
-        }
+        // A named-only image is read as stored: documents are restored named-only (RER-131), so
+        // its records' preorder is the node ids rows hold.
+        let image = TapeImage::from_bytes(&bytes, &grammar).map_err(invalid)?;
         let parents = std::env::var_os("RERAIL_TREE_DESCENT").is_none().then(|| parents(&image));
         let image = Arc::new(Held { image, parents });
         if self.held.len() == HELD {

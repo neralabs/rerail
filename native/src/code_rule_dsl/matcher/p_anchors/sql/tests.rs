@@ -34,7 +34,8 @@ fn value_index_is_case_exact_grammar_agnostic_and_survives_edits_and_reopen() {
         .unwrap()
     };
     let indexed = rows(&store);
-    for term in ["Target", "target", "const", "42", "// spaced residue"] {
+    // `const` is a keyword the records leave out (RER-131): no value row.
+    for term in ["Target", "target", "42", "// spaced residue"] {
         assert!(
             indexed.iter().any(|(t, _, _)| t == term),
             "missing value {term}"
@@ -420,7 +421,7 @@ fn parallel_connections_do_not_share_a_global_page_cache_mutex() {
 fn incremental_reads_cover_overflows_without_full_columns_or_stale_cursors() {
     let store = store::Store::temporary().unwrap();
     let lang = GrammarDialect::TypeScript;
-    let source = "other(value);\n".repeat(12000) + "target(value);\n";
+    let source = "other(value);\n".repeat(14000) + "target(value);\n";
     let doc = document(&source, lang);
     let fid = store.put("a.ts", &doc).unwrap();
     assert!(doc.transducer_len() > 65535);
@@ -680,17 +681,19 @@ fn descendant_relations_use_subtree_ranges_instead_of_ancestor_closures() {
 fn kindless_inner_relations_read_only_tree_neighbours() {
     use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
     let source = "f(g(target(x)));";
+    // A bare regex target reaches tokens too (`tokens`, RER-131); an `all` of two regexes is a
+    // kind-less target that reaches named nodes only, the tree neighbours this test reads.
     for (rule, expected) in [
         (
-            serde_json::json!({"kind":"call_expression","has":{"regex":"^target$"}}),
+            serde_json::json!({"kind":"call_expression","has":{"all":[{"regex":"^target$"},{"regex":"t"}]}}),
             1,
         ),
         (
-            serde_json::json!({"kind":"arguments","has":{"regex":"^x$"}}),
+            serde_json::json!({"kind":"arguments","has":{"all":[{"regex":"^x$"},{"regex":"x"}]}}),
             1,
         ),
         (
-            serde_json::json!({"kind":"call_expression","has":{"regex":"^target$","stopBy":"end"}}),
+            serde_json::json!({"kind":"call_expression","has":{"all":[{"regex":"^target$"},{"regex":"t"}],"stopBy":"end"}}),
             3,
         ),
         (

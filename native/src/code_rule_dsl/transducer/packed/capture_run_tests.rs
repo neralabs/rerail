@@ -1,15 +1,12 @@
 use super::capture_run::Limits;
 use super::*;
-use crate::code_rule_dsl::tape::{Grammar, TapeImage};
-use ast_grep_core::tree_sitter::StrDoc;
 use crate::code_rule_dsl::language::GrammarDialect as SupportLang;
 use ast_grep_core::tree_sitter::LanguageExt;
 
-fn tape(source: &str) -> TapeDoc {
-    let grammar = Grammar::new(SupportLang::Python).unwrap();
-    let native = StrDoc::new(source, SupportLang::Python);
-    let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+/// Capture runs walk anonymous siblings (a tree-sitter query's `"(" .`): a tape that keeps every
+/// token as a record.
+pub(super) fn tape(source: &str) -> TapeDoc {
+    TapeDoc::every_node_for_test(SupportLang::Python, source)
 }
 pub(super) fn program() -> Program {
     let lang = SupportLang::Python.get_ts_language();
