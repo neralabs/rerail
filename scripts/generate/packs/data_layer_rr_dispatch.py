@@ -26,6 +26,7 @@ def folded_pattern(words):
 
 def generate(source,target,header):
     original=module(source,'serverplan_dispatch_architecture');text=api_scope(header('serverplan_dispatch_architecture',target))
+    text=text.replace('.scope include "**/*.py"','.scope include "**/*.py", "scripts/allowlists/lint_serverplan_dispatch_architecture.txt"')
     text+='.scope text "scripts/allowlists/lint_serverplan_dispatch_architecture.txt"\n'
     for relation,name in [('sd_family','_BACKEND_FAMILY_ATTRS'),('sd_backend_call','_BACKEND_CALLS'),
         ('sd_step_name','_STEP_TYPE_NAMES'),('sd_nonstep','_NON_DISPATCH_STEP_TYPES'),('sd_step_suffix','_STEP_TYPE_SUFFIXES'),
@@ -46,6 +47,7 @@ def generate(source,target,header):
     text+='.decl sd_whitespace(value: symbol)\nsd_whitespace('+json.dumps(classes()[1]+'+')+').\n'
     text+='#include "data-layer/dispatch-source.rr"\n#include "data-layer/dispatch-repository.rr"\n'
     plugin=original.dispatch_architecture_plugin(source)
+    text=re.sub(r'^\.description .*$', '.description '+json.dumps(plugin.description),text,flags=re.M)
     config=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description,
         findingSeverity='hard-fail',extractor=original.DISPATCH_EXTRACTOR.extractor_id,parser='ast_collect',scope='static',include_tests='false',fact_kind='list')
     text+=''.join(f'pp_config({json.dumps(k)},{json.dumps(v)}).\n' for k,v in config.items())
@@ -56,7 +58,7 @@ def generate(source,target,header):
         text+=f'sdr_root_scope({i},{json.dumps(value)},{json.dumps(parent)},{json.dumps(name)}).\n'
     text+='.decl sdr_default_signature(value: symbol)\nsdr_default_signature('+json.dumps(original.INVENTORY_SIGNATURE)+').\n'
     for section,fields in [('plugin',dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description)),
-        ('scope',dict(include_tests=False,broad_repo_scope=False)),('extractor',asdict(original.DISPATCH_EXTRACTOR))]:
+        ('scope',dict(include_tests=plugin.file_scope.include_tests,broad_repo_scope=plugin.file_scope.broad_repo_scope)),('extractor',asdict(original.DISPATCH_EXTRACTOR))]:
         for ordinal,(key,value) in enumerate(fields.items()):
             if isinstance(value,str):kind,encoded='string',value
             elif isinstance(value,bool):kind,encoded='boolean',str(value).lower()

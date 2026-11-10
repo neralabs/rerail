@@ -44,6 +44,23 @@ def cases(module):
     add('empty-inventory',[file(inventory,'# no suppressions\n \n')])
     add('nonempty-inventory',[file(root+'/a.py'),file(inventory,'entry\n')])
     add('bad-signature',[file(root+'/a.py')],signature='invalid')
+    add('empty-scope-directories',[dict(path=p,directory=True) for p in module._GENERIC_DIRS])
+    add('scope-root-is-file',[file(root,'pass\n')])
+    add('base-is-directory',[dict(path=base,directory=True)])
+    add('directory-alias',[file(root+'/sub/a.py'),dict(path=root+'/link',symlink='sub')])
+    add('scope-root-alias',[file('shared/a.py'),dict(path=root,symlink='../../shared')])
+    add('inventory-alias',[file('shared-inventory.txt','entry\n'),dict(path=inventory,symlink='../../shared-inventory.txt')])
+    add('inventory-alias-empty',[file('shared-inventory.txt','# comment\n'),dict(path=inventory,symlink='../../shared-inventory.txt')])
+    for name,text in [('unicode-comment','\x1c\u2000# comment\u0085\u2000\n'),
+        ('unicode-lines','entry\u0085second\u2028third\u2029'),('duplicate-lines','entry\nentry\n'),
+        ('inline-comment','entry # retained\n')]:add('inventory-'+name,[file(inventory,text)])
+    for value in ['','UNSIGNED','NEEDS_SIGNING','!!!!','AAAA']:
+        add('signature-'+value,[file(root+'/a.py')],signature=value)
+    add('inventory-short-circuits-signature',[file(inventory,'entry\n')],signature='invalid')
+    for name,text in [('long','entry '+('x'*1200)+'\n'),('nul','alpha\0beta\n'),
+        ('mixed-lines',' a\r\nb\rc\v d\f e\x1c f\x1d g\x1e h\n'),
+        ('whitespace','\u2000keep\tinternal\u2000\n\u2000# ignored\n')]:
+        add('inventory-'+name,[file(inventory,text)])
     return rows
 
 
@@ -60,17 +77,18 @@ def observe(module,case):
         with redirect_stdout(stdout),redirect_stderr(stderr):
             plan=engine.plan([plugin]);view=engine.materialize((plugin,),max_workers=1)
             findings=module._findings(view);violations=plugin.reporter(view)
+            inventory=module._load_inventory(root/'scripts/allowlists/lint_serverplan_dispatch_architecture.txt')
         return dict(selectedFiles=[p.relative_to(root).as_posix() for p in plan.files],
             facts=canonical({p:b.facts for p,b in sorted(view.files.items())},root),
             findings=canonical(tuple(findings),root),violations=canonical(violations,root),
             plugin=canonical(dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description,
                 file_scope=asdict(plugin.file_scope),required_facts=tuple(asdict(f) for f in plugin.required_facts)),root),
-            stdout=stdout.getvalue().replace(str(root),'$ROOT'),stderr=stderr.getvalue().replace(str(root),'$ROOT'))
+            inventory=canonical(inventory),stdout=stdout.getvalue().replace(str(root),'$ROOT'),stderr=stderr.getvalue().replace(str(root),'$ROOT'))
 
 
 def decode(module,native):
     rows=native['diagnostics']
-    allowed={'DL_FILE','DL_META','SDR_CONFIG','SDR_SEQUENCE','SDR_SCOPE','SDR_FACT','SDR_REPORT','SDR_OUTPUT'}
+    allowed={'DL_FILE','DL_META','SDR_CONFIG','SDR_SEQUENCE','SDR_SCOPE','SDR_FACT','SDR_REPORT','SDR_OUTPUT','SDR_INVENTORY'}
     if any(r['code'] not in allowed for r in rows):raise ValueError('Unexpected repository contract rows')
     config={}
     for r in rows:
@@ -98,8 +116,8 @@ def decode(module,native):
     for part in ['directories','explicit_files']:
         scope[part]=tuple(Path(p['path']) for p in sorted(scopes,key=lambda p:p['ordinal']) if p['part']==part)
     scope={k:scope[k] for k in ['directories','explicit_files','include_tests','broad_repo_scope']}
-    metadata=next(r['parameters']['value'] for r in rows if r['code']=='DL_META' and r['parameters']['key']=='root')
-    root=Path(metadata)
+    metadata={r['parameters']['key']:r['parameters']['value'] for r in rows if r['code']=='DL_META'}
+    root=Path(metadata['root'])
     files=sorted((r['parameters'] for r in rows if r['code']=='DL_FILE'),key=lambda p:p['path_order'])
     if len({p['path'] for p in files})!=len(files):raise ValueError('Duplicate selected file')
     facts={Path(p['path']):({extractor['extractor_id']:[]} if p['fact_present'] else {}) for p in files}
@@ -113,13 +131,14 @@ def decode(module,native):
     findings.sort(key=lambda f:(f.path.as_posix(),f.line,f.code))
     reports=sorted((r['parameters'] for r in rows if r['code']=='SDR_REPORT'),
         key=lambda p:(p['phase'],p['path'],p['line'],p['code_value'],p['expression'],p['visit_order'],p['layer']))
-    violations=[module.StructuredViolation(plugin['name'],p['code_value'],root/p['path'],p['line'],p['message'],'hard-fail') for p in reports]
+    violations=[module.StructuredViolation(plugin['name'],p['code_value'],root/p['path'],p['line'],p['message'],metadata['findingSeverity']) for p in reports]
     output=sorted((r['parameters'] for r in rows if r['code']=='SDR_OUTPUT'),key=lambda p:p['ordinal'])
     stdout=''.join(r['text'] for r in output if r['channel']=='stdout')
     stderr=''.join(r['text'] for r in output if r['channel']=='stderr')
+    inventory=tuple(p['value'] for p in sorted((r['parameters'] for r in rows if r['code']=='SDR_INVENTORY'),key=lambda p:p['ordinal']))
     return dict(selectedFiles=[p['path'] for p in files],facts=canonical(facts,root),findings=canonical(tuple(findings),root),
         violations=canonical(violations,root),plugin=canonical(dict(**plugin,file_scope=scope,required_facts=(extractor,)),root),
-        stdout=stdout.replace(str(root),'$ROOT'),stderr=stderr.replace(str(root),'$ROOT'))
+        inventory=canonical(inventory),stdout=stdout.replace(str(root),'$ROOT'),stderr=stderr.replace(str(root),'$ROOT'))
 
 
 def main():

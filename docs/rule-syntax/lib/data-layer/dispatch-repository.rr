@@ -1,0 +1,54 @@
+// Discovery, extraction, and reporting share the dispatch event relation.
+#include "data-layer/plugin-production.rr"
+#include "data-layer/signing.rr"
+.decl sdr_config(section: symbol,key: symbol,field_order: number,kind: symbol,value: symbol)
+.decl sdr_sequence(section: symbol,key: symbol,ordinal: number,kind: symbol,value: symbol)
+.decl sdr_exists(parent: symbol,name: symbol)
+.decl sdr_scope_site(parent: symbol,name: symbol)
+sdr_scope_site(p,n) :- !env("data-layer.api","true"),sdr_root_scope(_,_,p,n).
+sdr_scope_site("impl/common/l2070_server_plan","base_server_plan.py") :- !env("data-layer.api","true").
+.decl sdr_scope_parent(path: symbol)
+sdr_scope_parent(p) :- sdr_scope_site(p,_).
+// The demand key must not depend on the entry name returned by the reader.
+sdr_exists(p,n) :- sdr_scope_parent(p),sdr_scope_site(p,n),dir_entry(p,n,1).
+sdr_exists(p,n) :- sdr_scope_parent(p),sdr_scope_site(p,n),dir_metadata(p,n,1,_,_).
+pp_file(p) :- !env("data-layer.api","true"),sd_base(p),dir_metadata("impl/common/l2070_server_plan","base_server_plan.py",1,_,_).
+
+.violation DispatchRepositoryConfig(at: span,section: symbol,key: symbol,field_order: number,kind: symbol,value: symbol) code "SDR_CONFIG" "dispatch configuration"
+DispatchRepositoryConfig(@place("",0),s,k,o,t,v) :- option("entryPoint","_production_contract"),sdr_config(s,k,o,t,v).
+.violation DispatchRepositorySequence(at: span,section: symbol,key: symbol,ordinal: number,kind: symbol,value: symbol) code "SDR_SEQUENCE" "dispatch configuration sequence"
+DispatchRepositorySequence(@place("",0),s,k,o,t,v) :- option("entryPoint","_production_contract"),sdr_sequence(s,k,o,t,v).
+.violation DispatchRepositoryScope(at: span,part: symbol,ordinal: number,path: symbol) code "SDR_SCOPE" "dispatch scope"
+DispatchRepositoryScope(@place("",0),"directories",i,p) :- option("entryPoint","_production_contract"),sdr_root_scope(i,p,parent,name),sdr_exists(parent,name).
+DispatchRepositoryScope(@place("",0),"explicit_files",0,p) :- option("entryPoint","_production_contract"),sd_base(p),sdr_exists("impl/common/l2070_server_plan","base_server_plan.py").
+
+.violation DispatchRepositoryFact(at: span,path: symbol,path_order: symbol,line: number,code_value: symbol,scope: symbol,expression: symbol,message: symbol,occurrence: number,visit_order: number,layer: number) code "SDR_FACT" "dispatch fact"
+DispatchRepositoryFact(@place(p,l),p,@replace_all(p,"/","\u0000"),l,c,s,e,m,o,i,k) :- option("entryPoint","_production_contract"),
+    sd_event(d,p,n,k,c,s,e,_,l,i),sd_occurrence(d,p,n,k,c,o),sd_message(c,m).
+
+.decl sdr_report(path: symbol,line: number,code: symbol,message: symbol,phase: number,expression: symbol,visit_order: number,layer: number)
+sdr_report(p,l,c,cat(s,": ",m,": ",e),0,e,i,k) :- pp_run(),sd_event(_,p,_,k,c,s,e,_,l,i),sd_message(c,m).
+sdr_report("scripts/allowlists/lint_serverplan_dispatch_architecture.txt",1,"SPD000","signed dispatch allowlist must remain empty",1,"",0,0) :- pp_run(),sdr_inventory_error().
+.violation DispatchRepositoryReport(at: span,path: symbol,line: number,code_value: symbol,message: symbol,phase: number,expression: symbol,visit_order: number,layer: number) code "SDR_REPORT" "dispatch reporter result"
+DispatchRepositoryReport(@place(p,l),p,l,c,m,phase,e,i,k) :- option("entryPoint","_production_contract"),sdr_report(p,l,c,m,phase,e,i,k).
+.violation DispatchProduction(at: span,code_value: symbol,message: symbol) code {code_value} "{message}"
+DispatchProduction(@place(p,l),c,message) :- !option("entryPoint",_),sdr_report(p,l,c,message,_,_,_,_).
+
+// The inventory is a text document; split_line uses Python's Unicode line breaks.
+.decl sdr_inventory_entry(ordinal: number,value: symbol)
+sdr_inventory_entry(i,e) :- pp_run(),doc(d,"scripts/allowlists/lint_serverplan_dispatch_architecture.txt",_),split_line(d,i,raw),sd_whitespace(w),
+    e=@replace_all(raw,cat("^",w,"|",w,"$"),""),e!="",!prefix("#",e).
+.decl sdr_signature(value: symbol)
+sdr_signature(s) :- option("dispatchSignature",s).
+sdr_signature(s) :- !option("dispatchSignature",_),sdr_default_signature(s).
+allow_sig("dispatch","serverplan_dispatch_architecture",s) :- pp_run(),!sdr_inventory_entry(_,_),sdr_signature(s).
+.decl sdr_inventory_error()
+sdr_inventory_error() :- sdr_inventory_entry(_,_).
+sdr_inventory_error() :- allow_status("dispatch",s),s!="valid".
+.decl sdr_stderr(text: symbol)
+sdr_stderr(cat("FAIL: WARNING: Allowlist for serverplan_dispatch_architecture is ",label,". Sign with --sign-allowlist.\n")) :-
+    allow_status("dispatch","unsigned"),sdr_signature(s),(s="NEEDS_SIGNING",label="needs signing";s!="NEEDS_SIGNING",label="unsigned").
+sdr_stderr(cat("FAIL: Allowlist signature verification failed for serverplan_dispatch_architecture: ",detail,"\n")) :-
+    allow_status("dispatch","invalid"),allow_message("dispatch",message),sdr_signature(s),nera_key(key),detail=@ed25519_error(key,message,s).
+.violation DispatchRepositoryOutput(at: span,channel: symbol,ordinal: number,text: symbol) code "SDR_OUTPUT" "dispatch output"
+DispatchRepositoryOutput(@place("",0),"stderr",0,t) :- option("entryPoint","_production_contract"),sdr_stderr(t).
