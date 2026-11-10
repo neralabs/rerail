@@ -223,7 +223,10 @@ describe("CheckoutCodeRuleRouter", () => {
     expect(lookups.mock.calls.length).toBeLessThanOrEqual(5);
 
     lookups.mockRestore();
+    // A command writes it: what is stamped while one of the session's calls runs is the session's own.
+    await bridge.begin("write-1", "shell", { command: "./write.sh" });
     await writeFile(join(session, "api", "deep", "g3.py"), "NEEDLE\n");
+    await bridge.finish("write-1");
     await bridge.checkpoint("turn");
     await bridge.settle();
     expect(violations(audits)).toEqual([{ checkout: session, path: "api/deep/g3.py", code: "SESSION", mode: "block" }]);
