@@ -78,56 +78,6 @@ describe("the engine service's runtimes", () => {
     expect(service.openRuntimes()).toBe(1);
   });
 
-  it("closes a session that sent no end once it has gone quiet, so a killed agent's session does not stay forever", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-idle-"));
-    roots.push(root);
-    const databasePath = join(root, "rerail.sqlite");
-    const [first, second] = [join(root, "first"), join(root, "second")];
-    for (const checkout of [first, second]) {
-      await mkdir(checkout);
-      startTestRepository(checkout, databasePath);
-    }
-    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-idle-${process.pid}-${Date.now()}` : join(root, "engine.sock");
-    let now = 1_000_000;
-    const service = await startEngineService({
-      socketPath,
-      storageRoot: join(root, "state"),
-      databasePath,
-      embedder: testEmbedder,
-      idleSessionMs: 60_000,
-      // The runtime closes when its last session does, so the closed session's runtime goes with it.
-      idleRuntimeMs: 0,
-      now: () => now,
-      createAuditor: () => ({
-        openWorkspace: async () => undefined,
-        acceptsPath: () => true,
-        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
-        close: async () => undefined,
-      }),
-    });
-    services.push(service);
-    const send = (event: AdapterEvent) => ingestEngineEvent({ socketPath }, event);
-    const session = (sessionId: string, cwd: string) => ({ host: "claude-code" as const, sessionId, cwd });
-    const prompt = (sessionId: string, cwd: string, text: string) =>
-      send({ kind: "user-prompt", eventId: `${sessionId}:${text}`, sessionId, session: session(sessionId, cwd), text });
-    const ended = (sessionId: string) => endedAt(databasePath, sessionId);
-
-    await send({ kind: "session-start", eventId: "a:start", session: session("a", first) });
-    await send({ kind: "session-start", eventId: "b:start", session: session("b", second) });
-    now += 50_000;
-    await prompt("b", second, "still here");
-    now += 20_000;
-    // `a` has been quiet for 70 s, `b` for 20 s: only `a` closes, and its checkout's runtime with it.
-    await service.closeIdleSessions();
-    expect(service.openRuntimes()).toBe(1);
-    expect(ended("a")).not.toBeNull();
-    expect(ended("b")).toBeNull();
-    // A closed session's next event opens it again from its ledger.
-    await prompt("a", first, "back");
-    expect(service.openRuntimes()).toBe(2);
-    expect(ended("a")).toBeNull();
-  });
-
   // A runtime holds its checkout's compiled rules, 12 s of CPU to compile for the five packs a TypeScript repository
   // adds: a session started soon after the last one ended reuses it, and the runtime closes once it was unused a while.
   it("keeps a checkout's runtime until no session has used it for the idle time, so a session that comes back soon reuses it", async () => {
@@ -183,6 +133,84 @@ describe("the engine service's runtimes", () => {
     expect(service.openRuntimes()).toBe(0);
     // Nothing in this test collects: the service does, once the runtime closed.
     await vi.waitFor(() => expect(compiled.deref()).toBeUndefined(), { timeout: 5_000 });
+  });
+});
+
+describe("the engine service's idle close", () => {
+  /** A service over two started checkouts whose sessions close after a minute of `clock` without an event. */
+  async function idleService(options: Partial<Parameters<typeof startEngineService>[0]> = {}) {
+    const root = await mkdtemp(join(tmpdir(), "rerail-idle-"));
+    roots.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    const [first, second] = [join(root, "first"), join(root, "second")];
+    for (const checkout of [first, second]) {
+      await mkdir(checkout);
+      startTestRepository(checkout, databasePath);
+    }
+    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-idle-${process.pid}-${Date.now()}` : join(root, "engine.sock");
+    const clock = { now: 1_000_000 };
+    const service = await startEngineService({
+      socketPath,
+      storageRoot: join(root, "state"),
+      databasePath,
+      embedder: testEmbedder,
+      idleSessionMs: 60_000,
+      // The runtime closes when its last session does, so the closed session's runtime goes with it.
+      idleRuntimeMs: 0,
+      now: () => clock.now,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+      ...options,
+    });
+    services.push(service);
+    const session = (sessionId: string, cwd = first) => ({ host: "claude-code" as const, sessionId, cwd });
+    const send = (event: AdapterEvent) => ingestEngineEvent({ socketPath }, event);
+    return {
+      first, second, clock, service, session, send,
+      start: (sessionId: string, cwd = first) => send({ kind: "session-start", eventId: `${sessionId}:start`, session: session(sessionId, cwd) }),
+      prompt: (sessionId: string, text: string, cwd = first) =>
+        send({ kind: "user-prompt", eventId: `${sessionId}:${text}`, sessionId, session: session(sessionId, cwd), text }),
+      ended: (sessionId: string) => endedAt(databasePath, sessionId),
+    };
+  }
+
+  it("closes a session that sent no end once it has gone quiet, so a killed agent's session does not stay forever", async () => {
+    const { second, clock, service, start, prompt, ended } = await idleService();
+    await start("a");
+    await start("b", second);
+    clock.now += 50_000;
+    await prompt("b", "still here", second);
+    clock.now += 20_000;
+    // `a` has been quiet for 70 s, `b` for 20 s: only `a` closes, and its checkout's runtime with it.
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(1);
+    expect(ended("a")).not.toBeNull();
+    expect(ended("b")).toBeNull();
+    // A closed session's next event opens it again from its ledger.
+    await prompt("a", "back");
+    expect(service.openRuntimes()).toBe(2);
+    expect(ended("a")).toBeNull();
+  });
+
+  it("keeps a quiet session open while it waits on a tool call, and closes it once the call is done", async () => {
+    const { clock, service, session, send, start, ended } = await idleService();
+    const tool = { sessionId: "a", session: session("a"), toolCallId: "t1", toolName: "Bash" } as const;
+    await start("a");
+    // A long command, or a permission prompt the user has not answered: the session sends nothing meanwhile.
+    await send({ kind: "call", eventId: "a:call", ...tool, input: { command: "npm test" } });
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(1);
+    expect(ended("a")).toBeNull();
+    await send({ kind: "result", eventId: "a:result", ...tool, output: "ok" });
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(0);
+    expect(ended("a")).not.toBeNull();
   });
 });
 

@@ -334,7 +334,7 @@ describe("A scan requested while the session's evaluator is still opening", () =
       await runtime.dispose();
       controls.close();
     };
-    return { opening, scans, settled, close };
+    return { runtime, sessionId: session.sessionId, opening, scans, settled, close };
   }
 
   it("completes with its audit once the evaluator has opened", async () => {
@@ -345,6 +345,17 @@ describe("A scan requested while the session's evaluator is still opening", () =
       const request = await test.settled();
       expect(request).toMatchObject({ status: "completed", auditIds: test.scans, error: null });
       expect(test.scans).toHaveLength(1);
+    } finally { await test.close(); }
+  });
+
+  it("keeps its quiet session open until the scan has finished, so an idle close does not cut the scan off", async () => {
+    const test = await scanFixture();
+    try {
+      const kept = await test.runtime.closeIdleSession(test.sessionId);
+      test.opening.resolve();
+      const request = await test.settled();
+      expect(request).toMatchObject({ status: "completed", auditIds: test.scans, error: null });
+      expect(kept).toBe(false);
     } finally { await test.close(); }
   });
 
@@ -431,8 +442,8 @@ describe("Rerail tool results waiting for their edit's check", () => {
       await writeFile(join(root, "a.ts"), text);
       return { answering: runtime.ingest({ kind: "result", eventId: `result-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: "Write", output: "ok" }) };
     };
-    const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, text: "" });
-    return { runtime, check, checking, steered, edit, turnEnd };
+    const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, session, text: "" });
+    return { runtime, root, session, check, checking, steered, edit, turnEnd };
   }
 
   /** `a.ts`'s finding as a steer renders it, and the digest that lists it at the end of the agent's run. */
@@ -466,6 +477,61 @@ describe("Rerail tool results waiting for their edit's check", () => {
         .toEqual([STEER]);
     } finally {
       vi.useRealTimers();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  // An idle close opens the session again from its ledger, which holds neither a steer still to deliver nor a check
+  // still running; the agent may only have gone quiet behind a permission prompt or a long tool.
+  it("keeps a quiet session open while an edit's check runs or its steer waits for the next event, so the steer still reaches the agent", async () => {
+    const { runtime, session, check, checking, steered, edit } = await hookSession();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { answering } = await edit("t1", BAD);
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await answering).toEqual([]);
+      vi.useRealTimers();
+
+      const kept = [await runtime.closeIdleSession(session.sessionId)];
+      check.resolve();
+      await steered.promise;
+      // The drained checks let go of the session first, so only the steer holds it now.
+      await new Promise(resolve => setImmediate(resolve));
+      kept.push(await runtime.closeIdleSession(session.sessionId));
+      const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: session.sessionId, session, text: "next" });
+      expect(next.map(delivery => delivery.content)).toEqual([STEER]);
+      expect(kept).toEqual([false, false]);
+      // Delivered: nothing holds the session open any more.
+      expect(await runtime.closeIdleSession(session.sessionId)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  it("keeps a quiet session open while a tool call waits for its result, so the edit the call makes is still checked", async () => {
+    const { runtime, root, session, check, turnEnd } = await hookSession();
+    try {
+      check.resolve();
+      const call = (id: string) => runtime.ingest({
+        kind: "call", eventId: `call-${id}`, sessionId: session.sessionId, session, toolCallId: id, toolName: "Write",
+        input: { file_path: join(root, "a.ts"), content: BAD },
+      });
+      await call("t1");
+      // The agent waits for the user to allow the write, or for a long tool, and sends nothing meanwhile.
+      const kept = await runtime.closeIdleSession(session.sessionId);
+      await writeFile(join(root, "a.ts"), BAD);
+      const answer = await runtime.ingest({ kind: "result", eventId: "result-t1", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write", output: "ok" });
+      expect(answer.map(delivery => delivery.content)).toEqual([STEER]);
+      expect(kept).toBe(false);
+      // A call the user refused gets no result: the end of its turn settles it.
+      await call("t2");
+      await turnEnd("turn");
+      expect(await runtime.closeIdleSession(session.sessionId)).toBe(true);
+    } finally {
       check.resolve();
       await runtime.dispose();
     }
@@ -552,6 +618,31 @@ describe("Rerail tool results waiting for their edit's check", () => {
       const fixed = await edit("t2", "export const a = 2;\n");
       expect(await fixed.answering).toEqual([]);
       expect(await runtime.yieldDeliveries("hook-check")).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  it("with the experimental digest on, keeps a quiet session open while it holds a finding for the digest", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const { runtime, session, check, checking, steered, edit, turnEnd } = await hookSession();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { answering } = await edit("t1", BAD);
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await answering).toEqual([]);
+      vi.useRealTimers();
+      check.resolve();
+      await steered.promise;
+      // The drained checks let go of the session first, so only the held finding holds it now.
+      await new Promise(resolve => setImmediate(resolve));
+
+      const kept = await runtime.closeIdleSession(session.sessionId);
+      expect((await turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
+      expect(kept).toBe(false);
     } finally {
       vi.useRealTimers();
       check.resolve();

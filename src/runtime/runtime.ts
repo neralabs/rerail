@@ -503,6 +503,11 @@ interface RuntimeSessionState {
   auditRequestWork: Promise<void> | undefined;
   repositoryAudit: Promise<void> | undefined;
   pendingCodeRuleCalls: Array<{ id: string; toolName: string }>;
+  /**
+   * The tool calls of the session's current turn still waiting for their result, which may come long after the call
+   * (a permission prompt, a long command). The turn's end settles them all: a call the user refused gets no result.
+   */
+  callsAwaitingResult: Set<string>;
   /** The edit checks a boundary stopped waiting for, until they drain; no later boundary waits for them again. */
   overdueEditChecks: Promise<void> | undefined;
   /**
@@ -880,9 +885,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         ...(preimages === undefined ? {} : { preimages }),
       });
       state.pendingCodeRuleCalls.push({ id, toolName: event.toolName });
+      state.callsAwaitingResult.add(id);
     }
     await this.#router(descriptor.host).ingest(event);
+    if (event.kind === "turn-end") state.callsAwaitingResult.clear();
     if (event.kind === "result") {
+      state.callsAwaitingResult.delete(event.toolCallId);
       const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
         const [call] = state.pendingCodeRuleCalls.splice(index, 1);
@@ -1466,6 +1474,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
       pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger.entries).map(call => ({ id: call.toolCallId, toolName: call.toolName })),
+      callsAwaitingResult: new Set(),
       overdueEditChecks: undefined,
       editCheckWaits: 0,
       yieldWaits: 0,
@@ -1568,13 +1577,27 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * Closes a session that sent no end and has gone quiet, as its end would, without recording an event: its host router
-   * forgets it too, so its next event opens it again from its ledger.
+   * forgets it too, so its next event opens it again from its ledger. A session that still owes its agent something the
+   * ledger does not hold (`#owesAgent`) stays open; false then.
    */
-  closeIdleSession(sessionId: string): Promise<void> {
+  closeIdleSession(sessionId: string): Promise<boolean> {
     return this.#ingestLanes.run(sessionId, async () => {
       const state = this.#sessions.get(sessionId);
-      if (state !== undefined) await this.#router(state.descriptor.host).stop(sessionId);
+      if (state === undefined) return true;
+      if (this.#owesAgent(state)) return false;
+      await this.#router(state.descriptor.host).stop(sessionId);
+      return true;
     });
+  }
+
+  /**
+   * Whether the session still owes its agent something that closing it would lose, since its ledger does not hold it: a
+   * tool call of its turn waiting for its result (a session opened again checks no edit the call makes), an edit check
+   * still running, a steer or held finding not yet delivered, or a scan the dashboard asked for.
+   */
+  #owesAgent(state: RuntimeSessionState): boolean {
+    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined || state.pendingSteers.length > 0
+      || state.missedFindings.length > 0 || state.auditRequestWork !== undefined;
   }
 
   async closeSession(sessionId: string): Promise<void> {

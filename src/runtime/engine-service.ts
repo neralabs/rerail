@@ -29,7 +29,10 @@ export interface EngineService {
   ): Promise<readonly AdapterDelivery[]>;
   /** How many runtimes are open: one per checkout some live session uses. */
   openRuntimes(): number;
-  /** Closes every session that has sent no event for the idle limit; the service also does this every minute. */
+  /**
+   * Closes every session that has sent no event for the idle limit and owes its agent nothing; the service also does
+   * this every minute.
+   */
   closeIdleSessions(): Promise<void>;
 }
 
@@ -38,7 +41,8 @@ export interface EngineService {
  * arrive: a coding agent that is killed sends none, and Claude Code gives its SessionEnd hook 1.5 s, which a hook on a
  * busy Windows machine outlasts. A session whose end was lost kept its state (its own copy of its checkout's source
  * walk, its conversation history, its evaluator) until the daemon stopped. A closed session's next event opens it again
- * from its ledger.
+ * from its ledger. A session waiting on a tool call, or holding a steer for its agent, stays open: its ledger holds
+ * neither.
  */
 export const IDLE_SESSION_MS = 30 * 60_000;
 /** How often the engine service looks for idle sessions. */
@@ -311,7 +315,8 @@ function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, run
 /**
  * Closes, as its end would, each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`), and then retires its
  * runtime as an end does. The check runs again in the session's lane, so an event that came in meanwhile keeps the
- * session open. A close that fails is reported and tried again on the next sweep.
+ * session open. A session that still owes its agent a tool call's check, a steer or a scan stays open
+ * (`RerailRuntime.closeIdleSession`), and so does one whose close fails, which is reported; the next sweep looks again.
  */
 async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now: () => number): Promise<void> {
   const idle = (lane: string): boolean => {
@@ -322,9 +327,9 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
     const [runtimeKey, sessionId] = JSON.parse(lane) as [string, string];
     const closing = state.lanes.run(lane, async () => {
       if (!idle(lane)) return false;
-      await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId);
-      state.lastEventAt.delete(lane);
-      return true;
+      const closed = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId) ?? true;
+      if (closed) state.lastEventAt.delete(lane);
+      return closed;
     });
     track(state, closing);
     try {
