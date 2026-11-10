@@ -77,7 +77,7 @@ fn tiny(f: Form) -> Kernel {
             Kernel::Closure { n: 8, off, dst }
         }
         Form::Probe | Form::Tile => {
-            let keys: crate::kernel::Keys = vec![std::sync::Arc::<[i64]>::from(vec![1i64, 2])].into();
+            let keys: crate::kernel::Keys = vec![crate::col::Col::from(vec![1i64, 2])].into();
             let by = if f == Form::Tile { crate::kernel::JoinBy::Tile } else { crate::kernel::JoinBy::Probe };
             Kernel::Join { left: keys.clone(), right: keys, right_id: None, by }
         }

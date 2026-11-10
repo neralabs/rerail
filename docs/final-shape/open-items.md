@@ -3365,6 +3365,27 @@ the wrapper's, in bytes, not the engine's.)
     tape restore and facts 3.3 s, parse 1.9 s); `values` 23.5 s (rules 6.6 s, projection 4.1 s, tape and facts
     4.2 s). Linear in the documents, so over the whole workspace about 400 s and 350 s of CPU cold. A warm run
     reuses each phase from its record.
+- Whole workspace, cold, 4 threads (2026-11-09 22:13, `44d7dac3f`, load 35–88): `struct` then `values` over 9,024
+  files finished: 861 s wall, 966 s CPU (899.6 user + 66.1 sys), 36,643 `lens` rows. Peak RSS 3,142 MB, three times
+  the budget. Two causes found, not yet fixed:
+  - Memory was above 1 GB from the start, so the chunk sizer shrank every chunk to its least (8,192 nodes): 2,028
+    chunks, against 4 for 237 files. Every per-chunk cost is paid 2,028 times.
+  - `v_enum` (`values.rr:77`) and its count (`rr_agg63`) read struct's exports alone, no document, yet run in the
+    per-file part, so each chunk derives them again over all of struct's exports: 116.6 M `struct__member` rows for
+    one answer, 148 s and 35 s. Relations made from facts alone are left to the split (`constants::foldable` skips
+    `constant_relations`), which derives them per chunk; cheap for small facts, not for a phase's exports.
+  - The rest: per-file rules 477 s in all, projection 149 s, tape and facts 137 s, cross part 120 s.
+- A main program over phase exports alone (`defs(q, k) :- struct__def(q, k)`) no longer builds documents
+  (`58a5243a1`): 480 builds to 243 on 237 files for `struct`, 726 to 489 for `values`.
+- Spike (2026-11-09, `RERAIL_SPIKE_PROJECTION`, `syntax/stored_spike.rs`): each document's projected relations
+  kept on disk per (document, relation), so a later phase or run reads them instead of rebuilding them. On 591
+  files, `struct` and `values` (1,197 builds, load 102–120): a build now costs 9.5 ms a document (tape restore
+  0.75, facts 2.1, projection 5.8, text tests 0.85); reading back every relation the phases read, views included,
+  2.0 ms (SQLite, zstd and varint decode, the relations remade). 12 MB on disk for the 591 files (about 20 KB a
+  document), against the tape cache's 52 MB; writing is 0.5 ms a document. Open: both phases read the per-node
+  axes (`rr_nearest_scope`, `rr_inside_*`), computed from each document's tree as asked, so a phase that reads
+  them still needs the facts unless the axes run over stored tree columns; joins over stored relations against
+  views over facts were not compared.
 
 **Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
 imported from outside is then open, counted as 1.
