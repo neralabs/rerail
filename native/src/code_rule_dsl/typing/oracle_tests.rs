@@ -1036,7 +1036,8 @@ rtype(f, a, d) :- types__rtype(f, a, d).
     let second = dump();
     assert!(second[1].iter().any(|l| l == "b.C\ta.A") && second[0].iter().any(|l| l.starts_with("a\tZ\t")), "{second:?}");
     let unchanged = run();
-    assert!(unchanged.phase_runs.iter().any(|p| p.name == "types" && p.report.cross_strata.is_none()), "the typing phase kept as it was");
+    let how: Vec<String> = unchanged.phase_runs.iter().map(|p| format!("{} {:?} {:?} {:?}", p.name, p.report.cross_strata, p.full_because, p.report.phases.iter().map(|x| x.0).collect::<Vec<_>>())).collect();
+    assert!(unchanged.phase_runs.iter().any(|p| p.name == "types" && p.report.cross_strata.is_none()), "the typing phase kept as it was: {how:?}");
     assert_eq!(dump(), second, "read back from the phase store");
     let full = session::full(run);
     assert_eq!(second, dump(), "the session's maintained typing phase against a full run");

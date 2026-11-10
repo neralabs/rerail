@@ -669,10 +669,8 @@ fn record(phase: &str, key: &str, consulted: &[(String, String, String)]) -> Res
     let Some(path) = store_path() else { return Ok(()) };
     let db = open_store(&path)?;
     records(&db)?;
-    if consulted.is_empty() {
-        db.execute("DELETE FROM phase_record WHERE phase=?1", [phase])?;
-        return Ok(());
-    }
+    // A run that consulted nothing (a phase over earlier phases' exports reads no document) is recorded too: its
+    // key, which holds those exports' versions, is all it depends on.
     let text = consulted.iter().map(|(w, p, d)| format!("{w}\t{p}\t{d}")).collect::<Vec<_>>().join("\n");
     db.execute("INSERT OR REPLACE INTO phase_record VALUES (?1, ?2, ?3)", params![phase, key, text])?;
     Ok(())
@@ -682,21 +680,30 @@ fn record(phase: &str, key: &str, consulted: &[(String, String, String)]) -> Res
 /// and everything it consulted as it was (`corpus::unchanged`). Its freshness then has nothing to record.
 #[allow(clippy::too_many_arguments)]
 fn reuse(phase: &str, key: &str, text: &str, root: &Path, typing: &Typing, options: &serde_json::Value) -> Result<Option<usize>> {
-    let Some(path) = store_path().filter(|p| p.exists()) else { return Ok(None) };
-    let db = open_store(&path)?;
-    records(&db)?;
-    let Some((last, consulted)): Option<(String, String)> = db.query_row("SELECT key, consulted FROM phase_record WHERE phase=?1", [phase], |r| Ok((r.get(0)?, r.get(1)?))).ok() else { return Ok(None) };
     // `RERAIL_PHASE_WHY`: why a phase was not kept, on stderr.
     let why = |what: &str| {
         if std::env::var_os("RERAIL_PHASE_WHY").is_some() {
             eprintln!("phase {phase}: not kept: {what}");
         }
     };
+    let Some(path) = store_path().filter(|p| p.exists()) else {
+        why("no phase store");
+        return Ok(None);
+    };
+    let db = open_store(&path)?;
+    records(&db)?;
+    let Some((last, consulted)): Option<(String, String)> = db.query_row("SELECT key, consulted FROM phase_record WHERE phase=?1", [phase], |r| Ok((r.get(0)?, r.get(1)?))).ok() else {
+        why("no last run recorded");
+        return Ok(None);
+    };
     if last != key {
         why("its key changed (its program, options, root or an earlier phase's exports)");
         return Ok(None);
     }
     let consulted = parse_consulted(&consulted);
+    if consulted.is_empty() {
+        return Ok(Some(0));
+    }
     if !super::unchanged_phase(&[text], root, typing, options, &consulted)? {
         why("an input it consulted changed");
         return Ok(None);
