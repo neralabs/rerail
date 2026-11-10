@@ -7,7 +7,8 @@ import {
   type webcrypto,
   type KeyObject,
 } from "node:crypto";
-import { mkdir, mkdtemp, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -24,6 +25,8 @@ import {
   type ActivationTrustRoots,
   type CustomerProfile,
   type FlattenedJws,
+  type ProfileStoreOptions,
+  type VerifiedCustomerProfile,
 } from "../../src/activation/customer-profile.js";
 import type { DeviceSecretStore } from "../../src/activation/device-keystore.js";
 import { stableJsonText } from "../../src/engine/index.js";
@@ -79,10 +82,10 @@ interface ProfileFixture {
   trustRoots: ActivationTrustRoots;
 }
 
-async function fixture(platform?: NodeJS.Platform): Promise<ProfileFixture> {
+async function fixture(options?: ProfileStoreOptions): Promise<ProfileFixture> {
   const home = await mkdtemp(join(tmpdir(), "rerail-profile-"));
   temporaryDirectories.push(home);
-  const profileStore = new CustomerProfileStore(home, platform);
+  const profileStore = new CustomerProfileStore(home, options);
   const secrets = new MemorySecretStore();
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const trustRoots: ActivationTrustRoots = {
@@ -279,7 +282,7 @@ describe("signed customer profiles", () => {
   });
 
   it.each(["EPERM", "EACCES", "EBUSY"])("waits through %s on Windows, where another activation is deleting the profile lock folder", async code => {
-    const setup = await fixture("win32");
+    const setup = await fixture({ platform: "win32" });
     const identity = await setup.activation.deviceIdentity("acme");
     failNextLockCreate(code);
 
@@ -288,7 +291,7 @@ describe("signed customer profiles", () => {
   });
 
   it("fails at once on EPERM elsewhere, where it means the home refuses this process", async () => {
-    const setup = await fixture("linux");
+    const setup = await fixture({ platform: "linux" });
     const identity = await setup.activation.deviceIdentity("acme");
     failNextLockCreate("EPERM");
 
@@ -302,3 +305,87 @@ describe("signed customer profiles", () => {
       .toThrow("Unknown profile argument: unexpected");
   });
 });
+
+describe("an activation finding its profile's lock taken", () => {
+  const neverWaits = { sleep: async (): Promise<void> => { throw new Error("waited"); } };
+
+  it("takes over the lock of an activation whose process is gone", async () => {
+    const setup = await fixture(neverWaits);
+    const lockPath = await profileLock(setup.home, { owner: { pid: DEAD_PID, token: "other", at: Date.now() } });
+
+    await expect(activateAcme(setup)).resolves.toMatchObject({ profile: { customerId: "acme" } });
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it("takes over a lock older than any activation takes, even if its pid now names a running process", async () => {
+    const setup = await fixture(neverWaits);
+    await profileLock(setup.home, { owner: { pid: process.pid, token: "other", at: Date.now() - 11 * 60_000 } });
+
+    await expect(activateAcme(setup)).resolves.toMatchObject({ profile: { customerId: "acme" } });
+  });
+
+  it("takes over a lock with no owner, left by an activation that died before writing one", async () => {
+    const setup = await fixture(neverWaits);
+    await profileLock(setup.home, { ageMs: 60_000 });
+
+    await expect(activateAcme(setup)).resolves.toMatchObject({ profile: { customerId: "acme" } });
+  });
+
+  it.each([
+    ["a running activation", { owner: { pid: process.pid, token: "other", at: Date.now() } }],
+    ["an activation that has made the lock and not written its owner yet", {}],
+  ])("waits for %s, then takes the lock", async (_holder, held) => {
+    const events: string[] = [];
+    let lockPath = "";
+    const setup = await fixture({
+      // While this activation waits, the other finishes and lets go.
+      sleep: async () => {
+        events.push(existsSync(lockPath) ? "the other holds the lock" : "the other lost its lock");
+        await rm(lockPath, { recursive: true });
+        events.push("the other lets go");
+      },
+    });
+    lockPath = await profileLock(setup.home, held);
+
+    await expect(activateAcme(setup)).resolves.toMatchObject({ profile: { customerId: "acme" } });
+    expect(events).toEqual(["the other holds the lock", "the other lets go"]);
+  });
+
+  it("leaves the lock alone when another activation took it over meanwhile", async () => {
+    const setup = await fixture();
+    const identity = await setup.activation.deviceIdentity("acme");
+    const lockPath = join(setup.home, "profiles", ".locks", "acme.lock");
+    const theirs = JSON.stringify({ pid: process.pid, token: "theirs", at: Date.now() });
+    // A secret store write held longer than PROFILE_LOCK_STALE_MS, after which another activation took the lock.
+    setup.secrets.write = async () => { await writeFile(join(lockPath, "owner.json"), theirs); };
+
+    await setup.activation.activateOnline({
+      profileName: "acme",
+      code: "one-use-code",
+      activationUrl: "http://localhost:3000",
+      trustRoots: setup.trustRoots,
+      rerailVersion: "0.1.0",
+      fetch: async () => new Response(JSON.stringify({ profile: signProfile(profile(identity.thumbprint), setup.signingKey), deviceCredential: {} })),
+      now: NOW,
+    });
+    await expect(readFile(join(lockPath, "owner.json"), "utf8")).resolves.toBe(theirs);
+  });
+});
+
+/** A pid no process has: above Linux's default limit, and odd, which no Windows pid is. */
+const DEAD_PID = 2 ** 22 - 1;
+
+/** `home`'s lock on the profile "acme" as another activation holds it: with `owner` written, made `ageMs` ago. */
+async function profileLock(home: string, held: { owner?: { pid: number; token: string; at: number }; ageMs?: number }): Promise<string> {
+  const lockPath = join(home, "profiles", ".locks", "acme.lock");
+  await mkdir(lockPath, { recursive: true });
+  if (held.owner !== undefined) await writeFile(join(lockPath, "owner.json"), JSON.stringify(held.owner));
+  const madeAt = new Date(Date.now() - (held.ageMs ?? 0));
+  await utimes(lockPath, madeAt, madeAt);
+  return lockPath;
+}
+
+async function activateAcme(setup: ProfileFixture): Promise<VerifiedCustomerProfile> {
+  const identity = await setup.activation.deviceIdentity("acme");
+  return await setup.activation.activateFile("acme", signProfile(profile(identity.thumbprint), setup.signingKey), setup.trustRoots, NOW);
+}
