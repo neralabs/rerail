@@ -1,1 +1,1 @@
-On Windows, two set-ups, or a set-up and `rerail packs add`, running at once no longer fail with "EPERM: operation not permitted" when one lets go of the rule packs' lock as the other takes it: the second waits its turn.
+On Windows, Rerail no longer fails with "EPERM: operation not permitted" when one process lets go of a lock as another takes it: two set-ups, or a set-up and `rerail packs add`, and sessions starting the daemon wait their turn.

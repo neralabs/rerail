@@ -9,7 +9,7 @@ import { Readable, type Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
-import { replaceFile } from "../engine/file-replace.js";
+import { heldOnWindows, nameTaken, replaceFile } from "../engine/file-replace.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
 import { forgetMainInstanceHolder } from "../engine/native/main-instance.js";
@@ -596,12 +596,12 @@ interface StartLockLease {
  * fight over the state file. A lease held by a dead pid or past its expiry
  * is reclaimed.
  */
-export interface StartLockTiming {
+export interface StartLockOptions {
   leaseMs: number;
   renewMs: number;
 }
 
-const DEFAULT_START_LOCK_TIMING: StartLockTiming = { leaseMs: START_LOCK_LEASE_MS, renewMs: START_LOCK_LEASE_MS / 3 };
+const DEFAULT_START_LOCK_OPTIONS: StartLockOptions = { leaseMs: START_LOCK_LEASE_MS, renewMs: START_LOCK_LEASE_MS / 3 };
 
 async function readStartLockLease(leasePath: string): Promise<StartLockLease | undefined> {
   return await readFile(leasePath, "utf8").then(text => JSON.parse(text) as StartLockLease).catch(() => undefined);
@@ -612,7 +612,24 @@ function isLiveLease(lease: StartLockLease | undefined, machine: DaemonMachine):
   return lease !== undefined && processAlive(lease.pid, machine.kill) && lease.expiresAt >= Date.now();
 }
 
-/** Makes the start lock's folder at `lockPath`: a stale lock in the way is removed, a held one waited for. */
+/**
+ * Removes a start lock taken for stale; false when Windows refuses because another start is deleting that folder
+ * already. A folder being deleted has no lease left to read, so it looks stale; the caller waits for that delete.
+ */
+async function removeStaleLock(lockPath: string, platform: NodeJS.Platform): Promise<boolean> {
+  try {
+    await rm(lockPath, { recursive: true, force: true });
+    return true;
+  } catch (error) {
+    if (heldOnWindows(error, platform)) return false;
+    throw error;
+  }
+}
+
+/**
+ * Makes the start lock's folder at `lockPath`: a stale lock in the way is removed, a held one waited for. On the
+ * machine's Windows, a folder another start is still deleting counts as held.
+ */
 async function takeStartLock(lockPath: string, leasePath: string, machine: DaemonMachine): Promise<void> {
   const deadline = Date.now() + START_TIMEOUT_MS;
   for (;;) {
@@ -620,13 +637,11 @@ async function takeStartLock(lockPath: string, leasePath: string, machine: Daemo
       await mkdir(lockPath, { mode: 0o700 });
       return;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      // Another start holds the lock, or on Windows is still deleting its folder as it lets go.
+      if (!nameTaken(error, machine.platform)) throw error;
       const lease = await readStartLockLease(leasePath);
-      if (!isLiveLease(lease, machine)) {
-        await rm(lockPath, { recursive: true, force: true });
-        continue;
-      }
-      if (Date.now() > deadline) throw new Error(`Another Rerail start (pid ${lease.pid}) is still in progress`);
+      if (!isLiveLease(lease, machine) && await removeStaleLock(lockPath, machine.platform)) continue;
+      if (Date.now() > deadline) throw new Error(`Another Rerail start (${lease === undefined ? "starting" : `pid ${lease.pid}`}) is still in progress`);
       await sleep(POLL_INTERVAL_MS);
     }
   }
@@ -635,7 +650,7 @@ async function takeStartLock(lockPath: string, leasePath: string, machine: Daemo
 export async function withStartLock<T>(
   home: string,
   operation: () => Promise<T>,
-  timing: StartLockTiming = DEFAULT_START_LOCK_TIMING,
+  options: StartLockOptions = DEFAULT_START_LOCK_OPTIONS,
   machine: DaemonMachine = THIS_MACHINE,
 ): Promise<T> {
   const lockPath = join(home, START_LOCK_DIR);
@@ -644,7 +659,7 @@ export async function withStartLock<T>(
   // Replaced whole, never rewritten in place: a rewrite truncates first, and a starter that read the empty file
   // between would take the lease for stale and remove the lock this start still holds.
   const writeLease = async (): Promise<void> => {
-    const lease: StartLockLease = { pid: process.pid, expiresAt: Date.now() + timing.leaseMs };
+    const lease: StartLockLease = { pid: process.pid, expiresAt: Date.now() + options.leaseMs };
     await replaceFile(leasePath, JSON.stringify(lease), { mode: 0o600 });
   };
   const ownsLease = async (): Promise<boolean> => (await readStartLockLease(leasePath))?.pid === process.pid;
@@ -656,7 +671,7 @@ export async function withStartLock<T>(
     renewal = renewal.then(async () => {
       if (await ownsLease()) await writeLease();
     }).catch(() => undefined);
-  }, timing.renewMs);
+  }, options.renewMs);
   renew.unref();
   try {
     return await operation();
@@ -705,7 +720,7 @@ export async function startDaemon(
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
-  }, DEFAULT_START_LOCK_TIMING, machine);
+  }, DEFAULT_START_LOCK_OPTIONS, machine);
 }
 
 /**
@@ -730,7 +745,7 @@ export async function startDaemonForPackage(
     }
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
-  }, DEFAULT_START_LOCK_TIMING, machine);
+  }, DEFAULT_START_LOCK_OPTIONS, machine);
 }
 
 /** Whether a healthy daemon was launched from the package the caller is executing. */
