@@ -289,8 +289,9 @@ up, is in `scripts/host/host-smoke.ts` and `scripts/host/host-harness.ts`.
 
 ### Developing on Windows
 
-Pull request CI runs on Linux and macOS only. Test a change to how Rerail starts processes, resolves paths, replaces
-files or writes commands on Windows yourself, and keep to the rules in [docs/windows.md](docs/windows.md).
+Pull request CI runs the unit suite on Windows in one job (`unit-windows`), and every other test job on Linux or macOS.
+Test a change to how Rerail starts processes, resolves paths, replaces files or writes commands on Windows yourself,
+and keep to the rules in [docs/windows.md](docs/windows.md).
 
 **Git, Git LFS and line endings.** Git for Windows includes Git LFS; run `git lfs install` once before you clone. Its
 installer sets `core.autocrlf=true` for the whole machine, which checks text files out with CRLF line breaks.
@@ -303,9 +304,6 @@ tracked file again:
 ```sh
 git rm -r --cached -q . && git reset --hard
 ```
-
-> TODO(lane D): confirm `.gitattributes` holds `* text=auto eol=lf` after the merge; at the base of this section only
-> the two model files are `-text`.
 
 **Node and the native engine.** Install Node.js 24 or newer. `npm run build:native` compiles with Microsoft's C++
 toolchain, so install the Visual Studio Build Tools with the C++ workload, and rustup:
@@ -347,9 +345,10 @@ redirects it. `RERAIL_DEVICE_SECRET_STORE=file` keeps activation out of Windows 
 **Symlinks.** Windows makes a symlink only with Developer Mode on or from an elevated process. Rerail itself never
 makes one there ([docs/windows.md, "Links"](docs/windows.md#links)), so run the suite without Developer Mode, as most
 users' machines are: a test that needs a symlink skips and says why, or makes a junction where a junction tests the
-same thing.
-
-> TODO(lane E): name the test helper that skips or makes a junction, and the suite's state on Windows after the merge.
+same thing. Tests do either through `symlinkOrSkip` or `linkFolder` (`test/support/platform/links.ts`); the other
+helpers for what differs on Windows (named pipes, permission bits, removing a folder Windows still holds) sit beside
+them in `test/support/platform/`. CI's `unit-windows` job runs the whole unit suite on Windows on every push to main and
+every pull request from a branch of this repository, so a test that fails there fails CI.
 
 **PowerShell scripts.** `scripts/host/windows-install-smoke.ps1`, the release gate on Windows, runs under PowerShell 7
 in `release.yml`. It dot-sources `scripts/host/windows-host.ps1`, which the environment matrix's Windows VMs also run
@@ -364,9 +363,6 @@ pwsh -NoProfile -File scripts/host/windows-install-smoke.ps1 -Tarball neralabs-r
 Delete the tarball afterwards; git does not ignore it. The smoke installs into a sandbox profile whose folder name has
 an accent and a space. It puts back your user `Path`, which set-up writes and the sandbox cannot redirect, and reads
 every child's output as UTF-8, so it passes on a console whose code page is 437, an en-US install's default.
-
-> TODO(lane D): confirm both fixes landed. If either did not, say instead to save the user `Path` before a run, and
-> that the smoke fails at its `no-repo` step on code page 437.
 
 **Console windows.** On Windows, a console program started by a process with no console opens a window, which
 Windows 11 hands to Windows Terminal, and it takes focus. When you change how Rerail starts a process, start it
