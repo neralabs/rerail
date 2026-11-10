@@ -257,3 +257,35 @@ fn batches_test_their_strings_at_once_on_one_pool() {
         assert_eq!(passed, expected);
     }
 }
+
+/// The data-layer programs' SQLite functions (decision 0107) give what SQLite's own give, over strings with
+/// multi-byte characters, negative and zero positions, and patterns of `%` and `_`.
+#[test]
+fn sqlite_functions_as_sqlite_has_them() {
+    use super::functions::eval;
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let sql = |q: &str, args: &[&dyn rusqlite::ToSql]| -> rusqlite::types::Value { db.query_row(q, args, |r| r.get(0)).unwrap() };
+    let words = ["", "a", "héllo wörld", "  pad  ", "_lazy_name", "x.y.z", "'quoted'"];
+    for s in words {
+        for (y, z) in [(1, 1), (0, 3), (-3, 2), (2, -1), (5, 100), (-20, 4), (3, 0), (1, -2)] {
+            assert_eq!(eval("sql_substr", &[s], &[y, z]), sql("SELECT substr(?1, ?2, ?3)", &[&s, &y, &z]), "substr({s:?}, {y}, {z})");
+            assert_eq!(eval("sql_substr2", &[s], &[y]), sql("SELECT substr(?1, ?2)", &[&s, &y]), "substr({s:?}, {y})");
+        }
+        for sub in ["", "l", "wö", "z", "lazy"] {
+            assert_eq!(eval("sql_instr", &[s, sub], &[]), sql("SELECT instr(?1, ?2)", &[&s, &sub]), "instr({s:?}, {sub:?})");
+        }
+        for chars in [" ", "'\"", "._"] {
+            assert_eq!(eval("sql_trim2", &[s, chars], &[]), sql("SELECT trim(?1, ?2)", &[&s, &chars]));
+            assert_eq!(eval("sql_ltrim2", &[s, chars], &[]), sql("SELECT ltrim(?1, ?2)", &[&s, &chars]));
+        }
+        assert_eq!(eval("sql_trim", &[s], &[]), sql("SELECT trim(?1)", &[&s]));
+        assert_eq!(eval("sql_upper", &[s], &[]), sql("SELECT upper(?1)", &[&s]));
+        assert_eq!(eval("sql_length", &[s], &[]), sql("SELECT length(?1)", &[&s]));
+        for p in ["%", "_%", "%lazy%", "X.Y.Z", "h_llo%", ""] {
+            assert_eq!(eval("sql_like", &[s, p], &[]), sql("SELECT ?1 LIKE ?2", &[&s, &p]), "{s:?} LIKE {p:?}");
+        }
+    }
+    for s in ["12", " -7x", "+3", "abc", "", "4.5"] {
+        assert_eq!(eval("sql_cast_int", &[s], &[]), sql("SELECT CAST(?1 AS INTEGER)", &[&s]), "cast({s:?})");
+    }
+}

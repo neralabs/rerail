@@ -1085,7 +1085,10 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
 /// of it the library's) goes with them. Returns the relations taken out, and the cone's.
 fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> (usize, BTreeSet<String>) {
     use front::Literal;
-    let library: BTreeSet<&str> = modules.files.iter().flat_map(|(_, _, names)| names).map(String::as_str).filter(|r| !core.contains(*r)).collect();
+    // An input the program reads (`within`, which lowering keeps where a rule reads it) is a base relation, the run's:
+    // its declaration stays with the program.
+    let library: BTreeSet<&str> =
+        modules.files.iter().flat_map(|(_, _, names)| names).map(String::as_str).filter(|r| !core.contains(*r) && !prog.inputs.iter().any(|i| i == r)).collect();
     let reads = |r: &front::Rule| -> Vec<String> {
         r.body
             .iter()
@@ -6057,6 +6060,16 @@ fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles)
     }
 }
 
+/// The documents JSON policies select, each its `scope`'s `include` (every file where it has none) less its `exclude`;
+/// `None` where a policy has no `scope` (it reads every file) or there is no policy.
+fn json_scopes(policies: &[serde_json::Value]) -> Option<Vec<(Vec<String>, Vec<String>)>> {
+    let globs = |v: Option<&serde_json::Value>| -> Vec<String> { v.and_then(|v| v.as_array()).into_iter().flatten().filter_map(|g| g.as_str().map(str::to_owned)).collect() };
+    if policies.is_empty() {
+        return None;
+    }
+    policies.iter().map(|p| p.get("scope").map(|s| (globs(s.get("include")), globs(s.get("exclude"))))).collect()
+}
+
 /// The files the program's policies select (`front::Program::doc_scopes`, their `.scope`): a document outside
 /// every policy's scope is not parsed, and gives no facts.
 /// A scope entry taken from a policy option (`.scope dirs option("…")`) reads the option's values, from the run's
@@ -6064,10 +6077,12 @@ fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles)
 fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::Value) -> CorpusFiles {
     let text_glob = |p: &String| prog.text_globs.iter().any(|g| crate::code_rule_dsl::logic::strings::test("glob", p, g));
     found.text.retain(text_glob);
-    if prog.doc_scopes.is_none() {
+    // A program of JSON policies (`.policy {…}`) and no `.scope`: their `scope`s (decision 0107).
+    let doc_scopes = prog.doc_scopes.clone().or_else(|| json_scopes(&prog.policies));
+    if doc_scopes.is_none() {
         return found;
     }
-    let scopes = front::resolve_scopes(&prog.doc_scopes, options);
+    let scopes = front::resolve_scopes(&doc_scopes, options);
     let before = found.parsed();
     for files in found.by_label.values_mut().chain([&mut found.text]) {
         files.retain(|p| front::in_doc_scopes(&scopes, p));

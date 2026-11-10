@@ -2008,6 +2008,9 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
         if stats.lazy.0.contains_key(rel.as_str()) {
             continue;
         }
+        if !prog.decls.contains_key(rel) {
+            return Err(Error::Statistics(format!("the input {rel} is not declared")));
+        }
         input_stats(&mut stats, &mut ndv, prog, rel)?;
     }
     // Input indexes as column lists, each ending in the rowid column if the table has one (SQLite appends it). The
@@ -6731,12 +6734,15 @@ fn decoded_outputs(
     let (mut outputs, mut all_nodes) = (BTreeMap::new(), BTreeMap::new());
     let text = |e: &str| if atoms { format!("sym_text({e})") } else { e.to_owned() };
     for rel in prog.outputs.iter().filter(|r| !kept.contains(*r)) {
+        // The findings form `finding(key, n)` is written as `finding_at` (key, path, start); a `finding` of another
+        // shape (a data-layer program's `finding(clause, code, n)`) is an output like any other.
+        let findings_form = rel == "finding" && prog.decls.get(rel).is_none_or(|cols| cols.len() == 2);
         // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).
         let domains: Vec<lower::Domain> = match lowered {
-            Some(l) if rel != "finding" => l.domains[rel].clone(),
+            Some(l) if !findings_form => l.domains.get(rel).cloned().ok_or_else(|| Error::Plan(format!("the output {rel} has no columns' domains")))?,
             _ => Vec::new(),
         };
-        let sql = if rel == "finding" {
+        let sql = if findings_form {
             format!(
                 "SELECT DISTINCT {}, {}, k.start FROM finding x JOIN {facts}node k ON k.n = x.c1 JOIN {facts}doc d ON d.d = k.d",
                 text("x.c0"),
@@ -6752,7 +6758,7 @@ fn decoded_outputs(
         } else {
             format!("SELECT * FROM {}", crate::code_rule_dsl::logic::sql::ident(rel))
         };
-        let name = if rel == "finding" { "finding_at".to_owned() } else { rel.clone() };
+        let name = if findings_form { "finding_at".to_owned() } else { rel.clone() };
         let kinds = lowered.map(|l| l.dialect.kinds());
         // A value names its grammar (its tape tag): a guest's kinds are its grammar's (decision 0058 §2).
         let of_tag = |tag: i64| u8::try_from(tag).ok().and_then(crate::code_rule_dsl::language::from_tape_tag).map(|d| d.kinds());
