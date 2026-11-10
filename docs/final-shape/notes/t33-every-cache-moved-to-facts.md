@@ -45,12 +45,13 @@ it (03 §1's versions, at the grain of a relation).
 
 **Identity by naming, for every relation** (user, 2026-11-10). A cached relation is a relation like any other:
 its identity names its rules and what they read, so a rule edit makes it new, with no join of the program's facts
-in any key. To make a relation new by hand, `.cache r, s version N`: the version is part of each relation's
-identity, so bumping it makes them new, and every relation derived from them (built: `rr::lower`'s
-`cache_directive`, the qualifier `cache version N`, which combining renames with the relation).
+in any key. A version, when one is wanted, is a column of the facts, written in the rule that makes them. Bumping
+it is a rule edit like any, so the relation and everything derived from it are derived again. No directive and
+no special handling:
 
 ```text
-.cache tape_of version 2     // the tapes, and everything read off them, are derived again
+.decl my_cached_fact(key: symbol, result: symbol, v: symbol)
+my_cached_fact(k, r, "v1") :- my_key(k), r = @expensive(k).    // "v2" derives it again
 ```
 
 ## The moves
@@ -155,4 +156,4 @@ Decided (user, 2026-11-10):
 
 1. **K1's layout is frames** per (space, relation, partition), as chosen for SQL access (bd12fc52d).
 2. **This branch builds what the other session is not doing:** K1 to K4, and steps 1 and 4.
-3. **Identity by naming for every relation**, and `.cache r version N` to make relations new (above).
+3. **Identity by naming for every relation**; a version is a column of the facts, bumped in the rule (above).

@@ -276,14 +276,6 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
             Item::Policy(document) => l.prog.policies.push(document),
-            // `.cache r, s version N` (t33): the version is part of each relation's identity, so bumping it makes
-            // the relations new, and what is derived from them; without `version`, version 0.
-            Item::Setting { key, text } if key == crate::code_rule_dsl::logic::front::CACHE => {
-                for (rel, version) in cache_directive(&text).map_err(at)? {
-                    l.prog.qualifiers.entry(rel).or_default().insert(crate::code_rule_dsl::logic::front::cache_qualifier(version));
-                }
-                l.prog.settings.push((key, text));
-            }
             Item::Setting { key, text } => l.prog.settings.push((key, text)),
             Item::Violation { name, cols, code, code_in, tag, suppress, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, message).map_err(at)?,
             Item::Clause { heads, body, edits } => {
@@ -320,11 +312,6 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).filter(|b| !(reads_within && *b == "within")) {
         l.prog.decls.remove(b);
         l.prog.inputs.retain(|i| i != b);
-    }
-    for (rel, words) in &l.prog.qualifiers {
-        if words.iter().any(|w| w.starts_with(crate::code_rule_dsl::logic::front::CACHE)) && !l.prog.decls.contains_key(rel) {
-            return Err(Error::Syntax(format!(".cache {rel}: the relation is not declared")));
-        }
     }
     l.kind_sets()?;
     lower_boolean_relations(&mut l.prog);
@@ -2615,16 +2602,3 @@ pub(super) fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
     out
 }
 
-
-/// `.cache r, s version N`'s relations, each with the version (0 when none is given).
-fn cache_directive(text: &str) -> Result<Vec<(String, u64)>, Error> {
-    let (rels, version) = match text.split_once(" version ") {
-        Some((rels, v)) => (rels, v.trim().parse::<u64>().map_err(|_| Error::Syntax(format!(".cache {text}: the version must be a number")))?),
-        None => (text, 0),
-    };
-    let names: Vec<String> = rels.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned).collect();
-    if names.is_empty() || names.iter().any(|n| !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')) {
-        return Err(Error::Syntax(format!(".cache {text}: expected `.cache r, s` or `.cache r, s version N`")));
-    }
-    Ok(names.into_iter().map(|n| (n, version)).collect())
-}

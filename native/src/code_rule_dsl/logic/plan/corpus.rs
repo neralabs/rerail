@@ -6180,14 +6180,8 @@ uses(n, f) :- imp(n, q), def(f, q).
         let (ran_a, _) = run(unused);
         assert!(ran_a < all, "the first program's relations are still kept ({ran_a} of {all})");
         // An edit to `unused`'s rule: `uses` and what it reads stay clean.
-        let edited_rule = unused.replace("!used(f)", "!used(f), f != 0");
-        let (edited, all_e) = run(&edited_rule);
+        let (edited, all_e) = run(&unused.replace("!used(f)", "!used(f), f != 0"));
         assert!(edited < all_e, "a rule edit reruns only what it reaches ({edited} of {all_e})");
-        assert_eq!(run(&edited_rule).0, 0, "unchanged again: nothing runs");
-        // `.cache uses version 1`: a new `uses`, and so a new `used` and `unused`.
-        let (bumped, all_v) = run(&format!("{edited_rule}.cache uses version 1\n"));
-        assert_eq!(bumped, all_v, "a bumped version makes the relation and its readers new ({bumped} of {all_v})");
-        assert_eq!(run(&format!("{edited_rule}.cache uses version 1\n")).0, 0, "the bumped version is kept like any");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
