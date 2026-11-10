@@ -102,6 +102,16 @@ function rulesOf(repo: string) {
   }
 }
 
+/** Library rule `id`'s stored rule document. */
+function getLibraryRuleDocument(id: string): unknown {
+  const database = openRerailDatabase(defaultRerailDatabasePath());
+  try {
+    return getLibraryRule(database, id)?.document.rule;
+  } finally {
+    database.$client.close();
+  }
+}
+
 /** The mode library rule `id`'s stored content sets. */
 function getLibraryRuleMode(id: string): string | undefined {
   const database = openRerailDatabase(defaultRerailDatabasePath());
@@ -680,19 +690,91 @@ describe("rerail rules add", () => {
     expect(rulesOf(repo)).toMatchObject({ setUp: false, repository: [] });
   });
 
-  it("refuses to replace a rule by Rerail with the same id", async () => {
-    const repo = await repository();
-    const bundled = [...loadRuleCatalog().documents.values()].find(document => document.kind === "code");
-    if (bundled === undefined) throw new Error("expected a code rule by Rerail");
-    const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: bundled.rule.id } });
+  describe("a draft that keeps a By Rerail rule's id", () => {
+    // Each test copies its own rule: the library is shared by this file's tests, and a second copy takes `-copy-2`.
+    const SHIPPED = "complexity-cyclomatic-python";
 
-    const { exit, stdout, stderr } = await run("add", [file, "--repo", repo]);
+    /** `repo` set up with the complexity pack at `folder`. */
+    function setUpWithComplexity(repo: string, folder = ""): void {
+      const database = openRerailDatabase(defaultRerailDatabasePath());
+      try {
+        setUpRepository(database, recordCheckout(database, repo).repositoryKey, { packs: [{ packId: "complexity", folder }] });
+      } finally {
+        database.$client.close();
+      }
+    }
 
-    expect(exit).toBe(1);
-    expect(stdout).toBe("");
-    expect(stderr).toContain(`${bundled.rule.id} is a rule by Rerail, so it was not replaced`);
-    const after = rulesOf(repo);
-    expect(after.library).not.toContain(bundled.rule.id);
-    expect(after).toMatchObject({ setUp: false, repository: [] });
+    async function show(repo: string, id: string): Promise<{ exit: number; draft: { kind: string; rule: Record<string, unknown> }; stderr: string }> {
+      let stdout = "";
+      let stderr = "";
+      const exit = await runRuleDraftCommand("show", [id, "--repo", repo], () => "usage", {
+        stdout: { write: text => (stdout += text) },
+        stderr: { write: text => (stderr += text) },
+      });
+      return { exit, draft: JSON.parse(stdout === "" ? "null" : stdout) as { kind: string; rule: Record<string, unknown> }, stderr };
+    }
+
+    /** The rules `repo` runs whose id starts with `prefix`, by rule id, with where they come from. */
+    function rulesNamed(repo: string, prefix: string) {
+      const database = openRerailDatabase(defaultRerailDatabasePath());
+      try {
+        return listRepositoryRules(database, loadRuleCatalog(), recordCheckout(database, repo).repositoryKey).rules
+          .filter(rule => rule.document.rule.id.startsWith(prefix))
+          .map(rule => ({ id: rule.document.rule.id, kind: rule.source.kind, folder: rule.attachmentFolder, on: rule.on }))
+          .sort((a, b) => a.id.localeCompare(b.id));
+      } finally {
+        database.$client.close();
+      }
+    }
+
+    it("is stored as your copy with only its scope changed, added where the original is, which keeps running until approval", async () => {
+      const repo = await repository();
+      setUpWithComplexity(repo, "api");
+      const shown = await show(repo, SHIPPED);
+      expect(shown.exit).toBe(0);
+      expect(shown.stderr).toContain(`${SHIPPED} ships with Rerail. rules add stores your edit of it as your copy`);
+      const scope = { include: ["**/*.py"], exclude: ["**/tests/**", "**/scripts/**"] };
+      const file = writeDraft(repo, { ...shown.draft, rule: { ...shown.draft.rule, scope } });
+
+      const { exit, stdout } = await run("add", [file, "--repo", repo]);
+
+      expect(exit).toBe(0);
+      expect(stdout).toMatch(new RegExp(`^● Saved your copy of ${SHIPPED} as ${SHIPPED}-copy, added to rerail-rule-draft-\\w+/api where ${SHIPPED} is\\.\\n`));
+      expect(stdout).toContain(`It runs in Log beside ${SHIPPED} until a person approves it, which turns ${SHIPPED} off there: rerail rules approve ${SHIPPED}-copy\n`);
+      expect(getLibraryRuleDocument(`${SHIPPED}-copy`)).toEqual({ ...shown.draft.rule, id: `${SHIPPED}-copy`, scope });
+      expect(rulesNamed(repo, SHIPPED)).toEqual([
+        { id: SHIPPED, kind: "pack", folder: "api", on: true },
+        { id: `${SHIPPED}-copy`, kind: "library_rule", folder: "api", on: true },
+      ]);
+    });
+
+    it("is refused where the repository does not run the original, storing nothing", async () => {
+      const repo = await repository();
+      setUpEmpty(repo);
+      const id = "complexity-cyclomatic-php";
+      const file = writeDraft(repo, (await show(repo, id)).draft);
+
+      const { exit, stdout, stderr } = await run("add", [file, "--repo", repo]);
+
+      expect(exit).toBe(1);
+      expect(stdout).toBe("");
+      expect(stderr).toContain(`${id} is not added to rerail-rule-draft-`);
+      expect(rulesOf(repo).library.filter(rule => rule.startsWith(id))).toEqual([]);
+    });
+
+    it("is refused where your copy of it is already added, which show and add both name", async () => {
+      const repo = await repository();
+      setUpWithComplexity(repo);
+      const id = "complexity-cyclomatic-rust";
+      const file = writeDraft(repo, (await show(repo, id)).draft);
+      expect((await run("add", [file, "--repo", repo])).exit).toBe(0);
+
+      const again = await run("add", [file, "--repo", repo]);
+
+      expect(again.exit).toBe(1);
+      expect(again.stderr).toContain(`already has your copy of ${id}, ${id}-copy. Change that one: rerail rules show ${id}-copy`);
+      expect((await show(repo, id)).stderr).toContain(`Change that one: rerail rules show ${id}-copy`);
+      expect(rulesOf(repo).library.filter(rule => rule.startsWith(id))).toEqual([`${id}-copy`]);
+    });
   });
 });

@@ -201,6 +201,31 @@ function freeCopyId(db: Queries, ruleCatalog: RuleCatalog, sourceId: string): st
   return candidate;
 }
 
+/** Folders of the repository where the By Rerail rule `sourceId` is present: added alone or with its pack. */
+export function rerailRuleFolders(db: Pick<Queries, "select">, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey, sourceId: string): string[] {
+  const packId = ruleCatalog.packOf.get(sourceId);
+  const alone = and(eq(ruleAttachments.sourceKind, "rerail_rule"), eq(ruleAttachments.sourceId, sourceId));
+  const presences = db.select({ folder: ruleAttachments.folder }).from(ruleAttachments).where(and(
+    eq(ruleAttachments.repositoryKey, repositoryKey),
+    packId === undefined ? alone : or(alone, and(eq(ruleAttachments.sourceKind, "pack"), eq(ruleAttachments.sourceId, packId))),
+  )).all();
+  return [...new Set(presences.map(row => row.folder))].sort();
+}
+
+/** Ids of the library copies of the By Rerail rule `sourceId` that are added to the repository. */
+export function rerailRuleCopiesIn(db: Pick<Queries, "select">, repositoryKey: RepositoryKey, sourceId: string): string[] {
+  const rows = db.select({ id: libraryRules.ruleId }).from(libraryRules)
+    .innerJoin(ruleAttachments, and(eq(ruleAttachments.sourceKind, "library_rule"), eq(ruleAttachments.sourceId, libraryRules.ruleId)))
+    .where(and(eq(libraryRules.copiedFromRuleId, sourceId), eq(ruleAttachments.repositoryKey, repositoryKey)))
+    .orderBy(asc(libraryRules.ruleId)).all();
+  return [...new Set(rows.map(row => row.id))];
+}
+
+/** Whether the library holds a row under `id`, readable or quarantined; such a row shadows a By Rerail rule's id. */
+export function libraryHoldsId(db: Pick<Queries, "select">, id: string): boolean {
+  return db.select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, id)).get() !== undefined;
+}
+
 /**
  * Store an edited By Rerail rule as a library copy, in one transaction: wherever the original is present in the
  * repository (its pack or the rule itself is attached), the copy is added at the same folder. The copy's first
@@ -223,17 +248,7 @@ export function copyRerailRuleToLibrary(
     const id = options.id ?? freeCopyId(tx, ruleCatalog, sourceId);
     const document = validateLibraryDocument({ ...edited, id }, original.kind);
     writeLibraryRule(tx, ruleCatalog, document, { copiedFromRuleId: sourceId, now });
-    const packId = ruleCatalog.packOf.get(sourceId);
-    const presences = tx.select({ folder: ruleAttachments.folder }).from(ruleAttachments).where(and(
-      eq(ruleAttachments.repositoryKey, repositoryKey),
-      packId === undefined
-        ? and(eq(ruleAttachments.sourceKind, "rerail_rule"), eq(ruleAttachments.sourceId, sourceId))
-        : or(
-          and(eq(ruleAttachments.sourceKind, "rerail_rule"), eq(ruleAttachments.sourceId, sourceId)),
-          and(eq(ruleAttachments.sourceKind, "pack"), eq(ruleAttachments.sourceId, packId)),
-        ),
-    )).all();
-    const folders = [...new Set(presences.map(row => row.folder))].sort();
+    const folders = rerailRuleFolders(tx, ruleCatalog, repositoryKey, sourceId);
     for (const folder of folders) {
       tx.insert(ruleAttachments)
         .values({ repositoryKey, folder, sourceKind: "library_rule", sourceId: id, createdAt: now })

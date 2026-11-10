@@ -30,11 +30,20 @@ import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableErr
 import { CODE_RULE_FORMAT, codeRuleSchema, type CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
-import { normalizeFolder } from "../engine/catalog/repository-model.js";
+import { normalizeFolder, type CheckoutContext, type RuleCatalog } from "../engine/catalog/repository-model.js";
+import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { addAttachment, setUpRepository } from "../engine/catalog/rule-configuration.js";
-import { getLibraryRule, upsertLibraryRule } from "../engine/catalog/rule-library.js";
+import {
+  copyRerailRuleToLibrary,
+  getLibraryRule,
+  libraryHoldsId,
+  rerailRuleCopiesIn,
+  rerailRuleFolders,
+  upsertLibraryRule,
+  type CopiedRule,
+} from "../engine/catalog/rule-library.js";
 import { isApproved, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "../engine/catalog/rule-schema.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
@@ -568,8 +577,10 @@ export async function testRuleDraftFile(file: string, repo: string): Promise<Rul
 export interface AddedRule {
   ruleId: string;
   repositoryName: string;
-  /** The repository folder the rule was added at; `""` is the whole repository. */
-  folder: string;
+  /** The repository folders the rule was added at; `""` is the whole repository. */
+  folders: readonly string[];
+  /** The By Rerail rule the draft edited, stored as `ruleId`, your copy of it; null for a rule of your own. */
+  copiedFromRuleId: string | null;
   /** Whether adding the rule set the repository up, with this rule as its only one. */
   setUp: boolean;
   /** The mode the rule's content sets; `block` steers until block enforcement lands. */
@@ -578,25 +589,59 @@ export interface AddedRule {
   approved: boolean;
 }
 
+function libraryWriteError(error: unknown, ruleId: string): RuleDraftError {
+  if (error instanceof EngineUnavailableError) return new RuleDraftError(`the Engine is unavailable, so rule ${ruleId} cannot be checked`);
+  return new RuleDraftError(errorMessage(error));
+}
+
+/**
+ * Store a draft of a By Rerail rule as your copy, as `library_rules_upsert` does for its id: added wherever the
+ * original is in the checkout's repository, where approving the copy switches the original off. Refused where the
+ * original is not added, or where a copy of it already is: that copy is the one to change.
+ */
+function addRerailRuleCopy(database: RerailDatabase, ruleCatalog: RuleCatalog, checkout: CheckoutContext, draft: RuleDraft): AddedRule {
+  const sourceId = draft.rule.id;
+  const name = repositoryName(checkout.checkoutPath);
+  if (draft.folder !== "") {
+    throw new RuleDraftError(`folder: your copy of ${sourceId} is added where ${sourceId} is, so the draft cannot name a folder`);
+  }
+  const copies = rerailRuleCopiesIn(database, checkout.repositoryKey, sourceId);
+  if (copies.length > 0) {
+    throw new RuleDraftError(`${name} already has your copy of ${sourceId}, ${copies.join(", ")}. Change that one: rerail rules show ${copies[0]}`);
+  }
+  if (rerailRuleFolders(database, ruleCatalog, checkout.repositoryKey, sourceId).length === 0) {
+    throw new RuleDraftError(`${sourceId} is not added to ${name}, so there is nothing here for your copy to replace`);
+  }
+  let copied: CopiedRule;
+  try {
+    copied = copyRerailRuleToLibrary(database, ruleCatalog, checkout.repositoryKey, sourceId, draft.rule);
+  } catch (error) {
+    throw libraryWriteError(error, sourceId);
+  }
+  const ruleId = copied.rule.document.rule.id;
+  const approved = isApproved(database, ruleSubject(ruleId, copied.rule.payloadHash));
+  return { ruleId, repositoryName: name, folders: copied.folders, copiedFromRuleId: sourceId, setUp: false, mode: draft.rule.mode, approved };
+}
+
 /**
  * Store the draft's rule in your library, through the same validation as `library_rules_upsert`, and add it to
  * `repo`'s repository at the draft's folder. A repository that is not set up yet is set up with this rule (an
- * agent creating a rule may add it to the repository). A By Rerail rule is never replaced: its id is refused.
+ * agent creating a rule may add it to the repository). A By Rerail rule is never replaced: a draft with its id is
+ * stored as your copy ({@link addRerailRuleCopy}).
  */
 export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defaultRerailDatabasePath()): AddedRule {
   const database = openRerailDatabase(databasePath);
   try {
     const checkout = recordCheckout(database, repo);
     const ruleCatalog = loadRuleCatalog();
-    // A rule by Rerail is never overwritten by one the person drafts.
-    if (ruleCatalog.documents.has(draft.rule.id)) {
-      throw new RuleDraftError(`${draft.rule.id} is a rule by Rerail, so it was not replaced. Give the new rule another id.`);
+    // A library rule a later release bundled the id of wins over the By Rerail rule, so a draft with its id edits it.
+    if (ruleCatalog.documents.has(draft.rule.id) && !libraryHoldsId(database, draft.rule.id)) {
+      return addRerailRuleCopy(database, ruleCatalog, checkout, draft);
     }
     try {
       upsertLibraryRule(database, ruleCatalog, draft.rule, draft.kind);
     } catch (error) {
-      if (error instanceof EngineUnavailableError) throw new RuleDraftError(`the Engine is unavailable, so rule ${draft.rule.id} cannot be checked`);
-      throw new RuleDraftError(errorMessage(error));
+      throw libraryWriteError(error, draft.rule.id);
     }
     const attachment = { sourceKind: "library_rule" as const, sourceId: draft.rule.id, folder: draft.folder };
     const setUp = checkoutStatus(database, checkout).setUp === false;
@@ -604,7 +649,51 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     else addAttachment(database, { repositoryKey: checkout.repositoryKey, ...attachment });
     const stored = getLibraryRule(database, draft.rule.id);
     const approved = stored !== undefined && isApproved(database, ruleSubject(draft.rule.id, stored.payloadHash));
-    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp, mode: draft.rule.mode, approved };
+    return {
+      ruleId: draft.rule.id,
+      repositoryName: repositoryName(checkout.checkoutPath),
+      folders: [draft.folder],
+      copiedFromRuleId: null,
+      setUp,
+      mode: draft.rule.mode,
+      approved,
+    };
+  } finally {
+    database.$client.close();
+  }
+}
+
+/** A rule as a draft (`{ kind, rule }`), with what the person should know about changing it. */
+export interface ShownRule {
+  readonly draft: RuleDocument;
+  readonly notes: readonly string[];
+}
+
+/** What changing the By Rerail rule `id` from `repo` does: a copy of it, or the copy this repository already has. */
+function rerailRuleNotes(database: RerailDatabase, repo: string, id: string): string[] {
+  const checkout = lookupCheckout(database, repo);
+  const copies = checkout === undefined ? [] : rerailRuleCopiesIn(database, checkout.repositoryKey, id);
+  if (checkout === undefined || copies.length === 0) {
+    return [`${id} ships with Rerail. rules add stores your edit of it as your copy, added where ${id} is; approving the copy turns ${id} off there.`];
+  }
+  return [`${repositoryName(checkout.checkoutPath)} already has your copy of ${id}, ${copies.join(", ")}. Change that one: rerail rules show ${copies[0]}`];
+}
+
+/**
+ * The rule `id` as a draft for `rules test` and `rules add`: one of yours, or a By Rerail rule, which `rules add`
+ * stores as your copy. Reading records nothing.
+ */
+export function showRule(id: string, repo: string, databasePath = defaultRerailDatabasePath()): ShownRule {
+  const database = openRerailDatabase(databasePath);
+  try {
+    const own = getLibraryRule(database, id);
+    if (own !== undefined) return { draft: own.document, notes: [] };
+    if (libraryHoldsId(database, id)) throw new RuleDraftError(`your rule ${id} could not be read; the dashboard shows why`);
+    const bundled = loadRuleCatalog().documents.get(id);
+    if (bundled === undefined) {
+      throw new RuleDraftError(`there is no rule ${id}: it is neither yours nor in an installed pack. A worktree's own rules are files in its .rerail/rules/`);
+    }
+    return { draft: bundled, notes: rerailRuleNotes(database, repo, id) };
   } finally {
     database.$client.close();
   }
@@ -689,16 +778,20 @@ const EXAMPLE_DRAFT = {
   },
 };
 
-/** What `rerail rules test --help` and `rerail rules add --help` print: the commands, the draft format, and an example. */
+/** What `rerail rules test|add|show --help` print: the commands, the draft format, and an example. */
 function ruleDraftHelp(): string {
   return [
     "Usage:",
+    "  rerail rules show <rule id> [--repo <dir>]",
     "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "",
+    "rules show prints a rule as a draft: one of yours, or a By Rerail rule from an installed pack.",
     "rules test checks a draft without storing it: it validates the rule, runs its cases, and for a code rule lists the",
     "places it matches in the repository. It also takes a rule document on its own (a worktree's .rerail/rules/<name>.json),",
-    "which has no cases. rules add stores the rule in your library and adds it to the repository.",
+    "which has no cases. rules add stores the rule in your library and adds it to the repository. A draft that keeps a",
+    "By Rerail rule's id is stored as your copy of it, added where the original is; approving the copy turns the",
+    "original off there.",
     "",
     "A draft is one JSON file:",
     "  {",
@@ -720,7 +813,8 @@ function ruleDraftHelp(): string {
     "          call's input as JSON text.",
     "",
     "Options:",
-    "  --repo <dir>  the checkout whose repository the rule is tested against or added to (default: the current directory)",
+    "  --repo <dir>  the checkout whose repository the rule is shown for, tested against or added to (default: the current",
+    "                directory)",
     "  --json        rules test only: print the report as JSON, with every match and every unchecked file",
     "",
     "Example: a code rule that forbids console.log in src/**/*.ts, with one case of each kind.",
@@ -728,10 +822,11 @@ function ruleDraftHelp(): string {
   ].join("\n");
 }
 
-function draftArguments(action: "test" | "add", args: readonly string[], usage: () => string): { file: string; repo: string; json: boolean } {
+function draftArguments(action: RuleDraftAction, args: readonly string[], usage: () => string): { file: string; repo: string; json: boolean } {
   const file = args[0];
   if (file === undefined || file.startsWith("--")) {
-    throw new Error(`rules ${action} needs a draft file; rerail rules ${action} --help shows its format\n\n${usage()}`);
+    const needs = action === "show" ? "a rule id" : "a draft file";
+    throw new Error(`rules ${action} needs ${needs}; rerail rules ${action} --help shows its format\n\n${usage()}`);
   }
   const parsed = parseArguments(
     args.slice(1),
@@ -741,37 +836,53 @@ function draftArguments(action: "test" | "add", args: readonly string[], usage: 
   return { file, repo: resolve(parsed.options.get("--repo") ?? process.cwd()), json: parsed.flags.has("--json") };
 }
 
-/** `rerail rules test <draft.json | rule.json>` and `rerail rules add <draft.json>`; with `--help`, the draft format. */
-export async function runRuleDraftCommand(
-  action: "test" | "add",
-  args: readonly string[],
-  usage: () => string,
-  io: RuleDraftCommandIo = {},
-): Promise<number> {
-  const stdout = io.stdout ?? process.stdout;
-  if (args.includes("--help") || args.includes("-h")) {
-    stdout.write(`${ruleDraftHelp()}\n`);
-    return 0;
+type RuleDraftAction = "show" | "test" | "add";
+type Output = NonNullable<RuleDraftCommandIo["stdout"]>;
+
+/** Where an added rule went: the repository, or its folders. */
+function placesText(added: AddedRule): string {
+  return added.folders.map(folder => folder === "" ? added.repositoryName : `${added.repositoryName}/${folder}`).join(", ");
+}
+
+function runShow(id: string, repo: string, stdout: Output, stderr: Output): number {
+  let shown: ShownRule;
+  try {
+    shown = showRule(id, repo);
+  } catch (error) {
+    if (!(error instanceof RuleDraftError)) throw error;
+    stderr.write(`● ${error.message}\n`);
+    return 1;
   }
-  const { file, repo, json } = draftArguments(action, args, usage);
-  if (action === "test") {
-    const report = await testRuleDraftFile(file, repo);
-    stdout.write(`${json ? JSON.stringify(report) : formatRuleDraftReport(report)}\n`);
-    return report.ok ? 0 : 1;
-  }
+  // The draft alone on stdout, so it can be saved as a file; what the person should know goes to stderr.
+  stdout.write(`${JSON.stringify(shown.draft, null, 2)}\n`);
+  for (const note of shown.notes) stderr.write(`● ${note}\n`);
+  return 0;
+}
+
+function addedLines(added: AddedRule): string[] {
+  const source = added.copiedFromRuleId;
+  const lines = [source === null
+    ? `● Added ${added.ruleId} to ${placesText(added)}.`
+    : `● Saved your copy of ${source} as ${added.ruleId}, added to ${placesText(added)} where ${source} is.`];
+  if (added.setUp) lines.push(`  ${added.repositoryName} was not set up, so it is now set up with this rule.`);
+  if (added.mode === "block") lines.push(`  ${added.ruleId} is on Block. ${BLOCK_STEERS_NOTE}`);
+  if (added.approved) return lines;
+  lines.push(source === null
+    ? `  It runs in Log until a person approves it: rerail rules approve ${added.ruleId}`
+    : `  It runs in Log beside ${source} until a person approves it, which turns ${source} off there: rerail rules approve ${added.ruleId}`);
+  return lines;
+}
+
+async function runAdd(file: string, repo: string, stdout: Output, stderr: Output): Promise<number> {
   let added: AddedRule;
   try {
     added = addRuleDraft(readRuleDraft(file), repo);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
-    (io.stderr ?? process.stderr).write(`● The rule was not added: ${error.message}\n`);
+    stderr.write(`● The rule was not added: ${error.message}\n`);
     return 1;
   }
-  const where = added.folder === "" ? added.repositoryName : `${added.repositoryName}/${added.folder}`;
-  stdout.write(`● Added ${added.ruleId} to ${where}.\n`);
-  if (added.setUp) stdout.write(`  ${added.repositoryName} was not set up, so it is now set up with this rule.\n`);
-  if (added.mode === "block") stdout.write(`  ${added.ruleId} is on Block. ${BLOCK_STEERS_NOTE}\n`);
-  if (!added.approved) stdout.write(`  It runs in Log until a person approves it: rerail rules approve ${added.ruleId}\n`);
+  for (const line of addedLines(added)) stdout.write(`${line}\n`);
   // The same dashboard the footer and steers link to, scoped to this checkout's repository when the daemon knows it.
   const dashboard = await readRulesDashboard({ cwd: repo });
   if (dashboard.url !== null) {
@@ -780,4 +891,32 @@ export async function runRuleDraftCommand(
     stdout.write(`  ${link.href}\n`);
   }
   return 0;
+}
+
+async function runTest(file: string, repo: string, json: boolean, stdout: Output): Promise<number> {
+  const report = await testRuleDraftFile(file, repo);
+  stdout.write(`${json ? JSON.stringify(report) : formatRuleDraftReport(report)}\n`);
+  return report.ok ? 0 : 1;
+}
+
+/**
+ * `rerail rules show <id>`, `rerail rules test <draft.json | rule.json>` and `rerail rules add <draft.json>`; with
+ * `--help`, the draft format.
+ */
+export async function runRuleDraftCommand(
+  action: RuleDraftAction,
+  args: readonly string[],
+  usage: () => string,
+  io: RuleDraftCommandIo = {},
+): Promise<number> {
+  const stdout = io.stdout ?? process.stdout;
+  const stderr = io.stderr ?? process.stderr;
+  if (args.includes("--help") || args.includes("-h")) {
+    stdout.write(`${ruleDraftHelp()}\n`);
+    return 0;
+  }
+  const { file, repo, json } = draftArguments(action, args, usage);
+  if (action === "show") return runShow(file, repo, stdout, stderr);
+  if (action === "add") return await runAdd(file, repo, stdout, stderr);
+  return await runTest(file, repo, json, stdout);
 }

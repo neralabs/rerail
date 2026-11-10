@@ -146,6 +146,7 @@ rerail rules test draft.json --json     # the same, listing every match and ever
 rerail rules add draft.json             # store it in your library and add it, on, to this repo
 rerail rules approve <id>               # after reading it: it steers instead of running in Log
 rerail rules export --output rules.json # your rules, to read or edit one
+rerail rules show <id> > draft.json     # one rule as a draft, a By Rerail one too; adding it back stores your copy
 ```
 
 <details>
