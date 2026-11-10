@@ -23,7 +23,7 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use tree_sitter::{Language, Node as TsNode};
 
 /// An interned name (a kind or a field; 0 is "no field").
@@ -65,6 +65,8 @@ pub(in crate::code_rule_dsl) struct TokenGrammar {
     extras: BTreeSet<String>,
     /// Every token text some kind's automaton implies somewhere.
     implied_texts: BTreeSet<String>,
+    /// Every token text and field name, sorted, leaked once per dialect ([`Self::intern`]).
+    interned: Vec<&'static str>,
 }
 
 /// A parent's gaps ([`TokenGrammar::gaps`]): per stored child, the implied word just before it
@@ -358,7 +360,11 @@ impl TokenGrammar {
             .flatten()
             .map(|label| texts[label.name as usize].clone())
             .collect();
-        Ok(Self { names, texts, kinds, field_sym, unsupported, extras, implied_texts })
+        let mut interned: Vec<&'static str> = texts.iter().map(|text| &*Box::leak(text.clone().into_boxed_str())).collect();
+        interned.push("");
+        interned.sort_unstable();
+        interned.dedup();
+        Ok(Self { names, texts, kinds, field_sym, unsupported, extras, implied_texts, interned })
     }
 
     pub(in crate::code_rule_dsl) fn kind_count(&self) -> usize {
@@ -645,8 +651,24 @@ pub(in crate::code_rule_dsl) fn grammar_json(lang: GrammarDialect) -> Option<&'s
 impl TokenGrammar {
     /// A dialect's automata, for its tape grammar's tree-sitter language; `None` where it has none.
     pub(in crate::code_rule_dsl) fn of_dialect(lang: GrammarDialect) -> Option<Arc<Self>> {
-        let grammar = super::Grammar::new(lang).ok()?;
-        Self::of(lang, grammar.kinds.grammar()?)
+        // Built once per dialect, as `of` builds it; a lookup after that, for the token queries.
+        static BY_DIALECT: [OnceLock<Option<Arc<TokenGrammar>>>; 256] = [const { OnceLock::new() }; 256];
+        BY_DIALECT
+            .get(lang as usize)?
+            .get_or_init(|| {
+                let grammar = super::Grammar::new(lang).ok()?;
+                Self::of(lang, grammar.kinds.grammar()?)
+            })
+            .clone()
+    }
+
+    /// `text` (a token text or field name of this grammar) for the life of the process: the
+    /// grammar is built once per dialect and never dropped.
+    pub(in crate::code_rule_dsl) fn intern(&self, text: &str) -> &'static str {
+        match self.interned.binary_search_by(|known| (*known).cmp(text)) {
+            Ok(at) => self.interned[at],
+            Err(_) => "",
+        }
     }
 
     /// A dialect's automata, built once per process from its `grammar.json`; `None` where there
