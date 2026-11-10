@@ -75,8 +75,12 @@ async function connection(root: string, home: string, id: Harness): Promise<Pick
     const plan = await registerHarnesses({ root, home, harnesses: [id], dryRun: true });
     return { connected: plan.changes.every(change => change.harness !== id || change.action === "unchanged"), problem: null };
   } catch (error) {
-    return { connected: false, problem: error instanceof Error ? error.message : String(error) };
+    return { connected: false, problem: errorMessage(error) };
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Claude Code's managed settings file, which no other setting overrides; none on native Windows, where Claude Code has no sandbox. */
@@ -96,7 +100,7 @@ function rerailDataAccess(id: Harness, connected: boolean, home: string, platfor
   switch (id) {
     case "claude-code":
       if (!connected) return { access: "open", why: "Rerail is not connected to Claude Code, so nothing keeps it out of Rerail's data." };
-      return platform !== "win32" && claudeSandboxOn(join(home, ".claude", "settings.json"), claudeManagedSettings)
+      return claudeSandboxOn(platform, join(home, ".claude", "settings.json"), claudeManagedSettings)
         ? { access: "kept-out", why: "Claude Code's sandbox is on, so its commands and file tools cannot read Rerail's data." }
         : { access: "file-tools", why: "Claude Code's sandbox is off (sandbox.enabled), so its file tools cannot read Rerail's data but its shell commands can." };
     case "cursor":
@@ -111,10 +115,13 @@ function rerailDataAccess(id: Harness, connected: boolean, home: string, platfor
   }
 }
 
-/** Claude Code's `sandbox.enabled`: managed settings, where they set it, win over the user's. */
-function claudeSandboxOn(userSettings: string, managedSettings: string | undefined): boolean {
+/**
+ * Whether Claude Code's sandbox is on: `sandbox.enabled`, where managed settings that set it win over the user's. Native
+ * Windows has no sandbox, whatever the settings say.
+ */
+function claudeSandboxOn(platform: NodeJS.Platform, userSettings: string, managedSettings: string | undefined): boolean {
   const managed = managedSettings === undefined ? undefined : sandboxEnabled(managedSettings);
-  return (managed ?? sandboxEnabled(userSettings)) === true;
+  return platform !== "win32" && (managed ?? sandboxEnabled(userSettings)) === true;
 }
 
 /** The part of a Claude Code settings file that says whether its sandbox is on. */
@@ -167,21 +174,20 @@ export interface RefreshResult {
  */
 export async function refreshCodingAgents(root: string, home: string): Promise<RefreshResult> {
   const result: RefreshResult = { agents: [], changes: [], notes: [], failures: [], unchecked: [] };
-  const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
   for (const id of detectHarnesses(home)) {
     try {
       if (!(await isRegistered(root, home, id))) continue;
     } catch (error) {
-      result.unchecked.push({ agent: id, message: message(error) });
+      result.unchecked.push({ agent: id, message: errorMessage(error) });
       continue;
     }
     try {
       const report = await registerHarnesses({ root, home, harnesses: [id] });
       result.agents.push(id);
       result.changes.push(...report.changes.filter(change => change.harness === id));
-      for (const note of report.notes) if (!result.notes.includes(note)) result.notes.push(note);
+      result.notes = [...new Set([...result.notes, ...report.notes])];
     } catch (error) {
-      result.failures.push({ agent: id, message: message(error) });
+      result.failures.push({ agent: id, message: errorMessage(error) });
     }
   }
   return result;
@@ -224,28 +230,58 @@ export interface ConnectResult {
  * one left out of `agents` keeps it; naming Pi or `rerail update` swaps it.
  */
 export async function connectCodingAgents(root: string, home: string, agents: readonly Harness[], workspaceDir?: string): Promise<ConnectResult> {
-  const result: ConnectResult = { changed: [], all: [], failures: [], codexTrust: false, ompPlugin: false };
+  const connections: AgentConnection[] = [];
   for (const id of [...agents, ...await piToSwap(root, home, agents)]) {
-    try {
-      const report = await registerHarnesses({ root, home, harnesses: [id], ...(workspaceDir === undefined ? {} : { workspaceDir }) });
-      if (agents.includes(id) && report.changes.some(change => change.harness === id && (change.action === "created" || change.action === "updated"))) result.changed.push(id);
-      if (report.notes.includes(CODEX_TRUST_NOTE)) result.codexTrust = true;
-      if (report.notes.includes(OMP_PLUGIN_NOTE)) result.ompPlugin = true;
-    } catch (error) {
-      result.failures.push(error instanceof UnreadableConfigError
-        ? { agent: id, message: error.reason, file: error.path }
-        : { agent: id, message: error instanceof Error ? error.message : String(error) });
-    }
+    connections.push(await connectAgent(root, home, id, { named: agents.includes(id), workspaceDir }));
   }
+  const notes = connections.flatMap(connection => connection.notes);
+  const all = await connectedAgents(root, home);
+  // OMP's plugin install is looked for whenever OMP is connected, named or not.
+  const ompPlugin = notes.includes(OMP_PLUGIN_NOTE) || (!agents.includes("omp") && all.includes("omp") && await loadsOmpPluginCopy(root, home));
+  return {
+    changed: connections.filter(connection => connection.changed).map(connection => connection.id),
+    all,
+    failures: connections.flatMap(connection => connection.problem ?? []),
+    codexTrust: notes.includes(CODEX_TRUST_NOTE),
+    ompPlugin,
+  };
+}
+
+/** What set-up's connection did with one coding agent: changed its config or not, the notes, or the problem that left it as it was. */
+interface AgentConnection {
+  id: Harness;
+  changed: boolean;
+  notes: readonly string[];
+  problem?: ConnectProblem;
+}
+
+/** Registers `root` with coding agent `id` alone; a change counts only for an agent the person `named`. */
+async function connectAgent(
+  root: string, home: string, id: Harness, { named, workspaceDir }: { named: boolean; workspaceDir: string | undefined },
+): Promise<AgentConnection> {
+  try {
+    const report = await registerHarnesses({ root, home, harnesses: [id], workspaceDir });
+    const wrote = report.changes.some(change => change.harness === id && (change.action === "created" || change.action === "updated"));
+    return { id, changed: named && wrote, notes: report.notes };
+  } catch (error) {
+    const problem = error instanceof UnreadableConfigError
+      ? { agent: id, message: error.reason, file: error.path }
+      : { agent: id, message: errorMessage(error) };
+    return { id, changed: false, notes: [], problem };
+  }
+}
+
+/** Every coding agent on this computer that holds a registration of `root` (`isRegistered`). */
+async function connectedAgents(root: string, home: string): Promise<Harness[]> {
+  const connected: Harness[] = [];
   for (const id of detectHarnesses(home)) {
     try {
-      if (await isRegistered(root, home, id)) result.all.push(id);
+      if (await isRegistered(root, home, id)) connected.push(id);
     } catch {
       // A config that cannot be read connects nothing; set-up names it when it was asked to connect it.
     }
   }
-  if (!result.ompPlugin && !agents.includes("omp") && result.all.includes("omp")) result.ompPlugin = await loadsOmpPluginCopy(root, home);
-  return result;
+  return connected;
 }
 
 /**

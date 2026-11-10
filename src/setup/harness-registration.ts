@@ -54,7 +54,7 @@ export interface RegistrationOptions {
   nodePath?: string;
   harnesses?: readonly Harness[];
   /** Native project settings context; omitted for global-only programmatic registration. */
-  workspaceDir?: string;
+  workspaceDir?: string | undefined;
   dryRun?: boolean;
   /** Test seam for platform-specific command quoting and directory links. */
   platform?: NodeJS.Platform;
