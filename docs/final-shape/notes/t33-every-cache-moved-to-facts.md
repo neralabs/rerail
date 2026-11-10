@@ -43,10 +43,15 @@ empty, so it is derived again and its readers see the delta; a relation two prog
 A derived frame records the digest each relation its stratum read had then, and is current while each still has
 it (03 §1's versions, at the grain of a relation).
 
-**A cache depends on rules only when it says so** (user, 2026-11-10). A cache's result is keyed by its key
-relation's rows and the native step's own version, not by the rules around it: for the settled parts of the
-engine (parsing, projection, automata) a rule digest would be pure overhead. An attribute of the `.cache`
-directive makes a cache depend on a rule where that is wanted. It comes with K3.
+**Identity by naming, for every relation** (user, 2026-11-10). A cached relation is a relation like any other:
+its identity names its rules and what they read, so a rule edit makes it new, with no join of the program's facts
+in any key. To make a relation new by hand, `.cache r, s version N`: the version is part of each relation's
+identity, so bumping it makes them new, and every relation derived from them (built: `rr::lower`'s
+`cache_directive`, the qualifier `cache version N`, which combining renames with the relation).
+
+```text
+.cache tape_of version 2     // the tapes, and everything read off them, are derived again
+```
 
 ## The moves
 
@@ -150,4 +155,4 @@ Decided (user, 2026-11-10):
 
 1. **K1's layout is frames** per (space, relation, partition), as chosen for SQL access (bd12fc52d).
 2. **This branch builds what the other session is not doing:** K1 to K4, and steps 1 and 4.
-3. **Rule dependence is an attribute of a cache**, off by default (above).
+3. **Identity by naming for every relation**, and `.cache r version N` to make relations new (above).

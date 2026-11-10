@@ -2351,3 +2351,17 @@ fn quoting_escapes_only_what_needs_it() {
     assert_eq!(super::quote("plain text é"), "\"plain text é\"");
     assert_eq!(super::quote("a\"b\\c\nd\te\u{1}"), "\"a\\\"b\\\\c\\nd\\te\\u{1}\"");
 }
+
+/// `.cache r, s version N` (t33): a version on each relation, which its identity holds; an undeclared relation or a
+/// version that is not a number is refused.
+#[test]
+fn cache_gives_each_relation_its_version() {
+    let prog = super::parse(".decl r(x: number)\n.decl s(x: number)\nr(1).\ns(x) :- r(x).\n.output s\n.cache r, s version 3\n").unwrap();
+    for rel in ["r", "s"] {
+        assert!(prog.qualified(rel, &crate::code_rule_dsl::logic::front::cache_qualifier(3)), "{rel}: {:?}", prog.qualifiers.get(rel));
+    }
+    let plain = super::parse(".decl r(x: number)\nr(1).\n.output r\n.cache r\n").unwrap();
+    assert!(plain.qualified("r", &crate::code_rule_dsl::logic::front::cache_qualifier(0)));
+    assert!(super::parse(".decl r(x: number)\nr(1).\n.output r\n.cache q version 1\n").is_err());
+    assert!(super::parse(".decl r(x: number)\nr(1).\n.output r\n.cache r version two\n").is_err());
+}

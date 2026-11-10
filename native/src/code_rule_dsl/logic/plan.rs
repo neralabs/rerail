@@ -4741,7 +4741,8 @@ pub(in crate::code_rule_dsl) fn identities(prog: &Program, sccs: &[BTreeSet<Stri
         let mut h = Sha256::new();
         h.update(b"rerail.relation/v1\0leaf\0");
         h.update(rel.as_bytes());
-        h.update(format!("{:?}\n{:?}", prog.decls.get(rel), prog.facts.get(rel)).as_bytes());
+        let cache: Vec<&String> = prog.qualifiers.get(rel).into_iter().flatten().filter(|w| w.starts_with(super::front::CACHE)).collect();
+        h.update(format!("{:?}\n{:?}\n{cache:?}", prog.decls.get(rel), prog.facts.get(rel)).as_bytes());
         h.finalize().into()
     };
     let mut out: HashMap<String, [u8; 32]> = HashMap::new();
@@ -4751,7 +4752,9 @@ pub(in crate::code_rule_dsl) fn identities(prog: &Program, sccs: &[BTreeSet<Stri
         h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
         for rel in scc {
             h.update(rel.as_bytes());
-            let shape = (prog.decls.get(rel), prog.facts.get(rel), prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel));
+            // `.cache r version N`: the version, so bumping it makes the relation new.
+            let cache: Vec<&String> = prog.qualifiers.get(rel).into_iter().flatten().filter(|w| w.starts_with(super::front::CACHE)).collect();
+            let shape = (prog.decls.get(rel), prog.facts.get(rel), prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel), cache);
             h.update(format!("\0{shape:?}\0").as_bytes());
         }
         let mut texts: Vec<String> = rules.iter().map(|r| format!("{r:?}")).collect();

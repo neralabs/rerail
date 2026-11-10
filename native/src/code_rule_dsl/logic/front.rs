@@ -365,6 +365,14 @@ pub(in crate::code_rule_dsl) struct Program {
     pub(in crate::code_rule_dsl) qualifiers: BTreeMap<String, BTreeSet<String>>,
 }
 
+/// `.cache r version N` (t33): the directive, and the qualifier it gives each relation. The version is part of the
+/// relation's identity (`plan::identities`): bumping it makes the relation new, and every relation derived from it.
+pub(in crate::code_rule_dsl) const CACHE: &str = "cache";
+
+pub(in crate::code_rule_dsl) fn cache_qualifier(version: u64) -> String {
+    format!("{CACHE} version {version}")
+}
+
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
 pub(in crate::code_rule_dsl) const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic"];
 
