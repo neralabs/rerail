@@ -293,7 +293,7 @@ function windowsUserPath(binDir: string, mode: "check" | "add" | "check-remove" 
   const result = spawnSync(
     windowsPowerShell(env),
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(WINDOWS_SCRIPT, "utf16le").toString("base64")],
-    { cwd: home, env: { ...env, RERAIL_PATH_ENTRY: binDir, RERAIL_PATH_MODE: mode }, encoding: "utf8", timeout: 30_000, windowsHide: true },
+    { cwd: home, env: { ...env, RERAIL_PATH_ENTRY: binDir, RERAIL_PATH_MODE: mode }, encoding: "utf8", timeout: 30_000 },
   );
   const answer = (result.stdout ?? "").trim().split(/\r?\n/u).pop();
   if (result.status !== 0 || (answer !== "changed" && answer !== "unchanged")) {
