@@ -1244,41 +1244,6 @@ mod tests {
         assert_eq!(unfold(&reader, 1, &[&twice], 1).unwrap()[0].to_string(), "o($n) :- a($t), a($t), $t = $n");
     }
 
-    /// A reader in a recursion is priced by its delta plans: inlined into `reach`'s recursive rule, `edge`'s join
-    /// is made again for each new reach row, though priced whole the copy joins `imp` and `md` first and looks as
-    /// cheap as reading `edge` (`rr_cx_edge`, priced 7.8 M work cheaper inlined; 277 s of calls_cx when it was).
-    #[test]
-    fn a_relation_read_in_a_recursion_is_priced_by_its_delta_plans() {
-        use super::super::{Inputs, Stats};
-        use std::collections::{HashMap, HashSet};
-        let prog = super::super::super::rr::parse(
-            ".decl imp(d: number, q: number)\n.decl md(e: number, q: number)\n.decl own(d: number)\n.input imp\n.input md\n.input own\n\
-             .decl edge(d: number, e: number)\nedge(d, e) :- imp(d, q), md(e, q).\n\
-             .decl reach(d: number, e: number)\nreach(d, d) :- own(d).\nreach(d, f) :- reach(d, e), edge(e, f).\n.output reach\n",
-        )
-        .unwrap();
-        let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
-        let mut model = Model { analysis: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
-        model.stats.nodes = 450_000.0;
-        // Measured rows (an earlier chunk's), then distinct values by column.
-        for (rel, rows, ndv) in [
-            ("imp", 40_000.0, vec![4_000.0, 4_000.0]),
-            ("md", 4_000.0, vec![4_000.0, 4_000.0]),
-            ("own", 4_000.0, vec![4_000.0]),
-            ("edge", 40_000.0, vec![4_000.0, 4_000.0]),
-            ("reach", 100_000.0, vec![4_000.0, 4_000.0]),
-        ] {
-            model.stats.card.insert(rel.to_owned(), rows);
-            for (c, n) in ndv.into_iter().enumerate() {
-                model.ndv.insert((rel.to_owned(), c), n);
-                model.stats.fan.insert((rel.to_owned(), c), rows / n);
-            }
-        }
-        let chosen = choose(&prog, &mut model).unwrap();
-        assert!(chosen.is_none(), "edge inlined into reach's recursion");
-    }
-
     /// A head that names a variable twice equates the read's terms there, the read's own: a reader variable named as
     /// one of the definition's (`n` in both) stays the reader's. (`expr_name(n, n, x) :- ast_name(n, x)` read as
     /// `expr_name(t, n, x)` once came out `t = t`, leaving the reader's `n` free: every stored name of the batch.)
@@ -1409,6 +1374,41 @@ mod tests {
         // Both ran, inlined did worse than stored: taken back.
         let v = weigh(&[(17_000.0, Some(30_000.0))], &[(8_500.0, Some(2_000_000.0))], (55_000.0, Some(55_000.0)), (1_433.0, Some(1_433.0)));
         assert!(!v.inline && v.how == "both sides observed", "{v:?}");
+    }
+
+    /// A reader in a recursion is priced by its delta plans: inlined into `reach`'s recursive rule, `edge`'s join
+    /// is made again for each new reach row, though priced whole the copy joins `imp` and `md` first and looks as
+    /// cheap as reading `edge` (`rr_cx_edge`, priced 7.8 M work cheaper inlined; 277 s of calls_cx when it was).
+    #[test]
+    fn a_relation_read_in_a_recursion_is_priced_by_its_delta_plans() {
+        use super::super::{Inputs, Stats};
+        use std::collections::{HashMap, HashSet};
+        let prog = super::super::super::rr::parse(
+            ".decl imp(d: number, q: number)\n.decl md(e: number, q: number)\n.decl own(d: number)\n.input imp\n.input md\n.input own\n\
+             .decl edge(d: number, e: number)\nedge(d, e) :- imp(d, q), md(e, q).\n\
+             .decl reach(d: number, e: number)\nreach(d, d) :- own(d).\nreach(d, f) :- reach(d, e), edge(e, f).\n.output reach\n",
+        )
+        .unwrap();
+        let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+        let mut model = Model { docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+        model.stats.nodes = 450_000.0;
+        // Measured rows (an earlier chunk's), then distinct values by column.
+        for (rel, rows, ndv) in [
+            ("imp", 40_000.0, vec![4_000.0, 4_000.0]),
+            ("md", 4_000.0, vec![4_000.0, 4_000.0]),
+            ("own", 4_000.0, vec![4_000.0]),
+            ("edge", 40_000.0, vec![4_000.0, 4_000.0]),
+            ("reach", 100_000.0, vec![4_000.0, 4_000.0]),
+        ] {
+            model.stats.card.insert(rel.to_owned(), rows);
+            for (c, n) in ndv.into_iter().enumerate() {
+                model.ndv.insert((rel.to_owned(), c), n);
+                model.stats.fan.insert((rel.to_owned(), c), rows / n);
+            }
+        }
+        let chosen = choose(&prog, &mut model).unwrap();
+        assert!(chosen.is_none(), "edge inlined into reach's recursion");
     }
 
     /// `.decl r(…) inline` and its kin are read as Soufflé spells them; two that disagree are an error.

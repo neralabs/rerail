@@ -616,6 +616,7 @@ pub(crate) fn scope(conn: &Connection) -> usize {
 
 /// Drops what the connection at `at` left: its components and derived relations (`scope`).
 pub(crate) fn forget_scope(at: usize) {
+    crate::code_rule_dsl::logic::plan::forget_connection(at);
     if let Ok(mut c) = COMPONENTS.lock() {
         c.retain(|((s, _), _)| *s != at);
     }

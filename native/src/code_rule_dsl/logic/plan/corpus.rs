@@ -2194,6 +2194,7 @@ fn run_observed(
         None => {
             // A document's nodes are `d << 32 | index`: its interval, for the SQL strata's range reads.
             db.execute_batch("ATTACH ':memory:' AS s; CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER);")?;
+            super::docs_by_shift(&db);
             let ranges = docs.iter().map(|(d, _)| vec![SqlValue::Integer(*d), SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect();
             super::insert_many(&db, "INSERT INTO s.stat_docrange", ranges)?;
             super::Stats::empty(&lowered.program)
@@ -3268,7 +3269,8 @@ fn run_observed(
                     if new.is_empty() {
                         break;
                     }
-                    if own {
+                    // A guest's interval is its key's (`docs_by_shift`): nothing is written for it in the waves.
+                    if own && !super::by_shift_of(&db) {
                         let ranges = new.iter().map(|d| i64::from(d.key)).map(|k| vec![SqlValue::Integer(k), SqlValue::Integer(k << 32), SqlValue::Integer((k << 32) | 0xffff_ffff)]).collect();
                         super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
                     }
@@ -3497,7 +3499,9 @@ fn run_observed(
                 entries.get_mut(&f).expect("checked").rows.entry(rel.to_owned()).or_insert_with(|| (width, Vec::new())).1.extend(values);
             }
         };
-        // Exports remain in native memory; this boundary performs no SQL writes.
+        // A transaction only for exports read from their tables (a SQL stratum's): one the engine holds asks SQL
+        // nothing (decision 0104).
+        let mut reading = false;
         for rel in split.exports.iter().filter(|r| !handed.contains(*r)) {
             // Rows another chunk wrote too (a file-local relation without a location column) are kept once. A kept
             // export goes from the engine to `x` in one statement and is measured in place; one a SQL stratum
@@ -3513,6 +3517,10 @@ fn run_observed(
                     mention(&mut mentioned, rows.as_ref());
                 }
             } else {
+                if !reading {
+                    db.execute_batch("BEGIN")?;
+                    reading = true;
+                }
                 let rows = Rows::read(&db, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
                 let inserted = { let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the export".into()); exports.borrow_mut().add(rel, types.len(), &rows) };
                 { let _s = crate::code_rule_dsl::logic::profile::span(|| "totals".into()); totals.add_rows(rel, inserted, &rows, &types); }
@@ -3521,6 +3529,9 @@ fn run_observed(
                     mention(&mut mentioned, &rows);
                 }
             }
+        }
+        if reading {
+            db.execute_batch("COMMIT")?;
         }
         // The semi-join: of each deferred base relation, the rows whose node an export row holds.
         for (rel, source, pairs) in std::mem::take(&mut deferred) {
@@ -3731,6 +3742,7 @@ fn run_observed(
             db2.execute_batch("PRAGMA synchronous=OFF")?;
             db2.execute("ATTACH ?1 AS x", [x_path.to_string_lossy()])?;
             db2.execute_batch("ATTACH ':memory:' AS s; CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER);")?;
+            super::docs_by_shift(&db2);
             crate::code_rule_dsl::logic::native::register(&db2)?;
             crate::code_rule_dsl::logic::native::register_symbols(&db2)?;
             let modules = Modules::default();
@@ -3840,8 +3852,11 @@ fn run_observed(
             all_paths.extend(fresh.iter().map(|d| d.path.clone()));
             let keys = memo::doc_keys(&all_paths);
             let keys = &keys[keys.len() - fresh.len()..];
-            let ranges = keys.iter().map(|d| vec![SqlValue::Integer(*d), SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect();
-            super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
+            // A loaded document's interval is its key's (`docs_by_shift`): nothing is written for it in the waves.
+            if !super::by_shift_of(&db) {
+                let ranges = keys.iter().map(|d| vec![SqlValue::Integer(*d), SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect();
+                super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
+            }
             loaded_docs.extend(keys.iter().copied().zip(fresh.iter().map(|d| d.path.clone())));
             docs_tx.send(keys.iter().copied().zip(fresh).map(|(k, d)| (k, d.path, Some(Arc::from(d.module.as_str())))).collect()).map_err(|_| Error::Plan("the chunk builder ended".to_owned()))?;
             if !drain(process)? {

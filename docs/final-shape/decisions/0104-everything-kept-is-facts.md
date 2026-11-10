@@ -129,8 +129,24 @@ warm and after an edit), CPU (user + sys, with the load) and the pins of `facts_
 | 1 | The tapes as the two rules above, for a run's files and its guests; contents by digest; the tape and source writes are the writer's | no tape or source statement among the hazards; the 4.2 s wait is gone |
 | 2 | The memo's entries read before the first wave; a lookup writes nothing | no memo statement among the hazards |
 | 3 | The constants, the statistics and the choices read before the first wave, written by the writer | no store statement among the hazards |
-| 4 | A program's stated facts and `rdl_int` bound in the engine, not loaded through SQL tables; inputs read from where they are held | no statement on the run's connection among the hazards, except `finding` after the last wave |
+| 4 | A program's stated facts and `rdl_int` bound in the engine, not loaded through SQL tables; inputs read from where they are held | **built**: on the slice, one statement is left on the run's connection (below) |
 | 5 | A test runs a small corpus with the profile on and fails on any hazard | the test passes with none |
+
+**Step 4, as built.** Within a native run, the run's connection makes nothing in SQL that SQL
+does not read:
+
+- a relation of stated facts alone is held in the engine. A relation with rules and stated facts
+  has its facts apart (`rel__stated`), read by one rule;
+- a native run makes no views. A projection of an input is a stratum like any, run from the input
+  where it is held;
+- a range read computes a document's node-id interval from its key, when the run's documents are
+  numbered by key (the corpus runner's). The guests and the loaded documents write no intervals;
+- `rdl_int` is a series in the statement that reads it;
+- a connection's state (what its runs left in SQL, its settings, how its documents are numbered)
+  is kept with the connection and dropped when it closes. A run asks SQL nothing it knows.
+
+On the slice, the run's connection went from 208 table statements, 91 inserts, 11 input reads and
+one rule run in SQLite, to one `PRAGMA` on the first run of a guests' connection.
 
 How relations are stored and read back is shared work. rr-align's frames (one stored form, each
 relation by its identity, written only by the writer) are that form. As each of the stores above
