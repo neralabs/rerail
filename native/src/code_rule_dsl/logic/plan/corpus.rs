@@ -4512,6 +4512,17 @@ fn run_observed(
             let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
             let columns = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
             let source = crate::code_rule_dsl::logic::native::component::columns_source(names, columns);
+            // Loading answers are inputs to maintenance as well as to execution. Omitting them here makes a
+            // retained output look unchanged after an import edit, although its bound input has new rows.
+            let source = {
+                let parts = session.as_ref().map(|s| s.cross.lock().expect("the session's cross-file parts"));
+                retain::kept_source(parts.as_deref(), &rel, source, &mut input_digests)
+            };
+            if let Some((_, held)) = cross_inputs.iter_mut().find(|(r, _)| r == &rel) {
+                *held = Arc::clone(&source);
+            } else {
+                cross_inputs.push((rel.clone(), Arc::clone(&source)));
+            }
             cross_stats.measured(&rel, syntax::statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
             modules.bind(&db, &rel, source)?;
         }
@@ -6977,57 +6988,6 @@ unused(f) :- def(f, _), !used(f).
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// t32 4.1: a new process maintains its cross-file part from the rows the last process kept, as a session does.
-    /// After an edit that changes a cross-file row, a changed stratum is maintained from its deltas, not derived
-    /// again, and the outputs are a run's with an empty store.
-    #[test]
-    fn a_new_process_maintains_the_cross_file_part_from_the_kept_rows() {
-        let marker = format!("# {:?}\n", std::time::SystemTime::now());
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("kept-part");
-        std::fs::create_dir_all(&dir).unwrap();
-        let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
-        write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
-        write("b.py", "from a import f\ndef g():\n    pass\n");
-        write("c.py", "from a import k\ndef h():\n    pass\n");
-        let rule = dir.join("uses.rr");
-        std::fs::write(&rule, r#"
-.decl def(n: node, q: symbol)
-def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
-.decl imp(n: node, q: symbol)
-imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
-uses(n, f) :- imp(n, q), def(f, q).
-.decl used(f: node)
-used(f) :- uses(_, f).
-.decl unused(f: node)
-unused(f) :- def(f, _), !used(f).
-.output unused
-"#).unwrap();
-        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
-        let out = dir.join("out");
-        let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
-        let run = |store: &str| {
-            super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
-            let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-            (report.cross_maintained.0, std::fs::read_to_string(out.join("unused.csv")).unwrap())
-        };
-        let (cold, derived) = run("kept.sqlite");
-        assert_eq!(cold, 0, "nothing kept: every stratum derived");
-        // c no longer imports k: k is unused; uses and used are maintained from their deltas.
-        write("c.py", "def h():\n    pass\n");
-        let (maintained, rows) = run("kept.sqlite");
-        let (_, fresh) = run("fresh.sqlite");
-        assert_eq!(rows, fresh);
-        assert_ne!(rows, derived);
-        assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
-        // And back: the next process maintains from what this one kept.
-        write("c.py", "from a import k\ndef h():\n    pass\n");
-        let (again, rows) = run("kept.sqlite");
-        assert_eq!(rows, derived);
-        assert!(again > 0);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     /// The cone of requests is kept like any relation (t33 K1, K3): its stratum that asks for directories, files and
     /// loads and answers them inside its fixpoint is clean while what it reads and its answers are as they were. An
     /// edit that changes neither evaluates none of the cone; a new import, or a library file whose own imports
@@ -7077,6 +7037,57 @@ unused(f) :- def(f, _), !used(f).
         assert!(ran > 0, "a loaded document's change is a changed answer: the cone runs");
         assert_eq!(deeper, ["a.pyi", "b.pyi", "builtins.pyi", "c.pyi"]);
         assert_eq!(deeper, run("fresh-2.sqlite").1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// t32 4.1: a new process maintains its cross-file part from the rows the last process kept, as a session does.
+    /// After an edit that changes a cross-file row, a changed stratum is maintained from its deltas, not derived
+    /// again, and the outputs are a run's with an empty store.
+    #[test]
+    fn a_new_process_maintains_the_cross_file_part_from_the_kept_rows() {
+        let marker = format!("# {:?}\n", std::time::SystemTime::now());
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("kept-part");
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+        write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
+        write("b.py", "from a import f\ndef g():\n    pass\n");
+        write("c.py", "from a import k\ndef h():\n    pass\n");
+        let rule = dir.join("uses.rr");
+        std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl used(f: node)
+used(f) :- uses(_, f).
+.decl unused(f: node)
+unused(f) :- def(f, _), !used(f).
+.output unused
+"#).unwrap();
+        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let out = dir.join("out");
+        let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let run = |store: &str| {
+            super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+            let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+            (report.cross_maintained.0, std::fs::read_to_string(out.join("unused.csv")).unwrap())
+        };
+        let (cold, derived) = run("kept.sqlite");
+        assert_eq!(cold, 0, "nothing kept: every stratum derived");
+        // c no longer imports k: k is unused; uses and used are maintained from their deltas.
+        write("c.py", "def h():\n    pass\n");
+        let (maintained, rows) = run("kept.sqlite");
+        let (_, fresh) = run("fresh.sqlite");
+        assert_eq!(rows, fresh);
+        assert_ne!(rows, derived);
+        assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
+        // And back: the next process maintains from what this one kept.
+        write("c.py", "from a import k\ndef h():\n    pass\n");
+        let (again, rows) = run("kept.sqlite");
+        assert_eq!(rows, derived);
+        assert!(again > 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

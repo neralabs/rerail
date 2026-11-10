@@ -184,6 +184,61 @@ impl KeptStrata for Kept<'_> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code_rule_dsl::logic::{native, plan, rr};
+    use crate::code_rule_dsl::logic::plan::lower;
+
+    #[test]
+    fn an_unchanged_native_plan_reuses_facts_and_admits_only_consumed_payloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("facts.sqlite");
+        let text = ".decl e(a:number,b:number)\ne(1,2).\ne(2,3).\ne(3,4).\n\
+            .decl r(a:number,b:number)\nr(a,b) :- e(a,b).\nr(a,c) :- r(a,b),e(b,c).\n\
+            .decl total(n:number)\ntotal(n) :- n=count : {r(_,_)}.\n.output total\n";
+        let run = || {
+            let store = ContentStore::open(&path).unwrap();
+            let p = rr::parse(text).unwrap();
+            let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+            let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
+            let db = rusqlite::Connection::open(&path).unwrap();
+            native::register(&db).unwrap();
+            native::register_symbols(&db).unwrap();
+            let mut kept = Kept::new(&store, [42; 32], &[]);
+            let outcome = plan::run_atoms_native_hooked(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+                Default::default(), "program", plan::Hooks { strata: Some(&mut kept), ..Default::default() }).unwrap();
+            let counts = kept.strata.unwrap();
+            let admitted: Vec<_> = kept.admitted.keys().cloned().collect();
+            kept.finish();
+            (counts, admitted, outcome.outputs)
+        };
+        let first = run();
+        assert!(first.0.0 > 0, "cold native evaluation must do work");
+        let warm = run();
+        assert_eq!(warm.2, first.2);
+        assert_eq!(warm.0.0, 0, "an unchanged native transformation must not execute");
+        assert!(!warm.1.contains(&"r".to_owned()), "the retained closure has no running consumer and must not be hydrated: {:?}", warm.1);
+        assert!(warm.1.contains(&"total".to_owned()), "the final output is demanded");
+    }
+
+    #[test]
+    fn publication_between_metadata_and_payload_admission_invalidates_the_cut() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+        let rel = FrameRel { name: "r".into(), ident: [1; 32] };
+        let put = |v| FramePut { rel: rel.clone(), part: 0, digest: v as u64, reads: vec![],
+            rows: FrameRows { types: vec![0], rows: vec![v], n: 1 } };
+        store.keep_frames(&[42; 32], &[put(1)], &[], None).unwrap();
+        let mut kept = Kept::new(&store, [42; 32], &[]);
+        kept.program(&HashMap::from([("r".into(), [1; 32])]));
+        assert!(kept.has_rows("r"));
+        store.keep_frames(&[42; 32], &[put(2)], &[], None).unwrap();
+        kept.admit(&["r".into()]);
+        assert!(!kept.has_rows("r"), "old metadata must never certify replacement rows");
+    }
+}
+
 /// The cross-file part a new process maintains as a session does (t32 4.1): what `retain::after` keeps, kept in
 /// the store's frames under each relation's identity, and read back as the next process's `Retained`. Its strata
 /// whose reads changed are maintained from those rows (`maintain::rewrite`), not derived again.
@@ -357,59 +412,4 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
     store.queue_frames(part.space, puts, Vec::new(), Some(used));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::code_rule_dsl::logic::{native, plan, rr};
-    use crate::code_rule_dsl::logic::plan::lower;
-
-    #[test]
-    fn an_unchanged_native_plan_reuses_facts_and_admits_only_consumed_payloads() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("facts.sqlite");
-        let text = ".decl e(a:number,b:number)\ne(1,2).\ne(2,3).\ne(3,4).\n\
-            .decl r(a:number,b:number)\nr(a,b) :- e(a,b).\nr(a,c) :- r(a,b),e(b,c).\n\
-            .decl total(n:number)\ntotal(n) :- n=count : {r(_,_)}.\n.output total\n";
-        let run = || {
-            let store = ContentStore::open(&path).unwrap();
-            let p = rr::parse(text).unwrap();
-            let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-            let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
-            let db = rusqlite::Connection::open(&path).unwrap();
-            native::register(&db).unwrap();
-            native::register_symbols(&db).unwrap();
-            let mut kept = Kept::new(&store, [42; 32], &[]);
-            let outcome = plan::run_atoms_native_hooked(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
-                Default::default(), "program", plan::Hooks { strata: Some(&mut kept), ..Default::default() }).unwrap();
-            let counts = kept.strata.unwrap();
-            let admitted: Vec<_> = kept.admitted.keys().cloned().collect();
-            kept.finish();
-            (counts, admitted, outcome.outputs)
-        };
-        let first = run();
-        assert!(first.0.0 > 0, "cold native evaluation must do work");
-        let warm = run();
-        assert_eq!(warm.2, first.2);
-        assert_eq!(warm.0.0, 0, "an unchanged native transformation must not execute");
-        assert!(!warm.1.contains(&"r".to_owned()), "the retained closure has no running consumer and must not be hydrated: {:?}", warm.1);
-        assert!(warm.1.contains(&"total".to_owned()), "the final output is demanded");
-    }
-
-    #[test]
-    fn publication_between_metadata_and_payload_admission_invalidates_the_cut() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
-        let rel = FrameRel { name: "r".into(), ident: [1; 32] };
-        let put = |v| FramePut { rel: rel.clone(), part: 0, digest: v as u64, reads: vec![],
-            rows: FrameRows { types: vec![0], rows: vec![v], n: 1 } };
-        store.keep_frames(&[42; 32], &[put(1)], &[], None).unwrap();
-        let mut kept = Kept::new(&store, [42; 32], &[]);
-        kept.program(&HashMap::from([("r".into(), [1; 32])]));
-        assert!(kept.has_rows("r"));
-        store.keep_frames(&[42; 32], &[put(2)], &[], None).unwrap();
-        kept.admit(&["r".into()]);
-        assert!(!kept.has_rows("r"), "old metadata must never certify replacement rows");
-    }
 }

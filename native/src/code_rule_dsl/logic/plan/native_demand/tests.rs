@@ -143,6 +143,7 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
                     digest: core::digest(&facts),
                     path: "test.py".into(),
                     facts,
+                    tape: None,
                     guest: None,
                     module: None,
                     tape: None,

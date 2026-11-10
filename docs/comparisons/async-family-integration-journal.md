@@ -1057,3 +1057,76 @@ Results, reproduction commands, and limits are recorded in
 `docs/comparisons/native-cold-budget-2026-11-10.md`.
 Artifacts include the before/after profiles, workload runs, validation logs, and source/binary digests
 under `native-budget-1e1ec60a3` in the comparison artifact directory.
+
+
+## 2026-11-10 — Merge the expanded integration hub
+
+The local integration tip `c59e669ec` includes newer committed work than the remote tip `1add64b22`.
+Merged the local tip, including executor matchers, typing phases, maintained cross-process facts,
+sort reuse, planner axis choices, and index experiments.
+
+Resolved conflicts by preserving both the request-cone tests and the new cross-process maintenance test.
+Kept the native demand tests in their separate module, including the lifetime regression.
+The new cross-process fact space uses the existing namespace helper with `cross-maintained`.
+Its hash bytes match integration's helper exactly. Test documents include the new optional tape field.
+The resident demand fix and complete lifetime analysis remain in place.
+
+The next proposed performance task is the maintained join order recorded in decision 0101.
+At O125 step 07, four `ifn__ins` rules take 526 `fv__ins` rows into `pv` through a broad key.
+The `pv` relation has 201,000 rows. A later `icall` filter rejects everything.
+This costs 0.53 million work units, about 8% of that step.
+
+Compare the current order with an early `icall` join and a semijoin over demanded keys.
+Record intermediate rows, probes, CPU, and the complete step result for each shape.
+Use the winning shape to identify the missing planner statistic or restriction.
+Avoid a rule-name-specific order override. Keep rule outputs and maintenance parity as the acceptance checks.
+This evidence comes from integration's typing/edit workload, not the four-rule async timing.
+The async cold profile still places most CPU in parsing and input preparation.
+Further reductions in its SQL instruction count alone do not establish an end-to-end speedup.
+
+A separate follow-up is prepared-program identity across processes (t32 stage 4).
+Integration records phase recomputation in the second process because fresh preparation and restored preparation have different relation identities.
+Check that equivalent prepared programs produce identical identities and reuse the same facts.
+This is distinct from join ordering and from the cost of genuinely parsing cold inputs.
+
+
+### Merge regression: loading answers missing from maintenance inputs
+
+The merged cone-retention test fails after adding `import b`: reused output omits `b.pyi`, while a fresh run includes it.
+The same test passes with cross-process part retention disabled, isolating the interaction.
+Loading answers were bound for execution but absent from `cross_inputs` and its input digests.
+The new retained part therefore had no recorded dependency on those changing rows.
+The fix registers each loading answer as an ordinary cross-file input, replacing an earlier binding if present.
+The existing cone test supplies the failing regression; the new cross-process maintenance test already passes.
+
+
+### Next priority after reviewing the incoming storage path
+
+The new `kept_strata::load` loops over inputs and derived frames, calling `frame_rows` for each.
+That function calls `admit_frames` with one key. A durable miss from the pending writer cache executes a schema check and a payload query.
+The existing `Kept::admit` already admits a set and checks that payload metadata matches the earlier metadata snapshot.
+The new cross-process path does not use that contract.
+
+Integrating that path with bulk fact admission is the first follow-up for this branch.
+Admit the input frames together, determine which derived frames are valid, then admit that demanded set together.
+Check metadata consistency before accepting rows. Consumers then read admitted facts in memory.
+Measure the store connection too: the core-query budget excludes these storage executions.
+After this integration, address the maintained join amplification and prepared-program identity issues described above.
+
+
+### Merge qualification
+
+The fixed merged build passes the cone-retention regression and the new cross-process maintenance test.
+Five native demand tests, two retained-frame tests, and three matcher-lowering tests pass.
+The positive fixture produces all 120 expected findings.
+All thirteen session/cache checks pass in native mode, and all thirteen pass in composed mode.
+
+The 5,725-file native job passes all five conditions against the unchanged 100-execution ceiling.
+Core SQL counts are 19 cold, 31 warm, 31 warm with profiling, 21 after an edit, and 31 after warming the edit.
+Cold local execution still uses zero SQL statements; statistics setup uses seven and cross-file execution uses twelve.
+Whole-process cold CPU is 11.233 s and wall time is 5.405 s in this run.
+The machine load differs from earlier runs, so this is not a controlled timing comparison.
+These counts exclude storage SQL, including the incoming per-frame reads identified above.
+
+Build logs and regression artifacts are under `merge-c59e669ec` in the comparison artifact directory.
+Final test and workload results are in its `fixed` directory.
