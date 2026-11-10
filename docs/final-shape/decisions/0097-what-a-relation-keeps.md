@@ -191,27 +191,87 @@ named apart by the unfolding pass, so a first-level copy has the text priced and
 It is off by default until its regression is fixed (`RERAIL_OBSERVED_STEPS=on` turns it on). The integration's statistics kept by delta (0096) are not
 read yet: they keep rows and distinct values, not step counts.
 
-**The factorized store: the analysis, and the design.** Not built. The profile names, under "factorized store
-(decision 0097)", each relation that crosses the chunk boundary (an output of the local part: an export or a
-finding) whose every rule splits at a variable its head projects away into parts that each name a head variable,
-where its flat rows (observed where an earlier chunk measured them) are over twice its parts' estimated rows. On
-the 8 programs: `fl853_p4_outer(f, x) :- rr_inside_ks5(f, p), bound_in(p, x)` (the record's `fl858_p4_outer`),
-404 k rows a chunk flat against about 19 k as its two parts by `$p`; and `class_path(n, s)` by `$c`, 425 k against
-60 k (estimated). The design:
+**The factorized store across the chunk boundary (built).** The chunks hand the cross-file part each export's
+rows; moving them (holding them, attributing them to their files, writing the per-file memo) was 39 s of the
+pack's 284 s of CPU. Some exports are a product: `fl853_p4_outer(f, x) :- rr_inside_ks5(f, p), bound_in(p, x)`
+(every name bound in every scope a node is inside) held 771 k rows over the fixture files, though its two parts,
+joined only at the scope `p` the head drops, hold about 100 k. Such an export is now handed on as its parts, and
+the cross-file rules that read it join the parts.
 
-- **Where:** `push_local_joins` (`typing/file_local.rs`), which makes the `fl*` pieces. A component that splits so
-  is pushed as one piece per part, each with the key in its interface (`fl_a(f, p)`, `fl_b(p, x)`), and the
-  cross-file rule reads `fl_a(f, p), fl_b(p, x)` where it read the product. Each part keeps the comparisons and
-  negations over its own variables; one that reads two parts keeps the component whole. The key is a node, so each
-  part is located (0052) as the product was.
-- **When:** the split is fixed before the first chunk runs, and the exports are part of the per-file memo's key, so
-  the choice must be stable across runs: from the estimates (parts' rows against the product's), or from the kept
-  statistics (0096) of the run before. The gate is the analysis's: the product over twice the parts, and every
-  cross-file reader binding a column of each part or demanded (`demand_p4_outer` binds `(f, x)`), so the reader's
-  join is per key and not the whole product again.
-- **The reader:** expansion is the cross part's ordinary join; nothing new runs. For a reader that binds neither
-  part the join costs the product's work, in the cross part's CPU, not its memory.
+- **What changes.** After the file-local joins are pushed into the chunks, and before their rows are located
+  (`file_local::factorize_exports`, called from the corpus run's preparation). For each export whose every rule
+  splits at a variable its head projects away into parts that each name a head variable (`keeps::factors`; each
+  part keeps the comparisons and negations over its own variables, and a literal that reads two parts keeps them
+  one part), each part becomes a file-local relation of its head variables and the key, `fz892(x, p) :-
+  bound_in(p, x), …` and `fz894(f, p) :- rr_inside_ks5(f, p), …`. Each is reduced by the others' keys
+  (`fzk895(p) :- rr_inside_ks5(f, p), …` read in `fz892`'s rule), so every row stored joins and no part holds more
+  rows than the product it replaces. The export's rules go, and each cross-file read of it becomes its parts
+  joined at a fresh key: `p4_outer(f, x) :- p4_read(_, x, f, _), fz894(f, k), fz892(x, k)`. The parts' key is a
+  node, so they are located (0052) as the product was. If the split does not find a part file-local, that export
+  is left whole.
+- **When.** Only where the parts can be smaller and the readers stay cheap:
+  - at least two parts may hold many rows per key. A part holds one row per key when the key determines its head
+    variables through keys of the relations it reads. The keys are inferred from the program (`relation_keys`): a
+    node's attributes by the node, the tree's edges by the child and by the parent with the field or index, a
+    lattice by its key, and a derived relation by a column that determines the head in each of its rules, found to
+    a fixpoint. So `bound(p, x) :- …, field(a, "left", l), text(l, x)` split at the assignment `a` is left whole: its
+    second part is one row per key, and splitting it would double the rows. UP003's `p6_primitive(a, t)` is refused
+    the same way;
+  - every read of the export is positive, in a cross-file rule that binds a column of it (a constant, or a variable
+    another positive atom names), so the reader's join starts from a bound part and goes through the key;
+  - at most 4 rules and 8 reader copies.
 
+  An inferred key that is wrong costs rows, never findings: the test only decides whether a relation is split.
+- **The per-file memo.** The memo keys each file's entry by the plan, a digest of the file-local part as it was
+  lowered (`memo::program_digest`: its rules, declarations and outputs, which include the exports). Factorizing
+  changes that part (the parts are its exports in place of the product), so a run whose choice differs from the one
+  a warm memo was written under has another key: every file misses and is evaluated again. That is a miss, not a
+  wrong answer. For the miss to happen only when the choice changes, the choice is made from the program alone,
+  before the first chunk, never from a chunk's rows: the program's shape and the keys it shows. The prepared
+  program, which is kept across processes under the program text, the engine build and the run's additions
+  (decision 0073), now also names the setting: `RERAIL_FACTORIZE=off` (or a run's `factorize: off`) is another
+  prepared program, not a stale one. The statistics kept by delta (0096) are kept under the same digest, so they
+  follow the choice too. The test `corpus::tests::an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_the_memo`
+  runs one program four times over one store, off, off, on, on and back to off: the findings are identical every
+  time; each change is a miss for every file and each repeat a hit; the memo's entries hold the two parts, reduced
+  (every row joins), and no product, and the parts' join equals the product's rows the off run stored.
+  `file_local::tests::an_export_joined_at_a_projected_key_is_handed_on_as_its_parts` checks the rewrite, and that
+  a join whose second part is a node's attribute is left whole.
+- **The reader.** Nothing new runs in the cross part: the parts are inputs, and the planner orders the reader's
+  join. On the 8 programs it joins per key from the bound side: `p4_outer` reads `fz894` by `f` (899 bindings, 912
+  rows) and checks `fz892` by `(x, p)` (148 rows), where it checked the product by `(f, x)` (899 to 148).
+  `p7_names_class` reads `class_path`'s parts by the bound `p`, through the key, to its 22,659 rows, the same rows
+  it read from the product.
+- **The profile** names each relation factorized, with its parts, under "factorized store (decision 0097)", and the
+  rows each export handed on under "rows handed on to the cross-file part". Relations the analysis still names as
+  stored flat but smaller as parts (a finding, a part of one row a key, a reader that binds nothing) are listed
+  under "factorized store (decision 0097): stored flat, would shrink as parts".
+
+**Measured: the factorized store.** On the 8 programs (486 fixture files, 2 chunks, default threads). CPU is the
+profile's user + sys. Two runs of each, against the base binary and the same binary with `RERAIL_FACTORIZE=off`.
+Findings are byte-identical in every run.
+
+| Setting | Rows handed on | Moving rows, CPU s | Local CPU s | Cross CPU s | Peak RSS | Load (1-min) |
+|---|---:|---:|---:|---:|---:|---|
+| base binary | (not counted) | 4.28, 4.45 | 17.4, 17.6 | 3.14, 3.21 | 308, 314 MB | 24 to 50 |
+| `RERAIL_FACTORIZE=off` | 986,114 | 4.51, 4.61 | 18.3, 18.5 | 3.84, 3.23 | 308, 307 MB | 35 to 37 |
+| factorized | 307,743, 306,011 | 2.73, 3.08 | 14.5, 16.6 | 2.52, 2.73 | 278 MB (and one 801 MB) | 28 to 99 |
+
+- `fl853_p4_outer`'s 771,152 rows are now 89,605 (`fz894`, `f` inside `p`) and fewer than 11 k (`fz892`). Rows
+  handed on fall 69%; moving them falls about a third (1.4 to 1.6 s); local CPU falls 1 to 4 s (the product is no
+  longer built), cross CPU 0.5 s. On the slice it factorizes `class_path` and the two `p4_outer` joins.
+- Peak RSS varies between runs far more than with the change: the base binary also peaked at 798 MB once on the
+  same slice, so the single 801 MB run is that variation, not the change.
+
+On the pack (534 programs, the same files, one run each, base then factorized, load 26 to 131 and 89 to 97):
+findings byte-identical. 115 exports are handed on factorized, among them `p207_outer`'s two (the pack's
+`fl853_p4_outer`), `class_path`, and joins of the typing context (`ann_q`, `head_q`, `type_arg`, `version_cmp`,
+`typevar_name`, …). Moving rows to the cross-file part went from 38.75 to 37.26 s, about 4%, within the noise:
+the pack hands on 6.7 M rows of 1,843 exports, and its largest exports (`fl5237_p514_effect` 197 k, `precedes`
+196 k, `fl4196_doc_opener` 186 k) are not products of parts. In all, 284.3 s against 290.4 s of CPU (local 209.3
+against 211.9 s, cross 26.3 against 26.1 s), within the noise of that load; the factorizing itself costs 1.4 s of
+the run's preparation, which the prepared program kept in the store (0073) pays once. Peak RSS was 1,097 MB against
+1,579 MB (see below).
 **Measured.** 8 programs that read `bound_in`, and PYI055 + UP035 (which include the typing context), on the 486
 fixture files in 2 chunks. Each pair's findings are byte-identical in all four settings. CPU is the profile's
 user + sys of the run; native work is `native.tsv`'s summed work. Load (1-minute) was 30 to 115 throughout, so
@@ -240,6 +300,7 @@ differences under about 15% are noise.
   so the copies' atoms are priced by the binding patterns they read, or keep the observed choice unless the
   alternative is estimated to win by a margin. With more than 2 chunks the record already corrects it (the third
   chunk sees both sides).
-- Build the factorized store as designed above.
+- Make the factorized store pay on the pack: its largest exports are not products of parts. The next step is the
+  size of each export, not its shape (projection, demand from the cross part).
 - Read the observations across runs, from the kept statistics (0096), not only across a run's chunks.
 - Have the converter write `inline` on the helpers it makes.
