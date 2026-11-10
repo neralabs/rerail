@@ -133,7 +133,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 |---|---|
 | `kind` | `code` |
 | `rule` | the rule document |
-| `folder` | optional: the repository folder to add the rule at, instead of the whole repository |
+| `folder` | optional: the repository folder to add the rule at, `""` for the whole repository. Absent, a new rule goes to the whole repository and one already added stays where it is. |
 | `cases.caught`, `cases.passed` | files the rule must catch, and must let pass: `{ "path", "content" }` |
 
 </details>

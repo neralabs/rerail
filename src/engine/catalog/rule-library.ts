@@ -12,6 +12,7 @@ import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
 import {
   libraryRules,
+  repositories,
   ruleAttachments,
   ruleCatalogIdentities,
   ruleSettings,
@@ -220,6 +221,15 @@ export function libraryRuleFolders(db: Pick<Queries, "select">, repositoryKey: R
     eq(ruleAttachments.sourceId, id),
   )).orderBy(asc(ruleAttachments.folder)).all();
   return rows.map(row => row.folder);
+}
+
+/** The repositories the library rule `id` is added to, by key with their names, in key order. */
+export function libraryRuleRepositories(db: Pick<Queries, "select">, id: string): Array<{ repositoryKey: RepositoryKey; name: string }> {
+  const rows = db.select({ repositoryKey: ruleAttachments.repositoryKey, name: repositories.displayName }).from(ruleAttachments)
+    .innerJoin(repositories, eq(repositories.repositoryKey, ruleAttachments.repositoryKey))
+    .where(and(eq(ruleAttachments.sourceKind, "library_rule"), eq(ruleAttachments.sourceId, id)))
+    .orderBy(asc(ruleAttachments.repositoryKey)).all();
+  return [...new Map(rows.map(row => [row.repositoryKey, row])).values()];
 }
 
 /** Ids of the library copies of the By Rerail rule `sourceId` that are added to the repository. */

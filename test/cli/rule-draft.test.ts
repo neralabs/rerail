@@ -23,8 +23,10 @@ import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-dr
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { installPack } from "../support/installed-packs.js";
 
-// Core ships no packs; these tests add, configure and copy the complexity pack's rules.
+// Core ships no packs; these tests add, configure and copy the complexity pack's rules, and show the typescript pack's
+// with option values set.
 installPack("complexity");
+installPack("typescript");
 
 const directories: string[] = [];
 
@@ -651,6 +653,35 @@ describe("rerail rules add", () => {
     expect(rulesOf(repo).repository).toEqual([{ id: "acme:no-console-log", kind: "library_rule", folder: "web", on: true }]);
   });
 
+  it("keeps a rule added already where it is when the draft names no folder, and widens it when it names \"\"", async () => {
+    const repo = await repository();
+    setUpEmpty(repo);
+    const rule = { ...noConsolePolicy(), id: "acme:no-console-widen" };
+    expect((await run("add", [writeDraft(repo, { kind: "code", rule, folder: "web" }), "--repo", repo])).exit).toBe(0);
+
+    expect((await run("add", [writeDraft(repo, { kind: "code", rule }), "--repo", repo])).stdout).toContain("/web.\n");
+    expect(rulesOf(repo).repository.map(added => added.folder)).toEqual(["web"]);
+
+    const widened = await run("add", [writeDraft(repo, { kind: "code", rule, folder: "" }), "--repo", repo]);
+
+    expect(widened.stdout).toMatch(/^● Added acme:no-console-widen to rerail-rule-draft-\w+\.\n/);
+    expect(rulesOf(repo).repository.map(added => added.folder)).toEqual(["", "web"]);
+  });
+
+  it("shows your rule with where saving changes it: this repository, and the others that add it", async () => {
+    const first = await repository();
+    const second = await repository();
+    const rule = { ...noConsolePolicy(), id: "acme:no-console-shared" };
+    for (const repo of [first, second]) expect((await run("add", [writeDraft(repo, { kind: "code", rule }), "--repo", repo])).exit).toBe(0);
+    const elsewhere = await repository();
+
+    const shown = await run("show", [rule.id, "--repo", first]);
+
+    expect(JSON.parse(shown.stdout)).toEqual({ kind: "code", rule });
+    expect(shown.stderr).toMatch(new RegExp(`^● acme:no-console-shared is yours, added to rerail-rule-draft-\\w+; saving changes it where it is\\. It is also added to rerail-rule-draft-\\w+, where saving changes it too\\.\\n$`));
+    expect((await run("show", [rule.id, "--repo", elsewhere])).stderr).toContain("acme:no-console-shared is yours and not added to rerail-rule-draft-");
+  });
+
   it("says a rule added on Block steers in this release, and stores it on Block", async () => {
     const repo = await repository();
     setUpEmpty(repo);
@@ -750,7 +781,7 @@ describe("rerail rules add", () => {
       const id = "complexity-cyclomatic-javascript";
       expect((await run("add", [writeDraft(repo, (await show(repo, id)).draft), "--repo", repo])).exit).toBe(0);
       const copy = await show(repo, `${id}-copy`);
-      expect(copy.stderr).toBe("");
+      expect(copy.stderr).toMatch(new RegExp(`^● ${id}-copy is yours, added to rerail-rule-draft-\\w+; saving changes it where it is\\.\\n$`));
       const scope = { include: ["**/*.js"], exclude: ["**/vendor/**"] };
 
       const { exit, stdout } = await run("add", [writeDraft(repo, { ...copy.draft, rule: { ...copy.draft.rule, scope } }), "--repo", repo]);
@@ -776,6 +807,67 @@ describe("rerail rules add", () => {
       const shown = await show(repo, id);
 
       expect(shown.draft.rule).toEqual({ ...loadRuleCatalog().documents.get(id)?.rule, mode: "log" });
+    });
+
+    it("is shown with the option values the repository sets, which the copy keeps, and as shipped when they no longer apply", async () => {
+      const repo = await repository();
+      const id = "typescript-eslint-consistent-type-definitions";
+      const configure = (config: Record<string, string | boolean>) => {
+        const database = openRerailDatabase(defaultRerailDatabasePath());
+        try {
+          const repositoryKey = recordCheckout(database, repo).repositoryKey;
+          setUpRepository(database, repositoryKey, { packs: [{ packId: "typescript", folder: "" }] });
+          setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: id, on: true, mode: null, config });
+        } finally {
+          database.$client.close();
+        }
+      };
+      const shipped = loadRuleCatalog().documents.get(id)?.rule;
+
+      configure({ retired: true });
+      expect((await show(repo, id)).draft.rule).toEqual(shipped);
+
+      configure({ option: "type" });
+      const configured = (await show(repo, id)).draft;
+
+      expect(JSON.stringify(configured.rule)).toContain(`"config":{"option":"type"}`);
+      expect((await run("add", [writeDraft(repo, configured), "--repo", repo])).exit).toBe(0);
+      expect(getLibraryRuleDocument(`${id}-copy`)).toEqual({ ...configured.rule, id: `${id}-copy` });
+    });
+
+    it("says a rule that is off here would run on as a copy", async () => {
+      const repo = await repository();
+      setUpWithComplexity(repo);
+      const id = "complexity-cyclomatic-typescript";
+      const database = openRerailDatabase(defaultRerailDatabasePath());
+      try {
+        const repositoryKey = recordCheckout(database, repo).repositoryKey;
+        setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: id, on: false, mode: null });
+      } finally {
+        database.$client.close();
+      }
+
+      const { stderr } = await show(repo, id);
+
+      expect(stderr).toMatch(new RegExp(`^● ${id} is off in rerail-rule-draft-\\w+, and your copy would run there, on\\.`));
+    });
+
+    it("refuses your copy made for another repository where its original runs, which show points at", async () => {
+      const first = await repository();
+      setUpWithComplexity(first);
+      const id = "complexity-cyclomatic-vue";
+      expect((await run("add", [writeDraft(first, (await show(first, id)).draft), "--repo", first])).exit).toBe(0);
+      const second = await repository();
+      setUpWithComplexity(second);
+      const shown = await show(second, `${id}-copy`);
+      expect(shown.stderr).toContain(`${id}-copy is your copy of ${id} for another repository, and is not added to rerail-rule-draft-`);
+      expect(shown.stderr).toContain(`To change ${id} here: rerail rules show ${id}\n`);
+
+      const { exit, stderr } = await run("add", [writeDraft(second, shown.draft), "--repo", second]);
+
+      expect(exit).toBe(1);
+      expect(stderr).toContain(`${id}-copy is your copy of ${id} for another repository, and ${id} runs in rerail-rule-draft-`);
+      expect(rulesNamed(second, id)).toEqual([{ id, kind: "pack", folder: "", on: true }]);
     });
 
     it("is refused where the repository does not run the original, which show says first, storing nothing", async () => {

@@ -217,11 +217,15 @@ mode and its id stay as they are. Write's review and quality gates are about tho
 commands, not a new rule.
 
 1. **Read the rule:** `rerail rules show <id>`. It prints the rule as a draft, as it runs in this repo; save it as
-   `<tmp>/draft.json`. A line on stderr says what saving does:
-   - No line: the rule is the person's own, and saving changes it where it is.
-   - A rule that ships with Rerail is saved as the person's copy, added where it is; approving the copy turns it off there.
-   - "already has your copy … Change that one": run `rules show` on the copy's id and change that one instead.
-   - "is not added to <repo>": the rule does not run here, so there is no scope to change. Say so, and stop.
+   `<tmp>/draft.json`. A line on stderr says what saving does. Go on after the first two lines below, start again with
+   the rule they name after the next two, and after the rest say what the line says, and stop:
+   - "is yours, added to <repo>": saving changes the person's rule where it is. If the line says it is also added to
+     other repositories, saving changes it there too: the card's Saved as row names them.
+   - "ships with Rerail": saved as the person's copy, added where it is; approving the copy turns it off there.
+   - "already has your copy … Change that one": run `rules show` on the copy's id and start again with that one.
+   - "is your copy of <original> for another repository": run `rules show <original>` and start again with that one.
+   - "is not added to <repo>": the rule does not run here, so there is no scope to change here.
+   - "is off in <repo>": a copy would run where the person has the rule off. Ask whether they want it on first.
    - A rule in this worktree's `.rerail/rules/` is not printed: read its file instead and change it in place.
 
    A rule with no `scope` (one about commands, not files) has no paths to change: say so, and stop.
@@ -247,7 +251,8 @@ commands, not a new rule.
      Left out now   tests/test_api.py, conftest.py
      Tested         Would catch <N> places in this repo
      Unchanged      What it checks, its message, <Steer|Log>
-     Saved as       Your copy of <id>; the original turns off where the copy is added | <id>, revision <n>
+     Saved as       Your copy of <id>; the original turns off where the copy is added | <id>, revision <n>, here
+                    (and in <other repositories>)
 
      1. Yes, save it
      2. Change something
@@ -255,8 +260,8 @@ commands, not a new rule.
    ```
 
    The diff lists only the globs added (`+`) and removed (`-`). If the person already said yes in this conversation to
-   exactly these globs (a preview shown before this skill was read), and every case passed, that yes stands: show the
-   card without its question and save. If checking changed a glob, ask.
+   exactly these globs, every case passed, and that earlier preview said what saving does (what the Saved as row says),
+   that yes stands: show the card without its question and save. Otherwise ask.
 5. **Save it, only after the person says yes.** `rerail rules add <tmp>/draft.json`, then `rerail rules approve <the id
    rules add printed>`: the person's yes to the card is their approval, and a copy's approval turns the original off. A
    rule in `.rerail/rules/` is saved by writing its file, then `rerail rules approve <id>`. Reply in one line:
