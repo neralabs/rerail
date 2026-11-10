@@ -107,3 +107,9 @@ pub fn loop_costs(lines: &[String]) -> (usize, usize) {
     let mvn = lines.iter().filter(|l| l.starts_with("mvn v")).count();
     (stack, mvn)
 }
+
+/// The Cranelift IR of the loop body: everything between the body block's label and the next
+/// block's. `block0` is the entry, `block1` a file's row, `block2` the body over its blocks.
+pub fn body_of(clif: &str) -> Vec<String> {
+    hot_loop(clif).into_iter().flat_map(|(_, lines)| lines).collect()
+}

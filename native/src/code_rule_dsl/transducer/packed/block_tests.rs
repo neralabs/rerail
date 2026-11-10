@@ -5,7 +5,7 @@
 //! straight bit operations.
 
 // The IR text's helpers, tier 1's (`rerail_compiler::clif_text`).
-pub(super) use rerail_compiler::clif_text::{hot_loop, loop_costs, machine_loop, opcode};
+pub(super) use rerail_compiler::clif_text::{body_of, hot_loop, loop_costs, machine_loop, opcode};
 use super::*;
 use super::block::BlockRun;
 
@@ -199,11 +199,6 @@ fn eq_swar_form_equals_reference() {
 
 // --- What each executor lowers to ----------------------------------------------------------
 
-/// The Cranelift IR of the loop body: everything between the body block's label and the next
-/// block's. `block0` is the entry, `block1` a file's row, `block2` the body over its blocks.
-pub(super) fn body_of(clif: &str) -> Vec<String> {
-    hot_loop(clif).into_iter().flat_map(|(_, lines)| lines).collect()
-}
 
 
 /// The sinks' loop-carried values (`native_cpu_block`): a running count per counted output and

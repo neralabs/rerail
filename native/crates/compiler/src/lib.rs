@@ -18,6 +18,9 @@ pub mod block;
 pub mod block_native;
 pub mod clif_text;
 pub mod grammar;
+/// The Bitlex ladder's checks, for this crate's tests and the engine's.
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod ladder;
 mod error;
 pub mod native_cpu_block;
 pub mod native_cpu_codegen;
@@ -31,6 +34,9 @@ pub mod rir_asm;
 pub mod rir_text;
 pub mod set_mode;
 pub mod stream;
+/// Tier 2's hand-written programs and their tests.
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod stream_tests;
 pub mod stream_ir;
 
 pub use error::Error;
@@ -43,3 +49,5 @@ mod gating_tests;
 mod outline_tests;
 #[cfg(test)]
 mod tier2_tests;
+#[cfg(test)]
+mod ladder_tests;

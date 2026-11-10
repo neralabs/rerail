@@ -16,5 +16,5 @@ pub(in crate::code_rule_dsl) use rerail_compiler::stream::Node;
 use super::*;
 
 #[cfg(test)]
-#[path = "stream_tests.rs"]
+#[path = "stream_round_trip_tests.rs"]
 mod tests;

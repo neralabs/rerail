@@ -387,7 +387,7 @@ fn jsonc_comments_equal_tree_sitter() {
 fn json_shapes() {
     for name in ["14-json", "15-jsonc"] {
         let c = form(name);
-        let p = &c.program.block_programs()[0];
+        let p = &c.program.block_programs[0];
         let mut ops: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         for op in &p.ops {
             let k = format!("{op:?}");
@@ -490,7 +490,7 @@ fn json_tier1_vectors_equal_the_interpreter() {
                 files.push(f);
             }
         }
-        let block = &c.program.block_programs()[0];
+        let block = &c.program.block_programs[0];
         for f in &files {
             assert_eq!(c.parser.tier1.extract(f), block.run_files(&[f]).remove(0), "{name}: {:?}", String::from_utf8_lossy(f));
         }
@@ -517,7 +517,7 @@ fn json_gated_regions_equal_the_interpreter() {
         assert!(!plan.regions.is_empty(), "{name}: no gated region");
         let tests: usize = plan.regions.iter().map(|r| 1 + usize::from(r.pre.is_some())).sum();
         assert_eq!(c.parser.tier1.gate_branches, tests * (1 + usize::from(c.parser.tier1.ascii_branch)), "{name}: a region without its branch");
-        let block = &c.program.block_programs()[0];
+        let block = &c.program.block_programs[0];
         let mut files: Vec<Vec<u8>> = Vec::new();
         for t in tokens {
             for at in 0..140 {

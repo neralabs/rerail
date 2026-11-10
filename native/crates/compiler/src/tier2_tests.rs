@@ -13,8 +13,8 @@ use crate::{native_ir, rir_asm, stream};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-/// The ladder's files: the engine's test data.
-const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/bitlex_ladder");
+/// The ladder's files.
+const DIR: &str = crate::ladder::DIR;
 
 /// A kind or field id per name, in order of first use, as a grammar would number them.
 #[derive(Default)]
