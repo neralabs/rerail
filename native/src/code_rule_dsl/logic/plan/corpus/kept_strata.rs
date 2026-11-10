@@ -21,7 +21,7 @@
 
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::plan::KeptStrata;
-use crate::content_store::{ContentStore, FramePut, FrameRel, FrameRows, FrameStored};
+use crate::content_store::{AdmittedFrame, ContentStore, FramePut, FrameRel, FrameRows, FrameStored};
 use sha2::{Digest as _, Sha256};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -34,9 +34,14 @@ const FLUSH_VALUES: usize = 1 << 22;
 
 /// The cross-file fact space of the corpus at `root`.
 pub(in crate::code_rule_dsl) fn space(root: &Path) -> [u8; 32] {
+    part_space(root, "cross")
+}
+
+/// The fact space of a part of the run over `root` (`cross`, `cone`: the cone of requests answered in the fixpoint).
+pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] {
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let mut h = Sha256::new();
-    h.update(b"rerail.space/v1\0cross\0");
+    h.update(format!("rerail.space/v1\0{part}\0").as_bytes());
     h.update(root.to_string_lossy().as_bytes());
     h.finalize().into()
 }
@@ -48,6 +53,8 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     rels: HashMap<String, FrameRel>,
     /// What is stored of those relations.
     was: HashMap<String, FrameStored>,
+    /// Encoded rows admitted before scheduling. Reading a kept relation never calls SQLite.
+    admitted: HashMap<String, Arc<AdmittedFrame>>,
     /// The inputs bound before the run, and those bound as their first reader runs (`loaded`, by the caller).
     inputs: HashMap<String, Arc<dyn Source>>,
     pub(in crate::code_rule_dsl) loaded: Rc<RefCell<HashMap<String, Arc<dyn Source>>>>,
@@ -67,6 +74,7 @@ impl<'s> Kept<'s> {
             space,
             rels: HashMap::new(),
             was: HashMap::new(),
+            admitted: HashMap::new(),
             inputs: inputs.iter().map(|(r, s)| (r.clone(), Arc::clone(s))).collect(),
             loaded: Default::default(),
             digests: HashMap::new(),
@@ -102,8 +110,25 @@ impl KeptStrata for Kept<'_> {
         self.rels = identities.iter().map(|(name, ident)| (name.clone(), FrameRel { name: name.clone(), ident: *ident })).collect();
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the strata kept, from the store".into());
         let rels: Vec<FrameRel> = self.rels.values().cloned().collect();
-        let stored = self.store.frames(&self.space, &rels, 0).unwrap_or_default();
-        self.was = stored.into_iter().map(|(rel, s)| (rel.name, s)).collect();
+        self.was = self.store.frames(&self.space, &rels, 0).unwrap_or_default().into_iter().map(|(r, s)| (r.name, s)).collect();
+    }
+
+    fn admit(&mut self, relations: &[String]) {
+        let rels: Vec<_> = relations.iter().filter_map(|r| self.rels.get(r).cloned()).collect();
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "admit demanded retained facts".into());
+        let stored = self.store.admit_frames(&self.space, &rels, 0).unwrap_or_default();
+        // Metadata and payload are separate batches. A concurrent publication must never let
+        // the scheduler use old metadata with new rows. A miss or change conservatively derives again.
+        if rels.iter().any(|r| stored.get(r).map(|f| &f.stored) != self.was.get(&r.name)) {
+            self.was.clear();
+            self.admitted.clear();
+            crate::code_rule_dsl::logic::profile::decision("fact admission", || "frames changed during admission; derive again".into());
+            return;
+        }
+        crate::code_rule_dsl::logic::profile::decision("fact admission", || format!(
+            "{} retained relations, {} demanded payloads, {} admitted, {} encoded bytes; consumers read memory",
+            self.was.len(), rels.len(), stored.len(), stored.values().map(|f| f.encoded_bytes()).sum::<usize>()));
+        self.admitted = stored.into_iter().map(|(rel, f)| (rel.name, f)).collect();
     }
 
     fn input(&mut self, rel: &str) -> Option<u64> {
@@ -129,8 +154,7 @@ impl KeptStrata for Kept<'_> {
     }
 
     fn rows(&mut self, rel: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
-        let frame = self.rels.get(rel)?;
-        self.store.frame_rows(&self.space, frame, 0).ok().flatten().map(|k| (k.types, k.rows, k.n))
+        self.admitted.get(rel)?.rows().ok().map(|k| (k.types, k.rows, k.n))
     }
 
     fn counted(&mut self, evaluated: usize, of: usize) {
@@ -177,15 +201,6 @@ pub(in crate::code_rule_dsl) struct Part {
     cones: HashMap<String, std::collections::BTreeSet<String>>,
 }
 
-/// The fact space of the corpus at `root` that a maintained cross-file part is kept in.
-fn part_space(root: &Path) -> [u8; 32] {
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let mut h = Sha256::new();
-    h.update(b"rerail.space/v1\0cross-maintained\0");
-    h.update(root.to_string_lossy().as_bytes());
-    h.finalize().into()
-}
-
 /// Whether a new process maintains its cross-file part from the store (`RERAIL_KEPT_PART=off`: the per-stratum
 /// cut of `Kept` instead, to compare).
 pub(in crate::code_rule_dsl) fn part_wanted() -> bool {
@@ -229,7 +244,8 @@ pub(in crate::code_rule_dsl) fn load(
     now: &HashMap<String, u64>,
 ) -> super::Result<(Option<super::retain::Retained>, Part)> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part kept, from the store".into());
-    let space = part_space(root);
+    // The fact space of the corpus at `root` that a maintained cross-file part is kept in.
+    let space = part_space(root, "cross-maintained");
     let (sccs, _) = crate::code_rule_dsl::logic::front::strata(prog).map_err(|e| super::Error::Plan(e.to_string()))?;
     let by_stratum: Vec<Vec<&crate::code_rule_dsl::logic::front::Rule>> = sccs.iter().map(|scc| prog.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect()).collect();
     let input_names: std::collections::HashSet<&str> = inputs.iter().map(|(r, _)| r.as_str()).collect();
@@ -341,4 +357,59 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
     store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token())));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code_rule_dsl::logic::{native, plan, rr};
+    use crate::code_rule_dsl::logic::plan::lower;
+
+    #[test]
+    fn an_unchanged_native_plan_reuses_facts_and_admits_only_consumed_payloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("facts.sqlite");
+        let text = ".decl e(a:number,b:number)\ne(1,2).\ne(2,3).\ne(3,4).\n\
+            .decl r(a:number,b:number)\nr(a,b) :- e(a,b).\nr(a,c) :- r(a,b),e(b,c).\n\
+            .decl total(n:number)\ntotal(n) :- n=count : {r(_,_)}.\n.output total\n";
+        let run = || {
+            let store = ContentStore::open(&path).unwrap();
+            let p = rr::parse(text).unwrap();
+            let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+            let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
+            let db = rusqlite::Connection::open(&path).unwrap();
+            native::register(&db).unwrap();
+            native::register_symbols(&db).unwrap();
+            let mut kept = Kept::new(&store, [42; 32], &[]);
+            let outcome = plan::run_atoms_native_hooked(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+                Default::default(), "program", plan::Hooks { strata: Some(&mut kept), ..Default::default() }).unwrap();
+            let counts = kept.strata.unwrap();
+            let admitted: Vec<_> = kept.admitted.keys().cloned().collect();
+            kept.finish();
+            (counts, admitted, outcome.outputs)
+        };
+        let first = run();
+        assert!(first.0.0 > 0, "cold native evaluation must do work");
+        let warm = run();
+        assert_eq!(warm.2, first.2);
+        assert_eq!(warm.0.0, 0, "an unchanged native transformation must not execute");
+        assert!(!warm.1.contains(&"r".to_owned()), "the retained closure has no running consumer and must not be hydrated: {:?}", warm.1);
+        assert!(warm.1.contains(&"total".to_owned()), "the final output is demanded");
+    }
+
+    #[test]
+    fn publication_between_metadata_and_payload_admission_invalidates_the_cut() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+        let rel = FrameRel { name: "r".into(), ident: [1; 32] };
+        let put = |v| FramePut { rel: rel.clone(), part: 0, digest: v as u64, reads: vec![],
+            rows: FrameRows { types: vec![0], rows: vec![v], n: 1 } };
+        store.keep_frames(&[42; 32], &[put(1)], &[], None).unwrap();
+        let mut kept = Kept::new(&store, [42; 32], &[]);
+        kept.program(&HashMap::from([("r".into(), [1; 32])]));
+        assert!(kept.has_rows("r"));
+        store.keep_frames(&[42; 32], &[put(2)], &[], None).unwrap();
+        kept.admit(&["r".into()]);
+        assert!(!kept.has_rows("r"), "old metadata must never certify replacement rows");
+    }
 }

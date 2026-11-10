@@ -311,3 +311,28 @@ fn results_for_many_files_answer_as_one_file_at_a_time() {
     let hashes = [HashKey::sha256(b), HashKey::sha256(b"absent"), HashKey::sha256(a)];
     assert_eq!(store.held_sources_by_hash(&hashes).unwrap(), vec![store.source_by_hash(hashes[0]).unwrap(), None, store.source_by_hash(hashes[2]).unwrap()]);
 }
+
+/// A small demanded batch must probe its keys, not multiply every retained plan row by every request.
+#[test]
+fn memo_batch_work_is_bounded_by_demanded_keys() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_path, store) = store("demand-work");
+    let source = store.put_facts_source(b"same bytes", content(b"same bytes"), &[]).unwrap();
+    let paths: Vec<_> = (0..2048).map(|i| format!("file-{i}.py")).collect();
+    let records: Vec<_> = paths.iter().map(|p| (source, p.as_str(), result(1, true, p.as_bytes()))).collect();
+    store.put_facts_results(7, &FactsPlanSet::new(vec![plan(1)]), &records).unwrap();
+    let keys: Vec<_> = paths.iter().step_by(16).map(|p| (source, p.as_str())).collect();
+    let work = AtomicUsize::new(0);
+    unsafe extern "C" fn trace(_: u32, state: *mut std::ffi::c_void, statement: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+        // The statement and counter remain live until the synchronous query completes.
+        let vm = unsafe { rusqlite::ffi::sqlite3_stmt_status(statement.cast(), rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP, 1) };
+        unsafe { &*state.cast::<AtomicUsize>() }.fetch_add(vm as usize, Ordering::Relaxed);
+        0
+    }
+    unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
+        rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace), (&work as *const AtomicUsize).cast_mut().cast()); }
+    let got = store.facts_results_for(7, plan(1), &keys);
+    unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(), 0, None, std::ptr::null_mut()); }
+    assert_eq!(got.unwrap(), keys.iter().map(|(_, p)| Some(p.as_bytes().to_vec())).collect::<Vec<_>>());
+    assert!(work.load(Ordering::Relaxed) < 100_000, "128 demanded keys must not scan 2048 retained rows each: {} VM instructions", work.load(Ordering::Relaxed));
+}

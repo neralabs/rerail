@@ -1,8 +1,9 @@
 //! The tree section's grammar to tier 2's state machine (docs/parser-generators/18-tree-as-grammar.md
 //! §2): a pass of the Bitlex compiler. Its output is the block program's `states` and `arms`.
 //!
-//! 1. **Levels.** The root rule and each `nested` rule is a level. Every other rule and every
-//!    choice is inlined into the levels that use it; a use of a nested rule is a call.
+//! 1. **Levels.** The root rule and each `nested` rule is a level, and so is each rule or choice
+//!    whose calls save enough states (`shared`). Every other rule and every choice is inlined
+//!    into the levels that use it; a use of a level is a call.
 //! 2. **Positions.** Glushkov's construction over each level's expression: a position per token
 //!    and per call; each edge between two positions knows the wrappers (nodes, fields,
 //!    supertypes) it leaves and enters.
@@ -511,21 +512,233 @@ struct Raw {
     arms: Vec<(u16, Vec<Act>, usize, Vec<usize>)>,
 }
 
-/// The state machine of the tree section's rules in `stmts`.
-/// With a whole root (`node K whole`), the root is open before the first token (the words open
-/// it at byte 0, `bitlex_tier2::lower`): state 0's arms do not open it, and state 0 ends the file
-/// when the root may be empty. The third value says so.
-pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow>, bool), String> {
+/// The tree section's rules, desugared: the nodes (the root first), the choices inlined where
+/// used, the nested choices, and each `balanced` level's `(K, O, C)`.
+fn gather(stmts: &[Stmt], tokens: &[String]) -> (Vec<Rule>, Vec<(String, Option<String>, Gram)>, Vec<Rule>, Vec<(String, String, String)>) {
     let mut rules = Vec::new();
     let mut choices = Vec::new();
     let mut nested_choices = Vec::new();
     let mut balanced = Vec::new();
     for s in stmts {
         match s {
-            Stmt::Node { kind, nested, whole, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced, ids.tokens), own: true, supertype: None }),
-            Stmt::Choice { name, supertype, nested: true, body } => nested_choices.push(Rule { kind: name.clone(), nested: true, whole: false, body: desugar(body, &mut balanced, ids.tokens), own: false, supertype: supertype.clone() }),
-            Stmt::Choice { name, supertype, body, .. } => choices.push((name.clone(), supertype.clone(), desugar(body, &mut balanced, ids.tokens))),
+            Stmt::Node { kind, nested, whole, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced, tokens), own: true, supertype: None }),
+            Stmt::Choice { name, supertype, nested: true, body } => nested_choices.push(Rule { kind: name.clone(), nested: true, whole: false, body: desugar(body, &mut balanced, tokens), own: false, supertype: supertype.clone() }),
+            Stmt::Choice { name, supertype, body, .. } => choices.push((name.clone(), supertype.clone(), desugar(body, &mut balanced, tokens))),
             _ => {}
+        }
+    }
+    (rules, choices, nested_choices, balanced)
+}
+
+/// The fewest states a call must save for a rule to be shared by calls (`shared`).
+pub const SHARED_STATES: usize = 8;
+
+/// The states a rule's calls save: its inner positions once instead of at each of its `uses`,
+/// less a state for each call. An inner position is one the rule may go on from (its state's
+/// arms are the rule's own); a position it may end with is a state at each place either way
+/// (its arms are the place's), so a choice of single tokens saves nothing.
+pub fn saved_states(uses: usize, inner: usize) -> usize {
+    (uses.saturating_sub(1) * inner).saturating_sub(uses)
+}
+
+/// The rules and choices not marked `nested` that become calls, as if they were: those whose
+/// calls save `SHARED_STATES` states or more (`saved_states`), the rules they use decided first
+/// (a call is one position). Inlined, each place has a copy of the rule's inner states; called,
+/// its level has them once, and each use pays a push and a return when it runs: a few states
+/// saved are not worth that. The rest stay inlined; so do those that may match no token (a call
+/// takes one), those a refusing level uses (its marks would be the callee's, `refusing`), and
+/// those whose first token merges into the leaf before them.
+fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[Rule], stmts: &[Stmt]) -> Vec<String> {
+    #[derive(Default)]
+    struct Facts {
+        uses: HashMap<String, usize>,
+        size: HashMap<String, usize>,
+        called: HashMap<String, bool>,
+        /// Inlined for good: what a refusing level reaches.
+        kept: Vec<String>,
+    }
+    let body = |name: &str| -> Option<&Gram> {
+        rules.iter().find(|r| r.kind == name).map(|r| &r.body).or_else(|| choices.iter().find(|c| c.0 == name).map(|c| &c.2))
+    };
+    let fixed = |name: &str| rules.iter().position(|r| r.kind == name).is_some_and(|r| r == 0 || rules[r].nested);
+    // Uses: each place a body names it (a `+`'s twice: its body is expanded twice).
+    fn count(g: &Gram, times: usize, uses: &mut HashMap<String, usize>) {
+        match g {
+            Gram::Sym(n) => *uses.entry(n.clone()).or_default() += times,
+            Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| count(g, times, uses)),
+            Gram::Plus(a) => count(a, 2 * times, uses),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => count(a, times, uses),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => count(body, times, uses),
+            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => {}
+        }
+    }
+    let mut f = Facts::default();
+    for g in rules.iter().chain(levels).map(|r| &r.body).chain(choices.iter().map(|c| &c.2)) {
+        count(g, 1, &mut f.uses);
+    }
+    // A name's positions where it is used: one for a call or a token, its body's inlined.
+    fn size(g: &Gram, f: &mut Facts, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), stack: &mut Vec<String>) -> usize {
+        match g {
+            Gram::Lit(_) | Gram::Merge(..) | Gram::Any(_) | Gram::Balanced { .. } => 1,
+            Gram::Sym(n) => match ctx(n) {
+                (Some(b), false) if !stack.contains(n) => {
+                    if decide(n, &b, f, ctx, stack) { 1 } else { f.size[n] }
+                }
+                _ => 1,
+            },
+            Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().map(|g| size(g, f, ctx, stack)).sum(),
+            Gram::Plus(a) => 2 * size(a, f, ctx, stack),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::As(_, a) => size(a, f, ctx, stack),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => size(body, f, ctx, stack),
+        }
+    }
+    // Whether `n` may match no token, and whether its first token merges into the leaf before.
+    fn empty(g: &Gram, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), called: &HashMap<String, bool>, stack: &mut Vec<String>) -> bool {
+        match g {
+            Gram::Lit(_) | Gram::Merge(..) | Gram::Any(_) | Gram::Balanced { .. } => false,
+            Gram::Sym(n) => match ctx(n) {
+                (Some(b), false) if !stack.contains(n) && !called.get(n).copied().unwrap_or(false) => {
+                    stack.push(n.clone());
+                    let e = empty(&b, ctx, called, stack);
+                    stack.pop();
+                    e
+                }
+                _ => false,
+            },
+            Gram::Seq(gs) => gs.iter().all(|g| empty(g, ctx, called, stack)),
+            Gram::Alt(gs) => gs.iter().any(|g| empty(g, ctx, called, stack)),
+            Gram::Opt(_) | Gram::Star(_) => true,
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::As(_, a) => empty(a, ctx, called, stack),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => empty(body, ctx, called, stack),
+        }
+    }
+    fn merges_first(g: &Gram, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), called: &HashMap<String, bool>, stack: &mut Vec<String>) -> bool {
+        match g {
+            Gram::Merge(..) => true,
+            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => false,
+            Gram::Sym(n) => match ctx(n) {
+                (Some(b), false) if !stack.contains(n) && !called.get(n).copied().unwrap_or(false) => {
+                    stack.push(n.clone());
+                    let m = merges_first(&b, ctx, called, stack);
+                    stack.pop();
+                    m
+                }
+                _ => false,
+            },
+            Gram::Seq(gs) => {
+                for g in gs {
+                    if merges_first(g, ctx, called, stack) {
+                        return true;
+                    }
+                    if !empty(g, ctx, called, stack) {
+                        return false;
+                    }
+                }
+                false
+            }
+            Gram::Alt(gs) => gs.iter().any(|g| merges_first(g, ctx, called, stack)),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::As(_, a) => merges_first(a, ctx, called, stack),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => merges_first(body, ctx, called, stack),
+        }
+    }
+    // The positions `g` may end with, the rules it uses decided.
+    fn lasts(g: &Gram, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), called: &HashMap<String, bool>, stack: &mut Vec<String>) -> usize {
+        match g {
+            Gram::Lit(_) | Gram::Merge(..) | Gram::Any(_) | Gram::Balanced { .. } => 1,
+            Gram::Sym(n) => match ctx(n) {
+                (Some(b), false) if !stack.contains(n) && !called.get(n).copied().unwrap_or(false) => {
+                    stack.push(n.clone());
+                    let k = lasts(&b, ctx, called, stack);
+                    stack.pop();
+                    k
+                }
+                _ => 1,
+            },
+            Gram::Seq(gs) => {
+                let mut k = 0;
+                for g in gs.iter().rev() {
+                    k += lasts(g, ctx, called, stack);
+                    if !empty(g, ctx, called, stack) {
+                        break;
+                    }
+                }
+                k
+            }
+            Gram::Alt(gs) => gs.iter().map(|g| lasts(g, ctx, called, stack)).sum(),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::As(_, a) => lasts(a, ctx, called, stack),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => lasts(body, ctx, called, stack),
+        }
+    }
+    fn decide(n: &str, b: &Gram, f: &mut Facts, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), stack: &mut Vec<String>) -> bool {
+        if let Some(&c) = f.called.get(n) {
+            return c;
+        }
+        stack.push(n.to_owned());
+        let s = size(b, f, ctx, stack);
+        let inner = s.saturating_sub(lasts(b, ctx, &f.called, stack));
+        let e = empty(b, ctx, &f.called, stack) || merges_first(b, ctx, &f.called, stack);
+        stack.pop();
+        let c = !e && !f.kept.iter().any(|k| k == n) && saved_states(f.uses.get(n).copied().unwrap_or(0), inner) >= SHARED_STATES;
+        f.size.insert(n.to_owned(), s);
+        f.called.insert(n.to_owned(), c);
+        c
+    }
+    let ctx = |n: &str| -> (Option<Gram>, bool) { (body(n).cloned(), fixed(n)) };
+    // What a refusing level reaches by inlining, before any call: inlined there for good.
+    let refusing: Vec<&str> = stmts.iter().filter_map(|s| if let Stmt::Refuse { levels, .. } = s { Some(levels.iter().map(String::as_str)) } else { None }).flatten().collect();
+    fn reach(g: &Gram, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), out: &mut Vec<String>) {
+        match g {
+            Gram::Sym(n) => {
+                if let (Some(b), false) = ctx(n)
+                    && !out.contains(n)
+                {
+                    out.push(n.clone());
+                    reach(&b, ctx, out);
+                }
+            }
+            Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| reach(g, ctx, out)),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => reach(a, ctx, out),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => reach(body, ctx, out),
+            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => {}
+        }
+    }
+    for l in &refusing {
+        if let Some(b) = rules.iter().chain(levels).find(|r| r.kind == *l).map(|r| &r.body) {
+            reach(b, &ctx, &mut f.kept);
+        }
+    }
+    let names: Vec<String> = rules.iter().skip(1).filter(|r| !r.nested).map(|r| r.kind.clone()).chain(choices.iter().map(|c| c.0.clone())).collect();
+    for n in &names {
+        if let Some(b) = body(n).cloned() {
+            decide(n, &b, &mut f, &ctx, &mut Vec::new());
+        }
+    }
+    names.into_iter().filter(|n| f.called.get(n).copied().unwrap_or(false)).collect()
+}
+
+/// The rules and choices of a tree section that become calls (`shared`), for tests.
+#[cfg(test)]
+pub(crate) fn shared_names(stmts: &[Stmt], tokens: &[String]) -> Vec<String> {
+    let (rules, choices, levels, _) = gather(stmts, tokens);
+    shared(&rules, &choices, &levels, stmts)
+}
+
+/// The state machine of the tree section's rules in `stmts`.
+/// With a whole root (`node K whole`), the root is open before the first token (the words open
+/// it at byte 0, `bitlex_tier2::lower`): state 0's arms do not open it, and state 0 ends the file
+/// when the root may be empty. The third value says so.
+pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow>, bool), String> {
+    let (mut rules, mut choices, mut nested_choices, balanced) = gather(stmts, ids.tokens);
+    // The rules shared by calls (`shared`): levels of their own, as if marked `nested`.
+    let calls = shared(&rules, &choices, &nested_choices, stmts);
+    for r in rules.iter_mut().skip(1) {
+        r.nested |= calls.contains(&r.kind);
+    }
+    for (name, supertype, body) in std::mem::take(&mut choices) {
+        if calls.contains(&name) {
+            nested_choices.push(Rule { kind: name, nested: true, whole: false, body, own: false, supertype });
+        } else {
+            choices.push((name, supertype, body));
         }
     }
     // Each `balanced K O C`'s level: any token but `O` or `C` merged into the leaf, an inner `O`
@@ -585,7 +798,10 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
                 refuses.push((ids.kind)(mark)?);
             }
         }
-        levels.push(Level { kind: (ids.kind)(kind)?, own: b.rules[r].own, supertype, edges, refuses });
+        // A shared choice's level (`shared`) makes no node: where its name is no kind of the
+        // grammar's, an id of its own from the top, apart from every kind, names the level.
+        let id = if !b.rules[r].own && calls.contains(&b.rules[r].kind) { (ids.kind)(kind).unwrap_or(u16::MAX - l as u16) } else { (ids.kind)(kind)? };
+        levels.push(Level { kind: id, own: b.rules[r].own, supertype, edges, refuses });
     }
     // Each level a `refuse` names: a nested one.
     for s in stmts {
@@ -692,12 +908,14 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
     }
 
     // Merge states that act alike (Moore's refinement), then number them from the start, in
-    // the order they are reached.
+    // the order they are reached. States of different levels act alike when their arms do and
+    // they end alike: the root's apart, a level with a node of its own apart from one without
+    // (its end closes it), and the marks refused the same.
     let mut class: Vec<usize> = Vec::new();
     {
-        let mut keys: Vec<(usize, Option<u8>)> = Vec::new();
+        let mut keys: Vec<(bool, bool, Option<u8>, &[u16])> = Vec::new();
         for r in &raw {
-            let k = (r.level, r.end);
+            let k = (r.level == 0, levels[r.level].own, r.end, levels[r.level].refuses.as_slice());
             let c = keys.iter().position(|x| *x == k).unwrap_or_else(|| {
                 keys.push(k);
                 keys.len() - 1
@@ -739,11 +957,31 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
             queue.extend(p.iter().copied());
         }
     }
+    // Levels that share a state are one level from here on: a state that ends returns to the
+    // states any of them returns to (`bitlex_masks`'s modes follow returns by level).
+    let mut joined: Vec<usize> = (0..levels.len()).collect();
+    fn find(joined: &mut [usize], l: usize) -> usize {
+        let mut r = l;
+        while joined[r] != r {
+            r = joined[r];
+        }
+        joined[l] = r;
+        r
+    }
+    let mut first_of: HashMap<usize, usize> = HashMap::new();
+    for (i, r) in raw.iter().enumerate() {
+        let other = *first_of.entry(class[i]).or_insert(r.level);
+        let (a, b) = (find(&mut joined, other), find(&mut joined, r.level));
+        if a != b {
+            joined[a.max(b)] = a.min(b);
+        }
+    }
     let mut states = Vec::new();
     let mut arms = Vec::new();
     for (s, &i) in order.iter().enumerate() {
         let r = &raw[i];
-        states.push(StateRow { level: levels[r.level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone() });
+        let level = find(&mut joined, r.level);
+        states.push(StateRow { level: levels[level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone() });
         for (token, acts, q, p) in &r.arms {
             arms.push(ArmRow { from: s as u16, token: *token, acts: acts.clone(), to: number[&class[*q]], push: p.iter().map(|&p| number[&class[p]]).collect() });
         }

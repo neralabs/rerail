@@ -275,8 +275,10 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     }
     // The segment's count of each counted output (`counted_outputs`), for the positions' bases
     // and the totals.
+    // The totals' one count is every total's words OR-ed (`native_cpu_block::counted`).
     for (c, k) in counted_outputs(native).into_iter().enumerate() {
-        tail.push_str(&format!("  {{ const uint n = simd_sum(uint(popcount(ow{k}))); if (l == 0u) counts[{c}u] = n; }}\n"));
+        let w = if c < native.extracts.len() { format!("ow{k}") } else { native.totals.iter().map(|t| format!("ow{t}")).collect::<Vec<_>>().join(" | ") };
+        tail.push_str(&format!("  {{ const uint n = simd_sum(uint(popcount({w}))); if (l == 0u) counts[{c}u] = n; }}\n"));
     }
     // The state after the lane, under the serial names (`State::pack`).
     let mut names = String::new();
@@ -1012,10 +1014,12 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
                  \x20       for (uint i = 0u; i < 64u && w != 0ul; i++) {{ positions[f.pos_base + {e}u * max(len, 1u) + at] = j * 64u + uint(ctz(w)); at++; w &= w - 1ul; }} }} }}\n"
             ));
         }
-        for (t, &k) in native.totals.iter().enumerate() {
+        // All the totals into one flag, the count after the extracts' (`counted_outputs`).
+        if !native.totals.is_empty() {
+            let words: String = native.totals.iter().map(|&k| format!(" | out[f.out_base + {k}u * f.groups + j]")).collect();
             count.push_str(&format!(
-                "      {{ uint n = 0u; for (uint j = seg.y; j < seg.z; j++) n += uint(popcount(out[f.out_base + {k}u * f.groups + j])); counts[t * {counted}u + {}u] = n; }}\n",
-                native.extracts.len() + t
+                "      {{ ulong any = 0ul; for (uint j = seg.y; j < seg.z; j++) any = any{words}; counts[t * {counted}u + {}u] = uint(any != 0ul); }}\n",
+                native.extracts.len()
             ));
         }
         count_cases.push_str(&format!("    case {p}u: {{\n{count}      break; }}\n"));
@@ -1246,9 +1250,9 @@ fn group_levels(programs: &[&BlockNative]) -> std::collections::BTreeSet<usize> 
     programs.iter().flat_map(|n| Levels::of(n).groups.into_iter().map(|g| g.level)).collect()
 }
 
-/// The outputs counted per segment: the extracts', then the totals'.
+/// The outputs counted per segment: the extracts', then one for all the totals (one flag).
 fn counted_outputs(native: &BlockNative) -> Vec<usize> {
-    native.extracts.iter().chain(&native.totals).copied().collect()
+    rerail_compiler::native_cpu_block::counted(native)
 }
 
 /// Whether the exact scans are left to the runs to learn: no `RERAIL_SERIAL_EXACT`.
@@ -1814,7 +1818,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: S
                 positions[from..from + (count(e) as usize).min(capacity)].to_vec()
             })
             .collect();
-        let totals = (0..n.totals.len()).map(|t| u64::from(count(n.extracts.len() + t))).collect();
+        let totals = if n.totals.is_empty() { Vec::new() } else { vec![u64::from(count(n.extracts.len()) != 0)] };
         results.push(BlockRun { outputs, positions, totals });
     }
     Ok((serial(results), None))

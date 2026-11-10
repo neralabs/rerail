@@ -151,6 +151,8 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).
         rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &["n", "a"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],
+        // An `ast` matcher's matched nodes (decision 0106).
+        rel if rel.starts_with(crate::code_rule_dsl::logic::plan::corpus::AST_MATCHES) => crate::code_rule_dsl::logic::plan::corpus::ast_columns(rel),
         // The `py.*` families (`facts::vtab::syntax::PY`).
         rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::PY.iter().position(|&p| p == rel).map(|i| crate::code_rule_dsl::facts::vtab::syntax::PY_COLUMNS[i])?,
         _ => return None,

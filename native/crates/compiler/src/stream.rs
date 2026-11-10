@@ -22,7 +22,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
     let words = program.words.len();
     let block = program.block_programs.first();
     let extracts = block.map_or(0, |b| b.extracts.len());
-    let totals = block.map_or(0, |b| b.totals.len());
+    // The totals are one flag (`BlockRun::totals`).
+    let totals = block.map_or(0, |b| b.totals.len().min(1));
     let masks = block.map_or(0, |b| b.masks.len());
     let ok = match opcode {
         TOKEN => mode == 0 && usize::from(operand) < extracts,

@@ -1,0 +1,16 @@
+
+running 3 tests
+test code_rule_dsl::logic::plan::corpus::cache_architecture::a_cache_is_rules_only_with_no_store_hook_or_lookup_of_its_own ... ok
+test code_rule_dsl::logic::plan::corpus::cache_architecture::every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved ...
+thread 'code_rule_dsl::logic::plan::corpus::cache_architecture::every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved' (126272284) panicked at native/src/code_rule_dsl/logic/plan/corpus/cache_architecture.rs:88:5:
+a stored table outside decision 0103 (a cache is two rules in the program's .rr): ["code_rule_dsl/logic/plan/native_demand.rs: keys", "code_rule_dsl/logic/plan/native_demand.rs: facts"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test code_rule_dsl::logic::plan::corpus::cache_architecture::no_cache_tests_its_own_freshness_but_those_not_yet_moved ... ok
+
+failures:
+
+failures:
+    code_rule_dsl::logic::plan::corpus::cache_architecture::every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 3124 filtered out; finished in 0.24s
