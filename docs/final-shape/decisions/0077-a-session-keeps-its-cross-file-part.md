@@ -1,6 +1,6 @@
 # 0077: A session keeps its cross-file part; an edit runs the strata it changed, then maintains their rows
 
-Status: accepted (2026-11-08). Stages 1 and 2 built.
+Status: accepted (2026-11-08). Stages 1 and 2 built; §4, the strata kept across processes, built 2026-11-09.
 
 (Numbered past 0076, which Bend-language-investigation uses for its per-component cross memo, not yet in this
 tip.)
@@ -133,6 +133,74 @@ Measured:
   import nothing (`count … = 0`), over four edits that raise and lower the counts to none. All 11 strata are
   maintained each time, none derived again, and the findings equal a full run's.
 
+### 4. Across processes: a run from the command line keeps its strata in the tape cache
+
+A session keeps the cross-file part in memory. A run from the command line has no session, so before this it
+derived the whole part again after any edit. On the Python pack (534 programs, 486 fixture files), a one-line edit
+to one file cost about 26–29 s of cross-file CPU, the same as a cold run.
+
+Now such a run keeps the part's strata in the tape cache (`corpus::kept_strata`, table `kept_strata`). It keeps
+them per program: the part's key (`retain::key`), the engine build, and the program as the whole-program choices
+(0090 §5) left it. For each input it keeps a digest of the rows. For each derived relation it keeps a digest and
+the rows, encoded as the cross-file memo encodes them (column-wise differences, as varints). The store holds the
+last four programs.
+
+The cut is made as the run goes, one stratum at a time (`plan::Hooks::strata`), not before the run as §2 makes it.
+§2's cut on the pack runs 815 of 1,556 strata, because most strata read `node` or an export that the edit changed.
+But most strata that run derive the rows they had: an appended line changes no import, no class and no call in
+another file. So:
+
+- A stratum is not run when it is plain and every relation it reads has the digest it had last time. Its reads are
+  the inputs (digested as the run binds them) and the relations of earlier strata (this run's digest). Plain means
+  rules only: no native operator, lattice, view, produced request or `ast` literal.
+- A stratum that runs gives its rows' digest. If the rows came out the same, its readers stay clean. This is early
+  cutoff, as §3's empty delta is.
+- A clean relation's rows are read from the store only when a stratum that runs reads it, or when the run's end
+  keeps it (an output). They are held as if this run had derived them (`setfix::hold_rows`), with their counts and
+  distinct values measured for the planner.
+- Only the relations whose rows changed are written. The inputs' digests are written last, and the first write
+  drops the old ones. A run that stops part way leaves no input digest, so the next run finds nothing clean rather
+  than rows that belong to other inputs.
+
+This is stage 1 with early cutoff, not stage 2. A stratum that runs derives its rows from empty, as a cold run
+does. Maintaining it from deltas needs the old rows of every relation it reads, as engine relations, which only a
+session holds.
+
+Measured, debug build, CPU as user + system, load 90–155 (72 users), pack one-edit run (append one line to
+`pyflakes/F401_22.py`). Before is the base binary at its second edit; after is this binary at its first and
+second edits:
+
+| | before | after, edit 1 | after, edit 2 |
+|---|---:|---:|---:|
+| process CPU | 65.9 s | 51.4 s | 49.5 s |
+| process instructions | 643 G | 503 G | 502 G |
+| local phase | 16.3 s | 8.8 s | 8.9 s |
+| cross phase | 25.7 s | 20.2 s | 19.3 s |
+| cross strata not run | 0 of 1,556 | 663 | 666 |
+| clean relations read back | 0 | 374 (147 k rows) | 374 (147 k rows) |
+| rows written to the store | 0 | 2.37 M | 2.37 M |
+| `keep the strata's rows` | | 0.27 s | |
+
+The findings are identical to the base binary's on cold, edit 1 and edit 2. The cold run's cross phase went from
+25.0 s to 28.3 s. That is the first write of every relation's rows, 2.6 M rows. It is within the noise at this
+load.
+
+Test `cross_file_strata_are_kept_across_runs_in_the_tape_cache` covers three cases:
+
+- unchanged files: strata are kept;
+- an edit that changes no cross-file row: strata are kept;
+- an edit that changes the cross-file rows: the findings equal those of a run with an empty cache.
+
+What limits it on the pack:
+
+- **Relations whose rows change on every edit.** Each run rewrites 2.37 M rows, so most of the derived rows change
+  digest on any edit. They are tree walks over all files, such as `rr_up52`, `rr_up69` and `rr_up70` and the
+  annotation copies of them. They are in the cross part only because they read `tape` with no location, although
+  each stays within one document. Moving them to the file-local part would let their strata, and their readers,
+  stay clean. That is a typing change (`typing/file_local.rs`), not made here.
+- **A relation is kept whole.** One changed file rewrites the whole relation. Per-document blocks would write only
+  the changed file's rows, as the memo does (ledger #14).
+
 ## What the prior work says
 
 - **Spec §21.8** (rule-engine-direction): semi-naive deltas over changed keys, delete-and-rederive for recursive
@@ -172,3 +240,5 @@ Sibling branches (surveyed 2026-11-08):
 - The run still makes the part's views, tables and plans each time, and replays memoised exports into `x`; a session
   could keep the connection and `x` too.
 - Programs with gates, and typing programs with bounded rounds, run whole.
+- Across processes (§4), a stratum that runs derives its rows again; it is not maintained. Relations are kept whole,
+  not per document.
