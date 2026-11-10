@@ -168,7 +168,9 @@ Each step is committed on its own and checked with named tests and S7
 
 ## 4. Status
 
-Steps 1 and 2 are done. Their results are in §5 and §6.
+All six steps are done. Steps 1 and 2 are in §5 and §6, step 3 in §7–§9,
+and the cut-over (steps 5 and 6) in §10. Step 4's fact rows and root
+programs on Metal are open items (O-metal-fact-rows, O-metal-root-programs).
 
 ## 5. Step 1 result
 
@@ -445,3 +447,95 @@ the tests to their `all`'s kinds left 113 kind-less facts.
 
 Still open: Metal fails on named-only documents with `BackendFailure`,
 and on the wave with `BackendLaunchLimit` (step 4).
+
+## 10. Steps 5 and 6: one node space
+
+There is one shape now. A tree-sitter tape is stored named-only and
+restored as stored. The node API recognizes a parent's tokens when a
+reader asks for them.
+
+### What went
+
+- **The full restore** (`restore_tree_as`, `Shape`, `restore_named`,
+  the `named_only` field and its environment switches). Tests that need
+  every node as a record build one for themselves
+  (`TapeDoc::every_node_for_test`); they no longer pin the old restore.
+- **The unfold on the read path.** `tokens::unfold` stays, as a test that
+  the fold loses nothing.
+- **The parts cache.** §1 says nothing is cached. `next_all` and
+  `prev_all` now hold their parent's parts while they walk, and find
+  their anchor by bisection over the parts' ends. A single `next` or
+  `prev` recognizes its parent once.
+
+### Stored formats
+
+Every format that numbers nodes was bumped (§2): prefilter 7, positional
+index 4, `rerail.core/v3`, Python rows 2, facts-a 2, slice memo 2, corpus
+memo 6, `rerail.node-reference/v2`. No token-kind postings were added,
+because no rule roots at a token any more (§9).
+
+### Old rules kept exact
+
+Named-only walks changed what two kinds of old rule meant. The compiler
+now keeps them exact:
+
+- **A neighbour is the sibling right beside the node.** A `precedes` or
+  `follows` neighbour that walks named nodes stepped over tokens. In
+  `a = 'x'; b = 'x'`, the `;` used to be `a = 'x'`'s neighbour, so
+  `precedes: {kind: expression_statement}` failed; the named walk found
+  `b = 'x'`. A named neighbour now also needs no token beside the node
+  (`TokenTest::none`). The token index decides it, and the SQL catalog
+  reads it as a gate (`SemanticFactSource::Tokens`).
+
+  ```yaml
+  # written:            precedes: { kind: expression_statement }
+  # compiled, in effect: all: [ precedes: { kind: expression_statement },
+  #                             tokens: { none: after } ]   # nothing beside
+  ```
+
+- **A regex tested with more reaches tokens too.** `precedes: {regex:
+  "^==$", precedes: …}` (Ruff's E712) found no token, since the regex
+  was not bare (§9). The tokens it reaches by the regex are now tested by
+  the rest of the target, at the token (`TokenTest::rule`).
+
+The converter writes the same `.rr` for the data-layer pack as before:
+the token alternatives are read on names, as it always read a kindless
+regex.
+
+### Other fixes
+
+- Structural keys and named leaves count recognized tokens, as
+  tree-sitter's tree has them. Structure reads are bounded by the nodes
+  the node API serves, not by the records.
+- `op_at`, `prev_token` and `token` read a node's parts. They had read
+  the records alone, so they had lost the recognized tokens.
+- The anchor indexes walk records and skip anonymous leaves.
+- Required text: a token test inside the node needs its regex's text.
+
+
+### Measured
+
+Python pack, 30 files, interpreter, process CPU: 500 keys on every
+change above. Without the parts cache it took 36.1 s (load 24–78). After
+the neighbour fix it took 34.4 s (load 67–94). The full tree took 32.5 s
+in an earlier window.
+
+The data-layer repository at `2b1504ad`, through the corpus runner
+(`measure_inside_three_ways`, way `baseline`), cold, at load 70–96:
+
+| | Named-only (now) | Full tree (t10 §1, load ~25) |
+|---|---|---|
+| Files | 9,024 | 9,010 |
+| Nodes held | 18.68M | 28.2M |
+| Parse (worker) CPU | 88.4 s | 22.9 s |
+| Batch (worker) CPU | 15.5 s | 8.8 s |
+| Total CPU | 115.9 s | 43.8 s |
+| Peak RSS | 857 MB | 316 MB |
+
+The node count is 0.66× the full tree's, as t27 §9 predicted. The CPU and
+peak RSS are not yet explained. The load was three to four times t10's,
+and t10's run is from another build with another program, so this is no
+same-window comparison. The next step is a full-shape baseline of the
+same build and program in the same window, then a profile of the parse
+phase (the fold, and the token recognition that facts ask for). S7 was
+not rerun after these fixes.
