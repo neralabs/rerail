@@ -3340,3 +3340,16 @@ The accelerator checkpoint remains 43 unit tests and eleven integration tests pa
 These changes add no SQL statements and do not reset statement allowances.
 The profiler measures executed statements; the scoreboard measures jobs, including preparation and rejected queries.
 Retained recursive lowering and complete-session admission remain the next required integration work.
+
+
+### Keep the library caller outside the worker registry (2026-11-10)
+
+The one-worker problem also affects background SDK calls when library initialization reserves the process's main thread as worker 0.
+A main thread waiting for that SDK call cannot execute the queued SQL work.
+Library initialization now creates actual workers. Headless initialization leaves registration to the controlled CLI or the first library executor.
+The headless CLI still registers its main thread explicitly before its first job.
+
+The public Rust SDK example runs a recursive join and aggregate from a background caller.
+Debug runs with one and four configured workers both return the expected three rows, in one submission and 357 VM steps.
+A bounded subprocess wait checks that either run terminates.
+The existing one- and two-worker profiling regression covers the eager worker configuration used by the library.

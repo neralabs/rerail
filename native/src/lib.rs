@@ -66,12 +66,11 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
-    // And, as the library loads (before `main` in the engine's binary, as Node loads the addon), before any pool
-    // is made: the one pool, of the most threads the process uses (`RERAIL_THREADS`), the process's main thread
-    // one of them when it is the one loading.
-    // Rust's test runner parks its main thread while tests run on other threads.
-    // It cannot serve as worker 0, especially with RERAIL_THREADS=1.
-    threads::configure(!cfg!(test) && threads::is_main_thread());
+    // Library callers and the test runner can park their main thread. Their pool needs
+    // actual workers, including with RERAIL_THREADS=1. The headless CLI registers its
+    // own main thread explicitly, before its first job.
+    #[cfg(not(feature = "headless"))]
+    threads::configure(false);
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // SAFETY: jemalloc's malloc accepts any size.
