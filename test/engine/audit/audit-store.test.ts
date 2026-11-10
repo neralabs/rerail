@@ -138,7 +138,13 @@ describe("SQLite audit persistence", () => {
       violations: [{ id: "violation-1" }, { id: "violation-2" }],
       failures: [{ clauseId: "clause-b" }],
     });
-    expect(new Database(path).prepare("SELECT count(*) AS count FROM audit_result_pages").get()).toEqual({ count: 0 });
+    const pages = new Database(path);
+    try {
+      expect(pages.prepare("SELECT count(*) AS count FROM audit_result_pages").get()).toEqual({ count: 0 });
+    } finally {
+      // Left open, it holds the database until collected, and Windows then refuses to remove the test's folder.
+      pages.close();
+    }
     store.close();
   });
 
