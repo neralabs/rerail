@@ -2357,6 +2357,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) kept: BTreeSet<String>,
     /// The kept relations handed to the caller during the run (`run_atoms_native_handing`), no longer held.
     pub(in crate::code_rule_dsl) handed: BTreeSet<String>,
+    /// The relations recomputed in their readers (decision 0099): no table and no engine rows hold them.
+    pub(in crate::code_rule_dsl) inlined: BTreeSet<String>,
 }
 
 /// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
@@ -3609,6 +3611,7 @@ impl Run<'_, '_> {
                 continue;
             }
             let Ok(((order, _, _), _)) = self.model.plan_rule_reused(prog, &r.head, &r.body, None) else { continue };
+            // The level batch keys its pairs by the spec's digest, as the stratum's join does.
             if let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &self.native_rels) {
                 out.push(spec);
             }
@@ -4689,9 +4692,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // What each derived relation keeps (decision 0099): stored, or inlined into its readers, from this plan's
     // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
     let inlined;
+    let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
     let prog: &Program = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
         Some((p, done)) => {
             super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
+            inlined_rels = done.into_iter().collect();
             inlined = p;
             // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
             if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
@@ -5008,7 +5013,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             // The level's first joins (decision 0100 §5, §6): every seed join of its strata that reads only
             // relations already held, sent to the executor as one batch while the level's strata run.
             let native_ones: Vec<usize> = level.iter().copied().filter(|&j| !sccs[j].iter().all(|r| run.views.contains(r))).collect();
-            let specs: Vec<_> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
+            let specs: Vec<Arc<JoinSpec>> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
             if !specs.is_empty() {
                 let _wave = super::profile::span(|| "level wave (joins)".into());
                 let sent = super::native::component::prefetch_joins(db, &specs)?;
@@ -5151,6 +5156,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     outcome.outputs = outputs;
     outcome.nodes = nodes;
     outcome.handed = handed;
+    outcome.inlined = inlined_rels;
     Ok(outcome)
 }
 
