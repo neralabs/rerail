@@ -33,6 +33,8 @@ pub(in crate::code_rule_dsl) mod match_all;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
 pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols};
+/// A connection's identity for the state a run leaves with it (`setfix::scope`).
+pub(in crate::code_rule_dsl) use setfix::scope as setfix_scope;
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
     pub(in crate::code_rule_dsl) use super::setfix::lab;
