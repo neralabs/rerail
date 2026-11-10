@@ -46,20 +46,28 @@ async function rerailStatus(chunks: Buffer[], validInput: boolean): Promise<stri
   if (Number.parseInt(node, 10) < REQUIRED_NODE_MAJOR) {
     return formatTerminalStatus(fallbackPresentation(`needs Node ${REQUIRED_NODE_MAJOR} or newer (this is ${node})`));
   }
-  const sessionUnavailable = (): string => formatTerminalStatus(fallbackPresentation("session unavailable"));
-  if (!validInput) return sessionUnavailable();
   try {
-    const payload = statusPayloadSchema.safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-    if (!payload.success) return sessionUnavailable();
-    const { session_id: sessionId, cwd, workspace } = payload.data;
-    const root = [workspace?.project_dir, cwd].find(path => path !== undefined && isAbsolute(path));
-    if (root === undefined) return sessionUnavailable();
+    const session = validInput ? statusSession(chunks) : undefined;
+    if (session === undefined) return formatTerminalStatus(fallbackPresentation("session unavailable"));
+    const { sessionId, root } = session;
     // Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides.
     const result = await readPresentation({ sessionId, host: "claude-code", cwd: root, startState: () => localStartState(root) });
     return result.presence === "silent" ? "" : formatTerminalStatus(result);
   } catch {
     return formatTerminalStatus(fallbackPresentation("unavailable"));
   }
+}
+
+/**
+ * The session a status line's input names and the checkout it runs in, its project folder or else its `cwd`;
+ * undefined when the input names no session or no absolute folder. Input that is not JSON throws.
+ */
+function statusSession(chunks: Buffer[]): { sessionId: string; root: string } | undefined {
+  const payload = statusPayloadSchema.safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+  if (!payload.success) return undefined;
+  const { session_id: sessionId, cwd, workspace } = payload.data;
+  const root = [workspace?.project_dir, cwd].find(path => path !== undefined && isAbsolute(path));
+  return root === undefined ? undefined : { sessionId, root };
 }
 
 /** How the person's previous status line is started: a program, its arguments, and whether Node wraps it in a shell. */
@@ -173,7 +181,12 @@ export async function runClaudeStatus(
 
   const rerailText = await rerailStatus(chunks, validInput);
   await previousDone;
-  if (rerailText !== "") output.write(`${lastByte !== undefined && lastByte !== 10 ? "\n" : ""}${rerailText}\n`);
+  if (rerailText !== "") output.write(appendedLine(rerailText, lastByte));
+}
+
+/** `text` as a line after output whose last byte was `lastByte`: a newline first when that output ended mid-line. */
+function appendedLine(text: string, lastByte: number | undefined): string {
+  return `${lastByte !== undefined && lastByte !== 10 ? "\n" : ""}${text}\n`;
 }
 
 const launchedPath = process.argv[1];
