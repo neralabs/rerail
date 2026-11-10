@@ -261,7 +261,7 @@ describe("whether a coding agent can read Rerail's data", () => {
       await writeFile(join(home, ".cursor", "cli-config.json"), "{}\n");
     });
     expect(await stateOf(withConfig.root, withConfig.home, "cursor", { platform: "linux" })).toEqual({ connected: true, access: "file-tools" });
-    expect(await stateOf(withConfig.root, withConfig.home, "cursor", { platform: "win32" })).toEqual({ connected: true, access: "open" });
+    expect(await stateOf(withConfig.root, withConfig.home, "cursor", { platform: "win32" })).toEqual({ connected: true, access: "file-tools" });
 
     const without = await connected(["cursor"]);
     expect(await stateOf(without.root, without.home, "cursor", { platform: "linux" })).toEqual({ connected: true, access: "open" });

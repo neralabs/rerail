@@ -89,7 +89,7 @@ export function claudeManagedSettingsPath(platform: NodeJS.Platform = process.pl
  * What keeps coding agent `id` out of the Rerail home and the content cache, read from its files only. Set-up writes
  * deny entries for Claude Code (`claudeIsolationEntries`) and the Cursor CLI (`planCursorCli`); they hold only where
  * the host enforces them: Claude Code's sandbox rules only while its sandbox is on, and the Cursor CLI's file tools
- * only in an existing `cli-config.json`, never on native Windows.
+ * only in an existing `cli-config.json`.
  */
 function rerailDataAccess(id: Harness, connected: boolean, home: string, platform: NodeJS.Platform, claudeManagedSettings: string | undefined): CodingAgentState["rerailData"] {
   switch (id) {
@@ -99,7 +99,7 @@ function rerailDataAccess(id: Harness, connected: boolean, home: string, platfor
         ? { access: "kept-out", why: "Claude Code's sandbox is on, so its commands and file tools cannot read Rerail's data." }
         : { access: "file-tools", why: "Claude Code's sandbox is off (sandbox.enabled), so its file tools cannot read Rerail's data but its shell commands can." };
     case "cursor":
-      return connected && platform !== "win32" && existsSync(join(home, ".cursor", "cli-config.json"))
+      return connected && existsSync(join(home, ".cursor", "cli-config.json"))
         ? { access: "file-tools", why: "The Cursor CLI's file tools cannot read Rerail's data; Cursor's editor agent and shell commands can." }
         : { access: "open", why: "Nothing keeps Cursor's agent out of Rerail's data." };
     case "codex":

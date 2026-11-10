@@ -357,7 +357,10 @@ function windowsFallbackWords(command: string): string | undefined {
  * earlier releases wrote, which doubled each `%` in a path and fell back to a bare `node`. Registering replaces those.
  */
 function generatedHookCommands(recorded: HookCommandContext, executable: string): string[] {
-  const commands = [hookCommand(recorded, executable), directCommand(recorded, executable), powershellHookCommand(recorded, executable)];
+  const commands = [
+    hookCommand(recorded, executable), directCommand(recorded, executable),
+    powershellHookCommand(recorded, executable), cursorPowershellHookCommand(recorded, executable),
+  ];
   if (recorded.platform !== "win32") return commands;
   for (const word of [(value: string) => `"${value}"`, (value: string) => `"${value.replaceAll("%", "%%")}"`]) {
     const node = word(recorded.nodePath);
@@ -369,16 +372,16 @@ function generatedHookCommands(recorded: HookCommandContext, executable: string)
 
 /**
  * Node and hook script of a generated shell-form entry: direct, the POSIX `sh` fallback, the Windows `cmd` fallback, or
- * Codex's PowerShell fallback.
+ * Codex's or Cursor's PowerShell fallback.
  */
 function shellHookTarget(context: Pick<Context, "platform">, command: string, executable: string): HookTarget | undefined {
   const windows = context.platform === "win32";
   const fallbackPrefix = `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' `;
   const literal = String.raw`('(?:[^'\u2018-\u201B]|['\u2018-\u201B]{2})*')`;
-  const powershellFallback = new RegExp(
+  const powershellFallback = [
     String.raw`^\$LASTEXITCODE = 1; if \(Test-Path -LiteralPath ${literal}\) \{ & \1 ${literal} \} else \{ node \2 \}; exit \$LASTEXITCODE$`,
-    "u",
-  ).exec(command);
+    String.raw`^Invoke-Command -ScriptBlock \{ if \(Test-Path -LiteralPath ${literal}\) \{ \$input \| & \1 ${literal} \} else \{ \$input \| node \2 \} \}$`,
+  ].map(source => new RegExp(source, "u").exec(command)).find(match => match !== null) ?? null;
   let direct = windowsFallbackWords(command) ?? command;
   if (command.startsWith(fallbackPrefix)) direct = command.slice(fallbackPrefix.length);
   if (powershellFallback !== null && windows) {
@@ -449,11 +452,12 @@ export function hookCommand(context: HookCommandContext, executable: string): st
 }
 
 /**
- * The Windows form of {@link hookCommand}, for hosts that run a hook's command in cmd.exe, from `node` and `hook` as
- * quoted words. The fallback finds `node.exe` with `%~$PATH:I`, which searches PATH alone: a bare `node` would make cmd
- * look in the current folder first, where a repository's own node.exe, node.bat or node.cmd would run on every hook.
- * `@` keeps cmd from echoing the command onto the hook's output. cmd stays node's parent, as it has no `exec`, so a
- * host that kills it on a timeout leaves node running; the hook then ends itself (`exitWhenParentGone`).
+ * The Windows form of {@link hookCommand}, from `node` and `hook` as quoted words, for a host that runs a hook's command
+ * in cmd.exe. No host gets it now; registration recognizes it to replace what earlier set-ups wrote for Cursor. The
+ * fallback finds `node.exe` with `%~$PATH:I`, which searches PATH alone: a bare `node` would make cmd look in the
+ * current folder first, where a repository's own node.exe, node.bat or node.cmd would run on every hook. `@` keeps cmd
+ * from echoing the command onto the hook's output. cmd stays node's parent, as it has no `exec`, so a host that kills
+ * it on a timeout leaves node running; the hook then ends itself (`exitWhenParentGone`).
  */
 export function windowsCmdHookCommand(node: string, hook: string): string {
   return `cmd /d /c "if exist ${node} (${node} ${hook}) else (for %I in (node.exe) do @"%~$PATH:I" ${hook})"`;
@@ -469,6 +473,19 @@ function powershellHookCommand(context: HookCommandContext, executable: string):
   const node = powershellLiteral(context.nodePath);
   const hook = powershellLiteral(hookScript(context, executable));
   return `$LASTEXITCODE = 1; if (Test-Path -LiteralPath ${node}) { & ${node} ${hook} } else { node ${hook} }; exit $LASTEXITCODE`;
+}
+
+/**
+ * The same order for Cursor on Windows, which runs a hook's command in PowerShell with the event piped in:
+ * `Get-Content <event> | & { $input | <command> }`. The command is a pipeline element there, so the Codex form, which
+ * starts with an assignment, cannot parse, and the `cmd` form breaks at its nested quotes and `$PATH`. `Invoke-Command`
+ * hands its input to the script block as `$input`, which goes on to node's stdin. PowerShell looks a bare `node` up on
+ * PATH, never in the current folder.
+ */
+function cursorPowershellHookCommand(context: HookCommandContext, executable: string): string {
+  const node = powershellLiteral(context.nodePath);
+  const hook = powershellLiteral(join(context.root, executable));
+  return `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath ${node}) { $input | & ${node} ${hook} } else { $input | node ${hook} } }`;
 }
 
 /**
@@ -1004,8 +1021,8 @@ async function planClaudeSettings(
  * The Cursor CLI's file tools follow `permissions.deny` in `~/.cursor/cli-config.json`: no write to the Rerail home or
  * the content cache, no read of the cache or of the home's data (`RERAIL_HOME_DATA_ENTRIES`). Only a file the CLI has
  * written is changed, so a Cursor without the CLI gets none. Nothing else in Cursor reads such a list: `sandbox.json`
- * only adds paths, and the editor's agent has no path deny. Native Windows is left out, as the reference shows only
- * POSIX paths.
+ * only adds paths, and the editor's agent has no path deny. The CLI matches a rule literally but for `*`, against the
+ * path as the platform writes it, so on Windows each rule is written with backslashes (`C:\Users\me\.rerail\**`).
  */
 async function planCursorCli(context: Context): Promise<Plan[]> {
   const path = join(context.home, ".cursor", "cli-config.json");
@@ -1018,8 +1035,8 @@ async function planCursorCli(context: Context): Promise<Plan[]> {
     ...(isolateHome ? [rerailHome, cache] : [cache]).map(directory => `Write(${directory}/**)`),
     ...isolateHome ? RERAIL_HOME_DATA_ENTRIES.map(entry => `Read(${rerailHome}/${entry})`) : [],
     `Read(${cache}/**)`,
-  ];
-  const wanted = context.mode === "register" && existing.exists && context.platform !== "win32" ? { "permissions.deny": deny } : {};
+  ].map(rule => (context.platform === "win32" ? rule.replaceAll("/", "\\") : rule));
+  const wanted = context.mode === "register" && existing.exists ? { "permissions.deny": deny } : {};
   const next = structuredClone(existing.value);
   const added = replaceAddedEntries(context, next, previous, wanted, path);
   const settingsChanged = stableJsonText(existing.value) !== stableJsonText(next);
@@ -1111,7 +1128,9 @@ async function planClaudeProjectSettings(workspace: string, context: Context): P
 
 function planCursor(context: Context): Promise<Plan> {
   const path = join(context.home, ".cursor", "hooks.json");
-  const command = hookCommand(context, ENTRY_POINTS.cursorHook);
+  const command = context.platform === "win32"
+    ? cursorPowershellHookCommand(context, ENTRY_POINTS.cursorHook)
+    : hookCommand(context, ENTRY_POINTS.cursorHook);
   const detail =
     context.mode === "register"
       ? `register rerail hooks for ${CURSOR_HOOK_EVENTS.length} Cursor events`

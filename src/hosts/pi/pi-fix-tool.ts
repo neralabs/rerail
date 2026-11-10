@@ -64,6 +64,12 @@ const FIX_PROMPT = [
 ].join("\n");
 
 /**
+ * The entry a Bun-compiled binary reports in `process.argv[1]`: a file in Bun's virtual root, `/$bunfs/root/` on POSIX
+ * and `B:/~BUN/root/` on Windows. Bun's `existsSync` says it exists, but the binary is its own entry point.
+ */
+const BUN_VIRTUAL_ENTRY = /^(?:\/\$bunfs\/root\/|[A-Za-z]:[\\/]~BUN[\\/]root[\\/])/u;
+
+/**
  * The child `pi` command line for `task`: Pi's own entry point when there is one, the `pi` on PATH otherwise. The child
  * loads no extensions (neither Rerail again nor the user's, headless) and has only Pi's file tools. On Windows the `pi`
  * on PATH must be a `pi.exe` or `pi.com`, found through PATH alone: a bare name is looked for in the repository first,
@@ -81,7 +87,7 @@ export function piFixInvocation(
   if (parent.model !== undefined) args.push("--model", parent.model);
   if (parent.thinkingLevel !== undefined) args.push("--thinking", parent.thinkingLevel);
   args.push(`${FIX_PROMPT}\n\n${task}`);
-  if (script !== undefined && !script.startsWith("/$bunfs/root/") && existsSync(script)) {
+  if (script !== undefined && !BUN_VIRTUAL_ENTRY.test(script) && existsSync(script)) {
     return { command: execPath, args: [script, ...args] };
   }
   // A compiled `pi` binary is its own entry point; a bare runtime without one falls back to PATH.

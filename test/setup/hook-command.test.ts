@@ -31,14 +31,14 @@ describe("the Windows cmd hook command", () => {
   });
 
   it("keeps each % of a Windows path single, since no batch file reads the command back", () => {
-    // cmd.exe given a command line on its own, as Cursor gives it a hook, reads `%%` as two characters.
+    // cmd.exe given a command line on its own, outside a batch file, reads `%%` as two characters.
     const percent = String.raw`C:\Users\a%b`;
     const command = hookCommand({ platform: "win32", nodePath: win32.join(percent, "node.exe"), root: win32.join(percent, ".rerail", "current") }, CURSOR_HOOK);
     expect(command).toContain(`"${win32.join(percent, "node.exe")}"`);
     expect(command).not.toContain("%%");
   });
 
-  it("recognizes the form it writes and the forms earlier releases wrote", () => {
+  it("recognizes the PowerShell form Codex runs and each cmd form earlier set-ups wrote, so registering replaces it", () => {
     const written = windowsCmdHookCommand(`"${node}"`, `"${hook}"`);
     expect(generatedHookTarget(written, CURSOR_HOOK, "win32")).toEqual({ nodePath: node, script: hook });
     // Codex hands a hook's command to PowerShell.

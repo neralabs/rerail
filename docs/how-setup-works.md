@@ -205,7 +205,8 @@ Agents run commands as you, so only their own sandbox can keep them out.
   Access: Workspace" in Cursor's settings makes the agent ask before reading outside the workspace; it covers every
   path, so set-up leaves it alone.
 - **Cursor CLI** (`cursor-agent`): `Write(...)` denies for both folders and Claude Code's `Read(...)` denies, for its
-  file tools only. Written only when the CLI has written that file, and not on Windows.
+  file tools only. Written only when the CLI has written that file; on Windows as native paths
+  (`C:\Users\me\.rerail\**`), the only form the CLI matches.
 - **OMP and Pi** have no sandbox: their agents can read and change all of Rerail's data.
 
 </details>

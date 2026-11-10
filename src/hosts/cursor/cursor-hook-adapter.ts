@@ -1,4 +1,5 @@
 import { rm } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { z } from "zod/v4";
 import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop, type SteerRule } from "../../engine/adapter-contract.js";
 import { missedSteerDigestEnabled } from "../../engine/experimental-features.js";
@@ -33,13 +34,38 @@ export const CURSOR_FOLLOWUP_LOOP_LIMIT = 3;
 /** 0 on a run's first stop; a missing or malformed count reads as that. */
 const loopCountSchema = z.number().int().nonnegative().catch(0);
 
-export function cursorWorkspace(input: CursorHookInput): string {
+/** A drive-letter path in each form Cursor may send it on Windows: `C:\repo`, `C:/repo`, `/c:/repo` (a URI's path), `/c/repo`. */
+const WINDOWS_DRIVE_PATH = /^(?:\/([A-Za-z]):?|([A-Za-z]):)(?=[\\/]|$)/u;
+
+/** `value` decoded when it is a `file:` URI, as a path for the platform; a URI Node cannot read stays as sent. */
+function fileUrlPath(value: string, windows: boolean): string {
+  if (!value.startsWith("file:")) return value;
+  try {
+    return fileURLToPath(value, { windows });
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * A path from a Cursor payload as a path on this machine: a `file:` URI decoded and, on Windows, a drive-letter path in
+ * any of the forms of `WINDOWS_DRIVE_PATH` written `C:\repo`. Any other path stays as sent.
+ */
+function cursorPath(value: string, platform: NodeJS.Platform): string {
+  const path = fileUrlPath(value, platform === "win32");
+  const drive = platform === "win32" ? WINDOWS_DRIVE_PATH.exec(path) : null;
+  if (drive === null) return path;
+  const rest = path.slice(drive[0].length).replaceAll("/", "\\");
+  return `${(drive[1] ?? drive[2] ?? "").toUpperCase()}:${rest === "" ? "\\" : rest}`;
+}
+
+export function cursorWorkspace(input: CursorHookInput, platform: NodeJS.Platform = process.platform): string {
   const cwd = optionalText(input, "cwd");
-  if (cwd !== undefined) return cwd;
+  if (cwd !== undefined) return cursorPath(cwd, platform);
   const roots = input.workspace_roots;
   if (Array.isArray(roots)) {
     const root = roots.find(candidate => typeof candidate === "string" && candidate.trim() !== "");
-    if (typeof root === "string") return root;
+    if (typeof root === "string") return cursorPath(root, platform);
   }
   return process.cwd();
 }
