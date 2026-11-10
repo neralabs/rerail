@@ -5,10 +5,18 @@ import { loadRuleCatalog } from "./rule-catalog.js";
 import { parseRuleDocument, readJsonDocument } from "./rule-documents.js";
 import {
   DEPENDENCY_ECOSYSTEMS,
+  fileEndings,
   globPattern,
   matchFolder,
   matchReason,
+  nearMiss,
+  packLooksFor,
   scanRepository,
+  type FileEnding,
+  type NearMiss,
+  type NotScannedFolder,
+  type PackLooksFor,
+  type RepositoryScan,
   type RulePackMatch,
   type RulePackSignal,
 } from "./rule-pack-matcher.js";
@@ -365,13 +373,12 @@ export function rulePackIdOf(ruleId: string, packs: readonly RulePack[] = loadRu
 }
 
 /**
- * The packs whose match definition fits the repository at `repositoryRoot`, from its files and dependency manifests:
- * no model, no network, no code from the packs, and no list of what does not fit. A pack fits whatever its rules;
- * `ruleCount` is how many start on. Languages come first, then frameworks, then repository packs. Each comes with the
- * folder it belongs in (see `RulePackRecommendation.folder`).
+ * The packs whose match definition fits the scanned repository, from its files and dependency manifests: no model, no
+ * network, no code from the packs. A pack fits whatever its rules; `ruleCount` is how many start on. Languages come
+ * first, then frameworks, then repository packs. Each comes with the folder it belongs in (see
+ * `RulePackRecommendation.folder`). `explainNoFit` says why none does.
  */
-export function rulePacksThatFit(repositoryRoot: string, packs: readonly RulePack[]): RulePackRecommendation[] {
-  const scan = scanRepository(repositoryRoot);
+export function rulePacksThatFit(scan: RepositoryScan, packs: readonly RulePack[]): RulePackRecommendation[] {
   return packs.flatMap(pack => {
     const reason = matchReason(pack.match, scan);
     if (reason === undefined) return [];
@@ -381,9 +388,38 @@ export function rulePacksThatFit(repositoryRoot: string, packs: readonly RulePac
   });
 }
 
+/** Why none of a set of packs fits a repository: what the scan found and left out, and what each pack looks for. */
+export interface NoFitExplanation {
+  /** The endings of the files scanned, most files first. */
+  readonly endings: readonly FileEnding[];
+  /** The folders the scan did not enter. */
+  readonly notScanned: readonly NotScannedFolder[];
+  /** Whether the scan read Git's listing, which leaves out the files Git ignores. */
+  readonly git: boolean;
+  /** The packs that look for files the repository has but exclude every one of them, most files first. */
+  readonly nearMisses: readonly (NearMiss & { readonly name: string })[];
+  /** What each pack looks for, in the order the packs came. */
+  readonly packs: readonly (PackLooksFor & { readonly name: string })[];
+}
+
+/** Why none of `packs` fits the scanned repository; the caller knows none does (`rulePacksThatFit` gave none). */
+export function explainNoFit(scan: RepositoryScan, packs: readonly RulePack[]): NoFitExplanation {
+  const nearMisses = packs.flatMap(pack => {
+    const missed = nearMiss(pack.match, scan);
+    return missed === undefined ? [] : [{ name: pack.name, ...missed }];
+  });
+  return {
+    endings: fileEndings(scan),
+    notScanned: scan.notScanned,
+    git: scan.git,
+    nearMisses: nearMisses.sort((left, right) => right.fileCount - left.fileCount),
+    packs: packs.map(pack => ({ name: pack.name, ...packLooksFor(pack.match) })),
+  };
+}
+
 /** The packs that fit the repository at `repositoryRoot` (`rulePacksThatFit`) and have a rule that starts on. */
 export function recommendRulePacks(repositoryRoot: string, packs: readonly RulePack[] = loadRulePacks()): RulePackRecommendation[] {
-  return rulePacksThatFit(repositoryRoot, packs).filter(found => found.ruleCount > 0);
+  return rulePacksThatFit(scanRepository(repositoryRoot), packs).filter(found => found.ruleCount > 0);
 }
 
 /** How long a daemon reuses a repository's recommendations before scanning it again. */

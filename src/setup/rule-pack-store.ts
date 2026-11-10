@@ -22,12 +22,15 @@ import {
   readRuleCatalog,
 } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog, SkippedRulePack } from "../engine/catalog/repository-model.js";
+import { scanRepository, type RepositoryScan } from "../engine/catalog/rule-pack-matcher.js";
 import {
+  explainNoFit,
   packIdOfPackage,
   RULE_PACK_PACKAGE_NAME,
   rulePackPackageName,
   rulePackPackageOf,
   rulePacksThatFit,
+  type NoFitExplanation,
   type RulePack,
 } from "../engine/catalog/rule-packs.js";
 import { defaultRerailHome, UPDATE_STATE_FILE } from "../engine/storage/rerail-home.js";
@@ -260,6 +263,8 @@ export interface PackDiscovery {
   readonly downloadFailures?: readonly string[];
   /** The catalog of the fetched packs: what their rules would be, before any is installed. */
   readonly catalog: RuleCatalog;
+  /** When the repository was scanned, packs were available, and none fits it: why not. */
+  readonly nothingFits?: NoFitExplanation;
 }
 
 /** Why a pack was left out, naming its files from the pack's own folder: the package name already says which pack. */
@@ -280,6 +285,12 @@ export function packsLeftOutByCore(home: string, current: string, previous: stri
   const leftOut = (coreVersion: string) => readRuleCatalog(directories, { coreVersion }).skipped;
   const before = new Set((previous === undefined ? [] : leftOut(previous)).map(skipped => skipped.path));
   return leftOut(current).filter(skipped => !before.has(skipped.path)).map(skippedProblem);
+}
+
+/** Why none of the `available` packs fits the scanned repository, when there are some and none does. */
+function nothingFits(scan: RepositoryScan | undefined, available: readonly DiscoveredPack[]): Pick<PackDiscovery, "nothingFits"> {
+  if (scan === undefined || available.length === 0 || available.some(found => found.match !== undefined)) return {};
+  return { nothingFits: explainNoFit(scan, available.map(found => found.pack)) };
 }
 
 /**
@@ -309,7 +320,8 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
       coreVersion: activeCoreVersion(home), compile: true, localSources: localSources(home, standIns),
     });
     const packs = [...catalog.packs.values()];
-    const matched = new Map((repositoryRoot === undefined ? [] : rulePacksThatFit(repositoryRoot, packs)).map(found => [found.pack.id, found]));
+    const scan = repositoryRoot === undefined ? undefined : scanRepository(repositoryRoot);
+    const matched = new Map((scan === undefined ? [] : rulePacksThatFit(scan, packs)).map(found => [found.pack.id, found]));
     const discovered = packs.flatMap((pack): DiscoveredPack[] => {
       if (pack.version === null || pack.packageName === null) return [];
       const found = matched.get(pack.id);
@@ -332,6 +344,7 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
       problems: [...fetch.problems.map(problem => `${problem.packageName}: ${problem.reason}`), ...catalog.skipped.map(skippedProblem)],
       ...(fetch.fetched.length === 0 && fetch.problems.length > 0 ? { downloadFailures: [...new Set(fetch.problems.map(problem => problem.reason))] } : {}),
       catalog,
+      ...nothingFits(scan, available),
     };
   } finally {
     await fetch.release();

@@ -355,10 +355,75 @@ describe("T4 / C4 recommended rule packs", () => {
   it("says plainly when no rule pack fits, and when no coding agent was found", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: [], agentsFound: [] }, "agent");
     expect(text).toContain("Scanned acme-web. None of Rerail’s rule packs fit it.");
+    expect(text).not.toContain("Packs look for");
     expect(text).not.toContain("Rule pack ");
     expect(text).toContain("Start Rerail in acme-web with no rule packs on?");
     expect(text).toContain("  Will connect to: no coding agents found");
     expect(text).not.toContain("Adds /rerail commands");
+  });
+
+  type NoFitExplanation = NonNullable<RecommendedPacksInput["nothingFits"]>;
+  const NO_FIT: NoFitExplanation = {
+    endings: [{ ending: ".py", fileCount: 9 }, { ending: ".md", fileCount: 4 }],
+    notScanned: [{ folder: "fixtures", fileCount: 2 }],
+    git: true,
+    nearMisses: [{ name: "Python", fileCount: 9, excludedBy: [{ glob: "tests/", fileCount: 6 }, { glob: "scripts/", fileCount: 3 }] }],
+    packs: [
+      { name: "Python", files: ["*.py", "*.pyi"], dependencies: [] },
+      { name: "TypeScript", files: ["*.ts", "*.mts", "*.cts", "*.tsx"], dependencies: ["typescript"] },
+      { name: "Node.js", files: ["*.cjs", "*.mjs"], dependencies: ["express", "koa", "fastify"] },
+    ],
+  };
+  const noFit = (nothingFits: Partial<NoFitExplanation>): string =>
+    renderRecommendedPacks({ ...PACKS, packs: [], nothingFits: { ...NO_FIT, ...nothingFits } }, "agent");
+
+  it("says why no rule pack fits: what the scan found and skipped, the pack that came closest, and what each pack looks for", () => {
+    const block = [
+      "Scanned acme-web. None of Rerail’s rule packs fit it.",
+      "",
+      "  Found           .py 9 · .md 4",
+      "  Not scanned     fixtures/ (2) and files Git ignores",
+      "  Closest         Python excludes the 9 files it looks for: tests/ (6),",
+      "                  scripts/ (3)",
+      "  Packs look for  Python      *.py, *.pyi",
+      "                  TypeScript  *.ts, *.mts, *.cts, +1 more,",
+      "                              dependency: typescript",
+      "                  Node.js     *.cjs, *.mjs,",
+      "                              dependencies: express, koa, +1 more",
+    ].join("\n");
+    expect(stripAnsi(renderRecommendedPacks({ ...PACKS, packs: [], nothingFits: NO_FIT }, "terminal"))).toContain(`● ${block}`);
+    expect(noFit({})).toContain(block);
+  });
+
+  it("lists every file ending, so a lone source file among many others is not hidden", () => {
+    const endings = [[".md", 40], [".json", 12], [".yaml", 6], [".toml", 2], [".go", 1]] as const;
+    expect(noFit({ endings: endings.map(([ending, fileCount]) => ({ ending, fileCount })) })).toContain("  Found           .md 40 · .json 12 · .yaml 6 · .toml 2 · .go 1\n");
+    expect(noFit({ endings: [] })).toContain("  Found           no files\n");
+  });
+
+  it("says Git-ignored files were not scanned only under Git, and leaves the row out when nothing was skipped", () => {
+    expect(noFit({ notScanned: [] })).toContain("  Not scanned     files Git ignores\n");
+    expect(noFit({ notScanned: [{ folder: "node_modules" }], git: false })).toContain("  Not scanned     node_modules/\n");
+    expect(noFit({ notScanned: [], git: false })).not.toContain("Not scanned");
+  });
+
+  it("names at most two closest packs and three excludes each, counting the other excludes, and leaves the row out when none came close", () => {
+    const excludedBy = ["tests/", "scripts/", "docs/", "tools/", "ci/"].map((glob, index) => ({ glob, fileCount: 5 - index }));
+    const text = noFit({ nearMisses: [
+      { name: "Python", fileCount: 15, excludedBy },
+      { name: "Complexity", fileCount: 4, excludedBy: [{ glob: "tests/", fileCount: 4 }] },
+      { name: "PHP", fileCount: 1, excludedBy: [{ glob: "tests/", fileCount: 1 }] },
+    ] });
+    expect(text).toContain("                  scripts/ (4), docs/ (3), +2 more\n");
+    expect(text).toContain("Complexity excludes the 4 files it looks for");
+    expect(text).not.toContain("PHP excludes");
+    expect(noFit({ nearMisses: [] })).not.toContain("Closest");
+  });
+
+  it("explains nothing when a pack fits", () => {
+    const text = renderRecommendedPacks({ ...PACKS, nothingFits: NO_FIT }, "agent");
+    expect(text).not.toContain("Found ");
+    expect(text).not.toContain("Packs look for");
   });
 });
 

@@ -24,13 +24,14 @@ import {
   rulePackShortName,
   type RulePackLocalSource,
 } from "../engine/catalog/rule-packs.js";
-import { clean } from "../harness/setup-screens.js";
+import { clean, noFitLines } from "../harness/setup-screens.js";
 import {
   addPackSpecs,
   discoverPacks,
   installedPackagesOf,
   npmPackStore,
   type DiscoveredPack,
+  type PackDiscovery,
   type PackStore,
   type PackVersion,
 } from "../setup/rule-pack-store.js";
@@ -196,13 +197,19 @@ function discoveredLine(found: DiscoveredPack): string {
   return `  ${clean(found.packageName)}@${clean(found.version)} (${found.ruleCount} rules)${match}${installed}`;
 }
 
+/** What `recommend` says first: the packs that fit, or that none does and why. */
+function recommendHeading(discovery: PackDiscovery, workspaceRoot: string): string[] {
+  if (discovery.recommended.length > 0) return [`Rule packs that fit ${workspaceRoot}:`];
+  return [`No rule pack fits ${workspaceRoot}.`, ...(discovery.nothingFits === undefined ? [] : noFitLines(discovery.nothingFits))];
+}
+
 async function recommend(args: readonly string[], usage: () => string, store: PackStore): Promise<number> {
   const { options } = parseArguments(args, { flags: [], options: ["--repo"] }, argument => `Unknown packs recommend option: ${argument}\n\n${usage()}`);
   const { workspaceRoot } = repositoryIdentityLocation(resolve(options.get("--repo") ?? process.cwd()));
   const discovery = await discoverPacks(workspaceRoot, store);
   const others = discovery.available.filter(found => found.match === undefined);
   write([
-    discovery.recommended.length === 0 ? `No rule pack fits ${workspaceRoot}.` : `Rule packs that fit ${workspaceRoot}:`,
+    ...recommendHeading(discovery, workspaceRoot),
     ...discovery.recommended.map(discoveredLine),
     ...(others.length === 0 ? [] : ["Other rule packs:", ...others.map(discoveredLine)]),
     // Never offered, since adding one would run nothing; listed so a pack that fits is not simply missing.

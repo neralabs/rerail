@@ -13,7 +13,7 @@ import {
   rulePackRecommendationsSchema,
   DatabaseApiStores,
 } from "../../../src/api/index.js";
-import { globPattern, scanRepository, signalEvidence } from "../../../src/engine/catalog/rule-pack-matcher.js";
+import { fileEndings, globPattern, nearMiss, packLooksFor, scanRepository, signalEvidence, type RepositoryScan, type RulePackMatch } from "../../../src/engine/catalog/rule-pack-matcher.js";
 import {
   cachedRecommendRulePacks,
   RECOMMENDATION_CACHE_MS,
@@ -171,10 +171,13 @@ describe("globPattern", () => {
   });
 });
 
+/** A scan of `files` alone, as Git would list them. */
+const scanOf = (files: string[]): RepositoryScan => ({ files, dependencies: new Map(), notScanned: [], git: true });
+/** The match definition of Rerail's own pack `id`. */
+const packMatch = (id: string): RulePackMatch => JSON.parse(readFileSync(fileURLToPath(new URL(`../../../packs/${id}/pack.json`, import.meta.url)), "utf8")).match;
+
 describe("the Python pack's match", () => {
-  const pack = JSON.parse(readFileSync(fileURLToPath(new URL("../../../packs/python/pack.json", import.meta.url)), "utf8"));
-  const [signal] = pack.match.any;
-  const scan = (files: string[]) => ({ root: "/", files, dependencies: new Map() });
+  const [signal] = packMatch("python").any;
 
   it.each([
     ["src/app/models.py", true],
@@ -195,7 +198,90 @@ describe("the Python pack's match", () => {
     ["doc/source/conf.py", false],
     ["docs/_ext/directive.py", false],
   ])("counts %s as Python source: %s", (path, expected) => {
-    expect(signalEvidence(signal, scan([path]))).toEqual(expected ? [path] : []);
+    expect(signalEvidence(signal!, scanOf([path]))).toEqual(expected ? [path] : []);
+  });
+});
+
+describe("nearMiss", () => {
+  const python = packMatch("python");
+
+  it("counts the files a pack looks for by the exclude glob that left each out, most first", () => {
+    const files = [
+      ...["a", "b", "c"].map(name => `scripts/${name}.py`),
+      ...["a", "b", "c", "d", "e", "f"].map(name => `tests/test_${name}.py`),
+    ];
+    expect(nearMiss(python, scanOf(files))).toEqual({ fileCount: 9, excludedBy: [{ glob: "tests/", fileCount: 6 }, { glob: "scripts/", fileCount: 3 }] });
+  });
+
+  it("counts a file under the first of the pack's excludes that catches it, and ties in the pack's order", () => {
+    const files = ["src/app/models_test.py", "src/app/test_views.py", "src/tests/test_api.py"];
+    expect(nearMiss(python, scanOf(files))).toEqual({
+      fileCount: 3,
+      excludedBy: [{ glob: "tests/", fileCount: 1 }, { glob: "test_*.py", fileCount: 1 }, { glob: "*_test.py", fileCount: 1 }],
+    });
+  });
+
+  it("counts a file two signals look for once, under the excludes of the signal that names it most closely", () => {
+    // The complexity pack's PHP signal excludes *.blade.php, which its Blade signal looks for: tests/ is why it is skipped.
+    expect(nearMiss(packMatch("complexity"), scanOf(["tests/view.blade.php"]))).toEqual({ fileCount: 1, excludedBy: [{ glob: "tests/", fileCount: 1 }] });
+  });
+
+  it("is undefined when the pack fits, when none of its files are there, and for a dependency signal", () => {
+    expect(nearMiss(python, scanOf(["src/app/models.py", "tests/test_models.py"]))).toBeUndefined();
+    expect(nearMiss(python, scanOf(["main.go", "README.md"]))).toBeUndefined();
+    expect(nearMiss({ any: [{ dependencies: { ecosystem: "pypi", names: ["django"] } }] }, scanOf(["tests/test_views.py"]))).toBeUndefined();
+  });
+});
+
+describe("packLooksFor", () => {
+  it("names each file glob and dependency once, as a person reads the glob", () => {
+    expect(packLooksFor(packMatch("typescript"))).toEqual({ files: ["*.ts", "*.mts", "*.cts", "*.tsx"], dependencies: ["typescript"] });
+  });
+});
+
+describe("fileEndings", () => {
+  it("counts files by ending, lowercased, most first and then alphabetically", () => {
+    const files = ["a.py", "src/B.PY", "src/c.py", "README.md", "pyproject.toml"];
+    expect(fileEndings(scanOf(files))).toEqual([{ ending: ".py", fileCount: 3 }, { ending: ".md", fileCount: 1 }, { ending: ".toml", fileCount: 1 }]);
+  });
+
+  it("leaves out files with no ending", () => {
+    expect(fileEndings(scanOf(["Makefile", "docker/Dockerfile", ".gitignore", "notes."]))).toEqual([]);
+  });
+});
+
+describe("scanRepository's folders not scanned", () => {
+  it("counts, under Git, the listed files in each folder it does not enter, and never lists Git-ignored ones", async () => {
+    const root = await temporaryDirectory("rerail-unseen-");
+    writeFiles(root, {
+      ".gitignore": "local/\n",
+      "fixtures/app.py": "app = None\n",
+      "testdata/sample.py": "sample = None\n",
+      ".venv/lib/site.py": "site = None\n",
+      "build/generated.py": "generated = None\n",
+      "build/more.py": "more = None\n",
+      "local/output.py": "output = None\n",
+      "notes.md": "notes\n",
+    });
+    execFileSync("git", ["-C", root, "init", "-q"]);
+    const found = scanRepository(root);
+    expect(found.files).toEqual([".gitignore", "notes.md"]);
+    expect(found.git).toBe(true);
+    expect(found.notScanned).toEqual([
+      { folder: "build", fileCount: 2 },
+      { folder: ".venv", fileCount: 1 },
+      { folder: "fixtures", fileCount: 1 },
+      { folder: "testdata", fileCount: 1 },
+    ]);
+  });
+
+  it("names, outside Git, the folders it walked past without entering them", async () => {
+    const root = await temporaryDirectory("rerail-unseen-walk-");
+    writeFiles(root, { "fixtures/app.py": "app = None\n", "node_modules/pkg/index.js": "\n", "notes.md": "notes\n" });
+    const found = scanRepository(root);
+    expect(found.files).toEqual(["notes.md"]);
+    expect(found.git).toBe(false);
+    expect(found.notScanned).toEqual([{ folder: "fixtures" }, { folder: "node_modules" }]);
   });
 });
 
