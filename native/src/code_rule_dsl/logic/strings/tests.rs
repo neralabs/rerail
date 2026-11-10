@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn python_bytes_keys_decode_escapes_raw_prefixes_and_large_literals() {
+    use rusqlite::types::Value;
+    let key=|source|functions::eval("python_bytes_key",&[source],&[]);
+    for (literal,hex) in [("b'k'","6b"),("B'\\x6b'","6b"),("b'\\153'","6b"),
+        ("br'\\x6b'","5c783662"),("b''",""),("b'''a\r\nb'''","610a62"),
+        ("b'\\xff\\0'","ff00"),("b'\\z'","5c7a")] {
+        assert_eq!(key(literal),Value::Text(hex.into()),"{literal}");
+    }
+    let large="k".repeat(70_000);
+    assert_eq!(key(&format!("b'{large}'")),Value::Text("6b".repeat(70_000)));
+    for invalid in ["'k'","b'\u{e9}'","f'k'","b'\\xzz'","b'",""] {
+        assert_eq!(key(invalid),Value::Null,"{invalid}");
+    }
+}
+
+#[test]
 fn python_numeric_keys_preserve_constant_equality_without_float_rounding() {
     use rusqlite::types::Value;
     let key = |source| functions::eval("python_number_key", &[source], &[]);

@@ -113,6 +113,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("to_number", &[Text], Number),
     ("python_int_clamped", &[Text, Number, Number, Number], Number),
     ("python_number_key", &[Text], Text),
+    ("python_bytes_key", &[Text], Text),
     ("decimal_cmp", &[Text, Text], Number),
     ("decimal_sub", &[Text, Text], Text),
     ("decimal_sum", &[Text], Text),
@@ -268,6 +269,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
         "byte_slice" => byte_slice(t(0), numbers[0], numbers[1]),
         "python_number_key" => python_number_key(t(0)),
+        "python_bytes_key" => python_bytes_key(t(0)),
         "rx_group" => super::group(t(0), t(1), t(2)),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
@@ -392,6 +394,24 @@ pub(in crate::code_rule_dsl) fn slice(s: &str, start: i64, end: i64) -> String {
 /// Equality key for numeric literal tokens under Python's `==`. Integers keep
 /// their full precision; integral floats use their exact binary integer value.
 /// This reads scalar syntax only and never evaluates arbitrary source code.
+fn python_bytes_key(source: &str) -> Option<String> {
+    use crate::code_rule_dsl::value::python::{prefix,decode_escapes};
+    use std::fmt::Write;
+
+    let quote_at=source.find(['\'','"'])?;
+    let flags=prefix(&source[..quote_at])?;
+    if !flags.bytes { return None; }
+    let rest=&source[quote_at..];
+    let width=if rest.starts_with("'''") || rest.starts_with("\"\"\"") {3} else {1};
+    if rest.len()<2*width || !rest.ends_with(&rest[..width]) { return None; }
+    let body=rest[width..rest.len()-width].replace("\r\n","\n").replace('\r',"\n");
+    if !body.is_ascii() { return None; }
+    let bytes=if flags.raw { body.bytes().map(u32::from).collect() } else {decode_escapes(&body,true)?};
+    let mut key=String::with_capacity(bytes.len()*2);
+    for byte in bytes { write!(&mut key,"{:02x}",u8::try_from(byte).ok()?).ok()?; }
+    Some(key)
+}
+
 fn python_number_key(source: &str) -> Option<String> {
     use num_bigint::BigInt;
     use num_traits::FromPrimitive;
