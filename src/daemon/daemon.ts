@@ -32,7 +32,7 @@ import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
-import { WINDOWS_ACL, type WindowsAcl } from "../engine/storage/windows-acl.js";
+import { openToOthers, type AccessReader } from "../engine/storage/private-files.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
@@ -750,45 +750,25 @@ function privateKeyHint(platform: NodeJS.Platform): string {
   return `icacls key.pem /inheritance:r /grant:r "${account}:R"`;
 }
 
-/** What `loadDaemonTls` checks a key's access with; tests pass their own. */
-export interface KeyAccess {
-  platform: NodeJS.Platform;
-  acl: Pick<WindowsAcl, "otherReaders">;
-}
-
 /**
- * The PEM files `tls` names, read once at start. The private key must be its owner's alone: a key other users can read
- * lets any of them impersonate the daemon, so a key with any group or other permission is refused, as ssh refuses
- * one. Windows has no mode bits: there a key whose ACL lets any account beyond the person, SYSTEM and Administrators
- * read it is refused, as OpenSSH for Windows refuses one. A key outside the profile folder, under `C:\certs` say,
- * inherits an ACL that lets every local user read it.
+ * The PEM files `tls` names, read once at start. The private key must be its owner's alone (`openToOthers`): a key
+ * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
+ * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
+ * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
+ * `C:\certs` say, inherits an ACL that lets every local user read it. `access` is for tests.
  */
-export async function loadDaemonTls(
-  tls: DaemonTlsFiles,
-  access: KeyAccess = { platform: process.platform, acl: WINDOWS_ACL },
-): Promise<DaemonTlsMaterial> {
-  if (access.platform === "win32") {
-    let readers: string[];
-    try {
-      readers = access.acl.otherReaders(tls.keyFile);
-    } catch (error) {
-      // Unread is refused, as a key others can read is: the daemon would otherwise serve with it unchecked.
-      throw new Error(`Could not read who may read ${tls.keyFile}: ${errorText(error)}`, { cause: error });
-    }
-    if (readers.length > 0) {
-      throw new Error(
-        `${tls.keyFile} can be read by other accounts (${readers.join(", ")}); a TLS private key must be readable by its `
-        + `owner only: ${privateKeyHint("win32").replace("key.pem", `"${tls.keyFile}"`)}`,
-      );
-    }
-  } else {
-    const mode = (await stat(tls.keyFile)).mode & 0o777;
-    if ((mode & 0o077) !== 0) {
-      throw new Error(
-        `${tls.keyFile} is open to other users (mode ${mode.toString(8).padStart(4, "0")}); a TLS private key must be `
-        + `readable by its owner only: chmod 600 ${tls.keyFile}`,
-      );
-    }
+export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
+  let others: string | undefined;
+  try {
+    others = await openToOthers(tls.keyFile, access);
+  } catch (error) {
+    // Unread is refused, as a key others can read is: the daemon would otherwise serve with it unchecked.
+    throw new Error(`Could not read who may read ${tls.keyFile}: ${errorText(error)}`, { cause: error });
+  }
+  if (others !== undefined) {
+    // A function, so a `$` in the key's path is never read as a replacement pattern.
+    const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", () => `"${tls.keyFile}"`);
+    throw new Error(`${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
   return { cert, key };

@@ -37,7 +37,7 @@ import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { makeLedgerFolder, openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
-import { keepPrivate } from "../engine/storage/private-files.js";
+import { keepFolderPrivate } from "../engine/storage/private-files.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { recordCheckout } from "../engine/catalog/repository-registry.js";
@@ -1393,7 +1393,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async #openLedger(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
     await makeLedgerFolder(directory);
-    keepPrivate(directory);
+    keepFolderPrivate(directory);
     if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
     const path = join(directory, "events.jsonl");
     const { values, appendState } = await readLines(path);

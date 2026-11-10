@@ -14,7 +14,7 @@ import { replaceFileSync } from "../engine/file-replace.js";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "../engine/child-process.js";
-import { keepPrivate, makeRerailHome } from "../engine/storage/private-files.js";
+import { keepFolderPrivate, makeRerailHome, type PrivateMachine } from "../engine/storage/private-files.js";
 import { defaultRerailHome, MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_TOKENS_FOLDER } from "../engine/storage/rerail-home.js";
 
 export interface RemoteEntry {
@@ -130,10 +130,16 @@ export function defaultRemoteName(url: string): string {
   return name === "" ? "remote" : name;
 }
 
+/**
+ * Adds a remote and writes its token. The tokens folder is kept private on every add, on Windows too, where a home an
+ * earlier release made outside the profile folder kept its parent's ACL until a daemon launch: the token would
+ * otherwise be readable by every local user. `machine` is for tests.
+ */
 export function addRemote(
   options: { url: string; token: string; name?: string; content: boolean; label?: string },
   home: string = defaultRerailHome(),
   now: number = Date.now(),
+  machine: PrivateMachine = {},
 ): RemoteEntry {
   const url = remoteUrl(options.url);
   const name = options.name ?? defaultRemoteName(url);
@@ -142,10 +148,10 @@ export function addRemote(
   if (token === "" || /\s/u.test(token)) throw new Error("The token is empty or has whitespace in it");
   const config = readRemoteConfig(home);
   if (config.remotes.some(remote => remote.name === name)) throw new Error(`A remote named ${name} exists; remove it first, or pass --name`);
-  makeRerailHome(home);
+  makeRerailHome(home, machine);
   const folder = join(home, REMOTE_TOKENS_FOLDER);
   mkdirSync(folder, { recursive: true, mode: 0o700 });
-  keepPrivate(folder);
+  keepFolderPrivate(folder, { ...machine, repair: true });
   replaceFileSync(tokenFile(home, name), `${token}\n`, { mode: 0o600 });
   const label = options.label?.trim();
   if (label !== undefined && (label === "" || label.length > 100 || /[\p{Cc}]/u.test(label))) throw new Error("A label is 1 to 100 characters, with no control characters");

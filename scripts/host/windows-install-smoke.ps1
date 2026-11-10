@@ -86,7 +86,7 @@ try {
   $legacy = New-Object Diagnostics.ProcessStartInfo("cmd.exe")
   $legacy.Arguments = '/d /s /c "chcp 437 >nul & call "%SMOKE_LAUNCHER%" version"'
   $legacy.UseShellExecute = $false; $legacy.CreateNoWindow = $true
-  $legacy.RedirectStandardOutput = $true; $legacy.RedirectStandardError = $true
+  Set-RerailUtf8Pipes $legacy
   $legacyRun = [Diagnostics.Process]::Start($legacy)
   $legacyOut = $legacyRun.StandardOutput.ReadToEndAsync(); $legacyErr = $legacyRun.StandardError.ReadToEndAsync()
   $legacyRun.WaitForExit()
@@ -106,7 +106,7 @@ try {
   $hostile.Arguments = '/d /s /c "call "%SMOKE_FALLBACK%" version"'
   $hostile.WorkingDirectory = "$base\hostile-repo"
   $hostile.UseShellExecute = $false; $hostile.CreateNoWindow = $true
-  $hostile.RedirectStandardOutput = $true; $hostile.RedirectStandardError = $true
+  Set-RerailUtf8Pipes $hostile
   $hostileRun = [Diagnostics.Process]::Start($hostile)
   $hostileOut = $hostileRun.StandardOutput.ReadToEndAsync(); $hostileErr = $hostileRun.StandardError.ReadToEndAsync()
   $hostileRun.WaitForExit()
@@ -152,9 +152,14 @@ try {
   $left = @(Get-ChildItem -Force -Name $rerailHome | Where-Object { $_ -in @("current", "bin", "versions", "update-state.json", "packs") })
   if (Test-Path "$sandbox\.cache\rerail") { $left += "$sandbox\.cache\rerail" }
   if ($left.Count -gt 0) { throw "install --remove left behind: $($left -join ', ')" }
+  $onPath = @((Split-RerailPathUnder (Get-RerailUserPath) $rerailHome).Under)
+  if ($onPath.Count -gt 0) { throw "install --remove left $($onPath -join ', ') in the user Path" }
   Step "windows-install-smoke: PASS"
 } finally {
   if (Test-Path $launcher) { & $launcher daemon stop | Out-Null }
   Stop-RerailRegistry $registry
   Remove-Item -Recurse -Force $base -ErrorAction SilentlyContinue
+  # Set-up wrote the sandbox's launcher folder into the user Path in HKCU\Environment; a run that failed before
+  # install --remove would leave a person's Path naming a deleted folder.
+  Clear-RerailUserPath -Folder $base | ForEach-Object { Write-Host $_ }
 }

@@ -1,3 +1,4 @@
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +24,24 @@ describe("the user home a test sees", () => {
     stubUserHome(moved);
     expect(homedir()).toBe(moved);
     expect(process.env.HOME).toBe(moved);
+  });
+});
+
+describe("the Git configuration a test repository sees", () => {
+  it("is its own and the test home's global file, never the machine's or the person's, so Git writes files the same everywhere", () => {
+    const root = mkdtempSync(join(tmpdir(), "rerail-git-config-"));
+    try {
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      const scopes = execFileSync("git", ["config", "--list", "--show-scope"], { cwd: root, encoding: "utf8" })
+        .split("\n").filter(line => line !== "").map(line => line.split("\t")[0]);
+      expect(new Set(scopes)).toEqual(new Set(["global", "local"]));
+      expect(execFileSync("git", ["config", "--global", "--list"], { cwd: root, encoding: "utf8" }).split("\n").filter(line => line !== "").sort())
+        .toEqual(["user.email=test@rerail.invalid", "user.name=Rerail test"]);
+      // Git for Windows' installer sets core.autocrlf=true in the machine's file; a test repository never reads it.
+      expect(spawnSync("git", ["config", "--get", "core.autocrlf"], { cwd: root }).status).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

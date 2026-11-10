@@ -305,6 +305,18 @@ describe("remote sink outbox", () => {
     await expect(runRemoteCommand(["add", "http://example.com", "--token-file", tokenFile], { home, stdout })).rejects.toThrow(/https/u);
   });
 
+  it("gives the token folder an owner-only ACL on Windows on every add, in a home an earlier release made", () => {
+    // The home is already there, so nothing gives it an ACL now: an earlier release made it with its parent's, under C:\.
+    const restricted: Array<[string, boolean]> = [];
+    const acl = { restrictToOwner: (path: string, folder: boolean): void => { restricted.push([path, folder]); }, otherReaders: (): string[] => [] };
+    const windows = { acl, platform: "win32" as const, profile: String.raw`C:\Users\nobody-here` };
+    addRemote({ url: "https://rerail.example", token: "t", content: true, name: "team" }, home, clock, windows);
+    expect(restricted).toEqual([[join(home, "remote-tokens"), true]]);
+    // A tokens folder an earlier release made is fixed too: each add sets the ACL again, which its files inherit.
+    addRemote({ url: "https://rerail.example", token: "t", content: true, name: "other" }, home, clock, windows);
+    expect(restricted).toEqual([[join(home, "remote-tokens"), true], [join(home, "remote-tokens"), true]]);
+  });
+
   it("backs off exponentially within bounds", () => {
     expect(backoffMs(1, () => 0.5)).toBe(2_000);
     expect(backoffMs(3, () => 0.5)).toBe(8_000);

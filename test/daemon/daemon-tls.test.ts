@@ -119,6 +119,18 @@ describe("TLS daemon", () => {
     await expect(loadDaemonTls(files, unread)).rejects.toThrow(`Could not read who may read ${files.keyFile}: Get-Acl failed`);
   });
 
+  it("names a refused key's path in its fix as it is, a `$&` in it too", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    // In a replacement string, `$&` stands for the text replaced.
+    await mkdir(join(root, "certs $& keys"));
+    const files = { certFile: join(root, "certs $& keys", "cert.pem"), keyFile: join(root, "certs $& keys", "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    await expect(loadDaemonTls(files, shared)).rejects.toThrow(`icacls "${files.keyFile}" /inheritance:r`);
+  });
+
   it("answers Rerail's own client over https pinned to the certificate it recorded, and nothing pinned to another", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
     const certificate = selfSignedCertificate();

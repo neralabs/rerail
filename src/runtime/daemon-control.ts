@@ -12,14 +12,13 @@ import { replaceFile } from "../engine/file-replace.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding, type NativeBinding } from "../engine/native/native.js";
 import { forgetMainInstanceHolder } from "../engine/native/main-instance.js";
-import { keepFolderToOwner } from "../engine/storage/windows-acl.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineHoldsCapability } from "./engine-proof.js";
 import { enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
 import { processState, type ProcessSignal } from "../engine/process-liveness.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
-import { makeRerailHome } from "../engine/storage/private-files.js";
+import { keepFolderPrivate, makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
 
 /** What `rerail status` and the launcher need to find a running daemon. */
@@ -821,7 +820,7 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions)
   await mkdir(control.home, { recursive: true, mode: 0o700 });
   // A Rerail home an earlier release made outside the profile folder kept its parent's ACL on Windows, which there lets
   // every local user read the capability and the database; a launch, rare beside hooks, gives it an owner-only one.
-  keepFolderToOwner({ folder: control.home });
+  keepFolderPrivate(control.home, { repair: true });
   const stateFile = join(control.home, DAEMON_STATE_FILE);
   const logFile = join(control.home, DAEMON_LOG_FILE);
   const env = { ...(options.env ?? process.env), RERAIL_HOME: control.home };
