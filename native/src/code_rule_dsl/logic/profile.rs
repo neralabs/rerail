@@ -1143,6 +1143,18 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         }
     }
 
+    // The executor's scoreboard (rerail-accel): every job on every lane, its thread CPU and its phases. On a device
+    // lane, `cpu s` is the host CPU the device cost; `wall` phases with no CPU are the device's own timeline.
+    let _ = writeln!(r, "\n== Executor (rerail-accel): jobs per lane, host CPU per phase");
+    let scores = super::lanes::scores();
+    if scores.is_empty() {
+        r.push_str("(no executor)\n");
+    }
+    for (binding, score) in scores {
+        let _ = writeln!(r, "-- {binding}");
+        let _ = writeln!(r, "{score}");
+    }
+
     // Warnings: the shapes that usually explain a slow rule.
     let _ = writeln!(r, "\n== Warnings");
     let mut warned = 0;
