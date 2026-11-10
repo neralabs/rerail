@@ -3591,7 +3591,7 @@ impl Run<'_, '_> {
                     let mut bycols = Vec::new();
                     for b in by.iter().filter(|b| !slots.contains_key(*b)) {
                         let c = column(b)?;
-                        bycols.push((c, sym(c) == 1));
+                        bycols.push((read(c), sym(c) == 1));
                     }
                     let mut a = a.clone();
                     for v in &local {
@@ -3601,7 +3601,7 @@ impl Run<'_, '_> {
                     let (src, args) = atom(&a, None, &mut slots)?;
                     let sep = const_tok(&Term::Str(sep.clone()))?;
                     let out = tok(&Term::Var(var.clone()), &mut slots)?;
-                    lines.push(JoinItem::StrJoin { src, args, x: (xc, sym(xc) == 1), by: bycols, sep, out });
+                    lines.push(JoinItem::StrJoin { src, args, x: (read(xc), sym(xc) == 1), by: bycols, sep, out });
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
                     let tn = tok(&Term::Var(n.clone()), &mut slots)?;

@@ -730,9 +730,10 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     }
 }
 
-/// The prepared programs kept in the process, by program key: a few of each, one per store whose atoms it holds
-/// (`interned`), so a process serving two stores (a session's and another run's) does not prepare again on each
-/// switch.
+/// The prepared programs kept in the process, by program key, given to `f`: a few of each, one per store whose atoms
+/// it holds (`interned`), so a process serving two stores (a session's and another run's) does not prepare again on
+/// each switch. A test's are its own thread's: tests run side by side, and one filling the cache clears it
+/// (`PREPARED_KEPT`) under another that expects its program kept (`prepared::tests`).
 fn with_prepared<R>(f: impl FnOnce(&mut HashMap<[u8; 32], Vec<Prepared>>) -> R) -> R {
     #[cfg(not(test))]
     {
@@ -756,7 +757,9 @@ const PREPARED_STORES: usize = 4;
 /// Keeps `p`, prepared under `key`, first among that key's.
 fn keep_prepared(key: [u8; 32], p: Prepared) {
     with_prepared(|kept| {
-        if !kept.contains_key(&key) && kept.len() >= PREPARED_KEPT { kept.clear(); }
+        if !kept.contains_key(&key) && kept.len() >= PREPARED_KEPT {
+            kept.clear();
+        }
         let all = kept.entry(key).or_default();
         all.retain(|q| q.interned != p.interned);
         all.insert(0, p);
@@ -1682,9 +1685,7 @@ fn run_observed(
                     Ok(path.to_owned())
                 }).collect::<Result<Vec<_>>>()?;
                 let label = match language.as_deref() {
-                    Some("python") => "python",
-                    Some("rust") => "rust",
-                    Some("rr") => "rr",
+                    Some(name) if let Some(label) = crate::code_rule_dsl::language::label_named(name) => label,
                     Some(other) => return Err(Error::Plan(format!("explicit input batch: unsupported corpus language {other:?}"))),
                     None if files.iter().filter(|p| p.ends_with(".rs")).count() > files.len() / 2 => "rust",
                     None => "python",
@@ -2552,14 +2553,15 @@ fn run_observed(
     // reads its input deltas from the documents whose content changed.
     let run_docs_held: std::sync::Mutex<input_delta::Docs> = std::sync::Mutex::new(HashMap::new());
     let run_docs = &run_docs_held;
-    // A file's memo entry when the run is memoised and the memo has it, else its document, built. An entry
-    // without the base rows this run's cross-file part reads is a miss.
+    // A file's memo entry when the run is memoised and the memo has it, else its document, built: a grammar file's
+    // tree, or the text of a file `.scope text` reads (`core::text`). An entry without the base rows this run's
+    // cross-file part reads is a miss. A text file that is not UTF-8 (an image, an archive) is no document (`None`).
     let has_base = |e: &memo::Entry| e.rows.contains_key(OWN_DOCS) && stored.iter().all(|(rel, _)| e.rows.contains_key(&memo::base_key(rel)));
     let stats_read = parking_lot::Mutex::new(Vec::new());
     // A window's files resolved together (`resolve`): stat each, look the ones the stat index knows up in one
     // statement, read and hash the others, find their contents in one statement and look those up in one more.
     // What is left is built (`build`). A few statements a window, not several a file.
-    let resolve = |window: &[(i64, String, Option<Arc<str>>)]| -> Result<Vec<(Option<memo::Content>, std::result::Result<memo::Entry, Option<(String, Option<memo::Content>)>>)>> {
+    let resolve = |window: &[(i64, String, Option<Arc<str>>)]| -> Result<Vec<Option<Resolved>>> {
         let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
         // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
         // source, and on a memo hit is neither read nor hashed.
@@ -2575,34 +2577,35 @@ fn run_observed(
             })
             .collect();
         let known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
-        let mut out: Vec<Option<(Option<memo::Content>, std::result::Result<memo::Entry, Option<(String, Option<memo::Content>)>>)>> = (0..window.len()).map(|_| None).collect();
+        let mut out: Vec<Option<Option<Resolved>>> = (0..window.len()).map(|_| None).collect();
         if let (true, Some(memo)) = (memoised, memo) {
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
             let asked: Vec<usize> = (0..window.len()).filter(|i| known[*i].is_some()).collect();
             let keys: Vec<(memo::Content, &str, i64)> = asked.iter().map(|i| (memo::Content::Stored(known[*i].expect("known")), world::store_path(&window[*i].1), window[*i].0)).collect();
             for (i, entry) in asked.into_iter().zip(memo.lookup_all(&memo_program, &keys).map_err(|e| Error::Plan(e.to_string()))?) {
                 if let Some(entry) = entry.filter(|e| has_base(e)) {
-                    out[i] = Some((known[i].map(memo::Content::Stored), Ok(entry)));
+                    out[i] = Some(Some((known[i].map(memo::Content::Stored), Ok(entry))));
                 }
             }
         }
-        let mut rest: Vec<usize> = (0..window.len()).filter(|i| out[*i].is_none()).collect();
-        let mut texts: Vec<String> = Vec::with_capacity(rest.len());
-        for i in &rest {
-            let path = &window[*i].1;
+        let mut rest: Vec<usize> = Vec::new();
+        let mut texts: Vec<String> = Vec::new();
+        let unresolved: Vec<usize> = (0..window.len()).filter(|i| out[*i].is_none()).collect();
+        for i in unresolved {
+            let path = &window[i].1;
             let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
             let source = match std::fs::read_to_string(root.join(path)) {
                 Ok(source) => source,
                 Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(path) => {
-                    out[*i] = Some((None, Err(None)));
+                    out[i] = Some(None);
                     continue;
                 }
                 Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
             };
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
             texts.push(source);
+            rest.push(i);
         }
-        rest.retain(|i| out[*i].is_none());
         // Read, a file is hashed whatever the index said: it may have changed since its stat.
         let contents: Vec<Option<memo::Content>> = match (memoised || recording, memo) {
             (true, Some(memo)) => {
@@ -2630,10 +2633,10 @@ fn run_observed(
             }
         }
         for ((r, text), (i, content)) in texts.into_iter().enumerate().zip(rest.iter().zip(contents)) {
-            out[*i] = Some(match entries[r].take() {
+            out[*i] = Some(Some(match entries[r].take() {
                 Some(entry) => (content, Ok(entry)),
-                None => (content, Err(Some((text, content)))),
-            });
+                None => (content, Err((text, content))),
+            }));
         }
         Ok(out.into_iter().map(|o| o.expect("every file resolved")).collect())
     };
@@ -2643,13 +2646,15 @@ fn run_observed(
         let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
         // Its own work: the file's input made from its source (the build's parts charge their own).
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
-        // A file of no grammar is here because `.scope text` reads it (`scoped`): text only, no tree.
-        if crate::code_rule_dsl::language::label_of_path(path).is_none() {
+        // A file of no grammar is here because `.scope text` reads it (`scoped`): text only, no tree, its lines W's
+        // for a file of no language (`core::text`).
+        if text_document(path) {
             let facts = Arc::new(core::text(Arc::new(source)));
             let digest = core::digest(&facts);
             return Ok((source_id, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, tape: None, guest: None, module }));
         }
         let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
+        // Tapes kept across runs where the run has the persistent store (`tape_cache`).
         let built = match &tapes {
             // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
             // tape and source frames are not linked.
@@ -2670,6 +2675,8 @@ fn run_observed(
         if let Some(references) = &references {
             references.add(*d as u32, path, &file.source, &facts)?;
         }
+        // W's values and f-string trees are read off the tape, in the file's context: kept only for a program that
+        // reads them.
         let tape = keep_tapes.then_some((doc, file));
         let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
         let digest = core::digest(&facts);
@@ -2680,20 +2687,20 @@ fn run_observed(
     // window at a time, in order, each a job of its own, and each file's tree and facts then built as a job.
     const WINDOW: usize = 256;
     let resolver = parking_lot::Mutex::new(resolve);
-    type Resolved = (Option<memo::Content>, std::result::Result<memo::Entry, Option<(String, Option<memo::Content>)>>);
-    // A document: a memo hit, or built from its source.
+    type Resolved = (Option<memo::Content>, std::result::Result<memo::Entry, (String, Option<memo::Content>)>);
+    // A document: a memo hit, or built from its source; `None` for a file that is no document.
     type Made = Result<Option<(Option<memo::Content>, std::result::Result<memo::Entry, syntax::Document>)>>;
     type Sources = Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>;
     // A chunk's documents, hits and kept documents while it is projected.
     type Cutting = (usize, Vec<(i64, String, Option<memo::Content>, u64)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
     let build = |docs: &Docs, i: usize| -> Made {
         // A window that failed resolves none of its files: its first holds the error, which ends the builder.
-        let (content, outcome) = docs.resolved.lock().remove(&i).ok_or_else(|| Error::Plan("a file of a window that failed".to_owned()))?;
+        let resolved = docs.resolved.lock().remove(&i).ok_or_else(|| Error::Plan("a file of a window that failed".to_owned()))?;
+        let Some((content, outcome)) = resolved else { return Ok(None) };
         let (d, path, module) = &docs.asked[i];
         match outcome {
             Ok(entry) => Ok(Some((content, Ok(entry)))),
-            Err(None) => Ok(None),
-            Err(Some((source, source_id))) => build_doc(d, path, module.clone(), source, source_id).map(|(c, doc)| Some((c, Err(doc)))),
+            Err((source, source_id)) => build_doc(d, path, module.clone(), source, source_id).map(|(c, doc)| Some((c, Err(doc)))),
         }
     };
     let project = |docs: Vec<syntax::Document>| -> (Result<Sources>, (f64, f64)) {
@@ -2709,7 +2716,7 @@ fn run_observed(
     /// far (one at a time), and each document built and not yet taken.
     struct Docs {
         asked: Vec<(i64, String, Option<Arc<str>>)>,
-        resolved: parking_lot::Mutex<BTreeMap<usize, Resolved>>,
+        resolved: parking_lot::Mutex<BTreeMap<usize, Option<Resolved>>>,
         /// Files up to here are resolved; a window's job is running.
         resolved_to: std::sync::atomic::AtomicUsize,
         resolving: std::sync::atomic::AtomicBool,
@@ -2738,6 +2745,8 @@ fn run_observed(
         failed: bool,
         /// No batch will come: the builder has ended.
         ended: bool,
+        /// A chunk or the memo's hits have been handed on: a corpus with no document hands on one empty chunk.
+        sent: bool,
         read_sources: Vec<crate::content_store::SourceId>,
         parse: (f64, f64),
         batch: (f64, f64),
@@ -2770,7 +2779,7 @@ fn run_observed(
     where
         B: Fn(&Docs, usize) -> Made + Sync,
         P: Fn(Vec<syntax::Document>) -> (Result<Sources>, (f64, f64)) + Sync,
-        R: FnMut(&[(i64, String, Option<Arc<str>>)]) -> Result<Vec<Resolved>> + Send,
+        R: FnMut(&[(i64, String, Option<Arc<str>>)]) -> Result<Vec<Option<Resolved>>> + Send,
     {
         /// Advances the builder as far as it goes now. A caller that finds another advancing leaves it to them: they
         /// look again before they let go.
@@ -2906,7 +2915,7 @@ fn run_observed(
                 let (resolved, built) = (docs.resolved.lock(), docs.built.lock());
                 (c.spawned..horizon.min(to).max(c.spawned))
                     .filter(|i| !built.contains_key(i))
-                    .map(|i| (resolved.get(&i).map_or(0, |(_, r)| r.as_ref().err().and_then(|v| v.as_ref()).map_or(0, |(source, _)| source.len())), i))
+                    .map(|i| (resolved.get(&i).and_then(Option::as_ref).map_or(0, |(_, r)| r.as_ref().err().map_or(0, |(source, _)| source.len())), i))
                     .collect()
             };
             c.spawned = c.spawned.max(horizon.min(to));
@@ -2942,6 +2951,12 @@ fn run_observed(
                 let i = c.next;
                 c.next += 1;
                 self.take(c, jobs, &docs, i, made);
+                return true;
+            }
+            // A corpus with no document still runs, over empty base relations: its outputs are what the program
+            // derives from none (no rows, for a rule that reads a document), not an error.
+            if !c.sent {
+                self.cut_chunk(c, jobs);
                 return true;
             }
             // Every document taken: the batch ends once all it cut is handed on.
@@ -2989,6 +3004,7 @@ fn run_observed(
             if c.pending.is_empty() {
                 // Only hits so far: handed on in batches, and at the end.
                 if !c.hits.is_empty() && (c.hits.len() >= 1024 || last) {
+                    c.sent = true;
                     c.out.push_back(Out::Ready(Ok((0, Vec::new(), Vec::new(), std::mem::take(&mut c.hits), Vec::new()))));
                 }
                 return;
@@ -2996,6 +3012,15 @@ fn run_observed(
             if c.pending_nodes < self.target.load(std::sync::atomic::Ordering::Relaxed) && !last {
                 return;
             }
+            self.cut_chunk(c, jobs);
+        }
+
+        /// Cuts the documents pending into a chunk, projected as a job.
+        fn cut_chunk<'s>(&'s self, c: &mut Cut, jobs: &crate::threads::Jobs<'s, '_>)
+        where
+            'a: 's,
+        {
+            c.sent = true;
             // A chunk whose rules ask for guests keeps its documents: the guests are made from them (decision 0055).
             let kept_docs = if self.keep_docs { c.pending.clone() } else { Vec::new() };
             let n = std::mem::take(&mut c.pending_nodes);
@@ -3038,6 +3063,7 @@ fn run_observed(
             handed: Default::default(),
             failed: false,
             ended: false,
+            sent: false,
             read_sources: Vec::new(),
             parse: (0.0, 0.0),
             batch: (0.0, 0.0),
@@ -5593,35 +5619,38 @@ fn text_document(path: &str) -> bool {
 
 /// A corpus's files by language: Python's, Rust's and `.rr` rule files, and the text-only documents.
 struct CorpusFiles {
-    python: Vec<String>,
-    rust: Vec<String>,
-    rr: Vec<String>,
+    /// Each dialect's files, by its label (the language registry's).
+    by_label: BTreeMap<&'static str, Vec<String>>,
     /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`front::Program::text_globs`).
     text: Vec<String>,
 }
 
 impl CorpusFiles {
     /// The run's documents: the language's files, then the text ones, in path order.
-    fn of(self, label: &str) -> Vec<String> {
-        let mut files = match label {
-            "rust" => self.rust,
-            "rr" => self.rr,
-            _ => self.python,
-        };
+    fn of(mut self, label: &str) -> Vec<String> {
+        let mut files = self.by_label.remove(label).unwrap_or_default();
         files.extend(self.text);
         files.sort();
         files
     }
+
+    /// How many files of `label` there are.
+    fn count(&self, label: &str) -> usize {
+        self.by_label.get(label).map_or(0, Vec::len)
+    }
+
+    /// How many files of any grammar there are.
+    fn parsed(&self) -> usize {
+        self.by_label.values().map(Vec::len).sum()
+    }
 }
 
-/// The language a corpus run reads: the one its program names (`.language python`, `rust` or `rr`), else Rust or
-/// Python by `Typing::rust`, or by whichever has more files.
+/// The language a corpus run reads: the one its program names (`.language`: any dialect of the registry this build
+/// parses), else Rust or Python by `Typing::rust`, or by whichever has more files.
 fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles) -> &'static str {
     match language {
-        Some("python") => "python",
-        Some("rust") => "rust",
-        Some("rr") => "rr",
-        _ if typing.rust.unwrap_or(found.rust.len() > found.python.len()) => "rust",
+        Some(name) if let Some(label) = crate::code_rule_dsl::language::label_named(name) => label,
+        _ if typing.rust.unwrap_or(found.count("rust") > found.count("python")) => "rust",
         _ => "python",
     }
 }
@@ -5637,12 +5666,12 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::V
         return found;
     }
     let scopes = front::resolve_scopes(&prog.doc_scopes, options);
-    let before = found.python.len() + found.rust.len() + found.rr.len();
-    for files in [&mut found.python, &mut found.rust, &mut found.rr, &mut found.text] {
+    let before = found.parsed();
+    for files in found.by_label.values_mut().chain([&mut found.text]) {
         files.retain(|p| front::in_doc_scopes(&scopes, p));
     }
     crate::code_rule_dsl::logic::profile::decision("documents", || {
-        format!("{} of {before} files, by the policies' `.scope`; {} read as text (`.scope text`)", found.python.len() + found.rust.len() + found.rr.len(), found.text.len())
+        format!("{} of {before} files, by the policies' `.scope`; {} read as text (`.scope text`)", found.parsed(), found.text.len())
     });
     found
 }
@@ -5650,14 +5679,12 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::V
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
 /// (`.rr`), skipping hidden directories and `target`.
 fn corpus_files(root: &Path) -> Result<CorpusFiles> {
-    let (mut python, mut rust, mut rr, mut text) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
     let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
-        Some("python") => python.push(relative),
-        Some("rust") => rust.push(relative),
-        Some("rr") => rr.push(relative),
+        Some(label) => by_label.entry(label).or_default().push(relative),
         // A hidden file (`.env`, `.hidden.md`) is no text document, as in W.
-        _ if !relative.rsplit('/').next().is_some_and(|name| name.starts_with('.')) => text.push(relative),
-        _ => {}
+        None if !relative.rsplit('/').next().is_some_and(|name| name.starts_with('.')) => text.push(relative),
+        None => {}
     };
     // In a Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
     // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
@@ -5707,19 +5734,17 @@ fn corpus_files(root: &Path) -> Result<CorpusFiles> {
         }
     }
     }
-    python.sort();
-    rust.sort();
-    rr.sort();
+    by_label.values_mut().for_each(|files| files.sort());
     text.sort();
     // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
     if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
         // Documents read as text too: a rule that reads every text document (a check over the repository's docs)
         // would otherwise read all of them in every sample.
-        for files in [&mut python, &mut rust, &mut rr, &mut text] {
+        for files in by_label.values_mut().chain([&mut text]) {
             *files = files.iter().step_by(n).cloned().collect();
         }
     }
-    Ok(CorpusFiles { python, rust, rr, text })
+    Ok(CorpusFiles { by_label, text })
 }
 
 /// Makes the base relations `prog` reads and does not derive inputs (`select::input_columns` names a base relation).
@@ -6078,7 +6103,7 @@ mod tests {
         let files = super::corpus_files(&root).unwrap();
         let listed = super::thread_usage();
         let mut digests = 0;
-        for f in &files.python {
+        for f in files.by_label.get("python").into_iter().flatten() {
             digests += super::observe(|o| o.digest(&root.join(f))).map_or(0, |_| 1);
         }
         let digested = super::thread_usage();
@@ -6091,8 +6116,8 @@ mod tests {
         println!(
             "phase 0 over {}: {} python, {} other files; {digests} digests; files {:.2} s, digests {:.2} s, flush {:.2} s CPU; peak RSS {:.0} MB\n  {did}",
             root.display(),
-            files.python.len(),
-            files.rust.len() + files.rr.len() + files.text.len(),
+            files.count("python"),
+            files.parsed() - files.count("python") + files.text.len(),
             cpu(start, listed),
             cpu(listed, digested),
             cpu(digested, flushed),

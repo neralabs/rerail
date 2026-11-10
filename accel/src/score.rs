@@ -330,6 +330,49 @@ pub fn take_phases() -> Vec<(&'static str, u64, f64, f64)> {
     PHASES.with_borrow_mut(std::mem::take)
 }
 
+/// A finished job, for the cost statistics (decision 0100 §14): what it was, what the price expected, and what it
+/// cost. The engine keeps them ([`keep_samples`], [`take_samples`]) and writes them to a store, where they are fitted
+/// back into the prices ([`crate::price::learn_from`]); a regressor can be trained on them later.
+#[derive(Clone, Debug)]
+pub struct Sample {
+    pub lane: Lane,
+    /// Its launches' names ([`crate::Kernel::name`]), comma-joined in order.
+    pub forms: String,
+    pub launches: u32,
+    pub units: f64,
+    /// The price's wall and host CPU estimates.
+    pub estimate: f64,
+    pub host_estimate: f64,
+    /// Its wall from start to end, its thread's CPU, and its wait in the queue.
+    pub wall: f64,
+    pub cpu: f64,
+    pub waited: f64,
+    /// Its phases: `name=cpu/wall` in microseconds, comma-joined (a device's timeline among them).
+    pub phases: String,
+    /// It compiled a pipeline or made a buffer: not what the lane costs warm.
+    pub cold: bool,
+    pub ok: bool,
+    /// The cores' slowdown under the machine's load when it ended ([`crate::exec::cores_slowdown`]).
+    pub load: f64,
+}
+
+static KEEP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SAMPLES: Mutex<Vec<Sample>> = Mutex::new(Vec::new());
+/// The most samples held for the engine to take: past it, new ones are dropped (and counted).
+const HELD: usize = 100_000;
+static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Keeps every finished job's sample from now on, for [`take_samples`].
+pub fn keep_samples(on: bool) {
+    KEEP.store(on, Ordering::Relaxed);
+}
+
+/// The samples kept since the last take, and how many were dropped since (more than [`HELD`] waiting).
+pub fn take_samples() -> (Vec<Sample>, u64) {
+    let s = std::mem::take(&mut *SAMPLES.lock().unwrap_or_else(|p| p.into_inner()));
+    (s, DROPPED.swap(0, Ordering::Relaxed))
+}
+
 /// A launch of a job: its form's name, units and estimate.
 #[derive(Clone, Copy, Debug)]
 pub struct Item {
@@ -498,6 +541,30 @@ impl Scoreboard {
                 p.wall += w;
             }
         });
+        if KEEP.load(Ordering::Relaxed) {
+            let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
+            let sample = Sample {
+                lane: t.lane,
+                forms: t.items.iter().map(|i| i.form).collect::<Vec<_>>().join(","),
+                launches: t.items.len() as u32,
+                units: t.items.iter().map(|i| i.units).sum(),
+                estimate: est,
+                host_estimate: host_est,
+                wall: ran,
+                cpu,
+                waited,
+                phases: phases.iter().map(|&(name, _, c, w)| format!("{name}={:.1}/{:.1}", c * 1e6, w * 1e6)).collect::<Vec<_>>().join(","),
+                cold,
+                ok,
+                load: crate::exec::cores_slowdown(),
+            };
+            let mut held = SAMPLES.lock().unwrap_or_else(|p| p.into_inner());
+            if held.len() < HELD {
+                held.push(sample);
+            } else {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
+        }
         if let Some(f) = trace() {
             let mut forms: Vec<&str> = t.items.iter().map(|i| i.form).collect();
             forms.dedup();

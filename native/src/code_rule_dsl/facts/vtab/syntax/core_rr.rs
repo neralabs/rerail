@@ -891,7 +891,7 @@ impl CoreRows {
         }
     }
 
-    /// `text` rows made beside these: the text of `Extra`'s spans (`SPAN`), which `core_rr`'s `text` has not.
+    /// `text` rows made beside these: the text of `Extra`'s spans (`granules::ExtraSpan`), which `core_rr`'s `text` has not.
     pub(super) fn extend_text(&mut self, rows: &[[i64; 2]]) {
         self.text.extend_from_slice(rows);
     }

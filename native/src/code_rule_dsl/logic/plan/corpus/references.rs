@@ -71,8 +71,8 @@ fn scope(value: Option<&Value>) -> Result<CodeRuleScope> {
 /// One summarized file: its path, summary, and its definitions' nodes by byte range (`syntax::definitions`).
 type File = (Arc<str>, Arc<Summary>, HashMap<(u32, u32), i64>);
 
-/// The corpus's files as the graph reads them, gathered while the chunks are built (`add`, on the chunk builder's
-/// thread), linked once they all are (`relations`).
+/// The corpus's files as the graph reads them, gathered while the chunks are built (`add`, from the chunk builder's
+/// jobs, in any order), linked once they all are (`relations`), in path order.
 pub(super) struct Files {
     config: Config,
     /// The directories the corpus marks as packages (`__init__.py`), from which each file's module follows.
@@ -111,7 +111,8 @@ impl Files {
     #[allow(clippy::type_complexity)]
     pub(super) fn relations(self, store: &ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>> {
         let key = self.config.key;
-        let files = self.files.into_inner().expect("reference files");
+        let mut files = self.files.into_inner().expect("reference files");
+        files.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         let graph = Graph::link_references(key, files.iter().map(|(path, summary, _)| (Arc::clone(path), Arc::new(summary.as_references(key)))).collect());
         let nodes: HashMap<&str, &HashMap<(u32, u32), i64>> = files.iter().map(|(path, _, nodes)| (path.as_ref(), nodes)).collect();
         let node = |path: &str, def: calls::summary::Def| {

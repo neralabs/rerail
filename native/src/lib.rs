@@ -15,9 +15,9 @@ mod build_languages;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
-pub mod content_store;
+pub use rerail_store::content_store;
 pub mod git_ignore;
-pub mod git_workspace;
+pub use rerail_store::git_workspace;
 mod main_instance;
 mod model;
 mod panic_boundary;
@@ -60,6 +60,22 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
     .character
 });
 
+/// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
+/// and the prefilter's tapes. Set as the library loads, before any store is opened.
+fn install_store_functions() {
+    content_store::set_connection_functions(|db| {
+        code_rule_dsl::text::install(db)?;
+        code_rule_dsl::prefilter::tapes::install(db)
+    });
+}
+
+/// Windows has no jemalloc hook (below): the store's functions alone, as the library loads.
+#[cfg(windows)]
+#[napi_derive::module_init]
+fn install_store_functions_on_load() {
+    install_store_functions();
+}
+
 /// Tree-sitter allocates through jemalloc, as Rust does: a parse allocates many small subtrees,
 /// which the system allocator served at 10% of the parse. Installed when the addon loads, before
 /// any Tree-sitter call; like Tree-sitter's own allocator, these abort when allocation fails.
@@ -71,6 +87,7 @@ fn install_tree_sitter_allocator() {
     // own main thread explicitly, before its first job.
     #[cfg(not(feature = "headless"))]
     threads::configure(false);
+    install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // SAFETY: jemalloc's malloc accepts any size.
@@ -107,6 +124,17 @@ fn install_tree_sitter_allocator() {
             free,
         }));
     }
+}
+
+/// The one pool, of the most threads the process uses (`RERAIL_THREADS`), the loading thread one of them when it is
+/// the process's main thread: made as Node registers the addon's exports, before any of them runs, and not in the
+/// library's constructor. A constructor runs inside `dlopen`, which holds glibc's loader lock; rayon's
+/// `use_current_thread` waits for every pool thread to start, and each one's first thread-local with a destructor
+/// registers it through `__cxa_thread_atexit_impl`, which takes that lock: the load never returned.
+#[cfg(not(target_family = "wasm"))]
+#[napi(module_exports)]
+pub fn configure_thread_pool(_exports: napi::bindgen_prelude::Object) {
+    threads::configure(threads::is_main_thread());
 }
 
 #[napi(object)]

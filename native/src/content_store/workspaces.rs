@@ -1,6 +1,6 @@
 //! Workspace registry, overlays, promotion to snapshots, and workspace leases.
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::StoredFile;
 use super::rows::{intern_path, intern_string, validate_relative_path};
 use super::{
@@ -8,7 +8,7 @@ use super::{
     STRING_REPOSITORY, SnapshotId, SourceId, StoreError, StoreResult, StoredPathObjects,
     StoredSourceObjects, TapeId, WorkspaceId, WorkspaceRegistration,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use rusqlite::OptionalExtension;
 use rusqlite::{Transaction, TransactionBehavior, params};
 use std::collections::HashMap;
@@ -54,7 +54,7 @@ impl ContentStore {
     /// Registers a workspace over an existing snapshot with a lease ending at `lease_until`.
     /// Production registers its workspace in the snapshot's own transaction (`publish_snapshot`),
     /// so collection cannot delete it in between.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn open_workspace(
         &self,
         root: &str,
@@ -139,7 +139,7 @@ impl ContentStore {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn overlay_file(
         &self,
         workspace_id: WorkspaceId,
@@ -191,7 +191,7 @@ impl ContentStore {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn remove_overlay_file(&self, workspace_id: WorkspaceId, path: &str) -> StoreResult<()> {
         validate_relative_path(path)?;
         let mut connection = self

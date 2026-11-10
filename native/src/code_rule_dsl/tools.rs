@@ -540,6 +540,14 @@ const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
 /// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063).
 pub fn cli(args: &[String]) -> Result<String, String> {
+    // However the command ends, the cost samples it made are written (decision 0100 §14).
+    struct Flush;
+    impl Drop for Flush {
+        fn drop(&mut self) {
+            crate::code_rule_dsl::logic::costs::flush();
+        }
+    }
+    let _flush = Flush;
     if let Some(dir) = std::env::var_os("RERAIL_SESSION") {
         crate::code_rule_dsl::logic::plan::corpus::session::start(std::path::Path::new(&dir))?;
     }

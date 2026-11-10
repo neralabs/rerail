@@ -17,6 +17,21 @@ function session(input: ClaudeHookInput): AdapterSession {
   return { host: "claude-code", sessionId: requiredText(input, "session_id"), cwd: claudeWorkspace(input.cwd) };
 }
 
+/**
+ * The turn end `Stop` or `StopFailure` reports. A Stop after a Stop hook kept the turn going (`stop_hook_active`) ends
+ * the same prompt again, so it is a turn end of its own, as Codex's continued turn is.
+ */
+function turnEndEvent(input: ClaudeHookInput, hook: "Stop" | "StopFailure", descriptor: AdapterSession): AdapterEvent {
+  const continuation = input.stop_hook_active === true ? ":continued" : "";
+  return {
+    kind: "turn-end",
+    eventId: `${descriptor.sessionId}:${hook === "Stop" ? "turn" : "turn-failure"}:${requiredText(input, "prompt_id")}${continuation}`,
+    sessionId: descriptor.sessionId,
+    session: descriptor,
+    text: optionalText(input, "last_assistant_message") ?? "",
+  };
+}
+
 export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[] {
   const hook = requiredText(input, "hook_event_name");
   const descriptor = session(input);
@@ -73,15 +88,7 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
       failed,
     }];
   }
-  if (hook === "Stop" || hook === "StopFailure") {
-    return [{
-      kind: "turn-end",
-      eventId: `${sessionId}:${hook === "Stop" ? "turn" : "turn-failure"}:${requiredText(input, "prompt_id")}`,
-      sessionId,
-      session: descriptor,
-      text: optionalText(input, "last_assistant_message") ?? "",
-    }];
-  }
+  if (hook === "Stop" || hook === "StopFailure") return [turnEndEvent(input, hook, descriptor)];
   throw new Error(`Unsupported Claude hook event: ${hook}`);
 }
 

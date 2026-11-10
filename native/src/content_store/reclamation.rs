@@ -491,7 +491,7 @@ impl ContentStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Every SQL statement `collect` ran on this thread, in execution order.
     pub(super) static EXECUTED_COLLECT_SQL: std::cell::RefCell<Vec<&'static str>> =
@@ -500,7 +500,7 @@ thread_local! {
 
 /// Every statement `collect` runs passes through here, so tests EXPLAIN the exact SQL it executed.
 fn collect_sql(sql: &'static str) -> &'static str {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     EXECUTED_COLLECT_SQL.with(|executed| executed.borrow_mut().push(sql));
     sql
 }

@@ -20,14 +20,14 @@ const CAP_BYTES: usize = 96 << 20;
 
 /// A tape's kind image: its language, node count and per kind atom its postings, by atom.
 #[derive(Debug)]
-pub(crate) struct KindImage {
+pub struct KindImage {
     pub lang: u32,
     pub nodes: u32,
     pub kinds: Vec<(u32, Vec<u8>)>,
 }
 
 impl KindImage {
-    pub(crate) fn postings(&self, atom: u32) -> Option<&[u8]> {
+    pub fn postings(&self, atom: u32) -> Option<&[u8]> {
         self.kinds.binary_search_by_key(&atom, |(kind, _)| *kind).ok().map(|at| self.kinds[at].1.as_slice())
     }
 }
@@ -51,7 +51,7 @@ struct Inner {
 }
 
 #[derive(Default)]
-pub(crate) struct WorkingSet(parking_lot::Mutex<Inner>);
+pub struct WorkingSet(parking_lot::Mutex<Inner>);
 
 impl WorkingSet {
     fn insert(&self, key: Key, entry: Entry, bytes: usize) {
@@ -76,23 +76,23 @@ impl WorkingSet {
     }
 
     /// Holds the decoded tape of digest `digest` (`bytes`: its estimated size).
-    pub(crate) fn put_tape(&self, digest: [u8; 32], tape: Arc<dyn Any + Send + Sync>, bytes: usize) {
+    pub fn put_tape(&self, digest: [u8; 32], tape: Arc<dyn Any + Send + Sync>, bytes: usize) {
         self.insert(Key::Tape(digest), Entry::Tape(tape), bytes);
     }
 
-    pub(crate) fn tape(&self, digest: [u8; 32]) -> Option<Arc<dyn Any + Send + Sync>> {
+    pub fn tape(&self, digest: [u8; 32]) -> Option<Arc<dyn Any + Send + Sync>> {
         match self.0.lock().entries.get(&Key::Tape(digest)) {
             Some((Entry::Tape(tape), _)) => Some(Arc::clone(tape)),
             _ => None,
         }
     }
 
-    pub(crate) fn put_kinds(&self, tape: i64, image: KindImage) {
+    pub fn put_kinds(&self, tape: i64, image: KindImage) {
         let bytes = image.kinds.iter().map(|(_, postings)| postings.len() + 32).sum::<usize>() + 64;
         self.insert(Key::Kinds(tape), Entry::Kinds(Arc::new(image)), bytes);
     }
 
-    pub(crate) fn kinds(&self, tape: i64) -> Option<Arc<KindImage>> {
+    pub fn kinds(&self, tape: i64) -> Option<Arc<KindImage>> {
         match self.0.lock().entries.get(&Key::Kinds(tape)) {
             Some((Entry::Kinds(image), _)) => Some(Arc::clone(image)),
             _ => None,
@@ -100,11 +100,11 @@ impl WorkingSet {
     }
 
     /// Drops everything: tapes left the store in bulk (reclamation), whose ids may be reused.
-    pub(crate) fn clear(&self) {
+    pub fn clear(&self) {
         *self.0.lock() = Inner::default();
     }
 
-    pub(crate) fn forget_kinds(&self, tape: i64) {
+    pub fn forget_kinds(&self, tape: i64) {
         let mut inner = self.0.lock();
         if let Some((_, bytes)) = inner.entries.remove(&Key::Kinds(tape)) {
             inner.bytes -= bytes;

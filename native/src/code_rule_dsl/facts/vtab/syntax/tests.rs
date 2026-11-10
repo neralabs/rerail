@@ -650,6 +650,98 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
     }
 }
 
+/// `Extra`'s span ids (`granules::ExtraSpan`) never equal a node's or a position's: each kind's slots are neither the
+/// positions' (`span_of` reads none of them) nor any slot a document's nodes take, even one folded past the granules'
+/// slots; the kinds' slots are distinct; and one span past a kind's capacity has no id (a named error, not a wrap).
+#[test]
+fn definition_slots_stay_below_the_span_bit() {
+    use granules::{ExtraSpan, INDEX, extra_low, span_of};
+    let kinds = [ExtraSpan::Line, ExtraSpan::Lf, ExtraSpan::Tape, ExtraSpan::Comment, ExtraSpan::Match];
+    let mut extra = BTreeSet::new();
+    for kind in kinds {
+        assert_eq!(extra_low(kind, kind.capacity()), None, "{kind:?} past its capacity");
+        for i in (0..kind.capacity()).step_by(INDEX as usize).chain([kind.capacity() - 1]) {
+            let low = extra_low(kind, i).expect("within capacity");
+            assert_eq!(span_of(low), None, "{kind:?} {i} is read as a position");
+            extra.insert(low >> INDEX_BITS);
+        }
+    }
+    assert_eq!(extra.len(), granules::EXTRA_SLOTS as usize, "each kind's slots are its own");
+    if !definition_ids() {
+        return;
+    }
+    let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
+    let (_, p) = leaf_ids("python", "many.py", &many);
+    assert!((0..p.locs()).all(|l| !extra.contains(&((p.global(l) as u32) >> INDEX_BITS))), "a node or position takes an `Extra` slot");
+}
+
+/// What core.rr's span ids come to over real files (the capacities `granules::ExtraSpan` and `granules::POSITIONS`
+/// give): over `RERAIL_PARITY_ROOTS` (`fixtures`, the data-layer fixtures' sources, or directories), per Python
+/// document, the most positions (tokens, text and lines), physical, `\n` and tape lines, comments, and matches and
+/// groups of every regex the data-layer pack's `match_all`, `match_group` and `rx_span` name over the source and each
+/// kind of line (an upper bound: one program with every pattern over every span kind).
+#[test]
+#[ignore]
+fn span_ids_census() {
+    use granules::ExtraSpan;
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog");
+    let literal = regex::Regex::new(r#"(?:match_all|match_group|rx_span)\("((?:[^"\\]|\\.)*)""#).unwrap();
+    let mut patterns: BTreeSet<String> = BTreeSet::new();
+    for e in std::fs::read_dir(&pack).unwrap().flatten() {
+        let text = std::fs::read_to_string(e.path()).unwrap_or_default();
+        patterns.extend(literal.captures_iter(&text).map(|c| c[1].replace("\\\"", "\"").replace("\\\\", "\\")));
+    }
+    let regexes: Vec<regex::Regex> = patterns.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
+    eprintln!("census: {} patterns, {} compile", patterns.len(), regexes.len());
+    let count = |text: &str| -> usize {
+        regexes.iter().map(|re| re.captures_iter(text).map(|c| c.iter().skip(1).flatten().count() + 1).sum::<usize>()).sum()
+    };
+    for corpus in crate::code_rule_dsl::cpython::parity::corpora() {
+        // (value, file) maxima: positions, lines, lf lines, tape lines, comments, matches.
+        let files = &corpus.files;
+        let threads = 16;
+        let maxima: Vec<[(usize, String); 6]> = std::thread::scope(|s| {
+            (0..threads)
+                .map(|t| {
+                    let count = &count;
+                    s.spawn(move || {
+                        let mut most: [(usize, String); 6] = Default::default();
+                        for (path, shown) in files.iter().skip(t).step_by(threads) {
+                            let Ok(src) = std::fs::read_to_string(path) else { continue };
+                            let Ok(file) = FileInput::new(shown.clone(), "python".to_owned(), Arc::new(src.clone()), None, None, "core") else { continue };
+                            let Ok(Built::Facts(facts)) = core::build(&file) else { continue };
+                            let facts = Arc::new(facts);
+                            let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+                            let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
+                            let f = &*facts;
+                            let lines = physical_lines(&src, true);
+                            let lf = physical_lines(&src, false);
+                            let tape: Vec<std::ops::Range<usize>> = (0..f.lines.starts().len()).map(|i| f.lines.start(i)..f.lines.end(i)).collect();
+                            let comments = (0..f.len() as u32).filter(|&id| f.named(id) && crate::code_rule_dsl::language::adapter::is_comment_kind(dialect.name(f, id))).count();
+                            let matches = count(&src) + [&lines, &lf, &tape].iter().flat_map(|ls| ls.iter()).map(|r| count(&src[r.clone()])).sum::<usize>();
+                            let now = [(p.locs() - p.len()) as usize, lines.len() + 1, lf.len(), tape.len(), comments, matches];
+                            for (m, v) in most.iter_mut().zip(now) {
+                                if v > m.0 {
+                                    *m = (v, shown.clone());
+                                }
+                            }
+                        }
+                        most
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect()
+        });
+        let capacity = [granules::POSITIONS, u64::from(ExtraSpan::Line.capacity()), u64::from(ExtraSpan::Lf.capacity()), u64::from(ExtraSpan::Tape.capacity()), u64::from(ExtraSpan::Comment.capacity()), u64::from(ExtraSpan::Match.capacity())];
+        for (k, name) in ["positions", "source and physical lines", "\\n lines", "tape lines", "comments", "matches and groups"].into_iter().enumerate() {
+            let (v, at) = maxima.iter().map(|m| m[k].clone()).max().unwrap_or_default();
+            eprintln!("census {}: {} files: {name}: at most {v} per document ({at}), capacity {}", corpus.name, files.len(), capacity[k]);
+        }
+    }
+}
+
 /// Each node's text and its id, under `granules`' numbering (the default): `(text, id)` pairs.
 fn leaf_ids(label: &str, path: &str, source: &str) -> (BTreeSet<(String, i64)>, Projected) {
     let d = document(7, path, label, source);

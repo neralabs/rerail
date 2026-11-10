@@ -282,6 +282,8 @@ mod block_rows_tests;
 mod bitlex_compile;
 // The `.rr` parser: the Bitlex grammar compiled, the engine's parser for what it refuses.
 pub(in crate::code_rule_dsl) mod rr_parser;
+/// JSON's parser: the ladder's JSONC grammar, with tree-sitter-json's ids (the tape's parse of a JSON file).
+pub(in crate::code_rule_dsl) mod json_parser;
 mod grammar;
 mod bitlex_prove;
 mod bitlex_tier2;

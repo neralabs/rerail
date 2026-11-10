@@ -382,7 +382,6 @@ grammar_dialect! {
     Html => SupportLang::Html,
     Css => SupportLang::Css,
     Lua => SupportLang::Lua,
-    Json => SupportLang::Json,
     Go => SupportLang::Go,
 }
 
@@ -407,8 +406,6 @@ const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] = &[
     (GrammarDialect::Scala, 4),
     (GrammarDialect::Go, 5),
     (GrammarDialect::Html, 250),
-    // The tape JSON's two tiers write, compared with tree-sitter's.
-    (GrammarDialect::Json, 251),
 ];
 
 /// The embeddings of the test-only grammars (`GrammarDialect::embeds`): an HTML file's scripts and
@@ -467,6 +464,12 @@ pub(crate) fn label_of_path(path: &str) -> Option<&'static str> {
         .max_by_key(|(suffix, _)| suffix.len())
         .filter(|(_, dialect)| dialect.lang.built())
         .map(|(_, dialect)| dialect.label)
+}
+
+/// The label of the dialect `name` names, when this build parses it (`GrammarDialect::built`): a program's
+/// `.language`.
+pub(crate) fn label_named(name: &str) -> Option<&'static str> {
+    DIALECTS.iter().find(|dialect| dialect.label == name && dialect.lang.built()).map(|dialect| dialect.label)
 }
 
 /// A dialect's persisted tape tag.

@@ -488,7 +488,9 @@ pub(super) fn gap(re: &str, g: &str) -> Option<usize> {
 /// What bounds a rule's made values (rule 1 of the module's).
 struct Bounds<'a> {
     rule: &'a Rule,
-    /// The variables bound outside the component: finitely many values each, fixed while it runs.
+    /// The variables bound outside the component, and those the rule bounds above and below by integers (`$t >= 0,
+    /// $t <= 100000`: a whole number between two, as a table of them would bind it): finitely many values each,
+    /// fixed while it runs.
     outside: BTreeSet<String>,
 }
 
@@ -503,6 +505,21 @@ impl<'a> Bounds<'a> {
                 }
                 Literal::Nearest { .. } | Literal::Ast { .. } => outside.extend(l.vars()),
                 _ => {}
+            }
+        }
+        let bound = |v: &String, below: bool| {
+            rule.body.iter().any(|l| match l {
+                Literal::Cmp { l: Term::Var(x), op, r: Term::Int(_) } if x == v => if below { matches!(*op, ">" | ">=") } else { matches!(*op, "<" | "<=") },
+                Literal::Cmp { l: Term::Int(_), op, r: Term::Var(x) } if x == v => if below { matches!(*op, "<" | "<=") } else { matches!(*op, ">" | ">=") },
+                _ => false,
+            })
+        };
+        for l in &rule.body {
+            if let Literal::Cmp { l: Term::Var(v), r: Term::Int(_), .. } | Literal::Cmp { l: Term::Int(_), r: Term::Var(v), .. } = l
+                && bound(v, true)
+                && bound(v, false)
+            {
+                outside.insert(v.clone());
             }
         }
         Bounds { rule, outside }
@@ -757,31 +774,6 @@ fn summarize(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&s
 /// A relation's key: a column along the way, and maybe a count beside it (an integer column); or a count alone
 /// (`(None, Some(c))`), the place never moving.
 type Key = (Option<usize>, Option<usize>);
-/// The variables a rule's positive atoms of relations outside `component` bind, and those it bounds above and below
-/// by integers (`$t >= 0, $t <= 100000`: a whole number between two, as a table of them would bind it): finitely
-/// many values each.
-fn finite_vars<'a>(rule: &'a Rule, component: &BTreeSet<String>) -> BTreeSet<&'a String> {
-    let bound = |v: &String, below: bool| {
-        rule.body.iter().any(|l| match l {
-            Literal::Cmp { l: Term::Var(x), op, r: Term::Int(_) } if x == v => if below { matches!(*op, ">" | ">=") } else { matches!(*op, "<" | "<=") },
-            Literal::Cmp { l: Term::Int(_), op, r: Term::Var(x) } if x == v => if below { matches!(*op, "<" | "<=") } else { matches!(*op, ">" | ">=") },
-            _ => false,
-        })
-    };
-    let ranged = rule.body.iter().filter_map(|l| match l {
-        Literal::Cmp { l: Term::Var(v), r: Term::Int(_), .. } | Literal::Cmp { l: Term::Int(_), r: Term::Var(v), .. } if bound(v, true) && bound(v, false) => Some(v),
-        _ => None,
-    });
-    rule.body
-        .iter()
-        .filter_map(|l| match l {
-            Literal::Atom(a) if !a.neg && !component.contains(&a.rel) => Some(a),
-            _ => None,
-        })
-        .flat_map(|a| a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }))
-        .chain(ranged)
-        .collect()
-}
 
 /// How a rule's count moves from a recursive atom's (`body`, None for a relation with none) to its head's
 /// (column `head`): `Some(true)` up by a positive integer from a value bound outside the component, or to one (a

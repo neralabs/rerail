@@ -267,6 +267,7 @@ const violationRecordSchema = z.object({
   auditId: z.string(),
   at: z.number().int().describe("Start time of the audit that reported the violation."),
   host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded."),
+  logged: z.boolean().describe("Rerail recorded the violation without telling the coding agent: the audit ran in Log mode, or the rule was in Log mode then. `mode` is the rule's mode alone."),
 }).strict();
 
 const repositoryPathSchema = z.string().refine(value => value === "" || isAbsolute(value), "Repository must be an absolute path or empty for the database default.");
@@ -581,9 +582,9 @@ export const operations: readonly Operation[] = [
       }, historyScope(stores, caller, input.repository));
       return {
         total: page.total,
-        violations: page.violations.map(({ violation: found, sessionId, auditId, at, host }) => {
+        violations: page.violations.map(({ violation: found, sessionId, auditId, at, host, logged }) => {
           const { id, ruleId, clauseId, code, mode, message, path, span, fix } = agentViolation(caller, found);
-          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host };
+          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host, logged };
         }),
         nextCursor: page.nextCursor,
       };

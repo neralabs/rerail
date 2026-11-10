@@ -560,3 +560,36 @@ fn polling_a_batch_preserves_its_outputs_and_scoreboard_completion() {
     let score=executor.score();let cpu=&score.units[Lane::Cpu.index()];
     assert_eq!((cpu.jobs,cpu.failed,cpu.queued,cpu.running),(2,0,0,0));
 }
+
+/// The cost statistics fit a device lane's rate from warm samples of one kernel alone, its fixed costs taken out;
+/// cold, failed and mixed jobs, and a table form on the cores, are not fitted.
+#[test]
+fn learned_rates_come_from_warm_samples_of_one_kernel() {
+    use rerail_accel::price::{MIN_SAMPLES, Prices, learn_from};
+    use rerail_accel::score::Sample;
+    let fixed = Prices::default().fixed[Lane::Gpu.index()];
+    let sample = |lane, forms: &str, launches: u32, units: f64, per: f64| Sample {
+        lane,
+        forms: forms.to_owned(),
+        launches,
+        units,
+        estimate: 0.0,
+        host_estimate: 0.0,
+        wall: fixed.submission + fixed.launch * f64::from(launches) + per * units,
+        cpu: 0.0,
+        waited: 0.0,
+        phases: String::new(),
+        cold: false,
+        ok: true,
+        load: 1.0,
+    };
+    let mut samples: Vec<Sample> = (0..MIN_SAMPLES).map(|i| sample(Lane::Gpu, "test-learned-span", 1, 1e5 + i as f64, 2e-9)).collect();
+    samples.push(Sample { cold: true, ..sample(Lane::Gpu, "test-learned-span", 1, 1e5, 1.0) });
+    samples.push(Sample { ok: false, ..sample(Lane::Gpu, "test-learned-span", 1, 1e5, 1.0) });
+    samples.extend((0..MIN_SAMPLES).map(|_| sample(Lane::Gpu, "test-learned-span,closure", 2, 1e5, 1.0)));
+    samples.extend((0..MIN_SAMPLES).map(|_| sample(Lane::Cpu, "closure", 1, 1e5, 1.0)));
+    let fitted = learn_from(&samples);
+    assert_eq!(fitted.len(), 1, "{fitted:?}");
+    assert_eq!((fitted[0].name.as_str(), fitted[0].lane, fitted[0].samples), ("test-learned-span", Lane::Gpu, MIN_SAMPLES));
+    assert!((fitted[0].per_unit - 2e-9).abs() < 1e-12, "{}", fitted[0].per_unit);
+}

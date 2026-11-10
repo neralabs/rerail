@@ -1,7 +1,8 @@
 /**
  * The conformance check's summary over every pack: the blocking failures (the pack reports' failures, and each shipped
- * rule of a gated tool-pack that fails a gate), the candidates ready to promote, and the shipped rules whose pack.json
- * `on` disagrees with upstream-status. Written as summary.{json,md} and the pull request comment (comment.ts).
+ * rule of a gated tool-pack, or own rule of a pack, that fails a gate), the candidates ready to promote, and the shipped
+ * rules whose pack.json `on` disagrees with upstream-status. Written as summary.{json,md} and the pull request comment
+ * (comment.ts).
  */
 import { appendFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -34,7 +35,7 @@ export interface PackFailures {
 
 export interface Summary {
   format: typeof SUMMARY_FORMAT;
-  /** The rules of gated tool-packs, shipped and candidate. */
+  /** The rules of gated tool-packs and the packs' own rules, shipped and candidate. */
   shipped: { rules: number; pass: number };
   candidates: { rules: number; pass: number };
   blocking: BlockingRow[];
@@ -112,7 +113,7 @@ export function summarize(packs: readonly PackFailures[], toolPacks: readonly To
       ["passes every gate", candidates.filter((rule) => rule.pass).length] as const,
     ]);
     for (const rule of candidates) {
-      if (rule.pass) promotable.push({ toolPack: verdict.toolPack, rule: rule.id, upstreamRule: rule.upstreamRule, startsOn: rule.defaultOn, startReason: rule.defaultOnReason });
+      if (rule.pass && rule.upstreamRule !== null) promotable.push({ toolPack: verdict.toolPack, rule: rule.id, upstreamRule: rule.upstreamRule, startsOn: rule.defaultOn, startReason: rule.defaultOnReason });
       candidateRows.push({ toolPack: verdict.toolPack, ...(rule.pass ? { pack: verdict.pack, rule: rule.id, stoppedAt: "passes", check: "-", why: "-" } : failureRow(verdict.toolPack, rule)) });
     }
   }
@@ -130,9 +131,11 @@ export function summarize(packs: readonly PackFailures[], toolPacks: readonly To
     candidateRows,
     unmappedCandidates: unmappedCandidates.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
     promotable,
-    onOff: toolPacks.flatMap((verdict) => verdict.rules
-      .filter((rule) => rule.location === "shipped" && rule.on !== null && rule.on !== rule.defaultOn)
-      .map((rule) => ({ pack: verdict.toolPack, rule: rule.id, packJson: rule.on!, upstreamStatus: rule.defaultOn, reason: rule.defaultOnReason }))),
+    // An own rule has no upstream-status to disagree with.
+    onOff: toolPacks.flatMap((verdict) => verdict.rules.flatMap((rule) =>
+      rule.upstreamRule !== null && rule.location === "shipped" && rule.on !== null && rule.on !== rule.defaultOn
+        ? [{ pack: verdict.toolPack, rule: rule.id, packJson: rule.on, upstreamStatus: rule.defaultOn, reason: rule.defaultOnReason }]
+        : [])),
     toolPacks: toolPacks.map((verdict) => {
       const of = (location: RuleVerdict["location"]) => verdict.rules.filter((rule) => rule.location === location);
       return {

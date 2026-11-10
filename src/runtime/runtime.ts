@@ -154,6 +154,8 @@ function auditRequestVerdict(auditIds: readonly string[], audits: readonly (Audi
 
 /** The events whose code-rule work needs the session's evaluator open: a tool call, its result, and a turn's end. */
 const CODE_RULE_BOUNDARIES: Partial<Record<AdapterEvent["kind"], true>> = { call: true, result: true, "turn-end": true };
+/** The window `#noteTurnWindow` opens for a turn; no host names a tool call so. */
+const TURN_WINDOW_ID = "rerail:turn";
 
 /** A turn end that waited longer than this on its settle work is written to the daemon log. */
 const SLOW_TURN_END_WAIT_MS = 1_000;
@@ -847,9 +849,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
+    await this.#noteTurnWindow(state, event);
     if (event.kind === "call") {
       const id = event.toolCallId;
-      const preimages = await bridge?.begin(id, event.toolName, event.input);
+      const preimages = await this.#beginCall(state, bridge, event);
       await this.#append(state, {
         type: "policy-call", toolCallId: id, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
         ...(preimages === undefined ? {} : { preimages }),
@@ -868,7 +871,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         try {
           // From the finish on, which may check the edit before it returns, to the end of the wait.
           await this.#waitingForEditChecks(state, false, async () => {
-            await bridge?.finish(call!.id, event.failed === true, { rewindable: true });
+            await this.#finishCall(state, bridge, call!.id, event.failed === true);
             await this.#append(state, { type: "policy-result", toolCallId: call!.id });
             await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
           });
@@ -942,6 +945,39 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const milliseconds = performance.now() - startedAt;
     if (milliseconds <= SLOW_TURN_END_WAIT_MS) return;
     this.#timingLog?.(`rerail: turn end of session ${sessionId} waited ${Math.round(milliseconds)} ms for ${waitedOn}\n`);
+  }
+
+  /**
+   * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
+   * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`).
+   */
+  async #beginCall(
+    state: RuntimeSessionState,
+    bridge: CodeRuleBridge | undefined,
+    event: Extract<AdapterEvent, { kind: "call" }>,
+  ): Promise<Readonly<Record<string, Preimage>> | undefined> {
+    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId);
+    return undefined;
+  }
+
+  /**
+   * A host whose own edit tool no hook shows (`observedFileWrite: "shell"`: Codex's `apply_patch`) writes outside every
+   * call's window, so its turn, from the prompt to the turn's end, is one: what is stamped then is the session's own.
+   * A call opens it too, as a turn has one only at its prompt, which a daemon restart in the middle of the turn loses;
+   * a window already open keeps its start. Two of its sessions' turns in one folder at once both take a change made
+   * then, as overlapping calls do.
+   */
+  async #noteTurnWindow(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
+    if (ADAPTER_CAPABILITIES[state.descriptor.host].observedFileWrite !== "shell") return;
+    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID);
+    else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
+  }
+
+  /** Finishes a tool call on the open evaluator; one answered while it opened only ends its window (`unwatchedResult`). */
+  async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, toolCallId: string, failed: boolean): Promise<void> {
+    if (bridge !== undefined) await bridge.finish(toolCallId, failed, { rewindable: true });
+    else await state.codeRuleBridge?.unwatchedResult(toolCallId);
   }
 
   /**

@@ -12,9 +12,11 @@ crate-type = ["cdylib", "rlib"]
 # language's tables but no grammar: its files are routed to no parser and nothing embeds it (`build.rs`,
 # `GrammarDialect::built`). The browser build (wasm/README.md) picks the languages a page needs.
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
-all-languages = ["lang-blade", "lang-javascript", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
+all-languages = ["lang-blade", "lang-javascript", "lang-json", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
 lang-blade = []
 lang-javascript = []
+# JSON, parsed by its Bitlex grammar (`transducer::packed::json_parser`); tree-sitter-json for a file it refuses.
+lang-json = ["ast-grep-language/tree-sitter-json"]
 lang-php = ["ast-grep-language/tree-sitter-php"]
 lang-python = []
 # `.rr` rule files, parsed by the rule engine's own parser (`logic::rr::syntax`, decision 0061).
@@ -51,6 +53,8 @@ base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 # Relational kernels on every lane and the executor that batches their launches (decision 0098).
 rerail-accel = { path = "../accel" }
+# The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
+rerail-store = { path = "crates/store", features = ["test-hooks"] }
 ast-grep-core = "=0.51.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).
