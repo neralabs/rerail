@@ -8,8 +8,10 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 
+pub mod bitlex_masks;
 pub mod block;
 pub mod block_native;
+pub mod clif_text;
 mod error;
 pub mod native_cpu_block;
 pub mod native_cpu_codegen;
@@ -18,3 +20,10 @@ pub mod native_cpu_pressure;
 pub mod native_cpu_shape;
 
 pub use error::Error;
+
+#[cfg(test)]
+mod delay_tests;
+#[cfg(test)]
+mod gating_tests;
+#[cfg(test)]
+mod outline_tests;

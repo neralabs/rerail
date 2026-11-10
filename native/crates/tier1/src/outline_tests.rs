@@ -7,9 +7,9 @@
 //! a stack slot. A gated region (`native_cpu_lanes::Region`) runs only where its gate has a
 //! bit: its branch calls it, with what it reads and gives through a stack slot.
 
-use super::block_tests::{hot_loop, opcode};
-use super::gating_tests::{ESCAPES, LATE, many, small};
-use super::native_cpu_block;
+use crate::clif_text::{hot_loop, opcode};
+use crate::gating_tests::{ESCAPES, LATE, many, small};
+use crate::native_cpu_block;
 
 /// The instructions of a function's IR, as text lines.
 fn instructions(clif: &str) -> Vec<&str> {

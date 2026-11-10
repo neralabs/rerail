@@ -10,6 +10,8 @@ description = "Tier 1 of the transducer's parsers: block programs, their native 
 test-hooks = []
 
 [dependencies]
+# Bitlex's parser, for the masks' lowering (`bitlex_masks`). No dependencies of its own.
+bitlex = { path = "../../../tools/bitlex", default-features = false }
 cranelift-codegen = "=0.125.4"
 cranelift-frontend = "=0.125.4"
 cranelift-module = "=0.125.4"

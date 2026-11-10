@@ -4,9 +4,9 @@
 //! block stores its own as it is, and the next block joins the two in memory, where it stored
 //! it an iteration before (`native_cpu_block::delayed_store`).
 
-use super::gating_tests::{ESCAPES, small};
-use super::native_cpu_block::{self, State};
-use super::native_ir::Pass;
+use crate::gating_tests::{ESCAPES, small};
+use crate::native_cpu_block::{self, State};
+use crate::block_native::Pass;
 
 /// Outputs at delays 1, 3 and 7, together.
 const DELAYS: &str = "lexer t
@@ -31,12 +31,12 @@ fn no_delayed_output_is_held_across_the_loop() {
     for text in [DELAYS, ESCAPES] {
         let g = small(text);
         let passes = g.native.passes();
-        let Some(Pass::Forward { body, .. }) = passes.passes.last() else { panic!("a forward pass last") };
+        let Some(Pass::Forward { body, .. }) = passes.passes.last().cloned() else { panic!("a forward pass last") };
         assert!(body.output_delays.iter().any(|&d| d > 0), "no delayed output");
         let compiled = native_cpu_block::compile(&g.native).expect("compiles");
         // The hot loop's head (block2) takes the block, the byte and output pointers, the
         // state, the counts, the row of slots: no held word.
-        let want = 3 + State::of(body).words + native_cpu_block::counted(body).len() + usize::from(passes.slots > 0);
+        let want = 3 + State::of(&body).words + native_cpu_block::counted(&body).len() + usize::from(passes.slots > 0);
         assert_eq!(params(&compiled.clif, "block2"), want, "a word held across the loop");
     }
 }

@@ -3201,6 +3201,7 @@ dependencies = [
 name = "rerail-tier1"
 version = "0.1.0"
 dependencies = [
+ "bitlex",
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",

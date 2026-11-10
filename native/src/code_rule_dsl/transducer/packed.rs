@@ -285,11 +285,7 @@ mod token_local;
 #[cfg(test)]
 mod token_local_tests;
 #[cfg(test)]
-mod gating_tests;
-#[cfg(test)]
-mod outline_tests;
-#[cfg(test)]
-mod delay_tests;
+mod gating_rr_tests;
 #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
 mod regex_relocation_tests;
 #[cfg(test)]

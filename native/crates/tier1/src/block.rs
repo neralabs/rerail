@@ -1122,3 +1122,43 @@ pub fn eq_swar(block: &[u8; 64], byte: u8) -> u64 {
         | word(6) << 48
         | word(7) << 56
 }
+
+/// Block program `at`'s rows: tables, operations, outputs, extracts, delay, and the tree section (`tree_rows`).
+pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
+    use std::fmt::Write as _;
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    for (t, table) in block.tables.iter().enumerate() {
+        let _ = writeln!(out, "  block {at} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
+    }
+    for (value, op) in block.ops.iter().enumerate() {
+        let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
+    }
+    // `block N rounds %c %n …`: one fixed point's carries, each with its next.
+    for group in &block.rounds {
+        let pairs: Vec<String> = group.iter().map(|(c, x)| format!("%{c} %{x}")).collect();
+        let _ = writeln!(out, "  block {at} rounds {}", pairs.join(" "));
+    }
+    for (k, value) in block.outputs.iter().enumerate() {
+        match block.output_delay(k) {
+            d if d == block.delay => {
+                let _ = writeln!(out, "  block {at} output %{value}");
+            }
+            d => {
+                let _ = writeln!(out, "  block {at} output %{value} delay {d}");
+            }
+        }
+    }
+    for value in &block.extracts {
+        let _ = writeln!(out, "  block {at} extract %{value}");
+    }
+    for value in &block.totals {
+        let _ = writeln!(out, "  block {at} total %{value}");
+    }
+    for value in &block.masks {
+        let _ = writeln!(out, "  block {at} mask %{value}");
+    }
+    if block.delay != 0 {
+        let _ = writeln!(out, "  block {at} delay {}", block.delay);
+    }
+}
+
