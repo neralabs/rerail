@@ -99,12 +99,14 @@ pub struct JoinSpec {
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
-/// (`base`), plus its table's rows when `seeded`.
+/// (`base`), plus its table's rows when `seeded`. A `base` with no relation gone (`-`) is a copy of the kept
+/// relation, its levels with it (decision 0090's `h__live`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Start {
     Rows,
     Empty,
     From(String),
+    /// `gone` "-": no rows gone (all of `old`).
     Base { old: String, gone: String, seeded: bool },
 }
 
@@ -132,6 +134,9 @@ pub enum Line {
     Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
     Probe { head: usize, delta: usize, sql: String },
     Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize> },
+    /// A recursive relation maintained by levels (decision 0090): its candidates, the level checked, those held,
+    /// those gone and the kept rows shown (`levels <cand> <chk> <held> <gone> <live>`).
+    Levels { cand: usize, chk: usize, held: usize, gone: usize, live: usize },
     Edge(EdgeSpec),
 }
 
@@ -400,7 +405,7 @@ impl std::fmt::Display for Line {
                     Start::Rows => Ok(()),
                     Start::Empty => f.write_str(" empty"),
                     Start::From(sql) => write!(f, " from {}", hex(sql)),
-                    Start::Base { old, gone, seeded } => write!(f, " base {} {}{}", hex(old), hex(gone), if *seeded { " seeded" } else { "" }),
+                    Start::Base { old, gone, seeded } => write!(f, " base {} {}{}", hex(old), if gone == "-" { "-".to_owned() } else { hex(gone) }, if *seeded { " seeded" } else { "" }),
                 }
             }
             Line::NoWrite => f.write_str("nowrite"),
@@ -418,6 +423,7 @@ impl std::fmt::Display for Line {
             Line::Gate { done, src, quiet, after } => {
                 write!(f, "gate {done} {} {} {}", src.map_or("-".to_owned(), |s| s.to_string()), comma(quiet), comma(after))
             }
+            Line::Levels { cand, chk, held, gone, live } => write!(f, "levels {cand} {chk} {held} {gone} {live}"),
             Line::Edge(e) => {
                 let slots = |xs: &[usize]| xs.iter().map(|s| format!("v{s}")).collect::<Vec<_>>().join(" ");
                 let src = match &e.edge {
@@ -466,7 +472,7 @@ impl ComponentSpec {
                             }
                             "base" => {
                                 let (old, gone) = (t.get(k + 1).ok_or("rel: base needs two tables")?, t.get(k + 2).ok_or("rel: base needs two tables")?);
-                                base = Some((unhex(old)?, unhex(gone)?));
+                                base = Some((unhex(old)?, if *gone == "-" { "-".to_owned() } else { unhex(gone)? }));
                                 k += 3;
                             }
                             "from" => {
@@ -501,6 +507,7 @@ impl ComponentSpec {
                     quiet: list(at(3)?)?,
                     after: list(at(4)?)?,
                 },
+                "levels" => Line::Levels { cand: num(at(1)?)?, chk: num(at(2)?)?, held: num(at(3)?)?, gone: num(at(4)?)?, live: num(at(5)?)? },
                 "rule" => {
                     let sections: Vec<&[&str]> = t.get(5..).unwrap_or(&[]).split(|x| *x == ";").collect();
                     let section = |name: &str| -> Result<&[&str], String> {

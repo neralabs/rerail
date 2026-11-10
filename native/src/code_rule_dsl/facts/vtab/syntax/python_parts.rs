@@ -20,6 +20,8 @@ pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, 
     let p = Projected::new(0, Arc::new(facts), &dialect, super::Shape::Core, false, None);
     let local = p.core.iter().position(|&id| matches!(dialect.name(&p.facts, id), "string" | "concatenated_string")).unwrap() as u32;
     from_tape(&p, &dialect, local, false).into_iter().map(|(v, at, spec, offset)| {
+        // `at` is a node id: its low bits are a local id only under preorder ids.
+        let at = p.local_of(at as u32).expect("a node of the document");
         let start = p.facts.start[p.core[at as usize] as usize];
         let node = positions.iter().find(|&&(s, _)| s == start).unwrap().1;
         (v, node, spec, offset)

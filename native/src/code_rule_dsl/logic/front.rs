@@ -363,6 +363,25 @@ pub(in crate::code_rule_dsl) struct Program {
     /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
     /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
     pub(in crate::code_rule_dsl) qualifiers: BTreeMap<String, BTreeSet<String>>,
+    /// A session's maintained strata, each with the rules that derive it again instead (decision 0090 §4,
+    /// `maintain::rewrite`): the run chooses per stratum, once its input deltas are known (`plan::run`).
+    pub(in crate::code_rule_dsl) again: Vec<Again>,
+}
+
+/// A maintained stratum's other form (decision 0090 §4). Both make its relations and their deltas (`r__minus`,
+/// `r__plus`), which are all that other strata read of it, so each stratum chooses alone.
+#[derive(Clone, Debug, Default)]
+pub(in crate::code_rule_dsl) struct Again {
+    /// The stratum's own relations (one fixpoint when derived again).
+    pub(in crate::code_rule_dsl) scc: BTreeSet<String>,
+    /// Every relation the maintained form makes for it: its relations, their pieces (`__del`, `__ins`, …) and deltas.
+    pub(in crate::code_rule_dsl) owned: BTreeSet<String>,
+    /// Its rules over the current inputs, then its deltas against its old rows.
+    pub(in crate::code_rule_dsl) rules: Vec<Rule>,
+    pub(in crate::code_rule_dsl) deltas: Vec<Rule>,
+    /// The input deltas its maintained form reads, and its relations' old rows: the sizes that choose.
+    pub(in crate::code_rule_dsl) reads: Vec<String>,
+    pub(in crate::code_rule_dsl) olds: Vec<String>,
 }
 
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
@@ -881,9 +900,126 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
     finish(prog)
 }
 
+/// The relation of each node's preorder key (`syntax`'s `node_order(n, k)`).
+const NODE_ORDER: &str = "node_order";
+
+/// Rules that order nodes, under node ids per definition (decision 0094 §2). An id follows preorder only inside its
+/// granule, so a comparison of two nodes (`b < n`: a binding before a use) and a `min`/`max` over nodes read the
+/// nodes' preorder keys instead (`node_order`): the order preorder ids gave, so the rule means what it did.
+/// - `x < y`, both nodes: `node_order(x, kx), node_order(y, ky), kx < ky` (`<=`, `>`, `>=` likewise);
+/// - `v = max x : { r(…x…) }`, `x` a node: `kv = max k : { r_ord(…x…, k) }, node_order(v, kv)`, where
+///   `r_ord(…x…, k) :- r(…x…), node_order(x, k)`.
+///
+/// A variable is a node when a column it fills is declared `node`: in the head or any atom of the body.
+fn order_nodes(prog: &mut Program) {
+    if !crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
+        return;
+    }
+    let decls = prog.decls.clone();
+    let typed = |a: &Atom, nodes: &mut BTreeSet<String>| {
+        for (t, (_, ty)) in a.args.iter().zip(decls.get(&a.rel).map_or(&[][..], Vec::as_slice)) {
+            if let Term::Var(v) = t
+                && ty == "node"
+            {
+                nodes.insert(v.clone());
+            }
+        }
+    };
+    let order = |n: &str, k: &str| Literal::Atom(Atom { rel: NODE_ORDER.to_owned(), args: vec![Term::Var(n.to_owned()), Term::Var(k.to_owned())], neg: false, gated: false });
+    let mut used = false;
+    let mut helpers: Vec<(Rule, Vec<(String, String)>)> = Vec::new();
+    let mut fresh = 0usize;
+    for r in &mut prog.rules {
+        let mut nodes = BTreeSet::new();
+        typed(&r.head, &mut nodes);
+        for l in &r.body {
+            match l {
+                Literal::Atom(a) => typed(a, &mut nodes),
+                Literal::Agg { atom, .. } => typed(atom, &mut nodes),
+                Literal::Nearest { n, a, .. } => {
+                    nodes.insert(n.clone());
+                    nodes.insert(a.clone());
+                }
+                _ => {}
+            }
+        }
+        // A min or max over nodes is a node.
+        for l in &r.body {
+            if let Literal::Agg { var, op: AggOp::Min | AggOp::Max, over: Some(o), atom } = l {
+                let mut inner = BTreeSet::new();
+                typed(atom, &mut inner);
+                if inner.contains(o) {
+                    nodes.insert(var.clone());
+                }
+            }
+        }
+        if nodes.is_empty() {
+            continue;
+        }
+        let mut body = Vec::with_capacity(r.body.len());
+        for l in std::mem::take(&mut r.body) {
+            match l {
+                Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } if matches!(op, "<" | "<=" | ">" | ">=") && nodes.contains(&x) && nodes.contains(&y) => {
+                    let (kx, ky) = (format!("rr_ord{fresh}"), format!("rr_ord{}", fresh + 1));
+                    fresh += 2;
+                    body.extend([order(&x, &kx), order(&y, &ky), Literal::Cmp { l: Term::Var(kx), op, r: Term::Var(ky) }]);
+                    used = true;
+                }
+                Literal::Agg { var, op: op @ (AggOp::Min | AggOp::Max), over: Some(o), atom } if {
+                    let mut inner = BTreeSet::new();
+                    typed(&atom, &mut inner);
+                    inner.contains(&o)
+                } =>
+                {
+                    // The rows aggregated, each with its node's key.
+                    let cols = decls.get(&atom.rel).cloned().unwrap_or_default();
+                    let mut head_args: Vec<Term> = Vec::new();
+                    let mut head_cols: Vec<(String, String)> = Vec::new();
+                    let mut agg_args: Vec<Term> = Vec::new();
+                    for (i, t) in atom.args.iter().enumerate() {
+                        // The node aggregated is the helper's own: only its key goes out.
+                        if let Term::Var(v) = t
+                            && *v != o
+                            && !head_args.contains(t)
+                        {
+                            head_args.push(t.clone());
+                            head_cols.push((format!("c{i}"), cols.get(i).map_or_else(|| "int".to_owned(), |(_, ty)| ty.clone())));
+                            agg_args.push(Term::Var(v.clone()));
+                        }
+                    }
+                    let k = format!("rr_ord{fresh}");
+                    let kv = format!("rr_ord{}", fresh + 1);
+                    fresh += 2;
+                    let name = format!("rr_ordered{}", helpers.len());
+                    head_args.push(Term::Var(k.clone()));
+                    agg_args.push(Term::Var(k.clone()));
+                    head_cols.push(("k".to_owned(), "int".to_owned()));
+                    helpers.push((Rule { head: Atom { rel: name.clone(), args: head_args, neg: false, gated: false }, body: vec![Literal::Atom(atom), order(&o, &k)] }, head_cols));
+                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name, args: agg_args, neg: false, gated: false } });
+                    body.push(order(&var, &kv));
+                    used = true;
+                }
+                other => body.push(other),
+            }
+        }
+        r.body = body;
+    }
+    for (rule, cols) in helpers {
+        prog.decls.insert(rule.head.rel.clone(), cols);
+        prog.rules.push(rule);
+    }
+    if used {
+        prog.decls.entry(NODE_ORDER.to_owned()).or_insert_with(|| vec![("n".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())]);
+        if !prog.inputs.iter().any(|i| i == NODE_ORDER) {
+            prog.inputs.push(NODE_ORDER.to_owned());
+        }
+    }
+}
+
 /// The checks and additions every program gets once parsed, whatever its syntax (this one or `.rr`, `logic::rr`):
 /// no computed term in a body atom, bounded lattices, the tree axes' input relations, bounded value cycles.
 pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Error> {
+    order_nodes(&mut prog);
     for rule in &prog.rules {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
         if let Some(a) = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None })

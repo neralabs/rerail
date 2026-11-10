@@ -20,11 +20,11 @@
 //! byte. The CPU works in 64-byte words; Metal gives each lane 16, 32 or 64 bytes
 //! (`metal_block_program::LaneWidth`).
 
-use super::Error;
+use crate::Error;
 
 /// An operation. Operands are earlier values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum BlockOp {
+pub enum BlockOp {
     /// The bytes equal to the byte: simdjson's `in.eq(c)`.
     Eq(u8),
     /// The bytes in any class of `bits` of table `table` (`ClassTable`).
@@ -92,7 +92,7 @@ pub(in crate::code_rule_dsl) enum BlockOp {
 
 /// How a row comparison compares (`BlockOp::Cmp`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum CmpOp {
+pub enum CmpOp {
     Eq,
     Ne,
     Lt,
@@ -107,7 +107,7 @@ impl CmpOp {
     }
 
     /// Whether `a op b`.
-    pub(in crate::code_rule_dsl) fn holds(self, a: i64, b: i64) -> bool {
+    pub fn holds(self, a: i64, b: i64) -> bool {
         match self {
             CmpOp::Eq => a == b,
             CmpOp::Ne => a != b,
@@ -120,7 +120,7 @@ impl CmpOp {
 /// A row comparison's right side: another column of the row, or a parameter, one value for
 /// every row of a run (an outer binding, a constant).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Rhs {
+pub enum Rhs {
     Col(u16),
     Param(u16),
 }
@@ -128,24 +128,24 @@ pub(in crate::code_rule_dsl) enum Rhs {
 /// What a row program reads (`BlockProgram::rows`): its columns, its parameters and its sets,
 /// by count. Each run gives them (`RowBatch`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct RowShape {
-    pub(in crate::code_rule_dsl) columns: u16,
-    pub(in crate::code_rule_dsl) params: u16,
-    pub(in crate::code_rule_dsl) sets: u16,
+pub struct RowShape {
+    pub columns: u16,
+    pub params: u16,
+    pub sets: u16,
 }
 
 /// A row program's input for one run: its columns (each `len` values), its parameters and its
 /// sets (`RowShape`).
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct RowBatch<'a> {
-    pub(in crate::code_rule_dsl) columns: &'a [&'a [i64]],
-    pub(in crate::code_rule_dsl) params: &'a [i64],
-    pub(in crate::code_rule_dsl) sets: &'a [&'a [u64]],
-    pub(in crate::code_rule_dsl) len: usize,
+pub struct RowBatch<'a> {
+    pub columns: &'a [&'a [i64]],
+    pub params: &'a [i64],
+    pub sets: &'a [&'a [u64]],
+    pub len: usize,
 }
 
 /// `v` read as a signed `width`-bit integer.
-pub(in crate::code_rule_dsl) fn lane(v: i64, width: u8) -> i64 {
+pub fn lane(v: i64, width: u8) -> i64 {
     match width {
         16 => i64::from(v as i16),
         32 => i64::from(v as i32),
@@ -155,30 +155,30 @@ pub(in crate::code_rule_dsl) fn lane(v: i64, width: u8) -> i64 {
 
 /// The bound on a block's rounds: a strictly causal group is right on one more bit each round,
 /// so 64 rounds make a block's 64 bits right and one more confirms it.
-pub(in crate::code_rule_dsl) const MAX_ROUNDS: usize = 65;
+pub const MAX_ROUNDS: usize = 65;
 
 /// The carried operations' word functions, shared by the CPU executors' references and the
 /// interpreter: each takes the block's word and the carry in, and gives the result and the carry
 /// out.
-pub(super) mod carry {
+pub mod carry {
     /// simdjson's even bits.
-    pub(in crate::code_rule_dsl) const EVEN: u64 = 0x5555_5555_5555_5555;
+    pub const EVEN: u64 = 0x5555_5555_5555_5555;
 
     /// `prev`: the word shifted up `k` bits, the previous word's top `k` bits below.
-    pub(in crate::code_rule_dsl) fn prev(word: u64, previous: u64, k: u8) -> u64 {
+    pub fn prev(word: u64, previous: u64, k: u8) -> u64 {
         (word << k) | (previous >> (64 - u32::from(k)))
     }
 
     /// `toggle`: the word's prefix XOR, inverted when `carry` (all ones or zero) is set; the
     /// carry out is the last bit, spread.
-    pub(in crate::code_rule_dsl) fn toggle(word: u64, carry: u64) -> (u64, u64) {
+    pub fn toggle(word: u64, carry: u64) -> (u64, u64) {
         let y = prefix_xor(word) ^ carry;
         (y, ((y as i64) >> 63) as u64)
     }
 
     /// simdjson's `prefix_xor` on aarch64: a carry-less multiply by all ones (`vmull_p64`).
     #[cfg(all(target_arch = "aarch64", target_feature = "aes"))]
-    pub(in crate::code_rule_dsl) fn prefix_xor(word: u64) -> u64 {
+    pub fn prefix_xor(word: u64) -> u64 {
         use core::arch::aarch64::vmull_p64;
         // SAFETY: `aes` (PMULL) is enabled for this target.
         unsafe { vmull_p64(word, u64::MAX) as u64 }
@@ -186,7 +186,7 @@ pub(super) mod carry {
 
     /// Elsewhere, six shift-XOR rounds.
     #[cfg(not(all(target_arch = "aarch64", target_feature = "aes")))]
-    pub(in crate::code_rule_dsl) fn prefix_xor(mut word: u64) -> u64 {
+    pub fn prefix_xor(mut word: u64) -> u64 {
         for k in [1, 2, 4, 8, 16, 32] {
             word ^= word << k;
         }
@@ -197,7 +197,7 @@ pub(super) mod carry {
     /// `b = !e | s`, the add `a + b + cin` generates a carry at each start and propagates it
     /// over each byte that is neither a start nor an end, so the carry into bit `i` is
     /// `f[i - 1]`. The carry out is the add's overflow, `f[63]`.
-    pub(in crate::code_rule_dsl) fn fill(s: u64, e: u64, cin: u64) -> (u64, u64) {
+    pub fn fill(s: u64, e: u64, cin: u64) -> (u64, u64) {
         let (a, b) = (s, !e | s);
         let into = a.wrapping_add(b).wrapping_add(cin) ^ a ^ b;
         let f = s | (!e & into);
@@ -206,7 +206,7 @@ pub(super) mod carry {
 
     /// `back_fill`: `fill` on the bits reversed, `b[i] = s[i] | (b[i + 1] & !e[i])` with
     /// `b[64] = cin` (0 or 1, the next block's bit 0); the carry out is `b[0]`.
-    pub(in crate::code_rule_dsl) fn back_fill(s: u64, e: u64, cin: u64) -> (u64, u64) {
+    pub fn back_fill(s: u64, e: u64, cin: u64) -> (u64, u64) {
         let (f, _) = fill(s.reverse_bits(), e.reverse_bits(), cin);
         let b = f.reverse_bits();
         (b, b & 1)
@@ -216,7 +216,7 @@ pub(super) mod carry {
     /// carry in (`cin`, 0 or 1: the block's first byte is escaped). Every byte an odd-offset
     /// bit of a run escapes, escaped bits of the run included; the carry out is the add's
     /// overflow.
-    pub(in crate::code_rule_dsl) fn escaped(run: u64, cin: u64) -> (u64, u64) {
+    pub fn escaped(run: u64, cin: u64) -> (u64, u64) {
         let b = run & !cin;
         let follows = (b << 1) | cin;
         let odd_starts = b & !EVEN & !follows;
@@ -227,7 +227,7 @@ pub(super) mod carry {
 
 impl BlockOp {
     /// The operation's text mnemonic and operands (`rir`).
-    pub(super) fn text(&self) -> String {
+    pub fn text(&self) -> String {
         let two = |name: &str, a: &u16, b: &u16| format!("{name} %{a}, %{b}");
         match self {
             BlockOp::Eq(byte) => format!("eq {byte:#04x}"),
@@ -261,7 +261,7 @@ impl BlockOp {
     }
 
     /// The values the operation reads.
-    pub(super) fn operands(&self) -> Vec<u16> {
+    pub fn operands(&self) -> Vec<u16> {
         match *self {
             BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => vec![],
             BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) | BlockOp::Carry(a) => vec![a],
@@ -272,7 +272,7 @@ impl BlockOp {
     }
 
     /// The operation with each operand `v` replaced by `f(v)`.
-    pub(super) fn renumbered(&self, f: impl Fn(u16) -> u16) -> Self {
+    pub fn renumbered(&self, f: impl Fn(u16) -> u16) -> Self {
         match *self {
             BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => *self,
             BlockOp::Not(a) => BlockOp::Not(f(a)),
@@ -290,7 +290,7 @@ impl BlockOp {
     }
 
     /// Parse `text`'s output: a mnemonic and its operands, as words.
-    pub(super) fn parse(words: &[String]) -> Result<Self, String> {
+    pub fn parse(words: &[String]) -> Result<Self, String> {
         let byte = |word: &str| -> Result<u8, String> {
             word.strip_prefix("0x")
                 .and_then(|hex| u8::from_str_radix(hex, 16).ok())
@@ -420,14 +420,14 @@ impl BlockOp {
 /// class bit `c` when bit `c` is set in both `lo[b & 15]` and `hi[b >> 4]`. Up to eight classes
 /// per pair, each a product of a set of high nibbles and a set of low nibbles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct ClassTable {
-    pub(super) lo: [u8; 16],
-    pub(super) hi: [u8; 16],
+pub struct ClassTable {
+    pub lo: [u8; 16],
+    pub hi: [u8; 16],
 }
 
 impl ClassTable {
     /// Whether byte `b` is in any class of `bits`.
-    pub(super) fn member(&self, b: u8, bits: u8) -> bool {
+    pub fn member(&self, b: u8, bits: u8) -> bool {
         self.lo[usize::from(b & 15)] & self.hi[usize::from(b >> 4)] & bits != 0
     }
 }
@@ -435,56 +435,56 @@ impl ClassTable {
 /// A block program: its class tables, its operations, the values it outputs, and the outputs
 /// whose positions the extract pass writes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct BlockProgram {
-    pub(super) tables: Vec<ClassTable>,
-    pub(super) ops: Vec<BlockOp>,
-    pub(super) outputs: Vec<u16>,
+pub struct BlockProgram {
+    pub tables: Vec<ClassTable>,
+    pub ops: Vec<BlockOp>,
+    pub outputs: Vec<u16>,
     /// Values, each also an output, whose set bits the extract pass writes as byte positions
     /// (`docs/parser-generators/10-bit-programs.md` §4.1): simdjson's structural
     /// indexes from its structural mask.
-    pub(super) extracts: Vec<u16>,
+    pub extracts: Vec<u16>,
     /// Values, each also an output, that each executor tests over the whole stream: a total per
     /// file (`BlockRun::totals`), 1 when the output has any bit and 0 when it has none. Tier 2
     /// reads them (`EMPTY`): the fallback's masks are totals, and a file with any bit goes to
     /// tree-sitter. Only whether there is a bit is wanted, so no executor counts them.
-    pub(super) totals: Vec<u16>,
+    pub totals: Vec<u16>,
     /// Values, each also an output, that tier 2 reads as masks, a word of 64 bytes at a time:
     /// the last byte of each token whose end its row does not know (`SPAN m=1`), found as the
     /// next set bit. Nothing flattens them.
-    pub(super) masks: Vec<u16>,
+    pub masks: Vec<u16>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
-    pub(super) delay: u8,
+    pub delay: u8,
     /// Each output's own delay (`0..=delay`), in `outputs`' order; an output without one is
     /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
     /// shifts each by its own (decision 0069).
-    pub(super) output_delays: Vec<u8>,
+    pub output_delays: Vec<u8>,
     /// The fixed points (Bitlex's `rounds until settled`): each group's carries, each with the
     /// value that is its next. A block's rounds run its group's members (the values on a way
     /// from a carry to a next) until no carry changes; every such way passes a `prev`, so they
     /// settle within `MAX_ROUNDS` (docs/parser-generators/03-bitlex.md §2.7).
-    pub(super) rounds: Vec<Vec<(u16, u16)>>,
+    pub rounds: Vec<Vec<(u16, u16)>>,
     /// A row program's inputs: its stream is rows, not bytes, bit `j` of word `i` row `64 i + j`
     /// of a run's columns (decision 0095 §2). Its values come from `Cmp` and `Bit` and the mask
     /// operations; it reads no bytes, has no delay, carries nothing from word to word and
     /// writes no tier-2 masks. Its extract pass writes row numbers: a filter's survivors.
-    pub(in crate::code_rule_dsl) rows: Option<RowShape>,
+    pub rows: Option<RowShape>,
 }
 
 /// A rounds group's layout: its members in order (the values on a way from one of its carries
 /// to one of its nexts, carries included), and the last of them, where the group runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Group {
-    pub(in crate::code_rule_dsl) members: Vec<usize>,
-    pub(in crate::code_rule_dsl) carries: Vec<(usize, usize)>,
+pub struct Group {
+    pub members: Vec<usize>,
+    pub carries: Vec<(usize, usize)>,
 }
 
 /// Each value's group, of `ops` under `rounds`: the values on a way from a group's carry to
 /// one of its nexts. Refused: a carry in no group or two, a next before its carry, groups that
 /// share a value, a way from a carry to a next that passes no `prev`, or a group reading a value
 /// that waits on a later group.
-pub(in crate::code_rule_dsl) fn groups(ops: &[BlockOp], rounds: &[Vec<(u16, u16)>]) -> Result<Vec<Group>, String> {
+pub fn groups(ops: &[BlockOp], rounds: &[Vec<(u16, u16)>]) -> Result<Vec<Group>, String> {
     let n = ops.len();
     let users = {
         let mut u: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -574,24 +574,24 @@ pub(in crate::code_rule_dsl) fn groups(ops: &[BlockOp], rounds: &[Vec<(u16, u16)
 /// A file of a batch: its bytes, and its program's index in the batch's programs. Every executor
 /// takes a batch in this shape (decision 0066).
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct BatchFile<'a> {
-    pub(in crate::code_rule_dsl) bytes: &'a [u8],
-    pub(in crate::code_rule_dsl) program: usize,
+pub struct BatchFile<'a> {
+    pub bytes: &'a [u8],
+    pub program: usize,
 }
 
 /// A run's results: each output's words, each extract's positions (`u32` byte offsets, in
 /// order), and each total: 1 when its output has a bit, else 0.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct BlockRun {
-    pub(super) outputs: Vec<Vec<u64>>,
-    pub(super) positions: Vec<Vec<u32>>,
-    pub(super) totals: Vec<u64>,
+pub struct BlockRun {
+    pub outputs: Vec<Vec<u64>>,
+    pub positions: Vec<Vec<u32>>,
+    pub totals: Vec<u64>,
 }
 
 impl BlockProgram {
     /// The verifier's rules for a block program: at least one operation and one output, every
     /// operand an earlier value, and outputs that name values.
-    pub(in crate::code_rule_dsl) fn verify(&self) -> Result<(), Error> {
+    pub fn verify(&self) -> Result<(), Error> {
         let fits = self.ops.len() <= usize::from(u16::MAX);
         let outputs = !self.outputs.is_empty() && self.outputs.iter().all(|&v| usize::from(v) < self.ops.len());
         let earlier = self
@@ -642,7 +642,7 @@ impl BlockProgram {
     }
 
     /// The bytes the program digest covers.
-    pub(super) fn canonical_bytes(&self) -> Vec<u8> {
+    pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&(self.tables.len() as u32).to_le_bytes());
         for table in &self.tables {
@@ -713,7 +713,7 @@ impl BlockProgram {
     }
 
     /// Output `k`'s delay: its own, or the program's.
-    pub(super) fn output_delay(&self, k: usize) -> u8 {
+    pub fn output_delay(&self, k: usize) -> u8 {
         // `u8::MAX`: none of its own (an output assembled before the program's delay was read).
         match self.output_delays.get(k) {
             Some(&d) if d != u8::MAX => d,
@@ -722,7 +722,7 @@ impl BlockProgram {
     }
 
     /// Each extract's output index (its place in `outputs`).
-    pub(super) fn extract_outputs(&self) -> Vec<usize> {
+    pub fn extract_outputs(&self) -> Vec<usize> {
         self.extracts
             .iter()
             .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: an extract is an output"))
@@ -730,7 +730,7 @@ impl BlockProgram {
     }
 
     /// Each mask's output index.
-    pub(super) fn mask_outputs(&self) -> Vec<usize> {
+    pub fn mask_outputs(&self) -> Vec<usize> {
         self.masks
             .iter()
             .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: a mask is an output"))
@@ -738,7 +738,7 @@ impl BlockProgram {
     }
 
     /// Each total's output index.
-    pub(super) fn total_outputs(&self) -> Vec<usize> {
+    pub fn total_outputs(&self) -> Vec<usize> {
         self.totals
             .iter()
             .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: a total is an output"))
@@ -747,12 +747,12 @@ impl BlockProgram {
 
     /// The CPU interpreter with the extract pass: the outputs, then each extract's positions,
     /// sized by its count before it is written (`extract`).
-    pub(super) fn run(&self, bytes: &[u8]) -> BlockRun {
+    pub fn run(&self, bytes: &[u8]) -> BlockRun {
         self.run_files(&[bytes]).pop().expect("one file")
     }
 
     /// `run` over several files at once (`interpret_files`).
-    pub(super) fn run_files(&self, files: &[&[u8]]) -> Vec<BlockRun> {
+    pub fn run_files(&self, files: &[&[u8]]) -> Vec<BlockRun> {
         let (extracts, totals) = (self.extract_outputs(), self.total_outputs());
         self.interpret_files(files)
             .into_iter()
@@ -773,7 +773,7 @@ impl BlockProgram {
 
     /// The CPU interpreter: every output's words over `bytes`. Bits past the end of `bytes` are
     /// zero.
-    pub(super) fn interpret(&self, bytes: &[u8]) -> Vec<Vec<u64>> {
+    pub fn interpret(&self, bytes: &[u8]) -> Vec<Vec<u64>> {
         self.interpret_files(&[bytes]).pop().expect("one file")
     }
 
@@ -781,7 +781,7 @@ impl BlockProgram {
     /// over every file's blocks (each file's stream and `delay` bytes past it, end to end). A
     /// carried operation starts each file with a zero carry, as a stream of its own; `within`
     /// and the byte before a block are the block's file's.
-    pub(super) fn interpret_files(&self, files: &[&[u8]]) -> Vec<Vec<Vec<u64>>> {
+    pub fn interpret_files(&self, files: &[&[u8]]) -> Vec<Vec<Vec<u64>>> {
         let (values, spans) = self.all_values(files);
         spans
             .into_iter()
@@ -800,7 +800,7 @@ impl BlockProgram {
     /// bytes past it included), as they are made: not cut at the file's end, not undelayed.
     /// With each file's span of blocks. For checks of what is claimed about a value
     /// (`token_local`).
-    pub(super) fn all_values(&self, files: &[&[u8]]) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
+    pub fn all_values(&self, files: &[&[u8]]) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
         let extra = usize::from(self.delay);
         // Each block's file (its length, and its block number within it), and whether it is
         // the file's first.
@@ -992,7 +992,7 @@ impl BlockProgram {
 
 /// The CPU interpreter over a batch (decision 0066): each file's run under its program, in the
 /// files' order. One `interpret_files` per program, over all of that program's files.
-pub(super) fn run_batch(programs: &[&BlockProgram], files: &[BatchFile<'_>]) -> Vec<BlockRun> {
+pub fn run_batch(programs: &[&BlockProgram], files: &[BatchFile<'_>]) -> Vec<BlockRun> {
     let mut out: Vec<Option<BlockRun>> = vec![None; files.len()];
     for (p, program) in programs.iter().enumerate() {
         let mine: Vec<usize> = (0..files.len()).filter(|&i| files[i].program == p).collect();
@@ -1009,7 +1009,7 @@ impl BlockProgram {
     /// `values` holding them value by value (`words` each, reused from run to run), then each
     /// output's words, cut at the batch's length. Straight-line word operations over the
     /// columns; `Cmp` and `Bit` build a word from 64 rows each.
-    pub(in crate::code_rule_dsl) fn interpret_rows<'v>(&'v self, batch: &RowBatch<'_>, values: &'v mut Vec<u64>) -> impl Iterator<Item = &'v [u64]> + 'v {
+    pub fn interpret_rows<'v>(&'v self, batch: &RowBatch<'_>, values: &'v mut Vec<u64>) -> impl Iterator<Item = &'v [u64]> + 'v {
         let words = batch.len.div_ceil(64);
         values.clear();
         values.resize(self.ops.len() * words, 0);
@@ -1071,22 +1071,22 @@ impl BlockProgram {
 
     /// A row program of `ops` over `shape`'s inputs, with its outputs and the outputs whose rows
     /// the extract pass writes; verified.
-    pub(in crate::code_rule_dsl) fn row_program(shape: RowShape, ops: Vec<BlockOp>, outputs: Vec<u16>, extracts: Vec<u16>) -> Result<Self, Error> {
+    pub fn row_program(shape: RowShape, ops: Vec<BlockOp>, outputs: Vec<u16>, extracts: Vec<u16>) -> Result<Self, Error> {
         let program = BlockProgram { ops, outputs, extracts, rows: Some(shape), ..BlockProgram::default() };
         program.verify()?;
         Ok(program)
     }
 
     /// A row program on the CPU JIT (`native_cpu_rows`).
-    pub(in crate::code_rule_dsl) fn compile_rows(&self) -> Result<super::native_cpu_rows::CompiledRows, Error> {
+    pub fn compile_rows(&self) -> Result<crate::native_cpu_rows::CompiledRows, Error> {
         self.verify()?;
         let shape = self.rows.ok_or(Error::InvalidTarget(0))?;
-        super::native_cpu_rows::compile(&super::native_ir::BlockNative::lower(self), usize::from(shape.columns))
+        crate::native_cpu_rows::compile(&crate::block_native::BlockNative::lower(self), usize::from(shape.columns))
     }
 
     /// A row program's extract pass: the rows (numbers within the batch, in order) whose bit
     /// output `k` sets, appended to `out`.
-    pub(in crate::code_rule_dsl) fn extract_rows(&self, batch: &RowBatch<'_>, k: usize, values: &mut Vec<u64>, out: &mut Vec<u32>) {
+    pub fn extract_rows(&self, batch: &RowBatch<'_>, k: usize, values: &mut Vec<u64>, out: &mut Vec<u32>) {
         let words = self.interpret_rows(batch, values).nth(k).expect("an output");
         for (w, &word) in words.iter().enumerate() {
             let mut m = word;
@@ -1100,12 +1100,12 @@ impl BlockProgram {
 
 /// The extract pass on the CPU (`10-bit-programs.md` §4.1): a plane's set bits as
 /// byte positions, into a vector allocated once at its final size.
-pub(super) mod extract {
+pub mod extract {
     /// The positions of `words`' set bits, `count` of them (the mask pass's popcount), by
     /// simdjson's flattening (`bit_indexer::write`): per word, eight positions written whether
     /// or not the word has them (trailing zeros, then clear the lowest bit), then eight more
     /// while the word has more; the slack past the last position is never read.
-    pub(in crate::code_rule_dsl) fn positions(words: &[u64], count: usize) -> Vec<u32> {
+    pub fn positions(words: &[u64], count: usize) -> Vec<u32> {
         // A word writes at most seven entries past its own bits, which the next word overwrites;
         // eight entries of slack cover the last.
         let mut out = vec![0u32; count + 8];
@@ -1135,7 +1135,7 @@ pub(super) mod extract {
 }
 
 /// The source as whole 64-byte blocks, zero past its end.
-pub(super) fn padded(bytes: &[u8]) -> Vec<[u8; 64]> {
+pub fn padded(bytes: &[u8]) -> Vec<[u8; 64]> {
     bytes
         .chunks(64)
         .map(|chunk| {
@@ -1147,7 +1147,7 @@ pub(super) fn padded(bytes: &[u8]) -> Vec<[u8; 64]> {
 }
 
 /// The blocks of `bytes` and `extra` zero bytes after them.
-pub(super) fn padded_by(bytes: &[u8], extra: usize) -> Vec<[u8; 64]> {
+pub fn padded_by(bytes: &[u8], extra: usize) -> Vec<[u8; 64]> {
     let mut blocks = padded(bytes);
     let want = (bytes.len() + extra).div_ceil(64);
     blocks.resize(want.max(blocks.len()), [0u8; 64]);
@@ -1156,27 +1156,27 @@ pub(super) fn padded_by(bytes: &[u8], extra: usize) -> Vec<[u8; 64]> {
 
 /// `within`'s word for block `at` of a stream of `len` bytes: the bits below the stream's end.
 /// Two shifts, so 64 bits is all ones with no shift by 64.
-pub(super) fn within(at: usize, len: usize) -> u64 {
+pub fn within(at: usize, len: usize) -> u64 {
     let t = len.saturating_sub(at * 64).min(64) as u32;
     ((1u64 << (t >> 1)) << (t - (t >> 1))).wrapping_sub(1)
 }
 
 /// `within` at delay `d` for block `at`: the bits `d <= i < len + d`.
 /// Multiples of `k` below 64 (`k` in 1..=63): `phase`'s word at a position that is one.
-pub(in crate::code_rule_dsl) fn period_bits(k: u8) -> u64 {
+pub fn period_bits(k: u8) -> u64 {
     (0..64).step_by(usize::from(k)).fold(0u64, |acc, i| acc | 1 << i)
 }
 
 /// `phase k r`'s word for the 64 bytes from position `at`: bit `j` where `(at + j) % k == r`,
 /// the period's bits shifted up by the first such `j`.
-pub(super) fn phase(at: usize, k: u8, r: u8) -> u64 {
+pub fn phase(at: usize, k: u8, r: u8) -> u64 {
     let k = usize::from(k);
     let first = (usize::from(r) + k - at % k) % k;
     period_bits(k as u8) << first
 }
 
 /// Plane `j` of the positions of word `at`'s bytes: bit `i` is bit `j` of `64 at + i`.
-pub(in crate::code_rule_dsl) fn position(at: usize, j: u8) -> u64 {
+pub fn position(at: usize, j: u8) -> u64 {
     const LOW: [u64; 6] = [0xAAAA_AAAA_AAAA_AAAA, 0xCCCC_CCCC_CCCC_CCCC, 0xF0F0_F0F0_F0F0_F0F0, 0xFF00_FF00_FF00_FF00, 0xFFFF_0000_FFFF_0000, 0xFFFF_FFFF_0000_0000];
     match j {
         0..=5 => LOW[usize::from(j)],
@@ -1185,13 +1185,13 @@ pub(in crate::code_rule_dsl) fn position(at: usize, j: u8) -> u64 {
     }
 }
 
-pub(super) fn within_at(at: usize, len: usize, d: u8) -> u64 {
+pub fn within_at(at: usize, len: usize, d: u8) -> u64 {
     within(at, len + usize::from(d)) & !within(at, usize::from(d))
 }
 
 /// An executor's output words as the stream's mask: shifted down by the program's `delay` (bit
 /// `i + delay` is byte `i`'s), cut to `len` bytes. Shared by every executor's host side.
-pub(super) fn undelay(words: &[u64], delay: u8, len: usize) -> Vec<u64> {
+pub fn undelay(words: &[u64], delay: u8, len: usize) -> Vec<u64> {
     let d = u32::from(delay);
     let mut out: Vec<u64> = (0..len.div_ceil(64))
         .map(|j| {
@@ -1207,7 +1207,7 @@ pub(super) fn undelay(words: &[u64], delay: u8, len: usize) -> Vec<u64> {
 }
 
 /// Clear the bits past `len` bytes.
-pub(super) fn mask_tail(words: &mut [u64], len: usize) {
+pub fn mask_tail(words: &mut [u64], len: usize) {
     if let Some(last) = words.last_mut()
         && len % 64 != 0
     {
@@ -1217,7 +1217,7 @@ pub(super) fn mask_tail(words: &mut [u64], len: usize) {
 
 /// `eq` over one block: four 16-byte compares and simdjson's arm64 `to_bitmask`.
 #[cfg(target_arch = "aarch64")]
-pub(super) fn eq(block: &[u8; 64], byte: u8) -> u64 {
+pub fn eq(block: &[u8; 64], byte: u8) -> u64 {
     use core::arch::aarch64::*;
     // SAFETY: NEON is in the aarch64 baseline; each load reads 16 bytes of the 64-byte block.
     unsafe {
@@ -1229,14 +1229,14 @@ pub(super) fn eq(block: &[u8; 64], byte: u8) -> u64 {
 
 /// Off aarch64, the SWAR form.
 #[cfg(not(target_arch = "aarch64"))]
-pub(super) fn eq(block: &[u8; 64], byte: u8) -> u64 {
+pub fn eq(block: &[u8; 64], byte: u8) -> u64 {
     eq_swar(block, byte)
 }
 
 /// `class` over one block: two nibble lookups per 16 bytes (`vqtbl1q_u8`, as simdjson's arm64
 /// `classify`), an AND, a test against the class bits, and the bitmask.
 #[cfg(target_arch = "aarch64")]
-pub(super) fn class(block: &[u8; 64], table: &ClassTable, bits: u8) -> u64 {
+pub fn class(block: &[u8; 64], table: &ClassTable, bits: u8) -> u64 {
     use core::arch::aarch64::*;
     // SAFETY: NEON is in the aarch64 baseline; each load reads 16 bytes of the block or a table.
     unsafe {
@@ -1257,13 +1257,13 @@ pub(super) fn class(block: &[u8; 64], table: &ClassTable, bits: u8) -> u64 {
 /// Off aarch64, the same lookups by SWAR are not available; the portable form reads the tables
 /// a byte at a time. It is not a measured path (x86 would use `pshufb`).
 #[cfg(not(target_arch = "aarch64"))]
-pub(super) fn class(block: &[u8; 64], table: &ClassTable, bits: u8) -> u64 {
+pub fn class(block: &[u8; 64], table: &ClassTable, bits: u8) -> u64 {
     block.iter().enumerate().fold(0, |m, (j, &b)| m | (u64::from(table.member(b, bits)) << j))
 }
 
 /// Each block's bytes one back: byte `j` of block `i`'s is stream byte `64 i + j - 1`, 0x00
 /// before the stream.
-pub(super) fn before_blocks(blocks: &[[u8; 64]]) -> Vec<[u8; 64]> {
+pub fn before_blocks(blocks: &[[u8; 64]]) -> Vec<[u8; 64]> {
     let mut last = 0u8;
     blocks
         .iter()
@@ -1280,7 +1280,7 @@ pub(super) fn before_blocks(blocks: &[[u8; 64]]) -> Vec<[u8; 64]> {
 /// `pair` over one block, given the block's bytes one back: two lookups at each, an AND of the
 /// class bytes, a test against the class bits, and the bitmask.
 #[cfg(target_arch = "aarch64")]
-pub(super) fn pair(prev: &[u8; 64], block: &[u8; 64], before: &ClassTable, table: &ClassTable, bits: u8) -> u64 {
+pub fn pair(prev: &[u8; 64], block: &[u8; 64], before: &ClassTable, table: &ClassTable, bits: u8) -> u64 {
     use core::arch::aarch64::*;
     // SAFETY: NEON is in the aarch64 baseline; each load reads 16 bytes of a block or a table.
     unsafe {
@@ -1301,7 +1301,7 @@ pub(super) fn pair(prev: &[u8; 64], block: &[u8; 64], before: &ClassTable, table
 
 /// Off aarch64, a byte at a time (not a measured path).
 #[cfg(not(target_arch = "aarch64"))]
-pub(super) fn pair(prev: &[u8; 64], block: &[u8; 64], before: &ClassTable, table: &ClassTable, bits: u8) -> u64 {
+pub fn pair(prev: &[u8; 64], block: &[u8; 64], before: &ClassTable, table: &ClassTable, bits: u8) -> u64 {
     (0..64).fold(0, |m, j| {
         let both = before.lo[usize::from(prev[j] & 15)] & before.hi[usize::from(prev[j] >> 4)]
             & table.lo[usize::from(block[j] & 15)] & table.hi[usize::from(block[j] >> 4)];
@@ -1333,7 +1333,7 @@ unsafe fn to_bitmask(
 
 /// `eq` over one block by SWAR: eight 8-byte words, each a zero-byte test and a multiply that
 /// gathers the eight high bits.
-pub(super) fn eq_swar(block: &[u8; 64], byte: u8) -> u64 {
+pub fn eq_swar(block: &[u8; 64], byte: u8) -> u64 {
     const LOW: u64 = 0x7f7f_7f7f_7f7f_7f7f;
     const HIGH: u64 = 0x8080_8080_8080_8080;
     const GATHER: u64 = 0x0002_0408_1020_4081;
@@ -1353,4 +1353,47 @@ pub(super) fn eq_swar(block: &[u8; 64], byte: u8) -> u64 {
         | word(5) << 40
         | word(6) << 48
         | word(7) << 56
+}
+
+/// Block program `at`'s rows: tables, operations, outputs, extracts, delay, and the tree section (`tree_rows`).
+pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
+    use std::fmt::Write as _;
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    for (t, table) in block.tables.iter().enumerate() {
+        let _ = writeln!(out, "  block {at} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
+    }
+    // `block N rows C P S`: a row program's columns, parameters and sets (`RowShape`).
+    if let Some(shape) = block.rows {
+        let _ = writeln!(out, "  block {at} rows {} {} {}", shape.columns, shape.params, shape.sets);
+    }
+    for (value, op) in block.ops.iter().enumerate() {
+        let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
+    }
+    // `block N rounds %c %n …`: one fixed point's carries, each with its next.
+    for group in &block.rounds {
+        let pairs: Vec<String> = group.iter().map(|(c, x)| format!("%{c} %{x}")).collect();
+        let _ = writeln!(out, "  block {at} rounds {}", pairs.join(" "));
+    }
+    for (k, value) in block.outputs.iter().enumerate() {
+        match block.output_delay(k) {
+            d if d == block.delay => {
+                let _ = writeln!(out, "  block {at} output %{value}");
+            }
+            d => {
+                let _ = writeln!(out, "  block {at} output %{value} delay {d}");
+            }
+        }
+    }
+    for value in &block.extracts {
+        let _ = writeln!(out, "  block {at} extract %{value}");
+    }
+    for value in &block.totals {
+        let _ = writeln!(out, "  block {at} total %{value}");
+    }
+    for value in &block.masks {
+        let _ = writeln!(out, "  block {at} mask %{value}");
+    }
+    if block.delay != 0 {
+        let _ = writeln!(out, "  block {at} delay {}", block.delay);
+    }
 }

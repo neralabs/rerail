@@ -771,3 +771,37 @@ Reference construction costs 1.425–1.484 CPU seconds. Relation execution and c
 About 98% of the measured test phases belong to the quadratic reference calculation.
 This separates the correctness-test runtime regression from the engine query cost.
 The final report retains both results and the source/binary identity of each measurement.
+
+
+## 2026-11-10 — Integration merge and sibling-workstream survey
+
+Selected the integration hub's committed local tip `b4f0aa04b` after fetching origin.
+The remote tip was `3ba1008cf`. The local tip adds the committed definition-ID integration.
+The hub also has an unfinished executor merge from `72a3a658b`; its working changes are outside this merge.
+
+Resolved conflicts in projection numbering, projection tests, and typed native start specifications.
+Definition/granule IDs remain the default, including guests. The explicit `node_order` relation remains available.
+Direct validated fact admission, counted postings, lazy columns, and lazy token spans remain in place.
+Granule digests find subtree boundaries through ordered core IDs, without demanding the full projection-size column.
+Both sets of tests remain present. The native start specification retains `Hash` and the integration's level semantics.
+
+Surveyed 22 worktrees through their committed tips, status, notes, and working diffs.
+The detailed findings are in `sibling-workstreams-2026-11-10.md`.
+The snapshot is under `benchmark/async-family-integration/merge-b4f0aa04b/`.
+No sibling working files were changed.
+
+The SQL/store-wait profiler already exists in `More-ergonomic-rule-syntax` at `d3ef2ab8f`.
+RER-131 owns the changing tape/token representation. The two cache branches own retention and relation identity.
+The executor branch owns the shared pool and placement of work. Typing-support's stable IDs enter through this merge.
+The singleton tape lookup remains in all six relevant working copies inspected.
+Bulk tape admission remains a useful scope here, with no new cache or private executor.
+The old 25% timing result does not describe this merged default-ID configuration.
+
+
+The optimized merge build passes. All 110 focused test executions pass.
+The positive async fixture passes with the new default IDs and with explicit preorder IDs.
+All 178 edge-fixture finding keys remain equal.
+The full workload retains 5,725 files, 19,007,630 core nodes, zero findings, 81 rule executions, and 785,573 VM instructions.
+Projection sizes remain demanded for only 35 documents, depths for 25, and token spans for 34.
+The full run is profiled validation, not a paired performance comparison.
+Merge evidence and the source hashes are under `benchmark/async-family-integration/merge-b4f0aa04b/`.

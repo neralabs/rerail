@@ -1,24 +1,23 @@
 //! Gated regions, simdjson's skip-when-absent branches generalized (doc 26 §1.1): which work a
 //! rare gate puts behind a branch, and that the outputs do not change.
 
-use super::bitlex_compile::{self, FALLBACK};
-use super::block::BlockProgram;
-use super::native_cpu_block::{self, State};
-use super::native_ir::{self, BlockNative, Pass};
+use crate::bitlex_masks::{self, FALLBACK};
+use crate::block::BlockProgram;
+use crate::block_native::{BlockNative, Pass};
+use crate::native_cpu_block::{self, State};
 
 /// A small grammar: its block program, its native form, and its named values.
 pub(super) struct Small {
     pub(super) block: BlockProgram,
     pub(super) native: BlockNative,
-    values: Vec<bitlex_compile::Named>,
+    values: Vec<bitlex_masks::Named>,
 }
 
 pub(super) fn small(text: &str) -> Small {
     let stmts = ::bitlex::syntax::parse(text).expect("parses");
-    let compiled = bitlex_compile::compile(&stmts, &[FALLBACK], None).expect("compiles");
-    let program = super::rir::assemble(&compiled.text()).expect("assembles");
-    let native = native_ir::lower(&program).expect("lowers").block_programs.remove(0);
-    Small { block: program.block_programs()[0].clone(), native, values: compiled.values }
+    let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], None).expect("compiles");
+    let native = BlockNative::lower(&compiled.program);
+    Small { block: compiled.program, native, values: compiled.values }
 }
 
 impl Small {
@@ -117,16 +116,6 @@ fn a_gated_region_equals_the_interpreter() {
 
 /// `.rr`'s `\u` check (`h4`, the `\u{…}` forms, `u_ok`) is behind the gate of a `\u` in a
 /// string: set in 0.02% of the corpus's blocks.
-#[test]
-fn rr_gates_its_unicode_escape_check() {
-    let c = super::rr_parser::compiled().expect("compiles");
-    let regions = regions(&c.native);
-    let op = |name: &str| usize::from(c.values.iter().find(|v| v.name == name).unwrap_or_else(|| panic!("no `{name}`")).op);
-    for name in ["h4", "b_short", "b_four", "b_five", "b_six", "u_ok"] {
-        assert!(regions.iter().any(|(_, m)| m.contains(&op(name))), "`{name}` is not gated: {} regions", regions.len());
-    }
-}
-
 /// The gate after a `back_fill`, as `.rr`'s `uesc` is (a string's fill comes after one): the
 /// hex check, made from the bytes alone, must not be made in the first pass and stored.
 pub(super) const LATE: &str = "lexer t
@@ -152,7 +141,7 @@ fn placed(native: &BlockNative) -> Vec<(Vec<usize>, Vec<usize>)> {
         let (mut made, mut loaded) = (Vec::new(), Vec::new());
         for (x, inst) in body.insts.iter().enumerate() {
             let o = origin[x] as usize;
-            if matches!(inst, native_ir::BlockInst::Load(_)) { loaded.push(o) } else { made.push(o) }
+            if matches!(inst, crate::block_native::BlockInst::Load(_)) { loaded.push(o) } else { made.push(o) }
         }
         out.push((made, loaded));
     }
@@ -234,7 +223,7 @@ fn dump_small_plan() {
             }
         }
     }
-    let remade = super::native_cpu_lanes::remade(&g.native);
+    let remade = crate::native_cpu_lanes::remade(&g.native);
     eprintln!("remade {:?}", (0..remade.len()).filter(|&x| remade[x]).collect::<Vec<_>>());
     for v in &g.values {
         eprintln!("name {} = <{}>", v.name, v.op);
@@ -255,27 +244,4 @@ fn dump_small_plan() {
         eprintln!("%{x:<3} {inst:<40?} lane {} mask {} full {:?} {name:?}", plan.lanes[x], plan.mask[x], plan.full[x]);
     }
     eprintln!("outputs {:?}", g.native.outputs);
-}
-
-#[test]
-#[ignore = "a dump: run by hand"]
-fn dump_rr_unicode() {
-    let c = super::rr_parser::compiled().expect("compiles");
-    let passes = c.native.passes_with(&c.native.pure());
-    let names = ["uesc", "h4", "u_four", "u_brace", "b_short", "b_four", "b_six", "u_ok"];
-    for (k, pass) in passes.passes.iter().enumerate() {
-        let Pass::Forward { body, .. } = pass else { continue };
-        let origin = &passes.origins[k];
-        let plan = State::of(body).plan;
-        let local = |name: &str| c.values.iter().find(|v| v.name == name).and_then(|v| origin.iter().position(|&o| o as usize == usize::from(v.op)));
-        for name in names {
-            let Some(x) = local(name) else { continue };
-            let region: Vec<usize> = plan.regions.iter().enumerate().filter(|(_, r)| r.members.contains(&x) || r.vectors.contains(&x)).map(|(i, _)| i).collect();
-            let users: Vec<String> = body.insts.iter().enumerate().filter(|(_, i)| i.operands().contains(&x)).map(|(u, i)| format!("%{u} {i:?} lane {} mask {} region {:?}", plan.lanes[u], plan.mask[u], plan.region_of[u])).collect();
-            eprintln!("pass {k} `{name}` %{x} {:?} lane {} mask {} regions {region:?} users {users:?}", body.insts[x], plan.lanes[x], plan.mask[x]);
-        }
-        for (i, r) in plan.regions.iter().enumerate() {
-            eprintln!("pass {k} region {i}: gate %{} {:?}, {} members, {} vectors", r.gate, body.insts[r.gate], r.members.len(), r.vectors.len());
-        }
-    }
 }

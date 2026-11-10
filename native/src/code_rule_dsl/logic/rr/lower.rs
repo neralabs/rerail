@@ -1426,9 +1426,13 @@ impl Lowerer {
                 let hit = vec![atom(&up, vec![v(&n), v(&s)]), atom(&set, vec![v(&s)])];
                 let none = self.negate(vec![hit.clone()], std::slice::from_ref(&n))?;
                 let mut out = Vec::new();
+                // The nearest stop is a, or a is below it: by the tree, not by comparing ids (ids follow preorder only
+                // inside a granule, decision 0094 §2).
+                let above = atom(crate::code_rule_dsl::facts::vtab::syntax::WITHIN, vec![v(&a), v(&s)]);
                 for b in below {
                     out.push(b.iter().cloned().chain([none.clone()]).collect());
-                    out.push(b.into_iter().chain(hit.iter().cloned()).chain([Literal::Cmp { l: v(&s), op: "<=", r: v(&a) }]).collect());
+                    out.push(b.iter().cloned().chain(hit.iter().cloned()).chain([Literal::Cmp { l: v(&s), op: "=", r: v(&a) }]).collect());
+                    out.push(b.into_iter().chain(hit.iter().cloned()).chain([above.clone()]).collect());
                 }
                 out
             }

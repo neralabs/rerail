@@ -191,6 +191,69 @@ impl RelStats {
         }
     }
 
+    /// `paired` statistics of a whole relation of `rows` rows, read from its postings rather than its rows: for each
+    /// column `c`, `postings(c, visit)` hands each value with the first-column values of the rows holding it (their
+    /// documents), and is `false` when it has none. The same as `documents` over the rows, at a hash a distinct value
+    /// rather than a row. `None` when a column has no postings.
+    pub(in crate::code_rule_dsl) fn from_postings(columns: Vec<String>, rows: i64, postings: &mut dyn FnMut(usize, &mut dyn FnMut(i64, &[i64])) -> bool) -> Option<Self> {
+        let mut s = Self::paired(columns);
+        s.rows = rows;
+        let mut docs: Vec<(i64, bool, bool)> = Vec::new();
+        let mut crossing: rustc_hash::FxHashSet<i64> = Default::default();
+        for (c, col) in s.cols.iter_mut().enumerate() {
+            crossing.clear();
+            let (mut sqd, mut local) = (0i64, 0i64);
+            let pairs = col.pairs.as_mut().expect("paired");
+            let mut exact = col.exact.take();
+            let found = postings(c, &mut |v, firsts| {
+                col.sketch.add(v, firsts.len() as i64);
+                if let Some(e) = &mut exact {
+                    e.insert(v, firsts.len() as i64);
+                    if e.len() > EXACT {
+                        exact = None;
+                    }
+                }
+                // Each row's document, whether its first column is a document key (`doc32` 0: summed across
+                // documents, as `syntax::measured` groups them), and whether `v` names another document.
+                docs.clear();
+                docs.extend(firsts.iter().map(|&f| (document_of(f), doc32(f) == 0, !names_doc(v, f))));
+                if docs.len() > 1 {
+                    docs.sort_unstable();
+                }
+                let mut small = 0i64;
+                let mut at = 0;
+                while at < docs.len() {
+                    let d = docs[at].0;
+                    let end = at + docs[at..].partition_point(|x| x.0 == d);
+                    let zero = docs[at..end].iter().filter(|x| x.1).count() as i64;
+                    let large = (end - at) as i64 - zero;
+                    local += 1;
+                    small += zero;
+                    sqd += large * large;
+                    if large > 0 {
+                        pairs.add(pair(d, v), large);
+                    }
+                    if docs[at..end].iter().any(|x| x.2) {
+                        crossing.insert(d);
+                    }
+                    at = end;
+                }
+                sqd += small * small;
+                if small > 0 {
+                    pairs.add(pair(0, v), small);
+                }
+            });
+            if !found {
+                return None;
+            }
+            col.exact = exact;
+            col.sqd = sqd;
+            col.local_ndv = local;
+            col.crossing = crossing.len() as i64;
+        }
+        Some(s)
+    }
+
     /// Rows in and out that are not whole documents (a phase export's delta), `plus` then `minus`, each row-major.
     pub(in crate::code_rule_dsl) fn delta(&mut self, plus: &[i64], minus: &[i64], width: usize) {
         if width == 0 {

@@ -13,9 +13,9 @@
 //! words by the caller (`CompiledRows::run`), so the last word reads no row past them; the host
 //! cuts the bits past the batch, as the interpreter does.
 
-use super::Error;
-use super::block::{CmpOp, RowBatch, Rhs, mask_tail};
-use super::native_ir::{BlockInst, BlockNative};
+use crate::Error;
+use crate::block::{CmpOp, RowBatch, Rhs, mask_tail};
+use crate::block_native::{BlockInst, BlockNative};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -27,13 +27,13 @@ use cranelift_module::{Linkage, Module, default_libcall_names};
 type Entry = unsafe extern "C" fn(*const *const i64, *const i64, *const [u64; 2], u64, *mut u64);
 
 /// A compiled row program.
-pub(in crate::code_rule_dsl) struct CompiledRows {
+pub struct CompiledRows {
     _module: JITModule,
     entry: Entry,
     outputs: usize,
     columns: usize,
     /// The function's Cranelift IR, for the shape's checks.
-    pub(super) clif: String,
+    pub clif: String,
 }
 
 /// One word of zeros, for a set with none of its own.
@@ -42,7 +42,7 @@ static EMPTY: [u64; 1] = [0];
 impl CompiledRows {
     /// Every output's words over the batch, output `k` at `out[k * words..]`; bits past the
     /// batch are zero. Columns shorter than whole words are copied padded first.
-    pub(in crate::code_rule_dsl) fn run(&self, batch: &RowBatch<'_>, out: &mut Vec<u64>) {
+    pub fn run(&self, batch: &RowBatch<'_>, out: &mut Vec<u64>) {
         let words = batch.len.div_ceil(64);
         let padded: Vec<Vec<i64>> = batch.columns[..self.columns]
             .iter()
@@ -204,7 +204,7 @@ pub(super) fn compile(native: &BlockNative, columns: usize) -> Result<CompiledRo
         f.finalize();
     }
     let clif = context.func.display().to_string();
-    super::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
+    crate::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
     module.clear_context(&mut context);
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
     // SAFETY: the function was declared and defined with `Entry`'s signature.
