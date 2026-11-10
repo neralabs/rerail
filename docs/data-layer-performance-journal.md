@@ -11231,3 +11231,32 @@ Coverage includes positive findings, lexical edge cases, TYPE_CHECKING state, re
 
 This is scanner evidence, not complete rule admission. Discovery, CLI, plugin/fact projections, original shared assertions, and update controls remain open.
 The inventory remains 12 accepted ports, 84 drafts, and four absent translations.
+
+### Final ef317 integration and dynamic-loading discovery, 2026-11-10
+
+Committed the prior scanner checkpoint in `81ff1d8c7`. Merge `a438d925f` imports Final through `ef317e108`, after fetching its remote branch.
+This includes planner-selected axes and native transducer execution of tree patterns. All engine work remains in the root checkout.
+The first merged CLI build took 147.615 seconds. The subsequent constant-transport repair build took 95.8 seconds.
+
+Repository parity exposed delimiter loss in Final's folded constants. Its internal tab-separated output split valid filenames into extra rows.
+The shared boundary now escapes delimiters and the escape marker before serialization, then decodes symbols after splitting rows.
+The native regression preserves tabs, newlines, carriage returns, Unicode, and literal escape text across fresh and cached runs.
+Removing the file invalidates the cached result. Both new tests pass; the existing combined-library request test also passes.
+The first regression fixture lacked a named request seed. The corrected fixture uses the existing corpus test's request convention.
+The independent data-layer red recording retains the original delimiter failure.
+The current library artifact also passes 107 rule-lowering tests; two existing tests remain ignored.
+
+Discovery shares the ordered Python walker with the dead-code survey rule. Its layer regex now preserves Python's Unicode digits and newline behavior.
+Single-file scanning and repository discovery use native filesystem requests. The adapter no longer copies every file or handles scanner read failures.
+A repository snapshot starts with no primary buffers; requested resources remain on disk. Separate scanner tests exercise supplied document buffers.
+The transport regression preserves binary files and symbolic links. The tooling suite passes 395 tests and 165 subtests.
+
+The expanded source corpus contains 116 scanner cases and 30 repository cases. Every repository witness retains positive files where applicable.
+An allowlisted FIFO exposed another issue: reader demand can include paths removed by a neighboring negative condition.
+The lowerer's general context deliberately omits negative atoms. The fix must put exclusion inside a named positive read-request relation.
+The failed bounded run also held the shared cache writer, causing unrelated concurrent checks to fail.
+Acceptance commands will use separate caches, as the original-assertion harness already does.
+
+All 115 tests in the unchanged dedicated Python module pass in the source recording.
+Native replay of its 90 non-CLI tests is underway. The 25 CLI tests and the broader fixed shared inventory remain open.
+Dynamic loading remains a draft. These results do not admit another rule or change the 100-port completion count.

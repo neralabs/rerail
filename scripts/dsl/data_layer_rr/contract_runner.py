@@ -1,6 +1,7 @@
 """Run source-recorded API contracts through either native execution interface."""
 import argparse
 import importlib
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -21,6 +22,8 @@ def main(check,format,build_cases,exercise,install,dependencies):
     sys.path[:0]=[str(source),str(source/'scripts')];module=importlib.import_module('scripts.lint_'+check)
     corpus=build_cases(module);fallbacks=[]
     if a.command=='native':
+        cache=tempfile.TemporaryDirectory(prefix='rerail-contract-cache-')
+        os.environ['RERAIL_TAPE_CACHE']=str(Path(cache.name)/'store.sqlite')
         a.engine=a.engine.absolute()
         from replay import execute_native,execute_workspace
         from data_layer_audit.native_guard import codes

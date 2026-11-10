@@ -8,7 +8,7 @@ CHECK='dynamic_module_loading'
 
 
 def settings(module):
-    result=dict(linter=[module.LINTER_NAME],signature=[module.ALLOWLIST_SIGNATURE],allowed=list(module.ALLOWLISTED_FILES),fast=list(module._FAST_SUBSTRINGS),extractor=[json.dumps(asdict(module.DYNAMIC_MODULE_LOADING_EXTRACTOR))])
+    result=dict(docstring=[module.__doc__],linter=[module.LINTER_NAME],signature=[module.ALLOWLIST_SIGNATURE],allowed=list(module.ALLOWLISTED_FILES),fast=list(module._FAST_SUBSTRINGS),extractor=[json.dumps(asdict(module.DYNAMIC_MODULE_LOADING_EXTRACTOR))])
     for name,patterns in [('primary',module._PATTERNS),('imports',module._IMPORT_MODULE_PATTERNS)]:
         result[name+'.pattern']=[p.pattern for p,_ in patterns];result[name+'.flags']=[str(p.flags) for p,_ in patterns];result[name+'.label']=[label for _,label in patterns]
     return {k:result[k] for k in sorted(result)}

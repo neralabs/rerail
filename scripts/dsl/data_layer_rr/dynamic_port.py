@@ -11,11 +11,9 @@ def scan(backend,entry,module,path,root,allowed,content=None):
     path=Path(path);root=Path(root);logical=path.relative_to(root).as_posix()
     allowed=list(allowed)
     if entry=='_scan_file':
-        plan=backend.native(CHECK,'_dynamic_prepare',[],dict(dmlCandidates=[logical],allowlistedFiles=allowed))
-        if any(r['code']!='DML_READ' or r['parameters']['ordinal']!=0 for r in plan):raise ValueError('Unexpected native dynamic read plan')
-        if not plan:return []
-        try:content=path.read_text(encoding='utf-8')
-        except (OSError,UnicodeDecodeError):content=None
+        exports=['dml.file='+logical]+[f'dml.allowed.{i}={p}' for i,p in enumerate(allowed)]
+        rows=backend.native(CHECK,'_dynamic_disk_file',[],dict(env=exports),root=root)
+        return disk_results(rows,root)
     files=[] if content is None else [dict(path='source-0.py',source=content)]
     rows=backend.native(CHECK,entry,files,dict(allowlistedFiles=list(allowed),dmlDocuments=['source-0.py'],dmlPaths=[logical]))
     if any(r['code']!='DML001' for r in rows):raise ValueError('Unexpected native dynamic-loading row')
@@ -37,14 +35,20 @@ def repository(backend,module,root,directories=None):
     exports=['dml.discovery=true']+[f'dml.allowed.{i}={p}' for i,p in enumerate(module.ALLOWLISTED_FILES)]
     if directories is not None:exports+=['data-layer.scan.configured=true']+[f'data-layer.scan.{i}={p}' for i,p in enumerate(directories)]
     rows=backend.native(CHECK,'_dynamic_repository',[],dict(env=exports),root=root)
-    if any(r['code'] not in {'DML_DISCOVERED','DML_FOUND'} for r in rows):raise ValueError('Unexpected dynamic repository response')
+    return disk_results(rows,root)
+
+
+def disk_results(rows,root):
+    if any(r['code'] not in {'DML_DISCOVERED','DML_FOUND','DML_IO_ERROR'} for r in rows):raise ValueError('Unexpected dynamic repository response')
     found=sorted((r for r in rows if r['code']=='DML_FOUND'),key=lambda r:(r['parameters']['file_ordinal'],r['line'],r['parameters']['ordinal']))
     return [(root/r['parameters']['path'],r['line'],r['parameters']['snippet'],r['parameters']['label']) for r in found]
+
 
 
 def install(backend,module,detectors=False):
     config=configuration(backend)
     if not config:raise ValueError('Native dynamic-loading configuration is missing')
+    backend.replace(module,'__doc__',config['docstring'][0])
     backend.replace(module,'LINTER_NAME',config['linter'][0]);backend.replace(module,'ALLOWLIST_SIGNATURE',config['signature'][0])
     backend.replace(module,'ALLOWLISTED_FILES',list(config['allowed']));backend.replace(module,'_FAST_SUBSTRINGS',tuple(config['fast']))
     for prefix,name in [('primary','_PATTERNS'),('imports','_IMPORT_MODULE_PATTERNS')]:
@@ -63,4 +67,6 @@ def install(backend,module,detectors=False):
             if len(rows)>1 or any(r['code']!='DML_TYPE_CHECKING' for r in rows):raise ValueError('Unexpected TYPE_CHECKING result')
             return bool(rows)
         backend.replace(module,'_is_in_type_checking_block',predicate)
+    if hasattr(backend,'configuration_bindings'):
+        backend.configuration_bindings[CHECK]=dict(nativeCall=len(backend.calls)-1,names=['__doc__','LINTER_NAME','ALLOWLIST_SIGNATURE','ALLOWLISTED_FILES','_FAST_SUBSTRINGS','_PATTERNS','_IMPORT_MODULE_PATTERNS','DYNAMIC_MODULE_LOADING_EXTRACTOR'])
     module._rerail_dynamic_configuration=lambda:configuration(backend)

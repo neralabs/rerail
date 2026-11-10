@@ -5,7 +5,7 @@ sgd_workspace(".") :- sgd_enabled().
 .decl sgd_top(name: symbol)
 sgd_top(name) :- sgd_workspace(path), dir_entry(path, name, 1).
 .decl sgd_layer(name: symbol)
-sgd_layer(name) :- sgd_top(name), match("l\\d{4}_.+(?s:.*)", name).
+sgd_layer(name) :- sgd_top(name), match("l\\d{4}_[^\\n]+(?s:.*)", name).
 .decl sgd_modern()
 sgd_modern() :- sgd_top("data_layer").
 sgd_modern() :- sgd_top("_internal").

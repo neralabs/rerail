@@ -555,6 +555,9 @@ class Suite:
             if check in {'backend_type_strings', 'hasattr_async'}:
                 from text_cli_port import install
                 install(self, module, check)
+            if check == 'dynamic_module_loading':
+                from dynamic_port import install
+                install(self,module,detectors=True)
             if check == 'connection_caches':
                 from connection_caches_port import install
                 install(self, module)
@@ -577,7 +580,7 @@ class Suite:
                     @wraps(original)
                     def run(*args, **kwargs):
                         values = dict(signature.bind(*args, **kwargs).arguments)
-                        result = self.scan(check, entry, module, values)
+                        result = original(*args,**kwargs) if check=='dynamic_module_loading' else self.scan(check, entry, module, values)
                         self.compare_original(check, entry, module, args, kwargs, result)
                         return result
                     if check=='backend_type_strings' and entry=='check_file' or check=='hasattr_async' and entry in {'check_file','should_exclude'}:run._rerail_native_check=check

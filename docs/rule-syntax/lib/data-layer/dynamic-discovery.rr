@@ -6,14 +6,30 @@ sgd_configured() :- env("data-layer.scan.configured","true").
 .decl dml_disk_allowed(path: symbol)
 dml_disk_allowed(p) :- env(key,p),match_all("\\Adml\\.allowed\\.[0-9]+\\z",key).
 dml_allowed(p) :- dml_disk_allowed(p).
+.decl dml_disk_path(path: symbol)
+dml_disk_path(p) :- sgd_file(_,p).
+dml_disk_path(p) :- env("dml.file",p).
+.decl dml_occurrence(path: symbol,ordinal: number)
+dml_occurrence(p,i) :- sgd_discovery_path(p,i).
+dml_occurrence(p,0) :- env("dml.file",p).
+.decl dml_disk_entry()
+dml_disk_entry() :- option("entryPoint","_dynamic_repository").
+dml_disk_entry() :- option("entryPoint","_dynamic_disk_file").
+// World demand contexts can omit neighboring negative atoms. Filter the whole
+// request batch in this named producer before handing paths to any reader.
+.decl dml_read_path(path: symbol)
+dml_read_path(p) :- dml_disk_path(p),!dml_disk_allowed(p).
 .decl dml_disk_error(path: symbol)
-dml_disk_error(p) :- sgd_file(_,p),!dml_disk_allowed(p),file_error(p,_,_,_,_,_,_,_).
-load(p,cat("dml:",p),"python") :- sgd_file(_,p),!dml_disk_allowed(p),!dml_disk_error(p).
+dml_disk_error(p) :- dml_read_path(p),file_error(p,_,_,_,_,_,_,_).
+load(p,cat("dml:",p),"python") :- dml_read_path(p),!dml_disk_error(p).
 .decl dml_disk_doc(path: symbol,d: number)
-dml_disk_doc(p,d) :- sgd_file(_,p),loaded(c,cat("dml:",p),"python"),loaded_doc(c,cat("dml:",p),"python",d).
+dml_disk_doc(p,d) :- dml_disk_path(p),loaded(c,cat("dml:",p),"python"),loaded_doc(c,cat("dml:",p),"python",d).
 .violation DynamicDiscovered(at: span,ordinal: number,path: symbol) code "DML_DISCOVERED" "discovered source"
 DynamicDiscovered(@place("",0),i,p) :- option("entryPoint","_dynamic_repository"),sgd_discovery_path(p,i).
 .violation DynamicFound(at: span,file_ordinal: number,path: symbol,ordinal: number,snippet: symbol,label: symbol) code "DML_FOUND" "{label}"
-DynamicFound(@place(p,l),i,p,j,clean,label) :- option("entryPoint","_dynamic_repository"),sgd_discovery_path(p,i),!dml_disk_allowed(p),
+DynamicFound(@place(p,l),i,p,j,clean,label) :- dml_disk_entry(),dml_occurrence(p,i),!dml_disk_allowed(p),
     dml_disk_doc(p,d),dml_candidate(d,l,j,label),dml_line(d,l,_,clean,_),!prefix("#",clean),dml_state(d,l,""),dml_quotes(d,l,0,0),
     !dml_type_checking(d,l),(j<3 ; j>=3,!dml_primary(d,l)).
+
+.violation DynamicReadError(at: span,path: symbol,io_kind: symbol,errno: number,detail: symbol,bytes_hex: symbol,start: number,end: number,reason: symbol) code "DML_IO_ERROR" "source read skipped"
+DynamicReadError(@place("",0),p,k,n,detail,b,s,e,r) :- dml_disk_entry(),dml_read_path(p),file_error(p,k,n,detail,b,s,e,r).

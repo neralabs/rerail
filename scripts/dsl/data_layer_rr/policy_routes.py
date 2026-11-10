@@ -2,7 +2,7 @@
 
 
 def policy_filename(check, entry):
-    if check=='dynamic_module_loading' and entry=='_dynamic_repository':
+    if check=='dynamic_module_loading' and entry in {'_dynamic_repository','_dynamic_disk_file'}:
         return 'dynamic-module-loading-repository.rr'
     if check=='plan_composition_architecture' and entry=='scan_semantic_source':
         return 'plan-composition-architecture-source.rr'
