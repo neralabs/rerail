@@ -1,7 +1,8 @@
 //! A component's spec as values. The planner hands these to the engine in process (`open_spec`, `reprobe_spec`),
 //! so a plan is not written as text and parsed again. The text (the module's spec lines, joins hex-encoded within)
-//! is kept for the SQL functions (`set_fixpoint_open(spec)`, T's extension), the lab's captures and the spikes'
-//! spec files: `to_text` writes what the planner wrote, and `parse` reads it back.
+//! is kept for the SQL functions (`set_fixpoint_open(spec)`: T's extension, a copy of the engine with its own
+//! components, over text symbols), the lab's capture files and the spikes' spec files: `to_text` writes what the
+//! planner wrote, and `parse` reads it back.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -525,7 +526,7 @@ impl ComponentSpec {
 }
 
 impl Reprobe {
-    /// The SQL function's `kind` and hex `body` (`set_fixpoint_reprobe`).
+    /// The SQL function's `kind` and hex `body` (`set_fixpoint_reprobe`), as a caller holding only text writes them.
     pub fn text(&self) -> (&'static str, String) {
         match self {
             Reprobe::Sql(sql) => ("sql", hex(sql)),
