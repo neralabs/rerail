@@ -2904,3 +2904,16 @@ It is a preparation heuristic, not a count of SQLite cursors or necessary rule w
 The kernel comparison must report seeds, productive feedback, final empty-frontier detection, SQL work, native storage CPU, and preparation costs.
 The 52 and 140 feedback-frame counts remain algorithm observations, not minimum iteration counts.
 The mixed opaque-producer fixture remains a separate acceptance case. A recursive kernel alone cannot remove its fallback overhead.
+
+#### Producer schema preparation
+
+Producer preparation no longer declares every relation inside a rolled-back SQL savepoint.
+It registers empty native schemas only for missing relations that the producer queries name.
+Query-local CTE aliases expose declared column names without replacing existing catalog views.
+SQLite still resolves actual reads through its authorizer. Projection dependencies still expand through the compiler metadata.
+Preparation unregisters temporary native schemas after success or failure. Existing inputs and result relations retain their owners.
+
+Two debug regressions pass. A 43-relation program prepares within two SQL submissions, with no per-relation schema helpers.
+The regressions also cover malformed SQL, temporary binding cleanup, live results, renamed declaration columns, and subsequent edits.
+The existing producer regression covers external tables, interned symbols, derived reads, aggregate consumers, updates, and rejected recursion through SQL.
+This change removes schema preparation overhead. Opaque execution still needs explicit retained boundaries.

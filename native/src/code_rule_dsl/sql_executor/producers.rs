@@ -13,6 +13,7 @@
 //! Tuple maintenance recomputes a producer's stratum whole when anything its query reads changes:
 //! a relation of the program, or a session input it reads by name (`maintenance::maintain`).
 use super::*;
+mod schema;
 
 #[derive(Clone, Debug)]
 pub(super) struct Producer {
@@ -93,9 +94,9 @@ pub(super) fn take(program: &mut front::Program) -> Result<Vec<Producer>> {
     Ok(producers)
 }
 
-/// The program relations each producer reads, as SQLite resolves its query. Inside a savepoint
-/// that is rolled back, every wave relation gets a placeholder table and its typed view; an
-/// authorizer records the tables the prepared query reads. A relation the emitter made a view
+/// The program relations each producer reads, as SQLite resolves its query. Missing relations
+/// get temporary native schemas, and typed names use query-local aliases. An authorizer
+/// records the tables the prepared query reads. A relation the emitter made a view
 /// counts as the relations that view reads. Each query must give its declaration's columns.
 /// Per producer: the wave relations it reads, and every other table or view it reads (lowercased),
 /// which tuple maintenance watches for changes.
@@ -105,26 +106,7 @@ fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Pr
         emitted.program.relations.iter().map(|(r, _)| (r.to_ascii_lowercase(), r.clone())).collect();
     let views: BTreeMap<String, &select::Query> =
         emitted.views.iter().map(|(r, q)| (r.to_ascii_lowercase(), q)).collect();
-    db.execute_batch("SAVEPOINT rr_producer_reads").map_err(error)?;
-    let result = (|| -> Result<Vec<(Vec<String>, Vec<String>)>> {
-        for (rel, arity) in &emitted.program.relations {
-            let cols = (0..*arity).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-            db.execute_batch(&format!("CREATE TEMP TABLE IF NOT EXISTS {}({cols})", quote(rel))).map_err(error)?;
-            if let Some(decl) = program.decls.get(rel) {
-                let view = quote(&format!("{}rel_{rel}", catalog::PREFIX));
-                let names = catalog::view_columns(decl).iter().map(|c| quote(c)).collect::<Vec<_>>().join(", ");
-                db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{view}; CREATE TEMP VIEW {view}({names}) AS SELECT * FROM {}", quote(rel)))
-                    .map_err(error)?;
-            }
-        }
-        for statement in &emitted.setup {
-            if statement.starts_with("CREATE TEMP TABLE rdl_int(") {
-                constants::integer_domain(db)?;
-                continue;
-            }
-            // The emitter's views, so a query may name them; anything already present is kept.
-            let _ = db.execute_batch(statement);
-        }
+    schema::with_schema(db,emitted,program,producers,|db,prefix| {
         let mut out = Vec::new();
         for p in producers {
             let seen = Arc::new(parking_lot::Mutex::new(BTreeSet::<String>::new()));
@@ -136,7 +118,7 @@ fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Pr
                 Authorization::Allow
             }))
             .map_err(error)?;
-            let prepared = db.prepare(&format!("SELECT * FROM ({})", p.query)).map(|s| s.column_count());
+            let prepared = db.prepare(&format!("{prefix}SELECT * FROM ({})", p.query)).map(|s| s.column_count());
             db.connection_mut().authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>).map_err(error)?;
             let width = prepared.map_err(|e| error(format!("{}: SQL producer query: {e}", p.rel)))?;
             if width != program.decls[&p.rel].len() {
@@ -162,9 +144,7 @@ fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Pr
             out.push((reads.into_iter().collect(), other.into_iter().collect()));
         }
         Ok(out)
-    })();
-    db.execute_batch("ROLLBACK TO rr_producer_reads; RELEASE rr_producer_reads").map_err(error)?;
-    result
+    })
 }
 
 /// The relations whose rows depend on `rel` through the program's rules and producers, `rel`
