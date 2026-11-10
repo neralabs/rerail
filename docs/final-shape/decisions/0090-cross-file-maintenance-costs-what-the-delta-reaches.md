@@ -474,6 +474,120 @@ The caveats:
 - Emitted rows stand in for derivations.
 - The witness is built from scratch here; how it is kept across runs (with the kept rows, under 0096) is not built.
 
+## Pressure-tested: levels over 26 steps, carried from run to run (2026-11-09)
+
+The runs above build each algorithm's state from scratch at every step. These runs carry it from step to step, as
+a real session would (`RERAIL_SPIKE_RECURSIVE_CARRY`). A level scheme can drift there: its levels inflate as edits
+pile up, and fewer supports count as being from below.
+
+**The replay.** Steps 1–20 are O125's recorded edits. Steps 21–26 are made up to be the worst case for any
+counting scheme:
+
+| steps | change |
+| --- | --- |
+| 21, 22 | delete, then restore, `l1400_types/__init__.py` (47 importers) |
+| 23, 24 | delete, then restore, `purity.py` and `lazy_mixin.py` (51 importers each) |
+| 25, 26 | delete, then restore, the whole `l2055_lazy_result` package (24 of 78 files) |
+
+**A fourth algorithm.** *Levels, checked*: levels without counts.
+- **What it keeps.** Each row keeps only its level, and every present row has a derivation from rows below it.
+- **Deletion.** A row that lost a derivation is checked in level order. It stays when a derivation from rows below
+  it still holds. Those rows are already decided, so the check is exact and one step deep, where B/F's search is
+  open-ended.
+- **Insertion.** New rows go above every level held (the maximum plus the wave). So no firing has to name its
+  premises, and the first levels are the waves of an ordinary derive: there is no counting pass.
+- **Cost.** 4 bytes a row.
+
+All 39 components, CPU seconds summed over them. All five algorithms equal the derive from scratch at every step,
+with every count and every below-support verified.
+
+| steps | recompute | DRed | levels | B/F | levels, checked |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| edits 1–20 | 83.8 | 36.3 | 18.2 | 21.6 | **12.9** |
+| toggles 21–26 | 23.4 | 20.0 | 28.2 | 23.8 | 23.6 |
+| toggles, recompute when cheaper | — | **14.8** | 17.5 | 15.9 | 15.6 |
+
+What the data says:
+
+- **Edits.** *Levels, checked* is the cheapest at nearly every step of 1–20, at 2.8× less than DRed and 1.4× less
+  than counted levels. Its levels inflate as edits pile up (in the 58-relation component, a mean of 219 and a max
+  of 421 by step 25, against 5 and 22 fresh), and that costs it nothing measurable. Counted levels barely drift
+  (mean 5.44 against 5.13 fresh at step 25).
+- **Mass deletes.** At steps 23 and 25 every maintained algorithm costs more than deriving again (5–8 s against
+  2.6–3.0 s). So the §4 threshold is needed whichever algorithm is chosen. With it, DRed is about 5% ahead of
+  *levels, checked* on the toggles.
+- **Overall.** Over the 26 steps, *levels, checked* takes 28.5 s against DRed's 51.1 s (with the threshold), and it
+  keeps 1.8–1.9 MB.
+
+**Choice.** For recursive strata: *levels, checked*, with §4's derive-again threshold for large changes. DRed stays
+for the non-recursive strata.
+
+Pitfalls found on the way, beyond those above:
+- **Carried state goes stale.** A component skipped one run (here, under the spike's size floor) moved without its
+  state, and both level schemes then missed 297 rows. Carried state must be dropped whenever a run does not
+  maintain it, and checked against the kept rows when it is read.
+- **The engine's kept rows drift.** They include more and more rows a derive from scratch does not produce: 2 at
+  step 3, 16 by step 7, with the per-step equality check off (`O125_NO_FULL`). This is open; it looks like a defect
+  in the engine's DRed path.
+
+## Built: levels, checked, in the engine (2026-11-09)
+
+Recursive strata are now maintained by *levels, checked* by default (`RERAIL_RECURSIVE=dred` keeps DRed). It is the
+same engine: the rewrite makes ordinary rules, and the component runs them in waves.
+
+**The rules.** Per recursive relation `h`, the maintenance rewrite (`maintain.rs`) makes five relations:
+
+| relation | rows | made by |
+| --- | --- | --- |
+| `h__cand` | heads of old derivations that lost a premise | DRed's delete rules, reading `q__gone` for the stratum's own `q` |
+| `h__chk` | the candidates of the level being checked | the component's levels driver |
+| `h__held` | the checked rows that still have a derivation | `h__held(H) :- h__chk(H), body` with the stratum's own atoms read as `q__live` |
+| `h__gone` | the checked rows with none | the driver: `h__chk` less `h__held` |
+| `h__live` | the kept rows already decided, below the level checked | `h__old` in place, rows hidden by the dead bitmap |
+
+**The driver** (`setfix.rs`, `Levels`). At a quiet point of the component it does three things:
+- it closes the level just checked: the rows of `h__chk` not in `h__held` go to `h__gone`;
+- it shows in `h__live` the kept rows below the next candidate level that are not gone;
+- it moves that level's candidates into `h__chk`.
+
+A candidate at or below a level already closed was decided there. Rederive and insertion then run as in DRed. A
+new row's level is the component's highest kept level plus its wave (`Rel::level`). Levels go with a kept
+relation through `based`, compaction and hand-off, and with an output read back from the engine (`corpus.rs`).
+
+**Two planning faults, fixed.** They made the first build slower than DRed outside the recursive strata:
+- **`h__live` was read as a delta.** It starts holding all of `h__old`, so the first wave scanned 181 K rows.
+  `h__live` is never a delta now.
+- **Whole plans were used for small batches.** The levels relations get small batches from row 0, and the engine
+  took those for a whole relation: it ran each batch with the plan for a whole relation, which scans `h__live` or
+  `h__old` first. Levels relations take no whole plans now. `h__live` is also planned with `h__old`'s statistics.
+
+**Measured** (O125 replay steps 06–08, CPU seconds in the component strata, from the profile):
+
+| step | DRed, all strata | levels, all strata | DRed, recursive | levels, recursive |
+| --- | ---: | ---: | ---: | ---: |
+| 06 (2 files) | 1.76 | **1.39** | 0.72 | 0.53 |
+| 07 (6 files) | 2.67 | **2.13** | 1.52 | 1.18 |
+| 08 (6 files) | 6.59 | **2.83** | 3.51 | 1.13 |
+
+- **Results.** Steps 06–08 equal the full derive (`same as full: true`), and the findings gate is unchanged:
+  `total (all): 3988 303 298 0`.
+- **The mass-delete steps.** The stress replay's steps 20–26, cross-file CPU seconds per step (the whole cross
+  part, not only the strata). Both equal the full derive. The full derive's cross part takes 7.7–8.2 s.
+
+  | step | change | DRed | levels |
+  | --- | --- | ---: | ---: |
+  | 20 | an O125 edit (2 files) | 12.2 | **9.1** |
+  | 21 | delete `l1400_types/__init__.py` | 6.4 | 6.4 |
+  | 22 | restore it | **6.1** | 7.0 |
+  | 23 | delete `purity.py`, `lazy_mixin.py` | **9.9** | 11.5 |
+  | 24 | restore them | **10.7** | 12.8 |
+  | 25 | delete a 24-file package | **10.0** | 12.3 |
+  | 26 | restore it | **12.4** | 13.9 |
+
+  This is what the spike found: levels wins on edits and loses 15–20% on mass toggles. At steps 23–26 both cost
+  more than deriving again, which is §4's threshold. The threshold is not built yet: it is the next step, and with
+  it the toggles cost the full derive's 8 s whichever algorithm runs.
+
 ## Built: counting the default (2026-11-09)
 
 A session now maintains its cross-file part by counting. `RERAIL_MAINTAIN=dred` keeps delete-and-rederive, to
@@ -489,9 +603,10 @@ compare with.
 
   A row that keeps a support is no longer deleted and appended again. So the survivors start from the old rows
   with only the truly gone ones dead (step 4's in-place start), and compaction sees only real garbage.
-- **Recursive strata** have no supports. They are maintained by delete-and-rederive under counting, where the
-  comparison derived them again. `RERAIL_COUNT_RECURSIVE=again` restores that. The levels witness from the spike
-  above is the exact form, not built.
+- **Recursive strata** have no supports. They are maintained by *levels, checked* (above), or by
+  delete-and-rederive under `RERAIL_RECURSIVE=dred`, where the first comparison derived them again.
+  `RERAIL_COUNT_RECURSIVE=again` restores that. The measurements below predate levels: their recursive strata ran
+  by delete-and-rederive.
 - **A session stores its cross-file relations** (`no_inline`, decision 0099), except one the program declares
   `inline`. An inlined relation leaves no rows for the next run, so every stratum over it was derived again: 98–118
   strata a step. `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare.
@@ -514,6 +629,21 @@ Steps 01–08 under counting, stored: 8 of 8 equal a full run, as under delete-a
 more than delete-and-rederive. That is not row work: a support per rule makes about 3.7× the strata, and each
 pays a fixed cost. Decision 0101 is the work that removes it: skip a stratum whose deltas are empty, make the
 whole-program passes once, and run a stratum's pieces as one component.
+
+## Merged: levels opt-in on the integration branch (2026-11-10)
+
+Merged with counting (above) and the other branches, *levels, checked* is exact on the session tests but not on
+the whole O125 replay: steps 01–07 equal a full run, and step 08 keeps 1 `type_of` row and 2 `possible_type` rows
+a full run does not (`l2050_transaction/transaction.py:12851.83`). Delete-and-rederive is 8 of 8 on the same
+binary. The difference is the same with counting or delete-and-rederive below, with the closure form off, and on
+one thread. So on the integration branch levels is opt-in (`RERAIL_RECURSIVE=levels`), until that row is found.
+
+Two faults of the merge are fixed:
+- **A closure's rows have no levels.** The closure form (0098 §1) adds a walk's rows at once, not in waves, so no
+  row's level is above its premises'. Its relation now holds no levels, and is maintained by delete-and-rederive.
+  Before, a cycle broken by an edit was kept (`a_session_maintains_a_recursive_cross_file_stratum`).
+- **An output is read back from the engine only when levels maintained it.** Any relation the engine derived has
+  levels, so the check `has_levels` also took a copy left by an earlier run, when this run's stratum ran in SQL.
 
 ## What the prior work says
 
@@ -558,7 +688,7 @@ whole-program passes once, and run a stratum's pieces as one component.
 ## Open
 
 - Whether 03 §2's "no DRed" is to be read as "no stored witness" (§6). This needs the architecture owner.
-- θ and the cost estimate (§4) are unmeasured.
+- θ and the cost estimate (§4) are unmeasured. The mass-delete steps above (23–26) are the cases it must catch.
 - Interface summaries for libraries (03 §14's derivations) and this session store meet at the library boundary;
   0083 §5–§6 places it, and this record does not.
 

@@ -4077,7 +4077,8 @@ fn run_observed(
                     // What the session keeps for the next run is stored, never inlined into its readers (decision
                     // 0099): its rows are read back to be kept, and maintained from next run as `r__old` ("no such
                     // table: py_f", inlined into `py_true` and `py_false`). So are the measurement aids' deltas.
-                    {
+                    // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare (as above).
+                    if !std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on") {
                         let aids = ["RERAIL_SPIKE_DELTA", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_CROSS_VERIFY"].iter().any(|v| std::env::var_os(v).is_some());
                         let program = &mut maintained.program.program;
                         let mut stored: BTreeSet<String> = cut.derived(&cross.program)?.into_iter().chain(wanted.iter().cloned()).collect();
@@ -4264,7 +4265,14 @@ fn run_observed(
                         .map(|rel| (rel, part.program.decls[rel].len()))
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| {
-                            let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten();
+                            // An output of a stratum maintained by levels (decision 0090) is still held with its rows' levels, which its
+                            // table does not keep: taken from the engine too.
+                            let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten()
+                                .or_else(|| {
+                                    // Only a relation this run maintained by levels (it has `h__gone`): any other the engine
+                                    // holds may be a copy left by an earlier run (a stratum that ran in SQL this time).
+                                    part.program.decls.contains_key(&format!("{rel}__gone")).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten().filter(|h| h.has_levels())
+                                });
                             let held = match held {
                                 Some(h) => h,
                                 None => {

@@ -160,6 +160,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
             Line::Probe { .. } => return Err("a `probe` line".to_owned()),
             Line::Gate { .. } => return Err("a `gate` line".to_owned()),
             Line::Edge(_) => return Err("a `rule` line".to_owned()),
+            Line::Levels(_) => return Err("a `levels` line".to_owned()),
         }
         let joins: Vec<&Arc<JoinSpec>> = match line {
             Line::Seed { join, .. } => vec![join],
