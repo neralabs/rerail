@@ -79,7 +79,8 @@ jobs:
       - name: Licence allowlist and copyleft gate
         run: node scripts/check/check-licenses.mjs
 
-  # Type checks and generated-reference checks need neither Rust nor a build.
+  # Type checks and generated-reference checks need neither Rust nor a build. scripts/check/pre-commit.sh runs the same
+  # checks before each commit: keep the two in step.
   lint:
     name: Lint and type-check
     runs-on: ubuntu-24.04
