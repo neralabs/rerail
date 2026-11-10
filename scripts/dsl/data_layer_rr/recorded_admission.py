@@ -16,12 +16,33 @@ SPECS = {
         cliControl='cli-rendering',
         scope='Recorded native detector, file-scope, CLI, JSON helper, supplied-fact, production and persistent-update contracts.'),
     'rerail.removed-admission/v1': dict(check='removed_compat_surfaces',public=239,original=4,positive=3,production=17,
-        parts=8,prefix='',label='removed-finalec3',productionSupplement=True,
+        parts=8,prefix='',label='removed-finalec3',productionSupplement=dict(ids=['unicode-off','unicode-on'],findings=[0,1]),
         pairs={'name-family':(1,0),'attribute-family':(1,0),'definition-family':(1,0),
                'api-trigger-bypass':(1,0),'same-line-dedup':(1,2),'file-suffix':(1,2)},
         cliControl='cli-mode',
         scope='Recorded native scanner, file discovery, full CLI, supplied-fact, production and persistent-update contracts.'),
+    'rerail.lifecycle-admission/v1': dict(check='versioned_lifecycle_legacy_surfaces',public=142,original=1,
+        originalObservations=3,positive=1,production=16,parts=6,prefix='',label='lifecycle-finalec3',
+        productionSupplement=dict(ids=['colon-path','unicode-class','unicode-method-off'],findings=[1,1,0]),
+        pairs={'method':(1,0),'class-shape':(0,1),'direct-body':(0,1),'supplied-trigger':(0,1),
+               'root-scope':(0,1),'test-scope':(0,1),'discovery-duplicates':(3,2)},
+        cliControl='renderer',extraControls=['collector-order','fact-split'],
+        scope='Recorded native scanners, collector order, scope, class predicate, DTO rendering/facts, CLI, discovery, reporter, production and persistent updates.'),
 }
+
+
+def validate_original_observations(owned,observations):
+    counts=Counter();wanted={}
+    for row in owned:
+        group=(row['test'],row['entry']);ordinal=counts[group];counts[group]+=1
+        wanted[(*group,ordinal)]=row
+    require(Counter((r['test'],r['entry'],r['ordinal']) for r in observations)==Counter(wanted.keys()),
+            'Original observations omitted or repeated')
+    for row in observations:
+        source=wanted[(row['test'],row['entry'],row['ordinal'])]
+        require(row['status']=='passed' and equal(row['expected'],source['findings']) and equal(row['actual'],source['findings']),
+                'Original complete finding differs')
+        require(equal(row['actualSourceResult'],source['sourceResult']), 'Original DTO fields differ')
 
 
 def validate(value):
@@ -62,6 +83,17 @@ def validate(value):
                 row=expected[name+':'+shape]
                 require(len(row['expected']['value'])==1 and row['expected']['value'][0]['code']=='RCS001', 'Forbidden-name positive matrix omitted')
         require(bool(expected['nfkc-trigger-off']['expected']['value']), 'Direct API trigger bypass was lost')
+    if check=='versioned_lifecycle_legacy_surfaces':
+        methods=expected['configuration']['expected']['value']['methods']
+        require(len(methods)==6 and len(set(methods))==6, 'Lifecycle method configuration differs')
+        for cls in ['BackendVersionedWriteTransaction','LazyVersionedWriteTransactionSparse','VersionedWriteTransaction','BackendWriteTransaction']:
+            for method in methods:
+                for prefix in ['', 'async ']:
+                    row=expected[f'{cls}:{method}:{prefix}']
+                    require(len(row['expected']['value'])==int(cls!='BackendWriteTransaction'), 'Lifecycle positive/negative matrix differs')
+        require(bool(expected['unicode-class']['expected']['value']) and
+                expected['predicate-BackendVersionedWriteTransactioｎ']['expected']['value'] is False,
+                'AST normalization and raw-name predicate were conflated')
     seen = {mode:[] for mode in MODES}
     for part in value['publicReports']:
         report(part)
@@ -79,8 +111,8 @@ def validate(value):
 
     originals = value['originalSuites']; require(set(originals)==MODES, 'Original APIs omitted')
     owned = [r for r in sources['original']['events'] if r['check']==check]
-    require(len(owned)==spec['original'] and sum(bool(r['findings']) for r in owned)==spec['positive'], 'Original positive corpus differs')
-    wanted = {(r['test'],r['entry']):r for r in owned}
+    require(len(owned)==spec.get('originalObservations',spec['original']) and
+            len({r['test'] for r in owned if r['findings']})==spec['positive'], 'Original positive corpus differs')
     for mode, suite in originals.items():
         report(suite)
         require(suite['mode']==mode and suite['exitCode']==0 and suite['oracle'] is False, 'Original API failed')
@@ -89,12 +121,7 @@ def validate(value):
         require(len(suite['collected'])==spec['original'] and set(suite['collected'])==set(suite['cases']), 'Original assertions omitted')
         for phases in suite['cases'].values():
             require({p['phase']:p['outcome'] for p in phases}==dict(setup='passed',call='passed',teardown='passed'), 'Original assertion failed or skipped')
-        observations = suite['detectorObservations']
-        require(Counter((r['test'],r['entry']) for r in observations)==Counter(wanted.keys()), 'Original observations omitted or repeated')
-        for row in observations:
-            source = wanted[(row['test'],row['entry'])]
-            require(row['status']=='passed' and equal(row['expected'],source['findings']) and equal(row['actual'],source['findings']), 'Original complete finding differs')
-            require(equal(row['actualSourceResult'],source['sourceResult']), 'Original DTO fields differ')
+        validate_original_observations(owned,suite['detectorObservations'])
         for call in suite['calls']:
             require(call['status']=='passed', 'Original native call failed'); execution(call)
 
@@ -114,9 +141,10 @@ def validate(value):
         baseline=json.loads(source['text']);native=supplement['report'];report(native)
         require(baseline['sourcePin']==PIN and baseline['passed'] and native['passed'] and native['oracle'] is False, 'Invalid supplemental production cohort')
         require(baseline['sourceSha256']==sources['public']['sourceSha256'] and native['baselineSha256']==source['sha256'], 'Supplemental recording differs')
-        require([r['input']['id'] for r in baseline['cases']]==[check+':unicode-off',check+':unicode-on'], 'Production trigger pair omitted')
-        require(len(baseline['cases'][0]['expected']['findings'])==0 and len(baseline['cases'][1]['expected']['findings'])==1, 'Production trigger observations differ')
-        require(len(native['cases'])==2, 'Production trigger executions omitted')
+        supplement_spec=spec['productionSupplement']
+        require([r['input']['id'] for r in baseline['cases']]==[check+':'+name for name in supplement_spec['ids']], 'Production trigger pair omitted')
+        require([len(r['expected']['findings']) for r in baseline['cases']]==supplement_spec['findings'], 'Production trigger observations differ')
+        require(len(native['cases'])==len(supplement_spec['ids']), 'Production trigger executions omitted')
         for wanted,row in zip(baseline['cases'],native['cases']):
             require(row['passed'] and equal(row['input'],wanted['input']) and equal(row['expected'],wanted['expected']) and equal(row['actual'],wanted['expected']), 'Production trigger result differs')
             require(len(row['native'])==2, 'Supplemental production query omitted')
@@ -149,7 +177,7 @@ def validate(value):
 
     controls = value['controls']; report(controls)
     require(controls['passed'] and controls['oracle'] is False, 'Invalid controls')
-    require(Counter(r['name'] for r in controls['cases'])==Counter([*spec['pairs'],spec['cliControl']]), 'Behavior controls omitted or repeated')
+    require(Counter(r['name'] for r in controls['cases'])==Counter([*spec['pairs'],spec['cliControl'],*spec.get('extraControls',[])]), 'Behavior controls omitted or repeated')
     policy = 'gate/data-layer/packs/data-layer/candidates/rr/'+check.replace('_','-')+'.rr'
     require(controls['policySha256']==value['programs'][policy]['sha256'], 'Control uses another policy')
     for row in controls['cases']:
@@ -160,6 +188,16 @@ def validate(value):
             require((len(a),len(b))==spec['pairs'][row['name']], 'Behavior control failed for another reason')
         elif row['name']=='cli-rendering':
             require(any(r['code']=='TEXT_CLI_OUTPUT' for r in a) and not any(r['code']=='TEXT_CLI_OUTPUT' for r in b), 'CLI control failed for another reason')
+        elif row['name']=='collector-order':
+            def lines(rows):return [r['line'] for r in sorted(rows,key=lambda r:(r['parameters']['collector_order0'],r['parameters']['collector_order1']))]
+            require(lines(a)==[2,5,4] and lines(b)==[2,4,5], 'Collector-order control failed for another reason')
+        elif row['name']=='fact-split':
+            def fact(rows):return json.loads(next(r['parameters']['fact_json'] for r in rows if r['code']=='LC_VALUE'))
+            require(fact(a)['message'].startswith('c.py:2: C.commit ') and fact(b)['message'].startswith('b: c.py:2: C.commit '), 'Fact splitting control failed for another reason')
+        elif row['name']=='renderer':
+            def outputs(rows):return [r['parameters']['stdout'] for r in rows if r['code']=='LC_OUTPUT']
+            require(len(outputs(a))==1 and 'base LazyVersionedWriteTransaction @legacy lifecycle surface' in outputs(a)[0], 'Renderer source output differs')
+            require(outputs(b)==[outputs(a)[0].replace('base LazyVersionedWriteTransaction @legacy lifecycle surface','DISABLED')], 'Renderer control failed for another reason')
         else:
             def stdout(rows): return ''.join(r['parameters']['stdout'] for r in sorted(
                 (r for r in rows if r['code']=='RCS_OUTPUT'),key=lambda r:(r['parameters']['phase'],r['parameters']['ordinal'])))
@@ -169,7 +207,7 @@ def validate(value):
     for section in ['programs','harness']:
         for item in value[section].values(): require(sha(item['text'].encode())==item['sha256'], 'Snapshot bytes differ')
     return dict(publicCasesPerAPI=spec['public'], originalCasesPerAPI=spec['original'], originalFindingPositiveCases=spec['positive'],
-                productionCases=spec['production']+(2 if spec.get('productionSupplement') else 0), suppliedFactCases=16, persistentSteps=14, controls=len(spec['pairs'])+2,
+                productionCases=spec['production']+len(spec.get('productionSupplement',{}).get('ids',[])), suppliedFactCases=16, persistentSteps=14, controls=len(spec['pairs'])+len(spec.get('extraControls',[]))+2,
                 nativeExecutions=native_count, fullMigrationAcceptance=False)
 
 

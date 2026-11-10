@@ -1,5 +1,39 @@
 # Data-layer performance journal
 
+## Versioned lifecycle native contract repairs: 2026-11-10
+
+The source corpus contains 142 cases for `versioned_lifecycle_legacy_surfaces`.
+It covers six banned methods, sync and async definitions, qualifying and unrelated classes, nested collector order, and normalized identifiers.
+It also covers file scopes, supplied text versus file contents, path errors, DTO rendering, fact conversion, discovery, and CLI output.
+
+Two [recorded API regressions](../gate/data-layer/fixtures/host/data-layer-port/rr-lifecycle-api-regressions-red.json.gz) failed before the repairs.
+The original content API uses supplied text as a trigger, then re-reads the file through FactEngine.
+The original collector emits all direct methods of an outer class before it visits nested classes.
+The adapter previously scanned supplied text and sorted findings by line. Native rules and collector ordinals now preserve these contracts.
+Class and method identifiers use AST normalization. The raw-name predicate keeps its separate suffix semantics.
+
+The [production regression](../gate/data-layer/fixtures/host/data-layer-port/rr-lifecycle-production-message-red.json.gz) exposed a message mismatch on paths containing multiple `": "` separators.
+The source fact serializer splits the rendered message at most twice. Native formatting now preserves that behavior.
+The public production report and fact payload use the same native message.
+Three additional production probes test this path and Unicode trigger/normalization behavior.
+
+Discovery and scans submit complete batches. The CLI renders its complete DTO batch in one native query.
+Python performs I/O, argparse processing, and passive DTO/exception construction. Rules invoke no Python.
+The standalone class predicate, renderer, and fact-conversion helper also execute native rules.
+
+The sole original test performs three linter calls. The admission auditor previously assumed one call per test.
+Four new TDD checks preserve all three source observations and reject an omitted negative, a repeated ordinal, or a wrong complete result.
+Existing PermissionError and RemovedCompat admission checks still pass.
+
+The [complete lifecycle receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-lifecycle-complete-finalec3.json.gz) verifies 449 native executions on Final `ec3cfe1b7`.
+All 142 public cases pass through snapshot and workspace APIs.
+The unchanged original test passes through both APIs, with every one of its three calls compared to the source recording.
+Nineteen production cases, 16 supplied-fact cases, 14 persistent steps, and 11 disabled-behavior controls also pass.
+The original-test harness maps synthetic native document names back to the recorded caller paths without changing the stored engine diagnostics.
+The receipt retains complete observations, source recordings, program snapshots, harness snapshots, and engine provenance.
+All 275 tooling tests pass. Selected-rule regeneration is byte-identical.
+The fixed inventory gate admits Versioned Lifecycle. The overall migration remains incomplete: six accepted ports, 89 drafts, and five absent translations.
+
 ## RemovedCompat native public contracts: 2026-11-10
 
 The source corpus now contains 239 cases.

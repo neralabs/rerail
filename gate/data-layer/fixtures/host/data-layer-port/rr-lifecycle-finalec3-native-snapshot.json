@@ -1,0 +1,37 @@
+{
+  "format": "rerail.recorded-original-admission/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "mode": "snapshot",
+  "exitCode": 0,
+  "engineSha256": "82179e5e6ef15dec415e7929d508e826a6dfebef2b1a8843547b668081ec7476",
+  "policySha256": {
+    "versioned_lifecycle_legacy_surfaces": "fd8fb308caf1f97afecfe1fd1af15c1e5fa1b1bc473ddba66590486e7044ad82"
+  },
+  "cases": {
+    "scripts/tests/test_lint_versioned_lifecycle_legacy_surfaces.py::test_versioned_lifecycle_surface_guardrail_cases": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "collected": [
+    "scripts/tests/test_lint_versioned_lifecycle_legacy_surfaces.py::test_versioned_lifecycle_surface_guardrail_cases"
+  ],
+  "semanticFallbacks": [],
+  "missingResults": [],
+  "retainedCaseIds": [],
+  "checkpoint": {
+    "path": "gate/data-layer/fixtures/host/data-layer-port/rr-lifecycle-complete-finalec3.json.gz",
+    "sha256": "8421dc1193c7ae705cb661451c8f042a6edc27d6e36473d4107283047216f0a2"
+  }
+}

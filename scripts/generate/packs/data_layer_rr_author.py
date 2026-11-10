@@ -100,18 +100,34 @@ def lifecycle(source, target):
     text = header('versioned_lifecycle_legacy_surfaces', target)
     from data_layer_rr_cli import logical_scope
     text = logical_scope(text, 'lifecycle_selected')
+    text = text.replace('lifecycle_selected(d) :- doc(d,_,_), option("entryPoint",_).',
+                        'lifecycle_selected(d) :- lc_api_allowed(d).')
     text += '.decl lifecycle_method(x: symbol)\n'
     text += ''.join(f'lifecycle_method({json.dumps(x)}).\n' for x in sorted(values))
     from data_layer_rr_production import production
     return production(source, 'versioned_lifecycle_legacy_surfaces', (text + '''
 .decl lifecycle_class(c: node, x: symbol)
-lifecycle_class(c, x) :- kind(c, "class_definition"), def_name(c, x),
+lifecycle_class(c, @nfkc(raw)) :- kind(c, "class_definition"), def_name(c, raw), x = @nfkc(raw),
     (suffix("VersionedWriteTransaction", x) ; suffix("LazyVersionedWriteTransactionSparse", x)).
 .violation Lifecycle(at: node, cls: symbol, method: symbol) code "VLL001"
     "{cls}.{method} shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering."
 Lifecycle(f, cls, name) :- lifecycle_class(c, cls), field(c, "body", b), body_stmt(b, st, _), defstmt(f, st),
-    kind(f, "function_definition"), def_name(f, name), lifecycle_method(name), docof(c, d), lifecycle_selected(d), !syntax_error(d, _, _).
-'''))
+    kind(f, "function_definition"), def_name(f, raw), name = @nfkc(raw), lifecycle_method(name), docof(c, d), lifecycle_selected(d), !syntax_error(d, _, _).
+''')) + lifecycle_api_suffix(source)
+
+
+def lifecycle_api_suffix(source):
+    from dataclasses import asdict
+    from data_layer_rr_text import module
+    original=module(source,'versioned_lifecycle_legacy_surfaces')
+    settings=dict(description=[original.__doc__],methods=sorted(original.BANNED_METHODS),
+        root_suffix=['impl'],paths_help=['Optional files or directories to scan. Defaults to impl/.'],
+        check_help=['Return non-zero when violations are present.'],
+        extractor=[json.dumps(asdict(original.VERSIONED_LIFECYCLE_LEGACY_SURFACES_EXTRACTOR))])
+    text='\n.decl lc_config(key: symbol, ordinal: number, value: symbol)\n'
+    for key,values in settings.items():
+        for i,value in enumerate(values):text+=f'lc_config({json.dumps(key)},{i},{json.dumps(value)}).\n'
+    return text+'#include "data-layer/lifecycle-api.rr"\n'
 
 
 def permission_error(source, target):

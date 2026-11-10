@@ -1,0 +1,96 @@
+// Batch owners and roots are lexical Path spellings, not resolved filesystem paths.
+.decl lc_owner(i: number, document: symbol, path: symbol)
+lc_owner(i,d,p) :- option("lifecycleBatch","true"), option_item("ownerDocs",i,d), option_item("ownerPaths",i,p).
+.decl lc_rel_input(path: symbol, root: symbol)
+lc_rel_input(p,r) :- lc_owner(_,_,p), option("lcRoot",r).
+lc_rel_input(p,r) :- lc_owner(_,_,p), option("lcScopeRoot",r).
+lc_rel_input(p,r) :- lcv_path(_,p), option("lcRoot",r).
+.decl lc_relative(path: symbol, root: symbol, result: symbol)
+lc_relative(p,p,".") :- lc_rel_input(p,p).
+lc_relative(p,r,@slice(p,strlen(r)+1,strlen(p))) :- lc_rel_input(p,r), r != ".", r != "/", r != "//", prefix(cat(r,"/"),p).
+lc_relative(p,"/",@slice(p,1,strlen(p))) :- lc_rel_input(p,"/"), p != "/", prefix("/",p), !prefix("//",p).
+lc_relative(p,"//",@slice(p,2,strlen(p))) :- lc_rel_input(p,"//"), p != "//", prefix("//",p).
+lc_relative(p,".",p) :- lc_rel_input(p,"."), !prefix("/",p).
+.decl lc_scope_path(i: number, path: symbol)
+lc_scope_path(i,rel) :- lc_owner(i,_,p), option("lcScopeRoot",r), lc_relative(p,r,rel).
+lc_scope_path(i,p) :- lc_owner(i,_,p), option("lcScopeRoot",r), !lc_relative(p,r,_).
+.decl lc_test(i: number)
+lc_test(i) :- lc_scope_path(i,p), @count_matches("(^|/)(test|tests)(/|$)",p) > 0.
+lc_test(i) :- lc_owner(i,_,p), option("lcFind","true"), contains("/tests/",p).
+.decl lc_first(path: symbol, ordinal: number)
+lc_first(p,n) :- lc_owner(_,_,p), n = min i : { lc_owner(i,_,p) }.
+.decl lc_supplied_ok()
+lc_supplied_ok() :- !option("lcSuppliedSource",_).
+lc_supplied_ok() :- option("lcSuppliedSource",s), pp_trigger(t), contains(t,s).
+.decl lc_api_allowed(d: number)
+lc_api_allowed(d) :- pp_doc(d,_), pp_api(), !option("lifecycleBatch","true"), pp_triggered(d).
+lc_api_allowed(d) :- lc_owner(i,p,owner), lc_first(owner,i), pp_doc(d,p), pp_api(), pp_triggered(d), lc_supplied_ok(),
+    suffix(".py",owner), strlen(@replace_all(owner,".*/","")) > 3, !lc_test(i), option("lcRoot",root), lc_relative(owner,root,_).
+
+.violation LifecycleConfig(at: span, key: symbol, ordinal: number, value: symbol) code "LC_CONFIG" "native configuration"
+LifecycleConfig(@place("",0),k,i,v) :- option("entryPoint","_lc_configuration"), lc_config(k,i,v).
+.violation LifecycleClass(at: span) code "LC_CLASS" "class predicate"
+LifecycleClass(@place("",0)) :- option("entryPoint","_lc_class"), option("className",name),
+    (suffix("VersionedWriteTransaction",name) ; suffix("LazyVersionedWriteTransactionSparse",name)).
+
+// One inventory batch preserves input root groups, duplicates and per-root Path order.
+.decl lc_discovered(i: number, group: number, path: symbol)
+lc_discovered(i,g,p) :- option("entryPoint","_lc_files"), option_item("candidatePaths",i,p), option_item("candidateGroups",i,s), g=to_number(s),
+    option_item("candidateKinds",i,"walk"), suffix(".py",p).
+lc_discovered(i,g,p) :- option("entryPoint","_lc_files"), option_item("candidatePaths",i,p), option_item("candidateGroups",i,s), g=to_number(s),
+    option_item("candidateKinds",i,"direct"), suffix(".py",p), strlen(@replace_all(p,".*/","")) > 3.
+.violation LifecycleFile(at: span, group: number, order_key: symbol, ordinal: number, value: symbol) code "LC_FILE" "selected file"
+LifecycleFile(@place("",0),g,@replace_all(p,"/","\u0000"),i,p) :- lc_discovered(i,g,p).
+.decl lc_requested(i: number, path: symbol)
+lc_requested(i,p) :- option("entryPoint","_lc_roots"), option_item("requestedRoots",i,p).
+.violation LifecycleRoot(at: span, ordinal: number, value: symbol) code "LC_ROOT" "CLI root"
+LifecycleRoot(@place("",0),i,p) :- lc_requested(i,p).
+LifecycleRoot(@place("",0),i,p) :- option("entryPoint","_lc_roots"), !lc_requested(_,_), option_item("defaultRoots",i,p).
+
+// The same formatter supplies legacy DTO methods, production messages and the CLI.
+.decl lc_render_input(path: symbol, line: symbol, cls: symbol, method: symbol)
+lc_render_input(p,to_string(l),c,m) :- ppe_Lifecycle(p,l,_,_,_,c,m,_).
+lc_render_input(p,l,c,m) :- lcv_path(i,owner), option("lcRoot",r), lc_relative(owner,r,p), lcv_line(i,l), lcv_class(i,c), lcv_method(i,m).
+.decl lc_rendered(path: symbol, line: symbol, cls: symbol, method: symbol, value: symbol)
+lc_rendered(p,l,c,m,cat(p,":",l,": ",c,".",m," shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering.")) :- lc_render_input(p,l,c,m).
+.decl lc_split(text: symbol, ordinal: number, end: number)
+lc_split(s,i,e) :- lc_rendered(_,_,_,_,s), match_all(": ",s,i,_,e), i < 2.
+.decl lc_message(text: symbol, value: symbol)
+lc_message(s,@slice(s,last,strlen(s))) :- lc_rendered(_,_,_,_,s), last=max e : { lc_split(s,_,e) }.
+.decl lc_collector_message(path: symbol, line: number, cls: symbol, method: symbol, message: symbol)
+lc_collector_message(p,l,c,m,message) :- ppe_Lifecycle(p,l,_,_,_,c,m,_), lc_rendered(p,to_string(l),c,m,s), lc_message(s,message).
+
+.decl lcv_path(i: number, value: symbol)
+.input lcv_path(IO=json,filename="lifecycle-values.json",path="/values/*/path")
+.decl lcv_line(i: number, value: symbol)
+.input lcv_line(IO=json,filename="lifecycle-values.json",path="/values/*/line",projection="python-str")
+.decl lcv_class(i: number, value: symbol)
+.input lcv_class(IO=json,filename="lifecycle-values.json",path="/values/*/class_name",projection="python-str")
+.decl lcv_method(i: number, value: symbol)
+.input lcv_method(IO=json,filename="lifecycle-values.json",path="/values/*/method_name",projection="python-str")
+.decl lcv_line_json(i: number, value: symbol)
+.input lcv_line_json(IO=json,filename="lifecycle-values.json",path="/values/*/line",projection="json")
+.decl lcv_class_json(i: number, value: symbol)
+.input lcv_class_json(IO=json,filename="lifecycle-values.json",path="/values/*/class_name",projection="json")
+.decl lcv_method_json(i: number, value: symbol)
+.input lcv_method_json(IO=json,filename="lifecycle-values.json",path="/values/*/method_name",projection="json")
+.decl lcv_render(i: number, rendered: symbol)
+lcv_render(i,s) :- lcv_path(i,owner), option("lcRoot",r), lc_relative(owner,r,p), lcv_line(i,l), lcv_class(i,c), lcv_method(i,m), lc_rendered(p,l,c,m,s).
+.decl lcv_bad(i: number, path: symbol)
+lcv_bad(i,p) :- lcv_path(i,p), option("lcRoot",root), !lc_relative(p,root,_).
+.decl lcv_blocked(i: number)
+lcv_blocked(i) :- lcv_path(i,_), lcv_bad(j,_), j < i.
+.violation LifecycleValueError(at: span, ordinal: number, path: symbol) code "LC_PATH_ERROR" "Path is outside the root"
+LifecycleValueError(@place("",0),i,p) :- lcv_bad(i,p), !lcv_blocked(i).
+.violation LifecycleValue(at: span, ordinal: number, rendered: symbol, fact_json: symbol) code "LC_VALUE" "projected value"
+LifecycleValue(@place("",0),i,s,cat("{\"file_path\":",@json_str(p),",\"line\":",l,",\"class_name\":",c,",\"method_name\":",m,",\"message\":",@json_str(message),"}")) :-
+    lcv_render(i,s), !lcv_blocked(i), option("entryPoint",entry), (entry="_lc_render" ; entry="_lc_fact"),
+    lcv_path(i,owner), option("lcRoot",r), lc_relative(owner,r,p), lcv_line_json(i,l), lcv_class_json(i,c), lcv_method_json(i,m), lc_message(s,message).
+.violation LifecycleOutput(at: span, ordinal: number, stdout: symbol) code "LC_OUTPUT" "CLI output"
+LifecycleOutput(@place("",0),i,cat(s,"\n")) :- option("entryPoint","_lc_cli_report"), lcv_render(i,s), !lcv_blocked(i).
+.decl lc_count(n: number)
+lc_count(n) :- option("entryPoint","_lc_cli_report"), n=count : { lcv_path(_,_) }.
+.violation LifecycleExit(at: span, value: number) code "LC_EXIT" "CLI status"
+LifecycleExit(@place("",0),0) :- lc_count(0).
+LifecycleExit(@place("",0),0) :- lc_count(n), n > 0, option("checkMode","false"), !lcv_bad(_,_).
+LifecycleExit(@place("",0),1) :- lc_count(n), n > 0, option("checkMode","true"), !lcv_bad(_,_).

@@ -1355,7 +1355,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
-      "sha256": "bad72221b969d73d4bd98a221d15bdf6f4bd6c28b076b89f94146d1b871e4c58",
+      "sha256": "fd8fb308caf1f97afecfe1fd1af15c1e5fa1b1bc473ddba66590486e7044ad82",
       "origin": "authored",
       "upstreamPath": "scripts/lint_versioned_lifecycle_legacy_surfaces.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2696,9 +2696,57 @@
       "batch": 1,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-versioned-lifecycle-legacy-surfaces.json",
       "legacySha256": "931b8c73be253bff264bf63ea46bd145f8d01fc7bc66290e367841b881465b97",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
-      "ruleSha256": "bad72221b969d73d4bd98a221d15bdf6f4bd6c28b076b89f94146d1b871e4c58"
+      "ruleSha256": "fd8fb308caf1f97afecfe1fd1af15c1e5fa1b1bc473ddba66590486e7044ad82",
+      "evidence": {
+        "assertions": 1,
+        "positives": 1,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "fd8fb308caf1f97afecfe1fd1af15c1e5fa1b1bc473ddba66590486e7044ad82",
+        "engineCommit": "c5c8b30306e2ca3da48375d75f43e4692a81dc48",
+        "corpusSha256": "2e431552b2a566a695e8b84553fb24e91ded3b073eda54005d6635389e005c4a",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "82179e5e6ef15dec415e7929d508e826a6dfebef2b1a8843547b668081ec7476",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-lifecycle-finalec3-native-snapshot.json",
+            "sha256": "a3cc7aa6dd0cb7a0c8c543871163d6c2dc5f8c02c7dc12d9033f7a3e802b09ca"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-lifecycle-finalec3-native-workspace.json",
+            "sha256": "e3e463b7cad001efd0a9df5e3f62a18c784c39d5bdbc387e5cac47156970d131"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-lifecycle-complete-finalec3.json.gz",
+            "sha256": "8421dc1193c7ae705cb661451c8f042a6edc27d6e36473d4107283047216f0a2"
+          }
+        ],
+        "supplemental": {
+          "publicCasesPerAPI": 142,
+          "originalCasesPerAPI": 1,
+          "originalFindingPositiveCases": 1,
+          "productionCases": 19,
+          "suppliedFactCases": 16,
+          "persistentSteps": 14,
+          "controls": 11,
+          "nativeExecutions": 449,
+          "fullMigrationAcceptance": false
+        },
+        "scope": "All original assertions through both APIs. Recorded native scanners, collector order, scope, class predicate, DTO rendering/facts, CLI, discovery, reporter, production and persistent updates."
+      },
+      "migrationProgress": {
+        "status": "full-contract-passed",
+        "verifiedNativeExecutions": 449
+      }
     },
     {
       "check": "no_api_root_imports",

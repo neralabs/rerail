@@ -245,7 +245,11 @@ class Suite:
             # This DTO has no message field. Use the engine's complete diagnostic instead of
             # calling the source Violation.render() from the legacy recording normalizer.
             from replay import result as diagnostic_result
-            actual = diagnostic_result(dict(check=check), self.calls[-1]['diagnostics'])
+            call=self.calls[-1]
+            owners={doc:canonical(Path(owner),root)['value'] for doc,owner in
+                    zip(call['options'].get('ownerDocs',[]),call['options'].get('ownerPaths',[]))}
+            actual = diagnostic_result(dict(check=check),
+                [dict(row,path=owners.get(row['path'],row['path'])) for row in call['diagnostics']])
         else:
             actual = (normalize_two(check, result, root, files) if check in {'admin_async_purity', 'async_executor', 'dynamic_module_loading', 'classvar_check', 'type_safety_patterns', 'forwardref', 'unresolved_forward_refs', 'conn_or_txn_union', 'async_patterns', 'async_sync_boundary'}
                       else normalize(check, entry, result, root, files))
@@ -498,13 +502,8 @@ class Suite:
             from removed_port import scan_batch
             return scan_batch(self,module,[path])
         if check == 'versioned_lifecycle_legacy_surfaces':
-            if 'source' in arguments:
-                source = arguments['source']
-            else:
-                source = path.read_text()
-            rows = self.native(check, entry, [dict(path=path.name, source=source)])
-            rows.sort(key=lambda r: (r['line'], r['message']))
-            return [module.Violation(path, r['parameters']['cls'], r['parameters']['method'], r['line']) for r in rows]
+            from lifecycle_port import scan_file
+            return scan_file(self,module,entry,path,arguments.get('source'))
 
         if check == 'no_source_inspection':
             if entry == 'scan_file_content':
@@ -560,6 +559,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'versioned_lifecycle_legacy_surfaces':
+                from lifecycle_port import install
+                install(self,module)
             if check == 'removed_compat_surfaces':
                 from removed_port import install
                 install(self,module)

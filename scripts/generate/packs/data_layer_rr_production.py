@@ -171,7 +171,13 @@ def production(source, check, text):
         text = text.replace(declaration.group(),newdecl,1)
         api_anchor = 'anchor' if node else '@place(p,l)'
         suffix += clause+'('+','.join([api_anchor,*[k for k,_ in tail],'o0','o1','o2'])+') :- '+event+', pp_api().\n'
-        suffix += clause+'('+','.join(['@place(p,l)',*[k for k,_ in tail],'o0','o1','o2'])+') :- '+event+', pp_run(), pp_fact_allowed(p), pp_report_allowed(p).\n'
+        if check != 'versioned_lifecycle_legacy_surfaces':
+            suffix += clause+'('+','.join(['@place(p,l)',*[k for k,_ in tail],'o0','o1','o2'])+') :- '+event+', pp_run(), pp_fact_allowed(p), pp_report_allowed(p).\n'
+        if check == 'versioned_lifecycle_legacy_surfaces':
+            event += ', lc_collector_message(p,l,cls,method,lc_message)'
+            message = 'lc_message'
+            suffix += '.violation LifecycleReport(at: span, source_message: symbol, event0: number, event1: number, event2: number) code "VLL001" "{source_message}"\n'
+            suffix += 'LifecycleReport(@place(p,l),lc_message,o0,o1,o2) :- '+event+', pp_run(), pp_fact_allowed(p), pp_report_allowed(p).\n'
         pkey = '@replace_all(p,"/","\\u0000")' if check in {'hasattr_async','serverplan_name_inference'} else 'p'
         sort = [pkey,'l',message,'0']
         if check == 'backend_type_strings': sort = ['p','l',code,'0']
