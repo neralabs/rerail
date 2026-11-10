@@ -245,12 +245,14 @@ describe("validatePack", () => {
       { rules: ["candidates/rules/pass.json: has id pass-statement; name it candidates/rules/pass-statement.json"] },
     ],
     [
+      // An underscore, not a namespace colon (eslint:no-alert): a Windows file name cannot hold a colon, so that file
+      // could not exist there, and the id must fail the check on every platform.
       "a candidate whose id is not lowercase letters, digits and dashes, though its file is named for it",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", description: "Avoid alert().", clauses: [] });
+        writeJson(join(directory, "candidates", "rules", "no_alert.json"), { format: "rerail.policy/v1", id: "no_alert", description: "Avoid alert().", clauses: [] });
       },
-      { rules: ["candidates/rules/eslint:no-alert.json: id eslint:no-alert is not lowercase letters, digits and dashes"] },
+      { rules: ["candidates/rules/no_alert.json: id no_alert is not lowercase letters, digits and dashes"] },
     ],
     [
       "a candidate with no id",

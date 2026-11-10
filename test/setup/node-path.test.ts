@@ -28,15 +28,22 @@ async function homebrew(): Promise<string> {
   return prefix;
 }
 
+/**
+ * Homebrew runs on macOS and Linux only, so pinnedNodePath reads only its `/`-separated keg paths and records any
+ * Windows node as it is. The two tests that link a keg into bin or opt would otherwise run wherever Windows lets the
+ * process make symbolic links (an elevated CI runner) and expect a Homebrew link that Windows never has.
+ */
+const noHomebrew = process.platform === "win32";
+
 describe("pinnedNodePath", () => {
-  it("records Homebrew's node by the link brew upgrade keeps, not its versioned keg", async context => {
+  it.skipIf(noHomebrew)("records Homebrew's node by the link brew upgrade keeps, not its versioned keg", async context => {
     const prefix = await homebrew();
     const node = await keg(prefix, "node", "26.5.0");
     symlinkOrSkip(context, join("..", "Cellar", "node", "26.5.0", "bin", "node"), join(prefix, "bin", "node"), "file");
     expect(pinnedNodePath(node)).toBe(join(prefix, "bin", "node"));
   });
 
-  it("records a formula Homebrew does not link into bin by its opt link", async context => {
+  it.skipIf(noHomebrew)("records a formula Homebrew does not link into bin by its opt link", async context => {
     const prefix = await homebrew();
     const linked = await keg(prefix, "node", "26.5.0");
     symlinkOrSkip(context, linked, join(prefix, "bin", "node"), "file");
