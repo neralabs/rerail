@@ -385,8 +385,8 @@ fn eq_lowers_to_straight_bit_operations() {
 /// compare and a ballot. Neither loops over bytes.
 #[test]
 fn interpreters_have_no_byte_loops() {
-    let cpu = include_str!("block.rs");
-    let kernel = &cpu[cpu.find("pub(super) fn eq(block").expect("the eq kernel")..];
+    let cpu = include_str!("../../../../crates/tier1/src/block.rs");
+    let kernel = &cpu[cpu.find("pub fn eq(block").expect("the eq kernel")..];
     let kernel = &kernel[..kernel.find("\n}\n").expect("its end")];
     for word in ["for ", "while ", "loop {", ".iter()", "[j]", "[i]"] {
         assert!(!kernel.contains(word), "the CPU eq kernel has `{word}`");

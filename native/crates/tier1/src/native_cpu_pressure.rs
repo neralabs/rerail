@@ -19,14 +19,14 @@ use cranelift_codegen::ir::{Block, Function, Value, ValueDef};
 
 /// The integer registers the allocator has for values on aarch64 (x0..x15, x19..x28 less the
 /// few it keeps), about. A count over it is a point where something must be on the stack.
-pub(super) const INT_REGS: usize = 24;
+pub const INT_REGS: usize = 24;
 /// The vector registers (v0..v31 less its scratch), about.
-pub(super) const VEC_REGS: usize = 30;
+pub const VEC_REGS: usize = 30;
 
 /// A pass's register pressure. Values are named by their place in the whole program, `None`
 /// for unmarked ones (block parameters, the loops' glue).
 #[derive(Clone, Debug, Default)]
-pub(super) struct Pressure {
+pub struct Pressure {
     /// The function's instructions (each a point).
     pub points: usize,
     pub int_peak: usize,
@@ -54,7 +54,7 @@ pub(super) struct Pressure {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct Blame {
+pub struct Blame {
     pub origin: Option<u32>,
     /// What made it: the instruction's opcode, or `param of blockN` (a loop's parameter: the
     /// carried state, a count, a pointer).
@@ -66,7 +66,7 @@ pub(super) struct Blame {
 
 /// `func`'s pressure, its marks read through `origins` (the pass's instructions' places in the
 /// whole program).
-pub(super) fn measure(func: &Function, origins: &[u32], hot: &[Block]) -> Pressure {
+pub fn measure(func: &Function, origins: &[u32], hot: &[Block]) -> Pressure {
     let dfg = &func.dfg;
     let blocks: Vec<Block> = func.layout.blocks().collect();
     let succs = |b: Block| -> Vec<Block> {
@@ -198,7 +198,7 @@ pub(super) fn measure(func: &Function, origins: &[u32], hot: &[Block]) -> Pressu
 /// a value live across one is kept in one of the ten callee-saved integer registers or on the
 /// stack, and a vector always on the stack (only the low half of v8..v15 is kept), stored and
 /// reloaded where the allocator places it, often on the path that does not call.
-pub(super) fn across_calls(func: &Function) -> Vec<(cranelift_codegen::ir::Inst, usize, usize)> {
+pub fn across_calls(func: &Function) -> Vec<(cranelift_codegen::ir::Inst, usize, usize)> {
     let dfg = &func.dfg;
     let blocks: Vec<Block> = func.layout.blocks().collect();
     let succs = |b: Block| -> Vec<Block> {

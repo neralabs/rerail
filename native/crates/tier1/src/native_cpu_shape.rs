@@ -27,7 +27,7 @@ use std::collections::HashMap;
 
 /// What one turn of a loop steps over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Step {
+pub enum Step {
     File,
     Block,
     Bits,
@@ -39,7 +39,7 @@ pub(super) enum Step {
 
 /// Why a function was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Refusal {
+pub enum Refusal {
     /// A call instruction, as text.
     Call(String),
     /// A loop whose header the lowering did not name.
@@ -48,7 +48,7 @@ pub(super) enum Refusal {
 
 /// Refuse `func` unless it calls only `own` functions and each of its cycles passes one of
 /// `heads`.
-pub(super) fn check(func: &Function, heads: &[(Block, Step)], own: &[UserExternalName]) -> Result<(), Refusal> {
+pub fn check(func: &Function, heads: &[(Block, Step)], own: &[UserExternalName]) -> Result<(), Refusal> {
     for block in func.layout.blocks() {
         for inst in func.layout.block_insts(block) {
             let data = &func.dfg.insts[inst];

@@ -3175,6 +3175,7 @@ dependencies = [
  "regex",
  "regex-automata",
  "regex-syntax",
+ "rerail-tier1",
  "ruff_python_ast",
  "ruff_python_parser",
  "rusqlite",
@@ -3194,6 +3195,18 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-tier1"
+version = "0.1.0"
+dependencies = [
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-jit-wasm",
+ "cranelift-module",
+ "libc",
 ]
 
 [[package]]
