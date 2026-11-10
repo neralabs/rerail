@@ -45,7 +45,10 @@ fn policies() -> Vec<(String, CompiledCodeRuleDsl)> {
         .into_iter()
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok()?;
-            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+            // A policy that does not compile is left out, and named.
+            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned())
+                .map_err(|error| eprintln!("SKIP {}: {}", path.display(), error.reason))
+                .ok()?;
             Some((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled))
         })
         .collect()
@@ -1021,7 +1024,10 @@ fn rer131_pack_keys() {
         .into_iter()
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok()?;
-            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+            // A policy that does not compile is left out, and named.
+            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned())
+                .map_err(|error| eprintln!("SKIP {}: {}", path.display(), error.reason))
+                .ok()?;
             Some((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled))
         })
         .collect();
@@ -1105,18 +1111,27 @@ fn rer131_runtime_keys() {
     let (mut rules, mut failed, mut keys) = (0, 0, 0);
     for path in documents {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let Ok(compiled) = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()) else { continue };
+        let compiled = match CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()) {
+            Ok(compiled) => compiled,
+            // A policy that does not compile is left out, and named.
+            Err(error) => {
+                eprintln!("SKIP {}: {}", path.display(), error.reason);
+                continue;
+            }
+        };
         rules += 1;
         let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let Ok(result) = compiled.evaluate(snapshot.clone(), "report".to_owned()) else {
-            failed += 1;
-            continue;
+        let result = match compiled.evaluate(snapshot.clone(), "report".to_owned()) {
+            Ok(result) => result,
+            Err(error) => {
+                eprintln!("FAILURE {stem}: {}", error.reason.chars().take(300).collect::<String>());
+                failed += 1;
+                continue;
+            }
         };
         let result: serde_json::Value = serde_json::from_str(&result).unwrap();
         if let Some(failures) = result["failures"].as_array().filter(|f| !f.is_empty()) {
-            if failed == 0 {
-                eprintln!("FAILURE {stem}: {}", serde_json::Value::from(failures.clone()).to_string().chars().take(400).collect::<String>());
-            }
+            eprintln!("FAILURE {stem}: {}", serde_json::Value::from(failures.clone()).to_string().chars().take(300).collect::<String>());
             failed += 1;
         }
         for v in result["violations"].as_array().into_iter().flatten() {
