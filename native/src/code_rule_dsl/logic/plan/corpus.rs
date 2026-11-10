@@ -4539,6 +4539,10 @@ fn run_observed(
                     // Each kept relation bound as `r__old`, and its statistics kept by delta if a run kept them: this
                     // run's `r`, maintained from it, has them patched by its delta (decision 0096 step 4).
                     let mut bound_old: HashMap<String, (Arc<crate::code_rule_dsl::logic::native::component::InRel>, Option<retain::Patched>)> = HashMap::new();
+                    // The kept relations whose statistics are made when first planned with (decision 0101 §4), and
+                    // `RERAIL_EAGER_KEPT_STATS` to make them all at binding, as before.
+                    let lazy_kept = std::env::var_os("RERAIL_EAGER_KEPT_STATS").is_none();
+                    let mut lazies: Vec<(String, Arc<crate::code_rule_dsl::logic::native::component::InRel>, Arc<crate::code_rule_dsl::logic::plan::LazyStats<LazyKept>>)> = Vec::new();
                     for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
                         let _bind = crate::code_rule_dsl::logic::profile::span(|| format!("bind {}", if held.is_some() { "kept" } else { "source" }));
                         // A kept relation's statistics, measured when it was first bound so, while it is kept as it is.
@@ -4557,6 +4561,41 @@ fn run_observed(
                             stats.measured(&rel, names.iter().cloned().zip(cols.iter().copied()), vals.iter().map(|(c, v, n)| (names[*c].clone(), *v, *n)));
                         } else {
                             let patched = held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.patched(&rel, h)).filter(|p| p.tested == tested).cloned());
+                            // Kept, and known neither by delta nor as measured for these constants: its statistics are
+                            // made when a stratum first plans with it (decision 0101 §4), as the eager path below would
+                            // make them. Most strata a step reaches are quiet or join an empty delta and never do.
+                            let measured_before = held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested).cloned());
+                            if patched.is_none() && measured_before.is_none() && lazy_kept
+                                && let Some(h) = &held
+                            {
+                                let maintains = rel.strip_suffix("__old").is_some_and(|of| part.program.decls.contains_key(&format!("{of}__del")));
+                                let (h2, source2, tested2, rel2) = (Arc::clone(h), Arc::clone(&source), tested.clone(), rel.clone());
+                                let wanted = constants.get(rel.as_str()).cloned();
+                                let lazy = crate::code_rule_dsl::logic::plan::LazyStats::new(move || {
+                                    let as_cols = |m: &[(String, i64, i64, i64, i64)]| m.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])).collect::<Vec<_>>();
+                                    // Counted from the engine's postings of it, and kept by this run's delta (decision 0096
+                                    // step 4), if this run maintains it; else, or with no index to count from, measured.
+                                    if maintains {
+                                        let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel2}"));
+                                        if let Some(stats) = super::statkeep::RelStats::from_postings(source2.columns(), h2.rows() as i64, &mut |c, visit| h2.each_posting(c, visit)) {
+                                            let counts = constant_counts(Some(&tested2), source2.as_ref());
+                                            let p = retain::Patched { at: Arc::as_ptr(&h2) as *const u8 as usize, stats, counts: counts.clone(), tested: tested2.clone() };
+                                            return (as_cols(&p.stats.statistics(&|_| true)), counts, LazyKept::Patched(p));
+                                        }
+                                    }
+                                    let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel2}"));
+                                    let measured = syntax::statistics(source2.as_ref());
+                                    let counts = constant_counts(wanted.as_ref(), source2.as_ref());
+                                    (as_cols(&measured), counts.clone(), LazyKept::Measured(measured, counts, tested2))
+                                });
+                                stats.lazily(&rel, h.rows(), lazy.clone());
+                                if let Some(of) = rel.strip_suffix("__old") {
+                                    bound_old.insert(of.to_owned(), (Arc::clone(h), None));
+                                }
+                                lazies.push((rel.clone(), Arc::clone(h), lazy));
+                                modules.bind(&db, &rel, source)?;
+                                continue;
+                            }
                             // Not kept by delta yet: counted from the engine's postings of it, in place of measuring it,
                             // and patched by this run's delta (decision 0096 step 4): a relation's first count costs
                             // about what a measure did, once.
@@ -4864,9 +4903,34 @@ fn run_observed(
                     // A maintained relation's statistics as next run binds it (`r__old`): those of the relation it
                     // started as, patched by its delta; counted from its rows once, the first run it is maintained.
                     let s = span("patch the maintained relations' statistics");
+                    // The lazy statistics a plan made are kept as the eager ones are: by delta, or as measured. One no
+                    // plan read is left to next run, which binds this run's relation lazily in turn.
+                    let mut unmade: BTreeSet<String> = BTreeSet::new();
+                    let lazy_made = lazies.len();
+                    let mut made = 0;
+                    for (rel, h, lazy) in lazies.drain(..) {
+                        let of = rel.strip_suffix("__old").map(str::to_owned);
+                        match lazy.made().map(|m| &m.2) {
+                            Some(LazyKept::Patched(p)) => {
+                                made += 1;
+                                if let Some(entry) = of.as_ref().and_then(|of| bound_old.get_mut(of)) {
+                                    entry.1 = Some(p.clone());
+                                }
+                            }
+                            Some(LazyKept::Measured(m, counts, tested)) => {
+                                made += 1;
+                                measured_kept.insert((rel.clone(), Arc::as_ptr(&h) as *const u8 as usize), (m.clone(), counts.clone(), tested.clone()));
+                            }
+                            None => unmade.extend(of),
+                        }
+                    }
+                    step(&format!("kept statistics: {made} of {lazy_made} lazy relations planned with"));
                     let mut patched: HashMap<String, retain::Patched> = HashMap::new();
                     for (rel, width, new) in &rows {
                         let Some((old, kept)) = bound_old.get(rel) else { continue };
+                        if unmade.contains(rel) {
+                            continue;
+                        }
                         let name = format!("{rel}__old");
                         let next = match kept {
                             Some(p) => p.after(old, new, *width),
@@ -6489,4 +6553,11 @@ uses(n, f) :- imp(n, q), def(f, q).
         assert_ne!(one, three);
         assert_eq!(reads("p3_quiet"), ["cmp_same"]);
     }
+}
+
+/// What a kept relation's lazy statistics leave the session (decision 0101 §4): its form kept by delta, or its
+/// measure.
+pub(in crate::code_rule_dsl) enum LazyKept {
+    Patched(retain::Patched),
+    Measured(Vec<(String, i64, i64, i64, i64)>, Vec<(String, i64, i64)>, BTreeSet<(usize, i64)>),
 }

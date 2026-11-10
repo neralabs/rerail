@@ -226,6 +226,50 @@ plans read it as one row. One recursive stratum (`attr_open`) then took 6.0 s in
 The skip now records the kept relation's row count and per-column statistics (`prior_stats`), as the opening
 path does.
 
+## Built: §4, a kept relation's statistics made when first planned with (2026-11-10)
+
+**The problem.** A session's run binds every kept relation as `r__old`. Each one not carried from the last
+run or kept by delta was counted or measured at binding. At O125's first edit, that was 819 counts and 168
+measures (1.8 s), and the patch after the run counted again (1.0 s). Many of those relations are read by
+no plan that step.
+
+**The change.** A kept relation is bound with its row count only. Its columns' statistics are made the
+first time a plan reads it (`plan::LazyStats`, `Model::resolve`), by the same count or measure as before:
+
+```rust
+// plan/corpus.rs, binding: its rows now, the rest on first use.
+stats.lazily(&rel, h.rows(), lazy.clone());
+// plan.rs, before a stratum's rules are planned: only what they read.
+self.model.resolve(prog, Model::read_by(rules.iter().copied()))?;
+```
+
+- **Who resolves.** A stratum's spec, a seed join, a view, the inline choice's cone, and `prior_stats`.
+- **What needs no columns.** A rule of one positive atom over distinct variables (a survivor,
+  `h :- h__old, !h__del`) has one order. Its estimate is the atom's rows.
+- **Deferred `prior_stats`.** A quiet or opened stratum's `h` takes its `h__old`'s columns only when a
+  reader is planned. They fill only what nothing set since (`live_stats` clears the deferral), as a later
+  write overrides them in the eager order.
+- **After the run.** What a plan made is kept as before (by delta, or as measured). A relation no plan read
+  is not patched; next run binds it lazily again.
+- **The switch.** `RERAIL_EAGER_KEPT_STATS` makes them all at binding, as before.
+
+**Measured** (O125 steps 01–03, debug build, load 65–139; spans with profiling on):
+
+| step 01 span | eager | lazy |
+|---|---:|---:|
+| bind and measure kept | 1.86 s | 0.06 s |
+| patch the maintained relations' statistics | 1.04 s | 0.45 s |
+| statistics made when first planned with (585 relations) | — | 1.18 s |
+| **sum** | **2.90 s** | **1.69 s** |
+
+| session CPU (no spans) | 01 | 02 | 03 |
+|---|---:|---:|---:|
+| eager | 13.0 s | 9.4 s | 5.9 s |
+| lazy | 11.8 s | 9.3 s | 6.3 s |
+
+Steps 02 and 03 do not move: by then a kept relation's statistics are carried or kept by delta, and
+binding was 0.17–0.19 s. Findings are the same as a full run's at each step, and the gate passes.
+
 ## Open
 
 - Whether §2's base-program form keeps demand's choices identical on the rewritten program. If it does not, the
