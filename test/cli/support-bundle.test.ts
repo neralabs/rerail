@@ -399,9 +399,9 @@ describe("scrubText", () => {
   });
 
   it.each([
-    ["as recorded", String.raw`C:\Users\somebody\src\acme-app\x.ts`],
-    ["with forward slashes", "C:/Users/somebody/src/acme-app/x.ts"],
-    ["JSON-escaped", String.raw`C:\\Users\\somebody\\src\\acme-app\\x.ts`],
+    ["as recorded", String.raw`C:\Users\somebody\src\acme-app\index.ts`],
+    ["with forward slashes", "C:/Users/somebody/src/acme-app/index.ts"],
+    ["JSON-escaped", String.raw`C:\\Users\\somebody\\src\\acme-app\\index.ts`],
   ])("replaces a Windows checkout path written %s", (_name, text) => {
     const knownValues = [{ value: String.raw`C:\Users\somebody\src\acme-app`, label: "<checkout>" }];
     expect(scrubText(text, { knownValues })).not.toContain("acme-app");
