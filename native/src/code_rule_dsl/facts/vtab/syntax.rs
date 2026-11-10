@@ -47,6 +47,7 @@ pub(crate) mod normalized;
 mod python_order;
 mod python_syntax;
 mod python_demand;
+mod candidates;
 mod python_parts;
 use core_rr::Family;
 mod guests;
@@ -908,6 +909,9 @@ impl Batch {
         let mut errors = Vec::new();
         // `core.rr`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
+        // Node identity/ancestry and line views do not require scalar rows or text interning.
+        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","comment","spread","op","op_at","op_t","intval","next_sibling","str_part","str_part_start","str_part_word"]
+            .into_iter().any(|r|projection.wants(r));
         let wants_text = core && projection.wants("text");
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Line);
@@ -1063,7 +1067,7 @@ impl Batch {
                 errors.push(key);
             }
             let f = &*d.facts;
-            for (local, &id) in p.core.iter().enumerate() {
+            for (local, &id) in p.core.iter().take(if scalar_nodes {p.core.len()}else{0}).enumerate() {
                 let n = p.global(local as u32);
                 if !core {
                     let is_operator = |c: &&u32| {
@@ -1153,6 +1157,7 @@ impl Batch {
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
             (py::CONTEXTS.map(|name| string(name) as i64), py::SPREADS.map(|name| string(name) as i64))
         });
+        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"scalarNodes":if scalar_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"nodes":docs.iter().map(|p|p.core.len()).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
         let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
         let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;

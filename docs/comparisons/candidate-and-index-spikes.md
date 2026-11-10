@@ -291,3 +291,7 @@ Typed producer metadata fixed that experiment. General lowering must reject cycl
 
 These are test-only spikes. Release behavior and its single execution path remain unchanged.
 The eventual implementation must replace the existing producer shape, without preserving experiment flags as user-facing modes.
+
+
+Production follow-up: [candidate demands before projection planning](early-candidate-demands.md) promotes the accepted candidate and connection changes.
+It measures the effect of lowering demands before projection, after merging integration hub `cd0d66944`.

@@ -321,7 +321,7 @@ pub(super) fn physical_sql(mut sql: String, prog: &Program) -> String {
         }
         assert_eq!(patches.len(),3);
         for (range,body) in patches.into_iter().rev() {sql.replace_range(range,body);}
-        let definition=format!("__rr_candidates(c0,c1,c2,c3,c4) AS MATERIALIZED (SELECT c0,c1,c2,c3,c4 FROM rr_batch_python_candidates WHERE frame=0 AND targets=(SELECT json_group_array(sym_text(c0)) FROM ({targets}))),\n");
+        let definition=format!("__rr_candidates(c0,c1,c2,c3,c4) AS MATERIALIZED (SELECT c0,c1,c2,c3,c4 FROM rr_batch_python_candidate_spike WHERE frame=0 AND targets=(SELECT json_group_array(sym_text(c0)) FROM ({targets}))),\n");
         sql.insert_str("WITH RECURSIVE ".len(),&definition);
         if std::env::var_os("RERAIL_DEMAND_FRAME_GUARD").is_some() {
             let mut gates=Vec::new();
@@ -358,5 +358,3 @@ pub(super) fn physical_sql(mut sql: String, prog: &Program) -> String {
     }
     sql
 }
-
-pub(crate) mod setup;

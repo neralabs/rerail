@@ -19,7 +19,7 @@ pub(super) fn planned(prog: &Program, db: &Connection, inputs: Inputs) -> Result
     use sha2::{Digest, Sha256};
     let key: [u8; 32] = Sha256::digest(
         format!(
-            "compose-v1\0{prog:?}\0{}\0{:?}\0{:?}\0{:?}",
+            "compose-v2\0{prog:?}\0{}\0{:?}\0{:?}\0{:?}",
             inputs.facts, inputs.atoms, inputs.kept, inputs.batch
         )
         .as_bytes(),
@@ -63,7 +63,7 @@ pub(super) fn accepts(prog: &Program) -> Result<bool> {
         || prog
             .natives
             .values()
-            .any(|n| !matches!(n, super::super::front::Native::Python { .. }))
+            .any(|n| !matches!(n, super::super::front::Native::Python { .. } | super::super::front::Native::PythonCandidates {..}))
         || prog.outputs.iter().any(|r| r == "finding")
     {
         return Ok(false);
@@ -119,7 +119,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     let mut frame_counts = BTreeMap::<String, usize>::new();
     for (rel, op) in &prog.natives {
         if needed.contains(rel) {
-            if let super::super::front::Native::Python { input, .. } = op {
+            if let super::super::front::Native::Python { input, .. } | super::super::front::Native::PythonCandidates {input,..} = op {
                 *frame_counts.entry(input.clone()).or_default() += 1;
             }
         }
@@ -132,7 +132,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
             name.push('_');
         }
         frame_defs.push(format!(
-            "{name}(handle) AS MATERIALIZED (SELECT rr_demand_frame(c0) FROM {})",
+            "{name}(handle) AS MATERIALIZED (SELECT rr_demand_frame(c0) FROM {} HAVING count(*) > 0)",
             ident(&input)
         ));
         if let Some(n) = uses.get_mut(&input) {
@@ -231,12 +231,12 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
             continue;
         }
         let mut arms = constants(rel);
-        if let Some(super::super::front::Native::Python {
-            kind,
-            input,
-            targets,
-        }) = prog.natives.get(rel)
-        {
+        let producer=match prog.natives.get(rel) {
+            Some(super::super::front::Native::Python{kind,input,targets})=>Some((kind.as_str(),input,targets.as_ref(),String::new())),
+            Some(super::super::front::Native::PythonCandidates{input,targets,context,member})=>Some(("candidates",input,Some(targets),format!(" AND context='{}' AND member='{}'",context.replace(char::from(39),"''"),member.replace(char::from(39),"''")))),
+            _=>None,
+        };
+        if let Some((kind,input,targets,parameters))=producer {
             let cols = prog.decls[rel]
                 .iter()
                 .enumerate()
@@ -263,7 +263,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                     )
                 })
                 .unwrap_or_default();
-            arms.push(format!("SELECT DISTINCT {cols} FROM rr_batch_python_{kind} WHERE frame=(SELECT handle FROM {}){target}",frames[input]));
+            arms.push(format!("SELECT DISTINCT {cols} FROM {} AS demanded CROSS JOIN rr_batch_python_{kind} WHERE frame=demanded.handle{target}{parameters}",frames[input]));
         } else {
             for rule in rules {
                 let ((order, _, _), _) =

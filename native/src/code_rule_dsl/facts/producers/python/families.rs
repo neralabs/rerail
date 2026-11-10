@@ -253,5 +253,6 @@ pub(crate) fn qualification_chain(g:&Grammar,f:&Facts,n:u32)->Option<(String,Vec
     Some((crate::code_rule_dsl::identifier::python_name(f.text(n).into()).into_owned(),tail))
 }
 
+pub(crate) mod candidates;
 #[cfg(test)]
-pub(crate) mod candidate_spike;
+pub(crate) use candidates as candidate_spike;

@@ -73,6 +73,7 @@ pub(in crate::code_rule_dsl) mod placement;
 mod demand;
 mod native_demand;
 mod compose;
+mod connection;
 pub(in crate::code_rule_dsl) mod sketch;
 pub(in crate::code_rule_dsl) mod statkeep;
 mod keeps;
@@ -2671,6 +2672,7 @@ impl Run<'_, '_> {
             Native::MatchAll { input, pattern, groups, positions } => return self.match_all(rel, input, pattern, groups, *positions),
             Native::Components { edge, own } => return self.components(rel, edge, own),
             Native::Python {kind,input,targets} => return self.python_relation(rel,kind,input,targets),
+            Native::PythonCandidates {input,targets,..} => return self.python_relation(rel,"candidates",input,&Some(targets.clone())),
         };
         let cols = |r: &str, n: usize| (0..n).map(|c| self.model.col(r, c)).collect::<Vec<_>>();
         let read = |sql: &str, width: usize| -> Result<Vec<Vec<i64>>> {
@@ -2725,7 +2727,9 @@ impl Run<'_, '_> {
             }
             let source = vtab::bound_source(self.db, "node").ok_or_else(|| Error::Plan("Python producer requires bound syntax facts".into()))?;
             let batch = source.python_batch().ok_or_else(|| Error::Plan("Python producer requires a syntax batch".into()))?;
-            batch.python_project(kind, &requests, &wanted).map_err(Error::Plan)?
+            if let Some(super::front::Native::PythonCandidates{context,member,..})=self.prog.natives.get(rel) {
+                batch.python_candidates(&requests,&wanted,context,member).map_err(Error::Plan)?
+            }else{batch.python_project(kind, &requests, &wanted).map_err(Error::Plan)?}
         };
         if self.model.inputs.atoms.is_some() {
             let strings = rows.iter().flatten().filter_map(|v| match v { SqlValue::Text(s) => Some(s.as_str()), _ => None });
@@ -3577,7 +3581,7 @@ impl Run<'_, '_> {
     /// 0100 §5): what a level's batch can pair before the stratum runs. Planned as the stratum will plan them
     /// (`plan_rule_reused` keeps the plan); a spec the stratum ends up planning otherwise is not found, and that seed
     /// runs by the host's walk.
-    fn seed_specs(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Vec<String> {
+    fn seed_specs(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Vec<std::sync::Arc<super::native::component::spec::JoinSpec>> {
         let prog = self.prog;
         if scc.iter().any(|r| prog.lattice.contains_key(r) || prog.natives.contains_key(r) || prog.gates.iter().any(|(g, _)| g == r)) {
             return Vec::new();
@@ -4434,10 +4438,7 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
 /// `temp` tables, dropped by the next run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
 pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
-    #[cfg(not(test))]
-    super::native::register_symbols(db)?;
-    #[cfg(test)]
-    compose::experiments::setup::run(db,2,||super::native::register_symbols(db))?;
+    connection::run(db,2,||super::native::register_symbols(db))?;
     let inputs = Inputs {
         facts: "main.".to_owned(),
         stats: format!("{stats}."),
@@ -4534,14 +4535,8 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_answering(
 }
 
 fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hooks: Hooks<'_>) -> Result<Outcome> {
-    #[cfg(not(test))]
-    super::native::register(db)?;
-    #[cfg(test)]
-    compose::experiments::setup::run(db,1,||super::native::register(db))?;
-    #[cfg(not(test))]
-    super::native::register_symbols(db)?;
-    #[cfg(test)]
-    compose::experiments::setup::run(db,2,||super::native::register_symbols(db))?;
+    connection::run(db,1,||super::native::register(db))?;
+    connection::run(db,2,||super::native::register_symbols(db))?;
     super::native::forget_inputs(db);
     let out = run(&lowered.program, db, inputs, Some(lowered), hooks);
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
@@ -4631,28 +4626,19 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     });
     let lowered=adjusted.as_ref();
     let setup = super::profile::span(|| "setup".into());
-    #[cfg(not(test))]
-    super::strings::register(db)?;
-    #[cfg(test)]
-    compose::experiments::setup::run(db,4,||super::strings::register(db))?;
-    #[cfg(not(test))]
-    super::native::aggregation::register_sum(db)?;
-    #[cfg(test)]
-    compose::experiments::setup::run(db,8,||super::native::aggregation::register_sum(db))?;
+    connection::run(db,4,||super::strings::register(db))?;
+    connection::run(db,8,||super::native::aggregation::register_sum(db))?;
     if inputs.atoms.is_some() && inputs.given.is_some() && PLANS.with(|p|p.borrow().is_some())
         && hooks.answer.is_none()
         && compose::enabled() && compose::accepts(prog)? {
         let needed=super::front::needed(prog,prog.outputs.iter().chain(&inputs.kept).cloned().collect());
         let reads:Vec<_>=prog.inputs.iter().filter(|r|needed.contains(*r)).cloned().collect();
         if let Some(load)=hooks.load.as_deref_mut(){load(&reads)?;}
-        let bindings=crate::code_rule_dsl::facts::vtab::Modules::default();
         for rel in super::native::component::adopted(db).into_iter().filter(|r|reads.contains(r)) {
             let held=super::native::component::held(db,&rel).ok_or_else(||Error::Plan(format!("missing retained input {rel}")))?;
             let source=held.source((0..prog.decls[&rel].len()).map(|c|sql_col(&rel,c)).collect());
             if !crate::code_rule_dsl::facts::vtab::replace_bound_source(db,&rel,source.clone())? {
-                #[cfg(test)]
-                if compose::experiments::setup::bind(db,&rel,source.clone())? {continue;}
-                bindings.bind(db,&rel,source)?;
+                connection::bind(db,&rel,source)?;
             }
         }
         let plan=compose::planned(prog,db,inputs)?;
@@ -5008,15 +4994,17 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         }
         // Python operators consume completed demands, not their synthetic locality-proof rules. Keep native
         // inputs and outputs in the set store before the SQL fallback can materialize them.
-        if atoms && scc.iter().any(|r| matches!(prog.natives.get(r), Some(super::front::Native::Python { .. }))) {
+        if atoms && scc.iter().any(|r| matches!(prog.natives.get(r), Some(super::front::Native::Python { .. } | super::front::Native::PythonCandidates {..}))) {
             let rel = scc.iter().next().unwrap();
-            let Some(super::front::Native::Python { kind, input, targets }) = prog.natives.get(rel) else {
-                return Err(Error::Plan("recursive Python semantic demands are not supported".into()));
+            let (kind,input,targets)=match prog.natives.get(rel) {
+                Some(super::front::Native::Python{kind,input,targets})=>(kind.as_str(),input,targets.clone()),
+                Some(super::front::Native::PythonCandidates{input,targets,..})=>("candidates",input,Some(targets.clone())),
+                _=>return Err(Error::Plan("recursive Python semantic demands are not supported".into())),
             };
             if scc.len() != 1 || scc.contains(input) || targets.as_ref().is_some_and(|t| scc.contains(t)) {
                 return Err(Error::Plan("recursive Python semantic demands are not supported".into()));
             }
-            let n = run.python_relation(rel, kind, input, targets)?;
+            let n = run.python_relation(rel, kind, input, &targets)?;
             super::profile::stratum(&skey, "native fact operator over retained demand relations", String::new);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
@@ -5036,7 +5024,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             // The level's first joins (decision 0100 §5, §6): every seed join of its strata that reads only
             // relations already held, sent to the executor as one batch while the level's strata run.
             let native_ones: Vec<usize> = level.iter().copied().filter(|&j| !sccs[j].iter().all(|r| run.views.contains(r))).collect();
-            let specs: Vec<String> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
+            let specs: Vec<_> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
             if !specs.is_empty() {
                 let _wave = super::profile::span(|| "level wave (joins)".into());
                 let sent = super::native::component::prefetch_joins(db, &specs)?;

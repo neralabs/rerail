@@ -556,6 +556,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
     // pass the ordinary dependency/location checks below. Other native operators remain cross-file.
     let constants = constant_relations(prog);
     let cross_native = |r: &str| prog.natives.get(r).is_some_and(|n| match n {
+        crate::code_rule_dsl::logic::front::Native::PythonCandidates { targets, .. } => !constants.contains(targets) && !(prog.facts.contains_key(targets) && !prog.inputs.contains(targets)),
         crate::code_rule_dsl::logic::front::Native::Python { targets, .. } => targets.as_ref().is_some_and(|t|
             !constants.contains(t) && !(prog.facts.contains_key(t) && !prog.inputs.contains(t))),
         _ => true,

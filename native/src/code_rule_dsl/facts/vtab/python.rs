@@ -16,8 +16,9 @@ pub(super) fn register(db: &Connection, binding: &Binding) -> Result<()> {
         ("origins", 2),
         ("assigned", 2),
         ("arguments", 5),
+        ("candidates", 4),
         #[cfg(test)]
-        ("candidates", 5),
+        ("candidate_spike", 5),
     ] {
         let name = CString::new(format!("rr_batch_python_{kind}")).unwrap();
         db.create_module(
@@ -71,7 +72,7 @@ unsafe impl<'v> VTab<'v> for ProducerTable {
         Ok((
             Cow::Owned(
                 CString::new(format!(
-                    "CREATE TABLE x({columns}, targets TEXT HIDDEN, frame INTEGER HIDDEN)"
+                    "CREATE TABLE x({columns}, targets TEXT HIDDEN, frame INTEGER HIDDEN, context TEXT HIDDEN, member TEXT HIDDEN)"
                 ))
                 .unwrap(),
             ),
@@ -109,6 +110,13 @@ unsafe impl<'v> VTab<'v> for ProducerTable {
         } else if self.producer.kind == "qualified" {
             return Ok(false);
         }
+        if self.producer.kind=="candidates" {
+            if target.is_none(){return Ok(false);}
+            for (offset,arg) in [(2,3),(3,4)] {
+                let Some(i)=info.constraints().position(|c|c.is_usable()&&c.column()==self.producer.width as i32+offset&&c.operator()==IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ) else{return Ok(false);};
+                info.constraint_usage(i).set_argv_index(arg);info.constraint_usage(i).set_omit(true);
+            }
+        }
         info.set_idx_num(i32::from(target.is_some()));
         info.set_estimated_rows(100);
         info.set_estimated_cost(100.0);
@@ -135,7 +143,7 @@ unsafe impl VTabCursor for ProducerCursor {
         self.rows.clear();
         self.at = 0;
         #[cfg(test)]
-        if self.producer.kind == "candidates" {
+        if self.producer.kind == "candidate_spike" {
             let targets = serde_json::from_str(&args.get::<String>(1)?).map_err(|e| failure(&e.to_string()))?;
             self.rows = self.producer.binding.current().python_batch().ok_or_else(|| failure("missing candidate batch"))?
                 .candidate_spike(&targets).map_err(|e| failure(&e))?;
@@ -149,9 +157,10 @@ unsafe impl VTabCursor for ProducerCursor {
         };
         crate::code_rule_dsl::logic::profile::decision("SQL semantic batch", || {
             format!(
-                "{}: {} demanded nodes, {} targets",
+                "{}: {} demanded {}, {} targets",
                 self.producer.kind,
                 keys.len(),
+                if self.producer.kind=="candidates" {"documents"}else{"nodes"},
                 targets.len()
             )
         });
@@ -164,9 +173,9 @@ unsafe impl VTabCursor for ProducerCursor {
             .current()
             .python_batch()
             .ok_or_else(|| failure("semantic producer requires a bound syntax batch"))?;
-        self.rows = batch
-            .python_project(self.producer.kind, &keys, &targets)
-            .map_err(|e| failure(&e))?;
+        self.rows = if self.producer.kind=="candidates" {
+            batch.python_candidates(&keys,&targets,&args.get::<String>(2)?,&args.get::<String>(3)?).map_err(|e|failure(&e))?
+        }else {batch.python_project(self.producer.kind,&keys,&targets).map_err(|e|failure(&e))?};
         Ok(())
     }
     fn next(&mut self) -> Result<()> {

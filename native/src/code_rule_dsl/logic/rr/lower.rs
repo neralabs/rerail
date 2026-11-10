@@ -70,7 +70,7 @@ fn test_of(rel: &str) -> Option<&'static str> {
 }
 
 /// The built-ins that take a relation, and its position.
-pub(super) const RELATION_ARG: [(&str, &[usize]); 12] = [
+pub(super) const RELATION_ARG: [(&str, &[usize]); 13] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
     ("precedes_stop", &[2]),
@@ -79,6 +79,7 @@ pub(super) const RELATION_ARG: [(&str, &[usize]); 12] = [
     ("dfs_first", &[3, 4]),
     ("dfs_first_memo", &[3, 4, 5]),
     ("components", &[3, 4]),
+    ("python_candidates", &[4,5]),
     ("python_qualified", &[2,3]),
     ("python_origins", &[2]),
     ("python_assigned", &[2]),
@@ -1919,6 +1920,29 @@ impl Lowerer {
                 let roots = if rel == "dfs_first_memo" { Some(name(&args[5])?) } else { None };
                 let rel = self.dfs_first(&edge, &target, roots.as_deref());
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(r)?, self.term(hit)?, self.term(first)?], neg, gated: false }));
+            }
+            ("python_candidates", [call,report,reference,receiver,input,targets,context,member]) => {
+                let name=|t:&STerm|match t{STerm::Var(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate inputs are relation names".into()))};
+                let literal=|t:&STerm|match t{STerm::Str(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate context and member must be string literals".into()))};
+                let (input,targets,context,member)=(name(input)?,name(targets)?,literal(context)?,literal(member)?);
+                if !crate::code_rule_dsl::facts::producers::python::families::CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
+                for name in [&input,&targets] {
+                    if !self.prog.decls.get(name).is_some_and(|cols|cols.len()==1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
+                }
+                let native=Native::PythonCandidates{input:input.clone(),targets:targets.clone(),context,member};
+                let rel=if let Some((name,_))=self.prog.natives.iter().find(|(_,n)|**n==native) {name.clone()}else {
+                    let mut serial=self.prog.natives.len();
+                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(&name){break name;}serial+=1;};
+                    let v=|s:&str|Term::Var(s.to_owned());
+                    let a=|r:&str,args:Vec<Term>|Literal::Atom(Atom{rel:r.into(),args,neg:false,gated:false});
+                    let mut body=vec![a(&input,vec![v("d")])];
+                    // Locality proof only: the native contract emits nodes from these documents.
+                    for n in ["c","f","r","o"] {body.push(a("node",vec![v("d"),v(n),Term::Wild,Term::Wild,Term::Wild]));}
+                    self.prog.decls.insert(rel.clone(),["c","f","r","o"].into_iter().map(|n|(n.into(),"node".into())).collect());
+                    self.prog.rules.push(Rule{head:Atom{rel:rel.clone(),args:["c","f","r","o"].into_iter().map(v).collect(),neg:false,gated:false},body});
+                    self.prog.natives.insert(rel.clone(),native);rel
+                };
+                return Ok(Literal::Atom(Atom{rel,args:[call,report,reference,receiver].into_iter().map(|a|self.term(a)).collect::<Result<Vec<_>,_>>()?,neg,gated:false}));
             }
             ("python_qualified" | "python_origins" | "python_assigned" | "python_arguments", _) => {
                 let kind=rel.strip_prefix("python_").unwrap();

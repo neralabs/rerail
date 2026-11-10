@@ -15,12 +15,5 @@
     "Use an existing async client, or `await asyncio.to_thread(helper, ...)` for the request and response handling; preserve the API and options."
     suppress ruff "ASYNC210"
 ASYNC210(f) :- async_blocking(_, f, q), async_http(q).
-.decl async_http(q: symbol)
-async_http("urllib.request.urlopen"). async_http("urllib3.request").
-async_http(cat(cat(m, "."), x)) :- (m = "requests" ; m = "httpx"), async_http_verb(x).
-.decl async_http_verb(x: symbol)
-async_http_verb("request"). async_http_verb("get"). async_http_verb("post"). async_http_verb("delete").
-async_http_verb("patch"). async_http_verb("put"). async_http_verb("head"). async_http_verb("connect").
-async_http_verb("options"). async_http_verb("trace").
 
 async_api_target(q) :- async_http(q).

@@ -600,3 +600,50 @@ The acceptance script passes all gates, including the original statement budget 
 The final profile locates most remaining cost before SQL: projection/interning costs 5.40 exclusive CPU seconds, and text tests cost 0.86 seconds.
 The SQL-only experimental rewrite occurs after `Projection::of`; production integration must lower typed candidate demands before source-demand analysis.
 Deferred projection itself remains unbenchmarked by these spikes. The report distinguishes that integration requirement from the measured SQL-boundary improvement.
+
+
+## Candidate demands before projection
+
+Merged the integration hub at `cd0d66944`, preserving its structured component specs, scheduler, retained statistics, parser, and typing changes.
+The first merge build catches two incomplete integrations between structured specs and level batching.
+The repair carries typed join specs through seed batching and hashes their typed values, without converting them back to text.
+
+The implementation introduces `python_candidates` during authored-rule lowering, before pruning, combination, preparation, and projection planning.
+Its inputs specify a document-scope relation, a qualified-target relation, an execution context, and a receiver member name.
+The async library supplies one shared conservative family target relation. Rule-specific exact qualification still determines findings.
+Only producers with identical input relations and literal parameters share a result.
+The candidate relation contains call, report, direct-reference, and receiver identifiers. Absent direct or receiver demands use the existing negative-node sentinel.
+
+Projection planning then sees no broad attribute-text dependency for this family.
+The batch builder skips per-node scalar materialization when none of those relations is read, while retaining the existing node identity mapping.
+A narrow projection must preserve requested node and line facts and leave unrelated text, operator, and literal relations empty.
+General full-projection fixtures remain a parity gate.
+The accepted nonempty demand-frame and connection-lifetime fixes become the production path, without runtime experiment switches.
+
+Validation compares the merged baseline, its accepted late spike, and production early lowering on the same corpus.
+The gates cover scope isolation, mixed direct/receiver candidates, cached input replacement, serialization, all 178 edge findings, and 120 positive findings.
+Profiles must show reduced projection strings and worker CPU, not only fewer SQL callbacks.
+
+The merged baseline built successfully after the typed-spec compatibility fixes.
+The executable and both rule-library directories were frozen before the candidate comparison.
+The first candidate build caught an outdated relation-argument array length.
+The registry length now includes the new operator.
+Design and acceptance criteria are in [early-candidate-demands.md](early-candidate-demands.md).
+
+The production build passed 32 focused tests, including full-projection behavior and cached adopted-input replacement.
+All 120 positive findings and all 178 recorded edge findings match.
+The first whole-corpus profile falls from 10.521 to 4.222 CPU seconds against the accepted late experiment.
+Projection own CPU falls from 3.993 to 0.407 seconds. The profile records zero scalar AST nodes and 23,777 interned strings.
+
+The profile also catches a modest SQL increase: 732,887 to 785,573 VM instructions, and 80 to 81 executions.
+The document-scoped production contract adds one document scan per chunk.
+Adaptive packing starts with three small probe chunks instead of two, yielding 73 chunks rather than 72 over identical input nodes.
+The sharing gate now checks one producer per reported chunk. The existing 100-execution and 800,000-VM ceilings remain unchanged.
+Repeated unprofiled runs are in progress. Profiled and unprofiled measurements remain separate.
+
+Three paired unprofiled rounds confirm the gain. Median corpus-run CPU is 11.104 seconds for the merged baseline,
+10.236 seconds for the accepted late experiment, and 3.714 seconds for production early lowering.
+Median worker batch CPU falls from 5.858 to 0.418 seconds against the late experiment.
+All fourteen acceptance gates pass, including the unchanged execution and VM ceilings.
+The host remains busy, so CPU is the primary comparison. Wall-time samples and warmups remain in the evidence.
+The final report separates profiled costs, repeated timings, preparation cost, and remaining tape/core-fact work.

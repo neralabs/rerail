@@ -14,7 +14,7 @@ impl Batch {
         let mut output = Vec::new();
         let mut total = candidate_spike::Work::default();
         for p in self.docs.iter().filter(|p| p.tag == py.grammar.tag()) {
-            let (rows, work) = candidate_spike::collect(&py.grammar, &p.facts, 2, &members, collector_mode, |n| {
+            let (rows, work) = candidate_spike::experiment(&py.grammar, &p.facts, 2, &members, collector_mode, |n| {
                 let imports = p.python_imports.get_or_init(|| Imports::from_core(&p.facts, &self.dialects[&p.tag].catalog, p.module.as_ref()));
                 if mode=="typed_ranges" {
                     use crate::code_rule_dsl::facts::producers::python::python_facts::Fact;

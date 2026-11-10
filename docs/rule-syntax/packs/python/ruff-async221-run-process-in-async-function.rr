@@ -19,13 +19,6 @@
 ASYNC221(f) :- async_blocking(_, f, q), async_runs(q).
 ASYNC221(f) :- async_blocking(c, f, q), async_spawn(q), !async_mode_arg(c, _).
 ASYNC221(f) :- async_blocking(c, f, q), async_spawn(q), async_mode_arg(c, a), async_p_wait(a).
-.decl async_runs(q: symbol)
-async_runs("os.system"). async_runs("os.posix_spawn"). async_runs("os.posix_spawnp").
-async_runs(cat("subprocess.", x)) :-
-    (x = "run" ; x = "call" ; x = "check_call" ; x = "check_output" ; x = "getoutput" ; x = "getstatusoutput").
-.decl async_spawn(q: symbol)
-async_spawn(cat("os.spawn", x)) :-
-    (x = "l" ; x = "le" ; x = "lp" ; x = "lpe" ; x = "v" ; x = "ve" ; x = "vp" ; x = "vpe").
 // Argument extraction starts only after the API qualifies as a spawn call.
 async_api_target(q) :- async_runs(q).
 async_api_target(q) :- async_spawn(q).

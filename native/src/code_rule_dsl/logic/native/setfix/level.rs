@@ -94,8 +94,8 @@ pub struct Paired {
 }
 
 /// The digest of a join's spec: the key its pairs are kept by.
-pub fn digest(spec: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
+pub fn digest<T: std::hash::Hash + ?Sized>(spec: &T) -> u64 {
+    use std::hash::Hasher;
     let mut h = rustc_hash::FxHasher::default();
     spec.hash(&mut h);
     h.finish()
@@ -128,7 +128,7 @@ fn qualifies(j: &super::JoinRule) -> Option<(&Arc<InRel>, &Arc<InRel>, &[(usize,
 }
 
 /// Sends the seed joins of a level (`specs`, each a seed's join spec) as one batch: the launches it sent.
-pub fn prefetch(conn: &rusqlite::Connection, specs: &[String]) -> Result<usize> {
+pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<super::spec::JoinSpec>]) -> Result<usize> {
     if !on() {
         return Ok(0);
     }
@@ -138,15 +138,16 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[String]) -> Result<usize> 
     let mut pending = Vec::new();
     for spec in specs {
         // Every atom a native relation's: the spec reads nothing the level makes, nor an input not loaded yet.
-        let atoms = spec.lines().map(str::trim).filter(|l| matches!(l.split_whitespace().next(), Some("pos" | "neg" | "count" | "sum" | "min" | "max" | "strjoin")));
-        if atoms.clone().next().is_none() || !atoms.into_iter().all(|l| l.split_whitespace().nth(1).is_some_and(|t| t.starts_with("r:"))) {
-            continue;
-        }
+        use super::spec::{JoinItem,Source};
+        let atoms=spec.items.iter().filter_map(|i|match i {
+            JoinItem::Atom{src,..}|JoinItem::Count{src,..}|JoinItem::Extreme{src,..}|JoinItem::StrJoin{src,..}=>Some(src),_=>None,
+        });
+        if atoms.clone().next().is_none() || !atoms.into_iter().all(|s|matches!(s,Source::Native(_))) {continue;}
         let key = digest(spec);
         if pending.iter().any(|(k, _): &(u64, Pending)| *k == key) {
             continue;
         }
-        let Ok(j) = super::parse_join(conn, spec, &mut syms) else { continue };
+        let Ok(j) = super::join_rule(conn, spec, &mut syms) else { continue };
         let Some((r0, r1, b0, slot_keys)) = qualifies(&j) else { continue };
         let Step::Atom { tests: t0, .. } = &j.steps[0] else { continue };
         // The left: the first atom's live rows passing its tests; per key, the value its slot takes.

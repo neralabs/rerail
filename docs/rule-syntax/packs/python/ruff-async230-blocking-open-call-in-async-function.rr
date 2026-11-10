@@ -16,4 +16,4 @@
     suppress ruff "ASYNC230"
 ASYNC230(f) :- async_blocking(_, f, q), (q = "builtins.open" ; q = "io.open" ; q = "io.open_code").
 ASYNC230(f) :- async_open_receiver(f,o), async_path_value(o).
-async_api_target("builtins.open"). async_api_target("io.open"). async_api_target("io.open_code").
+async_api_target(q) :- async_open_target(q).

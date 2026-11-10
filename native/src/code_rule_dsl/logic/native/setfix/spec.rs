@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 /// A value position: `_`, `v<slot>`, `i:<int>` or `x:<hex symbol>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Tok {
     Wild,
     Slot(usize),
@@ -16,14 +16,14 @@ pub enum Tok {
 }
 
 /// An atom's column: a value position, or an aggregate's own column (`a<name>`, the same name tests equality).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Arg {
     Tok(Tok),
     Local(String),
 }
 
 /// A head term: a value, or two slots' symbols joined by "." (`cat:v<a>:v<b>`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum HeadTok {
     Tok(Tok),
     Cat(usize, usize),
@@ -41,7 +41,7 @@ pub struct InputKey {
 
 /// Where an atom's rows are: the component's relation `i`'s delta (`d<i>`) or all of it (`c<i>`), a lower stratum's
 /// native relation (`r:<hex table>`) or an input.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Source {
     Delta(usize),
     Full(usize),
@@ -49,7 +49,7 @@ pub enum Source {
     Input(InputKey),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Extreme {
     Sum,
     Min,
@@ -57,7 +57,7 @@ pub enum Extreme {
 }
 
 /// One step of a native join, in plan order, or its head (last).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum JoinItem {
     /// `pos|neg <src> <args…>`
     Atom { neg: bool, src: Source, args: Vec<Arg> },
@@ -92,14 +92,14 @@ pub enum JoinItem {
 }
 
 /// A native join: its steps, then its head.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct JoinSpec {
     pub items: Vec<JoinItem>,
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
 /// (`base`), plus its table's rows when `seeded`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Start {
     Rows,
     Empty,
@@ -108,7 +108,7 @@ pub enum Start {
 }
 
 /// An edge rule (`rule …`): see the module's spec.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EdgeSpec {
     pub head: usize,
     pub src: usize,
@@ -121,7 +121,7 @@ pub struct EdgeSpec {
 }
 
 /// One spec line, after `name`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Line {
     Rel { name: String, types: String, start: Start },
     NoWrite,
@@ -135,14 +135,14 @@ pub enum Line {
 }
 
 /// A component: its name, then its lines in order (relations are numbered in order, probes are numbered in order).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ComponentSpec {
     pub name: String,
     pub lines: Vec<Line>,
 }
 
 /// A probe's new body (`reprobe`): SQL, a join, or the join it runs in the wave whose delta is the whole relation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Reprobe {
     Sql(String),
     Join(Arc<JoinSpec>),

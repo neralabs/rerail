@@ -614,3 +614,29 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
         assert_eq!(has_text(relation("src_line").value(0, 2)), line_needed, "line: {body}");
     }
 }
+
+#[test]
+fn candidate_demands_preserve_document_scope_and_receiver_independence() {
+    let store=ContentStore::open(&temp("candidate-scope")).unwrap();
+    let source="import requests\nrequests.get('top')\nasync def f():\n requests.get('url')\n factory().open()\n def nested():\n  requests.get('sync')\n";
+    let docs=vec![document(1,"a.py","python",source),document(2,"b.py","python",source)];
+    let projection=Projection{reads:Some(["doc","node","line"].into_iter().map(str::to_owned).collect()),..Projection::core()};
+    let (batch,relations,(strings,_))=Batch::build(&store,docs.clone(),&projection,false).unwrap();
+    assert!(!strings.iter().any(|s|s=="url" || s=="requests" || s==source),"unrequested AST strings must not be interned");
+    for name in ["text","name","str","value","op","op_at"] {
+        assert_eq!(relations.iter().find(|(n,_)|*n==name).unwrap().1.len(),0,"{name}");
+    }
+    let targets=BTreeSet::from(["requests.get".to_owned()]);
+    let rows=batch.python_candidates(&[2],&targets,"async_function","open").unwrap();
+    let int=|v:&rusqlite::types::Value|if let rusqlite::types::Value::Integer(n)=v{*n}else{panic!("candidate must be typed")};
+    assert_eq!(rows.len(),2);
+    assert!(rows.iter().all(|r|int(&r[0])>>32==2));
+    assert_eq!(rows.iter().filter(|r|int(&r[2])>=0).count(),1);
+    assert_eq!(rows.iter().filter(|r|int(&r[3])>=0).count(),1);
+    let receivers=batch.python_candidates(&[2],&BTreeSet::new(),"async_function","open").unwrap();
+    assert_eq!(receivers.len(),1);assert_eq!(int(&receivers[0][2]),-1);
+    assert!(batch.python_candidates(&[],&targets,"async_function","open").unwrap().is_empty());
+    let all=batch.python_candidates(&[1,2],&targets,"async_function","open").unwrap();assert_eq!(all.len(),4);
+    let (full,_,_)=Batch::build(&store,docs,&Projection::core(),false).unwrap();
+    assert_eq!(all,full.python_candidates(&[1,2],&targets,"async_function","open").unwrap(),"projection must preserve node identity");
+}

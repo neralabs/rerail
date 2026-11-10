@@ -1,14 +1,16 @@
 // Shared demand boundaries for blocking async APIs. Native operators return facts; rules compose them.
 #include "core.rr"
-.decl py_call(d: number, call: node, callee: node)
+#include "python/async-candidate-targets.rr"
 .decl py_call_site(d: number, report: node, call: node, ref: node)
-.decl py_exec_context(d: number, call: node, owner: node, kind: symbol)
-.decl py_attribute(d: number, node: node, object: node, name: node)
-.input py_call, py_call_site, py_exec_context, py_attribute
+.input py_call_site
+.decl async_documents(d:number)
+async_documents(d) :- doc(d,_,_).
+.decl async_candidates(c:node,f:node,r:node,o:node)
+async_candidates(c,f,r,o) :- python_candidates(c,f,r,o,async_documents,async_candidate_target,"async_function","open").
 
 .decl async_api_target(q: symbol)
 .decl async_site(c: node, f: node, r: node)
-async_site(c,f,r) :- py_call_site(d,f,c,r), py_exec_context(d,c,_,"async_function").
+async_site(c,f,r) :- async_candidates(c,f,r,_).
 .decl async_reference(n: node)
 async_reference(n) :- async_site(_,_,n), n >= 0.
 .decl async_qualified(n: node,q: symbol)
@@ -18,7 +20,7 @@ async_blocking(c,f,q) :- async_site(c,f,r), async_qualified(r,q).
 
 // Receiver demands follow the structural .open test, before binding resolution.
 .decl async_open_receiver(f: node,o: node)
-async_open_receiver(f,o) :- async_site(_,f,_), py_attribute(_,f,o,a), text(a,s), @nfkc(s) = "open".
+async_open_receiver(f,o) :- async_candidates(_,f,_,o), o >= 0.
 .decl async_receiver_demand(o: node)
 async_receiver_demand(o) :- async_open_receiver(_,o).
 .decl async_receiver_value(o: node,v: node)

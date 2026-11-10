@@ -16,4 +16,4 @@
 ASYNC222(f) :- async_blocking(_, f, q), split_dot(q, "os", x),
     (x = "wait" ; x = "wait3" ; x = "wait4" ; x = "waitid" ; x = "waitpid").
 
-async_api_target(cat("os.",x)) :- (x="wait" ; x="wait3" ; x="wait4" ; x="waitid" ; x="waitpid").
+async_api_target(q) :- async_wait(q).

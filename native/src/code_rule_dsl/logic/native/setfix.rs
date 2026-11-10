@@ -2553,7 +2553,7 @@ fn run_seed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
 }
 
 /// Sends a level's seed joins as one batch (decision 0100 §5): the launches sent.
-pub fn prefetch_joins(conn: &Connection, specs: &[String]) -> Result<usize> {
+pub fn prefetch_joins(conn: &Connection, specs: &[Arc<JoinSpec>]) -> Result<usize> {
     level::prefetch(conn, specs)
 }
 
