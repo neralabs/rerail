@@ -173,7 +173,7 @@ mro_found(c, x, d) :- mro_ask(c, x), <the search>.      // the output: where the
 |---|---|---|
 | 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | **drafted as 0106**, for review: a search is demand rules (a request relation, answer rules that read it), no program kind and no `.cache` |
 | 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | **measured, not taken** (0106 §5): as demand rules, `found` pulled six relations into `pv`'s recursion, +13.5% join work there (1.81 M to 2.05 M) for the same answers; the eager `found` was 279 units. P3 keeps it. The full corpus's 116 s (against 66 s, at load 110 against 36 to 76) was not measured again on the full corpus; on the 54 files, the same cold run took 38 s of main-thread CPU at load 75 to 97 and 29 to 32 s at 19 to 48, and the new path's cold run was no slower than the old (28.8 s against 31.9 s) |
-| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | `wbind`/`gpar` work gone |
+| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | **measured, not taken** (0106 §6): on the 84-file small corpus, cold, `lcbind` 316 k, `lgpar` 281 k, `wbind` 103 k (t27: 2.7 M), `gpar` 69 k, `lfound` 5 k, `lwbind` 4 k of 30.9 M join work: 2.5% and 0.3 s together. The cost is `py_try` (4.5 M), `tv` and `tbv` |
 
 ### Stage 8. P3 on symbols (this branch, after 2.1 and 7.2)
 
