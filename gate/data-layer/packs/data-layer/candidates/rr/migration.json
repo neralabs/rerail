@@ -4637,8 +4637,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
-    "status": "Final af8fee707 merged and CLI rebuilt. Dispatch passes complete recorded contracts and fixed original-inventory admission through both APIs, with 713 validated native executions.",
+    "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
+    "status": "Final fc6c1e0d9 merged; new CLI build and native acceptance pending.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4678,7 +4678,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "c9293b388facb170ec127d24c264d4c90120c6aec05a8750410b8f54bcaf7f02"
+        "sha256": "0b13d02be0aa6eb020a392e6c0e0f8a9671cfc1d0bf0dbcf7d4d37f23306add8"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
@@ -4754,7 +4754,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "700375540df883c2a6145cf30e82d55e1b34c3e2505ef76bdca0500d0b383f2b"
+        "sha256": "b3336ba05a7d02ebd7b5016d1450a3a4d7a5b4101c1a4549242fca1449fe92d9"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
@@ -4799,7 +4799,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
-        "sha256": "9094ccd61e7ef300beb904c6fe87b8785df39fbbbf9162dcbb9aa681de79753b"
+        "sha256": "4b127ab05e95cf5ea65541327c5a843104fa31e75e1c2f6687b7eb451697d213"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
@@ -4855,8 +4855,8 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "a2812b53a6250c4bd6809ee77e7a9a0efad14710",
-    "previousUpstreamCommit": "d03a0567d62dcec4b0dfafabc02ad46605c794bb",
+    "upstreamMerge": "532ad5afd7ab87af48265fb4653cd6e89c12fde6",
+    "previousUpstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
     "artifactHistory": [
       {
         "engineCommit": "1954d7c425c81efe98232d0ef6ff1a5c270e2c1a",
@@ -4913,10 +4913,10 @@
     },
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
-      "engineCommit": "cc6daa8992c8fe0a1fb034a00f1f534af528e8fe",
+      "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
+      "engineCommit": "532ad5afd7ab87af48265fb4653cd6e89c12fde6",
       "sourceTrees": {
-        "native": "b9f5792c538851dcc6a0217367a0d6b6f450b895",
+        "native": "6f49bc7e10d0657c2d8223c9dea11c3432597a61",
         "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
