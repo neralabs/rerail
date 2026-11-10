@@ -3752,9 +3752,24 @@ impl Run<'_, '_> {
             let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n"), lines.join("\n")));
         }
         let started = std::time::Instant::now();
-        // Where it runs (decision 0095). The device has no relational form yet, so every stratum runs here; the
-        // placement is recorded with the CPU it took, for the profile's "Placement" section.
+        // Where it runs (decision 0095 §7, §8). A stratum the placement puts on the device says so in its spec
+        // (`device`): its seed joins run there, in one submission, unless the device refuses one of them, which the
+        // profile then names. Only a stratum of seeds alone can go: recursion, gates and requests are forms the device
+        // lacks.
         let placed = placement::place(&shape);
+        // Placed there but a shape the device's run does not take: named, as a refusal.
+        let not_taken = if !placed.gpu {
+            None
+        } else if !probes.is_empty() {
+            Some("a recursive component")
+        } else if !gates.is_empty() || answering {
+            Some("a component with gates or requests")
+        } else if orders.is_empty() {
+            Some("no native seed join")
+        } else {
+            lines.insert(1, "device".to_owned());
+            None
+        };
         let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s } else { 0.0 };
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
         // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
@@ -3880,10 +3895,20 @@ impl Run<'_, '_> {
             let sizes: Vec<(&str, f64)> = rels.iter().filter_map(|r| Some((r.as_str(), *self.model.stats.card.get(*r)?))).collect();
             keeps::observe(&ruled, &sizes, self.model.stats.nodes);
         }
+        // What the device did, or why it refused (taken whether or not profiling, so a report never outlives its
+        // stratum).
+        #[cfg(target_os = "macos")]
+        let device = super::native::component::device_report().or_else(|| {
+            not_taken.map(|why| super::native::component::DeviceReport { refused: Some(why.to_owned()), ..Default::default() })
+        });
+        #[cfg(not(target_os = "macos"))]
+        let _ = not_taken;
+        #[cfg(not(target_os = "macos"))]
+        let device: Option<()> = None;
         if profiling {
             let (u, s) = corpus::thread_usage();
             let work: u64 = counted.iter().flatten().map(|(a, _)| *a).sum();
-            super::profile::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at);
+            super::profile::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at, device.as_ref());
         }
         if super::profile::on() {
             let empty = Vec::new();

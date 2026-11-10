@@ -80,7 +80,7 @@ pub(in crate::code_rule_dsl) struct Column {
     pub(in crate::code_rule_dsl) rows: usize,
 }
 
-fn device() -> Result<&'static metal::Device, Error> {
+pub(super) fn device() -> Result<&'static metal::Device, Error> {
     super::metal_program_backend::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)
 }
 
@@ -103,7 +103,7 @@ thread_local! {
 }
 
 /// The pipeline `name` of the variant `variant`, its source made by `source` the first time.
-fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, Error> {
+pub(super) fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, Error> {
     let key = format!("{variant} {name}");
     if let Some(p) = PIPELINES.with_borrow(|m| m.get(&key).cloned()) {
         return Ok(p);
@@ -133,7 +133,7 @@ pub(in crate::code_rule_dsl) fn set_wait(w: Wait) -> Wait {
 /// A committed command buffer, to wait for, and the pooled buffers it reads that nothing else holds: a pooled
 /// buffer is written by the host when handed out again, and Metal orders no host write after a GPU read, so they
 /// return to the pool only once it completes.
-struct Submitted {
+pub(super) struct Submitted {
     command: metal::CommandBuffer,
     done: Option<std::sync::mpsc::Receiver<()>>,
     reads: Vec<Column>,
@@ -141,7 +141,7 @@ struct Submitted {
 
 impl Submitted {
     /// Commits `command` (checked against the launch budget), with a completion handler when this thread waits on one.
-    fn commit(command: &CommandBufferRef) -> Result<Submitted, Error> {
+    pub(super) fn commit(command: &CommandBufferRef) -> Result<Submitted, Error> {
         let done = (WAIT.with(Cell::get) == Wait::Handler).then(|| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
             let block = block::ConcreteBlock::new(move |_: &CommandBufferRef| {
@@ -156,7 +156,7 @@ impl Submitted {
     }
 
     /// Waits for it; its GPU seconds. The buffers it read return to the pool after.
-    fn wait(self) -> f64 {
+    pub(super) fn wait(self) -> f64 {
         match self.done {
             Some(rx) if self.command.status() != metal::MTLCommandBufferStatus::Completed => {
                 let _ = rx.recv();
@@ -175,13 +175,15 @@ const KEYS_B: usize = 1;
 const IDX: usize = 2;
 const HIST: usize = 3;
 const HEADS: usize = 4;
-const COUNTS: usize = 5;
+pub(super) const COUNTS: usize = 5;
 const PAIRS: usize = 6;
 /// A scan's levels: slots `SCAN..`.
 const SCAN: usize = 7;
+/// The first slot free for other modules' scratch (`metal_join`): past the scan's levels.
+pub(super) const FREE: usize = 16;
 
 /// Scratch slot `slot`, at least `bytes` long (grown to a power of two when it is shorter).
-fn scratch(slot: usize, bytes: usize) -> Result<Buffer, Error> {
+pub(super) fn scratch(slot: usize, bytes: usize) -> Result<Buffer, Error> {
     SCRATCH.with_borrow_mut(|s| {
         if s.len() <= slot {
             s.resize_with(slot + 1, || None);
@@ -258,19 +260,36 @@ impl Drop for Held {
 
 /// One compute encoder over a command buffer: its dispatches run in order (a serial encoder), each seeing the last's
 /// writes.
-struct Pass<'a> {
+pub(super) struct Pass<'a> {
     command: &'a CommandBufferRef,
     encoder: &'a ComputeCommandEncoderRef,
+    /// The dispatches encoded so far (a command buffer's launch budget counts them).
+    dispatches: Cell<usize>,
 }
 
 impl<'a> Pass<'a> {
-    fn new(command: &'a CommandBufferRef) -> Pass<'a> {
-        Pass { command, encoder: command.new_compute_command_encoder() }
+    pub(super) fn new(command: &'a CommandBufferRef) -> Pass<'a> {
+        Pass { command, encoder: command.new_compute_command_encoder(), dispatches: Cell::new(0) }
+    }
+
+    /// The dispatches encoded so far.
+    pub(super) fn dispatches(&self) -> usize {
+        self.dispatches.get()
+    }
+
+    /// `groups` threadgroups of 256 threads over `buffers`, then `bytes` (a parameter block, as `constant T&`) after
+    /// them.
+    pub(super) fn run_bytes(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], bytes: &[u8], groups: usize) {
+        self.encoder.set_compute_pipeline_state(pipeline);
+        self.encoder.checked_set_buffers(self.command, buffers);
+        self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
+        self.encoder.checked_dispatch_thread_groups(self.command, MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
     }
 
     /// `groups` threadgroups of 256 threads over `buffers`, then `params` as `constant uint*` and `longs` as
     /// `constant long*` after them.
-    fn run(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], params: &[u32], longs: &[i64], groups: usize) {
+    pub(super) fn run(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], params: &[u32], longs: &[i64], groups: usize) {
         self.encoder.set_compute_pipeline_state(pipeline);
         self.encoder.checked_set_buffers(self.command, buffers);
         let at = buffers.len() as u64;
@@ -279,9 +298,10 @@ impl<'a> Pass<'a> {
             self.encoder.set_bytes(at + 1, std::mem::size_of_val(longs) as u64, longs.as_ptr().cast());
         }
         self.encoder.checked_dispatch_thread_groups(self.command, MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
     }
 
-    fn end(self) {
+    pub(super) fn end(self) {
         self.encoder.end_encoding();
     }
 }
@@ -333,7 +353,7 @@ impl Column {
 
 /// A multi-level exclusive scan of `count` `uint`s in place, its levels' sums in scratch; the total after it in
 /// `total()`.
-struct Scan {
+pub(super) struct Scan {
     count: usize,
     /// Each level's threadgroups and their sums.
     levels: Vec<(usize, Buffer)>,
@@ -373,7 +393,7 @@ kernel void scan_add(device uint* data [[buffer(0)]], device const uint* sums [[
 "#;
 
 impl Scan {
-    fn new(count: usize) -> Result<Scan, Error> {
+    pub(super) fn new(count: usize) -> Result<Scan, Error> {
         let mut levels = Vec::new();
         let mut size = count;
         loop {
@@ -387,7 +407,7 @@ impl Scan {
         Ok(Scan { count, levels })
     }
 
-    fn encode(&self, pass: &Pass<'_>, data: &BufferRef) -> Result<(), Error> {
+    pub(super) fn encode(&self, pass: &Pass<'_>, data: &BufferRef) -> Result<(), Error> {
         let block = pipeline("scan", "scan_block", || SCAN_SOURCE.to_owned())?;
         let add = pipeline("scan", "scan_add", || SCAN_SOURCE.to_owned())?;
         let mut inputs: Vec<(&BufferRef, usize)> = vec![(data, self.count)];
@@ -529,7 +549,7 @@ pub(in crate::code_rule_dsl) struct Keyed {
     pub(in crate::code_rule_dsl) bytes: usize,
 }
 
-fn groups(n: usize) -> usize {
+pub(super) fn groups(n: usize) -> usize {
     n.div_ceil(256).max(1)
 }
 
@@ -572,51 +592,18 @@ impl Keyed {
         let mut columns = columns.into_iter();
         let lead = columns.next().ok_or(Error::BackendFailure)?;
         let n = lead.rows;
-        let key = lead.width.key();
-        let variant = format!("sort {:?} {key:?}", lead.width);
-        let pipe = |name: &str| pipeline(&variant, name, || sort_source(lead.width, key));
-        let (init, hist, scatter, heads, compact) = (pipe("sort_init")?, pipe("sort_hist")?, pipe("sort_scatter")?, pipe("run_heads")?, pipe("run_compact")?);
-        let kb = key.bytes();
-        let (keys_a, keys_b) = (scratch(KEYS_A, kb * n)?, scratch(KEYS_B, kb * n)?);
-        // The order ends in `idx_a` after an even number of passes: that one is the relation's own, the other scratch.
-        let passes = lead.bits.div_ceil(8);
-        let perm = Held::new(4 * n)?;
-        let other = scratch(IDX, 4 * n)?;
-        let (idx_a, idx_b): (&BufferRef, &BufferRef) = if passes % 2 == 0 { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
-        let tiles = n.div_ceil(TILE).max(1);
-        let histogram = scratch(HIST, 4 * 256 * tiles)?;
-        let hscan = Scan::new(256 * tiles)?;
-        let heads_buf = scratch(HEADS, 4 * n)?;
-        let starts = Held::new(4 * (n + 1))?;
-        let rkeys = Held::new(kb * n)?;
-        let nruns = Held::new(4)?;
         let queue = queue()?;
         let command = queue.new_command_buffer();
         let pass = Pass::new(command);
+        let parts = encode_sort(&pass, &lead.buffer.buffer, lead.width, lead.bits, n)?;
         let mut others = Vec::new();
         let mut reads = Vec::new();
-        if n > 0 {
-            let nn = n as u32;
-            pass.run(&init, &[&lead.buffer.buffer, &keys_a, idx_a], &[nn], &[], groups(n));
-            for p in 0..passes {
-                let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, idx_a, &keys_b, idx_b) } else { (&keys_b, idx_b, &keys_a, idx_a) };
-                pass.run(&hist, &[ki, &histogram], &[nn, 8 * p], &[], tiles);
-                hscan.encode(&pass, &histogram)?;
-                pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p], &[], tiles);
-            }
-            let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
-            // The heads' scan after the histograms': the two share scratch, one after the other.
-            let rscan = Scan::new(n)?;
-            pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
-            rscan.encode(&pass, &heads_buf)?;
-            pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
-        }
         for c in columns {
             let w = c.width;
             let gather = pipeline(&format!("gather {w:?}"), "gather", || gather_source(w))?;
             let out = Held::new(n * w.bytes())?;
             if n > 0 {
-                pass.run(&gather, &[&c.buffer.buffer, &perm.buffer, &out.buffer], &[n as u32], &[], groups(n));
+                pass.run(&gather, &[&c.buffer.buffer, &parts.perm.buffer, &out.buffer], &[n as u32], &[], groups(n));
             }
             others.push(Column { buffer: out, width: w, base: c.base, bits: c.bits, rows: c.rows });
             reads.push(c);
@@ -626,9 +613,62 @@ impl Keyed {
         reads.push(lead);
         let mut pending = Submitted::commit(command)?;
         pending.reads = reads;
+        let kb = parts.key.bytes();
         let bytes = 4 * n + (n + 1) * (4 + kb) + others.iter().map(Column::bytes).sum::<usize>();
+        let SortParts { perm, starts, rkeys, nruns, key } = parts;
         Ok(Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, pending: RefCell::new(Some(pending)), runs: Cell::new(0), gpu: Cell::new(0.0), bytes })
     }
+}
+
+/// A sort's results on the device: each sorted place's row (`perm`), the key's runs (each one's first place in
+/// `starts`, with the end after the last; its key in `rkeys`, in the sort's word `key`) and their count (`nruns`).
+pub(super) struct SortParts {
+    pub(super) perm: Held,
+    pub(super) starts: Held,
+    pub(super) rkeys: Held,
+    pub(super) nruns: Held,
+    pub(super) key: Width,
+}
+
+/// Encodes into `pass` a stable LSD radix sort of the `n` values of `lead` (each `width` wide, their span `bits`
+/// bits) and the runs of equal values: the passes only its span needs. Intermediates are in scratch; the results are
+/// buffers of their own. `nruns` is not written when `n` is 0.
+pub(super) fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n: usize) -> Result<SortParts, Error> {
+    let key = width.key();
+    let variant = format!("sort {width:?} {key:?}");
+    let pipe = |name: &str| pipeline(&variant, name, || sort_source(width, key));
+    let (init, hist, scatter, heads, compact) = (pipe("sort_init")?, pipe("sort_hist")?, pipe("sort_scatter")?, pipe("run_heads")?, pipe("run_compact")?);
+    let kb = key.bytes();
+    let (keys_a, keys_b) = (scratch(KEYS_A, kb * n)?, scratch(KEYS_B, kb * n)?);
+    // The order ends in `idx_a` after an even number of passes: that one is the relation's own, the other scratch.
+    let passes = bits.div_ceil(8);
+    let perm = Held::new(4 * n)?;
+    let other = scratch(IDX, 4 * n)?;
+    let (idx_a, idx_b): (&BufferRef, &BufferRef) = if passes % 2 == 0 { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
+    let tiles = n.div_ceil(TILE).max(1);
+    let starts = Held::new(4 * (n + 1))?;
+    let rkeys = Held::new(kb * n)?;
+    let nruns = Held::new(4)?;
+    if n > 0 {
+        let histogram = scratch(HIST, 4 * 256 * tiles)?;
+        let hscan = Scan::new(256 * tiles)?;
+        let heads_buf = scratch(HEADS, 4 * n)?;
+        let nn = n as u32;
+        pass.run(&init, &[lead, &keys_a, idx_a], &[nn], &[], groups(n));
+        for p in 0..passes {
+            let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, idx_a, &keys_b, idx_b) } else { (&keys_b, idx_b, &keys_a, idx_a) };
+            pass.run(&hist, &[ki, &histogram], &[nn, 8 * p], &[], tiles);
+            hscan.encode(pass, &histogram)?;
+            pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p], &[], tiles);
+        }
+        let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
+        // The heads' scan after the histograms': the two share scratch, one after the other.
+        let rscan = Scan::new(n)?;
+        pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
+        rscan.encode(pass, &heads_buf)?;
+        pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
+    }
+    Ok(SortParts { perm, starts, rkeys, nruns, key })
 }
 
 /// A probe join's pairs, (left row, right host row), in left row order, and its GPU time.
