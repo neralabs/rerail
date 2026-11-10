@@ -19,7 +19,6 @@ fn loads_return_existing_snapshot_document_keys_through_aliases() {
     std::fs::write(&rule,r#"
 .language python
 .decl loaded_doc(path: symbol,module: symbol,grammar: symbol,d: number)
-.input loaded_doc
 load("via/a.py","first","python").
 load("via/a.py","second","python").
 .violation Identity(at: span,module: symbol,source_path: symbol,physical: symbol) code "IDENTITY" "identity"
@@ -45,7 +44,6 @@ fn loads_return_fresh_document_keys_for_every_module_answer() {
     std::fs::write(&rule,r#"
 .language python
 .decl loaded_doc(path: symbol,module: symbol,grammar: symbol,d: number)
-.input loaded_doc
 load("a.py","first","python").
 load("a.py","second","python").
 .violation Identity(at: span,module: symbol) code "IDENTITY" "identity"
