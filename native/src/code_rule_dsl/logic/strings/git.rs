@@ -187,16 +187,16 @@ pub(in crate::code_rule_dsl) fn revisions(root: &Path, base: Option<&str>) -> Re
     Ok((rows, repo.prefix))
 }
 
-/// What a read `consulted` recorded (and `git_rev`'s reads, `("git_rev", "REV", id)`) is now; `None` for another
-/// kind. A cache's freshness reads it as an `observed` fact (decision 0102 §2).
-pub(in crate::code_rule_dsl) fn now(what: &str, path: &str) -> Option<String> {
+/// Whether what `consulted` recorded (and `git_rev`'s reads, `("git_rev", "REV", id)`) reads the same now.
+pub(in crate::code_rule_dsl) fn still(what: &str, path: &str, digest: &str) -> bool {
     match what {
-        "git_index" => Some(open(Path::new(path)).map(|r| sha256_file(&r.repo.index_path())).unwrap_or_default()),
+        "git_index" => open(Path::new(path)).map(|r| sha256_file(&r.repo.index_path())).unwrap_or_default() == digest,
         "git_rev" => {
-            let (root, rev) = path.split_once('\t')?;
-            Some(revisions(Path::new(root), (!rev.is_empty()).then_some(rev)).map(|(rows, _)| rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")).unwrap_or_default())
+            let Some((root, rev)) = path.split_once('\t') else { return false };
+            let Ok((rows, _)) = revisions(Path::new(root), (!rev.is_empty()).then_some(rev)) else { return digest.is_empty() };
+            rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",") == digest
         }
-        _ => None,
+        _ => false,
     }
 }
 
@@ -240,9 +240,9 @@ mod tests {
         assert_eq!(git_tracked("docs/c.md"), Value::Integer(0));
         let recorded = consulted(&root);
         assert!(consulted(Path::new("/elsewhere")).is_empty());
-        assert_eq!(now(&recorded[0].0, &recorded[0].1).as_deref(), Some(recorded[0].2.as_str()), "the index as it was");
+        assert!(still(&recorded[0].0, &recorded[0].1, &recorded[0].2), "the index as it was");
         git(&["add", "sub/docs/c.md"]);
-        assert_ne!(now(&recorded[0].0, &recorded[0].1).as_deref(), Some(recorded[0].2.as_str()), "the index moved");
+        assert!(!still(&recorded[0].0, &recorded[0].1, &recorded[0].2), "the index moved");
         // git_rev: HEAD, and the merge base of HEAD and a branch that moved on.
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "two"]);
         let two = git(&["rev-parse", "HEAD"]);

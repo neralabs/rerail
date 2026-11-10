@@ -3444,28 +3444,3 @@ CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 element. Not yet traced (parser or tape); the `values` fixture uses `[0, *range(4)]`.
 
 **Closure:** `[*x]` and `(*x,)` keep their `list_splat` node, with a test.
-
-## O-caches-as-facts. The caches not yet moved to decision 0102's pattern
-
-**Status:** open (2026-11-10). Decision 0102 sets one pattern for every cache: an entry's reads are facts
-(`cache_read`), what is there now is facts (`observed`), and `lib/cache.rr` derives `cache_fresh`, run by the
-engine. The constants' rows (0094 §6) are moved: their key no longer hashes the programs, options, root and build,
-which are reads of the entry, and `World::still` is no longer called for them.
-
-The rest are listed in `corpus::cached::tests::architecture`, by table (`NOT_YET_MOVED`) and by the freshness test
-each still makes itself (`BESPOKE_CALLS`). The lists may only shrink. In 0102's order:
-
-- **The phase store's run record and the whole-run cutoff** (`phase_record`, `run_record`): their freshness is
-  the rule's now (`corpus::changes_of` reads `cached::changed`; on 591 files an unchanged rerun of `values` takes
-  1.08 to 1.17 s CPU against 1.02 to 1.04 s, load 75 to 88). Their records are still their own tables, read by
-  `unchanged_phase` and `reuse::unchanged`.
-- **The per-file memo** (`facts_results`, its plan digest).
-- **Tapes and their indexes, and the projected relations** (`tape_objects`, `file_documents`, the prefilter's and
-  vocabulary's tables), after RER-131's named-only tapes merge.
-- **Prepared programs, stored automata, kept strata, statistics, cross parts, checks** (`kept_strata*`, `cross_*`,
-  `stat_blob`, `fact_stats`, `*_check_results`, `combined::File::unchanged`).
-- **The derivation graph** (`name_bindings`, `derivations`, `derivation_inputs`, `derivation_valid`): folded into
-  `cache_reads` and `observed`.
-- **Collection** (0053's manifests) as reachability over `cache_entries`.
-
-**Closure:** both lists empty.

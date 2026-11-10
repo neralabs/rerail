@@ -43,7 +43,6 @@ mod input_delta;
 mod bridge;
 pub(crate) mod phases;
 mod constants;
-mod cached;
 pub(in crate::code_rule_dsl) mod inputs;
 pub(in crate::code_rule_dsl) use inputs::parameters as input_parameters;
 mod world;
@@ -286,18 +285,10 @@ fn changes_of(programs: &[&str], root: &Path, typing: &Typing, options: &serde_j
     if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1) {
         return Ok(None);
     }
-    // What changed is the freshness rule's (`cached::changed`, decision 0102): each read observed now, a document's
-    // bytes, a reader's file, a request's answer. Only documents changed: the run can be brought up to date by them.
+    let changed: Vec<String> = docs.iter().filter(|d| world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
     const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
-    let mut world = world::World::new(root, &prog);
-    let mut readers = inputs::observer(&prog, root);
-    let mut observe = |kind: &str, name: &str| match kind {
-        "doc" => Some(world::bytes_digest(&root.join(name))),
-        k if READERS.contains(&k) => readers(k, name),
-        _ => world.now(kind, name),
-    };
-    let changed = cached::changed(consulted, &mut observe)?;
-    Ok(changed.iter().all(|(kind, _)| kind == "doc").then(|| changed.into_iter().map(|(_, name)| name).collect()))
+    let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
+    Ok((inputs::still(&prog, root, &read) && world::World::new(root, &prog).still(&requests)).then_some(changed))
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1664,7 +1655,7 @@ fn run_observed(
     consulted.extend(folded);
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     external_inputs(&mut prog, root)?;
-    // The repository files, artifacts and base revision the readers read are consulted too (`inputs::observer`).
+    // The repository files, artifacts and base revision the readers read are consulted too (`inputs::still`).
     let read = inputs::take_consulted();
     if t.is_none() {
         consulted.extend(read);
