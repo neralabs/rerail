@@ -14,6 +14,18 @@ pub fn run(k: &Kernel) -> Output {
         Kernel::CountTable { loff, left, roff, right, emit } => count_table(loff, left, roff, right, *emit),
         Kernel::Histogram { off, codes, width } => histogram(off, codes, *width),
         Kernel::Closure { n, off, dst } => Output::Bits(closure(*n, off, dst)),
+        Kernel::Join { left, right, .. } => Output::Pairs(join(left, right, None)),
+    }
+}
+
+/// The join's pairs: the right sorted by key 0 (or `keyed`, its sort kept), each left row's run found by search.
+/// The shape is the caller's to check ([`Kernel::join_shape`]).
+pub fn join(left: &crate::kernel::Keys, right: &crate::kernel::Keys, keyed: Option<&crate::rows::Keyed>) -> Vec<(u32, u32)> {
+    let l: Vec<&[i64]> = left.iter().map(|c| &c[..]).collect();
+    let r: Vec<&[i64]> = right.iter().map(|c| &c[..]).collect();
+    match keyed {
+        Some(k) => crate::rows::probe(&l, k, &r),
+        None => crate::rows::probe(&l, &crate::rows::Keyed::new(r[0]), &r),
     }
 }
 

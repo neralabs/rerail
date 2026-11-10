@@ -109,3 +109,59 @@ fn begun_batches_run_while_the_caller_works_and_match_the_reference() {
         assert_eq!(&d.out, w, "on {}", d.lane.name());
     }
 }
+
+/// A relation of `n` rows: key 0 a node (a document `d` in the high bits, its node below 2^16), key 1 small.
+fn nodes(rng: &mut Rng, n: usize, docs: u64, per_doc: u64, small: u64) -> rerail_accel::kernel::Keys {
+    let k0: Vec<i64> = (0..n).map(|_| ((rng.below(docs) as i64) << 16) | rng.below(per_doc) as i64).collect();
+    let k1: Vec<i64> = (0..n).map(|_| rng.below(small) as i64 - 2).collect();
+    vec![Arc::from(k0), Arc::from(k1)].into()
+}
+
+/// The joins of a level on every lane that has them, by sort and probe and by tiles, the right sides kept by id
+/// across batches: each lane's pairs are the reference's, and the second batch reads what the first kept.
+#[test]
+fn joins_keep_their_right_sides_across_batches_and_match_the_reference() {
+    use rerail_accel::kernel::JoinBy;
+    let ex = Executor::new();
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    let rights: Vec<_> = (0..3).map(|i| nodes(&mut rng, 3000 + 1500 * i, 5, 400, 3)).collect();
+    // Many pairs a row: past the space a probe expects at first, so its second scatter runs.
+    let dense = nodes(&mut rng, 4000, 1, 40, 1);
+    for batch in 0..2 {
+        let mut launches = Vec::new();
+        let mut want = Vec::new();
+        for lane in ex.lanes() {
+            if !matches!(lane, Lane::Cpu | Lane::Gpu) {
+                continue;
+            }
+            for (i, r) in rights.iter().enumerate() {
+                for by in [JoinBy::Probe, JoinBy::Tile] {
+                    let left = nodes(&mut rng, 2000 + 700 * i + batch * 300, 5, 400, 3);
+                    let k = Kernel::Join { left: left.clone(), right: r.clone(), right_id: Some(i as u64), by };
+                    want.push(cpu::run(&k));
+                    launches.push(Launch::on(k, lane));
+                }
+            }
+            let left = nodes(&mut rng, 3000, 1, 40, 1);
+            let k = Kernel::Join { left, right: dense.clone(), right_id: Some(99), by: JoinBy::Probe };
+            want.push(cpu::run(&k));
+            launches.push(Launch::on(k, lane));
+        }
+        let (done, _) = ex.run(Batch(launches)).unwrap();
+        for (i, (d, w)) in done.iter().zip(&want).enumerate() {
+            let rerail_accel::Output::Pairs(p) = &d.out else { panic!("pairs") };
+            assert!(!p.is_empty(), "batch {batch} launch {i}: no pairs");
+            assert_eq!(&d.out, w, "batch {batch} launch {i} on {}", d.lane.name());
+        }
+    }
+    let space = ex.space();
+    for lane in [Lane::Cpu, Lane::Gpu] {
+        if ex.lanes().contains(&lane) {
+            let s = space[lane.index()];
+            // The CPU keeps one sort an id; the GPU one sort and one grouping (the dense side's sort alone).
+            assert!(s.hits >= s.misses, "{}: {s:?}", lane.name());
+        }
+    }
+    ex.clear();
+    assert_eq!(ex.space()[Lane::Cpu.index()].entries, 0);
+}

@@ -24,14 +24,17 @@
 //! in a second command buffer into a buffer of the exact size (the counts and offsets stay on the device).
 
 use crate::exec::Backend;
-use crate::kernel::{Bits, Kernel, Output};
+use crate::kernel::{Bits, JoinBy, Kernel, Output};
 use crate::lanes::Lane;
 use metal::{Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLDispatchType, MTLResourceOptions, MTLSize};
 use objc::{msg_send, sel, sel_impl};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+pub mod join;
 pub mod shared;
+pub mod space;
+pub mod tile;
 
 const SOURCE: &str = concat!(include_str!("common.metal"), include_str!("bits.metal"), include_str!("table.metal"), include_str!("closure.metal"));
 
@@ -98,12 +101,14 @@ fn gpu() -> Option<&'static Gpu> {
 
 /// This lane's backend, when this machine has a Metal device and the kernels compiled.
 pub fn backend() -> Option<Arc<dyn Backend>> {
-    gpu().map(|gpu| Arc::new(GpuBackend { gpu }) as Arc<dyn Backend>)
+    gpu().map(|gpu| Arc::new(GpuBackend { gpu, space: Default::default() }) as Arc<dyn Backend>)
 }
 
 /// The gpu lane.
 pub struct GpuBackend {
     gpu: &'static Gpu,
+    /// What the lane keeps between batches: joins' right sides (decision 0100 §4).
+    space: std::sync::Mutex<space::Space>,
 }
 
 /// What a submission took on the device.
@@ -120,7 +125,7 @@ pub struct Stats {
 
 /// The gpu lane's backend, as its own type (the timing test reads [`Stats`]).
 pub fn gpu_backend() -> Option<GpuBackend> {
-    gpu().map(|gpu| GpuBackend { gpu })
+    gpu().map(|gpu| GpuBackend { gpu, space: Default::default() })
 }
 
 impl Backend for GpuBackend {
@@ -155,11 +160,48 @@ impl Backend for GpuBackend {
                 let (n, words) = (*n as u64, (*n as u64).div_ceil(64).max(1));
                 off.len() as u64 == n + 1 && u32ok(n * words * 2) && fits(n * words * 8)
             }
+            Kernel::Join { left, right, by, .. } => {
+                let Ok((nl, nr)) = Kernel::join_shape(left, right) else { return false };
+                // The pairs' space (two a left row to start) and the columns at 64 bits.
+                let shape = fits(nl as u64 * 16) && fits(nr as u64 * 8) && (nl as u64) < (u32::MAX as u64) / 2;
+                shape && (*by == JoinBy::Probe || left.len() <= 3)
+            }
         }
     }
 
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
-        self.run(ks).map(|(o, _)| o)
+        // The joins in their own command buffers (`space::run`), the other forms in one.
+        let (joins, others): (Vec<usize>, Vec<usize>) = (0..ks.len()).partition(|&i| matches!(ks[i], Kernel::Join { .. }));
+        let mut outs: Vec<Option<Output>> = vec![None; ks.len()];
+        if !others.is_empty() {
+            let (o, _) = self.run(&others.iter().map(|&i| ks[i]).collect::<Vec<_>>())?;
+            for (&i, o) in others.iter().zip(o) {
+                outs[i] = Some(o);
+            }
+        }
+        if !joins.is_empty() {
+            let o = objc::rc::autoreleasepool(|| space::run(&self.space, &joins.iter().map(|&i| ks[i]).collect::<Vec<_>>()))?;
+            for (&i, o) in joins.iter().zip(o) {
+                outs[i] = Some(o);
+            }
+        }
+        Ok(outs.into_iter().map(|o| o.expect("every launch ran")).collect())
+    }
+
+    fn forget(&self, id: u64) {
+        if let Ok(mut s) = self.space.lock() {
+            s.forget(id);
+        }
+    }
+
+    fn clear(&self) {
+        if let Ok(mut s) = self.space.lock() {
+            s.clear();
+        }
+    }
+
+    fn space(&self) -> space::Counts {
+        self.space.lock().map(|s| s.counts()).unwrap_or_default()
     }
 }
 
@@ -422,6 +464,7 @@ impl Planner {
             Kernel::CountTable { loff, left, roff, right, emit } => self.count_table(loff, left, roff, right, *emit),
             Kernel::Histogram { off, codes, width } => self.histogram(off, codes, *width),
             Kernel::Closure { n, off, dst } => self.closure(*n, off, dst),
+            Kernel::Join { .. } => Err("a join runs in the space's own command buffers".into()),
         }
     }
 
