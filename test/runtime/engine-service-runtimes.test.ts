@@ -1,11 +1,13 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AdapterEvent } from "../../src/engine/index.js";
+import { CheckoutCatalogs, codeRuleSchema, type AdapterEvent } from "../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../src/runtime/engine-service.js";
 import { testEmbedder } from "../support/hook-events.js";
+import { setUpTestRepository, type TestRepositoryRules } from "../support/repository-rules.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 const roots: string[] = [];
@@ -17,16 +19,22 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 10 })));
 });
 
-/** An engine service over two started checkouts, `first` and `second`, whose runtimes stay `idleRuntimeMs` unused. */
-async function twoCheckouts(idleRuntimeMs: number) {
+/**
+ * An engine service over two started checkouts, `first` (a Git repository adding `rules`) and `second`, whose
+ * runtimes stay `idleRuntimeMs` unused.
+ */
+async function twoCheckouts(idleRuntimeMs: number, rules?: TestRepositoryRules) {
   const root = await mkdtemp(join(tmpdir(), "rerail-runtimes-"));
   roots.push(root);
   const databasePath = join(root, "rerail.sqlite");
   const [first, second] = [join(root, "first"), join(root, "second")];
-  for (const checkout of [first, second]) {
-    await mkdir(checkout);
-    startTestRepository(checkout, databasePath);
+  for (const checkout of [first, second]) await mkdir(checkout);
+  if (rules === undefined) startTestRepository(first, databasePath);
+  else {
+    execFileSync("git", ["init", "--quiet"], { cwd: first });
+    setUpTestRepository(first, rules, databasePath);
   }
+  startTestRepository(second, databasePath);
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-runtimes-${process.pid}-${Date.now()}` : join(root, "engine.sock");
   const service = await startEngineService({
     socketPath,
@@ -46,7 +54,7 @@ async function twoCheckouts(idleRuntimeMs: number) {
   const session = (sessionId: string, cwd: string) => ({ host: "claude-code" as const, sessionId, cwd });
   const start = (sessionId: string, cwd: string) => send({ kind: "session-start", eventId: `${sessionId}:start`, session: session(sessionId, cwd) });
   const end = (sessionId: string, cwd: string) => send({ kind: "session-end", eventId: `${sessionId}:end`, sessionId, session: session(sessionId, cwd) });
-  return { service, first, second, start, end, send, session };
+  return { service, databasePath, first, second, start, end, send, session };
 }
 
 describe("the engine service's runtimes", () => {
@@ -143,6 +151,37 @@ describe("the engine service's runtimes", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // A compiled rule's program is native memory V8 does not count, 512 MB for the Node pack's builtins rule, and a daemon
+  // with no session open allocates too little to start a collection: it kept a closed runtime's rules until the next
+  // session came.
+  it("frees a closed runtime's compiled rules without waiting for the daemon to allocate", async () => {
+    const rule = codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:freed", revision: 1, mode: "block",
+      scope: { include: ["**/*.py"], exclude: [] },
+      clauses: [{ id: "test:freed:check", violation: { anchor: "witness.span", code: "NO_PRINT", message: "No print" },
+        forbid: { ast: { language: "python", rule: { pattern: "print($ARG)" } } } }],
+    });
+    const { service, databasePath, first, start, end } = await twoCheckouts(0, { library: [{ kind: "code", rule }] });
+
+    await start("a", first);
+    // The rule as this checkout's catalogs compile it: the open runtime's catalog shares the executable.
+    const compiled = ((): WeakRef<object> => {
+      const catalogs = new CheckoutCatalogs(databasePath);
+      try {
+        const [entry] = catalogs.catalog(first).snapshot().codeRules;
+        if (entry === undefined) throw new Error("the library rule did not compile");
+        return new WeakRef(entry.executable);
+      } finally {
+        catalogs.close();
+      }
+    })();
+
+    await end("a", first);
+    expect(service.openRuntimes()).toBe(0);
+    // Nothing in this test collects: the service does, once the runtime closed.
+    await vi.waitFor(() => expect(compiled.deref()).toBeUndefined(), { timeout: 5_000 });
   });
 });
 

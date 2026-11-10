@@ -58,15 +58,23 @@ export function loadCodeRuleCapabilities(path: string = resolve(bundledCodeRuleD
 
 type CompileOutcome = { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl } | { readonly ok: false; readonly reason: string };
 
+/** A compiled outcome as the cache keeps it: a failure whole, an executable only while a catalog still holds it. */
+type HeldOutcome = { readonly ok: true; readonly executable: WeakRef<NativeCompiledCodeRuleDsl> } | { readonly ok: false; readonly reason: string };
+
 /**
  * Compiled executables shared by every checkout of the process: one per rule id, capabilities and `config` (a
  * repository's option values), for the source last compiled. Editing a rule replaces its entries, so a long-running
  * daemon keeps no earlier versions; two repositories configuring one rule differently each keep theirs.
+ *
+ * An executable is held weakly: the catalogs of the checkouts that run it hold it, and once the daemon closes the last
+ * runtime using it (`IDLE_RUNTIME_MS` after its repository's last session ended) the engine frees its program. Most
+ * rules compile to 0.3 MB, the Node pack's builtins rule to 512 MB, so keeping every rule ever compiled kept a daemon
+ * with no session open at its busiest size.
  */
 export class CompiledRuleCache {
-  readonly #outcomes = new Map<string, { readonly sourceDigest: string; readonly outcome: CompileOutcome }>();
+  readonly #outcomes = new Map<string, { readonly sourceDigest: string; readonly outcome: HeldOutcome }>();
 
-  /** Rules (per capabilities and config) with a compiled version held. */
+  /** Rules (per capabilities and config) with a compiled version known. */
   get size(): number {
     return this.#outcomes.size;
   }
@@ -75,20 +83,30 @@ export class CompiledRuleCache {
   compile(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string, sourceDigest: string, config: string): CompileOutcome {
     const key = `${capabilities.digest}\0${policyId}\0${config}`;
     const cached = this.#outcomes.get(key);
-    let outcome = cached?.sourceDigest === sourceDigest ? cached.outcome : undefined;
-    if (outcome === undefined) {
-      try {
-        const executable = loadNativeBinding().CodeRuleDslRuntime.compile(sourceText, "json", capabilities.json);
-        const canonical = JSON.parse(executable.canonicalJson()) as { id?: unknown };
-        outcome = canonical.id === policyId
-          ? { ok: true, executable }
-          : { ok: false, reason: `Compiled policy ID does not match rule document: ${policyId}` };
-      } catch (error) {
-        outcome = { ok: false, reason: error instanceof Error ? error.message : String(error) };
-      }
-      this.#outcomes.set(key, { sourceDigest, outcome });
-    }
+    const held = cached?.sourceDigest === sourceDigest ? liveOutcome(cached.outcome) : undefined;
+    if (held !== undefined) return held;
+    const outcome = compileOutcome(capabilities, policyId, sourceText);
+    this.#outcomes.set(key, { sourceDigest, outcome: outcome.ok ? { ok: true, executable: new WeakRef(outcome.executable) } : outcome });
     return outcome;
+  }
+}
+
+/** The outcome `held` keeps, or undefined once its executable was freed. */
+function liveOutcome(held: HeldOutcome): CompileOutcome | undefined {
+  if (!held.ok) return held;
+  const executable = held.executable.deref();
+  return executable === undefined ? undefined : { ok: true, executable };
+}
+
+function compileOutcome(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string): CompileOutcome {
+  try {
+    const executable = loadNativeBinding().CodeRuleDslRuntime.compile(sourceText, "json", capabilities.json);
+    const canonical = JSON.parse(executable.canonicalJson()) as { id?: unknown };
+    return canonical.id === policyId
+      ? { ok: true, executable }
+      : { ok: false, reason: `Compiled policy ID does not match rule document: ${policyId}` };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 

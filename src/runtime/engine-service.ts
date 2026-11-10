@@ -2,6 +2,8 @@ import { lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, request, type Server, type ServerResponse } from "node:http";
 import { connect } from "node:net";
 import { dirname, resolve as resolvePath } from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { z } from "zod/v4";
 import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
 import {
@@ -177,7 +179,7 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
 /**
  * How long a checkout's runtime stays open after its last session ends. A session that starts there again within it
  * finds its rules compiled and its checkout walked: the five packs a TypeScript repository adds take 12 s of CPU to
- * compile on a Windows laptop. After it the runtime closes.
+ * compile on a Windows laptop. After it the runtime closes, and the engine frees what its rules held.
  */
 export const IDLE_RUNTIME_MS = 15 * 60_000;
 
@@ -359,12 +361,26 @@ function retireUnusedRuntime(state: EngineRoutingState, runtimeKey: string): voi
   state.idle.set(runtimeKey, timer);
 }
 
+/**
+ * A full collection once a runtime closed, so the engine frees the programs of the rules it compiled. They are native
+ * memory V8 does not count (512 MB for the Node pack's builtins rule alone), and a daemon with no session open
+ * allocates too little to start a collection: the closed runtime's rules stayed in memory until the next session came.
+ */
+function collectGarbage(): void {
+  setFlagsFromString("--expose-gc");
+  const gc: unknown = runInNewContext("gc");
+  if (typeof gc === "function") gc();
+}
+
 function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
   const runtime = state.runtimes.get(runtimeKey);
   if (runtime === undefined) return;
   state.runtimes.delete(runtimeKey);
   for (const [configuration, key] of state.runtimeKeysByConfiguration) if (key === runtimeKey) state.runtimeKeysByConfiguration.delete(configuration);
-  const disposal = runtime.dispose().then(() => [] as const, (error: unknown) => {
+  const disposal = runtime.dispose().then(() => {
+    collectGarbage();
+    return [] as const;
+  }, (error: unknown) => {
     process.stderr.write(`rerail: closing an idle runtime failed: ${error instanceof Error ? error.message : String(error)}\n`);
     return [] as const;
   });
