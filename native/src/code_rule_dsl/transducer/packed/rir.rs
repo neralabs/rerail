@@ -944,22 +944,24 @@ fn build(parts: Parts) -> Result<Program, String> {
     let capture_programs = parts.capture_predicates.iter().map(value::CaptureProgram::lower).collect();
     let output_program = output::OutputProgram::lower(&directives, &parts.strings).map_err(verifier)?;
     let program = Program {
-        words: parts.words,
-        strings: parts.strings,
+        ir: Words {
+            words: parts.words,
+            strings: parts.strings,
+            labels: parts.labels,
+            longs: parts.longs,
+            tree_sitter_query: parts.query,
+            set_mode: parts.set_mode,
+            block_programs: parts.block_programs,
+            switches: parts.switches,
+            readings: parts.readings,
+        },
         predicates,
         value_programs,
         capture_predicates: parts.capture_predicates,
         capture_programs,
-        labels: parts.labels,
-        longs: parts.longs,
         directives,
         output_program,
-        tree_sitter_query: parts.query,
-        set_mode: parts.set_mode,
         ast_pattern: parts.pattern,
-        block_programs: parts.block_programs,
-        switches: parts.switches,
-        readings: parts.readings,
         digest: DigestMemo::default(),
     };
     program.validate().map_err(verifier)?;

@@ -24,7 +24,12 @@ pub mod native_cpu_codegen;
 pub mod native_cpu_lanes;
 pub mod native_cpu_pressure;
 pub mod native_cpu_shape;
+pub mod native_cpu_stream;
+pub mod native_ir;
+pub mod program;
 pub mod rir_text;
+pub mod set_mode;
+pub mod stream;
 pub mod stream_ir;
 
 pub use error::Error;

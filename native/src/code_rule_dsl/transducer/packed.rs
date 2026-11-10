@@ -303,68 +303,9 @@ mod block_plan_tests;
 mod value_packing;
 mod value_prefix;
 
-const STOP: u8 = 0x00;
-const KIND: u8 = 0x01;
-const FIELD: u8 = 0x02;
-const FLAGS: u8 = 0x03;
-const TEXT: u8 = 0x04;
-const SIZE: u8 = 0x05;
-const ASSERT: u8 = 0x06;
-const FIRST: u8 = 0x07;
-const LAST: u8 = 0x08;
-const ABSENT_FIELD: u8 = 0x09;
-const SUPERTYPE: u8 = 0x0a;
-const CHILD: u8 = 0x10;
-const NEXT: u8 = 0x11;
-const PARENT: u8 = 0x12;
-const DESCEND: u8 = 0x13;
-const FOLLOWING: u8 = 0x14;
-const SAVE_CURSOR: u8 = 0x15;
-const RESTORE_CURSOR: u8 = 0x16;
-const CAPTURE: u8 = 0x20;
-const REPEAT_BEGIN: u8 = 0x21;
-const REPEAT_BUMP: u8 = 0x22;
-const REPEAT_END: u8 = 0x23;
-const FORK: u8 = 0x30;
-const GOTO: u8 = 0x31;
-const EMIT: u8 = 0x40;
-// Tier 2's words, over the token stream (decision 0087, `stream`).
-const TOKEN: u8 = 0x50;
-const SWITCH: u8 = 0x51;
-/// `WORD` in `rir`.
-const WORD_IS: u8 = 0x52;
-// 0x53 was `CHECK`, a token's check run per token: a check is tier 1's masks (doc 18 §4).
-const OPEN: u8 = 0x54;
-const CLOSE: u8 = 0x55;
-const LEAF: u8 = 0x56;
-const NODE_FIELD: u8 = 0x57;
-const NODE_SUPER: u8 = 0x58;
-const PUSH: u8 = 0x59;
-const RETURN: u8 = 0x5a;
-const ACCEPT: u8 = 0x5b;
-const SPAN: u8 = 0x5c;
-/// Refuses unless one of tier 1's totals is zero: the fallback.
-const EMPTY: u8 = 0x5d;
-/// A mark (a token of no width) before the token: `m=k` its order, the operand its mask.
-const MARK: u8 = 0x5e;
-/// Runs the next word when the token starts at a bit of mask `operand`, else skips it: which of
-/// two rows beginning with one byte the token is.
-const ROW: u8 = 0x5f;
-/// The innermost open node becomes a node of kind `operand`: its kind decided by this token.
-const RETAG: u8 = 0x60;
-/// The token's leaf joins the grammar's leaf before it (the pending extras between are its text,
-/// dropped): one leaf of kind `operand`, to this token's end.
-const MERGE: u8 = 0x61;
-/// A node of kind `operand` around the node last made at this level, open: it takes that node's
-/// field and start; `NODE_FIELD m=1` and `RETAG m=1` then act on the moved node.
-const WRAP: u8 = 0x62;
-
-pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
-const GREEDY: u8 = 1;
-const EXTRA: u8 = 2;
-const MISSING: u8 = 4;
-const ERROR: u8 = 8;
-const SIZE_LONG: u8 = 0x80;
+// The transducer's word program and its opcodes, the compiler crate's (`rerail_compiler::program`).
+use rerail_compiler::program::*;
+pub(in crate::code_rule_dsl) use rerail_compiler::program::{NAMED, Words, word};
 const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
 const MAX_STEPS_PER_PATH: usize = 1 << 20;
 const MAX_WORK_PER_TASK: usize = 1 << 26;
@@ -847,32 +788,31 @@ enum PatternVerdict {
 
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Program {
-    words: Vec<u32>,
-    strings: Vec<Vec<u8>>,
+    /// The word program: the words and the tables they index, tier 1's and tier 2's
+    /// (`rerail_compiler::program::Words`). The fields below are the matcher's.
+    ir: Words,
     predicates: Vec<TextPredicate>,
     value_programs: Vec<value::ValueProgram>,
     capture_predicates: Vec<CapturePredicate>,
     capture_programs: Vec<value::CaptureProgram>,
-    labels: Vec<u16>,
-    longs: Vec<u64>,
     directives: Vec<Directive>,
     output_program: output::OutputProgram,
-    tree_sitter_query: bool,
-    /// Set mode (t1 spec-transducer §1, list step 14): the program's consumer reads its output
-    /// as a set of (task, label) keys, so an executor may stop a label at its first emit in a
-    /// task and drop a path whose reachable labels have all fired (`set_mode::Reach`). Its
-    /// captures are then one witness's, not every path's.
-    set_mode: bool,
     ast_pattern: Option<PackedPattern>,
-    /// Block programs, the side programs over source bytes (`block`), as `value_programs` are
-    /// the side programs over a node's text.
-    block_programs: Vec<block::BlockProgram>,
-    /// Tier 2's switch tables (`SWITCH`, decision 0087).
-    switches: Vec<stream::ByteSwitch>,
-    /// Tier 2's readings (`RETAG m=3`) and provisional fields.
-    readings: stream::Readings,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
+}
+
+impl std::ops::Deref for Program {
+    type Target = Words;
+    fn deref(&self) -> &Words {
+        &self.ir
+    }
+}
+
+impl std::ops::DerefMut for Program {
+    fn deref_mut(&mut self) -> &mut Words {
+        &mut self.ir
+    }
 }
 
 /// A program's plain digest, computed once: the CPU JIT's cache, the compilation requests and
@@ -1190,9 +1130,6 @@ impl WorkItem {
     }
 }
 
-fn split(word: u32) -> (u8, u8, u16) {
-    (word as u8, (word >> 8) as u8, (word >> 16) as u16)
-}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 enum SiblingRequirement {
@@ -1388,9 +1325,6 @@ impl CaptureStateSet {
     }
 }
 
-pub(in crate::code_rule_dsl) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
-    opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
-}
 
 impl PackedPattern {
     fn lower(node: &PatternNode) -> Self {
@@ -1880,24 +1814,16 @@ impl Program {
             .map(value::CaptureProgram::lower)
             .collect();
         let program = Self {
-            words,
-            strings,
+            ir: Words { words, strings, labels, longs, ..Words::default() },
             predicates,
             value_programs,
             capture_predicates,
             capture_programs,
-            labels,
-            longs,
             directives: Vec::new(),
             output_program: output::OutputProgram {
                 instructions: Vec::new(),
             },
-            tree_sitter_query: false,
-            set_mode: false,
             ast_pattern: None,
-            block_programs: Vec::new(),
-            switches: Vec::new(),
-            readings: stream::Readings::default(),
             digest: DigestMemo::default(),
         };
         program.validate()?;
