@@ -105,7 +105,7 @@ impl ExtraSpan {
 
 /// The low bits of span `i` of `kind`, or `None` past the kind's capacity.
 pub(super) fn extra_low(kind: ExtraSpan, i: u32) -> Option<u32> {
-    (i < kind.capacity()).then(|| (EXTRA_FIRST + kind.first() + i / INDEX) << INDEX_BITS | i % INDEX)
+    (i < kind.capacity()).then(|| ((EXTRA_FIRST + kind.first() + i / INDEX) << INDEX_BITS) | (i % INDEX))
 }
 
 /// What starts a granule.
