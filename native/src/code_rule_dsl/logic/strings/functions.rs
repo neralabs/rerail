@@ -112,6 +112,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // Soufflé's `to_number`: a decimal integer's value; no value for other text.
     ("to_number", &[Text], Number),
     ("python_int_clamped", &[Text, Number, Number, Number], Number),
+    ("python_number_key", &[Text], Text),
     ("decimal_cmp", &[Text, Text], Number),
     ("decimal_sub", &[Text, Text], Text),
     ("decimal_sum", &[Text], Text),
@@ -266,6 +267,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "convert" => Some(convert(t(0), t(1), t(2))),
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
         "byte_slice" => byte_slice(t(0), numbers[0], numbers[1]),
+        "python_number_key" => python_number_key(t(0)),
         "rx_group" => super::group(t(0), t(1), t(2)),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
@@ -387,6 +389,42 @@ pub(in crate::code_rule_dsl) fn slice(s: &str, start: i64, end: i64) -> String {
 }
 
 /// Half-open UTF-8 byte range, as stored on syntax nodes. Invalid ranges yield no value.
+/// Equality key for numeric literal tokens under Python's `==`. Integers keep
+/// their full precision; integral floats use their exact binary integer value.
+/// This reads scalar syntax only and never evaluates arbitrary source code.
+fn python_number_key(source: &str) -> Option<String> {
+    use num_bigint::BigInt;
+    use num_traits::FromPrimitive;
+
+    if source == "True" { return Some("n:1".into()); }
+    if source == "False" { return Some("n:0".into()); }
+    let text = source.replace('_', "");
+    let (negative, body) = if let Some(s) = text.strip_prefix('-') { (true,s) }
+        else { (false,text.strip_prefix('+').unwrap_or(&text)) };
+    let lower = body.to_ascii_lowercase();
+    let radix = [("0x",16),("0o",8),("0b",2)].into_iter()
+        .find_map(|(prefix,radix)| lower.strip_prefix(prefix).map(|s|(s,radix)));
+    if let Some((digits,radix)) = radix {
+        let value = BigInt::parse_bytes(digits.as_bytes(),radix)?;
+        return Some(format!("n:{}",if negative { -value } else { value }));
+    }
+    let imaginary = lower.ends_with('j');
+    if !imaginary && !lower.contains(['.','e']) {
+        if !body.bytes().all(|b| b.is_ascii_digit()) { return None; }
+        let value = BigInt::parse_bytes(body.as_bytes(),10)?;
+        return Some(format!("n:{}",if negative { -value } else { value }));
+    }
+    let digits = if imaginary { &text[..text.len()-1] } else { &text };
+    if !digits.bytes().all(|b| b.is_ascii_digit() || matches!(b,b'.'|b'e'|b'E'|b'+'|b'-')) { return None; }
+    let value: f64 = digits.parse().ok()?;
+    if value == 0.0 { return Some("n:0".into()); }
+    if imaginary { return Some(format!("j:{:016x}",value.to_bits())); }
+    if value.is_finite() && value.fract() == 0.0 {
+        return Some(format!("n:{}",BigInt::from_f64(value)?));
+    }
+    Some(format!("f:{:016x}",value.to_bits()))
+}
+
 pub(in crate::code_rule_dsl) fn byte_slice(s: &str, start: i64, end: i64) -> Option<String> {
     let (start, end) = (usize::try_from(start).ok()?, usize::try_from(end).ok()?);
     s.get(start..end).map(str::to_owned)
