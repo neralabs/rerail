@@ -13,7 +13,7 @@ import { realpathSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FOLDER_REMOVAL_RETRIES } from "../../../src/engine/file-replace.js";
+import { FOLDER_REMOVAL_RETRIES } from "../../../src/engine/folder-removal.js";
 
 /** A process this test process started, with the folder it runs in. */
 interface Started {
@@ -22,7 +22,7 @@ interface Started {
 }
 
 /** `ChildProcess#spawn`, which every start in node:child_process goes through; Node's types leave it out. */
-type Spawn = (this: ChildProcess, options: { cwd?: string | URL | undefined }) => unknown;
+type Spawn = (this: ChildProcess, options: { cwd?: string | URL | null | undefined }) => unknown;
 
 const STARTED = Symbol.for("rerail.test.started-processes");
 
@@ -54,9 +54,10 @@ function startedProcesses(): Set<Started> {
 }
 startedProcesses();
 
-function startedIn(cwd: string | URL | undefined): string {
+/** The folder a process starts in: `cwd` as `spawn` passes it on (null from `execFile` without one), else this process's. */
+function startedIn(cwd: string | URL | null | undefined): string {
   if (cwd instanceof URL) return fileURLToPath(cwd);
-  if (cwd !== undefined) return resolve(cwd);
+  if (typeof cwd === "string") return resolve(cwd);
   try {
     return process.cwd();
   } catch {

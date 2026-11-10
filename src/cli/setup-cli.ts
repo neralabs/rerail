@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, realpath, rm, rmdir, unlink, writeFile } from "node:fs/promises";
-import { FOLDER_REMOVAL_RETRIES, renameWithRetry } from "../engine/file-replace.js";
+import { FOLDER_REMOVAL_RETRIES } from "../engine/folder-removal.js";
+import { renameWithRetry } from "../engine/file-replace.js";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";

@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, closeSync, fchmodSync, openSync, renameSync as fsRenameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { chmod, open, rename as fsRename, rm as fsRm, stat } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
+import { FOLDER_REMOVAL_RETRIES } from "./folder-removal.js";
 
 /** How long a rename is retried on Windows. */
 const RENAME_RETRY_MS = 2_000;
@@ -182,13 +183,6 @@ async function makeWritable(path: string): Promise<RenameTarget> {
   }
   return "replaceable";
 }
-
-/**
- * How a folder removal waits out a file Windows holds for a moment, given to `rm` or `rmSync`: 10 more tries, each
- * 100 ms later than the one before, about 5.5 s in all. A folder a running process keeps open stays held, and the
- * removal then fails. Every removal that retries uses these, the tests' `removeFolder` included.
- */
-export const FOLDER_REMOVAL_RETRIES = { maxRetries: 10, retryDelay: 100 } as const;
 
 /**
  * Removes a temporary folder Rerail made, retrying while Windows holds a file in it, and never fails: a leftover folder
