@@ -15,6 +15,10 @@ mod language;
 mod lines;
 mod literal;
 mod logic;
+/// The profile's SQL hazards, for the content store's connections and writer (decision 0103).
+pub(crate) mod sql_hazards {
+    pub(crate) use super::logic::profile::{behind_the_run, on, sql_in_wave, wait_in_wave};
+}
 mod sql_executor;
 mod matcher;
 mod model;
