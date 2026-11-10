@@ -39,5 +39,17 @@ class OriginalObservationCoverageTests(unittest.TestCase):
         observed=copy.deepcopy(self.observations);observed[0]['actual']=[]
         with self.assertRaisesRegex(ValueError,'complete finding'):validate_original_observations(self.owned,observed)
 
+    def test_recorded_empty_io_result_needs_no_invented_normalized_dto(self):
+        from recorded_admission import validate_original_observations
+        source=dict(test='io',entry='check_file',files=[],sourceResult=[])
+        result=dict(test='io',entry='check_file',ordinal=0,status='passed',expected=[],actual=[],actualSourceResult=[])
+        validate_original_observations([source],[result])
+
+    def test_nonempty_result_cannot_stand_in_for_an_absent_normalized_dto(self):
+        from recorded_admission import validate_original_observations
+        source=dict(test='io',entry='check_file',files=[],sourceResult=['positive'])
+        result=dict(test='io',entry='check_file',ordinal=0,status='passed',expected=[],actual=[],actualSourceResult=['positive'])
+        with self.assertRaisesRegex(ValueError,'Normalized source findings missing'):validate_original_observations([source],[result])
+
 
 if __name__=='__main__':unittest.main()
