@@ -11,6 +11,8 @@ def sync_async_signatures(source, target, header):
     text = header('sync_async_signatures', target)
     text = text.replace('.mode log\n', '.mode block\n')
     text = re.sub(r'^\.scope include .*$', '.scope include "api/**/*.py", "impl/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"', text, flags=re.M)
+    from data_layer_rr_cli import api_scope
+    text=api_scope(text)
     text += '.decl sas_transaction(t: symbol)\n'
     text += ''.join(f'sas_transaction({json.dumps(t)}).\n' for t in sorted(original.TRANSACTION_TYPES))
     text += '.decl sas_connection(t: symbol)\n'

@@ -1,0 +1,65 @@
+// Source traversal for scan_semantic_source. Production and API policies share this body.
+#include "python/ast-shape.rr"
+#include "python/print.rr"
+.decl spc_valid(d: number)
+spc_valid(d) :- doc(d,_,_), !syntax_error(d,_,_).
+.decl spc_module_text(raw: symbol, value: symbol)
+spc_module_text(raw,@nfkc(@replace_all(raw,"[ \\t\\r\\n\\f\\\\]+",""))) :- spc_module_raw(raw).
+.decl spc_module_raw(raw: symbol)
+spc_module_raw(raw) :- from_module_raw(_,raw).
+spc_module_raw(raw) :- kind(i,"import_statement"), field(i,"name",a), dotted(a,raw).
+spc_module_raw(raw) :- kind(i,"import_statement"), field(i,"name",a), kind(a,"aliased_import"), field(a,"name",n), dotted(n,raw).
+.decl spc_alias(i: node, ordinal: number, name: symbol)
+spc_alias(i,k,name) :- kind(i,"import_statement"), child(i,a,k), field(i,"name",a), dotted(a,raw), spc_module_text(raw,name).
+spc_alias(i,k,name) :- kind(i,"import_statement"), child(i,a,k), field(i,"name",a), kind(a,"aliased_import"), field(a,"name",n), dotted(n,raw), spc_module_text(raw,name).
+.decl spc_import(i: node, name: symbol)
+spc_import(i,name) :- from_module_raw(i,raw), spc_module_text(raw,name).
+spc_import(i,"__future__") :- kind(i,"future_import_statement").
+spc_import(i,name) :- kind(i,"import_statement"), name=join text by k sep "," : { spc_alias(i,k,text) }.
+.decl spc_bad_import(i: node, name: symbol)
+spc_bad_import(i,name) :- spc_import(i,name), spc_import_part(part), contains(part,name).
+spc_bad_import(i,name) :- spc_import(i,name), (suffix(".lazy_result",name) ; suffix(".lazy_seq",name)).
+.decl spc_annotation(a: node, value: symbol)
+spc_annotation(a,text) :- kind(a,"assignment"), field(a,"type",t), annotation_text(t,text), spc_runtime_type(part), contains(part,text).
+.decl spc_builder(c: node)
+spc_builder(c) :- kind(m,"module"), body_stmt(m,s,_),
+    (c=s ; kind(s,"decorated_definition"), field(s,"definition",c)), kind(c,"class_definition"), def_name(c,n), @nfkc(n)="SemanticPlanBuilder".
+.decl spc_method(c: node, f: node, wrapper: node)
+spc_method(c,f,w) :- spc_builder(c), field(c,"body",b), body_stmt(b,w,_),
+    (f=w ; kind(w,"decorated_definition"), field(w,"definition",f)), kind(f,"function_definition"), !is_async(f).
+.decl spc_terminal_call(f: node, call: node, name: symbol)
+spc_terminal_call(f,k,@nfkc(raw)) :- spc_method(_,f,w), within(k,w), kind(k,"call"), field(k,"function",e), kind(e,"attribute"),
+    field(e,"attribute",a), text(a,raw), spc_terminal(@nfkc(raw)).
+.decl spc_return_root(f: node, name: symbol)
+spc_return_root(f,n) :- field(f,"return_type",t), child(t,e,0), spc_root(e,n).
+spc_return_root(f,n) :- field(f,"return_type",t), child(t,g,0), kind(g,"generic_type"), child(g,e,0), spc_root(e,n).
+spc_return_root(f,n) :- field(f,"return_type",t), child(t,g,0), kind(g,"subscript"), field(g,"value",e), spc_root(e,n).
+.decl spc_root(e: node, name: symbol)
+spc_root(e,@nfkc(n)) :- kind(e,"identifier"), text(e,n).
+spc_root(e,@nfkc(n)) :- kind(e,"attribute"), field(e,"attribute",a), text(a,n).
+spc_root(e,@nfkc(n)) :- kind(e,"member_type"), child(e,a,1), text(a,n).
+.decl spc_fragment(c: node, f: node, wrapper: node)
+spc_fragment(c,f,w) :- spc_method(c,f,w), def_name(f,n), @nfkc(n)="add_fragment", !spc_fragment_earlier(c,f).
+.decl spc_fragment_earlier(c: node, f: node)
+spc_fragment_earlier(c,f) :- spc_method(c,f,_), spc_method(c,g,_), def_name(g,n), @nfkc(n)="add_fragment", earlier(g,f).
+.decl spc_uses(w: node, name: symbol)
+spc_uses(w,@nfkc(n)) :- spc_fragment(_,_,w), ast_name(x,n), within(x,w).
+
+// Pass 0 is ast.walk(module); pass 1 follows each class and method in body order.
+// Native visit_index follows CPython field order, including defaults and keyword arguments.
+.violation Composition(at: node, source_rule: symbol, detail: symbol, phase: number, owner: number, method: number, step: number, depth: number, ordinal: number) code {source_rule} "{detail}"
+Composition(i,"SPC-001",cat("semantic plan imports runtime module ",@python_repr(name)),0,0,0,0,depth,ordinal) :-
+    spc_bad_import(i,name), docof(i,d), spc_valid(d), py_ast_depth(i,depth), visit_index(i,ordinal).
+Composition(a,"SPC-002",cat("semantic field uses runtime type ",@python_repr(text)),0,0,0,0,depth,ordinal) :-
+    spc_annotation(a,text), docof(a,d), spc_valid(d), py_ast_depth(a,depth), visit_index(a,ordinal).
+Composition(f,"SPC-004",cat("semantic builder exposes mutable return from ",@nfkc(n)),1,owner,method,0,0,0) :-
+    spc_method(c,f,_), def_name(f,n), !prefix("_",@nfkc(n)), spc_return_root(f,root), spc_mutable(root),
+    docof(f,d), spc_valid(d), visit_index(c,owner), visit_index(f,method).
+Composition(k,"SPC-003",cat("semantic builder calls runtime terminal ",name),1,owner,method,1,depth,ordinal) :-
+    spc_method(c,f,_), spc_terminal_call(f,k,name), docof(k,d), spc_valid(d), visit_index(c,owner), visit_index(f,method),
+    py_ast_depth(k,depth), visit_index(k,ordinal).
+Composition(f,"SPC-005","fragment import must use typed exact ref remapping",1,owner,2147483647,2,0,0) :-
+    spc_fragment(c,f,w), (!spc_uses(w,"RefRemap") ; !spc_uses(w,"rewrite_exact_plan_refs_payload")),
+    docof(f,d), spc_valid(d), visit_index(c,owner).
+.violation CompositionSyntax(at: span, message: symbol) code "SPC_SYNTAX" "{message}"
+CompositionSyntax(@place(p,l),message) :- doc(d,p,_), syntax_error(d,l,message).

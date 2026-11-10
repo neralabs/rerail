@@ -42,6 +42,9 @@ ENTRIES = {
     'forwardref': ['lint_file', 'lint_file_content', 'lint_directory'],
     'data_layer_facade_purity': ['lint_file', 'lint_targets'],
     'sync_async_signatures': ['analyze_file'],
+    'sql_grammar_escape_hatches': [],
+    'transaction_patterns': [],
+    'plan_composition_architecture': [],
     'conn_or_txn_union': ['analyze_file'],
     'async_patterns': ['lint_file', 'analyze_source', 'should_exclude'],
     'async_sync_boundary': ['scan_tree', '_get_call_name', '_is_allowlisted', '_is_informational'],
@@ -529,6 +532,15 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check=='plan_composition_architecture':
+                from composition_port import install
+                install(self,module)
+            if check=='sql_grammar_escape_hatches':
+                from grammar_escape_port import install
+                install(self,module)
+            if check=='transaction_patterns':
+                from patterns_port import install
+                install(self,module)
             if check == 'no_api_root_imports':
                 from api_imports_port import install
                 install(self,module)

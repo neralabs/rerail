@@ -2,6 +2,8 @@
 
 
 def policy_filename(check, entry):
+    if check=='plan_composition_architecture' and entry=='scan_semantic_source':
+        return 'plan-composition-architecture-source.rr'
     if check=='serverplan_grammar_surface' and entry in {'_project_facts','_project_messages'}:
         return 'serverplan-grammar-surface-project.rr'
     if check == 'impl_direct_execution' and entry.startswith('_ratchet_'):

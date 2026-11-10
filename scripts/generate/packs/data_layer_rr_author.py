@@ -258,6 +258,8 @@ def main():
                   ('async_sync_delegation', lambda s, t: async_sync_delegation(s, t, header)),
                   ('internal_dead_code', lambda s, t: internal_dead_code(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
+    from data_layer_rr_composition import generate as composition
+    generators.append(('plan_composition_architecture',lambda s,t:composition(s,t,header)[0]))
     unknown = set(args.check or []) - {name for name, _ in generators}
     if unknown: parser.error('Unknown checks: '+', '.join(sorted(unknown)))
     for check, generate in generators:
@@ -277,6 +279,14 @@ def main():
             entry.update(status='draft')
             entry.pop('evidence', None)
         entry.update(rulePath=path.as_posix(), ruleSha256=digest)
+        if check=='plan_composition_architecture':
+            companion=path.with_name(path.stem+'-source.rr');content=composition(source,entry,header)[1]
+            (ROOT/companion).write_text(content)
+            item=dict(destination=companion.as_posix(),sha256=sha(content.encode()),origin='authored',sourceCommit=PIN,
+                upstreamPath='scripts/lint_plan_composition_architecture.py')
+            index=next((i for i,file in enumerate(manifest['files']) if file['destination']==companion.as_posix()),None)
+            if index is None:manifest['files'].append(item)
+            else:manifest['files'][index]=dict(manifest['files'][index],**item)
         if check=='serverplan_grammar_surface':
             from data_layer_rr_projection import generate as projection
             for name,content in projection(ROOT,source).items():

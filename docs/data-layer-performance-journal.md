@@ -10626,3 +10626,49 @@ Remaining work for this shared cluster:
 The inventory remains nine accepted ports, 86 drafts, and five absent translations.
 The full 100-rule migration remains active. No full-repository cold benchmark was run.
 
+# Shared MCP providers and composition source traversal, 2026-11-10
+
+Installed the existing native grammar-escape and transaction-pattern adapters in the shared runner.
+Dynamic loading and signatures use their existing native scanner adapters.
+The first integration run passed through snapshots but missed the signature finding through workspaces.
+The signature policy's production globs excluded the explicit `module.py` input before parsing.
+The generator now admits API documents through the policy scope. Existing native document predicates retain production selection.
+Both APIs then matched the complete source signature DTO, including both function signatures and the owner path.
+
+The new MCP observer records arguments, keyword arguments, result types, every DTO field, order, and call multiplicity.
+The unchanged source module passes all eight tests and produces nine API observations.
+Seven shared tests now pass through both native APIs, with all eight corresponding API observations equal to the source.
+This replaces six of the previous seven failed shared tests with verified native execution.
+The remaining shared test calls `run_behavior_probes`; the semantic guard still rejects that Python linter function.
+No application execution or fixed empty result was added to native rules.
+
+Composition source analysis now shares one `.rr` library between its production policy and explicit-source policy.
+The source API does not request project behavior artifacts. Production retains its explicit artifact contract.
+Native rules apply canonical annotation text, Python string repr, normalized identifiers, and ordered source findings.
+CPython visit order and semantic depth retain breadth-first call order, including keyword arguments, dictionary values, and conditional expressions.
+All five original composition source tests pass through both APIs.
+
+The composition corpus contains 167 source cases. It covers all import fragments, runtime type fragments, terminal methods, and mutable return roots.
+It also checks aliases, relative imports, Unicode normalization, nested definitions, decorators, defaults, fragment name usage, duplicates, ordering, and parse errors.
+Exactly 166 cases pass through each API. The malformed parameter case remains red.
+The engine exposes its parse message and line, but cannot yet supply the complete CPython `SyntaxError.args` location tuple.
+The native adapter raises an explicit unsupported-operation error for that case. It does not substitute an approximate exception.
+The NUL-source exception already matches exactly.
+
+The checkpoint `rr-mcp-static-progress-finalec3.json.gz` records 370 native executions.
+It preserves seven passing shared cases per API, eight complete shared observations per API, five passing original composition source cases per API, and all 167 supplemental cases per API.
+It also preserves both full shared runs with the one application-probe failure and both syntax-exception failures.
+The validator rejects hidden gaps, changed DTO messages, omitted traversal cases, and mixed engine cohorts.
+All 336 migration tooling tests pass. No rule was newly admitted in this cohort.
+The inventory remains nine accepted ports, 86 drafts, and five absent translations.
+
+Next implementation steps:
+
+1. Extend the existing cached native Python parse diagnostic with typed exception kind, start/end positions, and source-line text. Derive the existing message/line relation from the same parse.
+2. Record complete Python 3.13 syntax-exception fixtures, including Unicode, multiline, indentation, and NUL cases. Use those fixtures for the native TDD ladder.
+3. Construct exception arguments in native rules. The host may construct the selected passive exception class from those arguments.
+4. Rerun all 167 composition cases and broaden the exception corpus until complete values match.
+5. Resolve the previously asked application-probe boundary, complete that producer contract, then rerun and combine the original modules without weakening the 132-case inspection gate.
+
+Only affected kernels ran. The root engine is unchanged and remains based on Final `ec3cfe1b7`.
+

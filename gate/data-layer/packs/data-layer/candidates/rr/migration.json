@@ -302,7 +302,10 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-composition-architecture.rr",
-      "sha256": "3a341800275caf104d668d3999675ad55666e3feb8b12c4664a668e293de0e36"
+      "sha256": "0824eeb074d9f80b01a576ad71b57672524e3e042b3d14364bd5ce7f69f4b8cb",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_plan_composition_architecture.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-helpers-allowlist.rr",
@@ -1543,7 +1546,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/sync-async-signatures.rr",
-      "sha256": "e53898844d12fe6686deec8a36692f2b854da475d16948a79ba7efcff4e083c4",
+      "sha256": "77cde38d41fa16e4fe98bacf0e97511dc3f09604a989863f3a63ceea5c5a199d",
       "origin": "authored",
       "upstreamPath": "scripts/lint_sync_async_signatures.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2631,6 +2634,13 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_lib/serverplan_facts.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-composition-architecture-source.rr",
+      "sha256": "26bca5f5105cf3087b6242b224fdc55c48454e3db6e429692f520b10162abbfa",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_composition_architecture.py"
     }
   ],
   "rules": [
@@ -3351,7 +3361,7 @@
       "legacySha256": "ef99509b0a370a866cf85e124284c7bf90ce2e8d3e34f1decf10fae408c8a3c7",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/sync-async-signatures.rr",
-      "ruleSha256": "e53898844d12fe6686deec8a36692f2b854da475d16948a79ba7efcff4e083c4"
+      "ruleSha256": "77cde38d41fa16e4fe98bacf0e97511dc3f09604a989863f3a63ceea5c5a199d"
     },
     {
       "check": "async_sync_delegation",
@@ -3989,7 +3999,7 @@
       "legacySha256": "5079ff97db88eeee2a757c66613e13c1be0c280a4f358a884411f867f388bacf",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-composition-architecture.rr",
-      "ruleSha256": "3a341800275caf104d668d3999675ad55666e3feb8b12c4664a668e293de0e36"
+      "ruleSha256": "0824eeb074d9f80b01a576ad71b57672524e3e042b3d14364bd5ce7f69f4b8cb"
     },
     {
       "check": "graph_lazy_sql_plan",
