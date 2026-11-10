@@ -24,6 +24,16 @@ function ConvertTo-RerailArgument([string]$Value) {
   return '"' + (($Value -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
 }
 
+# Redirects a process's stdout and stderr and reads them as UTF-8, which node writes to a pipe whatever the console's
+# code page. Left unset, .NET decodes them with the console's code page (437 on an en-US install), and set-up's JSON
+# comes back with the sandbox's accented profile path garbled.
+function Set-RerailUtf8Pipes([Diagnostics.ProcessStartInfo]$Start) {
+  $Start.RedirectStandardOutput = $true
+  $Start.RedirectStandardError = $true
+  $Start.StandardOutputEncoding = New-Object Text.UTF8Encoding $false
+  $Start.StandardErrorEncoding = New-Object Text.UTF8Encoding $false
+}
+
 # Runs a program with stdout and stderr read through pipes. Its stdout must close within 15 s of its exit: a daemon
 # that inherited the pipe would hold every captured `rerail setup` open (what a coding agent running set-up sees).
 function Invoke-RerailCaptured([string]$File, [string[]]$Arguments, [string]$WorkingDirectory, [int]$TimeoutMinutes = 15) {
@@ -31,8 +41,7 @@ function Invoke-RerailCaptured([string]$File, [string[]]$Arguments, [string]$Wor
   $start.Arguments = (@($Arguments) | ForEach-Object { ConvertTo-RerailArgument $_ }) -join " "
   $start.WorkingDirectory = $WorkingDirectory
   $start.UseShellExecute = $false
-  $start.RedirectStandardOutput = $true
-  $start.RedirectStandardError = $true
+  Set-RerailUtf8Pipes $start
   $process = [Diagnostics.Process]::Start($start)
   $stdout = $process.StandardOutput.ReadToEndAsync()
   $stderr = $process.StandardError.ReadToEndAsync()

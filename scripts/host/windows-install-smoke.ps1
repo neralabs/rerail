@@ -86,7 +86,7 @@ try {
   $legacy = New-Object Diagnostics.ProcessStartInfo("cmd.exe")
   $legacy.Arguments = '/d /s /c "chcp 437 >nul & call "%SMOKE_LAUNCHER%" version"'
   $legacy.UseShellExecute = $false; $legacy.CreateNoWindow = $true
-  $legacy.RedirectStandardOutput = $true; $legacy.RedirectStandardError = $true
+  Set-RerailUtf8Pipes $legacy
   $legacyRun = [Diagnostics.Process]::Start($legacy)
   $legacyOut = $legacyRun.StandardOutput.ReadToEndAsync(); $legacyErr = $legacyRun.StandardError.ReadToEndAsync()
   $legacyRun.WaitForExit()
@@ -106,7 +106,7 @@ try {
   $hostile.Arguments = '/d /s /c "call "%SMOKE_FALLBACK%" version"'
   $hostile.WorkingDirectory = "$base\hostile-repo"
   $hostile.UseShellExecute = $false; $hostile.CreateNoWindow = $true
-  $hostile.RedirectStandardOutput = $true; $hostile.RedirectStandardError = $true
+  Set-RerailUtf8Pipes $hostile
   $hostileRun = [Diagnostics.Process]::Start($hostile)
   $hostileOut = $hostileRun.StandardOutput.ReadToEndAsync(); $hostileErr = $hostileRun.StandardError.ReadToEndAsync()
   $hostileRun.WaitForExit()
