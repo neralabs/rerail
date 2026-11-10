@@ -1216,7 +1216,9 @@ fn forte_survives_random_and_truncated_templates() {
 /// `generate.php --corpus` selects
 /// them. Ten runs; prints one JSON line: the median run's seconds and MB/s, and the growth of the
 /// process's peak resident set while parsing (one tree alive at a time) over its peak after
-/// reading the templates. Run each parser and corpus in its own process.
+/// reading the templates. Run each parser and corpus in its own process. Unix only: the peak
+/// resident set is getrusage's, and `libc` is a dependency on Unix alone.
+#[cfg(unix)]
 #[test]
 #[ignore = "parser throughput over a Blade corpus"]
 fn benchmark_forte_throughput() {
