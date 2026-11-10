@@ -602,10 +602,13 @@ impl Retained {
             by_size.sort_by_key(|(_, k)| std::cmp::Reverse(k.rel.held_bytes().2));
             let (mut total, mut rows, mut now, mut shown) = (0usize, 0usize, 0usize, 0usize);
             let mut weighted = (0.0f64, 0.0f64, 0.0f64);
+            let mut placed = (0usize, 0usize);
             for (rel, kept) in by_size {
                 let sets: Vec<Vec<usize>> = shapes.get(rel.as_str()).map(|m| m.keys().cloned().collect()).unwrap_or_default();
                 let counts: Vec<u64> = shapes.get(rel.as_str()).map(|m| m.values().copied().collect()).unwrap_or_default();
-                if let Some((line, bytes, w_now, w_new, w_hash)) = kept.rel.index_spike(rel, &sets, &counts) {
+                if let Some((line, bytes, pbytes, dbytes, w_now, w_new, w_hash)) = kept.rel.index_spike(rel, &sets, &counts) {
+                    placed.0 += pbytes;
+                    placed.1 += dbytes;
                     weighted.0 += w_now;
                     weighted.1 += w_new;
                     weighted.2 += w_hash;
@@ -618,7 +621,13 @@ impl Retained {
                     }
                 }
             }
-            out.push(format!("SPIKE all kept: {rows} rows; orders {:.1} MB ({:.1} B/row) vs sets and indexes {:.1} MB ({:.1} B/row); this step's probes of kept relations, at the measured costs: {:.1} ms by chains, {:.1} ms by fenced orders, {:.1} ms by hashed orders", total as f64 / 1e6, total as f64 / rows.max(1) as f64, now as f64 / 1e6, now as f64 / rows.max(1) as f64, weighted.0 / 1e6, weighted.1 / 1e6, weighted.2 / 1e6));
+            let mixed = InRel::index_spike_mixed();
+            let g = InRel::index_spike_grown();
+            if g.2 > 0 {
+                out.push(format!("SPIKE grown, all kept: {} offers, {} held; today {:.1} ms {:.1} B/row; mixed {:.1} ms (set {:.1}, placed {:.1}, orders {:.1}) {:.1} B/row", g.2, g.3, g.0, g.4 as f64 / g.3.max(1) as f64, g.1, g.6, g.7, g.8, g.5 as f64 / g.3.max(1) as f64));
+            }
+            out.push(format!("SPIKE mixed (whole row placed, hot selective sets placed, the rest in orders): {:.1} MB ({:.1} B/row), {:.1} ms", mixed.0 as f64 / 1e6, mixed.0 as f64 / rows.max(1) as f64, mixed.1 / 1e6));
+            out.push(format!("SPIKE all kept: {rows} rows; orders {:.1} MB ({:.1} B/row) vs sets and indexes {:.1} MB ({:.1} B/row); this step's probes of kept relations, at the measured costs: {:.1} ms by chains, {:.1} ms by fenced orders, {:.1} ms by placed indexes; placed on every probed set and the row {:.1} MB ({:.1} B/row), orders + placed row {:.1} MB ({:.1} B/row)", total as f64 / 1e6, total as f64 / rows.max(1) as f64, now as f64 / 1e6, now as f64 / rows.max(1) as f64, weighted.0 / 1e6, weighted.1 / 1e6, weighted.2 / 1e6, placed.0 as f64 / 1e6, placed.0 as f64 / rows.max(1) as f64, (total + placed.1) as f64 / 1e6, (total + placed.1) as f64 / rows.max(1) as f64));
         }
         let mut top: Vec<(&(String, Vec<usize>), &u64)> = probes.iter().collect();
         top.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
