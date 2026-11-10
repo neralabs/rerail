@@ -1758,6 +1758,91 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
 mod tests {
     use super::*;
 
+    /// `congruence` signs a rule by its template and the labels of what it reads; that partitions the relations as
+    /// signing it by its canonical text under each round's labels does (the refinement as first written).
+    #[test]
+    fn congruence_by_templates_is_congruence_by_texts() {
+        let prog = super::super::rr::parse(
+            r#"
+            .decl e(a: number, b: number)
+            .input e
+            .decl f(a: number, b: number)
+            .input f
+            .decl p1(a: number, b: number)
+            .decl p2(a: number, b: number)
+            .decl p3(a: number, b: number)
+            .decl q1(a: number)
+            .decl q2(a: number)
+            .decl q3(a: number)
+            .decl c1(a: number, n: number)
+            .decl c2(a: number, n: number)
+            .decl out(a: number)
+            .output out
+            p1(x, y) :- e(x, y).
+            p1(x, z) :- p1(x, y), e(y, z).
+            p2(u, v) :- e(u, v).
+            p2(u, w) :- p2(u, v), e(v, w).
+            p3(x, y) :- f(x, y).
+            p3(x, z) :- p3(x, y), f(y, z).
+            q1(x) :- p1(x, _), !p3(x, x).
+            q2(x) :- p2(x, _), !p3(x, x).
+            q3(x) :- p3(x, _), !p1(x, x).
+            c1(a, n) :- e(a, _), n = count : { p1(a, _) }.
+            c2(a, n) :- e(a, _), n = count : { p2(a, _) }.
+            out(x) :- q1(x), q2(x), q3(x), c1(x, _), c2(x, _).
+            "#,
+        )
+        .unwrap();
+        let by_texts = |prog: &Program| -> Vec<Vec<String>> {
+            let mut rules_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
+            for r in &prog.rules {
+                rules_of.entry(r.head.rel.as_str()).or_default().push(r);
+            }
+            let cands: Vec<&str> = rules_of.keys().copied().filter(|r| !fixed(prog, r)).collect();
+            let types = |rel: &str| -> Vec<String> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default() };
+            let mut class: HashMap<&str, usize> = HashMap::new();
+            let mut ids: HashMap<(Vec<String>, usize), usize> = HashMap::new();
+            for &r in &cands {
+                let n = ids.len();
+                class.insert(r, *ids.entry((types(r), rules_of[r].len())).or_insert(n));
+            }
+            let mut classes = class.values().collect::<BTreeSet<_>>().len();
+            loop {
+                let label = |rel: &str| class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"));
+                let mut ids: HashMap<(usize, Vec<String>), usize> = HashMap::new();
+                let mut next: HashMap<&str, usize> = HashMap::new();
+                for &r in &cands {
+                    let mut sig: Vec<String> = rules_of[r].iter().map(|rule| canonical(rule, &label)).collect();
+                    sig.sort();
+                    let n = ids.len();
+                    next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
+                }
+                let now = ids.len();
+                class = next;
+                if now == classes {
+                    break;
+                }
+                classes = now;
+            }
+            let mut groups: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+            for &r in &cands {
+                groups.entry(class[r]).or_default().push(r.to_owned());
+            }
+            groups.into_values().filter(|g| g.len() > 1).map(|mut g| {
+                g.sort();
+                g
+            }).collect()
+        };
+        let mut want = by_texts(&prog);
+        let mut got = congruence(&prog, false);
+        want.sort();
+        got.sort();
+        assert_eq!(got, want);
+        // p1 and p2 are one relation, and so the relations over them; p3 reads `f`, not `e`.
+        assert!(got.contains(&vec!["p1".to_owned(), "p2".to_owned()]) && got.contains(&vec!["c1".to_owned(), "c2".to_owned()]), "{got:?}");
+        assert!(!got.iter().any(|g| g.contains(&"p3".to_owned())), "{got:?}");
+    }
+
     #[test]
     fn implied_atoms_kind_tests_and_identical_relations_go() {
         let mut prog = super::super::rr::parse(
