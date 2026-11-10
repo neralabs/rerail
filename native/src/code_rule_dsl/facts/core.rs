@@ -109,15 +109,20 @@ pub(crate) enum Built {
 
 /// Parses `file` in its own dialect and reads its facts off the tape.
 pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
+    build_with_tape(file).map(|(built, _)| built)
+}
+
+/// [`build`], with the tape the facts were read off (a program's matchers run over it, decision 0106).
+pub(crate) fn build_with_tape(file: &FileInput) -> Result<(Built, Option<TapeDoc>), String> {
     let language = eval::file_language(file).ok_or_else(|| format!("{} has no grammar", file.language))?;
     let tape = eval::file_tape(language, file).map_err(|e| e.reason.to_string())?;
     let Some((doc, lines)) = tape else {
-        return Ok(Built::Unparsed);
+        return Ok((Built::Unparsed, None));
     };
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = from_tape(&doc, lines)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
-    Ok(Built::Facts(facts))
+    Ok((Built::Facts(facts), Some(doc)))
 }
 
 /// A document read as text only (`.scope text`): its source and lines, and no tree. Its `doc`, `source` and
@@ -165,6 +170,15 @@ pub(crate) fn build_cached_as(file: &FileInput, cache: &crate::content_store::Co
 /// source in one transaction (O95), so a source collected since the caller resolved `known` is stored again, under a
 /// new id; `None` when the file did not parse and its source is not known.
 pub(crate) fn build_cached_source(file: &FileInput, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<(Built, Option<crate::content_store::SourceId>), String> {
+    build_cached_with_tape(file, cache, known).map(|(built, id, _)| (built, id))
+}
+
+/// [`build_cached_source`], with the tape the facts were read off (decision 0106).
+pub(crate) fn build_cached_with_tape(
+    file: &FileInput,
+    cache: &crate::content_store::ContentStore,
+    known: Option<crate::content_store::SourceId>,
+) -> Result<(Built, Option<crate::content_store::SourceId>, Option<TapeDoc>), String> {
     // A standalone cache build has the same lookup/parse/publication window as a corpus run.
     let _reading = cache.hold_collection().map_err(|e| e.to_string())?;
     use crate::code_rule_dsl::lines::Terminators;
@@ -201,7 +215,7 @@ pub(crate) fn build_cached_source(file: &FileInput, cache: &crate::content_store
             // Its own work: the source prepared for the parser (tree-sitter and the encoding charge their own).
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source.len() as u64);
             let Some(image) = TapeImage::parse(&grammar, &file.source, &|| false) else {
-                return Ok((Built::Unparsed, source_id));
+                return Ok((Built::Unparsed, source_id, None));
             };
             let image = image?;
             drop(parse);
@@ -222,7 +236,7 @@ pub(crate) fn build_cached_source(file: &FileInput, cache: &crate::content_store
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = from_tape(&doc, lines)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
-    Ok((Built::Facts(facts), source_id))
+    Ok((Built::Facts(facts), source_id, Some(doc)))
 }
 
 pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {

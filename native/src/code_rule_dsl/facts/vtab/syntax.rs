@@ -335,6 +335,8 @@ pub(crate) struct Document {
     /// The module a loaded document is (t21 E2: `load(path, module, …)`, the module its resolution gave); `None` for
     /// a file of the corpus, whose module follows from its path.
     pub module: Option<Arc<str>>,
+    /// The tape the facts were read off, kept where the program runs matchers over it (decision 0106).
+    pub(in crate::code_rule_dsl) tape: Option<crate::code_rule_dsl::tape::TapeDoc>,
 }
 
 /// A file's nodes as `core.rr`'s shape numbers them: each local id's core id and kind name, and the way from a node
@@ -1679,8 +1681,8 @@ impl Batch {
 /// T's base relations over `documents` (`sources`), each of `tests`' relations, and each of `sets` (a relation and its set's kind atoms):
 /// `rr_nearest_<set>(n, a)`, the nearest ancestor in the set, `rr_inside_<set>(n, a)`, every one (decision 0036), or
 /// `rr_has_<set>(n, a)`, n in the set and a each of its strict ancestors. Each is made per looked-up node on the host
-/// (`within::Axis`); `binding` (the transducer's file-local FIX, `typing::file_local::nearest`) no longer makes them
-/// for the whole batch first (O87).
+/// (`within::Axis`), or for the whole batch by the transducer's file-local FIX (`typing::file_local::nearest`, bound
+/// `binding`) where the planner expects more lookups than that costs (decision 0105).
 pub(crate) fn with_nearest(
     store: &ContentStore,
     documents: Vec<Document>,
@@ -1689,12 +1691,86 @@ pub(crate) fn with_nearest(
     binding: crate::code_rule_dsl::typing::file_local::Binding,
     projection: &Projection,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+    with_matchers(store, documents, sets, &[], tests, binding, projection)
+}
+
+/// A program's `ast` matcher (decision 0106): the relation of its matched nodes, `rr_ast_<k>(n)`, its matcher lowered
+/// for the transducer, and the conditions on a document's path and text it runs under.
+pub(crate) struct Matcher {
+    pub(crate) rel: String,
+    pub(in crate::code_rule_dsl) lowered: Arc<crate::code_rule_dsl::transducer::packed::LoweredMatcher>,
+    pub(in crate::code_rule_dsl) gates: Vec<crate::code_rule_dsl::matcher::DocumentGate>,
+}
+
+/// Each matcher's relation over the documents' tapes: one pass of the matcher's labels and roots over the batch (the
+/// transducer, on Metal where the run is bound there), its roots mapped from tape preorder (a core id) to the batch's
+/// node ids. A document with no tape (a guest, a text-only file) or one its gates exclude has no rows.
+fn matched(
+    batch: &Batch,
+    tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+    matchers: &[Matcher],
+    binding: crate::code_rule_dsl::typing::file_local::Binding,
+) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+    use crate::code_rule_dsl::logic::profile;
+    use crate::code_rule_dsl::transducer::packed::MatcherBackend;
+    let _span = profile::span(|| "ast matchers on the transducer".into());
+    let backend = match binding {
+        #[cfg(target_os = "macos")]
+        crate::code_rule_dsl::typing::file_local::Binding::Metal => MatcherBackend::MetalInterpreter,
+        _ => MatcherBackend::Cpu,
+    };
+    // Each tape's document in the batch.
+    let at: Vec<Option<&Projected>> = tapes.iter().map(|(facts, _, _)| batch.docs.iter().find(|p| Arc::ptr_eq(&p.facts, facts))).collect();
+    let mut out = Vec::new();
+    for m in matchers {
+        let held: Vec<usize> = (0..tapes.len())
+            .filter(|&i| at[i].is_some() && m.gates.iter().all(|g| g.holds(&tapes[i].2, tapes[i].0.source.as_str())))
+            .collect();
+        let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = held.iter().map(|&i| tapes[i].1.clone()).collect();
+        let roots = if docs.is_empty() { Vec::new() } else { m.lowered.roots_batch(backend, &docs).map_err(|e| StoreError::Invalid(format!("{}: {e:?}", m.rel)))? };
+        let mut r = Relation::new(&["n"]);
+        let mut rows = 0u64;
+        for (&i, found) in held.iter().zip(roots) {
+            let p = at[i].expect("held");
+            for core in found {
+                let local = p.local.get(core as usize).copied().unwrap_or(NONE);
+                if local != NONE {
+                    r.push(&[p.global(local)]);
+                    rows += 1;
+                }
+            }
+        }
+        profile::work(profile::Unit::Node, docs.iter().map(|d| d.transducer_len() as u64).sum());
+        crate::code_rule_dsl::prof::count("ast.matched", rows as usize);
+        out.push((m.rel.clone(), Arc::new(r) as Arc<dyn Source>));
+    }
+    Ok(out)
+}
+
+/// [`with_nearest`], with each of `matchers`' relations over the documents' tapes (decision 0106).
+pub(crate) fn with_matchers(
+    store: &ContentStore,
+    documents: Vec<Document>,
+    sets: &[(String, Vec<i64>)],
+    matchers: &[Matcher],
+    tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+    binding: crate::code_rule_dsl::typing::file_local::Binding,
+    projection: &Projection,
+) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
     let metal = matches!(binding, crate::code_rule_dsl::typing::file_local::Binding::Metal);
+    let tapes: Vec<(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)> = if matchers.is_empty() {
+        Vec::new()
+    } else {
+        documents.iter().filter(|d| d.guest.is_none()).filter_map(|d| Some((Arc::clone(&d.facts), d.tape.clone()?, d.path.clone()))).collect()
+    };
     let (batch, relations, (strings, symbols)) = Batch::build(store, documents, projection, metal)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
+    if !matchers.is_empty() {
+        out.extend(matched(&batch, &tapes, matchers, binding)?);
+    }
     let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
@@ -1720,7 +1796,7 @@ pub(crate) fn with_nearest(
         } else {
             within::Axis::Nearest
         };
-        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members))));
+        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members, binding))));
     }
     // The stored-projection spike (measurement only): the relations the program reads, but the per-node axes.
     if let Some(db) = std::env::var_os("RERAIL_SPIKE_PROJECTION") {

@@ -17,6 +17,11 @@
 //!   the set; `rr_inside_<set>(n, a)`, every such ancestor; `rr_has_<set>(n, a)`, `n` of a kind in the set and `a`
 //!   each of its strict ancestors. The same climbs and subtree intervals, filtered by the set.
 //!
+//! - **The batch's solve** (`Nearest` and `Inside`, decision 0105): where the planner expects more `n` lookups than
+//!   one solve of every node costs, the `n` side is made for the whole batch at once by the transducer's file-local
+//!   FIX (`typing::file_local::nearest`: pointer jumping on Metal, one pass in preorder on the CPU). Its rows are ids
+//!   `0..`; the rows made per looked-up `n` are then ids from `LOOKED_UP` on. A scan of these axes solves.
+//!
 //! Rows are made per node a join looks up (nothing for a node never bound), kept for the batch, and
 //! never moved: a row's id is stable, and reading it takes no lock. The two sides keep their rows apart:
 //! rows made from `inner` are ids `0..`, rows made from `outer` ids from `OUTER` on. A scan makes every
@@ -55,6 +60,13 @@ const BASE: usize = 1024;
 const CHUNKS: usize = 22;
 /// The first id of the rows made from `outer`.
 const OUTER: usize = 1 << 31;
+/// The first id of the rows made per looked-up `n` of an axis the batch's solve answers (`Within::solvable`).
+const LOOKED_UP: usize = 1 << 30;
+/// What one `n` made on lookup costs, in nanoseconds: the climb, its rows stored and the run kept under the lock.
+const LOOKUP_NS: f64 = 150.0;
+/// What the batch's solve costs per node, in nanoseconds: the parents and memberships copied, the FIX's pass,
+/// and the rows written.
+const SOLVE_NS: f64 = 12.0;
 
 pub(super) struct Within {
     batch: Arc<Batch>,
@@ -72,6 +84,21 @@ pub(super) struct Within {
     len: AtomicUsize,
     /// An axis's set: per dialect tag, whether each kind code is in it.
     members: FxHashMap<u8, Box<[bool]>>,
+    /// Where the batch's solve runs.
+    binding: crate::code_rule_dsl::typing::file_local::Binding,
+    /// The `n` lookups the planner expects, summed over its plans (`expect_lookups`).
+    expected: Mutex<f64>,
+    /// The batch's solve chosen: the next `n` lookup reads it.
+    chosen: std::sync::atomic::AtomicBool,
+    /// The `n` side of every node, made once (`solved`).
+    solved: OnceLock<Solved>,
+}
+
+/// An axis's `n` side for every node of the batch: per node row its run in `pairs` (`start[row]..start[row + 1]`),
+/// each pair inner node row << 32 | outer node row.
+struct Solved {
+    start: Vec<u32>,
+    pairs: Vec<u64>,
 }
 
 /// Statistics from the tree (`Within::shape`): rows, and per column (`n`, `a`) distinct values and the sum of
@@ -101,11 +128,16 @@ impl Within {
             shape: OnceLock::new(),
             len: AtomicUsize::new(0),
             members: FxHashMap::default(),
+            binding: crate::code_rule_dsl::typing::file_local::Binding::Cpu,
+            expected: Mutex::new(0.0),
+            chosen: std::sync::atomic::AtomicBool::new(false),
+            solved: OnceLock::new(),
         }
     }
 
-    /// The axis `axis` over the set of kind atoms `kinds`. Nothing is made until a join reads it.
-    pub(super) fn axis(batch: Arc<Batch>, axis: Axis, kinds: &[i64]) -> Self {
+    /// The axis `axis` over the set of kind atoms `kinds`, its batch's solve run on `binding`. Nothing is made until
+    /// a join reads it.
+    pub(super) fn axis(batch: Arc<Batch>, axis: Axis, kinds: &[i64], binding: crate::code_rule_dsl::typing::file_local::Binding) -> Self {
         use crate::code_rule_dsl::facts::core::{KIND_STRIDE, kind_atom};
         let kinds: rustc_hash::FxHashSet<i64> = kinds.iter().copied().collect();
         let members = batch
@@ -118,7 +150,78 @@ impl Within {
                 (tag, table)
             })
             .collect();
-        Within { members, ..Within::new(batch, Mode::Axis(axis)) }
+        Within { members, binding, ..Within::new(batch, Mode::Axis(axis)) }
+    }
+
+    /// Whether the batch's solve answers the `n` side: an axis of ancestors in the set (`has` reads every ancestor).
+    fn solvable(&self) -> bool {
+        matches!(self.mode, Mode::Axis(Axis::Nearest | Axis::Inside))
+    }
+
+    /// The first id of the rows made per looked-up `n`.
+    fn looked_up(&self) -> usize {
+        if self.solvable() { LOOKED_UP } else { 0 }
+    }
+
+    /// The batch's solve: every node's nearest strict ancestor in the set by the transducer's FIX, then per node its
+    /// rows (that ancestor, or for `inside` the chain of them).
+    fn solved(&self) -> &Solved {
+        self.solved.get_or_init(|| {
+            use crate::code_rule_dsl::logic::profile;
+            use crate::code_rule_dsl::typing::file_local::{self, Binding, Trees};
+            let _span = profile::span(|| "kind-set axis solved for the batch".into());
+            let n = self.batch.nodes.last().copied().unwrap_or(0);
+            let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));
+            for (doc, p) in self.batch.docs.iter().enumerate() {
+                let base = self.batch.nodes[doc] as u32;
+                for l in 0..p.len() {
+                    let up = p.parent[l as usize];
+                    parent.push(if up == NONE { file_local::NONE } else { base + up });
+                    kind.push(i64::from(self.member(doc, l)));
+                }
+            }
+            profile::work(profile::Unit::Node, n as u64);
+            // Membership is the kind: the set is `{1}`.
+            let trees = Trees { parent: &parent, kind: &kind };
+            let found = file_local::nearest(&trees, &[vec![1]], self.binding)
+                .or_else(|_| file_local::nearest(&trees, &[vec![1]], Binding::Cpu))
+                .expect("the CPU's nearest pass")
+                .pop()
+                .unwrap_or_default();
+            let inside = self.mode == Mode::Axis(Axis::Inside);
+            let (mut start, mut pairs) = (Vec::with_capacity(n + 1), Vec::with_capacity(n));
+            for v in 0..found.len() {
+                start.push(pairs.len() as u32);
+                let mut a = found[v];
+                while a != file_local::NONE {
+                    pairs.push((v as u64) << 32 | u64::from(a));
+                    a = if inside { found[a as usize] } else { file_local::NONE };
+                }
+            }
+            start.push(pairs.len() as u32);
+            Solved { start, pairs }
+        })
+    }
+
+    /// The planner expects `keys` more lookups of `n`: the batch's solve is chosen once they cost more than it.
+    pub(super) fn expect(&self, keys: f64) {
+        if !self.solvable() || self.chosen.load(Ordering::Relaxed) {
+            return;
+        }
+        let mut expected = self.expected.lock();
+        *expected += keys.max(0.0);
+        let nodes = self.batch.nodes.last().copied().unwrap_or(0) as f64;
+        if *expected * LOOKUP_NS > nodes * SOLVE_NS {
+            self.chosen.store(true, Ordering::Relaxed);
+            crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0105)", || {
+                format!("solved for the batch: the planner expects at least {:.0} lookups over {nodes:.0} nodes", *expected)
+            });
+        }
+    }
+
+    /// Whether `n` lookups read the batch's solve.
+    fn reads_solved(&self) -> bool {
+        self.solvable() && (self.chosen.load(Ordering::Relaxed) || self.solved.get().is_some())
     }
 
     /// Whether node `local` of document `doc` is of a kind in the axis's set.
@@ -263,7 +366,7 @@ impl Within {
             return run;
         }
         let start = made.0[side];
-        assert!(start + others.len() <= OUTER, "within: more rows than ids");
+        assert!(start + others.len() <= if side == 0 && self.solvable() { OUTER - LOOKED_UP } else { OUTER }, "within: more rows than ids");
         for (i, other) in others.iter().enumerate() {
             let (inner, outer) = if side == 0 { (row, base + other) } else { (base + other, row) };
             let (k, at) = slot(start + i);
@@ -274,7 +377,7 @@ impl Within {
         if side == 0 {
             self.len.store(made.0[0], Ordering::Release);
         }
-        let run = ((start + side * OUTER) as u32, others.len() as u32);
+        let run = ((start + if side == 0 { self.looked_up() } else { OUTER }) as u32, others.len() as u32);
         made.1[side].insert(row, run);
         run
     }
@@ -287,8 +390,11 @@ impl Within {
     }
 
     fn pair(&self, row: usize) -> u64 {
+        if self.solvable() && row < LOOKED_UP {
+            return self.solved().pairs[row];
+        }
         let side = usize::from(row >= OUTER);
-        let (k, at) = slot(row - side * OUTER);
+        let (k, at) = slot(row - if side == 0 { self.looked_up() } else { OUTER });
         self.chunks[side][k].get().expect("a row made")[at].load(Ordering::Relaxed)
     }
 
@@ -366,6 +472,9 @@ impl Source for Within {
     }
     /// Every pair once: a scan makes each node's containers, ids `0..len`.
     fn len(&self) -> usize {
+        if self.solvable() {
+            return self.solved().pairs.len();
+        }
         *self.all.get_or_init(|| {
             for row in 0..self.batch.nodes.last().copied().unwrap_or(0) as u32 {
                 self.rows(0, row);
@@ -387,11 +496,22 @@ impl Source for Within {
     fn made_on_lookup(&self) -> bool {
         true
     }
+    fn expect_lookups(&self, column: usize, keys: f64) {
+        if column == 0 {
+            self.expect(keys);
+        }
+    }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let mut out = Vec::new();
         for &v in values {
             let Some((doc, local)) = self.batch.node(v) else { continue };
-            let (start, n) = self.rows(column.min(1), (self.batch.nodes[doc] + local as usize) as u32);
+            let row = self.batch.nodes[doc] + local as usize;
+            if column == 0 && self.reads_solved() {
+                let start = &self.solved().start;
+                out.extend(start[row] as usize..start[row + 1] as usize);
+                continue;
+            }
+            let (start, n) = self.rows(column.min(1), row as u32);
             out.extend(start as usize..(start + n) as usize);
         }
         Some(out)

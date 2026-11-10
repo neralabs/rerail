@@ -54,6 +54,9 @@ impl Source for Overlay {
     fn made_on_lookup(&self) -> bool {
         self.current.made_on_lookup()
     }
+    fn expect_lookups(&self, column: usize, keys: f64) {
+        self.current.expect_lookups(column, keys);
+    }
     fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
         Some(self.ids(
             self.current.lookup(c, values)?,
