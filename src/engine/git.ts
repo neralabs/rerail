@@ -1,5 +1,5 @@
 import { execFile, spawn, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, realpathSync, statSync, type Stats } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
@@ -328,7 +328,7 @@ export async function gitCommitsBetween(cwd: string, from: string, to: string): 
   return commits === undefined || commits === "" ? [] : commits.split("\n");
 }
 
-/** The most bytes of paths `gitModifiedOrUntrackedPaths` reads: past it, a checkout lists none. */
+/** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
 
 /**
@@ -381,10 +381,11 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[]):
 
 /**
  * The index's unmerged entries under `cwd`, by path relative to it. Each value holds the path's modes, blobs and stages,
- * so a later conflict on the same path reads differently. Undefined when Git cannot say, outside a repository too.
+ * so a later conflict on the same path reads differently. Undefined when Git cannot say: outside a repository, past the
+ * timeout, or past `MAX_LISTED_PATH_BYTES` of entries.
  */
 async function unmergedEntries(cwd: string): Promise<ReadonlyMap<string, string> | undefined> {
-  const listed = await gitOutput(cwd, ["ls-files", "--unmerged", "-z"]);
+  const listed = await gitStdout(cwd, ["ls-files", "--unmerged", "-z"], MAX_LISTED_PATH_BYTES);
   if (listed === undefined) return undefined;
   const entries = new Map<string, string>();
   for (const record of listed.split("\0")) {
@@ -402,13 +403,9 @@ async function gitIndexPath(cwd: string): Promise<string | undefined> {
   return path === undefined ? undefined : resolve(cwd, path);
 }
 
-async function fileStamp(path: string): Promise<string | undefined> {
-  try {
-    const info = await stat(path);
-    return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
-  } catch {
-    return undefined;
-  }
+/** A file's device, inode, size and times, as one string: a write to the file, or a new file in its place, changes it. */
+export function fileStamp(info: Stats): string {
+  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
 }
 
 /**
@@ -427,7 +424,11 @@ export function gitUnmergedReader(): (cwd: string) => Promise<ReadonlyMap<string
     const index = indexes.get(cwd) ?? await gitIndexPath(cwd);
     if (index === undefined) return undefined;
     indexes.set(cwd, index);
-    return await fileStamp(index);
+    try {
+      return fileStamp(await stat(index));
+    } catch {
+      return undefined;
+    }
   };
   return async cwd => {
     // Stamped before the read: an index written between the two reads as changed next time.

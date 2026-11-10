@@ -1402,6 +1402,16 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(await passes(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
   });
 
+  it("reads one checkout each pass for a session opened in a subfolder of it, once a walk has found a change there too", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(join(root, "src"), { sourceRoot: () => root });
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"));
+    expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
+    asyncGitCalls.args.length = 0;
+    await bridge.checkpoint("turn");
+    expect(asyncGitCalls.args.filter(args => args.includes("--verify"))).toHaveLength(1);
+  });
+
   it("audits a shell edit of a file a modify/delete conflict left as it was, where the conflict's pass found no change", async () => {
     const root = await workspace();
     await writeFile(join(root, "src", "gone.py"), "gone\n");
@@ -1422,6 +1432,51 @@ describe("CodeRuleBridge and Git's own writes", () => {
       [{ path: "src/gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }],
     ]);
     expect(auditGeneratedEdits.mock.calls[0]?.[1].mode).not.toBe("log");
+  });
+
+  it("audits a shell edit of a file a modify/delete conflict left as it was, in a session opened in a subfolder of the checkout", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "src", "gone.py"), "gone\n");
+    git(root, "init", "--quiet", "--initial-branch=main");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "seed");
+    git(root, "switch", "--quiet", "-c", "other");
+    await rm(join(root, "src", "gone.py"));
+    git(root, "commit", "--quiet", "-am", "other");
+    git(root, "switch", "--quiet", "main");
+    await writeFile(join(root, "src", "gone.py"), "gone\nours\n");
+    git(root, "commit", "--quiet", "-am", "ours");
+    await awaitClockAfter(join(root, "src", "gone.py"));
+    const { bridge, auditGeneratedEdits } = await opened(join(root, "src"), { sourceRoot: () => root });
+    await shell(bridge, () => { try { git(root, "merge", "--quiet", "other"); } catch { /* The conflict is the point. */ } });
+    await shell(bridge, () => writeFile(join(root, "src", "gone.py"), "gone\nours\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }],
+    ]);
+  });
+
+  it("takes no conflict a checkout already had when it is first read for a merge that just stopped", async () => {
+    const root = await twoBranches();
+    git(root, "switch", "--quiet", "-c", "ours");
+    await writeFile(join(root, "src", "a.py"), "old\nours\n");
+    git(root, "commit", "--quiet", "-am", "ours");
+    git(root, "switch", "--quiet", "main");
+    // A checkout inside the session's folder, stopped on a conflict in `src/a.py` before the session opens.
+    const worktree = join(root, "wt");
+    git(root, "worktree", "add", "--quiet", "wt", "ours");
+    try { git(worktree, "merge", "--quiet", "other"); } catch { /* The conflict is the point. */ }
+    await writeFile(join(worktree, "src", "new.py"), "staged\n");
+    git(worktree, "add", "src/new.py");
+    await writeFile(join(worktree, "src", "new.py"), "staged\nlocal\n");
+    await awaitClockAfter(join(worktree, "src", "new.py"));
+    const { bridge, auditGeneratedEdits } = await opened(root, {
+      sourceRoot: path => resolve(root, path).startsWith(`${worktree}${sep}`) ? worktree : root,
+    });
+    // The first change found in that checkout is the first read of its entries: the file holding its index blob is no work of the merge.
+    await shell(bridge, () => writeFile(join(worktree, "src", "new.py"), "staged\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "wt/src/new.py", language: "python", previousText: "staged\nlocal\n", generatedText: "staged\n" }],
+    ]);
   });
 
   it("audits nothing of a worktree added inside the session's folder", async () => {

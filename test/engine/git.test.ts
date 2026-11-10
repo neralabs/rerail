@@ -254,6 +254,16 @@ describe("gitUnmergedReader", () => {
     expect((await gitUnmerged(root)).get("src/a.py")).not.toBe(conflict.get("a.py"));
   });
 
+  it("lists more entries than fit in the megabyte of output a Git command gets by default", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const blob = git(root, "rev-parse", "HEAD:a.py").trim();
+    const paths = Array.from({ length: 6_000 }, (_, at) => `src/${"conflicted-".repeat(5)}${at}.py`);
+    const entries = paths.flatMap(path => [1, 2, 3].map(stage => `100644 ${blob} ${stage}\t${path}\n`)).join("");
+    expect(Buffer.byteLength(entries)).toBeGreaterThan(1024 * 1024);
+    execFileSync("git", ["update-index", "--index-info"], { cwd: root, input: entries });
+    expect([...(await gitUnmerged(root)).keys()]).toEqual(paths.toSorted());
+  });
+
   it("holds its read while the index file is unchanged, and reads again once Git has written it", async () => {
     const root = await conflicted();
     const read = reader();

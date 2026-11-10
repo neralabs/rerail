@@ -16,7 +16,8 @@ import type {
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
 import {
-  gitBranchTips, gitCommitsBetween, gitHead, gitModifiedOrUntrackedPaths, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
+  fileStamp, gitBranchTips, gitCommitsBetween, gitHead, gitModifiedOrUntrackedPaths, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
+  readGitBlobs,
 } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
@@ -177,13 +178,14 @@ async function readUnmergedView(discovery: SourceDiscovery, checkout: string): P
 }
 /**
  * Whether a merge, rebase or cherry-pick stopped on a conflict since the last walk: the unmerged entries changed. A
- * modify/delete conflict can leave its file as it was, so the walk's changes need not name what stopped Git. When Git
- * could not list the entries, the changes that a conflict wrote (`conflictedByGit`) are all there is to go by.
+ * modify/delete conflict can leave its file as it was, so the walk's changes need not name what stopped Git. With no
+ * entries to compare (Git could not list them, or no walk has read this checkout's yet, so a conflict older than the
+ * session would read as new), the changes that a conflict wrote (`conflictedByGit`) are all there is to go by.
  */
 function stoppedSince(view: GitBlobs, named: ReadonlyArray<{ path: string; prior: string | undefined }>): boolean {
   const { unmerged, unmergedBefore } = view;
-  if (unmerged === undefined) return named.some(({ path, prior }) => conflictedByGit(view, path, prior));
-  return [...unmerged].some(([path, entries]) => unmergedBefore?.get(path) !== entries);
+  if (unmerged === undefined || unmergedBefore === undefined) return named.some(({ path, prior }) => conflictedByGit(view, path, prior));
+  return [...unmerged].some(([path, entries]) => unmergedBefore.get(path) !== entries);
 }
 /** The commits that moved `HEAD` since the last walk: none when something else moved it, undefined when Git cannot list them. */
 async function commitsMade(checkout: string, view: GitBlobs): Promise<string[] | undefined> {
@@ -233,9 +235,6 @@ function movedFromText(view: GitBlobs, path: string, prior: string | undefined):
 }
 /** The read error of a file too large to be a source or holding binary data, found once it was read. */
 const NOT_TEXT_ERROR = "Source exceeds its byte budget or contains binary data";
-function fileStamp(info: Stats): string {
-  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
-}
 /** What a walk observes of every file it looks at, before any read. */
 type StampedSource = Pick<Source, "path" | "language"> & { readonly stamp: string; readonly observedAt: number; readonly modifiedAt: number };
 function knownDigest(previous: ObservedSource | undefined): Pick<Source, "digest"> {
@@ -1505,6 +1504,8 @@ export class CodeRuleBridge {
   /**
    * `HEAD` and the unmerged entries of each of `worktrees`, for their walk; without them, of the session folder's checkout
    * and of every other checkout a walk has found a change in, but for the worktrees, whose own walk answers for theirs.
+   * Each is read at the checkout that owns its files, as `#gitVerdicts` asks for it: a session opened in a subfolder
+   * reads the checkout around it, whose unmerged paths Git lists from its top folder.
    * Read on every pass, not only one that finds changes: a modify/delete conflict can stop a merge without changing a
    * file, and the next pass must still know that conflict was there before the edit it finds. A checkout whose entries
    * Git could not list is left out of `unmerged`, so the last entries read stay its snapshot.
@@ -1513,7 +1514,9 @@ export class CodeRuleBridge {
     const heads = new Map<string, string>();
     const unmerged = new Map<string, ReadonlyMap<string, string>>();
     const others = [...discovery.heads.keys()].filter(known => !discovery.worktrees.roots.has(sessionPath(discovery.root, known)));
-    for (const root of worktrees ?? new Set([discovery.root, ...others])) {
+    // When no checkout owns the session folder, no change in it is asked about.
+    const session = this.#owningCheckout(discovery.root, "");
+    for (const root of worktrees ?? new Set(session === undefined ? others : [session, ...others])) {
       const head = await gitHead(root);
       if (head === undefined) continue;
       heads.set(root, head);
