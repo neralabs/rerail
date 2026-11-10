@@ -14,6 +14,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { worktreeRegistry } from "../catalog/repository-identity.js";
+import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
   AuditorCloseOptions,
@@ -75,6 +76,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #sessionRoot: string;
   readonly #lanes = new Map<string, Lane>();
   readonly #eligibility = new Map<string, CheckoutEligibility>();
+  /** Git's exclude stack of each checkout with no lane that a path was asked of; null where it cannot be opened. */
+  readonly #gitIgnore = new Map<string, NativeGitIgnoreMatcher | null>();
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
@@ -127,10 +130,35 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return routed !== undefined && routed.lane.enforcer.acceptsPath(routed.path);
   }
 
-  /** Whether the checkout that owns `path` ignores it; a path no lane owns is never ignored here, only not accepted. */
+  /**
+   * Whether the checkout that owns `path` ignores it while the session follows `.gitignore`: its lane's answer, or for a
+   * checkout that runs no rules (stopped, or started and not set up) Git's own. A walk of the session's folder asks this
+   * of every folder and file, and enters no folder Git ignores, so a checkout with no lane still keeps the walk out of
+   * its ignored folders. A path outside every Git checkout is never ignored.
+   */
   ignoresPath(path: string, directory: boolean): boolean {
-    const routed = this.#route(path);
-    return routed !== undefined && routed.lane.enforcer.ignoresPath(routed.path, directory);
+    const owner = this.#owner(resolve(this.#sessionRoot, path));
+    if (owner === undefined) return false;
+    const lane = this.#lane(owner.checkoutRoot);
+    return lane === undefined ? this.#gitIgnores(owner, directory) : lane.enforcer.ignoresPath(owner.path, directory);
+  }
+
+  /** Whether Git ignores `owner`'s path in its checkout, while the session follows `.gitignore`; its rules open once. */
+  #gitIgnores(owner: CheckoutOwner, directory: boolean): boolean {
+    if (this.#options.followGitignore !== true) return false;
+    try {
+      let matcher = this.#gitIgnore.get(owner.checkoutRoot);
+      if (matcher === undefined) {
+        matcher = loadNativeBinding().openGitIgnoreMatcher(owner.checkoutRoot);
+        this.#gitIgnore.set(owner.checkoutRoot, matcher);
+      }
+      return matcher?.ignored(owner.path, directory) ?? false;
+    } catch (error) {
+      // As a lane does: rules that cannot be read leave the path in, so a broken `.gitignore` never hides sources.
+      this.#gitIgnore.set(owner.checkoutRoot, null);
+      process.stderr.write(`rerail: cannot read Git ignore rules for ${owner.path || "."}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return false;
+    }
   }
 
   /** Why the checkout that owns the file `path` leaves an edit of it unchecked for Git's rules (`ignoredEdit` of its enforcer). */

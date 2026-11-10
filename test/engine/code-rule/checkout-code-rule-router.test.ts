@@ -20,7 +20,7 @@ import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import { checkouts, repositoryAudits } from "../../../src/engine/storage/schema.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
-import { stopTestRepository } from "../../support/started-repository.js";
+import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -168,6 +168,32 @@ describe("CheckoutCodeRuleRouter", () => {
       { checkout: parent, path: "api/a.py", code: "PARENT", mode: "block" },
       { checkout: sub, path: "api/b.py", code: "SUB", mode: "block" },
     ]);
+  });
+
+  it("leaves out what Git ignores in a checkout that runs no rules, not set up or stopped, while the session follows .gitignore", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFile(join(session, ".gitignore"), "scratch/\n*.log\n");
+    // Started but not set up: no lane runs, and a walk of the session's folder asks this of every folder and file in it.
+    startTestRepository(session, databasePath);
+    const { recorder } = recordingAudits();
+    const following = router(session, databasePath, recorder, undefined, true);
+    await following.openWorkspace("not-set-up");
+    expect(following.acceptsPath("api/x.py")).toBe(false);
+    expect([following.ignoresPath("scratch", true), following.ignoresPath("run.log", false)]).toEqual([true, true]);
+    expect([following.ignoresPath("api", true), following.ignoresPath("api/x.py", false)]).toEqual([false, false]);
+
+    const unfollowed = router(session, databasePath, recorder);
+    await unfollowed.openWorkspace("not-set-up-unfollowed");
+    expect(unfollowed.ignoresPath("scratch", true)).toBe(false);
+
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    stopTestRepository(session, databasePath);
+    const stopped = router(session, databasePath, recorder, undefined, true);
+    await stopped.openWorkspace("stopped");
+    expect(stopped.acceptsPath("api/x.py")).toBe(false);
+    expect([stopped.ignoresPath("scratch", true), stopped.ignoresPath("api", true)]).toEqual([true, false]);
   });
 
   it("judges a submodule's file by no rules while the submodule's repository is not set up", async () => {
