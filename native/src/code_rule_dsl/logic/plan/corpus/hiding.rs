@@ -22,7 +22,8 @@
 //! (`"sql:select"`, `plan::lower::Constants`), so a Python policy can name SQL kinds inside its SQL guests.
 
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use rustc_hash::FxHashMap as HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The relations a rule enters a guest through, and their columns that are the guest's: (relation, guest location
 /// columns, grammar column, tape column).
@@ -321,7 +322,7 @@ fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<S
         prog.rules.iter().map(|r| r.head.rel.clone()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(&r).map_or(0, Vec::len); (r, vec![Fact::default(); n]) }).collect();
     // A rule's analysis reads its positive atoms' carried columns: it is analysed again only when one of them changed
     // (a worklist, not every rule each round: a combined pack has tens of thousands, O111).
-    let mut readers: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut readers: HashMap<&str, Vec<usize>> = HashMap::default();
     for (i, rule) in prog.rules.iter().enumerate() {
         for l in &rule.body {
             if let Literal::Atom(a) = l
