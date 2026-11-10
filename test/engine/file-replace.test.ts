@@ -1,15 +1,38 @@
-import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { readdirSync, readFileSync, renameSync } from "node:fs";
+import { chmod, mkdtemp, readdir, readFile, rename as fsRename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { removeScratch, renameWithRetry, renameWithRetrySync } from "../../src/engine/file-replace.js";
+import { removeScratch, renameWithRetry, renameWithRetrySync, replaceFile, replaceFileSync } from "../../src/engine/file-replace.js";
 
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
 });
 
+async function scratch(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "rerail-file-replace-"));
+  roots.push(root);
+  return root;
+}
+
 const held = (code: string): Error => Object.assign(new Error(`${code}: operation not permitted, rename`), { code });
+
+/** The error a give-up on Windows throws: it says a program held the file, and keeps the code and the last refusal. */
+const heldTooLong = { code: "EPERM", message: expect.stringContaining("another program held"), cause: expect.objectContaining({ code: "EPERM" }) };
+
+/** A rename Windows refuses the first `failures` times, as while a scan holds the file, then the real one; records each source. */
+function heldThenRenamed(failures: number): { sources: string[]; rename: (from: string, to: string) => Promise<void> } {
+  const sources: string[] = [];
+  return {
+    sources,
+    rename: async (from, to) => {
+      sources.push(from);
+      if (sources.length <= failures) throw held("EPERM");
+      await fsRename(from, to);
+    },
+  };
+}
 
 /** A rename that fails with `code` the first `failures` times, then succeeds; counts its calls. */
 function flakyRename(failures: number, code = "EPERM"): { calls: () => number; rename: (from: string, to: string) => Promise<void> } {
@@ -33,7 +56,7 @@ describe("renameWithRetry", () => {
   });
 
   it("gives up once the retry time is spent, and never retries elsewhere or on another error", async () => {
-    await expect(renameWithRetry("a.tmp", "a", { platform: "win32", rename: flakyRename(1_000).rename, retryMs: 120 })).rejects.toMatchObject({ code: "EPERM" });
+    await expect(renameWithRetry("a.tmp", "a", { platform: "win32", rename: flakyRename(1_000).rename, retryMs: 120 })).rejects.toMatchObject(heldTooLong);
     const posix = flakyRename(1);
     await expect(renameWithRetry("a.tmp", "a", { platform: "linux", rename: posix.rename })).rejects.toMatchObject({ code: "EPERM" });
     expect(posix.calls()).toBe(1);
@@ -76,6 +99,85 @@ describe("renameWithRetrySync", () => {
       throw held("EPERM");
     } })).toThrow("EPERM");
     expect(posixCalls).toBe(1);
+  });
+});
+
+describe("replaceFile", () => {
+  it("makes the text the whole file through a file beside it, retrying a rename Windows refuses, never removing the old file first", async () => {
+    const root = await scratch();
+    const target = join(root, "settings.json");
+    await writeFile(target, "{\"old\":true}\n");
+    const rename = heldThenRenamed(1);
+    await replaceFile(target, "{\"new\":true}\n", { mode: 0o600, platform: "win32", rename: rename.rename });
+    expect(await readFile(target, "utf8")).toBe("{\"new\":true}\n");
+    expect(rename.sources).toHaveLength(2);
+    // `<file>.<pid>.<uuid>.tmp`: the uninstall knows a launcher write cut short by that name.
+    expect(rename.sources[0]?.startsWith(`${target}.${process.pid}.`)).toBe(true);
+    expect(rename.sources[0]).toMatch(/\.\d+\.[0-9a-f-]+\.tmp$/u);
+    expect(await readdir(root)).toEqual(["settings.json"]);
+  });
+
+  it("removes its file and leaves the old one when the rename fails", async () => {
+    const root = await scratch();
+    const target = join(root, "active-profile");
+    await writeFile(target, "old\n");
+    const refused = async (): Promise<void> => {
+      throw Object.assign(new Error("EXDEV: cross-device link not permitted, rename"), { code: "EXDEV" });
+    };
+    await expect(replaceFile(target, "new\n", { mode: 0o600, rename: refused })).rejects.toMatchObject({ code: "EXDEV" });
+    expect(await readdir(root)).toEqual(["active-profile"]);
+    expect(await readFile(target, "utf8")).toBe("old\n");
+  });
+
+  it("says another program held the file once Windows refused it past the retry, and removes its file", async () => {
+    const root = await scratch();
+    const target = join(root, "daemon.json");
+    await writeFile(target, "{}\n");
+    await expect(replaceFile(target, "{\"port\":1}\n", { mode: 0o600, platform: "win32", rename: flakyRename(1_000).rename, retryMs: 60 }))
+      .rejects.toMatchObject(heldTooLong);
+    expect(await readdir(root)).toEqual(["daemon.json"]);
+  });
+
+  it("keeps a read-only mode, the one mode bit Windows keeps", async () => {
+    const root = await scratch();
+    const target = join(root, "readonly.json");
+    await replaceFile(target, "{}\n", { mode: 0o444 });
+    expect((await stat(target)).mode & 0o222).toBe(0);
+    await chmod(target, 0o644);
+  });
+
+  it.skipIf(process.platform === "win32")("gives the file exactly its mode, which the umask does not narrow", async () => {
+    const root = await scratch();
+    const target = join(root, "rerail");
+    const umask = process.umask(0o022);
+    try {
+      await replaceFile(target, "#!/bin/sh\n", { mode: 0o775 });
+    } finally {
+      process.umask(umask);
+    }
+    expect((await stat(target)).mode & 0o777).toBe(0o775);
+  });
+});
+
+describe("replaceFileSync", () => {
+  it("makes the text the whole file, removes its file when the rename fails, and says a program held the file", async () => {
+    const root = await scratch();
+    const target = join(root, "remote.json");
+    let sources = 0;
+    replaceFileSync(target, "{\"remotes\":[]}\n", { mode: 0o600, platform: "win32", rename: (from, to) => {
+      sources += 1;
+      if (sources === 1) throw held("EBUSY");
+      renameSync(from, to);
+    } });
+    expect(readFileSync(target, "utf8")).toBe("{\"remotes\":[]}\n");
+    expect(() => replaceFileSync(target, "x", { mode: 0o600, rename: () => {
+      throw Object.assign(new Error("EXDEV: cross-device link not permitted, rename"), { code: "EXDEV" });
+    } })).toThrow(expect.objectContaining({ code: "EXDEV" }));
+    expect(() => replaceFileSync(target, "x", { mode: 0o600, platform: "win32", retryMs: 60, rename: () => {
+      throw held("EPERM");
+    } })).toThrow(expect.objectContaining(heldTooLong));
+    expect(readdirSync(root)).toEqual(["remote.json"]);
+    expect(readFileSync(target, "utf8")).toBe("{\"remotes\":[]}\n");
   });
 });
 

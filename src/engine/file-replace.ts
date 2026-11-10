@@ -6,9 +6,13 @@
  * a file just written. Removing a folder fails the same way while a file in it is held. Each hold lasts a moment, so
  * these helpers retry there; elsewhere the first failure stands, as a rename over a file never fails for that reason.
  * Every rename in `src/` goes through them: `npm run check:owned-builtins` fails on any other.
+ *
+ * To make text the whole of a file, use `replaceFile` or `replaceFileSync`. `renameWithRetry` is for moving a file or
+ * folder that already exists, and for a writer that must open its new file itself.
  */
-import { chmodSync, renameSync as fsRenameSync, statSync } from "node:fs";
-import { chmod, rename as fsRename, rm as fsRm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmodSync, closeSync, fchmodSync, openSync, renameSync as fsRenameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmod, open, rename as fsRename, rm as fsRm, stat } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
 /** How long a rename is retried on Windows. */
@@ -25,22 +29,36 @@ export interface RenameOptions {
 const codeOf = (error: unknown): unknown => (error instanceof Error && "code" in error ? error.code : undefined);
 
 /**
- * Renames `from` over `to`, retried on Windows for {@link RENAME_RETRY_MS} ms while either file is held. A read-only
- * `to` is made writable first there, since Windows refuses to replace a read-only file, which mode bits elsewhere never
- * stop; the file moved in keeps its own mode. A folder at `to` fails at once: Windows never renames over one, so
- * waiting would only delay the error.
+ * What a rename Windows refused for the whole retry throws. The bare `EPERM: operation not permitted, rename` never
+ * says that another program had the file open, which is what the person must close; the code stays for callers that
+ * branch on it, and the last refusal is the cause.
+ */
+function heldTooLong(error: unknown, from: string, to: string, retryMs: number): Error {
+  const code = codeOf(error);
+  const message = `${String(code)}: Windows refused for ${retryMs / 1_000} s to rename ${from} to ${to}, as another`
+    + " program held one of them open. Close the program that has it open, such as an editor or a virus scan, and try again.";
+  return Object.assign(new Error(message, { cause: error }), { code });
+}
+
+/**
+ * Renames `from` over `to`, retried on Windows for {@link RENAME_RETRY_MS} ms while either file is held, then thrown
+ * as an error that says another program held it. A read-only `to` is made writable first there, since Windows refuses
+ * to replace a read-only file, which mode bits elsewhere never stop; the file moved in keeps its own mode. A folder at
+ * `to` fails at once with the refusal itself: Windows never renames over one, so waiting would only delay the error.
  */
 export async function renameWithRetry(from: string, to: string, options: RenameOptions = {}): Promise<void> {
   const rename = options.rename ?? fsRename;
   const windows = (options.platform ?? process.platform) === "win32";
-  const deadline = Date.now() + (options.retryMs ?? RENAME_RETRY_MS);
+  const retryMs = options.retryMs ?? RENAME_RETRY_MS;
+  const deadline = Date.now() + retryMs;
   for (let attempt = 1; ; attempt += 1) {
     try {
       await rename(from, to);
       return;
     } catch (error) {
-      if (!windows || !HELD.has(codeOf(error)) || Date.now() >= deadline) throw error;
+      if (!windows || !HELD.has(codeOf(error))) throw error;
       if (attempt === 1 && await makeWritable(to) === "folder") throw error;
+      if (Date.now() >= deadline) throw heldTooLong(error, from, to, retryMs);
       await sleep(RENAME_RETRY_INTERVAL_MS);
     }
   }
@@ -57,16 +75,86 @@ const PAUSE = new Int32Array(new SharedArrayBuffer(4));
 export function renameWithRetrySync(from: string, to: string, options: RenameSyncOptions = {}): void {
   const rename = options.rename ?? fsRenameSync;
   const windows = (options.platform ?? process.platform) === "win32";
-  const deadline = Date.now() + (options.retryMs ?? RENAME_RETRY_MS);
+  const retryMs = options.retryMs ?? RENAME_RETRY_MS;
+  const deadline = Date.now() + retryMs;
   for (let attempt = 1; ; attempt += 1) {
     try {
       rename(from, to);
       return;
     } catch (error) {
-      if (!windows || !HELD.has(codeOf(error)) || Date.now() >= deadline) throw error;
+      if (!windows || !HELD.has(codeOf(error))) throw error;
       if (attempt === 1 && makeWritableSync(to) === "folder") throw error;
+      if (Date.now() >= deadline) throw heldTooLong(error, from, to, retryMs);
       Atomics.wait(PAUSE, 0, 0, RENAME_RETRY_INTERVAL_MS);
     }
+  }
+}
+
+export interface ReplaceFileOptions extends RenameOptions {
+  /** The file's permission bits, set exactly: the umask does not narrow them. Windows keeps only the read-only bit. */
+  mode: number;
+}
+
+export interface ReplaceFileSyncOptions extends RenameSyncOptions {
+  /** As {@link ReplaceFileOptions.mode}. */
+  mode: number;
+}
+
+/**
+ * The new file written beside `path` first. The uninstall knows `<file>.<pid>.<uuid>.tmp` in the Rerail home as a
+ * write cut short. The name is new, so creating it exclusively refuses a link someone planted there.
+ */
+const sidecarOf = (path: string): string => `${path}.${process.pid}.${randomUUID()}.tmp`;
+
+/**
+ * Makes `text` the whole of the file at `path`: a reader sees the old file or the new one, never part of either, and
+ * the old file is never removed first. The text goes to a new file beside `path`, which {@link renameWithRetry} then
+ * moves over it, so a file another program holds on Windows is retried and the give-up says what held it. When any
+ * step fails the new file is removed, the old one stays, and the error is the step's. The folder must exist.
+ */
+export async function replaceFile(path: string, text: string, options: ReplaceFileOptions): Promise<void> {
+  const { mode, ...renameOptions } = options;
+  const sidecar = sidecarOf(path);
+  try {
+    const handle = await open(sidecar, "wx", mode);
+    try {
+      await handle.writeFile(text, "utf8");
+      await handle.chmod(mode);
+    } finally {
+      await handle.close();
+    }
+    await renameWithRetry(sidecar, path, renameOptions);
+  } catch (error) {
+    // The failure the caller must see is the write's or the rename's, not a removal's.
+    await fsRm(sidecar, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** {@link replaceFile} for synchronous code. */
+export function replaceFileSync(path: string, text: string, options: ReplaceFileSyncOptions): void {
+  const { mode, ...renameOptions } = options;
+  const sidecar = sidecarOf(path);
+  try {
+    const descriptor = openSync(sidecar, "wx", mode);
+    try {
+      writeFileSync(descriptor, text, "utf8");
+      fchmodSync(descriptor, mode);
+    } finally {
+      closeSync(descriptor);
+    }
+    renameWithRetrySync(sidecar, path, renameOptions);
+  } catch (error) {
+    removeQuietlySync(sidecar);
+    throw error;
+  }
+}
+
+function removeQuietlySync(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // The failure the caller must see is the write's or the rename's, not a removal's.
   }
 }
 

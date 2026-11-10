@@ -10,7 +10,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { renameWithRetrySync } from "../engine/file-replace.js";
+import { replaceFileSync } from "../engine/file-replace.js";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "../engine/child-process.js";
@@ -67,17 +67,6 @@ export function excludedAt(exclusions: readonly RepositoryExclusion[], repositor
 const NAME = /^[a-z0-9][a-z0-9._-]{0,62}$/u;
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-/** `content` as the whole of `file`, owner-only, through a temporary file renamed over it. */
-function writePrivate(file: string, content: string): void {
-  const temporary = `${file}.${process.pid}.tmp`;
-  try {
-    writeFileSync(temporary, content, { mode: 0o600 });
-    renameWithRetrySync(temporary, file);
-  } finally {
-    rmSync(temporary, { force: true });
-  }
-}
-
 /** The remote's URL, checked: HTTPS, or HTTP to this machine only (a local test server); no credentials in it. */
 export function remoteUrl(value: string): string {
   let url: URL;
@@ -118,7 +107,8 @@ export function readRemoteConfig(home: string = defaultRerailHome()): RemoteConf
 function writeRemoteConfig(home: string, config: Omit<RemoteConfig, "excludedRepositories">): void {
   makeRerailHome(home);
   const excludedRepositories = [...new Set(config.exclusions.filter(exclusion => exclusion.to === null).map(exclusion => exclusion.repositoryKey))].sort();
-  writePrivate(join(home, REMOTE_CONFIG_FILE), `${JSON.stringify({ remotes: config.remotes, excludedRepositories, exclusions: config.exclusions }, null, 2)}\n`);
+  const text = `${JSON.stringify({ remotes: config.remotes, excludedRepositories, exclusions: config.exclusions }, null, 2)}\n`;
+  replaceFileSync(join(home, REMOTE_CONFIG_FILE), text, { mode: 0o600 });
 }
 
 function tokenFile(home: string, name: string): string {
@@ -156,7 +146,7 @@ export function addRemote(
   const folder = join(home, REMOTE_TOKENS_FOLDER);
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   keepPrivate(folder);
-  writePrivate(tokenFile(home, name), `${token}\n`);
+  replaceFileSync(tokenFile(home, name), `${token}\n`, { mode: 0o600 });
   const label = options.label?.trim();
   if (label !== undefined && (label === "" || label.length > 100 || /[\p{Cc}]/u.test(label))) throw new Error("A label is 1 to 100 characters, with no control characters");
   const entry: RemoteEntry = { name, id: randomUUID(), url, content: options.content, addedAt: now, ...(label === undefined ? {} : { label }) };

@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import {
-  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -22,7 +21,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn } from "../engine/child-process.js";
-import { removeScratch, renameWithRetry } from "../engine/file-replace.js";
+import { removeScratch, renameWithRetry, replaceFile } from "../engine/file-replace.js";
 import { DAEMON_STATE_FILE, daemonUsesPackageRoot, readDaemonState, stopDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
@@ -575,9 +574,7 @@ export class ManagedUpdater {
 
   private async writeState(state: UpdateState): Promise<void> {
     await mkdir(this.home, { recursive: true, mode: 0o700 });
-    const temporaryPath = `${this.statePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-    await renameWithRetry(temporaryPath, this.statePath, { platform: this.platform });
+    await replaceFile(this.statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, platform: this.platform });
     await this.syncLauncher(state.current);
   }
 
@@ -650,10 +647,7 @@ export class ManagedUpdater {
       const current = await readFile(path, "utf8").catch(() => undefined);
       if (current === shim) continue;
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-      const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-      await writeFile(temporaryPath, shim, { mode: 0o755 });
-      if (this.platform !== "win32") await chmod(temporaryPath, 0o755);
-      await renameWithRetry(temporaryPath, path, { platform: this.platform });
+      await replaceFile(path, shim, { mode: 0o755, platform: this.platform });
     }
   }
 

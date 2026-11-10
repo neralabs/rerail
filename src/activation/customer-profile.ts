@@ -9,7 +9,7 @@ import {
   type webcrypto,
 } from "node:crypto";
 import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
-import { renameWithRetry } from "../engine/file-replace.js";
+import { replaceFile } from "../engine/file-replace.js";
 import { join } from "node:path";
 import { z } from "zod";
 import type { DeviceSecretStore } from "./device-keystore.js";
@@ -316,9 +316,7 @@ export class CustomerProfileStore {
         }
 
         const stored = { schemaVersion: 1 as const, trustRoots, profile: envelope };
-        const temporaryPath = `${activationPath}.${process.pid}.${randomUUID()}.tmp`;
-        await writeFile(temporaryPath, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
-        await renameWithRetry(temporaryPath, activationPath);
+        await replaceFile(activationPath, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
         await this.select(profileName);
         await afterActivation?.();
         return verified;
@@ -340,9 +338,7 @@ export class CustomerProfileStore {
   async select(profileName: string): Promise<void> {
     this.profileDirectory(profileName);
     await mkdir(this.home, { recursive: true, mode: 0o700 });
-    const temporaryPath = `${this.activeProfilePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporaryPath, `${profileName}\n`, { mode: 0o600 });
-    await renameWithRetry(temporaryPath, this.activeProfilePath);
+    await replaceFile(this.activeProfilePath, `${profileName}\n`, { mode: 0o600 });
   }
 
   async remove(profileName: string): Promise<void> {

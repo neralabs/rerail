@@ -7,7 +7,7 @@ import {
   type webcrypto,
   type KeyObject,
 } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,6 +17,7 @@ import {
   signedUpdatePolicy,
 } from "../../src/cli/index.js";
 import {
+  ACTIVE_PROFILE_FILE,
   CustomerActivationManager,
   type ActivationFetch,
   CustomerProfileStore,
@@ -55,6 +56,7 @@ class MemorySecretStore implements DeviceSecretStore {
 }
 
 interface ProfileFixture {
+  home: string;
   activation: CustomerActivationManager;
   profileStore: CustomerProfileStore;
   secrets: MemorySecretStore;
@@ -75,6 +77,7 @@ async function fixture(): Promise<ProfileFixture> {
     keys: [{ ...publicKey.export({ format: "jwk" }), kid: "activation-test-1" } as ActivationTrustRoots["keys"][number]],
   };
   return {
+    home,
     activation: new CustomerActivationManager(profileStore, secrets),
     profileStore,
     secrets,
@@ -250,6 +253,14 @@ describe("signed customer profiles", () => {
       setup.activation.activateFile("acme", signProfile(profile(identity.thumbprint, 2), setup.signingKey), setup.trustRoots, NOW),
     ]);
     expect((await setup.activation.load("acme", NOW)).profile.sequence).toBe(3);
+  });
+
+  it("leaves no file beside the selection when it cannot be written", async () => {
+    const setup = await fixture();
+    // A folder where the selection goes: no platform renames a file over one.
+    await mkdir(join(setup.home, ACTIVE_PROFILE_FILE, "kept"), { recursive: true });
+    await expect(setup.profileStore.select("acme")).rejects.toThrow();
+    expect(await readdir(setup.home)).toEqual([ACTIVE_PROFILE_FILE]);
   });
 
   it("rejects trailing profile command arguments", async () => {

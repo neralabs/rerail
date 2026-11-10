@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { renameWithRetrySync } from "../file-replace.js";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { replaceFileSync } from "../file-replace.js";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
 import { mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
@@ -94,13 +94,10 @@ export function acquireMainInstance(build: MainRerailBuild, directory: string = 
     startedAt: new Date().toISOString(),
   };
   const holderPath = join(directory, MAIN_INSTANCE_HOLDER_FILE);
-  const staged = `${holderPath}.${process.pid}`;
   try {
-    // A refusal may read the record at any moment; the rename keeps it from ever seeing half of one.
-    writeFileSync(staged, `${JSON.stringify(holder)}\n`, { mode: 0o600 });
-    renameWithRetrySync(staged, holderPath);
+    // A refusal may read the record at any moment; replacing it whole keeps it from ever seeing half of one.
+    replaceFileSync(holderPath, `${JSON.stringify(holder)}\n`, { mode: 0o600 });
   } catch (error) {
-    rmSync(staged, { force: true });
     lock.release();
     throw error;
   }

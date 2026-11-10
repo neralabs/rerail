@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -8,7 +8,7 @@ import { Readable, type Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
-import { renameWithRetry } from "../engine/file-replace.js";
+import { replaceFile } from "../engine/file-replace.js";
 import { windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding, type NativeBinding } from "../engine/native/native.js";
 import { forgetMainInstanceHolder } from "../engine/native/main-instance.js";
@@ -606,13 +606,11 @@ export async function withStartLock<T>(
       await sleep(POLL_INTERVAL_MS);
     }
   }
-  // Written beside the lease and renamed over it: a rewrite in place truncates first, and a starter that read the
-  // empty file between would take the lease for stale and remove the lock this start still holds.
+  // Replaced whole, never rewritten in place: a rewrite truncates first, and a starter that read the empty file
+  // between would take the lease for stale and remove the lock this start still holds.
   const writeLease = async (): Promise<void> => {
     const lease: StartLockLease = { pid: process.pid, expiresAt: Date.now() + timing.leaseMs };
-    const written = `${leasePath}.${process.pid}.tmp`;
-    await writeFile(written, JSON.stringify(lease), { mode: 0o600 });
-    await renameWithRetry(written, leasePath);
+    await replaceFile(leasePath, JSON.stringify(lease), { mode: 0o600 });
   };
   const ownsLease = async (): Promise<boolean> => (await readStartLockLease(leasePath))?.pid === process.pid;
   await writeLease();

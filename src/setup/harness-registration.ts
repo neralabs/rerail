@@ -13,7 +13,6 @@ import {
   stat,
   symlink,
   unlink,
-  writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
@@ -34,7 +33,7 @@ import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
-import { renameWithRetry } from "../engine/file-replace.js";
+import { replaceFile } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
 import { DAEMON_ACCESS_TOKEN_FILE } from "../runtime/daemon-control.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
@@ -521,23 +520,18 @@ async function resolveWriteTarget(path: string): Promise<string> {
 }
 
 /**
- * Replaces the file behind `path` via temp file + rename beside it, first backing it up when it exists and `backup`:
- * a file Rerail generated whole (a command file or skill) is not backed up, since registration writes it again.
+ * Replaces the file behind `path` whole with `text` in `existing.mode`, first backing it up when it exists and
+ * `backup`: a file Rerail generated whole (a command file or skill) is not backed up, since registration writes it again.
  */
 export async function writeTextFile(path: string, text: string, existing: { exists: boolean; mode: number }, backup = true): Promise<void> {
   const target = await resolveWriteTarget(path);
-  const directory = dirname(target);
-  await mkdir(directory, { recursive: true });
+  await mkdir(dirname(target), { recursive: true });
   if (existing.exists && backup) {
     const backupPath = `${target}.${new Date().toISOString().replace(/[:.]/g, "-")}.${randomUUID()}.bak`;
     await copyFile(target, backupPath, constants.COPYFILE_EXCL);
     await chmod(backupPath, 0o600);
   }
-  const temp = join(directory, `.${randomUUID()}.tmp`);
-  await writeFile(temp, text, { mode: existing.mode });
-  await chmod(temp, existing.mode);
-  // A rename replaces the file on every platform; removing it first on Windows would leave no file if the rename failed.
-  await renameWithRetry(temp, target);
+  await replaceFile(target, text, { mode: existing.mode });
 }
 
 function planMutation(

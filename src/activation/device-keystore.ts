@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { renameWithRetry } from "../engine/file-replace.js";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { replaceFile } from "../engine/file-replace.js";
 import { join } from "node:path";
 import { spawn } from "../engine/child-process.js";
 import { windowsPowerShell } from "../engine/system-programs.js";
@@ -302,14 +301,7 @@ export class FileDeviceSecretStore implements DeviceSecretStore {
   async write(profileName: string, value: string): Promise<void> {
     const path = this.#path(profileName);
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
-    const staging = `${path}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(staging, value, { mode: 0o600, flag: "wx" });
-      await renameWithRetry(staging, path);
-    } catch (error) {
-      await rm(staging, { force: true });
-      throw error;
-    }
+    await replaceFile(path, value, { mode: 0o600 });
   }
 
   async remove(profileName: string): Promise<void> {

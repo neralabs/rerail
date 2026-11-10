@@ -1,6 +1,6 @@
 import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
-import { readFile, stat, writeFile, rm } from "node:fs/promises";
+import { readFile, stat, rm } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo, Server as NetServer } from "node:net";
@@ -9,7 +9,7 @@ import { tmpdir, userInfo } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
-import { renameWithRetry } from "../engine/file-replace.js";
+import { replaceFile } from "../engine/file-replace.js";
 import { searchGitFrom } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
@@ -210,24 +210,12 @@ async function readRememberedPort(portFile: string): Promise<number | undefined>
   }
 }
 
-/** `content` as the whole of `file`, readable by its owner only, through a temporary file renamed over it. */
-async function writePrivateFile(file: string, content: string): Promise<void> {
-  const temporaryFile = `${file}.${process.pid}.tmp`;
-  try {
-    await writeFile(temporaryFile, content, { mode: 0o600 });
-    // A status line or hook reading daemon.json holds it open for a moment, which fails a rename on Windows.
-    await renameWithRetry(temporaryFile, file);
-  } finally {
-    await rm(temporaryFile, { force: true });
-  }
-}
-
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** Remembering the port is a convenience: a failed write leaves the daemon running and is only reported. */
 async function rememberPort(portFile: string, port: number): Promise<void> {
   try {
-    await writePrivateFile(portFile, `${JSON.stringify({ port })}\n`);
+    await replaceFile(portFile, `${JSON.stringify({ port })}\n`, { mode: 0o600 });
   } catch (error) {
     process.stderr.write(`rerail daemon: could not remember port ${port} in ${portFile}: ${errorText(error)}\n`);
   }
@@ -256,7 +244,7 @@ async function persistentAccessToken(file: string): Promise<string> {
   }
   const token = newAccessToken();
   try {
-    await writePrivateFile(file, `${token}\n`);
+    await replaceFile(file, `${token}\n`, { mode: 0o600 });
   } catch (error) {
     process.stderr.write(`rerail daemon: could not keep the access capability in ${file}: ${errorText(error)}\n`);
   }
@@ -540,7 +528,7 @@ export class RerailDaemon {
   /** What a started daemon leaves behind for others: its state file, its remote sink and the port links point at. */
   async #announce(remembered: number | undefined): Promise<void> {
     const options = this.#options;
-    if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(this.state(), null, 2)}\n`);
+    if (options.stateFile !== undefined) await replaceFile(options.stateFile, `${JSON.stringify(this.state(), null, 2)}\n`, { mode: 0o600 });
     // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`).
     if (options.remoteSink !== false) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
     // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.

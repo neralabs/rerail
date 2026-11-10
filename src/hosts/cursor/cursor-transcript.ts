@@ -1,11 +1,11 @@
-import { mkdir, open, readFile, rm, writeFile, type FileHandle } from "node:fs/promises";
+import { mkdir, open, readFile, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import type { AdapterEvent, AdapterSession, RerailEventLoop } from "../../engine/adapter-contract.js";
 import { createHash } from "node:crypto";
 import { pendingPath, type HookInput, persistPending } from "../../harness/hook-adapter.js";
 import { steers } from "../../engine/catalog/rule-mode.js";
-import { renameWithRetry } from "../../engine/file-replace.js";
+import { replaceFile } from "../../engine/file-replace.js";
 
 const CursorTranscriptStateSchema = z
   .object({
@@ -64,14 +64,7 @@ async function readState(path: string): Promise<CursorTranscriptState> {
 
 async function writeState(path: string, state: CursorTranscriptState): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, JSON.stringify(state), { mode: 0o600 });
-  try {
-    await renameWithRetry(temporary, path);
-  } catch (error) {
-    await rm(temporary, { force: true });
-    throw error;
-  }
+  await replaceFile(path, JSON.stringify(state), { mode: 0o600 });
 }
 
 function userText(record: TranscriptRecord): string | undefined {
