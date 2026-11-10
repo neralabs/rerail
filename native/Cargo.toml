@@ -50,6 +50,8 @@ metal-tests = []
 rerail-accel = { path = "../accel" }
 # The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
 rerail-store = { path = "crates/store", features = ["test-hooks"] }
+base64 = "=0.22.1"
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.50.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).

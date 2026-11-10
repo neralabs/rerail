@@ -4,12 +4,15 @@ use super::super::sql::ident;
 use super::*;
 
 thread_local! {static CACHE:RefCell<HashMap<[u8;32],Compiled>>=RefCell::new(HashMap::new());}
+/// Whether a run may be one composed query: only when asked (`RERAIL_COMPOSE=1`). The integration branch runs its
+/// strata natively, with SQL only where SQL reads a relation (decision 0104), and a composed run passes by its
+/// sessions, kept strata and maintenance; the composed form stays for comparison (async-family-integration).
 pub(super) fn enabled() -> bool {
     #[cfg(test)]
     if experiments::native_only() {
         return false;
     }
-    true
+    std::env::var("RERAIL_COMPOSE").is_ok_and(|v| v == "1")
 }
 
 pub(super) fn clear() {

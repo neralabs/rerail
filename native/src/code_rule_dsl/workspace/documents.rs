@@ -52,7 +52,6 @@ impl FileVersion {
 /// A document the contract loaded: exactly the source and documents of one file version.
 pub(super) struct Document {
     /// P's syntax facts, shared by P's relational inputs (test-only, open item O18).
-    #[cfg(test)]
     pub(super) syntax: std::sync::OnceLock<Arc<crate::code_rule_dsl::relational::syntax::Facts>>,
     pub(super) source: Arc<String>,
     pub(super) image: tape::FileImage,
@@ -106,7 +105,6 @@ impl DocumentCache {
         self.used = 0;
     }
 
-    #[cfg(test)]
     pub(super) fn account_syntax(&mut self, version: &FileVersion) {
         if let Some((_, document)) = self.entries.get(version)
             && let Some(facts) = document.syntax.get()
@@ -457,7 +455,6 @@ fn install_document(
     image: tape::FileImage,
 ) -> (FileVersion, Arc<Document>) {
     let document = Arc::new(Document {
-        #[cfg(test)]
         syntax: std::sync::OnceLock::new(),
         bytes: std::sync::atomic::AtomicUsize::new(source.len() + image.estimated_bytes()),
         source,
