@@ -3899,8 +3899,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "04173bf00bc872fdfe1c9b602e0867f2f0f9d86b",
-    "status": "Final 04173bf00 root CLI registered. 131 focused engine tests and 229 tooling tests pass; nine original Surface workspace cases and ten supplied-fact cases pass. Complete 450-execution reporter receipts remain on Final 957. Full-native admission remains open.",
+    "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
+    "status": "Final ec3cfe1b7 merged without conflicts. Existing 43 generic extension files unchanged. Root artifact rebuild and focused validation pending; Surface full-contract evidence remains on Final 041.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
