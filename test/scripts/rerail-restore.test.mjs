@@ -245,7 +245,7 @@ test("restoreInstalled refuses when setup left no launcher", async () => {
     walOnlyDatabase(join(home, ".rerail-clean-20260929", "rerail-home"), "rerail.sqlite", ["r"]);
     await assert.rejects(
       restoreInstalled({ backupDir: join(home, ".rerail-clean-20260929"), env: envFor(home), log: () => {} }),
-      /rerail(?:\.cmd)? is missing; rerail setup did not complete/u,
+      { message: `${launcherPath(join(home, ".rerail"))} is missing; rerail setup did not complete, so nothing was restored` },
     );
   });
 });
