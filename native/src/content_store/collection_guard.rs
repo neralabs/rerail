@@ -14,7 +14,7 @@ pub(super) struct SharedLease {
 }
 
 /// Closing the handle releases the lease, including when unwinding or exiting the process.
-pub(crate) struct CollectionLease {
+pub struct CollectionLease {
     #[cfg(not(target_family = "wasm"))]
     held: Held,
 }
@@ -63,7 +63,7 @@ impl Drop for CollectionLease {
 impl ContentStore {
     /// Keep cache objects alive while a reader builds a result or prepares a durable root.
     /// Acquire before looking up source ids and release only after publishing their references.
-    pub(crate) fn hold_collection(&self) -> StoreResult<CollectionLease> {
+    pub fn hold_collection(&self) -> StoreResult<CollectionLease> {
         #[cfg(not(target_family = "wasm"))]
         {
             let shared = std::sync::Arc::clone(&self.lease);

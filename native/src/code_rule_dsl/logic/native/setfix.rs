@@ -872,12 +872,15 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
     let mut reg = COMPONENTS.lock().unwrap();
     let key = (scope(conn), name.clone());
     reg.retain(|(k, _)| *k != key);
-    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, levels, waiting: None,
-                               #[cfg(target_os = "macos")] device: device_plans, seed_specs };
-    comp.closure = {
-        let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
-        closure::recognize(&comp)
-    };
+    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None,
+                               #[cfg(target_os = "macos")] device: device_plans, seed_specs, levels };
+    // A levels stratum is run by its driver, step by step (`Levels`), not as a closure.
+    if comp.levels.lines.is_empty() {
+        comp.closure = {
+            let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
+            closure::recognize(&comp)
+        };
+    }
     reg.push((key, Arc::new(Mutex::new(comp))));
     Ok(name)
 }
@@ -1872,6 +1875,35 @@ pub fn forget_derived(conn: &Connection) {
 /// relations, decision 0090 step 3).
 pub fn held(conn: &Connection, table: &str) -> Option<Arc<InRel>> {
     DERIVED.lock().unwrap().get(&(scope(conn), table.to_owned())).cloned()
+}
+
+/// A native relation of `conn`'s run as the caller reads an output: each live row, its columns `text` gives as the
+/// symbols' text (what `sym_text` gives in SQL), the others as integers. `None`: the run holds no such relation. The
+/// rows are read where the engine holds them: an output is not written to a table to be read back.
+pub fn output_rows(conn: &Connection, table: &str, text: &[bool]) -> Result<Option<Vec<Vec<Value>>>> {
+    let Some(rel) = held(conn, table) else { return Ok(None) };
+    let syms = symbols(conn)?;
+    let syms = syms.read().unwrap();
+    let mut out = Vec::with_capacity(rel.rows());
+    for id in 0..rel.len() {
+        if is_dead(&rel.dead, id as u32) {
+            continue;
+        }
+        let row = rel.row(id);
+        let mut vals = Vec::with_capacity(row.len());
+        for (c, &v) in row.iter().enumerate() {
+            vals.push(if text.get(c).copied().unwrap_or(false) {
+                if v < 0 || v as usize >= syms.len() {
+                    return Err(err(format!("{table}: no symbol {v}")));
+                }
+                Value::Text(syms.name(v))
+            } else {
+                Value::Integer(v)
+            });
+        }
+        out.push(vals);
+    }
+    Ok(Some(out))
 }
 
 /// Puts a relation kept from an earlier run into `conn`'s next run as the input `table`: its strata read it in place,

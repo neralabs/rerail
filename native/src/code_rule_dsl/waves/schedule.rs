@@ -481,14 +481,14 @@ pub(in crate::code_rule_dsl) fn run_over(
     crate::threads::scope(|jobs| -> StoreResult<()> {
         let next = &next;
         let start = |chunk: Vec<Document>| {
-            jobs.spawn(move |_| {
+            jobs.spawn("a wave chunk's sources", move |_| {
                 let built = sources(store, chunk.clone()).map(|s| (chunk, s));
                 *next.lock() = Some(built);
             })
         };
         let mut started = planned.next().map(start).is_some();
         while started {
-            let built = rerail_accel::exec::help_until(|| next.lock().take());
+            let built = rerail_accel::exec::help_until_as("a wave chunk: its sources", || next.lock().take());
             started = planned.next().map(start).is_some();
             let (docs, relations) = built?;
             fresh(graph, &docs)?;

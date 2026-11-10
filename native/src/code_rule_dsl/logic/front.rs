@@ -19,6 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+pub(in crate::code_rule_dsl) mod caches;
 pub(in crate::code_rule_dsl) mod cycles;
 
 /// A token and the byte offset where it starts.
@@ -1047,6 +1048,8 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
         }
     }
     cycles::check(&prog)?;
+    // A cache is two rules (decision 0103): a broken form refuses the program.
+    caches::caches(&prog)?;
     Ok(prog)
 }
 

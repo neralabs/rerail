@@ -167,6 +167,7 @@ impl Backend for GpuBackend {
                 let (n, words) = (*n as u64, (*n as u64).div_ceil(64).max(1));
                 off.len() as u64 == n + 1 && u32ok(n * words * 2) && fits(n * words * 8)
             }
+            Kernel::Program(p) => p.0.per_unit(crate::lanes::Lane::Gpu).is_some(),
             Kernel::Join { left, right, by, .. } => {
                 let Ok((nl, nr)) = Kernel::join_shape(left, right) else {
                     return false;
@@ -182,15 +183,26 @@ impl Backend for GpuBackend {
         self.submit_timed(ks).map(|(o, _)| o)
     }
 
-    /// The joins in their own command buffers (`space::run`), the other forms in one (`run`, which times its
-    /// phases); the joins' wall time counts as the device's.
+    /// Programs submit their own command buffers on the one queue (`Program::run`), the joins theirs
+    /// (`space::run`), the other forms one together (`run`, which times its phases); the programs' and joins' wall
+    /// time counts as the device's.
     fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, crate::exec::Phases), String> {
-        let (joins, others): (Vec<usize>, Vec<usize>) = (0..ks.len()).partition(|&i| matches!(ks[i], Kernel::Join { .. }));
+        let (programs, rest): (Vec<usize>, Vec<usize>) = (0..ks.len()).partition(|&i| matches!(ks[i], Kernel::Program(_)));
+        let (joins, others): (Vec<usize>, Vec<usize>) = rest.into_iter().partition(|&i| matches!(ks[i], Kernel::Join { .. }));
         let mut outs: Vec<Option<Output>> = vec![None; ks.len()];
         let mut phases = crate::exec::Phases::default();
+        if !programs.is_empty() {
+            let t = std::time::Instant::now();
+            for &i in &programs {
+                let Kernel::Program(p) = ks[i] else { unreachable!("a program") };
+                let r = objc::rc::autoreleasepool(|| p.0.run(crate::lanes::Lane::Gpu)).map_err(|e| format!("program {}: {e}", p.0.name()))?;
+                outs[i] = Some(Output::Program(crate::kernel::ProgramResult(r)));
+            }
+            phases.device = Some(t.elapsed().as_secs_f64());
+        }
         if !others.is_empty() {
             let (o, s) = self.run(&others.iter().map(|&i| ks[i]).collect::<Vec<_>>())?;
-            phases = crate::exec::Phases { encode: s.encode, device: Some(s.device), decode: s.decode, worker_cpu: 0.0 };
+            phases = crate::exec::Phases { encode: s.encode, device: Some(phases.device.unwrap_or(0.0) + s.device), decode: s.decode, worker_cpu: 0.0 };
             for (&i, o) in others.iter().zip(o) {
                 outs[i] = Some(o);
             }
@@ -526,6 +538,7 @@ impl Planner {
             Kernel::Histogram { off, codes, width } => self.histogram(off, codes, *width),
             Kernel::Closure { n, off, dst } => self.closure(*n, off, dst),
             Kernel::Join { .. } => Err("a join runs in the space's own command buffers".into()),
+            Kernel::Program(_) => Err("a program submits its own command buffers".into()),
         }
     }
 

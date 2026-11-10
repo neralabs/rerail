@@ -282,7 +282,7 @@ impl ContentStore {
 
     /// G's collection of segments no completed snapshot tree names (8fe9ffed4 l.3439-3446),
     /// as a function of its own: W's collection pass has no tree result segments.
-    pub(crate) fn collect_tree_result_segments(
+    pub fn collect_tree_result_segments(
         transaction: &rusqlite::Transaction<'_>,
         limit: i64,
     ) -> StoreResult<()> {

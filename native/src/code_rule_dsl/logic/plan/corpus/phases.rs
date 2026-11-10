@@ -159,7 +159,8 @@ pub(crate) struct PhaseRun {
     pub(crate) granules: (usize, usize, usize, usize),
     /// The CPU the freshness bookkeeping took (store, digests, deltas), seconds on this thread.
     pub(crate) bookkeeping: f64,
-    /// Why the phase ran in full, when its fixed point could not be maintained (`maintain`).
+    /// Why the phase ran in full, when its fixed point could not be maintained: by the phase store (`maintain`), or
+    /// by a session's run from its inputs' deltas.
     pub(crate) full_because: Option<String>,
     /// Each export's version, and its delta when this run made one.
     pub(crate) versions: Deltas,
@@ -349,7 +350,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let report = super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, options)?;
         let began = thread_cpu();
         let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &program, &declared, &out)? };
-        let ((exports, units, granules), versions) = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports kept")); keep(&name, &rows, &declared.positions, declared.owner.as_deref(), producer, None)? };
+        let ((exports, units, granules), versions) = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports kept")); keep_in_session(&name, rows.clone(), &declared, producer)? };
         // Once its exports are kept: what it consulted, so an unchanged next run takes them as they are, and each
         // document's cone inputs, so a run of changed documents can tell whether the rest stands.
         {
@@ -361,7 +362,17 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let rows: BTreeMap<String, Vec<Vec<String>>> = rows.into_iter().filter(|(e, _)| wanted.contains(e)).collect();
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
         hand_versions(&reads, &versions, &mut handed);
-        runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: thread_cpu() - began, full_because: Some(full_because), versions });
+        // A session's run maintains the phase's fixed point from its inputs' deltas (an earlier phase's exports): no
+        // stratum derived again, it ran in full only as far as the phase store is concerned.
+        let full_because = match report.cross_strata {
+            Some((ran, all)) if report.cross_maintained.2 == 0 && report.cross_maintained.0 > 0 => {
+                crate::code_rule_dsl::logic::profile::decision("phase maintained (decision 0094 §4)", || format!("phase {name}: maintained by the session from its inputs' deltas: {ran} of {all} strata run, {} maintained", report.cross_maintained.0));
+                None
+            }
+            Some((0, _)) => None,
+            _ => Some(full_because),
+        };
+        runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: thread_cpu() - began, full_because, versions });
     }
     Ok((facts, runs, handed))
 }
@@ -551,7 +562,8 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
 
 /// The documents a run read: the workspace's and those it loaded, each once.
 fn documents(consulted: &[(String, String, String)]) -> usize {
-    consulted.iter().filter(|c| c.0 == "doc" || c.0 == "load").map(|c| c.1.as_str()).collect::<BTreeSet<_>>().len()
+    // A workspace document listed without a digest was not read (`run_observed`: none built).
+    consulted.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").map(|c| c.1.as_str()).collect::<BTreeSet<_>>().len()
 }
 
 fn parse_consulted(text: &str) -> Vec<(String, String, String)> {
@@ -658,10 +670,8 @@ fn record(phase: &str, key: &str, consulted: &[(String, String, String)]) -> Res
     let Some(path) = store_path() else { return Ok(()) };
     let db = open_store(&path)?;
     records(&db)?;
-    if consulted.is_empty() {
-        db.execute("DELETE FROM phase_record WHERE phase=?1", [phase])?;
-        return Ok(());
-    }
+    // A run that consulted nothing (a phase over earlier phases' exports reads no document) is recorded too: its
+    // key, which holds those exports' versions, is all it depends on.
     let text = consulted.iter().map(|(w, p, d)| format!("{w}\t{p}\t{d}")).collect::<Vec<_>>().join("\n");
     db.execute("INSERT OR REPLACE INTO phase_record VALUES (?1, ?2, ?3)", params![phase, key, text])?;
     Ok(())
@@ -671,21 +681,30 @@ fn record(phase: &str, key: &str, consulted: &[(String, String, String)]) -> Res
 /// and everything it consulted as it was (`corpus::unchanged`). Its freshness then has nothing to record.
 #[allow(clippy::too_many_arguments)]
 fn reuse(phase: &str, key: &str, text: &str, root: &Path, typing: &Typing, options: &serde_json::Value) -> Result<Option<usize>> {
-    let Some(path) = store_path().filter(|p| p.exists()) else { return Ok(None) };
-    let db = open_store(&path)?;
-    records(&db)?;
-    let Some((last, consulted)): Option<(String, String)> = db.query_row("SELECT key, consulted FROM phase_record WHERE phase=?1", [phase], |r| Ok((r.get(0)?, r.get(1)?))).ok() else { return Ok(None) };
     // `RERAIL_PHASE_WHY`: why a phase was not kept, on stderr.
     let why = |what: &str| {
         if std::env::var_os("RERAIL_PHASE_WHY").is_some() {
             eprintln!("phase {phase}: not kept: {what}");
         }
     };
+    let Some(path) = store_path().filter(|p| p.exists()) else {
+        why("no phase store");
+        return Ok(None);
+    };
+    let db = open_store(&path)?;
+    records(&db)?;
+    let Some((last, consulted)): Option<(String, String)> = db.query_row("SELECT key, consulted FROM phase_record WHERE phase=?1", [phase], |r| Ok((r.get(0)?, r.get(1)?))).ok() else {
+        why("no last run recorded");
+        return Ok(None);
+    };
     if last != key {
         why("its key changed (its program, options, root or an earlier phase's exports)");
         return Ok(None);
     }
     let consulted = parse_consulted(&consulted);
+    if consulted.is_empty() {
+        return Ok(Some(0));
+    }
     if !super::unchanged_phase(&[text], root, typing, options, &consulted)? {
         why("an input it consulted changed");
         return Ok(None);
@@ -739,6 +758,47 @@ fn current_versions(phase: &str, exports: &[String]) -> Result<Deltas> {
 }
 
 type Kept = (Vec<(String, usize, usize, usize)>, (usize, usize, usize), (usize, usize, usize, usize));
+
+/// A phase's exports' rows, by export.
+pub(super) type Rows = BTreeMap<String, Vec<Vec<String>>>;
+
+/// `keep` after a full run of the phase, in a session that holds its last run's rows at the store's current versions:
+/// the rows are diffed in memory, and only the granules whose rows changed are read, compared and written (as
+/// `maintain` keeps a changed document's). Outside a session, or holding other versions, every granule is.
+fn keep_in_session(phase: &str, rows: Rows, declared: &Declared, producer: [u8; 32]) -> Result<(Kept, Deltas)> {
+    // The session's lock is not held across `keep`, which opens the stores.
+    let held = {
+        let session = super::session::current();
+        let Some(s) = session.as_ref() else { return keep(phase, &rows, &declared.positions, declared.owner.as_deref(), producer, None) };
+        s.phase_rows.lock().ok().and_then(|m| m.get(phase).cloned())
+    };
+    let at = |v: &Deltas| -> BTreeMap<String, u64> { v.iter().map(|(rel, v)| (rel.clone(), v.now)).collect() };
+    let rows = std::sync::Arc::new(rows);
+    let (kept, versions) = match held {
+        Some((versions, old)) if versions == at(&current_versions(phase, &declared.exports)?) && old.keys().eq(rows.keys()) => {
+            // The granules whose rows changed: a row's first column, of a row new or gone.
+            let mut touched: BTreeSet<String> = BTreeSet::new();
+            for (rel, now) in rows.iter() {
+                let was: std::collections::HashSet<&Vec<String>> = old[rel].iter().collect();
+                let is: std::collections::HashSet<&Vec<String>> = now.iter().collect();
+                touched.extend(now.iter().filter(|r| !was.contains(r)).chain(old[rel].iter().filter(|r| !is.contains(r))).map(|r| r[0].clone()));
+            }
+            let within: Rows = rows.iter().map(|(rel, rs)| (rel.clone(), rs.iter().filter(|r| touched.contains(&r[0])).cloned().collect())).collect();
+            let ((mut exports, units, granules), versions) = keep(phase, &within, &declared.positions, declared.owner.as_deref(), producer, Some(&touched))?;
+            for e in &mut exports {
+                e.1 = rows[&e.0].len();
+            }
+            ((exports, units, granules), versions)
+        }
+        _ => keep(phase, &rows, &declared.positions, declared.owner.as_deref(), producer, None)?,
+    };
+    if let Some(s) = super::session::current().as_ref()
+        && let Ok(mut m) = s.phase_rows.lock()
+    {
+        m.insert(phase.to_owned(), (at(&versions), rows));
+    }
+    Ok((kept, versions))
+}
 
 /// Keeps a phase's exports in the phase store and its freshness in the derivation graph; the deltas against the last
 /// run. With `only`, `rows` are those of these granules, and the rest of the store stands.

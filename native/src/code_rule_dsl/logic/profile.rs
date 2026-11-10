@@ -43,7 +43,7 @@ pub use watch::watch;
 static ON: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(std::env::var_os("RERAIL_PROFILE").is_some()));
 
 /// Whether this run is profiled.
-pub(in crate::code_rule_dsl) fn on() -> bool {
+pub(crate) fn on() -> bool {
     ON.load(Ordering::Relaxed)
 }
 
@@ -133,6 +133,9 @@ struct State {
     waits: BTreeMap<(String, String, String), WaitTotal>,
     /// Where each native stratum ran, by stratum (`placed`, decision 0095).
     placements: BTreeMap<String, PlacedTotal>,
+    /// SQL inside the waves (`sql_in_wave`, `wait_in_wave`), by (hazard class, span path, connection and statement):
+    /// runs and nanoseconds.
+    hazards: BTreeMap<(&'static str, String, String), (u64, u64)>,
 }
 
 /// A stratum's placements, summed over its runs (chunks, guests, the cross-file part).
@@ -478,6 +481,128 @@ pub(in crate::code_rule_dsl) fn sql(text: String, ns: u64, vm: u64, scan: u64, s
     t.scan += scan;
     t.sort += sort;
     t.autoindex += autoindex;
+}
+
+/// Waves under way in this process (`waves`): SQL from a wave's thread meanwhile is a hazard.
+static WAVES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+thread_local! {
+    /// This thread works behind the run (the store's writer): what it sends to SQLite no wave waits for.
+    static BEHIND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
+/// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
+pub(in crate::code_rule_dsl) struct Waves(bool);
+
+pub(in crate::code_rule_dsl) fn waves() -> Waves {
+    let on = on();
+    if on {
+        WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    Waves(on)
+}
+
+impl Drop for Waves {
+    fn drop(&mut self) {
+        if self.0 {
+            WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+/// Marks this thread as working behind the run (the store's writer).
+pub(crate) fn behind_the_run() {
+    BEHIND.with(|b| b.set(true));
+}
+
+fn in_waves() -> bool {
+    on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
+}
+
+/// Why a statement inside the waves forces a wait on SQLite, by where it ran and what it does.
+fn hazard_class(conn: &str, path: &str, text: &str) -> &'static str {
+    let t = text.trim_start().to_ascii_uppercase();
+    if conn == "store" {
+        return if t.starts_with("SELECT") || t.starts_with("WITH") { "a read of the store (memo, tapes, statistics, kept state)" } else { "a write to the store on a wave's thread" };
+    }
+    if t.contains("FROM SET_DERIVED") {
+        "a native relation copied into a SQL table"
+    } else if t.starts_with("CREATE") || t.starts_with("DROP") || t.starts_with("ALTER") {
+        "a SQL table made or dropped for a relation"
+    } else if t.starts_with("INSERT") && t.contains(" VALUES") {
+        "facts written into a SQL table"
+    } else if t.starts_with("INSERT") || t.starts_with("REPLACE") || t.starts_with("DELETE") || t.starts_with("UPDATE") {
+        "a rule or a delta run in SQLite"
+    } else if (t.starts_with("SELECT") || t.starts_with("WITH")) && path.contains("input load") {
+        "an input read from a SQL table"
+    } else if t.starts_with("SELECT") || t.starts_with("WITH") {
+        "a relation read from SQL"
+    } else {
+        "other SQL (attach, pragma, transaction)"
+    }
+}
+
+/// A statement that connection `conn` (`run`: the run's database; `store`: the content store) ran in `ns`
+/// nanoseconds: inside the waves, on a wave's thread, it is a hazard (decision 0104: no wave waits for SQL).
+pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
+    if !in_waves() {
+        return;
+    }
+    let path = current();
+    let class = hazard_class(conn, &path, text);
+    let mut state = STATE.lock().unwrap();
+    let e = state.hazards.entry((class, path, format!("{conn}: {text}"))).or_default();
+    e.0 += 1;
+    e.1 += ns;
+}
+
+/// A wave's thread waited `wall` seconds for SQLite's side of the store (`what`: a queued write it reads, the queue's
+/// back-pressure): a hazard like a statement.
+pub(crate) fn wait_in_wave(what: &str, wall: f64) {
+    if !in_waves() {
+        return;
+    }
+    let path = current();
+    let mut state = STATE.lock().unwrap();
+    let e = state.hazards.entry(("a wait for the store's writer", path, format!("store: {what}"))).or_default();
+    e.0 += 1;
+    e.1 += (wall * 1e9) as u64;
+}
+
+/// The hazards: SQL a wave's thread ran or waited on between the run's first wave and its last.
+fn hazards(r: &mut String, state: &State) {
+    let (runs, ns): (u64, u64) = state.hazards.values().fold((0, 0), |a, v| (a.0 + v.0, a.1 + v.1));
+    let _ = writeln!(
+        r,
+        "\n== Forces SQL waits (hazards): {} statements, {runs} runs, {:.1} ms inside the waves",
+        state.hazards.len(),
+        ns as f64 / 1e6
+    );
+    let _ = writeln!(r, "SQL is in a run's data path only before its first wave and after its last. A wave that runs, reads or waits on");
+    let _ = writeln!(r, "SQL either waits for SQLite or reads rows it was not given (stale). Each is a hazard to remove.");
+    if state.hazards.is_empty() {
+        return;
+    }
+    let mut by: BTreeMap<&str, (usize, u64, u64)> = BTreeMap::new();
+    for ((class, _, _), (n, t)) in &state.hazards {
+        let e = by.entry(class).or_default();
+        e.0 += 1;
+        e.1 += n;
+        e.2 += t;
+    }
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by_key(|(_, v)| std::cmp::Reverse(v.2));
+    let _ = writeln!(r, "By kind (ms: SQLite's wall time, waits for its locks included):\n       ms     runs  stmts  kind");
+    for (class, (k, n, t)) in &by {
+        let _ = writeln!(r, "  {:>7.1} {n:>8} {k:>6}  {class}", *t as f64 / 1e6);
+    }
+    let mut all: Vec<_> = state.hazards.iter().collect();
+    all.sort_by_key(|(_, (_, t))| std::cmp::Reverse(*t));
+    let _ = writeln!(r, "Costliest (of {}):\n       ms     runs  kind / span / statement", all.len());
+    for ((class, path, text), (n, t)) in all.iter().take(40) {
+        let _ = writeln!(r, "  {:>7.1} {n:>8}  {class}\n                    {path}\n                    {}", *t as f64 / 1e6, short(text, 160));
+    }
 }
 
 /// Charges `n` units of `unit` work to the current span (the roofline). Off, it costs one load.
@@ -1184,6 +1309,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     let mut r = String::new();
     r.push_str(header);
     fallbacks(&mut r, &state);
+    hazards(&mut r, &state);
     placements(&mut r, &state);
     explain(&mut r, &state);
     // A root is a span with no parent recorded: a top span, or one whose parent was still open (a dump).
@@ -1317,9 +1443,59 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let _ = writeln!(r, "{score}");
     }
 
+    // The cost statistics (decision 0100 §14): the store, the samples read, and the rates learned in place of priors.
+    let _ = writeln!(r, "\n== Cost statistics (RERAIL_COSTS)");
+    r.push_str(&super::costs::summary());
+
+    // Waits that ran others' jobs (decision 0100 §12): a thread waiting on the pool runs queued jobs meanwhile, and a
+    // long one makes its own wait end late. Per site: its waits, the jobs they ran, and how late those made them.
+    let (waits, late_by) = rerail_accel::exec::waits();
+    let _ = writeln!(r, "\n== Waits that ran others' jobs (rerail-accel)");
+    if waits.is_empty() {
+        r.push_str("(no waits)\n");
+    } else {
+        let _ = writeln!(
+            r,
+            "{:<40} {:>7} {:>7} {:>7} {:>10} {:>10} {:>10} {:>6} {:>10} {:>10} {:>10}  longest job run",
+            "wait", "waits", "helped", "jobs", "wait ms", "jobs ms", "jobs cpu", "late", "late ms<=", "late max", "late exact"
+        );
+        for (site, w) in &waits {
+            let _ = writeln!(
+                r,
+                "{:<40} {:>7} {:>7} {:>7} {:>10.1} {:>10.1} {:>10.1} {:>6} {:>10.2} {:>10.2} {:>10.2}  {:.2} ms {}",
+                short(site, 40),
+                w.waits,
+                w.helping,
+                w.jobs,
+                w.wall * 1e3,
+                w.jobs_wall * 1e3,
+                w.jobs_cpu * 1e3,
+                w.late,
+                w.late_wall * 1e3,
+                w.late_max * 1e3,
+                w.late_exact * 1e3,
+                w.longest * 1e3,
+                w.longest_job
+            );
+        }
+        // `late ms<=`: a wait that found its work ready right after a job it ran was late by at most that job's
+        // wall; `late exact` where the waited work said when it ended (a batch's launches, a host job).
+        let mut late_by = late_by;
+        late_by.sort_by(|a, b| b.1.late_wall.total_cmp(&a.1.late_wall));
+        let _ = writeln!(r, "jobs that made waits late: {:<34} {:>7} {:>10} {:>10}", "job", "waits", "late ms<=", "late max");
+        for (job, l) in late_by.iter().take(12) {
+            let _ = writeln!(r, "  {:<58} {:>7} {:>10.2} {:>10.2}", short(job, 58), l.waits, l.late_wall * 1e3, l.late_max * 1e3);
+        }
+    }
+
     // Warnings: the shapes that usually explain a slow rule.
     let _ = writeln!(r, "\n== Warnings");
     let mut warned = 0;
+    if !state.hazards.is_empty() {
+        let runs: u64 = state.hazards.values().map(|v| v.0).sum();
+        let _ = writeln!(r, "- {} SQL statements ({runs} runs) force waits inside the waves: see == Forces SQL waits.", state.hazards.len());
+        warned += 1;
+    }
     for ((p, text), s) in &sql {
         if s.autoindex > 0 {
             let _ = writeln!(r, "- automatic index ({} rows) built for a statement in {p}: an index is missing.\n    {}", s.autoindex, short(text, 300));
@@ -1528,6 +1704,21 @@ mod tests {
         stratum("xsql", "SQL wave kernel", || "the native engine declined".into());
         fallback("xsql", "aggregate join (string concatenation)".into());
         drop(span(|| "stratum xsql".into()));
+        // SQL before the waves is the run's beginning; inside them, from a wave's thread, a hazard; from the store's
+        // writer (behind the run), none.
+        sql_in_wave("run", "SELECT 1 FROM xbefore", 1_000);
+        {
+            let _w = waves();
+            let _s = span(|| "xwave".into());
+            sql_in_wave("store", "BEGIN IMMEDIATE", 2_000_000);
+            std::thread::spawn(|| {
+                behind_the_run();
+                sql_in_wave("store", "INSERT INTO xbehind VALUES (1)", 1_000);
+            })
+            .join()
+            .unwrap();
+        }
+        sql_in_wave("run", "SELECT 1 FROM xafter", 1_000);
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("explain");
         write(&dir, "header\n").unwrap();
         let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
@@ -1535,6 +1726,9 @@ mod tests {
         assert!(report.contains("Stratum xstratum  [engine: native set engine]  (loops=2"), "{report}");
         assert!(report.contains("why: every rule has a native step"));
         assert!(report.contains("== Fell back to SQLite: 1 strata"), "{report}");
+        assert!(report.contains("== Forces SQL waits (hazards): 1 statements, 1 runs, 2.0 ms inside the waves"), "{report}");
+        assert!(report.contains("a write to the store on a wave's thread") && report.contains("xwave"), "{report}");
+        assert!(!report.contains("xbefore") && !report.contains("xafter") && !report.contains("xbehind"), "{report}");
         assert!(report.contains("xsql: aggregate join (string concatenation)"), "{report}");
         assert!(report.contains("rule #0003 (seed xrule)") && report.contains("loops=2 replans=1"));
         // Actual rows add over the loops.

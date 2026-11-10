@@ -73,7 +73,7 @@ pub struct Fixed {
 #[derive(Clone, Debug)]
 pub struct Prices {
     /// Seconds per unit, by form then lane; `None` where the lane has no kernel for the form.
-    per_unit: [[Option<f64>; 4]; 7],
+    per_unit: [[Option<f64>; 4]; FORMS],
     /// Per lane; for the CPU lane, wall seconds (the cores' time is `per_unit` divided by `cores`).
     pub fixed: [Fixed; 4],
     /// The cores the CPU lane spreads a launch over: the executor's pool (`RERAIL_THREADS`).
@@ -82,7 +82,7 @@ pub struct Prices {
     pub band: f64,
     /// Host CPU seconds per unit, by form then lane: what a launch costs the host's cores on that lane (the cores'
     /// own work; SME's stream on a core; a device lane's uploads and grouping).
-    host_per_unit: [[Option<f64>; 4]; 7],
+    host_per_unit: [[Option<f64>; 4]; FORMS],
     /// Host CPU per job (a batch's share of the lane: its submission) and per launch in it.
     pub host: [Fixed; 4],
     /// Seconds from a job's submission to its outputs beyond its work (the GPU's commit, scheduling and wake): the
@@ -120,9 +120,12 @@ fn form_index(f: Form) -> usize {
     f as usize
 }
 
+/// The forms the table prices, and a program's row (always empty: a program prices itself).
+const FORMS: usize = Form::ALL.len() + 1;
+
 impl Default for Prices {
     fn default() -> Self {
-        let mut per_unit = [[None; 4]; 7];
+        let mut per_unit = [[None; 4]; FORMS];
         let mut set = |f: Form, l: Lane, s: f64| per_unit[form_index(f)][l.index()] = Some(s);
         // Release builds, per unit at the largest workload of each form (see the module's comment).
         set(Form::BitProduct, Lane::Cpu, 4.1e-12);
@@ -150,7 +153,7 @@ impl Default for Prices {
         // column into a shared buffer (about 1 ns a row; a staged column is not copied), a tile side's grouping
         // (5 ns a row, measured with the join prices). The Neural Engine: its host expansion and sums are most of
         // its submission (the price's own comment), so its time counts as host time.
-        let mut host_per_unit = [[None; 4]; 7];
+        let mut host_per_unit = [[None; 4]; FORMS];
         for f in Form::ALL {
             let i = form_index(f);
             host_per_unit[i][Lane::Cpu.index()] = per_unit[i][Lane::Cpu.index()];
@@ -190,6 +193,96 @@ impl Default for Prices {
     }
 }
 
+/// Rates learned from the cost statistics (decision 0100 §14): seconds a unit, by kernel name ([`Kernel::name`]) and
+/// lane, with the samples each was fitted from. They take the place of the table's and a program's own.
+static LEARNED: std::sync::RwLock<Vec<Learned>> = std::sync::RwLock::new(Vec::new());
+
+/// A rate learned from samples ([`learn_from`]).
+#[derive(Clone, Debug)]
+pub struct Learned {
+    pub name: String,
+    pub lane: Lane,
+    /// Seconds a unit, the samples' median.
+    pub per_unit: f64,
+    pub samples: usize,
+}
+
+/// The fewest warm samples a rate is fitted from.
+pub const MIN_SAMPLES: usize = 8;
+
+/// Bumped at each change of [`LEARNED`]: a price reads its thread's copy, taken again only when this moves, so pricing
+/// (on every thread, for every launch) touches no shared lock.
+static LEARNED_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+thread_local! {
+    static LEARNED_COPY: std::cell::RefCell<(u64, Vec<(String, Lane, f64)>)> = const { std::cell::RefCell::new((0, Vec::new())) };
+}
+
+fn learned(name: &str, lane: Lane) -> Option<f64> {
+    let version = LEARNED_VERSION.load(std::sync::atomic::Ordering::Acquire);
+    if version == 0 {
+        return None;
+    }
+    LEARNED_COPY.with_borrow_mut(|(seen, copy)| {
+        if *seen != version {
+            *copy = LEARNED.read().map(|l| l.iter().map(|x| (x.name.clone(), x.lane, x.per_unit)).collect()).unwrap_or_default();
+            *seen = version;
+        }
+        copy.iter().find(|x| x.1 == lane && x.0 == name).map(|x| x.2)
+    })
+}
+
+/// The rates learned so far.
+pub fn learned_rates() -> Vec<Learned> {
+    LEARNED.read().map(|l| l.clone()).unwrap_or_default()
+}
+
+/// Fits per-unit rates from `samples` and puts them in place of the priors; the rates fitted.
+///
+/// Only what one sample measures directly is fitted: a device lane's wall (its submission's fixed costs taken out)
+/// and a program's on the cores (one job on one thread). A table form on the cores splits over threads, so its
+/// sample's wall is not one unit's cost; it keeps its prior. Each rate is the median of its warm, successful samples
+/// of one kernel name alone, with at least [`MIN_SAMPLES`] of them.
+pub fn learn_from(samples: &[crate::score::Sample]) -> Vec<Learned> {
+    let p = Prices::default();
+    let mut by: std::collections::BTreeMap<(String, usize), Vec<f64>> = Default::default();
+    for s in samples {
+        let name = s.forms.split(',').next().unwrap_or("");
+        // One kernel name alone: a mixed job's wall is not one name's.
+        if s.cold || !s.ok || s.units <= 0.0 || s.forms.split(',').any(|f| f != name) {
+            continue;
+        }
+        let name = name.to_owned();
+        let program = Form::ALL.iter().all(|f| f.name() != name);
+        if s.lane == Lane::Cpu && !program {
+            continue;
+        }
+        let fixed = p.fixed[s.lane.index()];
+        let busy = s.wall - fixed.submission - fixed.launch * f64::from(s.launches);
+        if busy > 0.0 {
+            by.entry((name, s.lane.index())).or_default().push(busy / s.units);
+        }
+    }
+    let fitted: Vec<Learned> = by
+        .into_iter()
+        .filter(|(_, v)| v.len() >= MIN_SAMPLES)
+        .map(|((name, lane), mut v)| {
+            v.sort_by(f64::total_cmp);
+            Learned { name, lane: Lane::ALL[lane], per_unit: v[v.len() / 2], samples: v.len() }
+        })
+        .collect();
+    if let Ok(mut l) = LEARNED.write() {
+        for f in &fitted {
+            l.retain(|x| !(x.name == f.name && x.lane == f.lane));
+            l.push(f.clone());
+        }
+        if !fitted.is_empty() {
+            LEARNED_VERSION.fetch_add(1, std::sync::atomic::Ordering::Release);
+        }
+    }
+    fitted
+}
+
 impl Prices {
     /// Replaces the price of `form` on `lane` (seconds per unit; `None`: no kernel).
     pub fn set(&mut self, form: Form, lane: Lane, per_unit: Option<f64>) {
@@ -202,8 +295,15 @@ impl Prices {
 
     /// `k`'s wall time on `lane`, without the submission's cost; `None` when the lane has no kernel for it.
     pub fn wall(&self, k: &Kernel, lane: Lane) -> Option<f64> {
-        let busy = self.per_unit(k.form(), lane)? * k.units();
-        let busy = if lane == Lane::Cpu { busy / self.cores } else { busy };
+        // A lane with no form of it stays without one; a learned rate replaces its prior.
+        let prior = match k {
+            Kernel::Program(p) => p.0.per_unit(lane)?,
+            _ => self.per_unit(k.form(), lane)?,
+        };
+        let per = learned(k.name(), lane).unwrap_or(prior);
+        let busy = per * k.units();
+        // A table form splits its work over the cores; a program's cores' form is one job, its price one thread's.
+        let busy = if lane == Lane::Cpu && !matches!(k, Kernel::Program(_)) { busy / self.cores } else { busy };
         Some(self.fixed[lane.index()].launch + busy)
     }
 
@@ -221,7 +321,10 @@ impl Prices {
 
     /// `k`'s host CPU seconds on `lane`, its job's share counted when the lane is not `open` for this batch yet.
     pub fn host(&self, k: &Kernel, lane: Lane, open: bool) -> Option<f64> {
-        let per = self.host_per_unit[form_index(k.form())][lane.index()]?;
+        let per = match k {
+            Kernel::Program(p) => p.0.host_per_unit(lane)?,
+            _ => self.host_per_unit[form_index(k.form())][lane.index()]?,
+        };
         let fixed = self.host[lane.index()];
         Some(per * k.units() + fixed.launch + if open { 0.0 } else { fixed.submission })
     }

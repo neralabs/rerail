@@ -12,7 +12,7 @@ thread_local! {
 
 /// `bytes` as one zstd frame at `level`, byte for byte what `encode_all` writes: streamed, so the
 /// frame header carries no content size.
-pub(crate) fn compress(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
+pub fn compress(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
     ENCODER.with_borrow_mut(|slot| {
         let encoder = match slot {
             Some((known, encoder)) if *known == level => {

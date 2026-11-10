@@ -418,6 +418,11 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     Ok(prepared_of(&facts, dialect).ok().map(|p| (p, documents)))
 }
 
+/// What the write of the program `key` is queued under (`write_back`, decision 0102).
+pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"facts_memo/prepared", key])
+}
+
 /// Stores `prepared` as the program `key` names under `source`: its documents, one a part (`PART_ROWS`), each one's
 /// facts, and the pointer to the documents; the documents' sources, which the run's manifest names so collection
 /// keeps them. A document's tape is made when its facts are read and the store has lost them.

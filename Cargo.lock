@@ -3208,6 +3208,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-parser-tests",
  "rerail-rr-syntax",
+ "rerail-store",
  "ruff_python_ast",
  "ruff_python_parser",
  "rusqlite",
@@ -3246,6 +3247,28 @@ name = "rerail-rr-syntax"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+]
+
+[[package]]
+name = "rerail-store"
+version = "0.1.0"
+dependencies = [
+ "foldhash",
+ "gix",
+ "hashbrown 0.16.1",
+ "libc",
+ "parking_lot",
+ "rayon",
+ "regex",
+ "regex-syntax",
+ "rerail-accel",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tikv-jemalloc-sys",
+ "zstd",
 ]
 
 [[package]]

@@ -26,7 +26,7 @@
 #include "core.rr"
 
 .phase types
-.export binds, bases, anc, attr, sig, rtype, vtype, owner, callret, tparam, tmap, rvar, rgen, ropen, pgen, rcarg
+.export binds, bases, anc, attr, sig, rtype, vtype, owner, callret, tparam, tmap, rvar, rgen, ropen, pgen, rcarg, wgen
 
 .decl struct__def(s: symbol, k: symbol)
 .decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
@@ -37,6 +37,9 @@
 .decl struct__vann(s: symbol, a: symbol)
 .decl struct__alias(s: symbol, e: symbol)
 .decl struct__tvar(s: symbol)
+.decl struct__all(m: symbol, x: symbol)
+.decl struct__ann(m: symbol, e: symbol, a: symbol, h: symbol)
+.decl struct__annarg(m: symbol, a: symbol, j: number, x: symbol)
 
 // ---- where a symbol is: the module it is defined in ------------------------------------------------------------
 .decl owner(s: symbol, m: symbol)
@@ -67,8 +70,12 @@ malias(m, x, y, r) :- struct__binds(m, x, "assign", ""), struct__alias(@dot(m, x
     r = substr(e, strlen(y) + 1, strlen(e) - strlen(y) - 1).
 binds(m, x, d) :- malias(m, x, y, ""), binds(m, y, d).
 binds(m, x, d) :- malias(m, x, y, r), r != "", binds(m, y, d0), t = @dot(d0, r), res(t, d).
-// `from n import *`: n's names that are not private, and not bound in m itself.
-binds(m, x, d) :- struct__binds(m, "*", "star", n), binds(n, x, d), x != "*", !prefix("_", x), !own_name(m, x).
+// `from n import *`: the names n's `__all__` lists, or with none, n's names that are not private; not those bound
+// in m itself.
+binds(m, x, d) :- struct__binds(m, "*", "star", n), struct__all(n, x), binds(n, x, d), !own_name(m, x).
+binds(m, x, d) :- struct__binds(m, "*", "star", n), !hasall(n), binds(n, x, d), x != "*", !prefix("_", x), !own_name(m, x).
+.decl hasall(n: symbol)
+hasall(n) :- struct__all(n, _).
 .decl own_name(m: symbol, x: symbol)
 own_name(m, x) :- struct__binds(m, x, how, _), how != "star".
 .decl mbound(m: symbol, x: symbol)
@@ -87,22 +94,18 @@ res(t, d) :- want(t), !struct__def(t, _), split_dot(t, m, y), !contains(".", y),
 res(t, d) :- want(t), !struct__def(t, _), split_dot(t, c, y), !contains(".", y), struct__def(c, "class"), struct__member(c, y, d), d != "".
 
 // ---- annotations and bases, as written, resolved in their module -------------------------------------------------
-// head_of(m, e, h): expression e written in module m, its head name h: `typing.List[int]` gives `typing.List`, a
-// quoted forward reference `"C"` gives `C`.
+// head_of(m, e, h): expression e written in module m, the head name h of one of its alternatives, as struct. read
+// it off e's tree (`struct__ann`): `typing.List[int]` gives `typing.List`, a quoted forward reference `"C"` gives `C`.
 .decl written(m: symbol, e: symbol)
 written(m, e) :- struct__base(c, _, e), owner(c, m).
 written(m, a) :- struct__param(f, _, _, a), a != "", owner(f, m).
 written(m, a) :- struct__ret(f, a), owner(f, m).
 written(m, a) :- struct__vann(s, a), owner(s, m).
 .decl head_of(m: symbol, e: symbol, h: symbol)
-head_of(m, e, h) :- alt(m, e, a), h0 = @replace_all(a, "\\[.*$", ""), h = @replace_all(h0, "^[\"']|[\"']$", ""), h != "", !contains("]", h).
-// alt(m, e, a): an alternative of union e (`A | None`), each part split at its first `|` (one inside brackets
-// splits too: the part left of it keeps its head, the part right of it has `]` and is dropped above).
+head_of(m, e, h) :- written(m, e), struct__ann(m, e, _, h), h != "".
+// alt(m, e, a): an alternative of union e (`A | None`; a `|` inside brackets is the argument's own).
 .decl alt(m: symbol, e: symbol, a: symbol)
-.decl rest(m: symbol, e: symbol, s: symbol)
-rest(m, e, e) :- written(m, e).
-rest(m, e, b) :- rest(m, e, s), match("^[^|]*\\|\\s*(?<b>.*)$", s).
-alt(m, e, a) :- rest(m, e, s), match("^(?<a>[^|]*[^|\\s])\\s*(\\|.*)?$", s).
+alt(m, e, a) :- written(m, e), struct__ann(m, e, a, _).
 // rexpr(m, e, d): e's head names d: a name of m, or else a builtin; a dotted head through its first name. hexpr
 // keeps which alternative h of a union names it.
 .decl hexpr(m: symbol, e: symbol, h: symbol, d: symbol)
@@ -127,22 +130,14 @@ unresolved(m, e) :- head_of(m, e, h), !hclass(m, e, h).
 resolved(m, e) :- written(m, e), !unresolved(m, e).
 
 // ---- generics: type variables, a class's parameters, and returns that name them -------------------------------
-// gin(m, e, a, s): alternative a of e is a subscript whose arguments s hold no subscript (`Iterator[_T]`,
-// `dict_items[_KT, _VT]`); garg(m, e, a, j, x): its j-th argument is the name x.
-.decl gin(m: symbol, e: symbol, a: symbol, s: symbol)
-gin(m, e, a, s) :- alt(m, e, a), match("^[A-Za-z_.]+\\[(?<s>[^\\[\\]]*)\\]$", a).
-.decl grest(m: symbol, e: symbol, a: symbol, j: number, s: symbol)
-grest(m, e, a, 0, s) :- gin(m, e, a, s).
-grest(m, e, a, j, r) :- grest(m, e, a, i, s), match("^[^,]*,\\s*(?<r>.*)$", s), succ(i, j).
-// Stored (`no_inline`, decision 0099): its readers join on x, which inlined is a regex's group, so no reader could
-// look x up (`nclass` read every `grest` row for each class: 2 M rows).
+// garg(m, e, a, j, x): alternative a of e is a generic (`Iterator[_T]`, `dict[_KT, list[_VT] | None]`) whose j-th
+// argument is the name x (an argument whose one alternative is a name, its own head).
+// Stored (`no_inline`, decision 0099): `nclass` and `tv` join on x.
 .decl garg(m: symbol, e: symbol, a: symbol, j: number, x: symbol) no_inline
-garg(m, e, a, j, x) :- grest(m, e, a, j, s), match("^(?<x>[A-Za-z_][A-Za-z_0-9.]*)\\s*(,.*)?$", s).
-.decl succ(i: number, j: number)
-succ(0, 1). succ(1, 2). succ(2, 3). succ(3, 4). succ(4, 5).
-// galt(m, e, a, h): a subscript alternative a and its head h, as `head_of` gives it.
+garg(m, e, a, j, x) :- struct__ann(m, e, a, _), struct__annarg(m, a, j, x), struct__ann(m, x, x, x).
+// galt(m, e, a, h): a generic alternative a of e and its head h.
 .decl galt(m: symbol, e: symbol, a: symbol, h: symbol)
-galt(m, e, a, h) :- gin(m, e, a, _), h = @replace_all(a, "\\[.*$", "").
+galt(m, e, a, h) :- struct__ann(m, e, a, h), h != "", struct__annarg(m, a, 0, _).
 // tv(m, x, y): name x written in module m is the type variable y.
 .decl tv(m: symbol, x: symbol, y: symbol)
 tv(m, x, y) :- garg(m, _, _, _, x), binds(m, x, y), struct__tvar(y).
@@ -153,7 +148,13 @@ tv(m, x, y) :- alt(m, _, x), binds(m, x, y), struct__tvar(y).
 .decl btv(c: symbol, i: number, j: number, y: symbol)
 btv(c, i, j, y) :- struct__base(c, i, e), owner(c, m), garg(m, e, e, j, x), tv(m, x, y).
 .decl pbase(c: symbol, i: number)
-pbase(c, i) :- struct__base(c, i, e), match("^([A-Za-z_.]*\\.)?(Generic|Protocol)\\[.*$", e).
+pbase(c, i) :- struct__base(c, i, e), owner(c, m), galt(m, e, e, h), named(h, x), gproto(x).
+.decl gproto(x: symbol)
+gproto("Generic"). gproto("Protocol").
+// named(h, x): head h's last name x (`typing.Generic`: `Generic`), for a generic's head.
+.decl named(h: symbol, x: symbol)
+named(h, h) :- galt(_, _, _, h), !contains(".", h).
+named(h, x) :- galt(_, _, _, h), split_dot(h, _, x), !contains(".", x).
 .decl explicit(c: symbol)
 explicit(c) :- pbase(c, _).
 .decl gbase(c: symbol, i: number)
@@ -232,7 +233,21 @@ vtype(s, a, "") :- struct__vann(s, a), owner(s, m), !resolved(m, a).
 // callret(f, b, d): f is declared to return a callable whose own return is b, b's head d: a decorator that wraps
 // what it decorates (`contextmanager(func: Callable[_P, Iterator[_T]]) -> Callable[_P, _GeneratorContextManager[_T]]`).
 .decl cbody(f: symbol, b: symbol)
-cbody(f, b) :- struct__ret(f, a), match("^([A-Za-z_.]*\\.)?Callable\\[[A-Za-z_0-9]+, (?<b>.*)\\]$", a).
+cbody(f, b) :- struct__ret(f, a), owner(f, m), callable(m, a, b).
+// callable(m, a, b): a is `Callable[P, b]`, P a name (a parameter specification), written in m.
+.decl callable(m: symbol, a: symbol, b: symbol)
+callable(m, a, b) :- galt(m, a, a, h), named(h, "Callable"), struct__annarg(m, a, 0, p), struct__ann(m, p, p, p), struct__annarg(m, a, 1, b),
+    !struct__annarg(m, a, 2, _).
 written(m, b) :- cbody(f, b), owner(f, m).
 .decl callret(f: symbol, b: symbol, d: symbol)
 callret(f, b, d) :- cbody(f, b), owner(f, m), rexpr(m, b, d).
+// wgen(f, ka, i, kb, j): such a decorator's parameter is a callable returning a generic of class ka whose argument i
+// is the type variable y, and the callable it returns gives a generic of class kb whose argument j is y
+// (`contextmanager`: `Iterator[_T_co]`'s 0 is `_GeneratorContextManager[_T_co]`'s 0). A call of what it wraps binds
+// y from the wrapped function's declared return.
+.decl cfunc(f: symbol, a: symbol)
+cfunc(f, a) :- cbody(f, _), struct__param(f, 0, _, p), owner(f, m), callable(m, p, a).
+written(m, a) :- cfunc(f, a), owner(f, m).
+.decl wgen(f: symbol, ka: symbol, i: number, kb: symbol, j: number)
+wgen(f, ka, i, kb, j) :- cfunc(f, a), owner(f, m), galt(m, a, s, h), hexpr(m, a, h, ka), struct__def(ka, "class"), garg(m, a, s, i, x),
+    tv(m, x, y), cbody(f, b), galt(m, b, s2, h2), hexpr(m, b, h2, kb), struct__def(kb, "class"), garg(m, b, s2, j, x2), tv(m, x2, y).
