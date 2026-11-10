@@ -13,7 +13,7 @@
 //!    the same serial encoder as the probes that read it, so they follow it.
 //!    - A right side of at most 2,048 rows and three keys is sorted in one dispatch (`small_sort`), its raw 64-bit
 //!      values read as they are; a larger one by the radix sort, narrowed first.
-//!    - A probe is one dispatch (`probe_one`): each threadgroup counts its rows' pairs, reserves them in the
+//!    - Every probe is in one dispatch (`probe_all`): each threadgroup counts its rows' pairs, reserves them in the
 //!      batch's arena with one atomic, and writes them there.
 //! 2. Only when needed: the scatters of the tile joins, sized from their counts, and the probes whose pairs did not
 //!    fit the arena, each into space of its exact size.
@@ -159,13 +159,37 @@ fn small(right: &Keys) -> bool {
 /// and the system's scheduling go on. A right side that takes the radix sort is narrowed from its values, so for
 /// one that is staged the lane waits for its gate before encoding (the profile's `wait for fill`).
 pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
+    start(space, ks)?.finish()
+}
+
+/// A batch's joins encoded and committed, not yet waited for (`start`): the lane encodes its next submission while
+/// the device runs this one, and `finish` reads it.
+pub struct Started {
+    command: super::join::Submitted,
+    held: Vec<Arc<crate::col::Gate>>,
+    committed: std::time::Instant,
+    reads: Vec<Column>,
+    tables: Vec<super::join::Held>,
+    arena: Arena,
+    jobs: Vec<Job>,
+    /// This submission's scratch set (`join::scratch_set`): its second pass, if any, encodes on it.
+    set: usize,
+}
+
+/// [`run`]'s first half: the batch's first command buffer encoded and committed, and its right sides kept (a sort
+/// still running is waited for by whoever reads its runs). The space is not held after: the lane's next batch may
+/// read what this one keeps.
+pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started, String> {
     let mut space = space.lock().map_err(|_| "the gpu lane's space was poisoned")?;
+    // Each submission on the other scratch set from the one before: at most two are in flight.
+    let set = super::join::scratch_set(0) ^ 1;
+    super::join::scratch_set(set);
     space.batch += 1;
     let queue = queue()?;
     let command = queue.new_command_buffer();
     let device = &crate::gpu::shared::get().ok_or("no Metal device")?.device;
     let gates = gates(ks);
-    let held: Vec<&Arc<crate::col::Gate>> = crate::score::phase("encode", || gates.iter().filter(|g| g.hold(command, device)).collect());
+    let held: Vec<Arc<crate::col::Gate>> = crate::score::phase("encode", || gates.into_iter().filter(|g| g.hold(command, device)).collect());
     let pass = crate::score::phase("encode", || Pass::new(command));
     // The arena every probe's pairs go to: two a left row expected, at least 64 a probe.
     let (mut cap, mut blocks) = (0usize, 0usize);
@@ -256,75 +280,104 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
     crate::score::count("small sorts (fused)", small_sorts);
     crate::score::count("radix sorts", radix_sorts);
     let committed = std::time::Instant::now();
-    commit_wait(command)?;
-    // How long the host filled the staged columns after the commit: the delay the early commit hid.
-    for g in &held {
-        if let Some(at) = g.opened_at() {
-            crate::score::add("fill after commit", 0.0, at.saturating_duration_since(committed).as_secs_f64());
-        }
-    }
-    drop(reads);
-    drop(tables);
-    // The second pass, only when needed: the tiles' scatters, and the probes whose pairs did not fit the arena.
-    let overflowed = arena.overflowed();
-    let mut spill: Vec<(usize, Arena)> = Vec::new();
-    let mut second = false;
-    let need = overflowed || jobs.iter().any(|j| matches!(j, Job::Tile { .. }));
-    let mut done = Vec::with_capacity(ks.len());
-    if !need {
-        done = jobs;
-    } else {
-        let command = queue.new_command_buffer();
-        let pass = crate::score::phase("encode", || Pass::new(command));
-        for (i, j) in jobs.into_iter().enumerate() {
-            done.push(match j {
-                Job::Probe { left, right, job } if overflowed && job.spilled(&arena).0 => {
-                    second = true;
-                    let total = job.spilled(&arena).1;
-                    let mut own = Arena::new(total, super::join::probe_blocks(left[0].rows))?;
-                    let job = crate::score::phase("encode", || ProbeOne::encode(&pass, &left, &right, &mut own))?;
-                    spill.push((i, own));
-                    Job::Probe { left, right, job }
-                }
-                Job::Tile { left, right, job } => {
-                    let keys: Vec<usize> = (0..left.columns.len()).collect();
-                    let job = crate::score::phase("encode", || job.scatter(&pass, &left, &keys, &right, &keys))?;
-                    second |= job.total > 0;
-                    Job::Tile { left, right, job }
-                }
-                other => other,
-            });
-        }
-        crate::score::phase("encode", || pass.end());
-        if second {
-            crate::score::count("second command buffers", 1);
-            commit_wait(command)?;
-        }
-    }
+    let command = super::join::Submitted::commit(command)?;
     crate::score::phase("keep", || {
         for (id, by, rows, bytes, entry) in built {
             if let Entry::Sorted(k) = &entry {
-                k.settle();
+                k.pending_on(&command);
             }
             space.put(id, by, rows, bytes, entry);
         }
     });
-    crate::score::phase("read pairs", || {
-        done.into_iter()
-            .enumerate()
-            .map(|(i, j)| match j {
-                Job::Probe { job, .. } => {
-                    let from = spill.iter().find(|(s, _)| *s == i).map_or(&arena, |(_, a)| a);
-                    job.pairs(from).map(Output::Pairs).ok_or_else(|| format!("join {i}: its pairs did not fit their exact space"))
-                }
-                Job::Tile { job, .. } => {
-                    let mut p = job.pairs();
-                    p.sort_unstable();
-                    Ok(Output::Pairs(p))
-                }
-            })
-            .collect()
-    })
+    Ok(Started { command, held, committed, reads, tables, arena, jobs, set })
+}
+
+impl Started {
+    /// [`run`]'s second half: waits for the first command buffer, runs the second when needed, and reads the pairs.
+    pub fn finish(self) -> Result<Vec<Output>, String> {
+        let before = super::join::scratch_set(self.set);
+        let r = self.finish_on_set();
+        super::join::scratch_set(before);
+        r
+    }
+
+    fn finish_on_set(self) -> Result<Vec<Output>, String> {
+        let Started { command, held, committed, reads, tables, arena, jobs, .. } = self;
+        let queue = queue()?;
+        command.wait();
+        // How long the host filled the staged columns after the commit: the delay the early commit hid.
+        for g in &held {
+            if let Some(at) = g.opened_at() {
+                crate::score::add("fill after commit", 0.0, at.saturating_duration_since(committed).as_secs_f64());
+            }
+        }
+        drop(reads);
+        drop(tables);
+        // The second pass, only when needed: the tiles' scatters, and the probes whose pairs did not fit the arena.
+        let overflowed = arena.overflowed();
+        // The probes whose pairs did not fit run again in one fused dispatch (the pipeline every probe uses, compiled
+        // ahead), into one arena of their exact total.
+        let spilled: Vec<bool> = jobs.iter().map(|j| matches!(j, Job::Probe { job, .. } if overflowed && job.spilled(&arena).0)).collect();
+        let (mut cap2, mut blocks2) = (0usize, 0usize);
+        for (j, _) in jobs.iter().zip(&spilled).filter(|(_, s)| **s) {
+            if let Job::Probe { left, job, .. } = j {
+                cap2 += job.spilled(&arena).1;
+                blocks2 += super::join::probe_blocks(left[0].rows);
+            }
+        }
+        let mut spill = if blocks2 > 0 { Some(Arena::new(cap2, blocks2)?) } else { None };
+        let mut respill = Fused::default();
+        let mut tables2: Vec<super::join::Held> = Vec::new();
+        let mut second = false;
+        let need = overflowed || jobs.iter().any(|j| matches!(j, Job::Tile { .. }));
+        let mut done = Vec::with_capacity(jobs.len());
+        if !need {
+            done = jobs;
+        } else {
+            let command = queue.new_command_buffer();
+            let pass = crate::score::phase("encode", || Pass::new(command));
+            for (i, j) in jobs.into_iter().enumerate() {
+                done.push(match j {
+                    Job::Probe { left, right, .. } if spilled[i] => {
+                        second = true;
+                        let own = spill.as_mut().expect("the spills' arena");
+                        let job = crate::score::phase("encode", || respill.probe(&left, &right, own))?;
+                        Job::Probe { left, right, job }
+                    }
+                    Job::Tile { left, right, job } => {
+                        let keys: Vec<usize> = (0..left.columns.len()).collect();
+                        let job = crate::score::phase("encode", || job.scatter(&pass, &left, &keys, &right, &keys))?;
+                        // Into the kernel's order on the device, after the scatter.
+                        let job = crate::score::phase("encode", || job.sort(&pass, left.rows, right.rows))?;
+                        second |= job.total > 0;
+                        Job::Tile { left, right, job }
+                    }
+                    other => other,
+                });
+            }
+            if let Some(own) = &spill {
+                crate::score::phase("encode", || std::mem::take(&mut respill).dispatch(&pass, own, &mut tables2))?;
+            }
+            crate::score::phase("encode", || pass.end());
+            if second {
+                crate::score::count("second command buffers", 1);
+                commit_wait(command)?;
+            }
+        }
+        // Each probe's pairs as a view of its arena: no copy (decision 0100 §9).
+        crate::score::phase("read pairs", || {
+            done.into_iter()
+                .enumerate()
+                .map(|(i, j)| match j {
+                    Job::Probe { job, .. } => {
+                        let from = if spilled[i] { spill.as_ref().expect("the spills' arena") } else { &arena };
+                        job.view(from).map(Output::View).ok_or_else(|| format!("join {i}: its pairs did not fit their exact space"))
+                    }
+                    Job::Tile { job, .. } => Ok(Output::Pairs(job.pairs())),
+                })
+                .collect()
+        })
+    }
 }
 
 fn k_len(k: &Kernel) -> usize {

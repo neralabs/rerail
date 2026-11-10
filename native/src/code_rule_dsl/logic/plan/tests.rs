@@ -25,6 +25,17 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[1]["result"],vec!["1\t99\t3\t17\t3\t7","2\t99\t1\t-2\t-2\t-2","4\t99\t3\t9223372036854775807\t-1\t9223372036854775807"]);
 }
 
+/// Whether this process numbers nodes in preorder, as T's facts and outputs do (`RERAIL_NODE_IDS=preorder`). The
+/// tests that compare with T run only then: under ids per definition (the default, decision 0094 §2a) a program that
+/// orders nodes reads `node_order`, which T's facts do not have, and outputs show ids as `slot.index`.
+fn t_numbering(test: &str) -> bool {
+    let preorder = !crate::code_rule_dsl::facts::vtab::syntax::definition_ids();
+    if !preorder {
+        eprintln!("{test}: skipped, T's facts number nodes in preorder; run with RERAIL_NODE_IDS=preorder");
+    }
+    preorder
+}
+
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
 }
@@ -55,6 +66,9 @@ fn chosen_line(c: &Chosen) -> String {
 /// On T's facts, the port chooses T's plans (anchor, walks, estimated work, rule for rule) and derives T's outputs.
 #[test]
 fn t_programs_plan_and_run_like_t() {
+    if !t_numbering("t_programs_plan_and_run_like_t") {
+        return;
+    }
     let facts = facts();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
@@ -90,6 +104,9 @@ fn t_programs_plan_and_run_like_t() {
 /// child process of this test, as T's `rdl.py` does.
 #[test]
 fn t_programs_run_natively_like_t() {
+    if !t_numbering("t_programs_run_natively_like_t") {
+        return;
+    }
     const CASE: &str = "RERAIL_RDL_NATIVE_CASE";
     if let Ok(case) = std::env::var(CASE) {
         let (modes, name) = case.split_once(' ').expect("modes and program");
@@ -195,6 +212,9 @@ fn outputs_match(name: &str, got: &Outcome, first: &HashMap<i64, i64>, failures:
 /// get T's plans and, decoded, T's outputs.
 #[test]
 fn t_programs_over_atoms_plan_and_run_like_t() {
+    if !t_numbering("t_programs_over_atoms_plan_and_run_like_t") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     let path = crate::code_rule_dsl::prefilter::tests::temp();
     let store = ContentStore::open(&path).unwrap();
@@ -245,6 +265,9 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
 /// the estimates and again from the counts the first run's boundary recorded.
 #[test]
 fn t_programs_as_wave_programs_give_run_atoms_outputs() {
+    if !t_numbering("t_programs_as_wave_programs_give_run_atoms_outputs") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::waves::{owner::Backing, schedule};
     use crate::content_store::Binding;
@@ -321,6 +344,9 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
 #[test]
 #[cfg_attr(debug_assertions, ignore = "O82: aborts in the metal crate on a debug build (`slice::from_raw_parts` precondition, metal-0.33.0 lib.rs:82)")]
 fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
+    if !t_numbering("t_programs_with_the_transducers_nearest_derive_t_outputs") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
     let t = Connection::open_in_memory().unwrap();
@@ -366,6 +392,9 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
 /// each component a mode runs in `logic::native` gives the rows T's pure SQL mode gives (the goldens).
 #[test]
 fn t_programs_run_natively_over_atoms_like_t() {
+    if !t_numbering("t_programs_run_natively_over_atoms_like_t") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
     let t = Connection::open_in_memory().unwrap();
@@ -477,6 +506,9 @@ fn product_programs_derive_t_outputs() {
 /// differ only in how they are written (`path:index` against T's global ids), so the own outputs are mapped to T's.
 #[test]
 fn own_ingestion_derives_what_t_facts_do() {
+    if !t_numbering("own_ingestion_derives_what_t_facts_do") {
+        return;
+    }
     use crate::code_rule_dsl::typing::file_local::Binding;
     let raw = zstd::decode_all(std::fs::File::open(root().join("../facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
     let corpus: Vec<(String, String)> = serde_json::from_slice(&raw).unwrap();

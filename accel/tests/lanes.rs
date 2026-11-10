@@ -149,7 +149,7 @@ fn joins_keep_their_right_sides_across_batches_and_match_the_reference() {
         }
         let (done, _) = ex.run(Batch(launches)).unwrap();
         for (i, (d, w)) in done.iter().zip(&want).enumerate() {
-            let rerail_accel::Output::Pairs(p) = &d.out else { panic!("pairs") };
+            let p = d.out.pairs().expect("pairs");
             assert!(!p.is_empty(), "batch {batch} launch {i}: no pairs");
             assert_eq!(&d.out, w, "batch {batch} launch {i} on {}", d.lane.name());
         }
@@ -246,7 +246,7 @@ fn small_joins_and_staged_columns_match_the_reference() {
     let mut rng = Rng(0x5eed);
     let mut col = |n: usize, m: u64| -> Vec<i64> { (0..n).map(|_| rng.below(m) as i64 - (m as i64) / 2).collect() };
     let mut cases: Vec<(Vec<Vec<i64>>, Vec<Vec<i64>>)> = Vec::new();
-    for (nl, nr, k, m) in [(1500, 2048, 1, 700), (3000, 1000, 2, 40), (10, 1, 3, 3), (0, 50, 1, 9), (40, 0, 2, 9), (5000, 1999, 3, 6)] {
+    for (nl, nr, k, m) in [(1500, 2048, 1, 700), (3000, 1000, 2, 40), (10, 1, 3, 3), (0, 50, 1, 9), (40, 0, 2, 9), (5000, 1999, 3, 6), (6000, 5000, 1, 50), (4000, 9000, 2, 30)] {
         cases.push(((0..k).map(|_| col(nl, m)).collect(), (0..k).map(|_| col(nr, m)).collect()));
     }
     let host = |cols: &[Vec<i64>]| -> Keys { cols.iter().map(|c| rerail_accel::Col::from(c.clone())).collect::<Vec<_>>().into() };
@@ -329,4 +329,151 @@ fn warm_small_gpu_jobs() {
     let s = ex.score();
     eprintln!("warm gpu job: {:.1} us host cpu", (s.units[Lane::Gpu.index()].cpu - before) * 1e6 / n as f64);
     eprintln!("{s}");
+}
+
+/// A device lane behind its plan: its worker is busy with an earlier batch, so the cores and the waiting caller
+/// claim the launches planned on it (decision 0100 §11), and the outputs are the reference's.
+#[test]
+fn launches_planned_on_a_lane_behind_its_plan_are_claimed_by_the_others() {
+    use rerail_accel::exec::{Backend, CpuBackend};
+    use rerail_accel::kernel::{JoinBy, Output};
+    /// A "device" that runs the reference after `delay`.
+    struct Slow(std::time::Duration);
+    impl Backend for Slow {
+        fn lane(&self) -> Lane {
+            Lane::Gpu
+        }
+        fn can(&self, _: &Kernel) -> bool {
+            true
+        }
+        fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
+            std::thread::sleep(self.0);
+            Ok(ks.iter().map(|k| cpu::run(k)).collect())
+        }
+    }
+    let delay = std::time::Duration::from_millis(300);
+    let mut ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Slow(delay))]);
+    // The device priced far cheaper, so the plan puts every launch there.
+    for f in [rerail_accel::kernel::Form::Probe] {
+        ex.prices.set(f, Lane::Gpu, Some(1e-15));
+    }
+    ex.prices.latency = [0.0; 4];
+    ex.prices.fixed[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
+    ex.prices.host[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
+    let mut rng = Rng(0xc1a1);
+    let mut join = |n: usize| {
+        let col = |rng: &mut Rng| -> rerail_accel::Col { (0..n).map(|_| rng.below(50) as i64).collect::<Vec<_>>().into() };
+        let (l, r) = (col(&mut rng), col(&mut rng));
+        Kernel::Join { left: vec![l].into(), right: vec![r].into(), right_id: None, by: JoinBy::Probe }
+    };
+    // The device's worker takes this one first, pinned, and is busy for `delay`.
+    let busy = ex.begin(Batch(vec![Launch::on(join(100), Lane::Gpu)])).unwrap();
+    let ks: Vec<Kernel> = (0..12).map(|i| join(200 + i)).collect();
+    let want: Vec<Output> = ks.iter().map(cpu::run).collect();
+    let t0 = std::time::Instant::now();
+    let running = ex.begin_as("claims test", Batch(ks.into_iter().map(Launch::new).collect())).unwrap();
+    let (done, _) = running.wait().unwrap();
+    let took = t0.elapsed();
+    for (i, (d, w)) in done.iter().zip(&want).enumerate() {
+        assert_eq!(&d.out, w, "launch {i} on {}", d.lane.name());
+    }
+    let tag = ex.score().tags["claims test"].clone();
+    assert_eq!(tag.launches[Lane::Gpu.index()], 12, "the plan put every launch on the device: {tag:?}");
+    assert!(tag.moved > 0 && done.iter().any(|d| d.lane == Lane::Cpu), "the cores took the late device's launches: {tag:?}");
+    assert!(took < delay, "the batch did not wait for the busy device: {took:?}");
+    busy.wait().unwrap();
+    eprintln!("{}", ex.score());
+}
+
+/// A "device" that runs the reference: at once, or begun and finished after `delay` (`start`), logging when each
+/// submission began and ended.
+struct Fake {
+    delay: std::time::Duration,
+    log: Arc<std::sync::Mutex<Vec<(&'static str, std::time::Instant)>>>,
+}
+
+struct FakePending(Vec<rerail_accel::kernel::Output>, std::time::Duration, Arc<std::sync::Mutex<Vec<(&'static str, std::time::Instant)>>>);
+
+impl rerail_accel::exec::Pending for FakePending {
+    fn finish(self: Box<Self>) -> Result<Vec<rerail_accel::kernel::Output>, String> {
+        std::thread::sleep(self.1);
+        self.2.lock().unwrap().push(("end", std::time::Instant::now()));
+        Ok(self.0)
+    }
+}
+
+impl rerail_accel::exec::Backend for Fake {
+    fn lane(&self) -> Lane {
+        Lane::Gpu
+    }
+    fn can(&self, _: &Kernel) -> bool {
+        true
+    }
+    fn submit(&self, ks: &[&Kernel]) -> Result<Vec<rerail_accel::kernel::Output>, String> {
+        Ok(ks.iter().map(|k| cpu::run(k)).collect())
+    }
+    fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn rerail_accel::exec::Pending + 'a>, String> {
+        self.log.lock().unwrap().push(("start", std::time::Instant::now()));
+        Ok(Box::new(FakePending(self.submit(ks)?, self.delay, Arc::clone(&self.log))))
+    }
+}
+
+fn probe(rng: &mut Rng, n: usize) -> Kernel {
+    let col = |rng: &mut Rng| -> rerail_accel::Col { (0..n).map(|_| rng.below(50) as i64).collect::<Vec<_>>().into() };
+    let (l, r) = (col(rng), col(rng));
+    Kernel::Join { left: vec![l].into(), right: vec![r].into(), right_id: None, by: rerail_accel::kernel::JoinBy::Probe }
+}
+
+/// The cores behind their plan, every pool thread busy and the caller not yet waiting: a device with nothing
+/// planned in the batch takes its launches (decision 0100 §11), and the outputs are the reference's.
+#[test]
+fn a_device_with_nothing_planned_takes_the_cores_late_launches() {
+    use rerail_accel::exec::CpuBackend;
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Fake { delay: std::time::Duration::ZERO, log })]);
+    // The device fast, but dear in host CPU, so the plan puts every launch on the cores.
+    ex.prices.set(rerail_accel::kernel::Form::Probe, Lane::Gpu, Some(1e-9));
+    ex.prices.latency = [0.0; 4];
+    ex.prices.fixed[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
+    ex.prices.host[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.05, launch: 0.05 };
+    let hold = std::time::Duration::from_millis(300);
+    // Every pool thread busy for `hold`, its work unknown to the plan (estimate 0).
+    let busy: Vec<_> = (0..rerail_accel::exec::threads()).map(|_| ex.spawn("hold", 0.0, move || std::thread::sleep(hold))).collect();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let mut rng = Rng(0xd1);
+    let ks: Vec<Kernel> = (0..8).map(|i| probe(&mut rng, 200 + i)).collect();
+    let want: Vec<rerail_accel::kernel::Output> = ks.iter().map(cpu::run).collect();
+    let running = ex.begin_as("idle device", Batch(ks.into_iter().map(Launch::new).collect())).unwrap();
+    // The caller works before it waits, so only the device can reach the launches meanwhile.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let t0 = std::time::Instant::now();
+    let (done, _) = running.wait().unwrap();
+    for (i, (d, w)) in done.iter().zip(&want).enumerate() {
+        assert_eq!(&d.out, w, "launch {i} on {}", d.lane.name());
+    }
+    let tag = ex.score().tags["idle device"].clone();
+    assert!(done.iter().all(|d| d.lane == Lane::Gpu), "the device took every late launch: {tag:?}");
+    assert!(t0.elapsed() < std::time::Duration::from_millis(50), "the outputs were ready when the caller waited");
+    for b in busy {
+        b.wait().unwrap();
+    }
+}
+
+/// Two batches on a device two submissions deep: the second begins before the first is read.
+#[test]
+fn a_device_begins_its_next_submission_before_it_reads_the_last() {
+    use rerail_accel::exec::CpuBackend;
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Fake { delay: std::time::Duration::from_millis(100), log: Arc::clone(&log) })]);
+    let mut rng = Rng(0xd2);
+    let (a, b) = (probe(&mut rng, 100), probe(&mut rng, 120));
+    let want = [cpu::run(&a), cpu::run(&b)];
+    let ra = ex.begin(Batch(vec![Launch::on(a, Lane::Gpu)])).unwrap();
+    let rb = ex.begin(Batch(vec![Launch::on(b, Lane::Gpu)])).unwrap();
+    let (da, _) = ra.wait().unwrap();
+    let (db, _) = rb.wait().unwrap();
+    assert_eq!((&da[0].out, &db[0].out), (&want[0], &want[1]));
+    let log = log.lock().unwrap();
+    let kinds: Vec<&str> = log.iter().map(|e| e.0).collect();
+    assert_eq!(kinds, ["start", "start", "end", "end"], "the second began while the first was in flight");
 }

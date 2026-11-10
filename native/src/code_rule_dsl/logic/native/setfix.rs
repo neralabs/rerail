@@ -3095,7 +3095,7 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
             let c0 = &j.counts[0];
             c0[0].set(c0[0].get() + 1);
             let mut last = u32::MAX;
-            for &(li, rid) in &p.pairs {
+            for (li, rid) in p.pairs.iter() {
                 if cx.error.is_some() { break; }
                 if li != last {
                     last = li;
