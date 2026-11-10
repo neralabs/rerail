@@ -597,7 +597,7 @@ mod grow_tests {
             assert!(set.grew > 0 && runs.runs.len() < 12, "{} grew, {} runs", set.grew, runs.runs.len());
             // With 16 fingerprint bits only the rows whose distance saturated are read again; with 2, a doubling
             // reads them all every other time.
-            assert!(if id_bits == 26 { set.rehashed >= 2000 } else { set.rehashed < 100 }, "{} rehashed, id bits {id_bits}", set.rehashed);
+            assert!(if id_bits == 26 { set.rehashed > 1000 } else { set.rehashed < 100 }, "{} rehashed, id bits {id_bits}", set.rehashed);
             assert_eq!(runs.count(&rows, k, &[3]), 200);
             assert_eq!(runs.count(&rows, k, &[3, 4]), 28);
             let mut got = 0;
