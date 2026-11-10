@@ -111,7 +111,7 @@ const result = JSON.parse(session.query(
 | `query(sql, parametersJson?, maxRows?)` | Returns columns, row arrays, and a `truncated` flag. |
 | `queryPlan(planJson)` | Fuses a read-only SQL graph and schedules independent groups on the shared worker pool. |
 | `reset()` | Clears generated outputs and keeps fact bindings and registered extensions. |
-| `setLimits(limitsJson)` | Sets per-operation `max_steps` and `timeout_ms`; `{}` removes limits. |
+| `setLimits(limitsJson)` | Sets per-operation `max_steps` and `timeout_ms`, and the session-wide `max_submissions`. An empty object removes limits without resetting usage. |
 | `createIndex(relation, columns)` | Retains an index on a session-owned result. Columns are zero-based positions. |
 | `registerLattice(name, specificationJson)` | Registers SQL aggregate, merge, and widening functions for a custom lattice. |
 
@@ -184,15 +184,24 @@ Graph outputs are private to that operation and return as row arrays.
 `explain()` also includes the latest successful graph plan without executing SQL.
 SQL profiles include every worker connection. Session profile totals include worker statements, including failures.
 The shared SQL scoreboard records group placement, queue time, CPU time, completion, and failures.
-Retained phases, opaque producers, recursive SQL kernels, direct queries, and cold SQL rules enter its owner-thread path.
-The profiler counts SQLite statements; the scoreboard measures execution jobs, including rejected queries.
+Eligible retained support phases use the same graph planner automatically.
+They need total checked expressions, pinned native inputs, and enough work for independent worker groups.
+The owner builds and publishes all returned roots together. Worker failure does not publish any result.
+Small phases use the cached owner statement. VM or time limits also keep these phases on the owner.
+Opaque producers, recursive kernels, and connection-local writes stay on the owner.
+The profiler counts SQLite statements. The scoreboard measures execution jobs, including rejected queries.
 `explain()` reports the SQL placement policy and its owner boundary.
 The standalone SQL request accepts these same graphs in a `query_plans` array and returns their results under that key.
 
 The Rust SDK example `native/examples/sql-work-plan.rs` runs a recursive join and aggregate from a background caller.
 With `RERAIL_THREADS=1`, it returns three result rows in one SQL submission.
 
-This graph API and retained rule execution currently have separate physical planners.
+The `max_submissions` limit on the session includes setup, owner and worker SQL, verification queries, and recovery.
+The graph allowance can only use credits that remain in the session.
+The scheduler reserves all planned worker submissions before launch and returns unused credits.
+Owner operations reserve space for rollback. If a statement would spend that reserve, the owner interrupts it and counts the attempt.
+`explain().sql_budget` shows used and reserved credits. Diagnostic EXPLAIN does not spend credits.
+This policy applies to managed operations. Rust extensions must keep the installed SQLite trace to use its accounting.
 Retained rule phases use the SQL scoreboard, but their recursive wave loop still runs on the owning connection.
 
 Fact bindings can include `types`, with one entry per column: `number`, `symbol`, `node`, or `loc`.
@@ -850,18 +859,21 @@ SQLite rechecks tuple correlation, affinity, and remaining predicates.
 Frozen cursors and transaction rollback preserve the previous rows and index configuration.
 This reduces initial CPU and memory. Supported recursive programs use the single retained schedule described above.
 
-Eligible cold positive graphs can continue inside a recursive SQL version loop.
-Production first uses the host SQL schedule. After 48 phases, qualifying remaining work uses one SQL submission.
+Eligible recursive components can continue inside a SQL version loop during cold or warm execution.
+The host schedule hands off after 48 SQL phases, or earlier when the session has few credits left.
 Short feedback chains keep the host schedule, including large inputs where the full loop costs more CPU.
-The loop retains contexts, support, intermediate frontiers, and maintenance cursors for later edits.
+The loop retains contexts, support, intermediate frontiers, and maintenance cursors.
+A warm handoff starts from the edited prefix. It consumes signed journals and replaces the old suffix only after success.
 Native callbacks construct storage and expose immutable versions. Rule evaluation stays in SQL.
 
-The current eligibility requires a mutually recursive set component, total expressions, no internal CTEs, and at most 32 emitted steps.
-Each retained rule requires a positive body. The collector supports at most 120 columns.
-Existing preparation and result-arm bounds still apply. Other shapes keep their existing paths.
-This loop uses the scored owner connection. Independent queryPlan groups use the shared SQL worker pool.
-Warm-history lowering, mixed-component lowering, and complete-session admission remain separate integration work.
+The loop needs a mutually recursive set component, total expressions, and positive rule bodies without internal CTEs.
+A scalar consumer can participate when its summary is ready, its external input is frozen, and its journal is empty.
+The loop stops before any gate it cannot execute. Opaque producers and other scalar stages keep their original input visibility and order.
+The active segment must fit the stage, result arm, column, and preparation bounds.
+Lattice feedback, changing scalar summaries inside feedback, and checked effects retain their existing paths.
+The recursive statement uses the scored owner connection. Independent checked support groups can use SQL workers.
 
 The first loop frame's explain data includes `sql_version_loop`.
-It records placement, logical analysis, rule stages, prefix phases, preparation costs, VM work, and storage CPU.
+It records placement, cold or warm scope, logical analysis, rule stages, frozen scalar inputs, owner gates, prefix phases, SQL size, VM work, and storage CPU.
+`checked_sql_work_plan` shows the last automatic worker plan and its execution counters.
 The outer operation keeps its original VM and time limits across the handoff.

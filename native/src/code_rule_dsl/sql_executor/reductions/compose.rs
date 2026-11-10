@@ -19,6 +19,34 @@ impl Retained {
     }
 
 
+    /// Reducers whose source and cursor are frozen can use their published
+    /// summary for every feedback step, including newly inserted contexts.
+    pub(in crate::code_rule_dsl::sql_executor) fn version_loop_frozen_scalars(
+        &self,
+        frozen: impl Fn(&str) -> bool,
+    ) -> bool {
+        self.lattice.is_none()
+            && self.scalar_phase_eligible()
+            && self.rules.iter().all(|r| !r.atoms.is_empty())
+            && self.reducer_inputs().all(frozen)
+    }
+
+    pub(in crate::code_rule_dsl::sql_executor) fn append_frozen_scalar_loop(
+        &self,
+        w: &mut Work<'_>,
+        changes: &BTreeMap<String, Delta>,
+        phase: &mut phase::Phase,
+    ) -> Result<(String, String)> {
+        let mut pending = vec![];
+        let (keys, next, _) = fused::append_with(
+            self, w, changes, phase, &BTreeMap::new(), &mut pending, &BTreeMap::new(),
+        )?;
+        if !pending.is_empty() {
+            return Err(error("Frozen scalar loop requires native support roots"));
+        }
+        Ok((keys, next))
+    }
+
     pub(in crate::code_rule_dsl::sql_executor) fn common_phase(&self) -> crate::code_rule_dsl::logic::analysis::Decision {
         let support = self.can_fuse() || self.isolated_phase().proven || self.scalar_phase_eligible();
         let bounded = self.phase_arms()<400;

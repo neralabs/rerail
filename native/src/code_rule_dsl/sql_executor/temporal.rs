@@ -256,12 +256,23 @@ impl Trace {
         let mut diagnostic_rows = vec![];
         let components = Arc::clone(&self.components);
         let mut sql_phases=0usize;
-        let mut loop_attempted=false;
+        let mut declined = BTreeMap::new();
         while at < self.frames.len() || !pending.is_empty() || needs_close {
-            if preparing && !loop_attempted && !pending.is_empty() && sql_phases>=cold_loop::HOST_PHASE_LIMIT {
-                loop_attempted=true;
-                if let Some(done)=cold_loop::resume(self,w,store,&pending,waves,limit,&mut diagnostic_rows)? {
-                    waves=done;break;
+            let low_budget = super::super::sql_admission::current()
+                .is_some_and(|ledger| ledger.available() <= 20 + 2 * self.relations.len());
+            if at > 0 && !pending.is_empty() && (preparing || sql_phases > 0)
+                && (sql_phases >= cold_loop::HOST_PHASE_LIMIT || low_budget) {
+                let ready = self.ready(&pending);
+                if declined.get(&ready).is_none_or(|last| sql_phases >= last + 8) {
+                    if let Some(progress) = cold_loop::resume(self, w, store, &pending, at, waves, limit, preparing, &mut diagnostic_rows)? {
+                        waves = progress.waves;
+                        pending = progress.pending;
+                        needs_close = progress.needs_close;
+                        at = self.frames.len();
+                        if pending.is_empty() && !needs_close { break; }
+                    } else {
+                        declined.insert(ready, sql_phases);
+                    }
                 }
             }
             let _context = w.profile_scope(||json!({"stage":if preparing {"retained initialization"} else {"retained update"},"component":self.prefix,"frame":at}));

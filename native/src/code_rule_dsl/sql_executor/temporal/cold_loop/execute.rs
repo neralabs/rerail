@@ -9,12 +9,19 @@ pub(super) fn run(
     store: &versions::Store,
     limit: u32,
     mut frame: Frame,
+    selected: BTreeSet<usize>,
     pending: BTreeSet<usize>,
+    prefix_frames: usize,
     waves: u32,
+    preparing: bool,
     diagnostic_rows: &mut Vec<Vec<SqlValue>>,
-) -> Result<Option<u32>> {
-    let prefix_frames = trace.frames.len();
-    let prefix_phases = trace.frames.iter().map(|f| f.phase_batches).sum::<usize>();
+) -> Result<Option<Progress>> {
+    let prefix_phases = trace
+        .frames
+        .iter()
+        .take(prefix_frames)
+        .map(|f| f.phase_batches)
+        .sum::<usize>();
     let initialized = frame.operators.iter().map(|op| op.ready).collect();
     let ran = frame
         .operators
@@ -24,19 +31,15 @@ pub(super) fn run(
         .map(|(id, _)| id)
         .collect();
     frame.composed = false;
-    let uncompiled = frame.clone();
-    let compiled = compile::build(trace, &mut frame, w, store, limit)?;
+    let compiled = compile::build(trace, &mut frame, w, store, &selected, limit, preparing)?;
     let Some((plan, roots)) = compiled else {
-        // Compilation can declare empty support roots before its size is known.
-        // Keep the original ownership list, so normal initialization owns each root once.
-        trace.frames.push(uncompiled);
+        store.discard_scope(w.db, frame.scope())?;
         return Ok(None);
     };
-    trace.frames.push(frame);
     let active = plan.ready(&pending);
     let width = roots.iter().map(|v| v.columns().len()).max().unwrap().max(
         plan.stages
-            .iter()
+            .values()
             .chain([&plan.fold])
             .map(|s| s.template.width())
             .max()
@@ -179,14 +182,20 @@ pub(super) fn run(
     w.version_nodes += arena.version_nodes;
     explanation["shared_roots"] = json!(arena.shared_roots);
     explanation["retained_nonempty_roots"] = json!(arena.retained_roots);
-    let base = trace.frames.pop().unwrap();
+    if arena.states.len() == 1 {
+        store.discard_scope(w.db, frame.scope())?;
+        return Ok(None);
+    }
+    for obsolete in trace.frames.drain(prefix_frames..) {
+        store.discard_scope(w.db, obsolete.scope())?;
+    }
+    let base = frame;
     for (iteration, state) in arena.states.iter().enumerate().skip(1) {
         let mut frame = if iteration == 1 {
             base.clone()
         } else {
             trace.frames.last().unwrap().fork(store)?
         };
-        frame.pipeline.clear();
         let _scope = store.activate(frame.scope())?;
         for &slot in &state.changed {
             if let Some(name) = plan.targets.get(&slot) {
@@ -197,8 +206,11 @@ pub(super) fn run(
             op.ready = state.initialized[id];
             op.active = state.ran.contains(&id);
             op.empty_body = state.empty_body[id];
-            op.comparison = state.roots[plan.operators[id].comparison.0].clone();
-            for (input, slot, _) in &plan.operators[id].seen {
+            let Some(operator) = plan.operators.get(&id) else {
+                continue;
+            };
+            op.comparison = state.roots[operator.comparison.0].clone();
+            for (input, slot, _) in &operator.seen {
                 op.seen.insert(input.clone(), state.roots[*slot].clone());
             }
             if let Some(states) = &mut op.run.reductions {
@@ -222,7 +234,7 @@ pub(super) fn run(
                 .or_insert(template);
         }
         let previous = &arena.states[iteration - 1];
-        if !state.ran.is_empty() {
+        if preparing && !state.ran.is_empty() {
             let written = state
                 .ran
                 .iter()
@@ -240,5 +252,10 @@ pub(super) fn run(
         }
         trace.frames.push(frame);
     }
-    Ok(Some(arena.states.last().unwrap().waves))
+    let final_state = arena.states.last().unwrap();
+    Ok(Some(Progress {
+        waves: final_state.waves,
+        pending: final_state.pending.clone(),
+        needs_close: !final_state.ran.is_empty(),
+    }))
 }

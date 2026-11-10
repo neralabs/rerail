@@ -167,11 +167,17 @@ impl Arena {
                 next.roots[input] = old.roots[source].clone();
             }
         }
-        for (id, op) in self.plan.operators.iter().enumerate() {
+        for (&id, op) in &self.plan.operators {
             if old.active.contains(&id) {
                 next.initialized[id] = true;
             }
             if old.active.contains(&id) || next.empty_body[id] {
+                for &journal in &op.journals {
+                    if next.roots[journal].len() > 0 {
+                        next.changed.push(journal);
+                        next.roots[journal] = next.roots[journal].empty_like();
+                    }
+                }
                 for (_, seen, current) in &op.seen {
                     next.roots[*seen] = old.roots[*current].clone();
                 }

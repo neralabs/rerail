@@ -77,6 +77,7 @@ struct State {
 struct Operator {
     seen: Vec<(String, usize, usize)>, // logical input, previous cursor, current source
     comparison: (usize, usize),
+    journals: Vec<usize>,
 }
 struct Stage {
     template: phase::Template,
@@ -86,16 +87,17 @@ struct Stage {
     arms: usize,
 }
 struct Plan {
-    stages: Vec<Arc<Stage>>,
+    stages: BTreeMap<usize, Arc<Stage>>,
     fold: Arc<Stage>,
     differences: BTreeMap<usize, (usize, usize, bool)>,
     targets: BTreeMap<usize, String>,
     inputs: Vec<(usize, usize)>,
-    operators: Vec<Operator>,
+    operators: BTreeMap<usize, Operator>,
     contexts: Vec<reductions::Retained>,
     frontiers: BTreeMap<String, usize>,
     steps: Arc<Vec<(schedule::Step, Option<Query>)>>,
     after: BTreeSet<(u32, u32)>,
+    pipeline: BTreeSet<usize>,
     limit: u32,
     sql: String,
     explain: Value,
@@ -107,7 +109,7 @@ impl Plan {
         }
         usize::try_from(id)
             .ok()
-            .and_then(|id| self.stages.get(id))
+            .and_then(|id| self.stages.get(&id))
             .cloned()
             .ok_or_else(|| sql_error("invalid retained loop stage"))
     }
@@ -123,6 +125,17 @@ impl Plan {
                 })
             })
             .collect()
+    }
+    fn pipeline_ready(&self, pending: &BTreeSet<usize>, ready: &BTreeSet<usize>) -> bool {
+        pending.difference(ready).any(|&id| {
+            self.pipeline.contains(&id)
+                && pending.iter().all(|&j| {
+                    !self
+                        .after
+                        .contains(&(self.steps[id].0.stratum, self.steps[j].0.stratum))
+                        || ready.contains(&j) && self.pipeline.contains(&j)
+                })
+        })
     }
 }
 struct Private {
@@ -205,13 +218,91 @@ impl Arena {
                 self.plan.limit
             )));
         }
-        Ok(!s.pending.is_empty() || !s.ran.is_empty())
+        // Return to the owner before evaluating any stage outside this checked segment.
+        Ok(!self.plan.pipeline_ready(&s.pending, &s.active)
+            && s.active.iter().all(|id| self.plan.stages.contains_key(id))
+            && (!s.pending.is_empty() || !s.ran.is_empty()))
     }
 }
 
-// Reserve the rest of the 100-statement complete-job target for owner work and publication.
-// This phase slice is conservative admission for eligible cold graphs, not whole-session accounting.
+// Keep short or sparse host replays on their cached statements.
 pub(super) const HOST_PHASE_LIMIT: usize = 48;
+
+pub(super) struct Progress {
+    pub waves: u32,
+    pub pending: BTreeSet<usize>,
+    pub needs_close: bool,
+}
+
+/// Admit entire checked set components. Unsupported components remain in the same
+/// trace and will see the same preceding-wave versions at their original gates.
+fn selection(
+    trace: &Trace,
+    frame: &Frame,
+    store: &versions::Store,
+    ready: &BTreeSet<usize>,
+) -> BTreeSet<usize> {
+    let mut groups = BTreeMap::<&BTreeSet<String>, Vec<usize>>::new();
+    for (id, (step, _)) in trace.steps.iter().enumerate() {
+        groups
+            .entry(&trace.components.members[&step.output])
+            .or_default()
+            .push(id);
+    }
+    let lattices = trace
+        .relations
+        .iter()
+        .filter(|(_, spec)| spec.lattice)
+        .map(|(name, _)| name.clone())
+        .collect();
+    let mut selected = BTreeSet::new();
+    let mut active_components = BTreeSet::new();
+    let mut recursive = false;
+    let mut active_recursive = false;
+    for (members, ids) in groups {
+        if ids.iter().all(|&id| {
+            let op = &frame.operators[id];
+            let (_, query) = &trace.steps[id];
+            !op.sql_kernel
+                && op.opaque.is_none()
+                && op.phase_eligible
+                && query.as_ref().is_some_and(|q| q.ctes.is_empty())
+                && op.run.reductions.as_ref().is_some_and(|states| {
+                    states.values().all(|s| {
+                        s.version_loop_eligible()
+                            || op.ready
+                                && s.version_loop_frozen_scalars(|input| {
+                                    op.pending.get(input).is_some_and(|journal| {
+                                        store.version_at(frame.scope(), &journal.plus).len() == 0
+                                            && store.version_at(frame.scope(), &journal.minus).len()
+                                                == 0
+                                    })
+                                })
+                    })
+                })
+        }) && plan::acyclic::version_loop(&trace.steps, members, &lattices)
+            .decision
+            .proven
+        {
+            recursive |= members.len() > 1;
+            if ids
+                .iter()
+                .any(|id| ready.contains(id) || frame.operators[*id].active)
+            {
+                active_recursive |= members.len() > 1;
+                active_components.extend(ids.iter().copied());
+            }
+            selected.extend(ids);
+        }
+    }
+    if recursive && selected.len() <= 32 {
+        selected
+    } else if active_recursive && active_components.len() <= 64 {
+        active_components
+    } else {
+        BTreeSet::new()
+    }
+}
 
 pub(super) fn run(
     _trace: &mut Trace,
@@ -222,33 +313,53 @@ pub(super) fn run(
     #[cfg(test)]
     let (trace, w, store, limit) = (_trace, _w, _store, _limit);
     #[cfg(test)]
-    if FORCE_LOOP.get() && !FORCE_HOST.get() && supported(trace) {
+    if FORCE_LOOP.get()
+        && !FORCE_HOST.get()
+        && candidate(&trace.emitted)
+        && trace.producers.is_empty()
+    {
         let frame = Frame::create(w, store, trace)?;
         let pending = (0..trace.steps.len()).collect();
-        let mut diagnostics = vec![];
-        let result = execute::run(trace, w, store, limit, frame, pending, 0, &mut diagnostics)?;
-        plan::insert_many(
-            w.db,
-            "INSERT INTO temp.wave_delta(wave,rel,rows)",
-            diagnostics,
-        )
-        .map_err(error)?;
-        return Ok(result);
+        let selected = selection(trace, &frame, store, &pending);
+        if selected.len() == trace.steps.len() {
+            let mut diagnostics = vec![];
+            let result = execute::run(
+                trace,
+                w,
+                store,
+                limit,
+                frame,
+                selected,
+                pending,
+                0,
+                0,
+                true,
+                &mut diagnostics,
+            )?;
+            plan::insert_many(
+                w.db,
+                "INSERT INTO temp.wave_delta(wave,rel,rows)",
+                diagnostics,
+            )
+            .map_err(error)?;
+            return Ok(result.map(|p| p.waves));
+        }
+        store.discard_scope(w.db, frame.scope())?;
     }
     Ok(None)
 }
-fn supported(trace: &Trace) -> bool {
-    candidate(&trace.emitted) && trace.producers.is_empty()
-}
+
 pub(super) fn resume(
     trace: &mut Trace,
     w: &mut Work<'_>,
     store: &versions::Store,
     pending: &BTreeSet<usize>,
+    at: usize,
     waves: u32,
     limit: u32,
+    preparing: bool,
     diagnostics: &mut Vec<Vec<SqlValue>>,
-) -> Result<Option<u32>> {
+) -> Result<Option<Progress>> {
     #[cfg(test)]
     if FORCE_HOST.get() {
         return Ok(None);
@@ -259,18 +370,40 @@ pub(super) fn resume(
             trace.emitted.program.name
         )));
     }
-    if !supported(trace) {
+    let base = &trace.frames[at - 1];
+    let ready = trace.ready(pending);
+    let selected = selection(trace, base, store, &ready);
+    if selected.is_empty()
+        || !ready.is_subset(&selected)
+        || base
+            .operators
+            .iter()
+            .enumerate()
+            .any(|(id, op)| op.active && !selected.contains(&id))
+    {
         return Ok(None);
     }
-    let frame = trace.frames.last().unwrap().fork(store)?;
+    if ready.iter().any(|&id| {
+        ready.iter().any(|&j| {
+            trace
+                .after
+                .contains(&(trace.steps[id].0.stratum, trace.steps[j].0.stratum))
+        })
+    }) {
+        return Ok(None);
+    }
+    let frame = base.fork(store)?;
     execute::run(
         trace,
         w,
         store,
         limit,
         frame,
+        selected,
         pending.clone(),
+        at,
         waves,
+        preparing,
         diagnostics,
     )
 }

@@ -692,6 +692,15 @@ impl Store {
         }
         Ok(())
     }
+    pub fn discard_scope(&self, db: &rusqlite::Connection, scope: usize) -> Result<()> {
+        let keys = self.tables.borrow().range((scope, String::new())..)
+            .take_while(|((owner, _), _)| *owner == scope)
+            .map(|(key, _)| key.clone()).collect::<Vec<_>>();
+        for key in keys {
+            self.remove_key(db, &key)?;
+        }
+        Ok(())
+    }
     pub fn new_scope(&self) -> Result<usize> {
         let next = self
             .next_scope
@@ -893,8 +902,13 @@ impl Store {
             return Ok(());
         };
         let (scope, name) = key;
-        let owners = self.slots.borrow()[name].owners.clone();
-        if owners.len() == 1 {
+        let remaining = self.slots.borrow()[name].owners.iter().find(|s| *s != scope).copied();
+        if let Some(remaining) = remaining {
+            self.modules.get(name).unwrap()
+                .set(self.tables.borrow()[&(remaining, name.clone())].clone())
+                .map_err(error)?;
+            self.slots.borrow_mut().get_mut(name).unwrap().owners.remove(scope);
+        } else {
             for undo in self.undo.write().iter_mut() {
                 let existing = !undo.created.iter().any(|(_, id)| *id == table.id)
                     || undo.removed.keys().any(|(_, n)| n == name);
@@ -908,19 +922,6 @@ impl Store {
             }
             self.modules.unregister(db, name).map_err(error)?;
             self.slots.borrow_mut().remove(name);
-        } else {
-            let remaining = *owners.iter().find(|s| *s != scope).unwrap();
-            self.modules
-                .get(name)
-                .unwrap()
-                .set(self.tables.borrow()[&(remaining, name.clone())].clone())
-                .map_err(error)?;
-            self.slots
-                .borrow_mut()
-                .get_mut(name)
-                .unwrap()
-                .owners
-                .remove(scope);
         }
         self.tables.borrow_mut().remove(key);
         for undo in self.undo.write().iter_mut() {

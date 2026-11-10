@@ -18,22 +18,13 @@ pub(super) fn build(
     frame: &mut Frame,
     w: &mut Work<'_>,
     store: &versions::Store,
+    selected: &BTreeSet<usize>,
     limit: u32,
+    preparing: bool,
 ) -> Result<Option<(Arc<Plan>, Vec<versions::Version>)>> {
-    if frame.operators.iter().any(|op| {
-        !op.phase_eligible
-            || op.sql_kernel
-            || op.opaque.is_some()
-            || op
-                .run
-                .reductions
-                .as_ref()
-                .is_none_or(|states| states.values().any(|s| !s.version_loop_eligible()))
-    }) {
-        return Ok(None);
-    }
     let _scope = store.activate(frame.scope())?;
-    for op in &mut frame.operators {
+    for &id in selected {
+        let op = &mut frame.operators[id];
         let state = op
             .run
             .reductions
@@ -62,36 +53,58 @@ pub(super) fn build(
         current.insert(name.clone(), slots[source]);
         inputs.push((slots[name], slots[source]));
     }
+    for (r, name) in &frame.input_counters {
+        let source = slots[&frame.counters[r]];
+        current.insert(name.clone(), source);
+        inputs.push((slots[name], source));
+    }
     let mut aliases = slots
         .iter()
         .map(|(name, &id)| (name.clone(), current[name], roots[id].columns()))
         .collect::<Vec<_>>();
-    let mut stages = vec![];
+    let mut stages = BTreeMap::new();
     let mut differences = BTreeMap::new();
-    let contexts = frame
-        .operators
+    let contexts = selected
         .iter()
-        .flat_map(|op| op.run.reductions.as_ref().unwrap().values().cloned())
+        .flat_map(|&id| {
+            frame.operators[id]
+                .run
+                .reductions
+                .as_ref()
+                .unwrap()
+                .values()
+                .cloned()
+        })
         .collect();
-    let mut empty_guards = vec![];
-    let mut operators = vec![];
+    let mut empty_guards = BTreeMap::new();
+    let mut operators = BTreeMap::new();
     let mut improvements = BTreeMap::<String, Vec<String>>::new();
-    for (id, op) in frame.operators.iter_mut().enumerate() {
+    for &id in selected {
+        let op = &frame.operators[id];
         let mut phase = phase::Phase::default();
         let gate = format!("{GATE}(__rr_parent.state,{id},0)");
         let first = format!("{GATE}(__rr_parent.state,{id},1)");
         let mut changed = BTreeMap::new();
         let mut seen = vec![];
+        let mut journals = vec![];
         for input in &op.run.inputs {
             // During a cold positive set loop, base relations only gain rows and
             // external facts stay frozen. Generated frontier inputs can lose rows.
-            let removable = frame
-                .inputs
-                .iter()
-                .any(|(logical, table)| table == input && logical.starts_with("delta_"));
-            let version = store.available(input);
+            let mut removable = !preparing
+                || frame
+                    .inputs
+                    .iter()
+                    .any(|(logical, table)| table == input && logical.starts_with("delta_"));
+            let journal = op.pending.get(input);
+            let version = if journal.is_none() {
+                store.available(input)
+            } else {
+                None
+            };
             let columns = if let Some(v) = &version {
                 v.columns()
+            } else if let Some(external) = store.available(input) {
+                external.columns()
             } else {
                 w.db.prepare(&format!("SELECT * FROM {} LIMIT 0", quote(input)))
                     .map_err(error)?
@@ -136,10 +149,26 @@ pub(super) fn build(
                 }
                 (sources.remove(0), sources.remove(0))
             } else {
-                (
-                    format!("SELECT {fields} FROM {} WHERE {first}", quote(input)),
-                    format!("SELECT {} WHERE 0", vec!["NULL"; columns.len()].join(",")),
-                )
+                let mut plus = format!("SELECT {fields} FROM {} WHERE {first}", quote(input));
+                let mut minus = format!("SELECT {} WHERE 0", vec!["NULL"; columns.len()].join(","));
+                removable = false;
+                if let Some(journal) = journal {
+                    journals.extend([slots[&journal.plus], slots[&journal.minus]]);
+                    // A new cache starts from the current facts. A ready cache consumes
+                    // only its own signed journal; subsequent iterations see it empty.
+                    let journal_fields = names("", columns.len());
+                    if roots[slots[&journal.plus]].len() > 0 {
+                        plus.push_str(&format!(" UNION ALL SELECT {journal_fields} FROM {} WHERE {gate} AND NOT {first}", quote(&journal.plus)));
+                    }
+                    if roots[slots[&journal.minus]].len() > 0 {
+                        minus = format!(
+                            "SELECT {journal_fields} FROM {} WHERE {gate} AND NOT {first}",
+                            quote(&journal.minus)
+                        );
+                        removable = true;
+                    }
+                }
+                (plus, minus)
             };
             changed.insert(
                 input.clone(),
@@ -165,12 +194,19 @@ pub(super) fn build(
                 }
             })
             .collect::<Vec<_>>();
-        empty_guards.push(if empty.is_empty() {
-            "0".to_owned()
+        empty_guards.insert(
+            id,
+            if empty.is_empty() {
+                "0".to_owned()
+            } else {
+                empty.join(" OR ")
+            },
+        );
+        let (_, next) = if state.version_loop_eligible() {
+            state.append_phase(w, &changed, &mut phase, false)?
         } else {
-            empty.join(" OR ")
-        });
-        let (_, next) = state.append_phase(w, &changed, &mut phase, false)?;
+            state.append_frozen_scalar_loop(w, &changed, &mut phase)?
+        };
         let improved = phase.relation(
             width,
             &format!(
@@ -193,11 +229,15 @@ pub(super) fn build(
             &mut slots,
             &mut roots,
         );
-        stages.push(compiled(phase, &slots)?);
-        operators.push(Operator {
-            seen,
-            comparison: (comparison, current[&frame.inputs[&step.output]]),
-        });
+        stages.insert(id, compiled(phase, &slots)?);
+        operators.insert(
+            id,
+            Operator {
+                seen,
+                journals,
+                comparison: (comparison, current[&frame.inputs[&step.output]]),
+            },
+        );
     }
     let mut phase = phase::Phase::default();
     for (r, spec) in &trace.relations {
@@ -214,15 +254,21 @@ pub(super) fn build(
         };
         let delta = phase.relation(spec.width, &query);
         phase.replace_all(store, &frame.frontiers[r], &delta)?;
-        phase.insert(store, &frame.published[r], &delta, true)?;
+        if !queries.is_empty() {
+            phase.insert(store, &frame.published[r], &delta, true)?;
+        }
     }
     let fold = compiled(phase, &slots)?;
     let expansion = stages
-        .iter()
+        .values()
         .chain([&fold])
         .map(|s| s.expansion)
         .sum::<usize>();
-    let arms = stages.iter().chain([&fold]).map(|s| s.arms).sum::<usize>();
+    let arms = stages
+        .values()
+        .chain([&fold])
+        .map(|s| s.arms)
+        .sum::<usize>();
     if arms > 400 || expansion > phase::Phase::EXPANSION_BUDGET {
         return Ok(None);
     }
@@ -233,7 +279,7 @@ pub(super) fn build(
         .unwrap_or(0)
         .max(
             stages
-                .iter()
+                .values()
                 .chain([&fold])
                 .map(|s| s.template.width())
                 .max()
@@ -242,11 +288,18 @@ pub(super) fn build(
     if width > 120 {
         return Ok(None);
     }
-    let bindings = |parent: &str| {
-        aliases.iter().map(|(name,id,columns)|format!("{}({}) AS NOT MATERIALIZED (SELECT {} FROM {ROWS} WHERE rr_state={parent} AND rr_slot={id})",quote(name),columns.iter().map(|c|quote(c)).collect::<Vec<_>>().join(","),names("",columns.len()))).collect::<Vec<_>>()
+    let bindings = |stage: &Stage, parent: &str| {
+        let body = stage.template.sql();
+        let words = body
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .collect::<BTreeSet<_>>();
+        // Frame and journal aliases are generated identifiers. Exclude unused aliases
+        // before SQLite expands each separately compiled stage.
+        aliases.iter().filter(|(name,_,_)| words.contains(name.as_str())).map(|(name,id,columns)|format!("{}({}) AS NOT MATERIALIZED (SELECT {} FROM {ROWS} WHERE rr_state={parent} AND rr_slot={id})",quote(name),columns.iter().map(|c|quote(c)).collect::<Vec<_>>().join(","),names("",columns.len()))).collect::<Vec<_>>()
     };
-    let mut work=stages.iter().enumerate().map(|(id,stage)|format!("__rr_work_{id} AS MATERIALIZED (SELECT CASE WHEN ({}) THEN {CLEAR}(__rr_parent.state,{id}) WHEN {GATE}(__rr_parent.state,{id},0) THEN {} ELSE __rr_parent.state END AS state)",empty_guards[id],transition(stage,id as i64,"__rr_parent.state",&bindings("__rr_parent.state")))).collect::<Vec<_>>();
-    let handles = (0..stages.len())
+    let mut work=stages.iter().map(|(&id,stage)|format!("__rr_work_{id} AS MATERIALIZED (SELECT CASE WHEN ({}) THEN {CLEAR}(__rr_parent.state,{id}) WHEN {GATE}(__rr_parent.state,{id},0) THEN {} ELSE __rr_parent.state END AS state)",empty_guards[&id],transition(stage,id as i64,"__rr_parent.state",&bindings(stage,"__rr_parent.state")))).collect::<Vec<_>>();
+    let handles = stages
+        .keys()
         .map(|id| format!("(SELECT state FROM __rr_work_{id})"))
         .collect::<Vec<_>>()
         .join(",");
@@ -260,27 +313,33 @@ pub(super) fn build(
             &fold,
             -1,
             "__rr_merged.state",
-            &bindings("__rr_merged.state")
+            &bindings(&fold, "__rr_merged.state")
         )
     );
-    let sql=format!("WITH RECURSIVE __rr_retained_states(state) AS (VALUES(0) UNION ALL SELECT {transition} FROM __rr_retained_states __rr_parent WHERE {LIVE}(__rr_parent.state)) SELECT state FROM __rr_retained_states");
+    let sql = format!(
+        "WITH RECURSIVE __rr_retained_states(state) AS (VALUES(0) UNION ALL SELECT {transition} FROM __rr_retained_states __rr_parent WHERE {LIVE}(__rr_parent.state)) SELECT state FROM __rr_retained_states"
+    );
     let frontiers = frame
         .frontiers
         .iter()
         .map(|(r, name)| (r.clone(), slots[name]))
         .collect();
-    let members = trace.relations.keys().cloned().collect();
+    let members = selected
+        .iter()
+        .map(|&id| trace.steps[id].0.output.clone())
+        .collect();
     let analysis = plan::acyclic::version_loop(&trace.steps, &members, &BTreeSet::new());
     let explain = json!({"strategy":"retained SQL version loop","executor":"sql","planned_submissions":1,
         "placement":"owner SQL connection",
-        "rule_stages":stages.iter().zip(trace.steps.iter()).enumerate().map(|(id,(stage,(step,_)))|json!({"id":id,"relation":step.output,"reads":step.reads,"output_arms":stage.arms,"dependency_expansion_cost":stage.expansion})).collect::<Vec<_>>(),
-        "conditional_rule_stages":stages.len(),"root_slots":roots.len(),"width":width,"output_arms":arms,"dependency_expansion_cost":expansion,
+        "rule_stages":stages.iter().map(|(&id,stage)| {let (step,_) = &trace.steps[id]; json!({"id":id,"relation":step.output,"reads":step.reads,"output_arms":stage.arms,"dependency_expansion_cost":stage.expansion,"frozen_scalar_inputs":frame.operators[id].run.reductions.as_ref().unwrap().values().flat_map(|s|s.reducer_inputs()).collect::<BTreeSet<_>>()})}).collect::<Vec<_>>(),
+        "sql_bytes":sql.len(),"conditional_rule_stages":stages.len(),"root_slots":roots.len(),"width":width,"output_arms":arms,"dependency_expansion_cost":expansion,
         "logical_analysis":analysis,"proof":"Positive set caches with total checked expressions; SQL maintains contexts, contributions, support counts and results; frozen gates retain every intermediate frontier",
         "storage_callbacks":"Root construction, indexed access, immutable version differences, and frontier-length scheduling only; no nested SQL",
         "input_differences":"Shared persistent-index differences, cached per current and seen root pair within each iteration",
         "empty_context_proof":"SQL tests positive input emptiness before cache work; storage-only clearing advances its unprotected cursors",
-        "cold_input_proof":"Positive set outputs only grow and external facts stay frozen; only generated frontier inputs require deletion branches",
-        "scope":"Cold initialization; warm history replay retains its existing transitions"});
+        "input_proof":if preparing {"Positive set roots only grow; generated frontiers can shrink"}else{"Version differences include both signs; external journals are consumed once"},
+        "scope":if preparing {"cold"}else{"warm"},
+        "owner_gates":trace.steps.iter().enumerate().filter(|(id,_)|!selected.contains(id)).map(|(_, (step,_))|step.output.as_str()).collect::<BTreeSet<_>>()});
     Ok(Some((
         Arc::new(Plan {
             stages,
@@ -293,6 +352,7 @@ pub(super) fn build(
             frontiers,
             steps: trace.steps.clone(),
             after: trace.after.clone(),
+            pipeline: frame.pipeline.clone(),
             limit,
             sql,
             explain,
@@ -322,5 +382,9 @@ fn transition(stage: &Stage, id: i64, parent: &str, bindings: &[String]) -> Stri
         .collect::<Vec<_>>()
         .join(",");
     let sentinel = format!("SELECT -1,{}", vec!["NULL"; width].join(","));
-    format!("(WITH __rr_retained_feed({protocol}) AS ({}) SELECT {COLLECT}({id},{parent},rr_tag,{}) FROM (SELECT * FROM __rr_retained_feed UNION ALL {sentinel}))",stage.template.sql_with(bindings),names("",width))
+    format!(
+        "(WITH __rr_retained_feed({protocol}) AS ({}) SELECT {COLLECT}({id},{parent},rr_tag,{}) FROM (SELECT * FROM __rr_retained_feed UNION ALL {sentinel}))",
+        stage.template.sql_with(bindings),
+        names("", width)
+    )
 }
