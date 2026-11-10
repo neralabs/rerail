@@ -62,6 +62,12 @@ def ident(code):
     return s
 
 
+def col(name):
+    """A helper's column for a metavariable: its name in lower case, unless that is `n`, the node column."""
+    c = mv(name).lower()
+    return c + "_mv" if c == "n" else c
+
+
 def compact(obj):
     return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 
@@ -177,6 +183,12 @@ class Program:
         self.notes = {}  # name -> comment lines printed above its .decl
         self.numeric = set()  # metavariables bound to a count
         self.symbolic = set()  # metavariables bound to a string by a transform
+        self.scope = {}  # JSON util name -> its relation, where a clause's own util takes another name
+        self.util_rels = set()  # relations utils already have
+
+    def util_rel(self, name):
+        """The relation of the util `name` where it is called or defined: the clause's own, if it has one."""
+        return self.scope.get(name, snake(name))
 
     def helper(self, base, note):
         self.helpers += 1
@@ -264,8 +276,8 @@ def lower(prog, rule, v, vs, skip=()):
             lits.append(f"{v} ~ {tick(val['context'])}{sel}")
         elif k == "matches" and isinstance(val, dict) and len(val) == 1:
             name, args = next(iter(val.items()))
-            prog.names.add(snake(name))
-            lits.append(f"{snake(name)}({v}, {', '.join(mv(a) for a in args.values())})")
+            prog.names.add(prog.util_rel(name))
+            lits.append(f"{prog.util_rel(name)}({v}, {', '.join(mv(a) for a in args.values())})")
         elif k == "notRegex":
             lits.append("!" + match(val, v))
         elif k == "pattern" and isinstance(val, str):
@@ -324,8 +336,8 @@ def lower(prog, rule, v, vs, skip=()):
         elif k == "not":
             lits.extend(negate(lower(prog, val, v, vs)))
         elif k == "matches" and isinstance(val, str):
-            prog.names.add(snake(val))
-            lits.append(f"{snake(val)}({v})")
+            prog.names.add(prog.util_rel(val))
+            lits.append(f"{prog.util_rel(val)}({v})")
         elif k == "nthChild" and isinstance(val, int):
             lits.append(f"child(_, {v}, {val - 1})")
         elif k == "resolves" and isinstance(val, dict):
@@ -605,12 +617,13 @@ def wrap(head, lits, width=88, edits=None):
 
 
 def render_util(prog, name, rule, out):
-    rel = snake(name)
+    rel = prog.util_rel(name)
+    prog.util_rels.add(rel)
     params = rule.get("params") if isinstance(rule, dict) else None
     if params:
         rule = rule["rule"] if "rule" in rule else {k: v for k, v in rule.items() if k != "params"}
         args = ", ".join(params)
-        prog.decls[rel] = f".decl {rel}(n: node, {', '.join(p.lower() + ': node' for p in params)})"
+        prog.decls[rel] = f".decl {rel}(n: node, {', '.join(col(p) + ': node' for p in params)})"
         prog.notes[rel] = [f"// {rel}(n, …): the JSON util `{name}`, called with `matches` and arguments {', '.join(params)}"]
         out.append((f"{rel}(n, {args})", lower(prog, rule, "n", Vars())))
         return
@@ -923,7 +936,9 @@ def share_metavariables(entries, helpers):
         calls = sorted(set(re.findall(r"(?<![\w.])([a-z_]\w*)\(", masked)) & set(helpers))
         rules.append({"e": e, "owner": e["head"].split("(")[0], "head": _upper_vars(e["head"].split("(", 1)[1]),
                       "up": _upper_vars(text) | set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", " ".join(e.get("edits") or []))),
-                      "binds": _binders(text), "calls": calls})
+                      "binds": _binders(text), "calls": calls,
+                      # a util's own `params` (`kw(n, N, V)`): the caller's arguments, local to the util
+                      "params": _upper_vars(e["head"].split("(", 1)[1]) if e["head"].split("(")[0] in helpers else set()})
     by_owner = {}
     for r in rules:
         by_owner.setdefault(r["owner"], []).append(r)
@@ -942,8 +957,8 @@ def share_metavariables(entries, helpers):
         fresh = {h: set() for h in helpers}
         for h in helpers:
             for r in by_owner.get(h, ()):
-                bound = r["binds"] | set().union(*[provides[g] & iface[g] for g in r["calls"]] or [set()])
-                provides[h] |= r["binds"] | set().union(*[provides[g] for g in r["calls"]] or [set()])
+                bound = r["binds"] | r["params"] | set().union(*[provides[g] & iface[g] for g in r["calls"]] or [set()])
+                provides[h] |= (r["binds"] | set().union(*[provides[g] for g in r["calls"]] or [set()])) - r["params"]
                 use = r["up"] | set().union(*[free_in[g] for g in r["calls"]] or [set()])
                 fresh[h] |= use - bound
         free_in = fresh
@@ -1006,6 +1021,7 @@ def translate(doc):
         cid = c.get("id", "clause")
         if "define" in c:
             d = c["define"]
+            prog.scope = {}
             utils = []
             for name, rule in (d.get("utils") or {}).items():
                 render_util(prog, name, rule, utils)
@@ -1028,6 +1044,10 @@ def translate(doc):
             continue
         a = forbid["ast"]
         local = []
+        # A clause's utils are its own (ast-grep scopes them to the rule): a name another clause already gave a
+        # relation gets the clause's id, so two clauses' `outer` stay two relations.
+        prog.scope = {name: (snake(name) if snake(name) not in prog.util_rels else f"{snake(name)}_{snake(cid)}")
+                      for name in (a.get("utils") or {})}
         for name, rule in (a.get("utils") or {}).items():
             render_util(prog, name, rule, local)
         cols = violation_columns(viol)
@@ -1085,7 +1105,7 @@ def translate(doc):
     for name, ps in params.items():
         if ps and name in prog.decls:
             prog.decls[name] = prog.decls[name][:-1] + "".join(
-                f", {p.lower()}: {'number' if p in prog.numeric else 'symbol' if p in prog.symbolic else 'loc'}"
+                f", {col(p)}: {'number' if p in prog.numeric else 'symbol' if p in prog.symbolic else 'loc'}"
                 for p in ps) + ")"
             ins = [p for p in ps if p in share_metavariables.inputs[name]]
             outs = [p for p in ps if p not in ins]

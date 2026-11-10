@@ -64,7 +64,8 @@ def anchor_captures(text, base):
 # Helper relations a rule declares are its own: prefixed with the rule's code, so no two programs (nor a program and
 # a library) share one. Every mention outside string and pattern literals is renamed: `rel(`, and `rel` passed as a
 # kind set. `.violation` relations keep their names (they are the findings).
-LIT = re.compile(r'"(?:[^"\\]|\\.)*"|`[^`]*`|//[^\n]*')
+# Directive names (`.scope`, `.policy`, `.decl`, …) at a line start are never renamed either.
+LIT = re.compile(r'"(?:[^"\\]|\\.)*"|`[^`]*`|//[^\n]*|(?m:^\.\w+)')
 def rename_outside_literals(text, names, tag):
     pat = re.compile(r"(?<![\w$])(" + "|".join(sorted(map(re.escape, names), key=len, reverse=True)) + r")(?!\w)")
     out, pos = [], 0
@@ -127,19 +128,61 @@ def lower_options(text, base):
 
 # A pattern that is one metavariable, `n ~ \`$X\``, matches every node and names it: `X = n`.
 def lone_metavariables(text, base):
-    text = re.sub(r"(?<![\w$])([a-z][a-z0-9_]*) ~ `\$_`", r"\1 = \1", text)
-    text = re.sub(r"(?<![\w$])([a-z][a-z0-9_]*) ~ `\$([A-Z][A-Z0-9_]*)`", r"\2 = \1", text)
+    # The pattern grounded the node; `node(…)` keeps it grounded where nothing else in the body does.
+    text = re.sub(r"(?<![\w$])([a-z][a-z0-9_]*) ~ `\$_`", r"node(_, \1, _, _, _)", text)
+    text = re.sub(r"(?<![\w$])([a-z][a-z0-9_]*) ~ `\$([A-Z][A-Z0-9_]*)`", r"node(_, \1, _, _, _), \2 = \1", text)
     return text
 
 # Main compares metavariables within one file. A body that joins two nodes by equal text, `text(A, t), text(B, t)`,
 # gets `@doc(A) = @doc(B)`: true in main, and it keeps the relation in the file-local part.
+# A pair with a node local to an aggregate `{ … }` gets its constraint inside that aggregate, where the node is bound.
+TEXT_USE = re.compile(r"(?<![\w$])text\((\w+), (\w+)\)")
+
+
+def aggregate_spans(body):
+    """(start, end) of each innermost-first `{ … }` aggregate body, outside string and pattern literals."""
+    spans, stack, q = [], [], None
+    for i, ch in enumerate(body):
+        if q:
+            if ch == q and body[i - 1] != "\\":
+                q = None
+            continue
+        if ch in "\"`":
+            q = ch
+        elif ch == "{":
+            stack.append(i)
+        elif ch == "}" and stack:
+            spans.append((stack.pop(), i))
+    return spans
+
+
 def same_document_joins(text, base):
     def same_doc(m):
         body = m.group(0)
-        uses = re.findall(r"(?<![\w$])text\((\w+), (\w+)\)", body)
+        spans = aggregate_spans(body)
+
+        def scope(pos):     # the innermost aggregate holding pos, or None for the rule body
+            inner = [(s, e) for s, e in spans if s < pos < e]
+            return min(inner, key=lambda x: x[1] - x[0]) if inner else None
         by_t = {}
-        for node, t in uses: by_t.setdefault(t, []).append(node)
-        extra = [f"@doc({ns[0]}) = @doc({x})" for t, ns in by_t.items() for x in ns[1:] if x != ns[0]]
+        for u in TEXT_USE.finditer(body):
+            by_t.setdefault(u.group(2), []).append((u.group(1), scope(u.start())))
+        # one text variable's uses lie in nested scopes (it is bound in the outermost one): each pair's constraint
+        # goes where the inner of its two nodes is bound
+        adds = {}
+        for t, uses in by_t.items():
+            first = uses[0][0]
+            for node, sc in uses[1:]:
+                if node == first:
+                    continue
+                s0 = uses[0][1]
+                deeper = sc if sc is not None and (s0 is None or sc[1] - sc[0] < s0[1] - s0[0]) else s0
+                c = f"@doc({first}) = @doc({node})"
+                if c not in adds.setdefault(deeper, []):
+                    adds[deeper].append(c)
+        for sc in sorted((k for k in adds if k is not None), key=lambda x: -x[1]):
+            body = body[:sc[1]].rstrip() + ", " + ", ".join(adds[sc]) + " " + body[sc[1]:]
+        extra = adds.get(None, [])
         return body[:-1] + (", " + ", ".join(extra) if extra else "") + "."
     text = re.sub(r"(?ms)^[A-Za-z_]\w*\([^\n]*?\) :-.*?\.(?=\s*$)", same_doc, text)
     return text
