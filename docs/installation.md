@@ -214,8 +214,9 @@ In short: macOS, glibc Linux and Windows 11 on arm64 or x64, with Node.js 24+, f
 - **Coding agents**, each found by its config folder in your home folder (`~/.claude`, `~/.codex`, `~/.cursor`,
   `~/.omp/agent`, `~/.pi/agent`; on Windows, the profile folder, `USERPROFILE`). Run `rerail setup` again to connect
   one installed later.
-  - Claude Code: the CLI, the VS Code extension (its panel shows no status line) and the JetBrains plugin; 2.1.139 or
-    newer on Windows. A steer found as a turn ends reaches the agent from 2.1.163; older versions show its line only.
+  - Claude Code 2.1.196 or newer: the CLI, the VS Code extension (its panel shows no status line) and the JetBrains
+    plugin. Older versions do not tell hooks which prompt they belong to, so Rerail records none of their prompts or
+    turn ends and steers nothing as a turn ends.
   - Codex CLI; trust the hook once with `/hooks`.
   - Cursor's IDE agent and its CLI (`cursor-agent`).
   - OMP and Pi.

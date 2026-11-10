@@ -32,7 +32,10 @@ const CLAUDE_EVENTS: EventTable = {
 
 /**
  * Events whose `additionalContext` reaches the model beside a tool call, at the session's start, or at `Stop`, where
- * Claude Code (2.1.163 and newer) shows it as `Stop hook feedback` and continues the turn so the agent can act on it.
+ * Claude Code shows it as `Stop hook feedback` and continues the turn so the agent can act on it. Claude Code takes
+ * `Stop` context from 2.1.163 (2.1.162 reports a Stop hook error and drops it), and its `Stop` input carries the
+ * `prompt_id` the turn end needs only from 2.1.196, so a `Stop` this hook answers always reaches the agent; an older
+ * one fails before it touches the held steers or records a receipt.
  * `UserPromptSubmit`'s lands inside the person's own turn, so a steer held then waits for the next tool call or `Stop`.
  */
 const CONTEXT_EVENTS: EventTable = {

@@ -203,6 +203,25 @@ describe("Claude Code one-shot hook", () => {
     expect(receipts).toEqual([["a"]]);
   });
 
+  it("leaves held steers held and counts nothing at a Stop without prompt_id, as Claude Code before 2.1.196 sends it", async () => {
+    const root = await temporaryDirectory();
+    const common = { session_id: "claude-session", cwd: root };
+    const { receipts, serve } = receiptServer(join(root, "sessions"));
+    await serve(
+      { ...common, hook_event_name: "MessageDisplay", message_id: "m1", index: "0", delta: "text", final: true },
+      scriptedLoop({ "assistant-delta": [delivery("steer", editSteer("a", "Fix a."), ["a"])] }),
+    );
+
+    // Claude Code drops Stop context before 2.1.163 and sends no prompt_id before 2.1.196: such a Stop must not
+    // spend the held steer on an agent that cannot be told.
+    expect(await serve({ ...common, hook_event_name: "Stop", stop_hook_active: false }, scriptedLoop({}))).toEqual({});
+    expect(receipts).toEqual([]);
+
+    expect(await serve({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-2", tool_input: {} }, scriptedLoop({})))
+      .toEqual({ systemMessage: "◆ R E R A I L · a  steered", hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: editSteer("a", "Fix a.") } });
+    expect(receipts).toEqual([["a"]]);
+  });
+
   it("holds a steer found at the person's prompt, line and all, for the next tool call", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
