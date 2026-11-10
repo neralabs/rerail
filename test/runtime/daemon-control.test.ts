@@ -39,6 +39,7 @@ vi.mock("../../src/engine/native/native.js", async () => {
 });
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
 import {
+  type DaemonMachine,
   type DaemonState,
   autostartDaemon,
   browserOpener,
@@ -667,6 +668,20 @@ describe("a state file Windows left behind", () => {
   });
 });
 
+/** A Windows machine with no engine pipe, where a pid is live while `alive` says so. */
+function windowsMachine(alive: (pid: number) => boolean = () => true): DaemonMachine {
+  return {
+    platform: "win32",
+    kill: (pid) => {
+      if (!alive(pid)) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      return true;
+    },
+    pipes: () => [],
+    holdsCapability: async () => false,
+    forgetMainInstanceHolder: () => undefined,
+  };
+}
+
 describe("launching the daemon", () => {
   let home: string;
 
@@ -690,7 +705,7 @@ describe("launching the daemon", () => {
       asked.push(pid);
       return codes.shift() ?? null;
     };
-    const daemon = launchDetached({ args: ["daemon.js"], cwd: undefined, env: {}, logFile: join(home, DAEMON_LOG_FILE) }, "win32");
+    const daemon = launchDetached({ args: ["daemon.js"], cwd: undefined, env: {}, logFile: join(home, DAEMON_LOG_FILE) }, windowsMachine());
     expect(daemon.exitReason()).toBeUndefined();
     expect(daemon.exitReason()).toBe("exited with code 3");
     expect(asked).toEqual([process.pid, process.pid]);
@@ -698,16 +713,17 @@ describe("launching the daemon", () => {
 
   it("goes through the native spawn on Windows, whose hidden console the daemon's Git and npm share, never Node's detached spawn", () => {
     const launched: Array<{ args: string[]; cwd: string | null; logPath: string }> = [];
+    // This process's pid, which the machine reads as gone: the exit is the machine's answer, not this OS's.
     native.spawnDetached = (_program, args, cwd, _env, logPath) => {
       launched.push({ args, cwd, logPath });
-      return DEAD_PID;
+      return process.pid;
     };
     opener.intercept = () => {
       throw new Error("Node's spawn must not start a detached process on Windows");
     };
     const log = join(home, DAEMON_LOG_FILE);
-    const daemon = launchDetached({ args: ["cli.js", "daemon", "start"], cwd: undefined, env: { A: "1", B: undefined }, logFile: log }, "win32");
-    expect(daemon.pid).toBe(DEAD_PID);
+    const daemon = launchDetached({ args: ["cli.js", "daemon", "start"], cwd: undefined, env: { A: "1", B: undefined }, logFile: log }, windowsMachine(pid => pid !== process.pid));
+    expect(daemon.pid).toBe(process.pid);
     expect(daemon.exitReason()).toBe("exited");
     expect(launched).toEqual([{ args: ["cli.js", "daemon", "start"], cwd: null, logPath: log }]);
   });
@@ -762,7 +778,7 @@ describe("autostartDaemon", () => {
     };
     try {
       // Once per process: this is the only call this file makes.
-      autostartDaemon("win32");
+      autostartDaemon(windowsMachine());
       expect(detachedByNode).toEqual([]);
       expect(spawned).toHaveLength(1);
       // Windows holds a process's current folder open: a launcher started in the session's folder kept that checkout

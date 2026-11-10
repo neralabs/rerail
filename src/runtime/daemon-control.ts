@@ -765,8 +765,8 @@ export interface DetachedLaunch {
  * Why a process the native spawn started is gone, or undefined while it runs: its exit code, from the handle the native
  * module kept. A binary built before it had no such handle, and there only a pid that no process holds says so.
  */
-function detachedExitReason(native: Pick<NativeBinding, "detachedExitCode">, pid: number): string | undefined {
-  if (native.detachedExitCode === undefined) return processAlive(pid) ? undefined : "exited";
+function detachedExitReason(native: Pick<NativeBinding, "detachedExitCode">, pid: number, kill: ProcessSignal): string | undefined {
+  if (native.detachedExitCode === undefined) return processAlive(pid, kill) ? undefined : "exited";
   const code = native.detachedExitCode(pid);
   return code === null ? undefined : `exited with code ${code}`;
 }
@@ -780,18 +780,20 @@ function detachedExitReason(native: Pick<NativeBinding, "detachedExitCode">, pid
  * as `just` leaves its own stdout inheritable, so a daemon started below it held the caller's output pipe open and a
  * captured `rerail setup | tee` never finished. The native spawn passes only NUL stdin and the log, and keeps the
  * child's handle, which says when it exits and with what code even after Windows gives its pid to another process.
+ * The Node binary and the pid checks are `machine`'s, as in every other entry point here.
  */
-export function launchDetached(launch: DetachedLaunch, platform: NodeJS.Platform = process.platform): LaunchedDaemon {
-  if (platform === "win32") {
+export function launchDetached(launch: DetachedLaunch, machine: DaemonMachine = THIS_MACHINE): LaunchedDaemon {
+  const node = nodeExecutable(machine.platform);
+  if (machine.platform === "win32") {
     const definedEnv = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
     const native = loadNativeBinding();
-    const pid = native.spawnDetached(nodeExecutable(), [...launch.args], launch.cwd ?? null, definedEnv, launch.logFile);
-    return { pid, exitReason: () => detachedExitReason(native, pid) };
+    const pid = native.spawnDetached(node, [...launch.args], launch.cwd ?? null, definedEnv, launch.logFile);
+    return { pid, exitReason: () => detachedExitReason(native, pid, machine.kill) };
   }
   const log = openSync(launch.logFile, "a", 0o600);
   let child;
   try {
-    child = spawn(nodeExecutable(), [...launch.args], { detached: true, stdio: ["ignore", log, log], cwd: launch.cwd, env: launch.env });
+    child = spawn(node, [...launch.args], { detached: true, stdio: ["ignore", log, log], cwd: launch.cwd, env: launch.env });
   } finally {
     closeSync(log);
   }
@@ -869,7 +871,7 @@ let autostartAttempted = false;
  * daemon serves every repository; sessions in any repository reuse it for their
  * engine service and status.
  */
-export function autostartDaemon(platform: NodeJS.Platform = process.platform): void {
+export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
   if (autostartAttempted) return;
   autostartAttempted = true;
   const setting = process.env.RERAIL_AUTOSTART;
@@ -882,7 +884,7 @@ export function autostartDaemon(platform: NodeJS.Platform = process.platform): v
       cwd: home,
       env: process.env,
       logFile: join(home, DAEMON_LOG_FILE),
-    }, platform);
+    }, machine);
   } catch {
     // Autostart is a convenience; the session must never notice it failing.
   }
