@@ -1,6 +1,18 @@
 use super::*;
 
 #[test]
+fn byte_ranges_preserve_exact_unicode_source_segments() {
+    let source="é😀ctx.backend_type == 'sqlite'";
+    assert_eq!(functions::byte_slice(source,6,source.len() as i64).as_deref(),Some("ctx.backend_type == 'sqlite'"));
+    assert_eq!(functions::byte_slice(source,0,2).as_deref(),Some("é"));
+    assert_eq!(functions::byte_slice(source,2,6).as_deref(),Some("😀"));
+    assert_eq!(functions::byte_slice(source,6,6).as_deref(),Some(""));
+    for (a,b) in [(-1,2),(1,2),(2,5),(6,2),(0,999)] {
+        assert_eq!(functions::byte_slice(source,a,b),None,"invalid byte range {a}..{b}");
+    }
+}
+
+#[test]
 fn literal_tests() {
     assert!(test("prefix", "_private", "_"));
     assert!(!test("prefix", "public", "_"));
