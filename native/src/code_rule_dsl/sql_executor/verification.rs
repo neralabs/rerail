@@ -99,6 +99,10 @@ impl CodeRuleSqlExecutor {
                     // compiler introduces this input without a user declaration.
                     // verification_cell preserves the negative root sentinel.
                     Some("node")
+                } else if name == "node_order" {
+                    // Both columns pack a store-local document atom in their high word.
+                    // The low word of k is a preorder index, independent of node numbering.
+                    Some(if column == 0 { "node" } else { "node_order" })
                 } else if matches!((name.as_str(), column), ("node", 2) | ("kind", 1)) {
                     Some("kind")
                 } else if (name.as_str(), column) == ("field", 1) {
@@ -244,6 +248,7 @@ impl CodeRuleSqlExecutor {
         Ok(match ty {
             "sym" | "symbol" => json!({"symbol":atom(value)?}),
             "document" => json!({"document":atom(value)?}),
+            "node_order" => json!({"nodeOrder":[atom(value >> 32)?,(value as u32).to_string()]}),
             "node" | "loc" if value >= 0 => {
                 json!({"node":[atom(value >> 32)?,(value as u32).to_string()]})
             }
@@ -320,7 +325,12 @@ mod tests {
         assert_ne!(one.verification_rows("SELECT n FROM tape").unwrap(), two.verification_rows("SELECT n FROM tape").unwrap());
         assert_eq!(one.verification_cell("node", Some(-1)).unwrap(), json!("-1"));
         assert_eq!(&one.verification_types()["tape"][..2], ["node", "node"]);
-        for relation in ["doc", "seen", "names", "kind", "kinds", "tape"] {
+        assert_ne!(
+            one.verification_rows("SELECT k FROM node_order").unwrap(),
+            two.verification_rows("SELECT k FROM node_order").unwrap(),
+        );
+        assert_eq!(one.verification_types()["node_order"], ["node", "node_order"]);
+        for relation in ["doc", "seen", "names", "kind", "kinds", "tape", "node_order"] {
             let read = |e: &CodeRuleSqlExecutor| {
                 let types = e.verification_types();
                 let mut rows = e

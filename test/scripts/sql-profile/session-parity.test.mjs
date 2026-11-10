@@ -153,10 +153,10 @@ test("snapshot and file publication compare semantic cells and complete document
   f.request=Buffer.from(JSON.stringify(request));
   for (const observed of [f.actual,f.oracle]) {
     observed.requestSha256=sha256(f.request);
-    observed.inputs={native:["n","s"]};
+    observed.inputs={native:["n","s","k"]};
     for (const [id,check] of observed.checks.entries()) {
       check.documents=id<2?[a,b]:[a,c];
-      check.state.native={columns:["n","s"],rows:[[{node:["a.py","0"]},{symbol:"x"}]]};
+      check.state.native={columns:["n","s","k"],rows:[[{node:["a.py","0"]},{symbol:"x"},{nodeOrder:["a.py","1"]}]]};
     }
     observed.checks[1].outcome="execution-limit";
   }

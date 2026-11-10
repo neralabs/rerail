@@ -13,11 +13,12 @@ function normalize(value) {
   return value;
 }
 function cell(value) {
-  return value === null || typeof value === "string" && /^-?\d+$/.test(value)
-    || value && typeof value === "object" && !Array.isArray(value)
-      && (Object.keys(value).length === 1 && (typeof value.symbol === "string" || typeof value.document === "string")
-        || Object.keys(value).length === 1 && Array.isArray(value.node) && value.node.length === 2
-          && typeof value.node[0] === "string" && typeof value.node[1] === "string" && /^\d+$/.test(value.node[1]));
+  if (value === null || typeof value === "string" && /^-?\d+$/.test(value)) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 1) return false;
+  if (typeof value.symbol === "string" || typeof value.document === "string") return true;
+  const reference = value.node ?? value.nodeOrder;
+  return Array.isArray(reference) && reference.length === 2
+    && typeof reference[0] === "string" && typeof reference[1] === "string" && /^\d+$/.test(reference[1]);
 }
 function documents(value) {
   if (!Array.isArray(value) || value.some(f => !f || typeof f.path !== "string" || typeof f.language !== "string" || typeof f.source !== "string")) throw new Error("Missing complete document state");

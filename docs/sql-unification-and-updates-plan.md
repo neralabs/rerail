@@ -3446,3 +3446,38 @@ Required next work:
    Independent queryPlan groups use the shared pool; this retained loop still uses its owner connection.
 4. Admit owner control, publication, worker groups, failures, and verification against one complete-session statement allowance.
 5. Reduce version-transport and CTE costs, then repeat the original complete corpus sessions in debug builds.
+
+### Mixed and warm SQL lowering with session admission (2026-11-10)
+
+The integration merge brings in the updated node and span ID layout. Session parity now decodes both columns of `node_order`.
+Its preorder key contains a store-local document atom and a document-relative index. The verifier compares the path and index across stores.
+
+The SQL version loop can resume from a warm replay prefix. It reads signed input differences and consumes pending external journals once.
+It installs a new suffix after SQL succeeds and retires obsolete scopes within the existing transaction.
+Long checked portions of mixed programs use this loop while preserving the original dependency gates.
+A scalar consumer can participate when its ready summary has a frozen source and an empty journal.
+An opaque producer still runs on the owner and receives the preceding wave's published dependencies.
+
+Eligible checked phases now send independent read groups to the shared SQL planner. The owner publishes their roots together.
+Explain shows the worker plan and counters, the recursive segment and its owner gates, and the remaining session credits.
+The session limit covers statements from setup through verification. Worker groups reserve credits before dispatch.
+The owner reserves recovery credits and checks cleanup costs before reset or rebinding can discard existing results.
+
+Debug verification used independent cold runs for all seven checkpoints of each document or corpus session.
+The table counts SQLite statement starts through the last verification query. The original three corpus cases also ran with a cap of 100.
+
+| Session | Statements through verification | Result under 100 |
+| --- | ---: | --- |
+| 80-node mutual recursion, cold run and warm deletion | 82 | Completed |
+| 32-file scalar snapshot and file-change replay | 58 | Completed |
+| CPython workload, 43 relations | 128 uncapped | Rejected deletion and recovery at 99 |
+| One-file workload with an opaque producer, 44 relations | 129 uncapped | Rejected deletion and recovery at 97 |
+| CPython call analysis, 100 relations | 416 uncapped | Interrupted initial run at 96 |
+
+The two capped sessions that reached deletion preserved the previous state after both rejections.
+The uncapped corpus sessions matched the cold oracle, including call-analysis preorder keys decoded through each store's atom table.
+These runs establish parity and admission behavior. CPU speedup remains unmeasured, and the larger corpus sessions still exceed 100 statements.
+
+The next work is to lower lattice feedback and scalar summaries that change during feedback, then reduce repeated preparation of large checked graphs.
+The version loop still requires total checked expressions, set results, and a bounded statement. Generated recursive CTEs retain their existing kernels.
+The remaining corpus submissions need a smaller execution plan before the cap can admit the full replay.
