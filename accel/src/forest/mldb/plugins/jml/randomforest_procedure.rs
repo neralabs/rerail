@@ -4,9 +4,11 @@
 //! (see the LICENSE at `accel/src/forest/mldb/`).
 //!
 //! Trains a random forest binary classifier: the training rows (`training_data`: the rows kept, their labels and
-//! weights), then per feature vector sampling a bag (`bag`: a bootstrap of the rows, in 32 stretches, reweighted
-//! and compacted) and per feature sampling a tree over ceil(sqrt(n)) of the active features, all of a bag's trees
-//! trained together (`trainMultipleSamplings`, on the device); the forest weighs every tree the same.
+//! weights), then per feature vector sampling a bag (`bag`: in 32 stretches of the rows, a proportion
+//! `featureVectorSamplingProp` of each kept by a seeded shuffle, and a bootstrap of the stretch weighting them,
+//! reweighted and compacted) and per feature sampling a tree over the active features each kept with probability
+//! `featureSamplingProp`, all of a bag's trees trained together (`trainMultipleSamplings`, on the device). Bags are
+//! trained in parallel, up to 8 at once as upstream (`maxBagsAtOnce`); the forest weighs every tree the same.
 //!
 //! Still in the .cc: the procedure's configuration description and registration, the binding of its SQL (the
 //! label, weight and where expressions, the feature space built from the dataset), and the saving of the
@@ -20,12 +22,14 @@
 //!   so the last `numRows % 32` rows were in no bag);
 //! - the bag's weights are scaled to total 1 (upstream divided by the total count, so the weights totalled the mean
 //!   input weight: past 2, W32 overflowed);
-//! - the counts are 32 bit (upstream's 8 bit counts could wrap).
-//! As upstream, `featureVectorSamplingProp` and `featureSamplingProp` are not used (the bag is a bootstrap of all
-//! the rows; a tree's features are ceil(sqrt(n))), and the shuffle of the rows in training (all of them,
-//! `trainprop` = 1) is not brought over, as it has no effect. Bags are trained one after the other (upstream: 8 at
-//! once on CPU threads), each bag's trees together on the device. The RNG is MT19937 as upstream; the shuffles are
-//! Fisher-Yates over `rng() % n`, as `std::shuffle` is not the same across C++ libraries.
+//! - the counts are 32 bit (upstream's 8 bit counts could wrap);
+//! - the two proportions are used: upstream kept every row (`trainprop = 1`, the proportion unread) and took
+//!   ceil(sqrt(n)) features per tree (the proportion's branch was `if (false)`); its sqrt rule is not kept;
+//! - the bootstrap's generator is seeded apart from the shuffle's (upstream seeded both with the same number, so the
+//!   draws were the shuffle's), and the feature samplings' seeds are distinct (upstream's `bag + 371 + i` gives bag
+//!   b's tree i + 1 and bag b + 1's tree i the same features once the proportion's branch runs).
+//! The RNG is MT19937 as upstream; the shuffles are Fisher-Yates over `rng() % n` and the uniform draws `rng() /
+//! 2^32`, as `std::shuffle` and `uniform_real_distribution` are not the same across C++ libraries.
 
 use crate::forest::dataset_feature_space::DatasetFeatureSpace;
 use crate::forest::memory_region::MemorySerializer;
@@ -39,11 +43,11 @@ pub struct RandomForestProcedureConfig {
     /// Number of samplings of feature vectors (bags). The total number of trees is
     /// `feature_vector_samplings * feature_samplings`.
     pub feature_vector_samplings: usize,
-    /// Proportion of feature vectors to select in each sample (unused, as upstream).
+    /// Proportion of feature vectors (rows) to select in each sample, before the bootstrap.
     pub feature_vector_sampling_prop: f32,
     /// Number of samplings of features (trees per bag).
     pub feature_samplings: usize,
-    /// Proportion of features to select in each sample (unused, as upstream).
+    /// Proportion of features to select in each sample (each active feature kept with this probability).
     pub feature_sampling_prop: f32,
     /// Maximum depth of the trees.
     pub max_depth: i32,
@@ -101,6 +105,11 @@ impl Mt19937 {
         self.next_u32() as usize % val
     }
 
+    /// A uniform draw in [0, 1): `rng() / 2^32`.
+    pub fn uniform01(&mut self) -> f64 {
+        self.next_u32() as f64 / 4294967296.0
+    }
+
     /// Fisher-Yates over `below`.
     pub fn shuffle<T>(&mut self, v: &mut [T]) {
         for i in (1..v.len()).rev() {
@@ -141,13 +150,17 @@ pub fn training_data(fs: Arc<DatasetFeatureSpace>, labels: &[f32], wheres: Optio
     Ok(all_data)
 }
 
-/// Bag `bag`'s count per row: a bootstrap in up to 32 stretches of the rows, each its own (seeded) draw of as many
-/// rows as it has, or 1 each without sampling.
+/// Bag `bag`'s count per row: in up to 32 stretches of the rows, a seeded shuffle keeps the first
+/// `featureVectorSamplingProp` of each stretch, and a bootstrap (as many draws as the stretch has rows, from a
+/// second generator) weighs them; a row's count is its draws if it is kept. Without sampling every count is 1.
 pub fn bag_counts(num_rows: usize, bag: usize, config: &RandomForestProcedureConfig) -> Vec<u32> {
     let num_partitions = num_rows.min(32);
     let mut counts = vec![0u32; num_rows];
+    if num_partitions == 0 {
+        return counts;
+    }
     use rayon::prelude::*;
-    let per = num_rows / num_partitions.max(1);
+    let per = num_rows / num_partitions;
     let stretches: Vec<(usize, usize)> = (0..num_partitions).map(|i| (per * i, if i == num_partitions - 1 { num_rows } else { per * (i + 1) })).collect();
     let parts: Vec<Vec<u32>> = stretches.par_iter().enumerate().map(|(i, &(first, last))| {
         let n = last - first;
@@ -155,12 +168,20 @@ pub fn bag_counts(num_rows: usize, bag: usize, config: &RandomForestProcedureCon
             return vec![1; n];
         }
         let seed = 245 + (bag * num_partitions) as u32 + i as u32;
-        let mut myrng = random_forest_rng(seed);
+        let mut in_training = vec![false; n];
+        let mut order: Vec<usize> = (0..n).collect();
+        Mt19937::new(seed).shuffle(&mut order);
+        // As upstream's `i < numRowsInPartition * trainprop`: ceil(n * prop) rows.
+        let kept = ((n as f64 * config.feature_vector_sampling_prop as f64).ceil() as usize).min(n);
+        for &k in &order[..kept] {
+            in_training[k] = true;
+        }
+        let mut myrng = random_forest_rng(seed ^ 0x9E37_79B9);
         let mut w = vec![0u32; n];
         for _ in 0..n {
             w[myrng.below(n)] += 1;
         }
-        w
+        w.iter().zip(&in_training).map(|(&c, &t)| if t { c } else { 0 }).collect()
     }).collect();
     for ((first, _), part) in stretches.iter().zip(parts) {
         counts[*first..*first + part.len()].copy_from_slice(&part);
@@ -169,7 +190,7 @@ pub fn bag_counts(num_rows: usize, bag: usize, config: &RandomForestProcedureCon
 }
 
 /// Bag `bag`: its rows (`reweightAndCompact`, the weights totalling 1) and the active features of each of its
-/// trees (ceil(sqrt(n)) of the active features, from successive seeded shuffles).
+/// trees (each active feature with probability `featureSamplingProp`; at least one, in up to 10 attempts).
 pub fn bag(all_data: &PartitionData, bag: usize, config: &RandomForestProcedureConfig) -> Result<(PartitionData, Vec<Vec<i32>>), String> {
     let counts = bag_counts(all_data.rows.row_count(), bag, config);
     let total: f64 = counts.iter().enumerate().map(|(i, &c)| all_data.rows.get_weight(i) as f64 * c as f64).sum();
@@ -178,16 +199,25 @@ pub fn bag(all_data: &PartitionData, bag: usize, config: &RandomForestProcedureC
     }
     let mut s = MemorySerializer;
     let data = all_data.reweight_and_compact(&counts, 1.0 / total, &mut s)?;
-    let mut active_feature_list: Vec<i32> = data.features.iter().enumerate().filter(|(_, f)| f.active).map(|(i, _)| i as i32).collect();
+    let active: Vec<i32> = data.features.iter().enumerate().filter(|(_, f)| f.active).map(|(i, _)| i as i32).collect();
+    if active.is_empty() {
+        return Err("no active features".into());
+    }
     let mut sampling_active_features = Vec::with_capacity(config.feature_samplings);
     for i in 0..config.feature_samplings {
-        let mut rng = Mt19937::new((bag + 371 + i) as u32);
-        let num_features_required = ((active_feature_list.len() as f64).sqrt().ceil() as usize).min(active_feature_list.len());
-        if num_features_required == 0 {
-            return Err("no active features".into());
+        let mut rng = Mt19937::new((371 + bag * config.feature_samplings + i) as u32);
+        let mut active_features = Vec::new();
+        // Cull the features according to the sampling proportion.
+        for attempt in 0.. {
+            active_features = active.iter().copied().filter(|_| rng.uniform01() <= config.feature_sampling_prop as f64).collect();
+            if !active_features.is_empty() {
+                break;
+            }
+            if attempt == 9 {
+                return Err("Feature partition had no features; consider increasing featureSamplingProp".into());
+            }
         }
-        rng.shuffle(&mut active_feature_list);
-        sampling_active_features.push(active_feature_list[..num_features_required].to_vec());
+        sampling_active_features.push(active_features);
     }
     Ok((data, sampling_active_features))
 }
@@ -199,18 +229,26 @@ pub struct Forest {
     pub weights: Vec<f32>,
 }
 
-/// Trains the forest over the training rows (`training_data`).
+/// Trains the forest over the training rows (`training_data`): the bags in parallel, up to 8 at once.
 pub fn train_forest(all_data: &PartitionData, config: &RandomForestProcedureConfig) -> Result<Forest, String> {
+    const MAX_BAGS_AT_ONCE: usize = 8;
     let total = config.feature_vector_samplings * config.feature_samplings;
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(config.feature_vector_samplings.clamp(1, MAX_BAGS_AT_ONCE)).build().map_err(|e| e.to_string())?;
+    use rayon::prelude::*;
+    let bags: Vec<Result<Vec<Tree>, String>> = pool.install(|| {
+        (0..config.feature_vector_samplings).into_par_iter().map(|b| {
+            let debug_name = format!("bag {b}");
+            let (data, samplings) = bag(all_data, b, config).map_err(|e| format!("error training {debug_name}: {e}"))?;
+            let trees = data.train_multiple_samplings(b as i32, &debug_name, config.max_depth, &samplings, config.training_scheme).map_err(|e| format!("error training {debug_name}: {e}"))?;
+            if trees.len() != samplings.len() {
+                return Err(format!("{debug_name}: {} trees for {} samplings", trees.len(), samplings.len()));
+            }
+            Ok(trees)
+        }).collect()
+    });
     let mut trees = Vec::with_capacity(total);
-    for b in 0..config.feature_vector_samplings {
-        let debug_name = format!("bag {b}");
-        let (data, samplings) = bag(all_data, b, config).map_err(|e| format!("error training {debug_name}: {e}"))?;
-        let bag_trees = data.train_multiple_samplings(b as i32, &debug_name, config.max_depth, &samplings, config.training_scheme).map_err(|e| format!("error training {debug_name}: {e}"))?;
-        if bag_trees.len() != samplings.len() {
-            return Err(format!("{debug_name}: {} trees for {} samplings", bag_trees.len(), samplings.len()));
-        }
-        trees.extend(bag_trees);
+    for b in bags {
+        trees.extend(b?);
     }
     Ok(Forest { fs: all_data.fs.clone(), weights: vec![1.0 / total as f32; total], trees })
 }
@@ -244,14 +282,16 @@ mod tests {
 
     /// Every bag row is the dataset row it came from (its label, its weight times its count, scaled, and its
     /// buckets), with rows left out of the training data: upstream's rows read other rows' buckets past the first
-    /// row left out. Every row of the dataset is in some bag's draw (upstream never drew the last `n % 32`).
+    /// row left out. With every row kept, the last rows are in some bag's draw (upstream never drew the last
+    /// `n % 32`); with a proportion, a bag draws about that proportion times 1 - 1/e of the rows; each tree has
+    /// some of the features.
     #[test]
     fn bag_rows_are_their_dataset_rows() {
         let n = 2003;
         let (all, labels, wheres, weights) = training(n, &|i| 1.0 + (i % 7) as f32 * 0.37);
         let kept: Vec<usize> = (0..n as usize).filter(|&i| !labels[i].is_nan() && wheres[i] != 0.0 && weights[i] > 0.0).collect();
         assert_eq!(all.rows.row_count(), kept.len());
-        let config = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 4, ..Default::default() };
+        let config = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 4, feature_vector_sampling_prop: 1.0, ..Default::default() };
         let mut drawn = vec![false; kept.len()];
         for b in 0..3 {
             let counts = bag_counts(kept.len(), b, &config);
@@ -279,10 +319,17 @@ mod tests {
             assert_eq!(j, data.rows.row_count());
             assert_eq!(samplings.len(), 4);
             for s in &samplings {
-                assert_eq!(s.len(), (data.features.len() as f64).sqrt().ceil() as usize);
+                assert!(!s.is_empty() && s.len() < data.features.len(), "{s:?}");
             }
         }
         assert!(drawn[kept.len() - 5..].iter().any(|&d| d), "the last rows are drawn");
+        let config = RandomForestProcedureConfig { feature_vector_sampling_prop: 0.3, ..config };
+        let counts = bag_counts(kept.len(), 0, &config);
+        let share = counts.iter().filter(|&&c| c > 0).count() as f64 / kept.len() as f64;
+        assert!((share - 0.3 * (1.0 - (-1f64).exp())).abs() < 0.03, "share of rows drawn {share}");
+        let (_, samplings) = bag(&all, 0, &RandomForestProcedureConfig { feature_samplings: 20, ..config }).unwrap();
+        let mean = samplings.iter().map(|s| s.len()).sum::<usize>() as f64 / 20.0;
+        assert!((mean - 0.3 * 14.0).abs() < 1.5, "mean features per tree {mean}");
     }
 
     /// The device decodes a bag's rows as the host does whatever their weight format: int multiples (uniform
@@ -294,7 +341,7 @@ mod tests {
             eprintln!("no Metal device: skipped");
             return;
         }
-        let config = RandomForestProcedureConfig::default();
+        let config = RandomForestProcedureConfig { feature_vector_sampling_prop: 1.0, ..Default::default() };
         let cases: [(&dyn Fn(usize) -> f32, WeightFormat); 3] = [(&|_| 1.0, WeightFormat::WfIntMultiple), (&|i| 1.0 + (i % 7) as f32 * 0.37, WeightFormat::WfTable), (&|i| 1.0 + (i % 5000) as f32 * 1e-3, WeightFormat::WfFloat)];
         for (weight, format) in cases {
             let (all, ..) = training(20000, weight);
