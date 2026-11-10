@@ -20,7 +20,21 @@ def audit(reporter,projection):
     for name,item in projection['programs'].items():
         if name in programs:compare(programs[name],item)
         programs[name]=item
-    for name,item in programs.items():compare(item['sha256'],sha((ROOT/name).read_bytes()))
+    # The shared CLI receipt also records other independent rules. Their archived
+    # results remain validated, but Surface admission binds current bytes only
+    # for programs actually consumed by Surface and its projection.
+    current=set()
+    def consumed(row):
+        if isinstance(row,dict):
+            for item in row.get('programInputs',[]):
+                if not item['path'].startswith('.rerail/'):current.add(item['path'])
+            for value in row.values():consumed(value)
+        elif isinstance(row,list):
+            for value in row:consumed(value)
+    consumed(reporter)
+    consumed({k:v for k,v in projection.items() if k not in {'cli','programs','harness'}})
+    consumed([r for r in projection['cli']['cases'] if r['input']['check']=='serverplan_grammar_surface'])
+    for name in current:compare(programs[name]['sha256'],sha((ROOT/name).read_bytes()))
     # The original-suite executions are embedded in both receipts; count once.
     shared=sum(len(r['calls']) for r in reporter['originalSuites'].values())
     return dict(nativeExecutions=a['nativeExecutions']+b['nativeExecutions']-shared,

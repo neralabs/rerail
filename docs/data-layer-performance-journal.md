@@ -10546,3 +10546,24 @@ Four shard-merger tests and the batch-query test pass. One original snapshot sha
 The scanner probe passes 38 cases. The helper probe retains one configuration mismatch: regex alternatives have a different order.
 These partial results do not certify the full 144-case corpus or all 148 original tests.
 
+# Backend full-contract admission, 2026-11-10
+
+Fetched Final after checkpoint `218c15a82`. Its latest commit remained `ec3cfe1b7`, already merged here.
+Regenerated the backend policy with `PYTHONHASHSEED=0`. The exposed regex alternatives now match the pinned source order.
+All 148 unchanged original tests pass through each native API, including 41 finding-positive cases.
+Each API retains all 122 source observations. Two empty-read observations now include complete normalized results instead of a legacy unavailable status.
+
+The receipt `rr-backend-types-complete-finalec3.json.gz` records 865 native executions.
+It covers 144 supplemental cases per API, 59 production cases, 16 supplied-fact cases, and 14 persistent update steps.
+Fifteen controls detect disabled regex families, skip and comment handling, direct-file suffix selection, batch read selection, CLI status, fact types, or reporter behavior.
+The CLI uses one native read plan and one native scan for its entire file batch. External callbacks retain their original protocol.
+The original-suite shard merger retains every phase, native call, observation, host transfer, and configuration binding.
+Admission rejects an observation without a native execution in its owning test.
+
+The TDD ladder also corrected Surface admission scope. Its shared CLI receipt records independent rules as historical observations.
+Those rules can advance independently. Current Surface policy bytes and shared libraries must still match its own consumed program inputs.
+The archived observations and hashes remain validated. No old receipt was relabeled as a current backend result.
+
+All 302 migration tooling tests pass. The inventory is eight accepted ports, 87 drafts, and five absent translations.
+The full 100-rule migration remains unfinished. No full-repository cold benchmark was run in this cohort.
+

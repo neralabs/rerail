@@ -32,6 +32,21 @@ class SurfaceAdmissionTests(unittest.TestCase):
             return raw+b'\n// changed\n' if path.name=='serverplan-grammar-surface.rr' else raw
         with patch.object(Path,'read_bytes',changed),self.assertRaises(AssertionError):audit(self.reporter,self.projection)
 
+    def test_other_rule_can_advance_after_shared_cli_receipt(self):
+        original=Path.read_bytes
+        def changed(path):
+            raw=original(path)
+            return raw+b'\n// other rule advanced\n' if path.name=='backend-type-strings.rr' else raw
+        with patch.object(Path,'read_bytes',changed):
+            self.assertEqual(634,audit(self.reporter,self.projection)['nativeExecutions'])
+
+    def test_surface_shared_library_must_still_match(self):
+        original=Path.read_bytes
+        def changed(path):
+            raw=original(path)
+            return raw+b'\n// changed\n' if path.name=='text-cli.rr' else raw
+        with patch.object(Path,'read_bytes',changed),self.assertRaises(AssertionError):audit(self.reporter,self.projection)
+
     def test_fixed_original_inventory_gate_admits_surface(self):
         entry=next(r for r in read_json(ROOT/MANIFEST)['rules'] if r['check']=='serverplan_grammar_surface')
         require_complete([entry])
