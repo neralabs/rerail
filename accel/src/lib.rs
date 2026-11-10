@@ -35,5 +35,5 @@ pub mod ane;
 
 pub use exec::{Batch, Done, Executor, Job, Launch};
 pub use col::{Col, Gate};
-pub use kernel::{Bits, Kernel, Output};
+pub use kernel::{Bits, Kernel, Output, PairView, Pairs};
 pub use lanes::Lane;

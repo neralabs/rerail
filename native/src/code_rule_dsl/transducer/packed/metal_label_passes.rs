@@ -23,6 +23,7 @@ use super::*;
 use super::super::metal_batch_abi::MetalEvaluation;
 use metal::{Buffer, CommandBuffer};
 use std::collections::HashMap;
+use crate::code_rule_dsl::residency::slabs::ResidentParts as _;
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
 
 /// A pass writes the label `target` (an index, not a class); labels it reads are its classes.
@@ -769,21 +770,25 @@ const MOST_ROUNDS: usize = 64;
 /// Bytes of per-level uploads one command buffer carries before the host waits for it.
 const SEGMENT_BYTES: usize = 64 << 20;
 
-/// Compiles the wave's pipelines (the set steps, the interpreter, the sweep and the label kernels) on a
-/// thread, once a process: each is compiled from source, 0.6 s together, and a pass that needs
-/// one before it is ready waits for the rest of its compile (they are cached behind locks).
+/// Compiles the wave's pipelines (the set steps, the interpreter, the sweep and the label kernels) as
+/// a job on the pool, once a process: each is compiled from source, 0.6 s together, and a pass that
+/// needs one before it is ready waits for the rest of its compile (they are cached behind locks).
 pub(in crate::code_rule_dsl) fn warm() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
-        std::thread::spawn(|| {
-            // The set program's kernels first: it runs first in a wave (its candidates). The shared
-            // device is not opened here: on S7 a wave waiting on this thread's open waited longer
-            // (to 0.8 s under load) than opening it itself (50-80 ms).
-            let _ = super::set_steps::pipelines();
-            let _ = compile_resident_interpreter_cached();
-            let _ = pipelines();
-            let _ = compile_sweep_cached();
-        });
+        // A panic leaves the kernels to be compiled where they are needed (a job's panic would end
+        // the process).
+        rayon::spawn(|| rerail_accel::exec::as_job("the label kernels' warm-up", || {
+            let _ = std::panic::catch_unwind(|| {
+                // The set program's kernels first: it runs first in a wave (its candidates). The shared
+                // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
+                // 0.8 s under load) than opening it itself (50-80 ms).
+                let _ = super::set_steps::pipelines();
+                let _ = compile_resident_interpreter_cached();
+                let _ = pipelines();
+                let _ = compile_sweep_cached();
+            });
+        }));
     });
 }
 

@@ -1,0 +1,985 @@
+{
+  "schema": "rerail-demand-repair-v1",
+  "runs": {
+    "baseline-rr": {
+      "source": "/Users/jeremy/orca/artifacts/async-family-comparison/results/rr.json",
+      "cpu_seconds": 1058.754435,
+      "wall_seconds": 2053.364409542,
+      "files": 5725,
+      "nodes": 19007630,
+      "chunks": 234,
+      "prepared": "store",
+      "executions": 88545,
+      "vm_steps": 0,
+      "findings": 0,
+      "demands": {},
+      "statement_types": {},
+      "aggregate_plans": [],
+      "phases": [
+        [
+          "stats",
+          0.2276300000000058,
+          0.26549800000000867,
+          11658.461184,
+          7
+        ],
+        [
+          "parse (worker)",
+          13.44739100000002,
+          2.5310580000000016,
+          11658.461184,
+          0
+        ],
+        [
+          "batch (worker)",
+          7.756006000000006,
+          0.4411219999999977,
+          11658.461184,
+          0
+        ],
+        [
+          "wait",
+          0.04614300000017957,
+          0.7895119999999969,
+          11658.461184,
+          0
+        ],
+        [
+          "local",
+          892.5420539999999,
+          106.039263,
+          11658.461184,
+          88416
+        ],
+        [
+          "cross",
+          31.165129999999976,
+          1.1935799999999972,
+          11658.461184,
+          122
+        ],
+        [
+          "write",
+          0.180753999999979,
+          0.0254939999999948,
+          11658.461184,
+          0
+        ]
+      ],
+      "top_own_cpu": []
+    },
+    "baseline-rr-profile": {
+      "source": "/Users/jeremy/orca/artifacts/async-family-comparison/results/rr-profile.json",
+      "cpu_seconds": 863.726854,
+      "wall_seconds": 1386.381737208,
+      "files": 5725,
+      "nodes": 19007630,
+      "chunks": 391,
+      "prepared": "store",
+      "executions": 141771,
+      "vm_steps": 58047536,
+      "findings": 0,
+      "demands": {},
+      "statement_types": {
+        "SELECT": 8863,
+        "INSERT": 41914,
+        "DROP": 45004,
+        "CREATE": 43869,
+        "PRAGMA": 1337,
+        "BEGIN": 391,
+        "COMMIT": 391,
+        "ATTACH": 2
+      },
+      "aggregate_plans": [
+        {
+          "span": "local/run/stratum rr_agg59/native",
+          "work": 74381995,
+          "plan": "seed rr_agg59($p, $s, $x): rr_inside_ks7($s, $p) , $p < 6917529027641081856 , $s < 6917529027641081856 , bound_in($p, $x)",
+          "max_step_outputs": 1342302187
+        },
+        {
+          "span": "local/run/stratum rr_in_annotation_1_rr_agg59/native",
+          "work": 24794259,
+          "plan": "seed rr_in_annotation_1_rr_agg59($p, $s, $x): rr_inside_ks7($s, $p) , rr_in_annotation_0_bound_in($p, $x)",
+          "max_step_outputs": 1342302187
+        },
+        {
+          "span": "local/run/stratum rr_agg90/native",
+          "work": 4856024,
+          "plan": "seed rr_agg90($i, $n, $s): pth_seen($n, $s, $b2) , visit_index($b2, $i)",
+          "max_step_outputs": 4855242
+        },
+        {
+          "span": "local/run/stratum rr_agg56/native",
+          "work": 6107494,
+          "plan": "seed rr_agg56($b, $n, $s, $x): rr_in_annotation_0_binding($s, $x, $b, _) , rr_ctx57($n, $s, $x) , $b < $n , !within($n, $b)",
+          "max_step_outputs": 2303300
+        },
+        {
+          "span": "local/run/stratum rr_agg72/native",
+          "work": 2580914,
+          "plan": "seed rr_agg72($b, $c, $j, $j3): pos_item($b) , call_item($c, $b, $j3) , rr_ctx71($c, $j) , $j3 < $j",
+          "max_step_outputs": 1225201
+        },
+        {
+          "span": "local/run/stratum rr_in_annotation_1_rr_agg72/native",
+          "work": 2580914,
+          "plan": "seed rr_in_annotation_1_rr_agg72($b, $c, $j, $j3): rr_in_annotation_0_pos_item($b) , rr_in_annotation_0_call_item($c, $b, $j3) , rr_in_annotation_0_rr_ctx71($c, $j) , $j3 < $j",
+          "max_step_outputs": 1225201
+        },
+        {
+          "span": "local/run/stratum rr_agg56/native",
+          "work": 3053747,
+          "plan": "seed rr_agg56($b, $n, $s, $x): binding($s, $x, $b, _) , rr_ctx57($n, $s, $x) , $b < $n , !within($n, $b)",
+          "max_step_outputs": 1151650
+        },
+        {
+          "span": "local/run/stratum rr_agg34/native",
+          "work": 66541,
+          "plan": "seed rr_agg34($i, $j, $ps): star_at($ps, $j) , rr_ctx32($i, $ps) , $j < $i",
+          "max_step_outputs": 55503
+        },
+        {
+          "span": "local/run/stratum rr_in_annotation_2_rr_agg34/native",
+          "work": 66541,
+          "plan": "seed rr_in_annotation_2_rr_agg34($i, $j, $ps): rr_in_annotation_0_star_at($ps, $j) , rr_in_annotation_1_rr_ctx32($i, $ps) , $j < $i",
+          "max_step_outputs": 55503
+        },
+        {
+          "span": "local/run/stratum rr_agg14/native",
+          "work": 113751,
+          "plan": "seed rr_agg14($c, $g, $i, $j): kind($g, 1252) , $g < 6917529027641081856 , child($c, $g, $j) , $c < 6917529027641081856 , rr_ctx15($c, $i) , $j < $i",
+          "max_step_outputs": 23216
+        },
+        {
+          "span": "local/run/stratum rr_in_annotation_0_rr_agg14/native",
+          "work": 68679,
+          "plan": "seed rr_in_annotation_0_rr_agg14($c, $g, $i, $j): kind($g, 1252) , child($c, $g, $j) , rr_in_annotation_0_rr_ctx15($c, $i) , $j < $i",
+          "max_step_outputs": 23216
+        },
+        {
+          "span": "local/run/stratum rr_agg70/native",
+          "work": 7614,
+          "plan": "seed rr_agg70($c, $j, $j2, $s): kind($s, 1172) , $s < 6917529027641081856 , call_item($c, $s, $j2) , rr_ctx71($c, $j) , $j2 < $j",
+          "max_step_outputs": 2772
+        }
+      ],
+      "phases": [
+        [
+          "stats",
+          0.6093929999999569,
+          0.4576009999999973,
+          11570.823168,
+          7
+        ],
+        [
+          "parse (worker)",
+          2.37340400000001,
+          1.2845239999999993,
+          11570.823168,
+          0
+        ],
+        [
+          "batch (worker)",
+          6.886033000000009,
+          0.48119800000000146,
+          11570.823168,
+          0
+        ],
+        [
+          "wait",
+          0.10808700000067661,
+          0.8974259999999877,
+          11570.823168,
+          0
+        ],
+        [
+          "local",
+          736.8550729999994,
+          86.63731500000002,
+          11570.823168,
+          141642
+        ],
+        [
+          "cross",
+          21.05143099999998,
+          0.5498850000000033,
+          11570.823168,
+          122
+        ],
+        [
+          "write",
+          0.15083000000004176,
+          0.018311999999994555,
+          11570.823168,
+          0
+        ]
+      ],
+      "top_own_cpu": [
+        {
+          "allocatedBytes": 268851035024,
+          "calls": 782,
+          "cpuSeconds": 217.61411699999869,
+          "footprintRiseBytes": 2183595520,
+          "freedBytes": 183309153952,
+          "name": "local/run/stratum rr_agg59/native/engine run (joins)",
+          "ownAllocatedBytes": 268851035024,
+          "ownCpuSeconds": 217.61411699999869,
+          "ownFootprintRiseBytes": 2183595520
+        },
+        {
+          "allocatedBytes": 267796406288,
+          "calls": 782,
+          "cpuSeconds": 212.44102600000224,
+          "footprintRiseBytes": 1898399208,
+          "freedBytes": 182824860544,
+          "name": "local/run/stratum rr_in_annotation_1_rr_agg59/native/engine run (joins)",
+          "ownAllocatedBytes": 267796406288,
+          "ownCpuSeconds": 212.44102600000224,
+          "ownFootprintRiseBytes": 1898399208
+        },
+        {
+          "allocatedBytes": 224631327520,
+          "calls": 391,
+          "cpuSeconds": 181.20152399999978,
+          "footprintRiseBytes": 7139071304,
+          "freedBytes": 153694682912,
+          "name": "local/run/stratum unbound_ref/native/engine open (load inputs, build indexes)",
+          "ownAllocatedBytes": 224631327520,
+          "ownCpuSeconds": 181.20152399999978,
+          "ownFootprintRiseBytes": 7139071304
+        },
+        {
+          "allocatedBytes": 80186190552,
+          "calls": 391,
+          "cpuSeconds": 69.4080950000004,
+          "footprintRiseBytes": 0,
+          "freedBytes": 78530494816,
+          "name": "local/guests",
+          "ownAllocatedBytes": 46436124576,
+          "ownCpuSeconds": 31.49444900000374,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 19874944432,
+          "calls": 551,
+          "cpuSeconds": 13.81066099999942,
+          "footprintRiseBytes": 0,
+          "freedBytes": 15447354392,
+          "name": "local/guests/batch with guests/project and intern",
+          "ownAllocatedBytes": 19645054560,
+          "ownCpuSeconds": 12.928338000000696,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 2500512176,
+          "calls": 7,
+          "cpuSeconds": 10.390711999999894,
+          "footprintRiseBytes": 0,
+          "freedBytes": 1644873776,
+          "name": "cross/stratum rr_in_annotation_0_rr_up52/native/engine run (joins)",
+          "ownAllocatedBytes": 2500512176,
+          "ownCpuSeconds": 10.390711999999894,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 97247616,
+          "calls": 506498,
+          "cpuSeconds": 9.919272999976654,
+          "footprintRiseBytes": 0,
+          "freedBytes": 113455520,
+          "name": "local/guests/tape cache lookup",
+          "ownAllocatedBytes": 97247616,
+          "ownCpuSeconds": 9.919272999976654,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 2500512192,
+          "calls": 7,
+          "cpuSeconds": 7.9207029999998895,
+          "footprintRiseBytes": 0,
+          "freedBytes": 1644873792,
+          "name": "cross/stratum rr_up52/native/engine run (joins)",
+          "ownAllocatedBytes": 2500512192,
+          "ownCpuSeconds": 7.9207029999998895,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 923530267624,
+          "calls": 391,
+          "cpuSeconds": 750.7989939999995,
+          "footprintRiseBytes": 11233141544,
+          "freedBytes": 920510620224,
+          "name": "local/run",
+          "ownAllocatedBytes": 1702327288,
+          "ownCpuSeconds": 5.847382000003957,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 7941477592,
+          "calls": 391,
+          "cpuSeconds": 6.408535000000019,
+          "footprintRiseBytes": 0,
+          "freedBytes": 5730020872,
+          "name": "worker batch/project and intern",
+          "ownAllocatedBytes": 7813698552,
+          "ownCpuSeconds": 5.834692000000036,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1489688192,
+          "calls": 782,
+          "cpuSeconds": 4.025831000001024,
+          "footprintRiseBytes": 0,
+          "freedBytes": 1464597264,
+          "name": "local/run/stratum region/native/engine run (joins)",
+          "ownAllocatedBytes": 1489688192,
+          "ownCpuSeconds": 4.025831000001024,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 6116488592,
+          "calls": 782,
+          "cpuSeconds": 3.9118490000018733,
+          "footprintRiseBytes": 0,
+          "freedBytes": 4034777792,
+          "name": "local/run/stratum pre_311/native/engine run (joins)",
+          "ownAllocatedBytes": 6116488592,
+          "ownCpuSeconds": 3.9118490000018733,
+          "ownFootprintRiseBytes": 0
+        }
+      ]
+    },
+    "demand-rr": {
+      "source": "/Users/jeremy/orca/artifacts/async-family-comparison/demand-repair/rr.json",
+      "cpu_seconds": 14.314558,
+      "wall_seconds": 37.055155417,
+      "files": 5725,
+      "nodes": 19007630,
+      "chunks": 73,
+      "prepared": "store",
+      "executions": 10414,
+      "vm_steps": 0,
+      "findings": 0,
+      "demands": {},
+      "statement_types": {},
+      "aggregate_plans": [],
+      "phases": [
+        [
+          "stats",
+          0.5200380000000002,
+          0.45383799999999996,
+          647.168,
+          7
+        ],
+        [
+          "parse (worker)",
+          2.6764590000000004,
+          0.7421869999999996,
+          647.168,
+          0
+        ],
+        [
+          "batch (worker)",
+          7.749964,
+          0.3356710000000003,
+          647.168,
+          0
+        ],
+        [
+          "wait",
+          0.028145999999999893,
+          0.10555999999999977,
+          647.168,
+          0
+        ],
+        [
+          "local",
+          0.976095,
+          0.06663300000000028,
+          647.168,
+          10345
+        ],
+        [
+          "cross",
+          0.001858999999999833,
+          8.699999999994823e-05,
+          647.168,
+          62
+        ],
+        [
+          "write",
+          1.6999999999933735e-05,
+          0.00044399999999999995,
+          647.168,
+          0
+        ]
+      ],
+      "top_own_cpu": []
+    },
+    "demand-rr-profile": {
+      "source": "/Users/jeremy/orca/artifacts/async-family-comparison/demand-repair/rr-profile.json",
+      "cpu_seconds": 15.752826,
+      "wall_seconds": 18.802452042,
+      "files": 5725,
+      "nodes": 19007630,
+      "chunks": 72,
+      "prepared": "store",
+      "executions": 10272,
+      "vm_steps": 2283088,
+      "findings": 0,
+      "demands": {
+        "origins": {
+          "requested": 10,
+          "admitted": 10,
+          "semantic": 10,
+          "scopes": 5,
+          "arguments": 0,
+          "rows": 23
+        },
+        "qualified": {
+          "requested": 261170,
+          "admitted": 12332,
+          "semantic": 0,
+          "scopes": 0,
+          "arguments": 0,
+          "rows": 0
+        }
+      },
+      "statement_types": {
+        "CREATE": 2031,
+        "INSERT": 1382,
+        "SELECT": 4615,
+        "DROP": 2022,
+        "PRAGMA": 76,
+        "BEGIN": 72,
+        "COMMIT": 72,
+        "ATTACH": 2
+      },
+      "aggregate_plans": [],
+      "phases": [
+        [
+          "stats",
+          0.448641,
+          0.2687280000000001,
+          651.149312,
+          7
+        ],
+        [
+          "parse (worker)",
+          2.662916,
+          1.1533229999999999,
+          651.149312,
+          0
+        ],
+        [
+          "batch (worker)",
+          7.270021000000001,
+          0.3262249999999996,
+          651.149312,
+          0
+        ],
+        [
+          "wait",
+          0.026431000000000204,
+          0.10829899999999992,
+          651.149312,
+          0
+        ],
+        [
+          "local",
+          1.0718769999999997,
+          0.36535300000000004,
+          651.149312,
+          10203
+        ],
+        [
+          "cross",
+          0.0023980000000001223,
+          0.0009479999999999489,
+          651.149312,
+          62
+        ],
+        [
+          "write",
+          2.199999999996649e-05,
+          0.0004629999999999912,
+          651.149312,
+          0
+        ]
+      ],
+      "top_own_cpu": [
+        {
+          "allocatedBytes": 8144101464,
+          "calls": 72,
+          "cpuSeconds": 6.561798999999993,
+          "footprintRiseBytes": 24395776,
+          "freedBytes": 5901856848,
+          "name": "worker batch/project and intern",
+          "ownAllocatedBytes": 8029542232,
+          "ownCpuSeconds": 6.018405999999998,
+          "ownFootprintRiseBytes": 24395776
+        },
+        {
+          "allocatedBytes": 4410940976,
+          "calls": 5725,
+          "cpuSeconds": 3.1017669999999518,
+          "footprintRiseBytes": 5177368,
+          "freedBytes": 3411963680,
+          "name": "worker parse/tree-sitter and facts",
+          "ownAllocatedBytes": 1671739192,
+          "ownCpuSeconds": 1.1070800000000394,
+          "ownFootprintRiseBytes": 5177368
+        },
+        {
+          "allocatedBytes": 1258543272,
+          "calls": 5725,
+          "cpuSeconds": 1.012586999999923,
+          "footprintRiseBytes": 0,
+          "freedBytes": 323242336,
+          "name": "worker parse/tree-sitter and facts/facts from tape",
+          "ownAllocatedBytes": 1258543272,
+          "ownCpuSeconds": 1.012586999999923,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 959693872,
+          "calls": 72,
+          "cpuSeconds": 0.9780440000000064,
+          "footprintRiseBytes": 140264096,
+          "freedBytes": 881854768,
+          "name": "worker batch/text tests",
+          "ownAllocatedBytes": 959693872,
+          "ownCpuSeconds": 0.9780440000000064,
+          "ownFootprintRiseBytes": 140264096
+        },
+        {
+          "allocatedBytes": 1290674712,
+          "calls": 5725,
+          "cpuSeconds": 0.5945639999999331,
+          "footprintRiseBytes": 0,
+          "freedBytes": 176953256,
+          "name": "worker parse/tree-sitter and facts/tape restore",
+          "ownAllocatedBytes": 1290674712,
+          "ownCpuSeconds": 0.5945639999999331,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 114559232,
+          "calls": 72,
+          "cpuSeconds": 0.5433929999999938,
+          "footprintRiseBytes": 0,
+          "freedBytes": 93588816,
+          "name": "worker batch/project and intern/intern atoms",
+          "ownAllocatedBytes": 114559232,
+          "ownCpuSeconds": 0.5433929999999938,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1226791520,
+          "calls": 2,
+          "cpuSeconds": 0.4812329999999997,
+          "footprintRiseBytes": 439632232,
+          "freedBytes": 878447160,
+          "name": "stats",
+          "ownAllocatedBytes": 1226331712,
+          "ownCpuSeconds": 0.4809059999999996,
+          "ownFootprintRiseBytes": 439632232
+        },
+        {
+          "allocatedBytes": 106711728,
+          "calls": 5725,
+          "cpuSeconds": 0.2730010000000181,
+          "footprintRiseBytes": 0,
+          "freedBytes": 1792408,
+          "name": "worker parse/read",
+          "ownAllocatedBytes": 106711728,
+          "ownCpuSeconds": 0.2730010000000181,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 274800,
+          "calls": 5725,
+          "cpuSeconds": 0.23960500000002155,
+          "footprintRiseBytes": 0,
+          "freedBytes": 320552,
+          "name": "worker parse/tree-sitter and facts/digest",
+          "ownAllocatedBytes": 274800,
+          "ownCpuSeconds": 0.23960500000002155,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1904216,
+          "calls": 5725,
+          "cpuSeconds": 0.23525799999999633,
+          "footprintRiseBytes": 0,
+          "freedBytes": 897976,
+          "name": "worker parse/memo lookup",
+          "ownAllocatedBytes": 1904216,
+          "ownCpuSeconds": 0.23525799999999633,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1256685304,
+          "calls": 72,
+          "cpuSeconds": 1.5609289999999998,
+          "footprintRiseBytes": 166035648,
+          "freedBytes": 4234289200,
+          "name": "local",
+          "ownAllocatedBytes": 373119168,
+          "ownCpuSeconds": 0.1571049999999996,
+          "ownFootprintRiseBytes": 166035648
+        },
+        {
+          "allocatedBytes": 4523048184,
+          "calls": 5725,
+          "cpuSeconds": 3.7961909999999772,
+          "footprintRiseBytes": 5177368,
+          "freedBytes": 3417821928,
+          "name": "worker parse",
+          "ownAllocatedBytes": 1743024,
+          "ownCpuSeconds": 0.11186000000006624,
+          "ownFootprintRiseBytes": 0
+        }
+      ]
+    },
+    "legacy-rr-profile": {
+      "source": "/Users/jeremy/orca/artifacts/async-family-comparison/aggregate-repair-legacy/rr-profile.json",
+      "cpu_seconds": 301.200169,
+      "wall_seconds": 600.801650416,
+      "files": 5725,
+      "nodes": 19007630,
+      "chunks": 291,
+      "prepared": "prepared",
+      "executions": 109166,
+      "vm_steps": 55754681,
+      "findings": 0,
+      "demands": {},
+      "statement_types": {
+        "SELECT": 6743,
+        "INSERT": 32354,
+        "DROP": 34644,
+        "CREATE": 33809,
+        "PRAGMA": 1032,
+        "BEGIN": 291,
+        "COMMIT": 291,
+        "ATTACH": 2
+      },
+      "aggregate_plans": [
+        {
+          "span": "local/run/stratum rr_demand_agg_rr_agg90/native",
+          "work": 11334638,
+          "plan": "seed rr_demand_agg_rr_agg90($n, $s): pth_seen($n, $s, $b) , kind($n, 1025) , rr_in_annotation_0_site_init($b, _) , visit_index($b, _)",
+          "max_step_outputs": 4855242
+        },
+        {
+          "span": "local/run/stratum rr_demand_agg_rr_agg56/native",
+          "work": 10020379,
+          "plan": "seed rr_demand_agg_rr_agg56($n, $s, $x): load_ref($n, $x) , $x != 120 , $x != 117 , look($n, $x, $s) , rr_nearest_ks14($n, $s) , kind($s, 1178)",
+          "max_step_outputs": 2448355
+        },
+        {
+          "span": "local/run/stratum rr_demand_agg_rr_agg56/native",
+          "work": 10020379,
+          "plan": "seed rr_demand_agg_rr_agg56($n, $s, $x): rr_in_annotation_0_load_ref($n, $x) , $x != 120 , $x != 117 , rr_in_annotation_2_look($n, $x, $s) , rr_nearest_rr_in_annotation_ks14($n, $s) , kind($s, 1178)",
+          "max_step_outputs": 2448355
+        },
+        {
+          "span": "local/run/stratum rr_demand_agg_rr_agg90/native",
+          "work": 5667319,
+          "plan": "seed rr_demand_agg_rr_agg90($n, $s): pth_seen($n, $s, $b) , kind($n, 1025) , site_init($b, _) , visit_index($b, _)",
+          "max_step_outputs": 2427621
+        },
+        {
+          "span": "local/run/stratum rr_demand_agg_rr_agg59/native",
+          "work": 7150903,
+          "plan": "seed rr_demand_agg_rr_agg59($s, $x): look($n, $x, $s) , $x != 120 , $x != 117 , kind($s, 1178) , load_ref($n, $x) , rr_nearest_ks14($n, $s)",
+          "max_step_outputs": 2375892
+        },
+        {
+          "span": "local/run/stratum rr_demand_agg_rr_agg59/native",
+          "work": 7150903,
+          "plan": "seed rr_demand_agg_rr_agg59($s, $x): rr_in_annotation_2_look($n, $x, $s) , $x != 120 , $x != 117 , kind($s, 1178) , rr_in_annotation_0_load_ref($n, $x) , rr_nearest_rr_in_annotation_ks14($n, $s)",
+          "max_step_outputs": 2375892
+        },
+        {
+          "span": "local/run/stratum rr_agg90/native",
+          "work": 3026888,
+          "plan": "seed rr_agg90($i, $n, $s): rr_demand_agg_rr_agg90($n, $s) , pth_seen($n, $s, $b2) , visit_index($b2, $i)",
+          "max_step_outputs": 1668714
+        },
+        {
+          "span": "local/run/stratum rr_agg72/native",
+          "work": 2580814,
+          "plan": "seed rr_agg72($b, $c, $j, $j3): pos_item($b) , call_item($c, $b, $j3) , rr_ctx71($c, $j) , $j3 < $j",
+          "max_step_outputs": 1225201
+        },
+        {
+          "span": "local/run/stratum rr_in_annotation_1_rr_agg72/native",
+          "work": 2580814,
+          "plan": "seed rr_in_annotation_1_rr_agg72($b, $c, $j, $j3): rr_in_annotation_0_pos_item($b) , rr_in_annotation_0_call_item($c, $b, $j3) , rr_in_annotation_0_rr_ctx71($c, $j) , $j3 < $j",
+          "max_step_outputs": 1225201
+        },
+        {
+          "span": "local/run/stratum rr_demand_agg_rr_agg56/native",
+          "work": 2012083,
+          "plan": "seed rr_demand_agg_rr_agg56($n, $s, $x): kind($s, 1132) , look($n, $x, $s) , $x != 120 , $x != 117 , load_ref($n, $x) , rr_nearest_ks14($n, $s)",
+          "max_step_outputs": 523810
+        },
+        {
+          "span": "local/run/stratum rr_demand_agg_rr_agg56/native",
+          "work": 2012083,
+          "plan": "seed rr_demand_agg_rr_agg56($n, $s, $x): kind($s, 1132) , rr_in_annotation_2_look($n, $x, $s) , $x != 120 , $x != 117 , rr_in_annotation_0_load_ref($n, $x) , rr_nearest_rr_in_annotation_ks14($n, $s)",
+          "max_step_outputs": 523810
+        },
+        {
+          "span": "local/run/stratum rr_demand_agg_rr_agg56/native",
+          "work": 1437669,
+          "plan": "seed rr_demand_agg_rr_agg56($n, $s, $x): look($n, $x, $s) , $x != 120 , $x != 117 , load_ref($n, $x) , rr_nearest_ks14($n, $s) , kind($s, 1132)",
+          "max_step_outputs": 350128
+        }
+      ],
+      "phases": [
+        [
+          "stats",
+          0.995712999999999,
+          0.33423500000000106,
+          1259.143168,
+          7
+        ],
+        [
+          "parse (worker)",
+          2.767352000000016,
+          1.3554900000000043,
+          2169.126912,
+          0
+        ],
+        [
+          "batch (worker)",
+          7.353189000000004,
+          0.47973300000000024,
+          2169.126912,
+          0
+        ],
+        [
+          "wait",
+          0.1151660000000565,
+          0.8179439999999898,
+          1259.143168,
+          0
+        ],
+        [
+          "local",
+          207.63232799999994,
+          43.94978100000001,
+          1259.143168,
+          109037
+        ],
+        [
+          "cross",
+          30.608368000000013,
+          1.058444999999999,
+          2169.126912,
+          122
+        ],
+        [
+          "write",
+          0.176653999999985,
+          0.03014800000000406,
+          2169.126912,
+          0
+        ]
+      ],
+      "top_own_cpu": [
+        {
+          "allocatedBytes": 77664501136,
+          "calls": 291,
+          "cpuSeconds": 83.58899899999994,
+          "footprintRiseBytes": 65257544,
+          "freedBytes": 75627451072,
+          "name": "local/guests",
+          "ownAllocatedBytes": 44093198856,
+          "ownCpuSeconds": 39.37463999999546,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 20821917792,
+          "calls": 446,
+          "cpuSeconds": 15.631928999999793,
+          "footprintRiseBytes": 65257544,
+          "freedBytes": 15684308856,
+          "name": "local/guests/batch with guests/project and intern",
+          "ownAllocatedBytes": 20593777856,
+          "ownCpuSeconds": 14.568008999999963,
+          "ownFootprintRiseBytes": 63832136
+        },
+        {
+          "allocatedBytes": 2500512176,
+          "calls": 7,
+          "cpuSeconds": 13.989450999999804,
+          "footprintRiseBytes": 0,
+          "freedBytes": 1644873776,
+          "name": "cross/stratum rr_in_annotation_0_rr_up52/native/engine run (joins)",
+          "ownAllocatedBytes": 2500512176,
+          "ownCpuSeconds": 13.989450999999804,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 2500512192,
+          "calls": 7,
+          "cpuSeconds": 13.289360000000016,
+          "footprintRiseBytes": 762364720,
+          "freedBytes": 1644873792,
+          "name": "cross/stratum rr_up52/native/engine run (joins)",
+          "ownAllocatedBytes": 2500512192,
+          "ownCpuSeconds": 13.289360000000016,
+          "ownFootprintRiseBytes": 762364720
+        },
+        {
+          "allocatedBytes": 113455552,
+          "calls": 506498,
+          "cpuSeconds": 11.745101000002286,
+          "footprintRiseBytes": 0,
+          "freedBytes": 129663456,
+          "name": "local/guests/tape cache lookup",
+          "ownAllocatedBytes": 113455552,
+          "ownCpuSeconds": 11.745101000002286,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 7937635328,
+          "calls": 291,
+          "cpuSeconds": 6.724434999999993,
+          "footprintRiseBytes": 0,
+          "freedBytes": 5726660624,
+          "name": "worker batch/project and intern",
+          "ownAllocatedBytes": 7812267424,
+          "ownCpuSeconds": 6.119318000000012,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1489884320,
+          "calls": 582,
+          "cpuSeconds": 4.923235000000096,
+          "footprintRiseBytes": 0,
+          "freedBytes": 1464657376,
+          "name": "local/run/stratum region/native/engine run (joins)",
+          "ownAllocatedBytes": 1489884320,
+          "ownCpuSeconds": 4.923235000000096,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 1489883312,
+          "calls": 582,
+          "cpuSeconds": 4.667916999999832,
+          "footprintRiseBytes": 0,
+          "freedBytes": 1464657152,
+          "name": "local/run/stratum rr_in_annotation_0_region/native/engine run (joins)",
+          "ownAllocatedBytes": 1489883312,
+          "ownCpuSeconds": 4.667916999999832,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 6194026864,
+          "calls": 582,
+          "cpuSeconds": 4.601167000000077,
+          "footprintRiseBytes": 42844184,
+          "freedBytes": 4095457104,
+          "name": "local/run/stratum pre_323/native/engine run (joins)",
+          "ownAllocatedBytes": 6194026864,
+          "ownCpuSeconds": 4.601167000000077,
+          "ownFootprintRiseBytes": 42844184
+        },
+        {
+          "allocatedBytes": 9750787400,
+          "calls": 291,
+          "cpuSeconds": 6.011745999999967,
+          "footprintRiseBytes": 180224,
+          "freedBytes": 9367289376,
+          "name": "local/run/statistics and plan/demand",
+          "ownAllocatedBytes": 7613881800,
+          "ownCpuSeconds": 4.5857109999997565,
+          "ownFootprintRiseBytes": 180224
+        },
+        {
+          "allocatedBytes": 5584783248,
+          "calls": 582,
+          "cpuSeconds": 4.228201999999861,
+          "footprintRiseBytes": 0,
+          "freedBytes": 3821353120,
+          "name": "local/run/stratum pre_90/native/engine run (joins)",
+          "ownAllocatedBytes": 5584783248,
+          "ownCpuSeconds": 4.228201999999861,
+          "ownFootprintRiseBytes": 0
+        },
+        {
+          "allocatedBytes": 2353118104,
+          "calls": 1746,
+          "cpuSeconds": 4.219297999999724,
+          "footprintRiseBytes": 0,
+          "freedBytes": 2352820120,
+          "name": "local/guests/guest statistics",
+          "ownAllocatedBytes": 2353118104,
+          "ownCpuSeconds": 4.219297999999724,
+          "ownFootprintRiseBytes": 0
+        }
+      ]
+    }
+  },
+  "edges_vs_ruff": [
+    {
+      "fixture": "1f85485a7075",
+      "expected": 120,
+      "actual": 120,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "38094aa6ac7e",
+      "expected": 2,
+      "actual": 2,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "483985bd330e",
+      "expected": 24,
+      "actual": 24,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "c6d2d16e3195",
+      "expected": 32,
+      "actual": 32,
+      "missing": [],
+      "unexpected": []
+    }
+  ],
+  "ratios": {
+    "rr": {
+      "cpu_seconds": 73.96347375867282,
+      "wall_seconds": 55.41373086779624,
+      "executions": 8.50249663913962,
+      "vm_steps": null
+    },
+    "rr-profile": {
+      "cpu_seconds": 54.82996219218062,
+      "wall_seconds": 73.73409245300391,
+      "executions": 13.801693925233645,
+      "vm_steps": 25.425010336877072
+    }
+  },
+  "gates": {
+    "all_ruff_edge_fixtures_measured": true,
+    "ruff_edges_match": true,
+    "legacy_1f85485a7075_unchanged": true,
+    "legacy_38094aa6ac7e_unchanged": true,
+    "legacy_483985bd330e_unchanged": true,
+    "legacy_c6d2d16e3195_unchanged": true,
+    "rr_full_workload_matches": true,
+    "rr_findings_match": true,
+    "rr-profile_full_workload_matches": true,
+    "rr-profile_findings_match": true
+  }
+}

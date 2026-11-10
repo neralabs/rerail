@@ -39,6 +39,7 @@ use super::metal_sort::queue;
 use metal::{BufferRef, CommandBuffer};
 use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, SortParts, Submitted, Width, encode_sort, groups, pipeline, scratch};
 
+
 /// No output or step: `Stage::last`, `Stage::passed`.
 pub(in crate::code_rule_dsl) const NONE: u32 = u32::MAX;
 /// The most keys, column tests, program columns, parameters, binds and operations a stage holds.
@@ -596,7 +597,7 @@ impl Batch {
     /// The encoder of the open command buffer, with room for `need` more dispatches (a new command buffer when not).
     fn pass(&mut self, need: usize) -> Result<&Pass<'static>, Error> {
         if self.pass.as_ref().is_some_and(|p| p.dispatches() + need > BUDGET) {
-            self.commit()?;
+            self.submit_open()?;
         }
         if self.pass.is_none() {
             let command = queue()?.new_command_buffer().to_owned();
@@ -609,7 +610,8 @@ impl Batch {
         Ok(self.pass.as_ref().expect("an open pass"))
     }
 
-    fn commit(&mut self) -> Result<(), Error> {
+    /// Ends the open pass and commits its command buffer (`Submitted::commit`, checked against the launch budget).
+    fn submit_open(&mut self) -> Result<(), Error> {
         let Some(pass) = self.pass.take() else { return Ok(()) };
         self.done.dispatches += pass.dispatches() as u32;
         pass.end();
@@ -622,7 +624,7 @@ impl Batch {
 
     /// Commits what is open and waits for every command buffer.
     pub(in crate::code_rule_dsl) fn finish(&mut self) -> Result<Done, Error> {
-        self.commit()?;
+        self.submit_open()?;
         for s in self.committed.drain(..) {
             self.done.gpu_seconds += s.wait();
         }

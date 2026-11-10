@@ -148,14 +148,13 @@ mod tests {
     use super::*;
     use crate::code_rule_dsl::typing::file_local::Binding;
 
-    /// The process has one session: its tests take turns.
-    static SERIAL: Mutex<()> = Mutex::new(());
+    /// The process has one session: its tests take turns, with every other test of a session (`SESSION_TESTS`).
+    use super::super::SESSION_TESTS as SERIAL;
 
     /// Two runs of one program in a session: the second compiles nothing and reads the unchanged file from the memo;
     /// a third, after an edit, evaluates the edited file only, and every run's findings are a fresh run's.
     #[test]
     fn a_session_reruns_what_an_edit_changed() {
-        let _session = super::super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let base = std::env::temp_dir().join(format!("rerail-session-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
@@ -245,6 +244,10 @@ mod tests {
     #[test]
     fn a_session_maintains_a_recursive_cross_file_stratum() {
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        recursive_cross_file_stratum();
+    }
+
+    fn recursive_cross_file_stratum() {
         let base = std::env::temp_dir().join(format!("rerail-session-reach-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
         std::fs::create_dir_all(&src).unwrap();
@@ -301,6 +304,66 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
             recursive += report.cross_maintained.1;
         }
         assert!(recursive > 0, "the recursive stratum is maintained");
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A maintained stratum whose deltas are all empty is passed on as its kept relations, not opened (decision 0101
+    /// §1): an edit adds an import that `via_h` filters out, so `seen`, which reads only `via_h`, deletes and derives
+    /// nothing. The findings are a full run's, with the skip and without it.
+    #[test]
+    fn a_session_passes_on_a_quiet_stratum() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-quiet-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("quiet.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-quiet" revision 1
+.description "An import in a file that imports h."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl via_h(a: number)
+via_h(a) :- dep(a, b), doc(b, _, "h").
+.decl seen(a: number)
+seen(a) :- via_h(a).
+.violation IMP(at: node) code "IMP" "An import in a file that imports h."
+IMP(i) :- impmod(i, _), docof(i, a), seen(a).
+"#,
+        )
+        .unwrap();
+        for (path, text) in [("a.py", "from h import x\n"), ("h.py", "x = 1\n"), ("d.py", "y = 2\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let findings = || {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        };
+        let full = || {
+            full(run);
+            findings()
+        };
+        start(&base.join("session")).unwrap();
+        run();
+        assert_eq!(findings(), full());
+        assert_eq!(findings().len(), 1, "a.py's import of h: {:?}", findings());
+        std::fs::write(src.join("a.py"), "from h import x\nfrom d import y\n").unwrap();
+        let quiet = crate::code_rule_dsl::logic::plan::quiet_strata();
+        let report = run();
+        let quiet = crate::code_rule_dsl::logic::plan::quiet_strata() - quiet;
+        let got = findings();
+        eprintln!("{:?} strata run, {:?} maintained; {quiet} quiet; {} findings", report.cross_strata, report.cross_maintained, got.len());
+        assert_eq!(got, full(), "the session's findings are a full run's");
+        assert_eq!(got.len(), 2, "both of a.py's imports: {got:?}");
+        assert!(quiet > 0, "`seen`'s stratum is quiet: nothing deleted, nothing to derive");
         stop();
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -412,6 +475,33 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     #[test]
     fn a_session_maintains_a_cross_file_aggregate() {
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        cross_file_aggregate();
+    }
+
+    /// Decision 0090 §4: every maintained stratum whose inputs changed derived again instead (no θ, no floor). Its
+    /// relations and their deltas are what the strata above read, maintained or not, so the findings stay a full
+    /// run's: over recursion, counting's supports and aggregates.
+    #[test]
+    fn a_session_derives_again_the_strata_its_deltas_outgrow() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        unsafe {
+            std::env::set_var("RERAIL_AGAIN_THETA", "0");
+            std::env::set_var("RERAIL_AGAIN_MIN", "0");
+        }
+        let run = std::panic::catch_unwind(|| {
+            recursive_cross_file_stratum();
+            cross_file_aggregate();
+        });
+        unsafe {
+            std::env::remove_var("RERAIL_AGAIN_THETA");
+            std::env::remove_var("RERAIL_AGAIN_MIN");
+        }
+        if let Err(e) = run {
+            std::panic::resume_unwind(e);
+        }
+    }
+
+    fn cross_file_aggregate() {
         let base = std::env::temp_dir().join(format!("rerail-session-count-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
         std::fs::create_dir_all(&src).unwrap();

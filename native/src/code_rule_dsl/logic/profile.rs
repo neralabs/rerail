@@ -33,6 +33,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
+mod analysis;
+mod analysis_report;
 mod kinds;
 mod memory;
 mod roofline;
@@ -1273,6 +1275,11 @@ pub(in crate::code_rule_dsl) fn open_spans() -> String {
     r
 }
 
+/// Record why expensive input relations are requested, before projection planning.
+pub(in crate::code_rule_dsl) fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads: &std::collections::BTreeSet<String>) {
+    if on() { analysis_report::projection(prog, reads); }
+}
+
 /// The report, and the tables, into `dir`. `header`: what was run (lines put first).
 pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
@@ -1313,6 +1320,11 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     // The report.
     let mut r = String::new();
     r.push_str(header);
+    let (analysis_text, analysis_json) = analysis_report::report(&state);
+    std::fs::write(dir.join("analysis.txt"), &analysis_text)?;
+    std::fs::write(dir.join("analysis.json"), serde_json::to_vec_pretty(&analysis_json)?)?;
+    r.push('\n');
+    r.push_str(&analysis_text);
     fallbacks(&mut r, &state);
     hazards(&mut r, &state);
     placements(&mut r, &state);
@@ -1448,6 +1460,51 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let _ = writeln!(r, "{score}");
     }
 
+    // The cost statistics (decision 0100 §14): the store, the samples read, and the rates learned in place of priors.
+    let _ = writeln!(r, "\n== Cost statistics (RERAIL_COSTS)");
+    r.push_str(&super::costs::summary());
+
+    // Waits that ran others' jobs (decision 0100 §12): a thread waiting on the pool runs queued jobs meanwhile, and a
+    // long one makes its own wait end late. Per site: its waits, the jobs they ran, and how late those made them.
+    let (waits, late_by) = rerail_accel::exec::waits();
+    let _ = writeln!(r, "\n== Waits that ran others' jobs (rerail-accel)");
+    if waits.is_empty() {
+        r.push_str("(no waits)\n");
+    } else {
+        let _ = writeln!(
+            r,
+            "{:<40} {:>7} {:>7} {:>7} {:>10} {:>10} {:>10} {:>6} {:>10} {:>10} {:>10}  longest job run",
+            "wait", "waits", "helped", "jobs", "wait ms", "jobs ms", "jobs cpu", "late", "late ms<=", "late max", "late exact"
+        );
+        for (site, w) in &waits {
+            let _ = writeln!(
+                r,
+                "{:<40} {:>7} {:>7} {:>7} {:>10.1} {:>10.1} {:>10.1} {:>6} {:>10.2} {:>10.2} {:>10.2}  {:.2} ms {}",
+                short(site, 40),
+                w.waits,
+                w.helping,
+                w.jobs,
+                w.wall * 1e3,
+                w.jobs_wall * 1e3,
+                w.jobs_cpu * 1e3,
+                w.late,
+                w.late_wall * 1e3,
+                w.late_max * 1e3,
+                w.late_exact * 1e3,
+                w.longest * 1e3,
+                w.longest_job
+            );
+        }
+        // `late ms<=`: a wait that found its work ready right after a job it ran was late by at most that job's
+        // wall; `late exact` where the waited work said when it ended (a batch's launches, a host job).
+        let mut late_by = late_by;
+        late_by.sort_by(|a, b| b.1.late_wall.total_cmp(&a.1.late_wall));
+        let _ = writeln!(r, "jobs that made waits late: {:<34} {:>7} {:>10} {:>10}", "job", "waits", "late ms<=", "late max");
+        for (job, l) in late_by.iter().take(12) {
+            let _ = writeln!(r, "  {:<58} {:>7} {:>10.2} {:>10.2}", short(job, 58), l.waits, l.late_wall * 1e3, l.late_max * 1e3);
+        }
+    }
+
     // Warnings: the shapes that usually explain a slow rule.
     let _ = writeln!(r, "\n== Warnings");
     let mut warned = 0;
@@ -1458,7 +1515,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     }
     for ((p, text), s) in &sql {
         if s.autoindex > 0 {
-            let _ = writeln!(r, "- automatic index ({} rows) built for a statement in {p}: an index is missing.\n    {}", s.autoindex, short(text, 300));
+            let _ = writeln!(r, "- automatic index ({} rows) built for a statement in {p}: inspect demand selectivity and join order before adding an index.\n    {}", s.autoindex, short(text, 300));
             warned += 1;
         }
         if s.vm > 0 && s.scan * 2 > s.vm && s.vm > 1_000_000 {

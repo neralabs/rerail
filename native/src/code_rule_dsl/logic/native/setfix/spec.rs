@@ -101,16 +101,17 @@ pub struct JoinSpec {
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
 /// (`base`), plus its table's rows when `seeded`. A `base` with no relation gone (`-`) is a copy of the kept
 /// relation, its levels with it (decision 0090's `h__live`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Start {
     Rows,
     Empty,
     From(String),
-    Base { old: String, gone: Option<String>, seeded: bool },
+    /// `gone` "-": no rows gone (all of `old`).
+    Base { old: String, gone: String, seeded: bool },
 }
 
 /// An edge rule (`rule …`): see the module's spec.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EdgeSpec {
     pub head: usize,
     pub src: usize,
@@ -123,32 +124,36 @@ pub struct EdgeSpec {
 }
 
 /// One spec line, after `name`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Line {
     Rel { name: String, types: String, start: Start },
     NoWrite,
     /// The placement put the stratum on the device (decision 0095 §7).
     Device,
+    /// Its recursive relations keep each row's level (decision 0090): a session maintains them by levels. Without it
+    /// no row has one, and a closure may run on the device (bit rows give reach, not distance).
+    Leveled,
     Request(usize),
     Produced(usize),
     Seed { head: usize, join: Arc<JoinSpec> },
     Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
     Probe { head: usize, delta: usize, sql: String },
     Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize> },
+    /// A recursive relation maintained by levels (decision 0090): its candidates, the level checked, those held,
+    /// those gone and the kept rows shown (`levels <cand> <chk> <held> <gone> <live>`).
+    Levels { cand: usize, chk: usize, held: usize, gone: usize, live: usize },
     Edge(EdgeSpec),
-    /// A levels stratum's relations of one `h` (decision 0090, `setfix::Levels`): cand, chk, held, gone, live.
-    Levels([usize; 5]),
 }
 
 /// A component: its name, then its lines in order (relations are numbered in order, probes are numbered in order).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ComponentSpec {
     pub name: String,
     pub lines: Vec<Line>,
 }
 
 /// A probe's new body (`reprobe`): SQL, a join, or the join it runs in the wave whose delta is the whole relation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Reprobe {
     Sql(String),
     Join(Arc<JoinSpec>),
@@ -405,11 +410,12 @@ impl std::fmt::Display for Line {
                     Start::Rows => Ok(()),
                     Start::Empty => f.write_str(" empty"),
                     Start::From(sql) => write!(f, " from {}", hex(sql)),
-                    Start::Base { old, gone, seeded } => write!(f, " base {} {}{}", hex(old), gone.as_deref().map_or("-".to_owned(), hex), if *seeded { " seeded" } else { "" }),
+                    Start::Base { old, gone, seeded } => write!(f, " base {} {}{}", hex(old), if gone == "-" { "-".to_owned() } else { hex(gone) }, if *seeded { " seeded" } else { "" }),
                 }
             }
             Line::NoWrite => f.write_str("nowrite"),
             Line::Device => f.write_str("device"),
+            Line::Leveled => f.write_str("leveled"),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
@@ -424,6 +430,7 @@ impl std::fmt::Display for Line {
             Line::Gate { done, src, quiet, after } => {
                 write!(f, "gate {done} {} {} {}", src.map_or("-".to_owned(), |s| s.to_string()), comma(quiet), comma(after))
             }
+            Line::Levels { cand, chk, held, gone, live } => write!(f, "levels {cand} {chk} {held} {gone} {live}"),
             Line::Edge(e) => {
                 let slots = |xs: &[usize]| xs.iter().map(|s| format!("v{s}")).collect::<Vec<_>>().join(" ");
                 let src = match &e.edge {
@@ -432,7 +439,6 @@ impl std::fmt::Display for Line {
                 };
                 write!(f, "rule {} {} {src} key {} ; ecols {} ; pat {} ; head {}", e.head, e.src, slots(&e.key), slots(&e.ecols), joined(&e.pat), joined(&e.out))
             }
-            Line::Levels([cand, chk, held, gone, live]) => write!(f, "levels {cand} {chk} {held} {gone} {live}"),
         }
     }
 }
@@ -473,7 +479,7 @@ impl ComponentSpec {
                             }
                             "base" => {
                                 let (old, gone) = (t.get(k + 1).ok_or("rel: base needs two tables")?, t.get(k + 2).ok_or("rel: base needs two tables")?);
-                                base = Some((unhex(old)?, if *gone == "-" { None } else { Some(unhex(gone)?) }));
+                                base = Some((unhex(old)?, if *gone == "-" { "-".to_owned() } else { unhex(gone)? }));
                                 k += 3;
                             }
                             "from" => {
@@ -493,6 +499,7 @@ impl ComponentSpec {
                 }
                 "nowrite" => Line::NoWrite,
                 "device" => Line::Device,
+                "leveled" => Line::Leveled,
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },
@@ -502,7 +509,6 @@ impl ComponentSpec {
                     join: join(at(3)?)?,
                     whole: t.get(4).map(|w| join(w)).transpose()?,
                 },
-                "levels" => Line::Levels([num(at(1)?)?, num(at(2)?)?, num(at(3)?)?, num(at(4)?)?, num(at(5)?)?]),
                 "probe" => Line::Probe { head: num(at(1)?)?, delta: num(at(2)?)?, sql: unhex(at(3)?)? },
                 "gate" => Line::Gate {
                     done: num(at(1)?)?,
@@ -510,6 +516,7 @@ impl ComponentSpec {
                     quiet: list(at(3)?)?,
                     after: list(at(4)?)?,
                 },
+                "levels" => Line::Levels { cand: num(at(1)?)?, chk: num(at(2)?)?, held: num(at(3)?)?, gone: num(at(4)?)?, live: num(at(5)?)? },
                 "rule" => {
                     let sections: Vec<&[&str]> = t.get(5..).unwrap_or(&[]).split(|x| *x == ";").collect();
                     let section = |name: &str| -> Result<&[&str], String> {

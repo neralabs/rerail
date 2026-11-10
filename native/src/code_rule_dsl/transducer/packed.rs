@@ -12,12 +12,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::ops::Range;
 use std::sync::Arc;
-#[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(target_os = "macos")]
-use std::sync::{LazyLock, mpsc};
-#[cfg(target_os = "macos")]
-use std::time::Duration;
 
 #[cfg(test)]
 mod admission_spike;
@@ -62,8 +56,6 @@ pub(in crate::code_rule_dsl) use metal_program_backend::set_steps;
 pub(in crate::code_rule_dsl) use metal_program_backend::lattice as metal_lattice;
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::nearest as metal_nearest;
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) use metal_program_backend::blocks as metal_blocks;
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::{RootJobs, RootsFound};
 #[cfg(target_os = "macos")]
@@ -246,7 +238,7 @@ pub(in crate::code_rule_dsl) use compilation::PlanId;
 mod native_cpu;
 mod native_cpu_capture;
 mod native_cpu_capture_pair;
-use rerail_tier1::native_cpu_codegen;
+use rerail_compiler::native_cpu_codegen;
 mod native_cpu_lua;
 mod native_cpu_output;
 mod native_cpu_output_sort;
@@ -255,17 +247,11 @@ mod native_cpu_reduction;
 mod native_cpu_regex;
 mod native_cpu_scheduler;
 mod native_cpu_value;
-// Block programs' Cranelift definer (`block`).
-use rerail_tier1::native_cpu_block;
-// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), tier 1's.
+// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use rerail_tier1::native_cpu_rows;
+pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_rows;
 // Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
 pub(in crate::code_rule_dsl) mod rows_sort;
-use rerail_tier1::native_cpu_lanes;
-use rerail_tier1::native_cpu_pressure;
-use rerail_tier1::native_cpu_shape;
-mod native_cpu_stream;
 mod native_ir;
 mod output;
 mod packed_arena;
@@ -281,37 +267,19 @@ pub(in crate::code_rule_dsl) mod fusion;
 pub(in crate::code_rule_dsl) mod rir;
 mod value;
 // Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
-pub(in crate::code_rule_dsl) use rerail_tier1::block;
+pub(in crate::code_rule_dsl) use rerail_compiler::block;
 pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
-mod block_tests;
-#[cfg(test)]
 mod block_rows_tests;
-// The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
-mod bitlex_compile;
-// The `.rr` parser: the Bitlex grammar compiled, the engine's parser for what it refuses.
-pub(in crate::code_rule_dsl) mod rr_parser;
-mod grammar;
-mod bitlex_prove;
-mod bitlex_tier2;
+#[cfg(test)]
+mod block_digest_tests;
+// The `.rr` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
+// what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
+#[allow(unused_imports)]
+pub(in crate::code_rule_dsl) use rerail_rr_parser as rr_parser;
 pub(in crate::code_rule_dsl) mod stream;
-#[cfg(test)]
-mod bitlex_compile_tests;
-mod token_local;
-#[cfg(test)]
-mod token_local_tests;
-#[cfg(test)]
-mod gating_rr_tests;
 #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
 mod regex_relocation_tests;
-#[cfg(test)]
-mod bitlex_corpus_tests;
-#[cfg(test)]
-mod bitlex_ladder_tests;
-#[cfg(test)]
-mod bitlex_rr_tests;
-#[cfg(test)]
-mod bitlex_json_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
 mod block_monoid;
 mod block_plan;
@@ -320,68 +288,9 @@ mod block_plan_tests;
 mod value_packing;
 mod value_prefix;
 
-const STOP: u8 = 0x00;
-const KIND: u8 = 0x01;
-const FIELD: u8 = 0x02;
-const FLAGS: u8 = 0x03;
-const TEXT: u8 = 0x04;
-const SIZE: u8 = 0x05;
-const ASSERT: u8 = 0x06;
-const FIRST: u8 = 0x07;
-const LAST: u8 = 0x08;
-const ABSENT_FIELD: u8 = 0x09;
-const SUPERTYPE: u8 = 0x0a;
-const CHILD: u8 = 0x10;
-const NEXT: u8 = 0x11;
-const PARENT: u8 = 0x12;
-const DESCEND: u8 = 0x13;
-const FOLLOWING: u8 = 0x14;
-const SAVE_CURSOR: u8 = 0x15;
-const RESTORE_CURSOR: u8 = 0x16;
-const CAPTURE: u8 = 0x20;
-const REPEAT_BEGIN: u8 = 0x21;
-const REPEAT_BUMP: u8 = 0x22;
-const REPEAT_END: u8 = 0x23;
-const FORK: u8 = 0x30;
-const GOTO: u8 = 0x31;
-const EMIT: u8 = 0x40;
-// Tier 2's words, over the token stream (decision 0087, `stream`).
-const TOKEN: u8 = 0x50;
-const SWITCH: u8 = 0x51;
-/// `WORD` in `rir`.
-const WORD_IS: u8 = 0x52;
-// 0x53 was `CHECK`, a token's check run per token: a check is tier 1's masks (doc 18 §4).
-const OPEN: u8 = 0x54;
-const CLOSE: u8 = 0x55;
-const LEAF: u8 = 0x56;
-const NODE_FIELD: u8 = 0x57;
-const NODE_SUPER: u8 = 0x58;
-const PUSH: u8 = 0x59;
-const RETURN: u8 = 0x5a;
-const ACCEPT: u8 = 0x5b;
-const SPAN: u8 = 0x5c;
-/// Refuses unless one of tier 1's totals is zero: the fallback.
-const EMPTY: u8 = 0x5d;
-/// A mark (a token of no width) before the token: `m=k` its order, the operand its mask.
-const MARK: u8 = 0x5e;
-/// Runs the next word when the token starts at a bit of mask `operand`, else skips it: which of
-/// two rows beginning with one byte the token is.
-const ROW: u8 = 0x5f;
-/// The innermost open node becomes a node of kind `operand`: its kind decided by this token.
-const RETAG: u8 = 0x60;
-/// The token's leaf joins the grammar's leaf before it (the pending extras between are its text,
-/// dropped): one leaf of kind `operand`, to this token's end.
-const MERGE: u8 = 0x61;
-/// A node of kind `operand` around the node last made at this level, open: it takes that node's
-/// field and start; `NODE_FIELD m=1` and `RETAG m=1` then act on the moved node.
-const WRAP: u8 = 0x62;
-
-pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
-const GREEDY: u8 = 1;
-const EXTRA: u8 = 2;
-const MISSING: u8 = 4;
-const ERROR: u8 = 8;
-const SIZE_LONG: u8 = 0x80;
+// The transducer's word program and its opcodes, the compiler crate's (`rerail_compiler::program`).
+use rerail_compiler::program::*;
+pub(in crate::code_rule_dsl) use rerail_compiler::program::{NAMED, Words, word};
 const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
 const MAX_STEPS_PER_PATH: usize = 1 << 20;
 const MAX_WORK_PER_TASK: usize = 1 << 26;
@@ -864,32 +773,31 @@ enum PatternVerdict {
 
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Program {
-    words: Vec<u32>,
-    strings: Vec<Vec<u8>>,
+    /// The word program: the words and the tables they index, tier 1's and tier 2's
+    /// (`rerail_compiler::program::Words`). The fields below are the matcher's.
+    ir: Words,
     predicates: Vec<TextPredicate>,
     value_programs: Vec<value::ValueProgram>,
     capture_predicates: Vec<CapturePredicate>,
     capture_programs: Vec<value::CaptureProgram>,
-    labels: Vec<u16>,
-    longs: Vec<u64>,
     directives: Vec<Directive>,
     output_program: output::OutputProgram,
-    tree_sitter_query: bool,
-    /// Set mode (t1 spec-transducer §1, list step 14): the program's consumer reads its output
-    /// as a set of (task, label) keys, so an executor may stop a label at its first emit in a
-    /// task and drop a path whose reachable labels have all fired (`set_mode::Reach`). Its
-    /// captures are then one witness's, not every path's.
-    set_mode: bool,
     ast_pattern: Option<PackedPattern>,
-    /// Block programs, the side programs over source bytes (`block`), as `value_programs` are
-    /// the side programs over a node's text.
-    block_programs: Vec<block::BlockProgram>,
-    /// Tier 2's switch tables (`SWITCH`, decision 0087).
-    switches: Vec<stream::ByteSwitch>,
-    /// Tier 2's readings (`RETAG m=3`) and provisional fields.
-    readings: stream::Readings,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
+}
+
+impl std::ops::Deref for Program {
+    type Target = Words;
+    fn deref(&self) -> &Words {
+        &self.ir
+    }
+}
+
+impl std::ops::DerefMut for Program {
+    fn deref_mut(&mut self) -> &mut Words {
+        &mut self.ir
+    }
 }
 
 /// A program's plain digest, computed once: the CPU JIT's cache, the compilation requests and
@@ -1033,7 +941,7 @@ pub(super) fn interpreter_reference(
 }
 
 // The transducer's errors, shared with tier 1's crate.
-pub(in crate::code_rule_dsl) use rerail_tier1::Error;
+pub(in crate::code_rule_dsl) use rerail_compiler::Error;
 
 #[derive(Clone, Copy)]
 struct Path {
@@ -1207,9 +1115,6 @@ impl WorkItem {
     }
 }
 
-fn split(word: u32) -> (u8, u8, u16) {
-    (word as u8, (word >> 8) as u8, (word >> 16) as u16)
-}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 enum SiblingRequirement {
@@ -1405,9 +1310,6 @@ impl CaptureStateSet {
     }
 }
 
-pub(in crate::code_rule_dsl) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
-    opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
-}
 
 impl PackedPattern {
     fn lower(node: &PatternNode) -> Self {
@@ -1897,24 +1799,16 @@ impl Program {
             .map(value::CaptureProgram::lower)
             .collect();
         let program = Self {
-            words,
-            strings,
+            ir: Words { words, strings, labels, longs, ..Words::default() },
             predicates,
             value_programs,
             capture_predicates,
             capture_programs,
-            labels,
-            longs,
             directives: Vec::new(),
             output_program: output::OutputProgram {
                 instructions: Vec::new(),
             },
-            tree_sitter_query: false,
-            set_mode: false,
             ast_pattern: None,
-            block_programs: Vec::new(),
-            switches: Vec::new(),
-            readings: stream::Readings::default(),
             digest: DigestMemo::default(),
         };
         program.validate()?;
@@ -2226,8 +2120,7 @@ impl Program {
     }
 
     pub(in crate::code_rule_dsl) fn label_name(&self, label: u16) -> Option<&str> {
-        let string = *self.labels.get(usize::from(label))?;
-        std::str::from_utf8(self.strings.get(usize::from(string))?).ok()
+        rerail_compiler::rir_asm::label_name(self, label)
     }
 
     pub(in crate::code_rule_dsl) fn string_value(&self, string: u16) -> Option<&str> {
@@ -2412,25 +2305,9 @@ impl Program {
         {
             return Err(Error::InvalidOperand(0));
         }
-        // A tier-2 program (decision 0087): its own words and rules.
+        // A tier-2 program (decision 0087): its own words and rules (`stream::validate_tier2`).
         if self.words.iter().any(|&w| stream::is_stream(split(w).0)) {
-            for (pc, &w) in self.words.iter().enumerate() {
-                let (opcode, mode, operand) = split(w);
-                match opcode {
-                    STOP => {
-                        if mode != 0 || operand != 0 {
-                            return Err(Error::InvalidMode(pc));
-                        }
-                    }
-                    GOTO => {
-                        if mode != 0 || usize::from(operand) >= self.words.len() {
-                            return Err(Error::InvalidTarget(pc));
-                        }
-                    }
-                    _ => stream::validate_word(self, pc, opcode, mode, operand)?,
-                }
-            }
-            return stream::validate(self);
+            return stream::validate_tier2(self);
         }
         if !self.switches.is_empty() {
             return Err(Error::InvalidOperand(0));
@@ -4305,168 +4182,6 @@ fn execute_with_backend_bounded_limit(
     Ok(BatchOutcome { outputs, errors })
 }
 
-#[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct ProductionDispatchGroup {
-    id: u64,
-    expected_files: usize,
-}
-
-#[cfg(target_os = "macos")]
-static NEXT_PRODUCTION_DISPATCH_GROUP: AtomicU64 = AtomicU64::new(1);
-
-pub(in crate::code_rule_dsl) fn new_production_dispatch_group(expected_files: usize) -> ProductionDispatchGroup {
-    ProductionDispatchGroup {
-        #[cfg(target_os = "macos")]
-        id: NEXT_PRODUCTION_DISPATCH_GROUP.fetch_add(1, Ordering::Relaxed),
-        #[cfg(not(target_os = "macos"))]
-        id: 0,
-        expected_files,
-    }
-}
-
-#[cfg(target_os = "macos")]
-struct ProductionDispatchRequest {
-    group: ProductionDispatchGroup,
-    key: metal_program_backend::ProgramBufferKey,
-    programs: Vec<Program>,
-    file: TapeDoc,
-    anchors: Vec<Vec<u32>>,
-    result_limits: Vec<u32>,
-    response: mpsc::SyncSender<Result<packed_batch::PackedExecution, Error>>,
-}
-
-#[cfg(target_os = "macos")]
-fn production_grid_fits(requests: &[ProductionDispatchRequest]) -> bool {
-    let mut tasks = 0_u64;
-    let mut nodes = 0_u64;
-    let mut source_bytes = 0_u64;
-    for request in requests {
-        tasks = tasks.saturating_add(
-            request
-                .anchors
-                .iter()
-                .map(|roots| roots.len() as u64)
-                .sum::<u64>(),
-        );
-        nodes = nodes.saturating_add(request.file.transducer_len() as u64);
-        source_bytes = source_bytes.saturating_add(request.file.transducer_source().len() as u64);
-    }
-    let maximum_tasks = u64::from(u32::MAX / 2 - 1);
-    tasks <= maximum_tasks && nodes <= u64::from(u32::MAX) && source_bytes <= u64::from(u32::MAX)
-}
-
-#[cfg(target_os = "macos")]
-fn production_grid_partitions(requests: &[ProductionDispatchRequest]) -> Vec<Range<usize>> {
-    let mut pending = Vec::with_capacity(requests.len());
-    pending.push(0..requests.len());
-    let mut partitions = Vec::new();
-    while let Some(range) = pending.pop() {
-        if range.len() <= 1 || production_grid_fits(&requests[range.clone()]) {
-            partitions.push(range);
-            continue;
-        }
-        let middle = range.start + range.len() / 2;
-        pending.push(middle..range.end);
-        pending.push(range.start..middle);
-    }
-    partitions
-}
-
-#[cfg(target_os = "macos")]
-fn execute_production_grid(requests: &[ProductionDispatchRequest]) {
-    for range in production_grid_partitions(requests) {
-        let partition = &requests[range.clone()];
-        let programs = &partition[0].programs;
-        let program_count = programs.len();
-        let files = partition
-            .iter()
-            .map(|request| request.file.clone())
-            .collect::<Vec<_>>();
-        let anchors = partition
-            .iter()
-            .map(|request| request.anchors.clone())
-            .collect::<Vec<_>>();
-        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-            eprintln!(
-                "TEMPO_PRODUCTION_GRID files={} sourceBytes={:?} tasks={:?}",
-                partition.len(),
-                partition
-                    .iter()
-                    .map(|request| request.file.transducer_source().len())
-                    .collect::<Vec<_>>(),
-                partition
-                    .iter()
-                    .map(|request| request.anchors.iter().map(Vec::len).sum::<usize>())
-                    .collect::<Vec<_>>()
-            );
-        }
-        let result = execute_with_backend_packed_result_limits(
-            ExecutionBackend::MetalJit,
-            programs,
-            &files,
-            &anchors,
-            Some(&partition[0].result_limits),
-        );
-        match result {
-            Ok(execution) => {
-                for (file, request) in partition.iter().enumerate() {
-                    let view = execution.view(file, 1, 0, program_count);
-                    let _ = request.response.send(view);
-                }
-            }
-            Err(error) => {
-                for request in partition {
-                    let _ = request.response.send(Err(error.clone()));
-                }
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn production_dispatch_worker(receiver: mpsc::Receiver<ProductionDispatchRequest>) {
-    const MAX_FILES_PER_DISPATCH: usize = 64;
-    const INCOMPLETE_GROUP_TIMEOUT: Duration = Duration::from_millis(100);
-    let mut pending = None;
-    loop {
-        let first = match pending.take().map(Ok).unwrap_or_else(|| receiver.recv()) {
-            Ok(request) => request,
-            Err(_) => return,
-        };
-        let expected_files = first.group.expected_files.clamp(1, MAX_FILES_PER_DISPATCH);
-        let mut requests = vec![first];
-        while requests.len() < expected_files {
-            match receiver.recv_timeout(INCOMPLETE_GROUP_TIMEOUT) {
-                Ok(request)
-                    if request.group.id == requests[0].group.id
-                        && request.key == requests[0].key
-                        && request.result_limits == requests[0].result_limits =>
-                {
-                    requests.push(request);
-                }
-                Ok(request) => {
-                    pending = Some(request);
-                    break;
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => break,
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-        execute_production_grid(&requests);
-    }
-}
-
-#[cfg(target_os = "macos")]
-static PRODUCTION_DISPATCH: LazyLock<mpsc::SyncSender<ProductionDispatchRequest>> =
-    LazyLock::new(|| {
-        let (sender, receiver) = mpsc::sync_channel(64);
-        std::thread::Builder::new()
-            .name("tempo-metal-dispatch".to_owned())
-            .spawn(move || production_dispatch_worker(receiver))
-            .expect("Tempo Metal dispatch worker must start");
-        sender
-    });
-
 pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -> Result<(), Error> {
     #[cfg(target_os = "macos")]
     {
@@ -4478,60 +4193,6 @@ pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -
             native_cpu::warm_jit(program)?;
         }
         Ok(())
-    }
-}
-
-pub(in crate::code_rule_dsl) fn execute_production_packed_result_limits(
-    programs: &[Program],
-    files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
-    result_limits: &[u32],
-    group: ProductionDispatchGroup,
-) -> Result<packed_batch::PackedExecution, Error> {
-    #[cfg(target_os = "macos")]
-    {
-        if files.len() != 1
-            || anchors.len() != 1
-            || anchors[0].len() != programs.len()
-            || result_limits.len() != programs.len()
-        {
-            return Err(Error::InvalidAnchor);
-        }
-        let key = metal_program_backend::program_buffer_key(programs)?;
-        let (response, receive) = mpsc::sync_channel(1);
-        PRODUCTION_DISPATCH
-            .send(ProductionDispatchRequest {
-                group,
-                key,
-                programs: programs.to_vec(),
-                file: files[0].clone(),
-                anchors: anchors[0].clone(),
-                result_limits: result_limits.to_vec(),
-                response,
-            })
-            .map_err(|_| Error::BackendFailure)?;
-        loop {
-            match receive.try_recv() {
-                Ok(result) => break result,
-                Err(mpsc::TryRecvError::Disconnected) => break Err(Error::BackendFailure),
-                Err(mpsc::TryRecvError::Empty) => {
-                    if !matches!(rayon::yield_now(), Some(rayon::Yield::Executed)) {
-                        std::thread::yield_now();
-                    }
-                }
-            }
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = group;
-        execute_with_backend_packed_result_limits(
-            ExecutionBackend::CpuJit,
-            programs,
-            files,
-            anchors,
-            Some(result_limits),
-        )
     }
 }
 

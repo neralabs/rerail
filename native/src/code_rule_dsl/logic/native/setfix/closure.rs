@@ -210,6 +210,9 @@ pub(super) struct Prepared {
     /// Each piece's nodes by local id.
     pieces: Vec<Vec<u32>>,
     pub(super) launches: Vec<Kernel>,
+    /// The relation keeps levels (decision 0090): its rows are made by distance on the host (`by_distance`), with no
+    /// launches.
+    levels: bool,
 }
 
 /// The first half: the distinct start nodes, the edges out of every node reached (the rest, searched once per
@@ -254,13 +257,19 @@ pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interne
     drop(h);
     let n = nodes.len();
     prof::count("closure", "nodes searched", n as u64);
-    if adj.iter().all(|a| a.len() <= 1) {
-        prof::count("closure", "closures by chains alone", 1);
-        return Some(Prepared { nodes, index, adj, at: Vec::new(), pieces: Vec::new(), launches: Vec::new() });
+    // Each row's level (decision 0090), when the relation keeps them: a row is made from the one a hop before it,
+    // so its level is its seed's plus its distance (the least over its seeds), which puts the row it is made from
+    // strictly below it. One push of them all would put every row at one level. Bit rows give reach, not distance.
+    let levels = store.rels[0].level.len() == store.rels[0].n;
+    if levels || adj.iter().all(|a| a.len() <= 1) {
+        if !levels {
+            prof::count("closure", "closures by chains alone", 1);
+        }
+        return Some(Prepared { nodes, index, adj, at: Vec::new(), pieces: Vec::new(), launches: Vec::new(), levels });
     }
     let _h = prof::host("closure", "encode: components, pieces, adjacency");
     let (at, pieces, launches) = partition(&adj);
-    Some(Prepared { nodes, index, adj, at, pieces, launches })
+    Some(Prepared { nodes, index, adj, at, pieces, launches, levels: false })
 }
 
 /// The reach graph's weakly connected components, each a chain, a part of a dense piece, or walked on the host; and
@@ -369,6 +378,9 @@ fn partition(adj: &[Vec<u32>]) -> (Vec<At>, Vec<Vec<u32>>, Vec<Kernel>) {
 /// The second half: each seed row with its column replaced by every node of its start's reach, from the chains, the
 /// pieces' bit rows (`outs`, one per launch) and the host's searches.
 pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut Store) -> Option<Ran> {
+    if p.levels {
+        return Some(by_distance(cl, &mut store.rels[0], &p.index, &p.nodes, &p.adj));
+    }
     let bits: Vec<Bits> = outs.into_iter().map(|o| if let Output::Bits(b) = o { Some(b) } else { None }).collect::<Option<_>>()?;
     if bits.len() != p.pieces.len() {
         return None;
@@ -453,4 +465,66 @@ pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut S
     prof::count("closure", "rows made", rows as u64);
     let how: Vec<&str> = [(dense, "bit rows"), (chain, "chains"), (host, "host walks past the limits")].iter().filter(|w| w.0).map(|w| w.1).collect();
     Some(Ran { nodes: n, rows, how: if how.is_empty() { "chains".into() } else { how.join(" and ") } })
+}
+
+/// The closure's rows with their levels: from each seed row, a search along `adj` gives each node its distance, and a
+/// row's level is the least of its seeds' levels plus their distances.
+fn by_distance(cl: &Closure, rel: &mut super::Rel, index: &HashMap<i64, u32>, nodes: &[i64], adj: &[Vec<u32>]) -> Ran {
+    let seeds = rel.n;
+    // A start node's reach with distances, searched once per distinct start.
+    let mut reach_of: HashMap<u32, Vec<(u32, u32)>> = HashMap::default();
+    let mut seen: Vec<u32> = vec![u32::MAX; nodes.len()];
+    let mut stamp = 0u32;
+    let mut search = |s: u32| -> Vec<(u32, u32)> {
+        stamp += 1;
+        let mut out: Vec<(u32, u32)> = Vec::new();
+        let mut frontier = vec![s];
+        let mut d = 0;
+        while !frontier.is_empty() {
+            d += 1;
+            let mut next = Vec::new();
+            for &v in &frontier {
+                for &w in &adj[v as usize] {
+                    if seen[w as usize] != stamp {
+                        seen[w as usize] = stamp;
+                        out.push((w, d));
+                        next.push(w);
+                    }
+                }
+            }
+            frontier = next;
+        }
+        out
+    };
+    let mut at: HashMap<Vec<i64>, usize> = HashMap::default();
+    let mut made: Vec<(Vec<i64>, u32)> = Vec::new();
+    let mut row = vec![0i64; rel.k];
+    for id in 0..seeds {
+        if rel.dead(id as u32) {
+            continue;
+        }
+        row.copy_from_slice(rel.row(id));
+        let base = rel.level[id];
+        let s = index[&row[cl.col]];
+        let reach = reach_of.entry(s).or_insert_with(|| search(s));
+        for &(z, d) in reach.iter() {
+            row[cl.col] = nodes[z as usize];
+            let level = base + d;
+            match at.get(&row) {
+                Some(&i) => made[i].1 = made[i].1.min(level),
+                None => {
+                    at.insert(row.clone(), made.len());
+                    made.push((row.clone(), level));
+                }
+            }
+        }
+    }
+    let mut rows = 0;
+    for (r, level) in &made {
+        if rel.push(r) {
+            *rel.level.last_mut().expect("a level pushed") = *level;
+            rows += 1;
+        }
+    }
+    Ran { nodes: nodes.len(), rows, how: "levels by distance".into() }
 }

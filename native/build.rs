@@ -472,8 +472,8 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     view_sources.push(manifest.join("src/code_rule_dsl/php_view.rs"));
     view_sources.push(manifest.join("src/code_rule_dsl/php_literal.rs"));
     // A `.rr` tape is the tree the rule engine's parser builds, numbered by its kinds table (decision 0061).
-    view_sources.push(manifest.join("src/code_rule_dsl/logic/rr/syntax.rs"));
-    view_sources.push(manifest.join("src/code_rule_dsl/logic/rr/tape.rs"));
+    view_sources.push(manifest.join("crates/rr_syntax/src/syntax.rs"));
+    view_sources.push(manifest.join("crates/rr_syntax/src/tape.rs"));
     view_sources.retain(|path| {
         !path
             .file_name()

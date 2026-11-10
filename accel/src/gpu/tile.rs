@@ -145,6 +145,8 @@ pub struct TileJob {
     _n: Held,
     scatter_pipe: metal::ComputePipelineState,
     out: Option<Held>,
+    /// What the pairs' sort reads and writes, until its command buffer completed.
+    keep: Vec<Held>,
     /// The pairs (after the count's command buffer completed and `scatter`).
     pub total: usize,
     /// The pairs of rows the kernel compares: the brute force's work.
@@ -289,7 +291,7 @@ kernel void rows_scan(device const uint* counts [[buffer(0)]], device uint* offs
         pass.run(&prefix, &[&counts.buffer, &offsets.buffer, &nbuf.buffer], &[], &[], 1);
     }
     // Every buffer the passes read is the job's until its command buffers completed.
-    Ok(TileJob { tiles: tiles.len(), threads, tiles_buf, highs_buf, unused, _counts: counts, offsets, _n: nbuf, scatter_pipe: scatter, out: None, total: 0, compared })
+    Ok(TileJob { tiles: tiles.len(), threads, tiles_buf, highs_buf, unused, _counts: counts, offsets, _n: nbuf, scatter_pipe: scatter, out: None, keep: Vec::new(), total: 0, compared })
     }
 
     /// The scatter, encoded into `pass`, once the count's command buffer completed (the same sides and keys).
@@ -308,11 +310,30 @@ kernel void rows_scan(device const uint* counts [[buffer(0)]], device uint* offs
         Ok(self)
     }
 
-    /// The pairs, (left host row, right host row), in tile order: after the scatter's command buffer completed.
+    /// The scattered pairs sorted into the kernel's order (left row, then right row) on the device, encoded into
+    /// `pass` after `scatter`: `left_rows` and `right_rows` are the sides' host rows, which bound the sort's key.
+    pub fn sort(mut self, pass: &Pass<'_>, left_rows: usize, right_rows: usize) -> Result<TileJob, String> {
+        let bits = |n: usize| usize::BITS - n.saturating_sub(1).leading_zeros();
+        if let Some(out) = self.out.take() {
+            let sorted = Held::new(8 * self.total)?;
+            super::join::encode_sorted_pairs(pass, &out, self.total, bits(left_rows), bits(right_rows), &sorted, &mut self.keep)?;
+            self.keep.push(out);
+            self.out = Some(sorted);
+        }
+        Ok(self)
+    }
+
+    /// The pairs, (left host row, right host row), in tile order (in row order after `sort`): after the scatter's
+    /// command buffer completed.
     pub fn pairs(&self) -> Vec<(u32, u32)> {
         let Some(out) = &self.out else { return Vec::new() };
         // SAFETY: `2 * total` words, written by the scatter.
         let flat = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), 2 * self.total) };
         flat.chunks_exact(2).map(|p| (p[0], p[1])).collect()
     }
+}
+
+/// Compiles the tile pairs' sort ahead of its first use (the tile kernels themselves are made per key forms).
+pub fn prewarm() {
+    let _ = super::join::prewarm_pair_sort();
 }

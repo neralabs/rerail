@@ -353,7 +353,7 @@ per word, a loop over the stream), but nothing generates it yet.
 
 Each executor must compute what the Bitlex file means, not only what the interpreter
 says. The corpus checks both. It is in
-`native/src/code_rule_dsl/transducer/packed/bitlex_corpus/`, one Bitlex file per
+`native/crates/parser_tests/bitlex_corpus/`, one Bitlex file per
 program, from one construct alone up to combinations of many.
 
 For every file and every input:
@@ -458,8 +458,8 @@ state S':  ',' -> leaf ...            ; S without its close
 
 ## 9. The ladder: thirteen languages, one keyword to nested data with comments
 
-The ladder is thirteen Bitlex files, in
-`native/src/code_rule_dsl/transducer/packed/bitlex_ladder/`. The languages are made
+The ladder is thirteen Bitlex files, in `native/crates/compiler/bitlex_ladder/`
+(the compiler crate's, with its tests). The languages are made
 up, so that no step is a known format. Each step adds one construct to the step
 before:
 

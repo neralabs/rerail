@@ -1,7 +1,11 @@
-//! Decision 0103 §6: a cache is two rules, and nothing else may be one. This test holds the stores' tables and the
-//! freshness tests that were made before the decision. A table or a call that is not on its list fails, so a new
-//! cache cannot be made outside the form. An entry is removed when its cache moves to the two rules; none may be
-//! added.
+//! Decision 0103: a cache is two rules, and nothing else may be one. Cached facts are just facts: stored, held in
+//! memory and written back the same way as every other fact. This test holds the stores' tables and the freshness
+//! tests that were made before the decision. A table or a call that is not on its list fails, so a new cache cannot
+//! be made outside the form. An entry is removed when its cache moves to the two rules; none may be added.
+//!
+//! It also holds the form to rules only: a cache's two rules are ordinary rules, evaluated, kept and maintained as
+//! every rule is. Only the lint of `.cache` (`front::caches`) knows a relation is a cache. No store, table, hook,
+//! lookup or rewrite of a cache's own.
 
 use std::path::{Path, PathBuf};
 
@@ -35,12 +39,12 @@ const NOT_CACHES: &[&str] = &[
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
-    "x", "rows", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
+    "x", "rows", "keys", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 
-/// The relations' own storage between runs: what a cache's two rules are kept in (decision 0103 §2), as every
-/// relation is.
-const RELATIONS: &[&str] = &["kept_strata", "kept_strata_programs"];
+/// The relations' own storage between runs: every relation's rows as frames (notes/t33, K1). A cache's rows are
+/// kept here as any relation's are, never in a table of their own.
+const RELATIONS: &[&str] = &["frames", "frame_spaces"];
 
 /// Caches made before decision 0103, each to move to the two rules (§7 lists each one's). This list may only shrink.
 const NOT_YET_MOVED: &[&str] = &[
@@ -113,9 +117,39 @@ fn no_cache_tests_its_own_freshness_but_those_not_yet_moved() {
         }
     }
     let extra: Vec<String> = found.iter().filter(|(file, needle)| !FRESHNESS_CALLS.iter().any(|(f, n, _)| f == file && n == needle)).map(|(f, n)| format!("{f}: {n}")).collect();
-    assert!(extra.is_empty(), "a cache tests its own freshness (decision 0103 §6: write its key rule instead): {extra:?}");
+    assert!(extra.is_empty(), "a cache tests its own freshness (decision 0103: write its key rule instead): {extra:?}");
     for (file, needle, most) in FRESHNESS_CALLS {
         let calls = found.iter().filter(|(f, n)| f == file && n == needle).count();
         assert!(calls <= *most, "{file}: {calls} calls of {needle}, at most {most} while it is not yet moved");
     }
+}
+
+/// The only files that may know a relation is a cache: the lint of `.cache` and the program front that calls it.
+/// Nothing that evaluates, keeps or maintains a relation asks whether it is a cache.
+const KNOWS_CACHES: &[&str] = &["code_rule_dsl/logic/front/caches.rs", "code_rule_dsl/logic/front.rs"];
+
+/// A cache's own store, hook or lookup: names no engine code may have (decision 0103: cached facts are just facts).
+const CACHE_MACHINERY: &[&str] = &["CacheStore", "cache_hits", "queue_cache_rows", "keep_cache_rows", "CachePut", "hold_kept"];
+
+#[test]
+fn a_cache_is_rules_only_with_no_store_hook_or_lookup_of_its_own() {
+    let mut files = Vec::new();
+    sources(&src(), &mut files);
+    let word = |name: &str| regex::Regex::new(&format!(r"\b{name}\b")).unwrap();
+    let machinery: Vec<(String, regex::Regex)> = CACHE_MACHINERY.iter().map(|n| ((*n).to_owned(), word(n))).collect();
+    let knows = regex::Regex::new(r"\bfront::caches\b|\bsuper::caches::").unwrap();
+    let mut found = Vec::new();
+    for file in &files {
+        let rel = relative(file);
+        let text = std::fs::read_to_string(file).unwrap();
+        for (name, re) in &machinery {
+            if re.is_match(&text) {
+                found.push(format!("{rel}: {name}"));
+            }
+        }
+        if knows.is_match(&text) && !KNOWS_CACHES.contains(&rel.as_str()) {
+            found.push(format!("{rel}: knows a relation is a cache"));
+        }
+    }
+    assert!(found.is_empty(), "a cache's own store, hook or lookup (decision 0103: cached facts are just facts, kept as every fact is): {found:?}");
 }

@@ -3,7 +3,7 @@
 //! vocabulary tables (schema: `vocabulary_*`) fill in SQL. Adapted from Pulling-it-all-together's
 //! `matcher/anchors/sql/functions.rs`; its node decoders (`nera_decode`, `nera_span`, `nera_slice`,
 //! `nera_parent`, ...) read P's private tape copies and went with them (03 §7).
-use crate::code_rule_dsl::prefilter::probes::TextProbe;
+use crate::probes::TextProbe;
 use rusqlite::{
     Connection, Result,
     functions::FunctionFlags,
@@ -14,7 +14,7 @@ fn invalid(message: impl Into<String>) -> rusqlite::Error {
 }
 
 /// Registers the term matchers and `generate_series` on `db`.
-pub(crate) fn install(db: &Connection) -> Result<()> {
+pub fn install(db: &Connection) -> Result<()> {
     rusqlite::vtab::series::load_module(db)?;
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_INNOCUOUS;
     db.create_scalar_function(

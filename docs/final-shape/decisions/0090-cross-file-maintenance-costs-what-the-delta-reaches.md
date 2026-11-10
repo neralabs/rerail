@@ -609,8 +609,8 @@ relation through `based`, compaction and hand-off, and with an output read back 
   | 26 | restore it | **12.4** | 13.9 |
 
   This is what the spike found: levels wins on edits and loses 15–20% on mass toggles. At steps 23–26 both cost
-  more than deriving again, which is §4's threshold. The threshold is not built yet: it is the next step, and with
-  it the toggles cost the full derive's 8 s whichever algorithm runs.
+  more than deriving again, which is §4's threshold. The threshold is now built (next section), but it saves less
+  than expected: the toggles still cost about twice the full derive, because of fixed costs, not row work.
 
 ## Built: counting the default (2026-11-09)
 
@@ -654,20 +654,218 @@ more than delete-and-rederive. That is not row work: a support per rule makes ab
 pays a fixed cost. Decision 0101 is the work that removes it: skip a stratum whose deltas are empty, make the
 whole-program passes once, and run a stratum's pieces as one component.
 
-## Merged: levels opt-in on the integration branch (2026-11-10)
+## Built: derive again by input delta, and what makes levels expensive (2026-11-10)
 
-Merged with counting (above) and the other branches, *levels, checked* is exact on the session tests but not on
-the whole O125 replay: steps 01–07 equal a full run, and step 08 keeps 1 `type_of` row and 2 `possible_type` rows
-a full run does not (`l2050_transaction/transaction.py:12851.83`). Delete-and-rederive is 8 of 8 on the same
-binary. The difference is the same with counting or delete-and-rederive below, with the closure form off, and on
-one thread. So on the integration branch levels is opt-in (`RERAIL_RECURSIVE=levels`), until that row is found.
+This section covers §4's threshold, a profile of levels on the mass-delete steps, and four fixes made with them.
+All figures are CPU seconds (user + system) on a debug build. The machine's load was high (14–116) and moved
+during runs, so pairs differ by up to 1.4× on identical work; read the figures as directions, not constants.
 
-Two faults of the merge are fixed:
-- **A closure's rows have no levels.** The closure form (0098 §1) adds a walk's rows at once, not in waves, so no
-  row's level is above its premises'. Its relation now holds no levels, and is maintained by delete-and-rederive.
-  Before, a cycle broken by an edit was kept (`a_session_maintains_a_recursive_cross_file_stratum`).
-- **An output is read back from the engine only when levels maintained it.** Any relation the engine derived has
-  levels, so the check `has_levels` also took a copy left by an earlier run, when this run's stratum ran in SQL.
+### §4's threshold, built
+
+Each maintained stratum keeps its rules as given beside its maintained form (`front::Again`). The run picks one
+form per stratum, at the stratum's first piece:
+
+- **Derive again** when its input deltas are at least θ of its old rows, and at least a floor of rows. The input
+  deltas are the `__minus` and `__plus` relations the maintained form reads. θ is 0.25 and the floor is 1,024 rows
+  (`RERAIL_AGAIN_THETA`, `RERAIL_AGAIN_MIN`). Without the floor, tiny sessions derived everything again.
+- **The form derived again runs where its inputs are ready**: after the strata that make its input deltas. It
+  then makes its own `__minus` and `__plus` against its old rows, so the strata above it read deltas as before.
+- `RERAIL_AGAIN=off` keeps every stratum maintained. `RERAIL_AGAIN_WHY=1` prints each choice. A session's report
+  counts the strata derived again under "input deltas past θ".
+
+**Measured.** The stress replay's steps 22–25, one process each, in order: θ = 0.25, then off.
+
+| step | change | θ = 0.25 | off | strata derived again |
+| --- | --- | ---: | ---: | ---: |
+| 22 | restore a package `__init__` | 14.8 | 16.8 | — |
+| 23 | delete 2 files | 13.9 | 18.9 | 441 |
+| 24 | restore them | 15.8 | 20.3 | 442 |
+| 25 | delete a 24-file package | 14.8 | 20.4 | — |
+
+(—: that run did not count them; the count was added after it.)
+
+Both equal the full derive (θ = 0.25 checked it at every step). The threshold saves 2–6 s a step. But the cold
+derive's cross part is 5.8–7.9 s, so a maintained step still costs about twice a cold one. θ = 0, which derives
+every maintained stratum again, costs 18.3–18.9 s on steps 23–24. So the gap is not row work.
+
+**What the gap is** (step 23, θ = 0, the profile's own times):
+
+| part | CPU s | note |
+| --- | ---: | --- |
+| the rewrite and old sources | 4.4 → **0.31** | fixed below |
+| joins in the engine | 4.9 | the row work |
+| `demand`: inline-or-store and the negation split | 2.8 | a whole-program pass, over ~3× the rules |
+| opening relations and indexes | 1.1 | 12,234 opens |
+| recording plans for the profile | 0.9 | profile only |
+| statistics, binding kept relations, patching their statistics | 2.5 | |
+
+Most of it is a fixed cost per stratum or per program, which decision 0101 is meant to remove: run the
+whole-program passes once, and skip strata whose deltas are empty.
+
+### The gap, profiled against a cold derive
+
+The table above is the profile of one session step. Compared span by span with the cold derive before it, on
+one binary (`RERAIL_PROFILE`: the replay keeps each run's `spans-<step>-<run>.tsv`), the gap is this:
+
+- **Inline-or-store priced every rule for nothing: 3.6 s, fixed.** It plans every rule of the program before
+  looking for a relation it may inline. A maintained program has about ten times the rules: 19,777 estimates at
+  step 23, against 2,052 cold. A session stores every cross-file relation, so there is never a choice to make.
+  It now estimates only when some relation may be inlined: 0.2 s, and the step's cross part goes from 14.0 to
+  12.1 s.
+- **The first maintained step measures what it binds: 2.0 s, once.** Each kept relation and each input's
+  `__plus` is measured when bound, and each maintained relation is counted for its patched statistics. From the
+  second step on, the patched statistics are carried. What's left is about 0.7 s a step, mostly the `__plus`
+  deltas (226 of them, 0.38 s).
+- **Joins: 8.2 s at step 24 against 6.1 s cold.** Three causes:
+  - *A stratum derived again also makes its deltas.* `h__plus :- h, !h__old` and `h__minus :- h__old, !h` are
+    full anti-joins: 188 K probes each for `kind` and `docof`, whatever the change. Over step 24 they cost 1.5 s,
+    more than the rules they follow (the supports, 1.1 s).
+  - *It runs in its support form:* `kind__sup0` from `node`, then `kind` from that, where the cold cross part
+    reads `kind__sup0` from the file-local part. That's two strata for each head, each with its deltas.
+  - *More engine calls:* 3,531 against 1,286. Engine time outside the plan pieces rises 2.5 → 3.5 s, about
+    0.4 ms an extra call.
+- **Per-stratum bookkeeping: about 1 s.** Each stratum's own time, the run's own time, spec, re-pricing and
+  binding, over 2,478 strata against 826.
+- **Smaller:** input deltas from the changed documents 0.26 s, the rewrite 0.15 s, what's left of inline-or-store
+  0.2 s.
+
+Step 24 after the fix: cross part 13.0 s against 8.5 s cold, at load 55–70. On a mass delete, maintenance saves
+no join work. The derived-again strata cost more than their cold form, because of the deltas and the support form.
+
+**What would close it**, in order of size:
+1. Make a derived-again stratum's deltas only when a maintained reader reads them. *Built: see below.*
+2. Derive again in the cold form (the head's own rules, reading the support from the file-local part where the
+   cold program does), and keep the support for the next run's counting only where it's maintained.
+3. 0101's per-stratum fixed cost: fewer, larger strata and engine calls.
+
+### Built: a stratum derived again makes its deltas only where they are read (2026-11-10)
+
+Deriving a stratum again also made its deltas against its old rows, `h__plus` and `h__minus`. Each is a full
+anti-join, whatever the change. Now they are deferred, and made where a stratum that runs first reads them.
+
+**The reader's decision is the hard part.** A maintained group picks its form by measuring its input deltas. If
+it measures a deferred delta, the delta must be made, and then nothing is saved: only 3 of the 441 groups derived
+again at step 23 have deltas no group reads. So a group that reads a deferred delta takes its size from an
+**estimate**: the input deltas of the stratum that makes it, at most that stratum's rows new and old. Every group
+derived again carries its own estimate forward, so a large change propagates and a small one stops. A group
+that stays maintained makes the deferred deltas it reads. What a deferred delta reads lives until its last reader.
+
+`RERAIL_AGAIN_DEFER` picks the rule: `estimate` (the default), `propagate` (a reader of a deferred delta is
+derived again without deciding), `measure` (the delta is made to be measured), or `off`.
+
+**Measured.** CPU time alone could not separate the modes: identical work differed by 30% between runs. So each
+comparison ran the modes at once, as separate processes under the same load, and counted the engine's work
+(rows touched, deterministic) and its calls.
+
+| | stress 23 | stress 24 | O125 06: work, calls | 07 | 08 |
+| --- | ---: | ---: | --- | --- | --- |
+| `estimate` | **9.2 s** | **9.5 s** | 1.47 M, 3,015 | 6.41 M, 3,079 | 7.15 M, 2,868 |
+| `propagate` | 8.8 s | 9.4 s | 5.66 M, 2,200 | 6.14 M, 2,529 | 7.56 M, 2,362 |
+| `off` | 10.9 s | 11.7 s | 1.47 M, 3,015 | 6.36 M, 3,744 | 6.88 M, 4,388 |
+
+The cold derive's cross part takes 7.1–7.4 s and does 7.77 M work. `propagate` quadruples step 06's work: 4
+groups crossed θ, and it pulled in 362 more. At about 0.4 µs a unit of work and 0.4 ms an engine call:
+- `estimate` costs the same as `off` at step 06, and 0.2–0.5 s less at 07–08;
+- on the toggles it saves 1.7–2.2 s a step, as `propagate` does.
+
+Steps 08 and 24 equal the full derive, and the findings gate is unchanged.
+
+### Investigated: deriving again without supports (2026-11-10)
+
+The question was whether a stratum derived again should use the program's original form, without counting's
+supports, and keep a support only where the next run maintains it. The data:
+
+- **The cold program has supports too.** Of its 618 supports, 599 are relations it makes. Only 19 are SQL views
+  of one input, `kind__sup0` and `docof__sup0` among them. So the cold form differs from the session's only in
+  those 19.
+- **Those 19 views cost real time in a session.** It makes them relations, keeps them and maintains them. At
+  stress steps 23–24 they take 0.95 s and 0.65 s, where cold they cost nothing. At O125 steps 06–08 they cost
+  nothing, since their changes there are 301–5,930 rows of about 181 K. They also hold 11.4 MB of kept rows in
+  11 relations, against 16.4 MB for the other 444 supports and 19.9 MB for 158 heads. That's about a quarter of
+  what a session keeps.
+- **Folding the other supports into their heads saves little.** The support's join work stays (0.5–0.9 s a
+  step, derived again). What goes is each head's projection of its support: 0.07–0.22 s a step, plus 167–333
+  engine calls at about 0.4 ms each.
+- **A support derived again is rarely maintained next step.** Under `estimate`, 4 of 166 go from derived again
+  to maintained at 07→08, and 5 of 455 at 23→24. So not keeping it would rarely cost a rebuild.
+
+**What this suggests.** Keep a support that is a view of one input a view in a session as well. Its old rows are
+the view over the input's old rows, and its delta is the view over the input's delta. That saves the 19 views'
+time and about a quarter of the kept memory, with no third form in the rewrite. Folding the other supports into
+their heads would save 0.15–0.35 s a step for a third form, and fewer, larger strata is 0101's work anyway.
+
+### What makes levels expensive
+
+Steps 22–25 of the stress replay, profiled by stratum and by role:
+
+- **On a mass delete, almost every candidate is truly gone.** At step 23, `pv` has 17,352 candidates and 17,324 of
+  them are gone. DRed over-deletes 18,674 and puts back all but 17,319. `walk` has 18,803 in both. So the check
+  that levels adds saves almost no deletes here, and its cost is all overhead.
+- **The check runs in many small batches.** It runs one batch per level: `pv`'s check took 168 of them, where
+  DRed's rederive took 27 waves. Each batch pays a plan and an engine call.
+- **Some check plans are misordered.** One estimate is off by about 270×: a probe of `fv__live` by `(k, v)` is
+  expected to return about 1 row and returns about 270, so the join order chosen is wrong.
+- **Per role at step 25:** levels' candidates take 1.56 s (4.7 M rows), the check 0.77 s (2.6 M), insert 0.93 s.
+  DRed's delete takes 1.69 s (4.8 M), insert 1.35 s, rederive 0.57 s.
+
+Levels still wins on ordinary edits, where most candidates survive their check (steps 06–08 above). On mass deletes
+the threshold now takes those strata out of maintenance. Two improvements remain open: batches per level, and the
+skew estimate.
+
+### Fixes made with it
+
+- **Kept rows drifted under levels.** Two faults:
+  - The driver showed again rows that were dead before it started.
+  - When a deleted row had been pushed again, finding a row's live copy could return its old dead copy, with the
+    old, lower level. The candidate then looked decided and was kept without a check.
+
+  Over O125 steps 01–08, levels lost 3–281 `acls` rows and 2–8 `icall` rows against a derive over the old inputs.
+  Now it matches DRed's kept rows at every step. `RERAIL_LEVELS_TRACE=<value>` traces the candidates holding a
+  value.
+- **A kept relation's bytes count its levels** (4 bytes a row) against the session's budget.
+- **DRed's and counting's batch relations take no whole plans** (`__del`, `__lost`, `__ins`, `__redo`), as the
+  levels relations already did. Their batches are small from the first row, and a whole plan scans the old rows
+  first. O125 steps 07–08, everything under DRed, one pair on one binary (`RERAIL_SMALL_WHOLE=dred` gives the
+  old behaviour back):
+
+  | step | whole plans (before) | no whole plans |
+  | --- | ---: | ---: |
+  | 07 (6 files) | 13.7 | **9.7** |
+  | 08 (6 files) | 12.1 | **10.9** |
+
+- **The rewrite cost 4.4 s a step.** Building each stratum's derived-again form scanned every rule once per
+  stratum, which is quadratic in the program. The delta rules are now found by relation, once: the whole rewrite
+  takes 0.31 s.
+
+### What this shows about the default
+
+On O125 steps 07–08 the default (counting, levels, θ = 0.25) takes 14.4–19.7 s for the cross part. Everything under
+DRed takes 9.7–10.9 s, and a cold derive takes 4.4–8.8 s. Counting runs 783 strata a step where DRed runs 209. The
+"Built: counting the default" section measured a 0.2–0.5 s difference on steps 01–04, but here it is 4–10 s. So
+until 0101 removes the per-stratum fixed cost, counting is the slower default on edits like these.
+
+## Merged: levels the default in the integration branch, held only where read (2026-11-10)
+
+Levels (above) is the default for a session's recursive strata on the integration branch too
+(`RERAIL_RECURSIVE=dred` compares). Four fixes made it exact and cheaper there.
+
+- **Rows dead before a run.** O125 step 08 kept 1 `type_of` and 2 `possible_type` rows a full run does not
+  derive. A `live` row deleted in an earlier run came back to life when its level was shown, and `id_of` found
+  that old dead copy, not the row's later live one. The driver now keeps the rows dead before the run
+  (`was_dead`): never shown, never a candidate's row (517250487).
+- **What is read back.** A relation is read back from the engine only if this run kept it there natively
+  (`Outcome::native`), and only with levels. Reading back by `h__gone` left a 58-relation component on
+  delete-and-rederive.
+- **Levels only where read.** Every relation held a 4-byte level per row. Now only a relation on a cycle of its
+  component's rules, a levels line's relation, or one started from a kept relation with levels gets them. At
+  O125 the kept levels go from 13.1 MB to 2.9 MB.
+- **The planner asks for them.** A component keeps levels only when its spec says `leveled`. The plan writes that
+  line for a stratum whose relations carry the `levels` qualifier, and only a session's cross part sets it. A
+  full run holds no levels. Its closures run on the device, since bit rows give reach, not distance. With
+  levels, a closure is made by distance on the host (`by_distance`).
+
+Result: O125 1–8 are the same as full with levels (with and without `RERAIL_AGAIN=off`).
+Gate: 3988 303 298 0.
 
 ## What the prior work says
 
@@ -712,7 +910,10 @@ Two faults of the merge are fixed:
 ## Open
 
 - Whether 03 §2's "no DRed" is to be read as "no stored witness" (§6). This needs the architecture owner.
-- θ and the cost estimate (§4) are unmeasured. The mass-delete steps above (23–26) are the cases it must catch.
+- θ is set (0.25, floor 1,024 rows) and catches steps 23–25, but is not tuned. The cost-estimate half of §4 is
+  not built. Neither matters much until the per-stratum fixed cost is gone (0101): today it, not row work, keeps
+  a maintained step at about twice a cold one.
+- Levels: one check batch per level, and the probe estimate on `__live` relations that is off by about 270×.
 - Interface summaries for libraries (03 §14's derivations) and this session store meet at the library boundary;
   0083 §5–§6 places it, and this record does not.
 

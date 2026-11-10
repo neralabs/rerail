@@ -1857,6 +1857,8 @@ fn spike_o125_replay() {
     let keep = |step: usize, what: &str| {
         if let Some(p) = &profile {
             let _ = std::fs::copy(p.join("native.tsv"), p.join(format!("native-{step:02}-{what}.tsv")));
+            let _ = std::fs::copy(p.join("spans.tsv"), p.join(format!("spans-{step:02}-{what}.tsv")));
+            let _ = std::fs::copy(p.join("profile.txt"), p.join(format!("profile-{step:02}-{what}.txt")));
         }
     };
     let phase = |r: &corpus::Report, name: &str| -> f64 { r.phases.iter().filter(|p| p.0 == name).map(|p| p.1 + p.2).sum() };

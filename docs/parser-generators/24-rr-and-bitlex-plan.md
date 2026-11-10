@@ -25,8 +25,8 @@ This page covers:
 
 ## 1. The references
 
-**`.rr`.** The engine's own parser (`logic/rr/syntax.rs`) already builds a tree: kinds and
-fields from `logic/rr/tape.rs`, byte spans, comments attached to the innermost node that holds
+**`.rr`.** The engine's own parser (`native/crates/rr_syntax/src/syntax.rs`) already builds a
+tree: kinds and fields from `tape.rs` beside it, byte spans, comments attached to the innermost node that holds
 them. That tree is the reference, node for node: kind, field, start, end, and the nesting.
 - The kind and field names in `rr.bitlex` are `tape.rs`'s names.
 - The corpus is the repository's 1,346 `.rr` files, 11 MB.
@@ -287,7 +287,7 @@ The other is a run of four backticks or more.
 
 ## 3. The `.rr` ladder
 
-The steps are in `bitlex_ladder/rr/`. Each one is a `.bitlex` file and passes the ladder tests
+The steps are in `native/crates/rr_syntax/bitlex_ladder/`. Each one is a `.bitlex` file and passes the ladder tests
 before the next one starts. The last step is the whole language, checked against the
 reference on the corpus.
 

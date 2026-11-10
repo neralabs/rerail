@@ -1,0 +1,102 @@
+{
+  "profiled": true,
+  "files": 5725,
+  "cpu_seconds": 15.752826,
+  "wall_seconds": 18.802452042,
+  "vm_steps": 2283088,
+  "candidate_sql_vm": 1773972,
+  "candidate_sql": [
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/stratum q0_rr_python_qualified_async_reference_async_api_target/engine materialize",
+      "nanoseconds": 7000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "INSERT INTO async_reference SELECT c0 FROM set_derived WHERE rel = ?1",
+      "vmSteps": 784512
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 65232,
+      "group": "local/run/stratum q3_rr_python_qualified_async_reference_async_api_target",
+      "nanoseconds": 5000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "SELECT DISTINCT c0 FROM async_reference",
+      "vmSteps": 196380
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 0,
+      "group": "local/run/stratum q0_rr_python_qualified_async_reference_async_api_target",
+      "nanoseconds": 2000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "CREATE TEMP TABLE async_reference(c0 INTEGER, PRIMARY KEY (c0)) WITHOUT ROWID",
+      "vmSteps": 2016
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 65232,
+      "group": "local/run/stratum q0_rr_python_qualified_async_reference_async_api_target",
+      "nanoseconds": 2000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "SELECT DISTINCT c0 FROM async_reference",
+      "vmSteps": 196380
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 65232,
+      "group": "local/run/stratum q2_rr_python_qualified_async_reference_async_api_target",
+      "nanoseconds": 2000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "SELECT DISTINCT c0 FROM async_reference",
+      "vmSteps": 196380
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 65232,
+      "group": "local/export to cross",
+      "nanoseconds": 1000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "SELECT * FROM temp.async_reference",
+      "vmSteps": 196308
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 65232,
+      "group": "local/run/stratum q1_rr_python_qualified_async_reference_async_api_target",
+      "nanoseconds": 1000000,
+      "runs": 72,
+      "sorts": 0,
+      "sql": "SELECT DISTINCT c0 FROM async_reference",
+      "vmSteps": 196380
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 18,
+      "group": "cross/setup",
+      "nanoseconds": 0,
+      "runs": 1,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.async_reference",
+      "vmSteps": 78
+    },
+    {
+      "autoindexRows": 0,
+      "fullScanSteps": 1278,
+      "group": "local/run/setup",
+      "nanoseconds": 0,
+      "runs": 71,
+      "sorts": 0,
+      "sql": "DROP TABLE IF EXISTS temp.async_reference",
+      "vmSteps": 5538
+    }
+  ],
+  "demand_reads": [],
+  "passed": false
+}

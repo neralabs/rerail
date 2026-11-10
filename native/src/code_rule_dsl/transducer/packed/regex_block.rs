@@ -40,31 +40,102 @@ pub(in crate::code_rule_dsl) struct SpanPrefilter {
     native: super::native_ir::BlockNative,
 }
 
-/// Where a batch's span programs ran (`ends_batch`).
+/// Where a batch's span programs ran (`ends_launch`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) enum RanOn {
     Metal,
     Cpu,
 }
 
-/// Every (file, program) pair's marks in one batch (decision 0066's shape): on Metal when `metal` and a device takes
-/// it, each lane a chunk of a file; otherwise the CPU interpreter, one pass per operation over every file's blocks.
-/// `files` are (bytes, the program's index in `filters`); the result is in `files`' order.
-pub(in crate::code_rule_dsl) fn ends_batch(filters: &[&SpanPrefilter], files: &[(&[u8], usize)], metal: bool) -> (Vec<Vec<u64>>, RanOn) {
-    use super::block::BatchFile;
-    let batch: Vec<BatchFile<'_>> = files.iter().map(|&(bytes, program)| BatchFile { bytes, program }).collect();
+/// A batch of span programs as a launch of the executor (decision 0100 §13), the same structure as every other
+/// dispatch: priced by its bytes and operations, placed on the cores or the GPU, claimed by whichever lane reaches it,
+/// run on that lane's worker, and scored. Its GPU form is the generated block program (on the one device and queue);
+/// its cores' form the interpreter, which the GPU's runs instead when the device refuses the batch.
+struct SpanEnds {
+    filters: Vec<std::sync::Arc<SpanPrefilter>>,
+    /// Each document's source, once; `files` are (document, program) pairs.
+    sources: Vec<std::sync::Arc<String>>,
+    files: Vec<(usize, usize)>,
+    gpu: bool,
+}
+
+/// The cores' interpreter: seconds a byte and operation (one thread), and the GPU's (decision 0100 §13's priors).
+const CPU_PER_BYTE_OP: f64 = 3e-11;
+const GPU_PER_BYTE_OP: f64 = 1e-12;
+
+impl SpanEnds {
+    fn batch(&self) -> Vec<super::block::BatchFile<'_>> {
+        self.files.iter().map(|&(d, program)| super::block::BatchFile { bytes: self.sources[d].as_bytes(), program }).collect()
+    }
+
+    fn cpu(&self) -> (Vec<Vec<u64>>, RanOn) {
+        let programs: Vec<&BlockProgram> = self.filters.iter().map(|f| &f.program).collect();
+        (super::block::run_batch(&programs, &self.batch()).into_iter().map(|mut r| r.outputs.swap_remove(0)).collect(), RanOn::Cpu)
+    }
+
     #[cfg(target_os = "macos")]
-    if metal && !batch.is_empty() {
+    fn metal(&self) -> Option<(Vec<Vec<u64>>, RanOn)> {
         use super::metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-        let natives: Vec<&super::native_ir::BlockNative> = filters.iter().map(|f| &f.native).collect();
-        if let Ok(run) = run_split(&natives, &batch, LaneWidth::W64, Executor::Generated(ClassStrategy::Lookup), 64) {
-            return (run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect(), RanOn::Metal);
+        let natives: Vec<&super::native_ir::BlockNative> = self.filters.iter().map(|f| &f.native).collect();
+        let run = run_split(&natives, &self.batch(), LaneWidth::W64, Executor::Generated(ClassStrategy::Lookup), 64).ok()?;
+        Some((run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect(), RanOn::Metal))
+    }
+}
+
+impl rerail_accel::kernel::Program for SpanEnds {
+    fn name(&self) -> &'static str {
+        "span prefilter"
+    }
+
+    fn units(&self) -> f64 {
+        self.files.iter().map(|&(d, p)| self.sources[d].len() as f64 * self.filters[p].program.ops.len() as f64).sum()
+    }
+
+    fn per_unit(&self, lane: rerail_accel::Lane) -> Option<f64> {
+        match lane {
+            rerail_accel::Lane::Cpu => Some(CPU_PER_BYTE_OP),
+            rerail_accel::Lane::Gpu if self.gpu => Some(GPU_PER_BYTE_OP),
+            _ => None,
         }
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = metal;
-    let programs: Vec<&BlockProgram> = filters.iter().map(|f| &f.program).collect();
-    (super::block::run_batch(&programs, &batch).into_iter().map(|mut r| r.outputs.swap_remove(0)).collect(), RanOn::Cpu)
+
+    fn run(&self, lane: rerail_accel::Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
+        #[cfg(target_os = "macos")]
+        if lane == rerail_accel::Lane::Gpu
+            && let Some(r) = self.metal()
+        {
+            return Ok(std::sync::Arc::new(r));
+        }
+        let _ = lane;
+        Ok(std::sync::Arc::new(self.cpu()))
+    }
+}
+
+/// Every (file, program) pair's marks in one batch (decision 0066's shape), as one launch of `ex`: each pattern's
+/// ends over each of `sources` (`files`: (source, the pattern's index in `filters`)), placed by price on the cores or,
+/// when `device` and `ex` has one, the GPU.
+pub(in crate::code_rule_dsl) fn ends_launch(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vec<u64>>, RanOn), String> {
+    ends_on(ex, filters, sources, files, device, None)
+}
+
+/// [`ends_launch`], pinned to `lane` when given.
+fn ends_on(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool, lane: Option<rerail_accel::Lane>) -> Result<(Vec<Vec<u64>>, RanOn), String> {
+    if files.is_empty() {
+        return Ok((Vec::new(), RanOn::Cpu));
+    }
+    let gpu = cfg!(target_os = "macos") && device;
+    let program = SpanEnds { filters: filters.to_vec(), sources: sources.to_vec(), files: files.to_vec(), gpu };
+    let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(std::sync::Arc::new(program)));
+    let launch = match lane {
+        Some(lane) => rerail_accel::Launch::on(kernel, lane),
+        None => rerail_accel::Launch::new(kernel),
+    };
+    let (mut done, _) = ex.run_as("span prefilter", rerail_accel::Batch(vec![launch]))?;
+    let rerail_accel::kernel::Output::Program(r) = done.remove(0).out else {
+        return Err("span prefilter: not a program's result".into());
+    };
+    let r = r.0.downcast::<(Vec<Vec<u64>>, RanOn)>().map_err(|_| "span prefilter: a result of another type".to_owned())?;
+    Ok(std::sync::Arc::try_unwrap(r).unwrap_or_else(|r| (*r).clone()))
 }
 
 impl SpanPrefilter {
@@ -471,8 +542,8 @@ mod tests {
                 rows.push_str(&format!("  block 0 %{i} = {}\n", op.text()));
             }
             rows.push_str(&format!("  block 0 output %{}\n  block 0 delay 1\n", program.outputs[0]));
-            let assembled = super::super::rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).unwrap();
-            let executors = super::super::block_tests::Executors::new(&assembled);
+            let assembled = rerail_compiler::rir_asm::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).unwrap();
+            let executors = rerail_parser_tests::executors::Executors::new(&assembled);
             for text in TEXTS {
                 let (runs, _) = executors.run(text.as_bytes(), true);
                 let want = p.ends(text.as_bytes());
@@ -483,24 +554,28 @@ mod tests {
         }
     }
 
-    /// The batch (`ends_batch`) gives each (file, program) the marks the program gives that file alone, on the
-    /// device and on the CPU.
+    /// The batch, one launch of the executor (`ends_launch`), gives each (file, program) the marks the program gives
+    /// that file alone: on the GPU's form and the cores', and wherever its price places it.
     #[test]
     fn a_batch_of_span_programs_marks_each_file_as_it_alone_would() {
-        let filters: Vec<SpanPrefilter> = ["SEC\\d+", "(?m)^class\\s+(?<c>\\w+)", "[\\p{Alphabetic}\\p{N}]+"].iter().map(|re| SpanPrefilter::compile(re, false).unwrap()).collect();
-        let refs: Vec<&SpanPrefilter> = filters.iter().collect();
+        use std::sync::Arc;
+        let filters: Vec<Arc<SpanPrefilter>> = ["SEC\\d+", "(?m)^class\\s+(?<c>\\w+)", "[\\p{Alphabetic}\\p{N}]+"].iter().map(|re| Arc::new(SpanPrefilter::compile(re, false).unwrap())).collect();
         let long = "x = 1  # SEC12\nclass Foo:\n    pass\n".repeat(500);
-        let mut files: Vec<(&[u8], usize)> = Vec::new();
-        for text in TEXTS.iter().copied().chain([long.as_str()]) {
-            for f in 0..filters.len() {
-                files.push((text.as_bytes(), f));
-            }
+        let sources: Vec<Arc<String>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.to_owned())).collect();
+        let files: Vec<(usize, usize)> = (0..sources.len()).flat_map(|d| (0..filters.len()).map(move |f| (d, f))).collect();
+        let ex = |device| crate::code_rule_dsl::logic::lanes::executor_for(device);
+        let gpu = cfg!(target_os = "macos") && ex(true).lanes().contains(&rerail_accel::Lane::Gpu);
+        let mut runs = vec![(false, Some(rerail_accel::Lane::Cpu)), (true, None)];
+        if gpu {
+            runs.push((true, Some(rerail_accel::Lane::Gpu)));
         }
-        for metal in [false, true] {
-            let (got, ran) = ends_batch(&refs, &files, metal);
-            assert!(metal == (ran == RanOn::Metal) || !cfg!(target_os = "macos"), "{ran:?}");
-            for ((bytes, f), got) in files.iter().zip(&got) {
-                assert_eq!(*got, filters[*f].ends(bytes), "program {f} on {ran:?}");
+        for (device, lane) in runs {
+            let (got, ran) = super::ends_on(ex(device), &filters, &sources, &files, device, lane).unwrap();
+            if let Some(lane) = lane {
+                assert_eq!(ran == RanOn::Metal, lane == rerail_accel::Lane::Gpu, "{lane:?}: {ran:?}");
+            }
+            for ((d, f), got) in files.iter().zip(&got) {
+                assert_eq!(*got, filters[*f].ends(sources[*d].as_bytes()), "program {f} on {ran:?}");
             }
         }
     }

@@ -44,6 +44,10 @@ const FACT_STORE: &[&str] = &[
     "node",
     "tape",
     "node_type",
+    "frames",
+    "frame_spaces",
+    // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
+    "samples",
     "{p}_out in code_rule_dsl/logic/native.rs",
     "{p}_out in code_rule_dsl/logic/native/extension.rs",
     "{} in code_rule_dsl/logic/plan.rs",
@@ -55,6 +59,9 @@ const FACT_STORE: &[&str] = &[
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
     "x",
+    // native_demand's tests' tables.
+    "keys",
+    "facts",
     "a",
     "b",
     "c",
@@ -111,8 +118,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("slice_match", "3"),
     ("slice_span", "3"),
     ("slice_fresh", "3"),
-    ("kept_strata", "4"),
-    ("kept_strata_programs", "4"),
     ("phase_record", "5"),
     ("phase_granules", "5"),
     ("phase_cones", "5"),
@@ -153,11 +158,13 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised.
-const NOT_YET_TABLES_PIN: usize = 68;
+const NOT_YET_TABLES_PIN: usize = 66;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
+    ("code_rule_dsl/logic/costs.rs", "FITTED"),
+    ("code_rule_dsl/logic/costs.rs", "WRITER"),
     // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
     ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
@@ -195,6 +202,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
+    ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),
@@ -220,9 +228,11 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "BUSY_DEADLINE_OVERRIDE"),
     ("content_store/connection.rs", "BUSY_TIMEOUT_OVERRIDE"),
     ("content_store/connection.rs", "BUSY_WAIT_HOOK"),
+    ("content_store/connection.rs", "CONNECTION_FUNCTIONS"),
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
+    ("content_store/hazards.rs", "HAZARDS"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
@@ -323,7 +333,7 @@ fn maps() -> BTreeSet<(String, String)> {
     let head = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+([A-Z_][A-Z_0-9]*)\s*:").unwrap();
     let held = regex::Regex::new(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<").unwrap();
     // A plain number, flag or instant holds no result.
-    let plain = regex::Regex::new(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<\s*(\(\s*\)|bool|u8|u16|u32|u64|usize|i32|i64|f64|std::time::Instant|Instant|std::time::Duration|Option<\s*(usize|u64|bool|f64|std::time::Instant)\s*>|\(\s*(Option<usize>|usize|u64|f64)\s*,\s*(usize|u64|f64)\s*\))\s*>").unwrap();
+    let plain = regex::Regex::new(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<\s*(\(\s*\)|bool|u8|u16|u32|u64|usize|i32|i64|f64|std::time::Instant|Instant|std::time::Duration|Option<\s*(usize|u64|i64|bool|f64|std::time::Instant)\s*>|\(\s*(Option<usize>|usize|u64|f64)\s*,\s*(usize|u64|f64)\s*\))\s*>").unwrap();
     let mut out = BTreeSet::new();
     for f in fs {
         let text = std::fs::read_to_string(&f).unwrap_or_default();

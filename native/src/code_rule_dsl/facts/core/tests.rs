@@ -31,7 +31,7 @@ fn columns_are_a_preorder_tree_with_children_and_kind_postings() {
         identifiers.iter().map(|&id| f.text(id)).collect::<Vec<_>>(),
         ["value", "left", "right", "print", "value"]
     );
-    assert_eq!(f.start_line[*identifiers.last().unwrap() as usize], 2);
+    assert_eq!(f.start_line(*identifiers.last().unwrap()), 2);
     assert!(f.of_kind(atom("python", "binary_operator")).iter().all(|&id| f.named(id)));
     assert!(!f.syntax_errors);
     assert!(f.depth() >= 4);
@@ -66,4 +66,43 @@ fn the_digest_is_of_the_content_not_the_path() {
     assert_ne!(a, digest(&facts("a.py", "python", "x  = 1\n")));
     // Same kinds and spans, other text: a reader of `text` sees the difference, so the digest does.
     assert_ne!(a, digest(&facts("a.py", "python", "y = 2\n")));
+}
+
+#[test]
+fn direct_tape_columns_equal_restored_columns_and_line_contracts() {
+    use crate::code_rule_dsl::{lines::{LineTable, Terminators}, tape::{Grammar, TapeDoc, TapeImage}};
+    for (label, source) in [
+        ("python", "é = f(1)\r\nclass A:\r def f(self):\n  return 'x'\n"),
+        ("python", "def broken(:\n    pass\n"),
+        ("python", ""),
+        ("javascript", "const x = (a) => a?.b ?? `x${a}`; // c\n"),
+        ("typescript", "interface A { x?: number }; const x: A = {};\n"),
+        ("rust", "fn main() { let x = Some(1); if let Some(y) = x { println!(\"{y}\"); } }"),
+        ("php", "<?php function f($x) { return $x + 1; }\n"),
+        ("sql", "SELECT a, count(*) FROM t GROUP BY a;"),
+        ("vue", "<template><div>{{ value }}</div></template><script>let value = 1;</script>"),
+        ("blade", "@if($ok)<div>{{ $value }}</div>@endif"),
+        ("tsx", "const A = () => <div title=\"x\">text</div>;"),
+        ("rr", ".decl item(n:number)\nitem(1).\n.output item\n"),
+    ] {
+        let lang = dialect_by_label(label).unwrap();
+        let grammar = Grammar::new(lang).unwrap();
+        let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+        let source = Arc::new(source.to_owned());
+        let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+        let doc = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &image.primary, &|| false).unwrap();
+        let old = from_tape(&doc, Arc::clone(&lines)).unwrap();
+        let new = from_image(Arc::clone(&source), &grammar, &image.primary, Arc::clone(&lines)).unwrap();
+        for (a,b) in [(&old.kind,&new.kind),(&old.parent,&new.parent),(&old.start,&new.start),(&old.end,&new.end),
+            (&old.subtree_end,&new.subtree_end),(&old.children,&new.children),(&old.child_offsets,&new.child_offsets),
+            (&old.kind_keys,&new.kind_keys),(&old.kind_offsets,&new.kind_offsets),(&old.kind_nodes,&new.kind_nodes),
+            (&old.class_keys,&new.class_keys),(&old.class_offsets,&new.class_offsets),(&old.class_nodes,&new.class_nodes)] {
+            assert_eq!(a,b,"{label}: {source}");
+        }
+        assert_eq!(old.flags,new.flags,"{label}");
+        assert_eq!(old.field,new.field,"{label}");
+        assert_eq!(old.syntax_errors,new.syntax_errors,"{label}");
+        assert_eq!(digest(&old),digest(&new),"{label}");
+        for id in 0..new.len() as u32 { assert_eq!(new.start_line(id), lines.line(new.start[id as usize] as usize) as u32 + 1); }
+    }
 }
