@@ -27,6 +27,7 @@ pub mod native_cpu_shape;
 pub mod native_cpu_stream;
 pub mod native_ir;
 pub mod program;
+pub mod rir_asm;
 pub mod rir_text;
 pub mod set_mode;
 pub mod stream;
@@ -40,3 +41,5 @@ mod delay_tests;
 mod gating_tests;
 #[cfg(test)]
 mod outline_tests;
+#[cfg(test)]
+mod tier2_tests;

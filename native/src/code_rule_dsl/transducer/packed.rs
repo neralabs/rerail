@@ -2321,25 +2321,9 @@ impl Program {
         {
             return Err(Error::InvalidOperand(0));
         }
-        // A tier-2 program (decision 0087): its own words and rules.
+        // A tier-2 program (decision 0087): its own words and rules (`stream::validate_tier2`).
         if self.words.iter().any(|&w| stream::is_stream(split(w).0)) {
-            for (pc, &w) in self.words.iter().enumerate() {
-                let (opcode, mode, operand) = split(w);
-                match opcode {
-                    STOP => {
-                        if mode != 0 || operand != 0 {
-                            return Err(Error::InvalidMode(pc));
-                        }
-                    }
-                    GOTO => {
-                        if mode != 0 || usize::from(operand) >= self.words.len() {
-                            return Err(Error::InvalidTarget(pc));
-                        }
-                    }
-                    _ => stream::validate_word(self, pc, opcode, mode, operand)?,
-                }
-            }
-            return stream::validate(self);
+            return stream::validate_tier2(self);
         }
         if !self.switches.is_empty() {
             return Err(Error::InvalidOperand(0));

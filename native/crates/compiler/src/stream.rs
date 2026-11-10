@@ -563,3 +563,25 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
         }
     }
 }
+
+/// A tier-2 program's words (decision 0087): `STOP`, `GOTO` and tier 2's own, each checked
+/// (`validate_word`), then the program's rules (`validate`).
+pub fn validate_tier2(program: &Words) -> Result<(), Error> {
+    for (pc, &w) in program.words.iter().enumerate() {
+        let (opcode, mode, operand) = split(w);
+        match opcode {
+            STOP => {
+                if mode != 0 || operand != 0 {
+                    return Err(Error::InvalidMode(pc));
+                }
+            }
+            GOTO => {
+                if mode != 0 || usize::from(operand) >= program.words.len() {
+                    return Err(Error::InvalidTarget(pc));
+                }
+            }
+            _ => validate_word(program, pc, opcode, mode, operand)?,
+        }
+    }
+    validate(program)
+}
