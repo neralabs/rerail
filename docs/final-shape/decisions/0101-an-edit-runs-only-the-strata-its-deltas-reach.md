@@ -270,6 +270,65 @@ self.model.resolve(prog, Model::read_by(rules.iter().copied()))?;
 Steps 02 and 03 do not move: by then a kept relation's statistics are carried or kept by delta, and
 binding was 0.17–0.19 s. Findings are the same as a full run's at each step, and the gate passes.
 
+## Proposed: §5, a base relation patched by its documents' delta, not sorted again (2026-11-10)
+
+**What is sorted each step.** A span on each stored column's first sort (`sort a stored column`), at O125
+with profiling on:
+
+| step | sorts | rows sorted | CPU | of which: base inputs' join indexes | statistics of the base rows |
+|---|---:|---:|---:|---:|---:|
+| 01 | 576 | 3.33 M | 1.24 s | 0.97 s | 0.16 s |
+| 02 | 675 | 3.01 M | 1.09 s | 0.80 s | 0.17 s |
+| 03 | 349 | 2.15 M | 0.80 s | 0.54 s | 0.17 s |
+
+Nearly all of it is seven base relations of the whole corpus: `node` (5 columns), `node_order`, the four
+`rr_nearest_*` scopes (≈ 141 k rows each), and `text` (≈ 48 k). An unchanged input is already read from
+the last run in place, with its sorted columns (`retain::kept_source`, 0094 §4). But the test is the whole
+relation's digest, and one edited file changes it. So each step rebuilds these from every file's rows
+(`columns_source`) and sorts every column again, for a delta of one or two documents.
+
+**What the sibling work gives.**
+
+- **0104 rule 4, "kept is maintained".** Within a session, the engine keeps the program's facts and
+  maintains them from the inputs' delta. A base relation is one of those facts, so rebuilding it is the
+  case 0104 retires.
+- **rr-align's frames.** A relation's stored form is partitioned by document (`part`). A document's rows
+  are one unit, keyed by its content (0104 step 3).
+- **The rows are already per document.** They come one memo entry per file (`plan/corpus.rs`, the memo
+  hits), and a node id carries its document (`id >> 32`).
+
+**The proposal.** The session holds each base relation as last run's source, with each document's row
+range. An edit's delta is its documents' partitions: old range out, new rows in. The new source is the
+old one patched, not a copy, and so is each sorted column:
+
+```text
+// Last run:  rows [doc 1 | doc 2 | doc 3]     column c sorted: ids by value
+// Edit doc 2: its range is dropped, its new rows appended:
+//            rows [doc 1 | doc 3 | doc 2']
+// Column c:  old ids minus doc 2's, renumbered past its range (one pass),
+//            merged with doc 2's new rows sorted (a few hundred): no sort of 141 k.
+// A node-id column needs no merge: a document's values are one interval,
+// so its run is spliced.
+```
+
+- **Statistics.** `measure the base rows held` is patched by the same delta, as kept relations' are
+  (0096 step 4, `statkeep`).
+- **Digests.** `kept_source` compares per-document digests, which the memo already has, not one digest of
+  141 k rows.
+- **Across processes.** A new process reads the frames and sorts once. A sorted column stored as a derived
+  relation is 0104 step 7's question, not this one's.
+- **Not a cache.** No key or table of its own: the relation is the session's held fact, maintained by its
+  delta.
+
+**Expected.** 0.7–1.0 s a step with profiling on (the base inputs' sorts plus their statistics), about
+half that without. That is about 10% of a steady step's cross part. The sample before §4 put
+`Stored::sorted` at 12% of samples.
+
+**Risks.** Row order changes from run to run. Joins and findings are set-valued, so that is safe, but
+anything that reads row order as meaning breaks: the documents count in `measured` sorts the ids it
+reads, so it holds; others must be found. The patch must be exact under a document added or removed, and
+under two edits in one step. The session test of §1 extends to that.
+
 ## Open
 
 - Whether §2's base-program form keeps demand's choices identical on the rewritten program. If it does not, the

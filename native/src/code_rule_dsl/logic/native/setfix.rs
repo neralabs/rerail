@@ -2607,7 +2607,10 @@ impl Stored {
         &self.sorted(c).ids
     }
     fn sorted(&self, c: usize) -> &Sorted {
-        self.index[c].get_or_init(|| Sorted::of(self.col(c)))
+        self.index[c].get_or_init(|| {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("sort a stored column ({} rows)", self.col(c).len()));
+            Sorted::of(self.col(c))
+        })
     }
     /// The rows whose column `c` is `v`: a search of the column's distinct values (contiguous, one per value), not of
     /// its rows through their ids (a cache miss a step).
