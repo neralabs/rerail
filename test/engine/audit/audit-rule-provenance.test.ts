@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statfsSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type { AuditInput, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance } from "../../../src/engine/audit/audit.js";
 import { openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
@@ -12,9 +12,13 @@ import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/b
 import { RERAIL_BASELINE_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
 import { tableColumns } from "../../../src/engine/storage/table-probe.js";
 
+// Every export calls the real one; a test that needs a disk with little free space overrides `statfsSync`.
+vi.mock("node:fs", { spy: true });
+
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.mocked(statfsSync).mockReset();
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -66,21 +70,48 @@ function auditInput(workspaceRoot: string, ruleProvenance: AuditRuleProvenance[]
   return { sessionId, workspaceRoot, scope: "touched-files", mode: "steer", revision: 1, catalogRevision: "catalog", ruleRevisions: [], paths: ["src/a.ts"], ruleProvenance };
 }
 
-/** Bytes of the file's pages that hold something: every page but those on the free list. */
-function bytesInUse(path: string): number {
+/** The file's pages that hold something (every page but those on the free list) and those that do not, in bytes. */
+function pageBytes(path: string): { inUse: number; free: number } {
   const database = new Database(path, { readonly: true });
   try {
     const pragma = (name: string): number => database.pragma(name, { simple: true }) as number;
-    return (pragma("page_count") - pragma("freelist_count")) * pragma("page_size");
+    const free = pragma("freelist_count") * pragma("page_size");
+    return { inUse: pragma("page_count") * pragma("page_size") - free, free };
   } finally {
     database.close();
   }
+}
+
+function bytesInUse(path: string): number {
+  return pageBytes(path).inUse;
 }
 
 /** An audit as Rerail before this change wrote one, and as an older Rerail sharing the file still does: provenance inline. */
 const INLINE_AUDIT = `INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, catalog_revision,
   rule_revisions_json, rule_provenance_json, paths_json, started_at, finished_at, status, violations_json, failures_json)
   VALUES (?, ?, ?, 'touched-files', 'steer', 1, 'catalog', '[]', ?, '[]', ?, ?, 'completed', '[]', '[]')`;
+
+/** Writes one audit per provenance as an older Rerail does, provenance inline; each audit's id and provenance text. */
+function writeInlineAudits(path: string, provenances: readonly AuditRuleProvenance[][]): { auditId: string; text: string }[] {
+  const written = provenances.map((provenance, index) => ({ auditId: `older-${index}`, text: JSON.stringify(provenance) }));
+  const older = new Database(path);
+  try {
+    written.forEach(({ auditId, text }, index) => older.prepare(INLINE_AUDIT).run(auditId, "session-a", "/home/dev/app", text, index, index + 1));
+  } finally {
+    older.close();
+  }
+  return written;
+}
+
+/** Leaves `bytes` of free pages in the file, as deleting that much history does. */
+function freePages(path: string, bytes: number): void {
+  const database = new Database(path);
+  try {
+    database.exec(`CREATE TABLE filler (data); INSERT INTO filler VALUES (randomblob(${bytes})); DROP TABLE filler`);
+  } finally {
+    database.close();
+  }
+}
 
 /** The step that keeps each provenance once, and what it adds to a file. */
 const STEP = "audit-rule-provenance-once";
@@ -114,6 +145,25 @@ async function fileAtTheBaseline(): Promise<string> {
     database.close();
   }
   return path;
+}
+
+/**
+ * Upgrades a file of the build before that holds 30 audits' provenance inline, with what `prepare` sets up (it returns
+ * how to undo it) in place during the open: the file's size before, and what the open wrote to stderr.
+ */
+async function upgradeLogging(prepare: (path: string) => () => void): Promise<{ path: string; size: number; logged: string }> {
+  const path = await fileOfTheBuildBefore();
+  writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+  const size = statSync(path).size;
+  const release = prepare(path);
+  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  try {
+    openRerailDatabase(path).$client.close();
+    return { path, size, logged: stderr.mock.calls.map(([chunk]) => String(chunk)).join("") };
+  } finally {
+    stderr.mockRestore();
+    release();
+  }
 }
 
 describe("audit rule provenance", () => {
@@ -160,19 +210,13 @@ describe("audit rule provenance", () => {
     const app = provenanceOf("/home/dev/app", 200);
     const worktree = provenanceOf("/home/dev/app-worktree", 200);
     // Audits sharing one provenance, another checkout's, one recorded before repository-owned rules, and none.
-    const written = [
+    const written = writeInlineAudits(path, [
       ...Array.from({ length: 12 }, () => app),
       ...Array.from({ length: 3 }, () => worktree),
       LEGACY,
       [],
       [],
-    ].map((provenance, index) => ({ auditId: `older-${index}`, text: JSON.stringify(provenance) }));
-    const older = new Database(path);
-    try {
-      written.forEach(({ auditId, text }, index) => older.prepare(INLINE_AUDIT).run(auditId, "session-a", "/home/dev/app", text, index, index + 1));
-    } finally {
-      older.close();
-    }
+    ]);
     const before = bytesInUse(path);
     // What the file holds beyond one copy of each distinct provenance.
     const distinct = new Set(written.map(({ text }) => text));
@@ -207,6 +251,69 @@ describe("audit rule provenance", () => {
     } finally {
       store.close();
     }
+  });
+
+  it("gives the space the move freed back to the disk on the open that moved it, and on no later open", async () => {
+    const path = await fileOfTheBuildBefore();
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    const before = statSync(path).size;
+
+    openRerailDatabase(path).$client.close();
+
+    // The file is its pages in use, a small part of what it was, and every audit reads its provenance as before.
+    expect(pageBytes(path).free).toBe(0);
+    expect(statSync(path).size).toBe(bytesInUse(path));
+    expect(statSync(path).size).toBeLessThan(before / 5);
+    const store = new SqliteAuditStore(path);
+    try {
+      for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+    } finally {
+      store.close();
+    }
+
+    // Space that deleted history frees later stays in the file for new history: no later open rewrites it.
+    freePages(path, 1_000_000);
+    const free = pageBytes(path).free;
+    expect(free).toBeGreaterThan(900_000);
+    openRerailDatabase(path).$client.close();
+    expect(pageBytes(path).free).toBe(free);
+  });
+
+  it("leaves the free space in the file when the upgrade moved no provenance", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, [[], []]);
+    freePages(path, 1_000_000);
+    const free = pageBytes(path).free;
+
+    openRerailDatabase(path).$client.close();
+
+    // The step's table and index take a few of the free pages; the rest stay.
+    expect(pageBytes(path).free).toBeGreaterThan(free - 64 * 1024);
+  });
+
+  it("keeps the file's size, and says why, when another connection reads the database through the upgrade", async () => {
+    const { path, size, logged } = await upgradeLogging(path => {
+      // A read begun before the upgrade: the WAL the step fills cannot be emptied while it lasts.
+      const reader = new Database(path, { readonly: true });
+      reader.exec("BEGIN");
+      reader.prepare("SELECT count(*) FROM audits").get();
+      return () => reader.close();
+    });
+    expect(logged).toContain(`rerail: ${path} keeps its size`);
+    expect(logged).toContain("another connection was using it");
+    expect(statSync(path).size).toBeGreaterThanOrEqual(size);
+    expect(pageBytes(path).free).toBeGreaterThan(size / 2);
+  }, 30_000);
+
+  it("keeps the file's size, and says why, when the disk has less free space than the file", async () => {
+    const { path, size, logged } = await upgradeLogging(() => {
+      vi.mocked(statfsSync).mockImplementation(() => ({ type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 20, bfree: 16, bavail: 16, files: 0, ffree: 0 }));
+      return () => vi.mocked(statfsSync).mockReset();
+    });
+    expect(logged).toContain(`rerail: ${path} keeps its size`);
+    expect(logged).toContain("free disk space");
+    expect(statSync(path).size).toBeGreaterThanOrEqual(size);
+    expect(pageBytes(path).free).toBeGreaterThan(size / 2);
   });
 
   it("leaves nothing of a repository's provenance in the file once its history is reset", async () => {
