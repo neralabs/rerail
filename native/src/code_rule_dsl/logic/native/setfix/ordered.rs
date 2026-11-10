@@ -321,3 +321,209 @@ mod tests {
         }
     }
 }
+
+/// A placed index that grows (the incremental form of `Placed`, mldb's IdHash growth): a row goes in at the first
+/// empty slot from its home (`hash * m / 2^64`), never wrapping (the slots run on past `m` as needed), so a key's
+/// rows are still between its home and the next empty slot. At three quarters full `m` doubles and the slots are
+/// placed again in their order, which is close to hash order, so the new table is written nearly in sequence.
+pub(super) struct Growing {
+    pub(super) cols: Vec<usize>,
+    slots: Vec<u32>,
+    m: usize,
+    len: usize,
+    id_bits: u32,
+    pub(super) grew: usize,
+}
+
+impl Growing {
+    pub(super) fn new(cols: Vec<usize>, id_bits: u32) -> Growing {
+        Growing { cols, slots: vec![0; 64], m: 64, len: 0, id_bits, grew: 0 }
+    }
+
+    #[inline]
+    fn home(&self, h: u64) -> usize {
+        (((h as u128) * (self.m as u128)) >> 64) as usize
+    }
+
+    /// Room for `more` rows at load 0.75 or less.
+    pub(super) fn reserve(&mut self, rows: &[i64], k: usize, more: usize) {
+        if (self.len + more) * 4 <= self.m * 3 {
+            return;
+        }
+        let mut m = self.m;
+        while (self.len + more) * 4 > m * 3 {
+            m *= 2;
+        }
+        let old = std::mem::replace(&mut self.slots, vec![0; m + 1]);
+        self.m = m;
+        self.grew += 1;
+        let mask = self.mask();
+        for s in old {
+            if s == 0 {
+                continue;
+            }
+            let id = (s & mask) - 1;
+            let h = key_hash(self.cols.iter().map(|&c| rows[id as usize * k + c]));
+            // Nearly sorted already: the first free slot from the home, or after the last placed.
+            let mut at = self.home(h);
+            while at < self.slots.len() && self.slots[at] != 0 {
+                at += 1;
+            }
+            if at >= self.slots.len() {
+                self.slots.resize(at + 1, 0);
+            }
+            self.slots[at] = s;
+        }
+    }
+
+    #[inline]
+    fn mask(&self) -> u32 {
+        if self.id_bits >= 32 { u32::MAX } else { (1u32 << self.id_bits) - 1 }
+    }
+
+    /// Places row `id` (hash `h`); with `dedup`, not when a live row equal on `cols` is there (returns false).
+    #[inline]
+    pub(super) fn insert(&mut self, rows: &[i64], k: usize, id: u32, h: u64, dedup: bool) -> bool {
+        let (ib, mask) = (self.id_bits, self.mask());
+        let enc = Placed::enc(id, h, ib);
+        let fp = Placed::fp(h, ib);
+        let mut at = self.home(h);
+        loop {
+            if at >= self.slots.len() {
+                self.slots.resize(at + 1, 0);
+            }
+            let s = self.slots[at];
+            if s == 0 {
+                self.slots[at] = enc;
+                self.len += 1;
+                return true;
+            }
+            if dedup && (ib >= 32 || s >> ib == fp) {
+                let x = (s & mask) - 1;
+                if self.cols.iter().all(|&c| rows[x as usize * k + c] == rows[id as usize * k + c]) {
+                    return false;
+                }
+            }
+            at += 1;
+        }
+    }
+
+    /// Whether a live row equal to row `id` on `cols` is held (the dedup test of a duplicate offer).
+    #[inline]
+    pub(super) fn insert_probe(&self, rows: &[i64], k: usize, id: u32, h: u64) -> bool {
+        let (ib, mask, fp) = (self.id_bits, self.mask(), Placed::fp(h, self.id_bits));
+        let mut at = self.home(h);
+        while let Some(&s) = self.slots.get(at) {
+            if s == 0 {
+                return false;
+            }
+            if ib >= 32 || s >> ib == fp {
+                let x = (s & mask) - 1;
+                if self.cols.iter().all(|&c| rows[x as usize * k + c] == rows[id as usize * k + c]) {
+                    return true;
+                }
+            }
+            at += 1;
+        }
+        false
+    }
+
+    pub(super) fn bytes(&self) -> usize {
+        self.slots.capacity() * 4
+    }
+}
+
+/// Sorted orders that grow by runs (the logarithmic method): each wave's new ids sorted by the order are a run, the
+/// newest of which is the wave's delta; before a wave adds its run, the newest runs are merged while the older is no
+/// more than twice the newer, so there are O(log n) runs and each id is merged O(log n) times.
+pub(super) struct Runs {
+    pub(super) order: Vec<usize>,
+    pub(super) runs: Vec<Vec<u32>>,
+    pub(super) merged: usize,
+}
+
+impl Runs {
+    pub(super) fn new(order: Vec<usize>) -> Runs {
+        Runs { order, runs: Vec::new(), merged: 0 }
+    }
+
+    fn cmp(order: &[usize], rows: &[i64], k: usize, a: u32, b: u32) -> Ordering {
+        let (ra, rb) = (&rows[a as usize * k..][..k], &rows[b as usize * k..][..k]);
+        order.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or_else(|| a.cmp(&b))
+    }
+
+    pub(super) fn add_wave(&mut self, rows: &[i64], k: usize, mut ids: Vec<u32>) {
+        while self.runs.len() >= 2 && self.runs[self.runs.len() - 2].len() <= 2 * self.runs[self.runs.len() - 1].len() {
+            let b = self.runs.pop().unwrap();
+            let a = self.runs.pop().unwrap();
+            self.merged += a.len() + b.len();
+            let mut out = Vec::with_capacity(a.len() + b.len());
+            let (mut i, mut j) = (0, 0);
+            while i < a.len() && j < b.len() {
+                if Self::cmp(&self.order, rows, k, a[i], b[j]).is_le() { out.push(a[i]); i += 1 } else { out.push(b[j]); j += 1 }
+            }
+            out.extend_from_slice(&a[i..]);
+            out.extend_from_slice(&b[j..]);
+            self.runs.push(out);
+        }
+        if ids.is_empty() {
+            return;
+        }
+        let order = &self.order;
+        ids.sort_unstable_by(|&a, &b| Self::cmp(order, rows, k, a, b));
+        self.runs.push(ids);
+    }
+
+    /// The number of ids holding `key` on the order's first `key.len()` columns, over every run.
+    pub(super) fn count(&self, rows: &[i64], k: usize, key: &[i64]) -> usize {
+        let cmp = |id: u32| -> Ordering {
+            let r = &rows[id as usize * k..][..k];
+            self.order.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+        };
+        self.runs.iter().map(|run| {
+            let s = run.partition_point(|&id| cmp(id) == Ordering::Less);
+            run[s..].partition_point(|&id| cmp(id) == Ordering::Equal)
+        }).sum()
+    }
+
+    pub(super) fn bytes(&self) -> usize {
+        self.runs.iter().map(|r| r.capacity() * 4).sum()
+    }
+}
+
+#[cfg(test)]
+mod grow_tests {
+    use super::*;
+
+    #[test]
+    fn growing_indexes_dedup_and_find_what_a_whole_build_does() {
+        let k = 3;
+        // Rows 0..2000, then 500 that repeat earlier rows (the duplicates a wave offers).
+        let mut rows: Vec<i64> = (0..2000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
+        rows.extend((0..500i64).flat_map(|i| [(i * 3) % 10, (i * 3) % 7, i * 3]));
+        let mut set = Growing::new(vec![0, 1, 2], 12);
+        let mut by01 = Growing::new(vec![0, 1], 12);
+        let mut runs = Runs::new(vec![0, 1, 2]);
+        let mut held = 0;
+        for wave in (0..2500u32).collect::<Vec<_>>().chunks(97) {
+            set.reserve(&rows, k, wave.len());
+            let mut fresh = Vec::new();
+            for &id in wave {
+                let r = &rows[id as usize * k..][..k];
+                if set.insert(&rows, k, id, key_hash(r.iter().copied()), true) {
+                    fresh.push(id);
+                }
+            }
+            by01.reserve(&rows, k, fresh.len());
+            for &id in &fresh {
+                by01.insert(&rows, k, id, key_hash([rows[id as usize * k], rows[id as usize * k + 1]].into_iter()), false);
+            }
+            held += fresh.len();
+            runs.add_wave(&rows, k, fresh);
+        }
+        assert_eq!(held, 2000);
+        assert!(set.grew > 0 && runs.runs.len() < 12, "{} grew, {} runs", set.grew, runs.runs.len());
+        assert_eq!(runs.count(&rows, k, &[3]), 200);
+        assert_eq!(runs.count(&rows, k, &[3, 4]), 28);
+    }
+}
