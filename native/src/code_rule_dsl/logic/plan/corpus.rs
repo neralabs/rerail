@@ -4122,6 +4122,8 @@ fn run_observed(
                     let s = span("plan and evaluate");
                     let got = super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?;
                     drop(s);
+                    // Decision 0090 §4: the maintained strata the run chose to derive again, by their deltas' size.
+                    let run_again = got.again;
                     step("ran");
                     collect(&db, &got, &part.program)?;
                     step("collected");
@@ -4395,6 +4397,9 @@ fn run_observed(
                         *m.entry(*why).or_insert(0) += 1;
                         m
                     });
+                    if run_again > 0 {
+                        cross_again.insert("input deltas past θ", run_again);
+                    }
                     // Every program's kept part shares the one budget: past it, only this program's is kept.
                     if next.bytes() + cells.values().map(retain::Retained::bytes).sum::<usize>() > retain::budget() {
                         cells.clear();

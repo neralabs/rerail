@@ -2380,6 +2380,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) handed: BTreeSet<String>,
     /// The relations recomputed in their readers (decision 0099): no table and no engine rows hold them.
     pub(in crate::code_rule_dsl) inlined: BTreeSet<String>,
+    /// The maintained strata derived again by their input deltas' size (decision 0090 §4), chosen during the run.
+    pub(in crate::code_rule_dsl) again: usize,
 }
 
 /// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
@@ -5172,6 +5174,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     outcome.nodes = nodes;
     outcome.handed = handed;
     outcome.inlined = inlined_rels;
+    outcome.again = again_chosen.iter().filter(|c| **c == Some(true)).count();
     Ok(outcome)
 }
 
