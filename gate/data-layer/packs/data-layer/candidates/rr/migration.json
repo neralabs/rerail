@@ -4128,11 +4128,11 @@
     ],
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "04173bf00bc872fdfe1c9b602e0867f2f0f9d86b",
-      "engineCommit": "d990ca9aaa346709f5e8367048d8c2b32ea541f8",
+      "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
+      "engineCommit": "2a80db4737df22751b31290881000409c012d53e",
       "sourceTrees": {
-        "native": "69a8a79edf809fcfc36d0d60498bff4c9f60015d",
-        "accel": "875e8daa91a43d3e3b1f8bc6f710b7bf6379d663",
+        "native": "353630ff0ebc2ce965cc081f7cc205714be55b73",
+        "accel": "c1cee95408206eb36c760b1db94154751cf5b5b7",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
