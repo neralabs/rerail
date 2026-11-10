@@ -2690,7 +2690,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr",
-      "sha256": "d756fffb5cd8b2e73bb12aa24d46db0e8364d08602d04a230cfa39e0b5293927",
+      "sha256": "8c04d456749fcecab038063e0e05e0ab21548d0660c000d9c2be2308770b2872",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_dispatch_architecture.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2730,6 +2730,10 @@
       "sha256": "d8b275eadc26788997dede6c55372d08ca3fcf15e6f592cfa294ec610ab5a0cf",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/dispatch-finding.rr",
+      "sha256": "96cb5962fb7638ade0709969b35aa9ff37997d0b299c731f5d650633d19b64bc"
     }
   ],
   "rules": [
@@ -3653,26 +3657,32 @@
       "legacySha256": "690192884c5fdb2d8f3ac738d3fa7b4cddeca15072cd7cb04c161a20ae654300",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr",
-      "ruleSha256": "d756fffb5cd8b2e73bb12aa24d46db0e8364d08602d04a230cfa39e0b5293927",
+      "ruleSha256": "8c04d456749fcecab038063e0e05e0ab21548d0660c000d9c2be2308770b2872",
       "migrationProgress": {
         "status": "draft",
-        "checkpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-alignment-final883-progress.json.gz",
-          "sha256": "fa891e1e7b24313ce79b09168dd5b22ffe9cf4b3422f94d8c92cd56760ff4d9c"
-        },
         "repositoryCasesPerAPI": 43,
         "repositoryPositivesPerAPI": 30,
         "scannerCasesPerAPI": 298,
         "scannerPositivesPerAPI": 203,
         "originalTestsPerAPI": 49,
         "remaining": [
-          "caller-created Finding projections",
           "supplied-fact reporting",
           "CLI contracts",
           "persistent updates",
           "behavior-removal controls",
           "full original inventory and admission"
-        ]
+        ],
+        "checkpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-alignment-final883-progress.json.gz",
+            "sha256": "fa891e1e7b24313ce79b09168dd5b22ffe9cf4b3422f94d8c92cd56760ff4d9c"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-finding-final883-progress.json.gz",
+            "sha256": "fb4f26f0e932b358efdbcb1f148d26cce23f9d8fcd0e0cd6e30f485b31e06c5e"
+          }
+        ],
+        "findingProjectionCasesPerAPI": 47
       }
     },
     {

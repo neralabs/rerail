@@ -2903,3 +2903,22 @@ This fixture correction does not certify previously accepted ports against the n
 retains complete observations, consumed programs, immutable build provenance, and the red and green logs.
 Dispatch remains a draft. Caller-created Finding projections, supplied-fact reporting, CLI contracts, persistent updates,
 behavior-removal controls, and final admission remain open. The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+
+### Dispatch caller-created Finding projections, 2026-11-10
+
+Added a native batch contract for `Finding.inventory_entry` and `Finding.render`.
+The source oracle first recorded 46 cases. The unimplemented native projection failed all 46 cases.
+The expanded corpus contains 47 cases, including identical values at separate ordinals.
+All cases pass through both APIs. One native request serves the complete projection corpus per API.
+Coverage includes Unicode whitespace, NULs, delimiters, 90-digit numbers, relative paths, double-slash roots, and lexical parent components.
+The adapter caches primitive value tuples and native strings. It no longer retains complete Finding objects.
+
+After adding the library, all 43 repository cases, 298 scanner cases, and 49 unchanged original tests pass again through each API.
+The tooling suite passes 375 tests. No engine rebuild was needed for this rule-library change.
+[The Finding progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-finding-final883-progress.json.gz)
+retains red and green observations, exact consumed programs, historical harness bytes, and current build provenance.
+
+Dispatch remains a draft. Supplied-fact reporting, CLI contracts, persistent updates, behavior-removal controls,
+and final admission remain open. The 100-port migration remains active.
+Final advanced to `72a3a658b` during this fixed cohort. The live alignment audit correctly refuses fresh migration admission until that merge.
+The recorded observations above belong to the immutable `883458148` engine cohort. They do not certify the newer engine.

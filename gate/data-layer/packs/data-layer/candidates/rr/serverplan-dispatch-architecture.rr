@@ -78,6 +78,7 @@ sd_base("impl/common/l2070_server_plan/base_server_plan.py").
 sd_whitespace("[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]+").
 #include "data-layer/dispatch-source.rr"
 #include "data-layer/dispatch-repository.rr"
+#include "data-layer/dispatch-finding.rr"
 pp_config("name","serverplan_dispatch_architecture").
 pp_config("enforcement","hard-fail").
 pp_config("description","Backend and concrete-step dispatch zero gate").

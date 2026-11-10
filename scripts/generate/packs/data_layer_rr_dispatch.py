@@ -45,7 +45,7 @@ def generate(source,target,header):
     text+=''.join(f'sd_message({json.dumps(k)},{json.dumps(v)}).\n' for k,v in messages.items())
     text+='.decl sd_base(value: symbol)\nsd_base('+json.dumps(original._BASE_SERVER_PLAN_FILE)+').\n'
     text+='.decl sd_whitespace(value: symbol)\nsd_whitespace('+json.dumps(classes()[1]+'+')+').\n'
-    text+='#include "data-layer/dispatch-source.rr"\n#include "data-layer/dispatch-repository.rr"\n'
+    text+='#include "data-layer/dispatch-source.rr"\n#include "data-layer/dispatch-repository.rr"\n#include "data-layer/dispatch-finding.rr"\n'
     plugin=original.dispatch_architecture_plugin(source)
     text=re.sub(r'^\.description .*$', '.description '+json.dumps(plugin.description),text,flags=re.M)
     config=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description,

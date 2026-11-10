@@ -12,7 +12,7 @@ def cases():
     def add(name,path='impl/a.py',root='/repo',expression='a  +\tb',**fields):
         row=dict(code='SPD001',path=path,line=1,scope='<module>',expression=expression,message='guidance',occurrence=1)
         row.update(fields);rows.append(dict(id=name,finding=row,root=root))
-    add('default');add('empty',expression='',scope='',message='',code='')
+    add('default');add('duplicate-default');add('empty',expression='',scope='',message='',code='')
     add('unicode',path='impl/é.py',expression='  α\u2000+\u0085β\n',scope='类.方法',message='消息')
     for char in ['\t','\n','\r','\v','\f','\x1c','\x1d','\x1e','\x1f','\u0085','\u00a0','\u1680','\u2000','\u2028','\u2029','\u202f','\u205f','\u3000','\u200b','\0']:
         add('whitespace-'+str(ord(char)),expression=char+'a'+char+char+'b'+char)
@@ -25,13 +25,6 @@ def cases():
     for value in [0,-1,10**90]:add('numbers-'+str(value),line=value,occurrence=value)
     add('delimiters',path='a|b.py',expression='a|b',scope='s|x',message='a:\nb',code='CUSTOM',line=-42,occurrence=12)
     return rows
-
-
-def payload(rows):
-    names=['code','path','line','scope','expression','message','occurrence']
-    result={ 'dispatchFinding'+name.title():[str(Path(r['finding'][name])) if name=='path' else str(r['finding'][name]) for r in rows] for name in names }
-    result['dispatchFindingRoot']=[str(Path(r['root'])) for r in rows]
-    return result
 
 
 def main():
@@ -57,19 +50,25 @@ def main():
                 fallbacks.append(frame.f_code.co_qualname);raise AssertionError('Original semantics executed')
         from replay import execute_native,execute_workspace
         execute=execute_native if a.mode=='snapshot' else execute_workspace
+        from dispatch_port import install
+        executions=[]
+        class Backend:
+            def replace(self,owner,name,value):setattr(owner,name,value)
+            def native(self,check,entry,files,options=None):
+                compare(check,'serverplan_dispatch_architecture')
+                result=execute(a.engine.absolute(),ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr',files,dict(entryPoint=entry,**(options or {})))
+                executions.append(result);return result['diagnostics']
+        project=install(Backend(),module)
+        values=[module.Finding(**dict(c['finding'],path=Path(c['finding']['path']))) for c in corpus]
         sys.setprofile(guard)
-        try:native=execute(a.engine.absolute(),ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr',[],dict(entryPoint='_finding_projection',**payload(corpus)))
+        try:
+            project(values,[Path(c['root']) for c in corpus])
+            for c,finding,oracle in zip(corpus,values,baseline['cases']):
+                actual=dict(inventory=finding.inventory_entry,rendered=finding.render(Path(c['root'])))
+                expected=oracle['expected'];rows.append(dict(input=c,expected=expected,actual=actual,passed=actual==expected))
         finally:sys.setprofile(None)
-        groups={}
-        for r in native['diagnostics']:
-            compare(r['code'],'SD_FINDING');v=r['parameters'];i=v['ordinal']
-            if i in groups:raise ValueError('Duplicate Finding projection')
-            groups[i]=dict(inventory=v['inventory'],rendered=v['rendered'])
-        for i,c in enumerate(corpus):
-            expected=baseline['cases'][i]['expected'];actual=groups.get(i)
-            rows.append(dict(input=c,expected=expected,actual=actual,passed=actual==expected))
-        compare(set(groups)-set(range(len(corpus))),set())
-    files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['replay.py','migration.py']]]
+        compare(len(executions),1);native=executions[0]
+    files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['replay.py','migration.py','dispatch_port.py']]]
     report=dict(format='rerail.dispatch-finding-contract/v1',sourcePin=PIN,sourceSha256=sha(path.read_bytes()),oracle=a.command=='source',
         mode=a.mode,admitted=False,cases=rows,passed=all(r.get('passed',True) for r in rows) and not fallbacks,
         semanticFallbacks=fallbacks,harnessFiles={f.relative_to(ROOT).as_posix():sha(f.read_bytes()) for f in files},native=native)

@@ -1,0 +1,19 @@
+// One typed batch of caller-created Finding values. Ordinals retain duplicates.
+.decl sdf_row(i: number,code: symbol,path: symbol,line: symbol,scope: symbol,expression: symbol,message: symbol,occurrence: symbol,root: symbol)
+sdf_row(i,c,p,l,s,e,m,o,r) :- option("entryPoint","_finding_projection"),
+    option_item("dispatchFindingCode",i,c),option_item("dispatchFindingPath",i,p),option_item("dispatchFindingLine",i,l),
+    option_item("dispatchFindingScope",i,s),option_item("dispatchFindingExpression",i,e),option_item("dispatchFindingMessage",i,m),
+    option_item("dispatchFindingOccurrence",i,o),option_item("dispatchFindingRoot",i,r).
+.decl sdf_relative(i: number,path: symbol)
+sdf_relative(i,".") :- sdf_row(i,_,p,_,_,_,_,_,p),prefix("/",p).
+sdf_relative(i,@slice(p,strlen(r)+1,strlen(p))) :- sdf_row(i,_,p,_,_,_,_,_,r),
+    prefix("/",p),prefix("/",r),r!="/",r!="//",prefix(cat(r,"/"),p).
+sdf_relative(i,@slice(p,1,strlen(p))) :- sdf_row(i,_,p,_,_,_,_,_,"/"),p!="/",prefix("/",p),!prefix("//",p).
+sdf_relative(i,@slice(p,2,strlen(p))) :- sdf_row(i,_,p,_,_,_,_,_,"//"),p!="//",prefix("//",p).
+.decl sdf_display(i: number,path: symbol)
+sdf_display(i,p) :- sdf_relative(i,p).
+sdf_display(i,p) :- sdf_row(i,_,p,_,_,_,_,_,_),!sdf_relative(i,_).
+.violation DispatchFinding(at: span,ordinal: number,inventory: symbol,rendered: symbol) code "SD_FINDING" "dispatch Finding projection"
+DispatchFinding(@place("",0),i,cat(c,"|",p,"|",s,"|",normal,"|occurrence=",o),cat(c," ",display,":",l,": ",s,": ",m,": ",e)) :-
+    sdf_row(i,c,p,l,s,e,m,o,_),sdf_display(i,display),sd_whitespace(w),
+    normal=@replace_all(@replace_all(e,w," "),"^ +| +$","").
