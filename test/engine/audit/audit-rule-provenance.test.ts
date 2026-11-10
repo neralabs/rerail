@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -181,6 +181,9 @@ describe("audit rule provenance", () => {
 
     const store = new SqliteAuditStore(path);
     try {
+      // The upgrade's pages went through the WAL; it is emptied once they commit, not kept that size while the store
+      // holds the file.
+      expect(statSync(`${path}-wal`).size).toBe(0);
       for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
       const listed = new Map(store.list({ limit: 200 }).audits.map(audit => [audit.auditId, JSON.stringify(audit.ruleProvenance)]));
       expect(listed).toEqual(new Map(written.map(({ auditId, text }) => [auditId, text])));
