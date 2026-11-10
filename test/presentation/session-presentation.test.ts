@@ -18,6 +18,7 @@ import { type AdapterDelivery, type RepositoryStartState, sessionStartNote } fro
 import type { presentationResponseSchema, sessionResponseSchema } from "../../src/api/index.js";
 import { hookRerailStarted } from "../../src/harness/index.js";
 import type { z } from "zod";
+import { testEngineEndpoint } from "../support/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 let home: string;
@@ -37,7 +38,7 @@ beforeEach(async () => {
   await writeFile(database, "");
   await writeFile(join(cwd, ".rerail", "repository-id"), "repository-under-test\n");
   state = { pid: process.pid, host: "127.0.0.1", port: 4737, url: "http://127.0.0.1:4737/", version: "test",
-    databasePath: database, kernelSocketPath: join(home, "engine.sock"), ui: "bundled", startedAt: 1, packageRoot: home };
+    databasePath: database, kernelSocketPath: testEngineEndpoint(home), ui: "bundled", startedAt: 1, packageRoot: home };
   await writeFile(join(home, "daemon.json"), JSON.stringify(state));
   requested = [];
   sessionContext = { session: { sessionId, host: "claude-code", cwd, repositoryId: "repository-under-test", startedAt: 1, endedAt: null, eventCount: 0 },

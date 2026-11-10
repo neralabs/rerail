@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService } from "../../src/runtime/engine-service.js";
+import { testEngineEndpoint } from "../support/engine-endpoint.js";
 import { testEmbedder } from "../support/hook-events.js";
 import { removeFolder } from "../support/remove-folder.js";
 import { startTestRepository } from "../support/started-repository.js";
@@ -12,7 +13,7 @@ import { startTestRepository } from "../support/started-repository.js";
 describe("engine service session concurrency", () => {
   it("does not let one opening agent session block another", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const engine = { socketPath };
     startTestRepository(root, join(root, "rerail.sqlite"));
     const blockedOpened = Promise.withResolvers<void>();

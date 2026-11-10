@@ -6,6 +6,7 @@ import { PassThrough, Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE } from "../../src/runtime/index.js";
 import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
+import { testEngineEndpoint } from "../support/engine-endpoint.js";
 import { linkFolder } from "../support/links.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
@@ -69,7 +70,7 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
     url: `http://127.0.0.1:${daemon.port}/`,
     version: "0.0.0",
     databasePath: join(home, "rerail.sqlite"),
-    kernelSocketPath: "/tmp/rerail-bridge-test.sock",
+    kernelSocketPath: testEngineEndpoint(home),
     ui: "bundled",
     startedAt: daemon.startedAt ?? 0,
     packageRoot: "/tmp/rerail-bridge-test-package",
