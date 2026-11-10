@@ -727,3 +727,40 @@ captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
     assert_eq!(result.outputs["captured"].len(), 1000);
     assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
 }
+
+/// A delta probe of a recursive component prices a lookup by the share of the binding's values the column holds
+/// (containment): `fbind`'s shape, where `fcall` by `$a` (a few hundred rows, few distinct `$a`) is probed by
+/// `pv`'s many `$a`. Priced as if every probe hit, `fcall` looked dearer than `tfix` by `$k`, and the plan read
+/// `tfix` and `fgp` first (19 M rows of work for 220 in calls_cx).
+#[test]
+fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
+    let p = parse(
+        ".decl pv(a:number, k:number, v:number)\n.decl fcall(c:number, f:number, i:number, a:number)\n.decl tfix(k:number, ka:number, w:number, x:number)\n\
+         .decl fgp(f:number, i:number, ka:number, w:number, y:number)\n.decl fbind(c:number, f:number, y:number, x:number)\n\
+         fbind(c, f, y, x) :- fcall(c, f, i, a), fgp(f, i, ka, w, y), pv(a, 1, k), tfix(k, ka, w, x).\n.output fbind\n",
+    )
+    .unwrap();
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut model = Model { analysis: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+    model.stats.nodes = 450_000.0;
+    // Live counts, as a wave leaves them: rows, then distinct values by column.
+    for (rel, rows, ndv) in [
+        ("pv", 400_000.0, vec![300_000.0, 3.0, 5_000.0]),
+        ("fcall", 400.0, vec![400.0, 50.0, 5.0, 100.0]),
+        ("tfix", 550.0, vec![350.0, 50.0, 10.0, 300.0]),
+        ("fgp", 100.0, vec![50.0, 5.0, 50.0, 10.0, 20.0]),
+        ("fbind", 1.0, vec![1.0; 4]),
+    ] {
+        model.stats.card.insert(rel.to_owned(), rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    model.stats.solve(["pv", "fcall", "tfix", "fgp", "fbind"].into_iter().map(str::to_owned).collect());
+    let r = &p.rules[0];
+    let ((order, _, _), _) = model.plan_rule_explained(&p, &r.head, &r.body, Some(2)).unwrap();
+    let order: Vec<&str> = order.iter().filter_map(|s| s.lit.atom()).map(|a| a.rel.as_str()).collect();
+    assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
+}
