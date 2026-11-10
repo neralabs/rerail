@@ -3147,3 +3147,57 @@ Complete-input coverage remains independently available on either path.
 
 Debug SQL verification still passes 176 tests, shared analysis passes sixteen, and SQL profiling passes twelve.
 The complete-session and separate CPU comparisons must be repeated for this scheduling choice.
+
+#### Final scheduling choice and complete-session results
+
+The final choice consolidates only the seven-relation call-analysis component.
+Its forty-seven generated variants become thirty-two active recursive full rules.
+Including five seed rules, its retained operator inventory decreases from eighty-four to thirty-seven.
+The five-relation open component keeps its twenty-four frontier operators because consolidation would leave twenty-four active operators.
+Workload also keeps its existing frontier caches. Complete-input coverage applies independently on those paths.
+These choices supersede the unrestricted three/eighty-three removal counts above.
+
+All three complete debug sessions compare every logical relation with the independent cold oracle at seven checkpoints.
+They cover failed publication, retry, unchanged publication, restoration, deletion, and recovery from empty input.
+The execution allowance remains 100. Verification SELECTs count; diagnostic EXPLAIN and the oracle do not.
+
+| Complete session | Parent submissions | Final submissions | Final setup / transactions / evaluation and cleanup | Complete parity |
+| --- | ---: | ---: | --- | --- |
+| Workload | 133 | 132 | 8 / 17 / 107 | 43 relations, seven checkpoints |
+| Call analysis | 415 | 412 | 15 / 15 / 382 | 99 relations, seven checkpoints |
+| One-file mixed producer | 135 | 133 | 9 / 17 / 107 | 44 relations, seven checkpoints |
+
+All captures have complete execution accounting and zero unknown origins.
+All three still fail the unchanged allowance. No per-wave or per-publication budget reset applies.
+
+| Fused SQL evaluation | Parent phase submissions | Final phase submissions | Parent VM instructions | Final VM instructions | Change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Workload | 80 | 79 | 362,438,134 | 248,266,781 | -31.50% |
+| Call analysis | 352 | 349 | 452,582,384 | 439,159,446 | -2.97% |
+| One-file mixed producer | 84 | 82 | 29,718,641 | 24,726,491 | -16.80% |
+
+Phase profiles record forty-two, one hundred eighty-five, and forty-five complete-input coverage applications, respectively.
+These instruction counts measure SQL evaluation work. They do not establish an end-to-end CPU improvement.
+
+The final unprofiled debug comparison repeats two fresh processes per strategy and corpus, reversing order in the second trial.
+Its CPU scope remains initial rule execution and four file publications, without empty-input recovery or validation queries.
+Builds, tests, and session captures stop before these timing processes begin. Other host work remains uncontrolled.
+
+| Final strategy | Paired CPU changes against the parent | Median peak RSS before validation: parent / final |
+| --- | --- | --- |
+| Workload | -5.33%, +7.74% | 475.99 / 475.88 MiB |
+| Call analysis | -16.51%, +1.21% | 1,641.09 / 1,496.81 MiB |
+
+All paired final output counts match. The separate complete-session checks establish full-content parity and rollback recovery.
+CPU direction does not repeat across both trials. These results do not establish general CPU acceptance or whole-product performance acceptance.
+The call-analysis RSS observations are promising, but cover this timing sequence rather than complete product memory headroom.
+
+Final debug verification passes 176 SQL-executor tests, sixteen shared-analysis tests, twelve SQL-profiler tests, and forty-four JavaScript tests.
+The structure gate has repository-wide findings; none points to a changed file in this increment.
+Temporary captures, comparison stores, and benchmark binaries are removed after these results are recorded.
+
+The remaining required production change is still substantial: compile retained context, support, and summary transitions into the SQL version loop.
+The loop must build the same state that sparse edits consume, without a second cold evaluation or support reconstruction pass.
+Initial execution and affected history replay must retain atomic failure, retry, frozen gates, and execution limits.
+Native callbacks remain limited to storage construction and indexed access. Rule evaluation stays in SQL, and AST matching stays outside it.
+Then repeat the complete sessions against the unchanged allowance and measure CPU separately again.
