@@ -875,3 +875,38 @@ describe("Rerail session restore", () => {
     expect(ledger).toContain("[redacted:openai-key:");
   });
 });
+
+describe("A runtime's closed sessions", () => {
+  // A checkout's runtime lives while any session in it does, and the idle close now ends every killed session there too.
+  it("are kept for late receipts only while they are among the last sixteen to close", { timeout: 20_000 }, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
+    directories.push(root);
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      embedder: {
+        fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
+        embed: async texts => texts.map(() => new Float32Array([1, 0])),
+      },
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => false,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    try {
+      for (let index = 0; index <= 16; index += 1) {
+        const session = { host: "claude-code" as const, sessionId: `s${index}`, cwd: root };
+        await runtime.ingest({ kind: "session-start", eventId: `s${index}:start`, session });
+        await runtime.ingest({ kind: "session-end", eventId: `s${index}:end`, sessionId: session.sessionId, session });
+      }
+      expect(() => runtime.recordSteer("s1", "late")).not.toThrow();
+      expect(() => runtime.recordSteer("s0", "late")).toThrow("Unknown session: s0");
+    } finally {
+      await runtime.dispose();
+    }
+  });
+});

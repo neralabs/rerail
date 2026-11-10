@@ -101,6 +101,12 @@ const HOOK_EDIT_CHECK_MS = 1_000;
  * for the source walk (`BOUNDARY_DISCOVERY_WAIT_MS`) that precedes it.
  */
 const NATIVE_EDIT_CHECK_MS = 10_000;
+/**
+ * How many closed sessions a runtime keeps for late receipts. A late receipt comes from a send still in flight as its
+ * session closed, so the last few closes are plenty; a checkout's runtime lives while any session there does, and would
+ * otherwise keep every session that ever closed in it.
+ */
+const CLOSED_SESSIONS_KEPT = 16;
 
 /**
  * Waits for `work` up to `ms`, and says whether it finished; past the cap the work carries on in the background. The
@@ -752,7 +758,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
   readonly #sessions = new Map<string, RuntimeSessionState>();
-  /** Kept past disposal for late receipts, with the repository each session was attributed to. */
+  /** Kept past disposal for late receipts, with the repository each session was attributed to; the latest few only. */
   readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number; repositoryKey: string | null }>();
   #sessionStoreClosed = false;
   readonly #routers = new Map<RerailHost, RerailHostRuntime>();
@@ -1609,6 +1615,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#closedSessions.set(sessionId, {
         descriptor: state.descriptor, startedAt: state.startedAt, endedAt: Date.now(), repositoryKey: this.#repositoryKey(state.checkout),
       });
+      // A map keeps insertion order, and a session that opens again leaves it: the first key closed longest ago.
+      if (this.#closedSessions.size > CLOSED_SESSIONS_KEPT) this.#closedSessions.delete(this.#closedSessions.keys().next().value!);
       if (state.ownerClaim !== undefined) {
         this.#controls.interrupt(sessionId);
         this.#controls.interruptRepositoryAudit(sessionId);
