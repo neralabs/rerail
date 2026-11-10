@@ -126,11 +126,32 @@ warm and after an edit), CPU (user + sys, with the load) and the pins of `facts_
 
 | # | What | Done when |
 |---|---|---|
-| 1 | The tapes as the two rules above, for a run's files and its guests; contents by digest; the tape and source writes are the writer's | no tape or source statement among the hazards; the 4.2 s wait is gone |
+| 1 | The tapes as the two rules above, for a run's files and its guests; contents by digest; the tape and source writes are the writer's | **the writes and reads are built** (below): no tape or source statement of a file or a guest among the hazards, and the 4.2 s wait is gone. The two rules are not built yet |
 | 2 | The memo's entries read before the first wave; a lookup writes nothing | **built**: no memo statement among the hazards of a cold run or of a run after an edit (below) |
 | 3 | The constants, the statistics and the choices read before the first wave, written by the writer | no store statement among the hazards |
 | 4 | A program's stated facts and `rdl_int` bound in the engine, not loaded through SQL tables; inputs read from where they are held | **built**: on the slice, one statement is left on the run's connection (below) |
 | 5 | A test runs a small corpus with the profile on and fails on any hazard | the test passes with none |
+
+**Step 1, as built (the reads and writes).** A wave runs no tape or source SQL:
+
+- before the first wave, the run reads the tapes of the files the memo has no entry for, as
+  stored frames, in one read. Each is decompressed in its file's wave;
+- in a wave, a file's tape is that frame, or one this process has queued, else the file is
+  parsed. Its source and tape are handed to the store's writer, and memory holds the tape
+  until it is written;
+- a content the store does not hold yet is named by its digest. The memo's entries, the stat
+  index and the kept statistics name it so, and the writer finds its source, written before
+  them, when it writes them. The next run finds it by digest;
+- a guest's tape is made the same way.
+
+On the slice, cold, run side by side with the run before this step: the hazards went from
+11,076 statement runs and 4,065 ms to 204 runs and 27 ms; CPU (user + sys) from 22.3 s to
+17.7 s, and wall from 25.2 s to 16.2 s, at a load of 50 to 100. The findings are the same, cold,
+warm and after an edit, and on a second program over a cache the first one filled (its tapes
+hit).
+
+Two source statements are left among the hazards. The planning choices and the measured
+constants are kept under a small text stored as a source. They are step 3's.
 
 **Step 2, as built.** Before the first wave, the run looks up every file of the corpus:
 
