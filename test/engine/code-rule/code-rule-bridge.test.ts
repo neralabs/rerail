@@ -801,6 +801,9 @@ async function twoBranches(): Promise<string> {
   await writeFile(join(root, "src", "a.py"), "old\n");
   await writeFile(join(root, "src", "gone.py"), "gone\n");
   git(root, "init", "--quiet", "--initial-branch=main");
+  // Git writes the files as committed, LF, whatever the machine sets: Git for Windows sets core.autocrlf=true for every
+  // repository. The describe block on core.autocrlf sets it for its own repositories.
+  git(root, "config", "core.autocrlf", "false");
   git(root, "add", ".");
   git(root, "commit", "--quiet", "-m", "seed");
   git(root, "switch", "--quiet", "-c", "other");
