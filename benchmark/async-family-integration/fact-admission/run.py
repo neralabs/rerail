@@ -6,6 +6,8 @@ p.add_argument('--binary', type=pathlib.Path, required=True)
 p.add_argument('--corpus', type=pathlib.Path, required=True)
 p.add_argument('--out', type=pathlib.Path, required=True)
 a = p.parse_args()
+if (a.out / "facts.sqlite").exists() or (a.out / "measurements.json").exists():
+    p.error("use a new output directory so the cold run has an empty fact store")
 a.out.mkdir(parents=True, exist_ok=True)
 corpus = a.out / 'corpus'
 if not corpus.exists(): shutil.copytree(a.corpus, corpus)

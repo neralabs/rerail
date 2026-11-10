@@ -144,9 +144,10 @@ impl ContentStore {
         for batch in missing.chunks(READ_BATCH) {
             let values = (0..batch.len()).map(|i| format!("(?{}, ?{})", 3 + 2*i, 4 + 2*i)).collect::<Vec<_>>().join(",");
             let columns = if payload { ", f.rows, f.types, f.data" } else { "" };
+            // Keep demand rows outside full-key probes; a space-first scan multiplies retained rows by demands.
             let sql = format!("WITH demanded(rel, ident) AS (VALUES {values}) \
                 SELECT f.rel, f.ident, f.digest, f.reads{columns} FROM demanded d \
-                JOIN frames f ON f.space = ?1 AND f.part = ?2 AND f.rel = d.rel AND f.ident = d.ident");
+                CROSS JOIN frames f ON f.space = ?1 AND f.part = ?2 AND f.rel = d.rel AND f.ident = d.ident");
             let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), part.into()];
             for rel in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into()]); }
             let mut st = connection.prepare_cached(&sql)?;
@@ -263,6 +264,32 @@ fn decode_reads(mut bytes: &[u8]) -> Vec<(String, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_admission_probes_demanded_keys_instead_of_scanning_the_space() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let puts: Vec<_> = (0..8192).map(|i| Put { rel: rel(&format!("r{i}"), 1), part: 0,
+            digest: 7, reads: vec![], rows: Rows { types: vec![0], rows: vec![i], n: 1 } }).collect();
+        store.keep_frames(&[1; 32], &puts, &[], None).unwrap();
+        let demands: Vec<_> = puts.iter().step_by(64).map(|p| p.rel.clone()).collect();
+        let work = AtomicUsize::new(0);
+        unsafe extern "C" fn trace(_: u32, state: *mut std::ffi::c_void, statement: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+            let vm = unsafe { rusqlite::ffi::sqlite3_stmt_status(statement.cast(), rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP, 1) };
+            unsafe { &*state.cast::<AtomicUsize>() }.fetch_add(vm as usize, Ordering::Relaxed);
+            0
+        }
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
+            rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace), (&work as *const AtomicUsize).cast_mut().cast()); }
+        let got = store.admit_frames(&[1; 32], &demands, 0);
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(), 0, None, std::ptr::null_mut()); }
+        let got = got.unwrap();
+        assert_eq!(got.len(), 128);
+        for p in puts.iter().step_by(64) { assert_eq!(got[&p.rel].rows().unwrap(), p.rows); }
+        assert!(work.load(Ordering::Relaxed) < 100_000,
+            "128 demands must use full-key probes, not scan 8192 stored frames: {} VM instructions", work.load(Ordering::Relaxed));
+    }
 
     #[test]
     fn frame_metadata_reads_are_batched() {

@@ -1,0 +1,29 @@
+[
+  {
+    "test": "corpus::cache_architecture",
+    "exit": 0,
+    "wall": 0.8286019579973072
+  },
+  {
+    "test": "logic::facts_only",
+    "exit": 0,
+    "wall": 0.04691891698166728
+  },
+  {
+    "test": "plan::native_demand::tests",
+    "exit": 0,
+    "wall": 5.745120708015747
+  },
+  {
+    "test": "content_store::frames::tests",
+    "exit": 0,
+    "passed": 7,
+    "log": "validation/rerail-frame-work-green.log"
+  },
+  {
+    "test": "content_store::facts_memo::tests",
+    "exit": 0,
+    "passed": 11,
+    "log": "validation/rerail-memo-green.log"
+  }
+]

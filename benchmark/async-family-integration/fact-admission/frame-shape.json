@@ -1,0 +1,74 @@
+[
+  {
+    "shape": "JOIN",
+    "stored": 8192,
+    "demanded": 128,
+    "returned": 128,
+    "vmApprox": 5310400,
+    "plan": [
+      [
+        2,
+        0,
+        0,
+        "CO-ROUTINE demanded"
+      ],
+      [
+        3,
+        2,
+        0,
+        "SCAN 128 CONSTANT ROWS"
+      ],
+      [
+        390,
+        0,
+        56,
+        "SEARCH f USING PRIMARY KEY (space=?)"
+      ],
+      [
+        399,
+        0,
+        0,
+        "BLOOM FILTER ON d (ident=?)"
+      ],
+      [
+        411,
+        0,
+        50,
+        "SEARCH d USING AUTOMATIC COVERING INDEX (ident=?)"
+      ]
+    ]
+  },
+  {
+    "shape": "CROSS JOIN",
+    "stored": 8192,
+    "demanded": 128,
+    "returned": 128,
+    "vmApprox": 2500,
+    "plan": [
+      [
+        2,
+        0,
+        0,
+        "CO-ROUTINE demanded"
+      ],
+      [
+        3,
+        2,
+        0,
+        "SCAN 128 CONSTANT ROWS"
+      ],
+      [
+        390,
+        0,
+        144,
+        "SCAN d"
+      ],
+      [
+        393,
+        0,
+        45,
+        "SEARCH f USING PRIMARY KEY (space=? AND rel=? AND ident=? AND part=?)"
+      ]
+    ]
+  }
+]

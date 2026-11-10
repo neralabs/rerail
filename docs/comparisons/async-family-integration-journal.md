@@ -824,3 +824,59 @@ The first baseline test build failed because a duplicate comparison helper calle
 The query reference now uses the integration's existing native oracle helper.
 The shell's Homebrew compiler also failed to load LLVM. Builds use the installed Rust 1.97.1 toolchain directly.
 Performance measurements and test outcomes follow below when available.
+
+The frame tests failed on the baseline: 257 relations caused 258 statements, and a queued empty relation waited for the blocked writer.
+All six frame tests now pass. Metadata uses at most four statements for those 257 relations.
+The unchanged-output reuse test passes on integration `013068e01`, after the comparison helper correction. No reuse-test workaround was necessary.
+
+Payload admission now uses a conservative dependency pass. It requests outputs and retained inputs of potentially changed consumers.
+Unchanged intermediate relations need metadata only. A changed frame between metadata and payload admission invalidates the cut and forces evaluation.
+
+Imported rr-align commit `d589e41fa` as a focused change, preserving integration's newer cache semantics and shared executor.
+Its native-answer validation replays batched external requests before reusing their derived relations.
+That protects against changed directories and loaded files. It does not yet satisfy zero native-answer calls on an unchanged run.
+
+The five full-workload baseline runs pass, each with 5,725 files and zero findings.
+Cold CPU is 21.899 seconds. Warm CPU is 9.987 seconds, and warm CPU after a comment edit is 9.914 seconds.
+The async job uses a composed query and does not exercise retained frames.
+Its warm profile attributes nearly all SQL hazard time to 23 per-file memo batch reads.
+
+EXPLAIN shows that SQLite drives each memo join from all rows of the plan, then scans the JSON demands.
+On the real store, 256 demands execute about 7,418,800 VM instructions. A demand-first join executes about 12,000 and returns identical rows.
+The new production regression test fails at 2,648,717 VM instructions for 128 demands against 2,048 stored rows.
+The fix uses CROSS JOIN to keep demands outside the indexed lookup. The work ceiling is 100,000 VM instructions.
+All eleven memo tests pass with the demand-first join. The native retention tests also pass.
+An unchanged recursive transformation evaluates zero strata. It admits its final aggregate, without loading the retained closure.
+Publishing replacement rows between metadata and payload admission forces recomputation.
+
+The five candidate workload runs pass, with the same 5,725 files and zero findings.
+Cold-store CPU falls from 21.899 to 16.502 seconds. Warm CPU falls from 9.987 to 0.523 seconds.
+The comment-edit run falls from 10.197 to 0.561 CPU seconds. These are separate processes, including startup and exit.
+Core SQL remains at 20 executions and 74,618 VM instructions in both warm profiles.
+The storage profiler still records 80 SQL executions, including 23 memo batch reads.
+Those reads fall from 27,603 to 138 milliseconds of SQL wall time. The main improvement is storage lookup shape, not frame admission.
+
+Default-mode validation exposes pre-existing composed-query/session failures.
+The saved integration binary reproduces the `.cache` session failure: its consumer cannot find the `info` relation.
+The composed path decodes outputs without retaining their fact relations for session maintenance.
+Other session fixtures use `back`/`BACK` and `leaf`/`LEAF`; SQLite rejects these as duplicate CTE names.
+Retained-strata tests expect scheduler reports that the composed path does not produce.
+The native-path retention tests pass with the existing test-only native selector. Default failures remain recorded, not suppressed.
+
+The architecture checks also found test fixtures mistaken for production tables and an unclassified profiling counter.
+Moved the fixtures to a test-only file. Classified `SIZES` as reporting state; the legacy-cache allowances remain unchanged.
+The remaining integration issues and measured limits are recorded in `fact-admission-2026-11-10.md`.
+
+
+The final review also measured the new frame query's work, beyond statement counts.
+SQLite chose the same bad join order: 128 demands against 8,192 frames took about 5.31 million VM instructions.
+One SQL statement was not enough. Added a production VM-budget test and changed this join to demand-first too.
+The isolated query falls to about 2,500 VM instructions. The production test fails at 5,311,431 before the fix.
+All seven frame tests pass after the fix, including the 100,000-instruction work ceiling.
+This correction affects retained frames, not the previously measured async job, which uses composed execution.
+
+
+The final engine build passes. Both architecture guards and all four relocated native-demand tests pass.
+The independent full-corpus native/reference harness passes parity and its timing gates.
+Its generated-compiler qualification remains false; this is supporting reference evidence, not a production cutover claim.
+The default-mode session failures remain open and are included in the evidence.

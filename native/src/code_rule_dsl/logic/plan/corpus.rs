@@ -225,6 +225,8 @@ pub(crate) struct Report {
     /// A run with no session, its strata kept in the tape cache (decision 0077 §4): the cross-file strata it
     /// evaluated, of all.
     pub(crate) cross_kept: Option<(usize, usize)>,
+    /// The cone of requests' strata evaluated, of all, when they are kept (t33 K3); `None` otherwise.
+    pub(crate) cone_kept: Option<(usize, usize)>,
     /// Of those, strata maintained from deltas, of them recursive, and strata derived again (decision 0077 §3).
     pub(crate) cross_maintained: (usize, usize, usize),
     /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
@@ -2493,6 +2495,7 @@ fn run_observed(
     let mut cone_inputs: BTreeMap<String, String> = BTreeMap::new();
     let no_loads = options.get("phase_no_loads").and_then(serde_json::Value::as_bool) == Some(true);
     let mut loading_rows: Vec<(String, Vec<Vec<i64>>)> = Vec::new();
+    let mut cone_kept: Option<(usize, usize)> = None;
     #[cfg(target_family = "wasm")]
     if docs_out.is_some() {
         return Err(Error::Plan("requests answered inside the fixpoint need threads (decision 0065 §2a)".to_owned()));
@@ -3762,10 +3765,14 @@ fn run_observed(
         let per_file_in: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> =
             counted_view.unwrap_or_else(|| per_file.iter().map(|r| (r.clone(), exports.borrow().snapshot(r, lowered.program.decls[r].len()))).collect());
         let (db_path, x_path, kept_in, world_in) = (path.clone(), cross_path.clone(), kept.clone(), world_inputs);
+        // The cone's relations are kept like any (t33 K1), in a fact space of their own; its stratum that asks and
+        // answers is clean while what it reads and its answers are as they were (K3).
+        let cone_store_path = durable.is_some().then(|| store.database_path().to_path_buf());
+        let cone_space = kept_strata::part_space(root, "cone");
         let decls = load.decls.clone();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
         let modes = modes.to_owned();
-        let cone = crate::threads::beside("the cone of requests", move || -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+        let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vec<i64>>)>, Option<(usize, usize)>)> {
             let db2 = Connection::open(&db_path)?;
             db2.execute_batch("PRAGMA synchronous=OFF")?;
             db2.execute("ATTACH ?1 AS x", [x_path.to_string_lossy()])?;
@@ -3779,12 +3786,18 @@ fn run_observed(
                 modules.bind(&db2, rel, source)?;
                 Ok(())
             };
+            let mut cone_inputs: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
             for (rel, source) in per_file_in {
+                cone_inputs.push((rel.clone(), Arc::clone(&source)));
                 bind(&rel, source)?;
             }
             for (rel, width) in &world_in {
-                bind(rel, crate::code_rule_dsl::logic::native::component::columns_source((0..*width).map(|c| format!("c{c}")).collect(), vec![Some(Vec::new()); *width]))?;
+                let empty = crate::code_rule_dsl::logic::native::component::columns_source((0..*width).map(|c| format!("c{c}")).collect(), vec![Some(Vec::new()); *width]);
+                cone_inputs.push((rel.clone(), Arc::clone(&empty)));
+                bind(rel, empty)?;
             }
+            let cone_store = cone_store_path.as_deref().map(ContentStore::open).transpose().map_err(|e| Error::Plan(e.to_string()))?;
+            let mut cone_kept = cone_store.as_ref().map(|s| kept_strata::Kept::new(s, cone_space, &cone_inputs));
             let mut answer = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
                 ask_tx.send((rel.to_owned(), rows.to_vec())).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
                 rerail_accel::exec::help_until_as("the cone: an answer", || match reply_rx.try_recv() {
@@ -3794,12 +3807,16 @@ fn run_observed(
                 })?
                 .map_err(Error::Plan)
             };
-            let got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats, kept_in.clone(), &modes, &mut answer)?;
+            let got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats, kept_in.clone(), &modes, &mut answer, cone_kept.as_mut().map(|k| k as &mut dyn super::KeptStrata))?;
+            let cone_strata = cone_kept.as_ref().and_then(|k| k.strata);
+            if let Some(k) = cone_kept {
+                k.finish();
+            }
             let mut out = Vec::new();
             for rel in &kept_in {
                 out.push((rel.clone(), held_rows(&db2, &got, rel, decls[rel].len())?));
             }
-            Ok(out)
+            Ok((out, cone_strata))
         });
         // The answers turn request atoms back into text, warm runs included (nothing else registers them then).
         crate::code_rule_dsl::logic::native::register_symbols(&db)?;
@@ -3832,19 +3849,37 @@ fn run_observed(
                 return Err(Error::Plan(format!("{rel}: a request this run does not answer")));
             }
             let mut fresh = Vec::new();
+            let mut again: std::collections::HashSet<i64> = std::collections::HashSet::new();
             let mut loaded_rows = Vec::new();
             // A run of some documents on their own (`phases::maintain`) follows no load: the documents loaded are the
             // last run's, kept.
             for row in rows.iter().filter(|_| !no_loads) {
                 let (asked, module, grammar) = (text(row[0])?, text(row[1])?, text(row[2])?);
+                // A load asked again (its stratum's requests answered again, t33 K3) is answered alike: the same
+                // document, its rows from the exports, not sent again.
+                if let Some(doc) = world.loaded_as(&asked) {
+                    if let Some((key, _)) = loaded_docs.iter().find(|(_, p)| *p == doc.path) {
+                        loaded_rows.push(vec![atoms(&[doc.path.as_str()])?[0], row[1], row[2]]);
+                        again.insert(*key);
+                    }
+                    continue;
+                }
                 if let Some(doc) = world.load(&asked, &module, &grammar, label, &corpus) {
                     loaded_rows.push(vec![atoms(&[doc.path.as_str()])?[0], row[1], row[2]]);
                     fresh.push(doc);
                 }
             }
             let mut out = vec![(world::LOADED.to_owned(), loaded_rows)];
-            if fresh.is_empty() {
+            if fresh.is_empty() && again.is_empty() {
                 out.extend(per_file.iter().map(|r| (r.clone(), Vec::new())));
+                return Ok(out);
+            }
+            if fresh.is_empty() {
+                for rel in &per_file {
+                    let at = split.locations.get(rel).and_then(|l| l.first().copied()).ok_or_else(|| Error::Plan(format!("{rel}: no location column")))?;
+                    let width = lowered.program.decls[rel].len();
+                    out.push((rel.clone(), exports.borrow().rows_of(rel, width, at, &again)));
+                }
                 return Ok(out);
             }
             // A document's key is a function of its path (decision 0052).
@@ -3860,7 +3895,8 @@ fn run_observed(
             }
             // The new documents' rows of the per-file relations the cone reads, from the exports the chunks added
             // (`exports`, held in memory), by their first location column.
-            let new: std::collections::HashSet<i64> = keys.iter().copied().collect();
+            let mut new: std::collections::HashSet<i64> = keys.iter().copied().collect();
+            new.extend(again);
             for rel in &per_file {
                 let at = split.locations.get(rel).and_then(|l| l.first().copied()).ok_or_else(|| Error::Plan(format!("{rel}: no location column")))?;
                 let width = lowered.program.decls[rel].len();
@@ -3887,7 +3923,7 @@ fn run_observed(
         }
         drop(reply_tx);
         drop(answer_one);
-        loading_rows = cone.join().map_err(|_| Error::Plan("the cone of requests panicked".to_owned()))??;
+        (loading_rows, cone_kept) = cone.join().map_err(|_| Error::Plan("the cone of requests panicked".to_owned()))??;
         loading_rows.extend(answered);
         // Every file seen: the keeper ends here, so the digests read the run's exports (the counted ones).
         finished = Some(finish()?);
@@ -5252,7 +5288,7 @@ fn run_observed(
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the Git index consulted".into());
         consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default() })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default() })
 }
 
 
@@ -6408,6 +6444,58 @@ unused(f) :- def(f, _), !used(f).
         let (_, fresh) = run("fresh.sqlite");
         assert_eq!(rows, fresh);
         assert_ne!(rows, derived);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The cone of requests is kept like any relation (t33 K1, K3): its stratum that asks for directories, files and
+    /// loads and answers them inside its fixpoint is clean while what it reads and its answers are as they were. An
+    /// edit that changes neither evaluates none of the cone; a new import, or a library file whose own imports
+    /// change, runs it, and the documents loaded are those a run with nothing kept loads.
+    #[test]
+    fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("cone-kept");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\na: 3.0-\nb: 3.0-\nc: 3.0-\n").unwrap();
+        std::fs::write(lib.join("builtins.pyi"), "class object: ...\n").unwrap();
+        for m in ["a", "b", "c"] {
+            std::fs::write(lib.join(format!("{m}.pyi")), format!("def {m}() -> None: ...\n")).unwrap();
+        }
+        std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+        std::fs::write(ws.join("main.py"), "import a\n").unwrap();
+        let rule = dir.join("p.rr");
+        std::fs::write(&rule, "#include \"python/modules.rr\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let out = dir.join("out");
+        let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let run = |store: &str| {
+            super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+            let report = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+            let mut loaded: Vec<String> = std::fs::read_to_string(out.join("n_loaded.csv")).unwrap().lines().map(|l| l.rsplit('/').next().unwrap().to_owned()).collect();
+            loaded.sort();
+            (report.cone_kept.expect("a run with a tape cache keeps its cone's strata"), loaded)
+        };
+        let ((ran, all), first) = run("kept.sqlite");
+        assert_eq!(ran, all, "the first run evaluates every stratum of the cone");
+        assert_eq!(first, ["a.pyi", "builtins.pyi"]);
+        // A comment: the cone reads nothing new, and its answers are as they were.
+        std::fs::write(ws.join("main.py"), "import a\n# a note\n").unwrap();
+        let ((ran, all), same) = run("kept.sqlite");
+        assert_eq!((ran, &same), (0, &first), "an edit that changes no read and no answer evaluates none of the cone (of {all})");
+        // A new import: a read changes, and the cone runs.
+        std::fs::write(ws.join("main.py"), "import a\nimport b\n# a note\n").unwrap();
+        let ((ran, _), grown) = run("kept.sqlite");
+        assert!(ran > 0, "a new import runs the cone");
+        assert_eq!(grown, run("fresh-1.sqlite").1, "the documents loaded are those a run with nothing kept loads");
+        assert_eq!(grown, ["a.pyi", "b.pyi", "builtins.pyi"]);
+        // A library file's own import: the answer to its load changes, and the cone runs.
+        std::fs::write(lib.join("b.pyi"), "import c\ndef b() -> None: ...\n").unwrap();
+        let ((ran, _), deeper) = run("kept.sqlite");
+        assert!(ran > 0, "a loaded document's change is a changed answer: the cone runs");
+        assert_eq!(deeper, ["a.pyi", "b.pyi", "builtins.pyi", "c.pyi"]);
+        assert_eq!(deeper, run("fresh-2.sqlite").1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

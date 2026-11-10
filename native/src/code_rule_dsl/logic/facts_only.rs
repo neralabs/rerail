@@ -198,6 +198,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
+    // Profiling totals, consumed and cleared by each report; no reusable results.
+    ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),

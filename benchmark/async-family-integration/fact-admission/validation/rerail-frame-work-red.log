@@ -1,0 +1,20 @@
+    Blocking waiting for file lock on build directory
+   Compiling rerail-store v0.1.0 (/Users/jeremy/orca/workspaces/rerail/Async-family-integration-comparison/native/crates/store)
+    Finished `profiling` profile [optimized + debuginfo] target(s) in 3m 01s
+     Running unittests src/lib.rs (/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_store-9f329dac6c2013e9)
+
+running 1 test
+
+thread 'content_store::frames::tests::frame_admission_probes_demanded_keys_instead_of_scanning_the_space' (126452476) panicked at native/crates/store/src/../../../src/content_store/frames.rs:289:9:
+128 demands must use full-key probes, not scan 8192 stored frames: 5311431 VM instructions
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test content_store::frames::tests::frame_admission_probes_demanded_keys_instead_of_scanning_the_space ... FAILED
+
+failures:
+
+failures:
+    content_store::frames::tests::frame_admission_probes_demanded_keys_instead_of_scanning_the_space
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 163 filtered out; finished in 0.08s
+
+error: test failed, to rerun pass `-p rerail-store --lib`
