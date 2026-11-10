@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkoutRealpath, physicalPath } from "../../../src/engine/catalog/checkout-control.js";
+import { shortSpelling } from "../support/short-path.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -30,5 +31,18 @@ describe("a checkout path's spelling", () => {
     const typed = root.replace(/^[A-Z]:/u, drive => drive.toLowerCase());
     expect(typed).not.toBe(root);
     expect(checkoutRealpath(typed)).toBe(root);
+  });
+
+  it("is each name's long form for a checkout spelt with 8.3 short names, as a Windows temp folder often is", async context => {
+    const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-checkout-spelling-")));
+    roots.push(root);
+    const short = shortSpelling(root);
+    if (short === undefined) {
+      // Not Windows, or a volume with 8.3 names turned off: there is no short spelling to resolve.
+      context.skip();
+      return;
+    }
+    expect(checkoutRealpath(short)).toBe(root);
+    expect(physicalPath(join(short, "not-yet"))).toBe(join(root, "not-yet"));
   });
 });
