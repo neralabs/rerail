@@ -115,11 +115,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("slice_match", "3"),
     ("slice_span", "3"),
     ("slice_fresh", "3"),
-    ("phase_record", "5"),
-    ("phase_granules", "5"),
-    ("phase_cones", "5"),
-    ("export_versions", "5"),
-    ("store_epoch", "5"),
     ("compiled_plans", "6"),
     ("compiled_plan_reads", "6"),
     ("plan_feedback", "6"),
@@ -155,7 +150,7 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised.
-const NOT_YET_TABLES_PIN: usize = 66;
+const NOT_YET_TABLES_PIN: usize = 61;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.

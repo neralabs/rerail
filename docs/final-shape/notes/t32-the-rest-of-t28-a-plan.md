@@ -75,12 +75,14 @@ exports against a full run; CPU and instructions retired, cold, warm and after t
 
 | Step | Change | Done when |
 |---|---|---|
-| 3.1 | **The run record goes.** A phase's nested run keeps its strata as any run does (the kept strata, or the session). An unchanged run is a run whose inputs have no change: every stratum clean, nothing derived | `phase_record`, `export_versions`, `store_epoch` and `unchanged_phase` gone; off the 0103 lists |
-| 3.2 | **A phase's per-document rows are a cache.** `.owner` and `phase_granules` become two rules in `struct.rr`: `doc_key(d, h)` from each document's content digest, and the per-document exports from it | `phase_granules` and `.owner` gone; P2 over the O125 edits gives the same exports |
-| 3.3 | `Session::phase_rows` (6afe7e79f) goes: the session's kept relations are the phase's exports | the field gone |
-| 3.4 | The cones (`phase_cones`) go with 3.1 | the table gone |
+| 3.1 | **The run record goes.** A phase's nested run keeps its strata as any run does (the kept strata, or the session). An unchanged run is a run whose inputs have no change: every stratum clean, nothing derived | **done.** The phase store is gone: a phase is its nested run, whose relations are kept as any run's (memo, kept strata, session); its exports are handed to the reader as input rows, whose delta the reader's run takes as any input's (by its documents, or the diff rules). Off the 0103 and 0104 lists |
+| 3.2 | **A phase's per-document rows are a cache.** `.owner` and `phase_granules` become two rules in `struct.rr`: `doc_key(d, h)` from each document's content digest, and the per-document exports from it | **done, without a cache:** struct's file-local rows are per document in its run's per-file memo already, so `.owner`, `.positions` and `phase_granules` go with no rule in their place |
+| 3.3 | `Session::phase_rows` (6afe7e79f) goes: the session's kept relations are the phase's exports | **done.** `phase_rows` and `phased` (the versions bound by the session) gone |
+| 3.4 | The cones (`phase_cones`) go with 3.1 | **done** |
 
-3.2 needs caches in the file-local part (5.1), since `struct.rr`'s exports are per document.
+What this costs until K4 (t33): a phase's export statistics are measured from its rows each run, no longer patched by
+version deltas (0096 §3), and an unchanged run runs the phase's nested run (all its parts kept) instead of reading a
+record.
 
 ### Stage 4. P2 maintained across processes
 

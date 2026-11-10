@@ -255,20 +255,10 @@ pub(crate) fn unchanged(programs: &[&str], root: &Path, typing: &Typing, options
     Ok(changes(programs, root, typing, options, consulted)?.is_some_and(|c| c.is_empty()))
 }
 
-/// `unchanged`, for a phase whose key holds the versions of the earlier phases' exports it reads (`phases::facts`):
-/// those are not consulted inputs, so reading them does not stop the comparison.
-pub(crate) fn unchanged_phase(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<bool> {
-    Ok(changes_of(programs, root, typing, options, consulted, true)?.is_some_and(|c| c.is_empty()))
-}
-
 /// The workspace documents whose bytes changed since a run that consulted `consulted`, when nothing else it
 /// consulted did: the same documents, by path, and every request's answer as it was (`World::still`). `None` when
 /// anything else changed, or the run cannot be compared (its documents named, typing, phases read).
 pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
-    changes_of(programs, root, typing, options, consulted, false)
-}
-
-fn changes_of(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], phases_keyed: bool) -> Result<Option<Vec<String>>> {
     if options.get("inputFiles").is_some() || consulted.is_empty() {
         return Ok(None);
     }
@@ -277,7 +267,7 @@ fn changes_of(programs: &[&str], root: &Path, typing: &Typing, options: &serde_j
     let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::tools::with_settings(p, &settings)).collect();
     let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
     let prog = combine(&programs, "")?;
-    if prog.decls.contains_key("declared_ret") || (!phases_keyed && !phases::wanted(&prog, None)?.is_empty()) {
+    if prog.decls.contains_key("declared_ret") || !phases::wanted(&prog, None)?.is_empty() {
         return Ok(None);
     }
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
@@ -335,7 +325,7 @@ fn patched(old: &dyn crate::code_rule_dsl::facts::vtab::Source, plus: &dyn crate
     Arc::new(relation)
 }
 
-/// A phase's rows as text (`phases::Versioned`), as values of `decl`'s types.
+/// A phase's rows as text, as values of `decl`'s types.
 fn values_of(decl: &[(String, String)], rows: &[Vec<String>]) -> Vec<Vec<front::Value>> {
     rows.iter()
         .map(|r| r.iter().zip(decl).map(|(v, (_, t))| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| front::Value::Str(v.clone()), front::Value::Int) } else { front::Value::Str(v.clone()) }).collect())
@@ -1562,18 +1552,12 @@ fn run_observed(
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
-    // The phase exports this session's runs hold bound, by version: their rows are not read again. Taken before the
-    // phases run, which are runs of the session themselves.
-    let held_versions: HashMap<String, u64> = {
-        let held = session::current();
-        held.as_ref().and_then(|s| s.phased.lock().ok().map(|m| m.iter().map(|(rel, (v, _))| (rel.clone(), *v)).collect())).unwrap_or_default()
-    };
     // The constants' own run runs no phase: a constant reads no input (`constants::foldable`), and a phase export is
     // one. Run here, a phase took the constants' option for its own, and wrote none of its exports.
-    let (phased, phase_runs, phase_versions) = if options.get(constants::OWN).is_some() {
-        (Default::default(), Vec::new(), Default::default())
+    let (phased, phase_runs) = if options.get(constants::OWN).is_some() {
+        (Default::default(), Vec::new())
     } else {
-        phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options, &|rel| held_versions.get(rel).copied())?
+        phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?
     };
     // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
     // prepared, so an edit that changes them leaves the program, its prepared plans and its keys as they were.
@@ -1582,7 +1566,7 @@ fn run_observed(
         for (rel, rows) in &bridged {
             prog.facts.entry(rel.clone()).or_default().extend(rows.iter().cloned());
         }
-        for rel in phased.keys().chain(phase_versions.keys()) {
+        for rel in phased.keys() {
             if !prog.inputs.contains(rel) {
                 prog.inputs.push(rel.clone());
             }
@@ -1975,12 +1959,9 @@ fn run_observed(
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     // A file-local part reading the run's options (`file_local::option_input`) is memoised under them too.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the memo's program and the components' plan".into()));
-    // A digest under the rows of the phases' exports that `rules` read, which are not in the program's text: by their
-    // versions when the phase store numbers them (no row read), else by their rows.
+    // A digest under the rows of the phases' exports that `rules` read, which are not in the program's text.
     let under_phased = |digest: [u8; 32], rules: &[front::Rule]| -> [u8; 32] {
-        let reads_phased: BTreeSet<&str> = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).filter(|r| phased.contains_key(*r) || phase_versions.contains_key(*r)).collect();
-        let (versioned, by_rows): (Vec<&str>, Vec<&str>) = reads_phased.iter().partition(|r| phase_versions.contains_key(**r));
-        let digest = if versioned.is_empty() { digest } else { memo::with_options(digest, &serde_json::json!(versioned.iter().map(|r| format!("{r}@{}", phase_versions[*r].now)).collect::<Vec<_>>())) };
+        let by_rows: BTreeSet<&str> = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).filter(|r| phased.contains_key(*r)).collect();
         if by_rows.is_empty() { digest } else { memo::with_rows(digest, by_rows.iter().map(|r| (*r, &phased[*r]))) }
     };
     let memo_program = {
@@ -2099,7 +2080,7 @@ fn run_observed(
     // answers, 183 s of a 966 s run. The memo's key is made before (`memo_program`): it holds the rules as written.
     let run_constants: Option<(lower::Lowered, Vec<String>)> = {
         let constant = crate::code_rule_dsl::typing::file_local::constant_relations(&lowered.program);
-        let of_phase = |r: &str| phased.contains_key(r) || phase_versions.contains_key(r);
+        let of_phase = |r: &str| phased.contains_key(r);
         // Those whose rules read an export, or another such: to a fixpoint. An output stays where the split put it.
         let mut once: BTreeSet<String> = BTreeSet::new();
         loop {
@@ -2171,7 +2152,7 @@ fn run_observed(
     {
         let p = &lowered.program;
         let not_of_documents = |rel: &str| {
-            p.rules.iter().any(|r| r.head.rel == rel) || p.facts.contains_key(rel) || p.natives.contains_key(rel) || phased.contains_key(rel) || phase_versions.contains_key(rel)
+            p.rules.iter().any(|r| r.head.rel == rel) || p.facts.contains_key(rel) || p.natives.contains_key(rel) || phased.contains_key(rel)
         };
         let needs = front::needed(p, p.outputs.clone());
         let why: Option<String> = if t.is_some() {
@@ -2291,44 +2272,16 @@ fn run_observed(
     // The phases' exports the program reads, as relations of atoms (`add_bridged`).
     let repository = {
         let mut repository = repository;
-        let phased_read: BTreeSet<&String> = phased.keys().chain(phase_versions.keys()).filter(|rel| read.contains(*rel)).collect();
+        let phased_read: BTreeSet<&String> = phased.keys().filter(|rel| read.contains(*rel)).collect();
         for rel in phased_read {
-            // A session's run reading the version its last run bound binds that (memory ahead of the phase store);
-            // reading the version after it, that with the delta applied: the delta's strings are the only ones interned.
-            let versioned = phase_versions.get(rel);
-            let version = versioned.map(|v| v.now);
-            let bound = session.as_ref().and_then(|s| s.phased.lock().ok()?.get(rel).cloned());
             let width = prog.decls[rel].len();
-            // Its statistics are counted from its rows once and then patched by each version's delta (decision 0096
-            // §3): an export is never measured again whole. Read as `syntax::measured` reads it.
+            // Read as `syntax::measured` reads it: its statistics counted from its rows.
             let flat = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vec<i64> { (0..s.len()).flat_map(|r| (0..width).map(move |c| (r, c))).map(|(r, c)| s.value(r, c)).collect() };
-            let read = |kept: &crate::code_rule_dsl::logic::plan::statkeep::RelStats| -> Vec<(String, i64, i64, i64, i64)> { kept.statistics(&|_| true) };
-            let (source, measured) = match (bound, versioned) {
-                (Some((at, (source, measured, _))), Some(v)) if at == v.now => (source, measured),
-                (Some((at, (old, _, counts))), Some(phases::Versioned { delta: Some((before, plus, minus)), now, .. })) if at == *before => {
-                    let decl = &prog.decls[rel];
-                    let (plus, minus) = (atoms_source(&store, width, values_of(decl, plus).iter())?, atoms_source(&store, width, values_of(decl, minus).iter())?);
-                    let source = patched(old.as_ref(), plus.as_ref(), minus.as_ref());
-                    let mut counts = (*counts).clone();
-                    counts.delta(&flat(plus.as_ref()), &flat(minus.as_ref()), width);
-                    let measured = rename(read(&counts), &source.columns());
-                    if let Some(s) = session.as_ref() {
-                        s.phased.lock().expect("the session's phase exports").insert(rel.clone(), (*now, (Arc::clone(&source), measured.clone(), Arc::new(counts))));
-                    }
-                    (source, measured)
-                }
-                _ => {
-                    let rows = phased.get(rel).ok_or_else(|| Error::Plan(format!("{rel}: the phase handed on no rows, and this run holds none")))?;
-                    let source = atoms_source(&store, width, rows.iter())?;
-                    let mut counts = crate::code_rule_dsl::logic::plan::statkeep::RelStats::new(source.columns());
-                    counts.delta(&flat(source.as_ref()), &[], width);
-                    let measured = read(&counts);
-                    if let (Some(s), Some(v)) = (session.as_ref(), version) {
-                        s.phased.lock().expect("the session's phase exports").insert(rel.clone(), (v, (Arc::clone(&source), measured.clone(), Arc::new(counts))));
-                    }
-                    (source, measured)
-                }
-            };
+            let rows = &phased[rel];
+            let source = atoms_source(&store, width, rows.iter())?;
+            let mut counts = crate::code_rule_dsl::logic::plan::statkeep::RelStats::new(source.columns());
+            counts.delta(&flat(source.as_ref()), &[], width);
+            let measured = counts.statistics(&|_| true);
             repository.push((rel.clone(), source, measured));
         }
         repository
@@ -4369,29 +4322,16 @@ fn run_observed(
                     // Each linear cost of a session's run is its own span (decision 0090, step 1).
                     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("session/{name}"));
                     let s = span("digest inputs");
-                    // A phase's export is digested by its version: none of its rows is read for it. A base relation's
-                    // digest was taken when its source was made (`retain::kept_source`).
+                    // A base relation's digest was taken when its source was made (`retain::kept_source`).
                     let digests: HashMap<String, u64> = cross_inputs
                         .iter()
-                        .map(|(rel, source)| (rel.clone(), phase_versions.get(rel).map(|v| v.now).or_else(|| input_digests.get(rel).copied()).unwrap_or_else(|| retain::digest(source.as_ref()))))
+                        .map(|(rel, source)| (rel.clone(), input_digests.get(rel).copied().unwrap_or_else(|| retain::digest(source.as_ref()))))
                         .collect();
                     drop(s);
                     let ckey = retain::key(&prepared_key, &cross.program);
                     let mut cells = cell.lock().expect("the session's cross-file part");
                     // Taken out while the run uses it; a run that fails leaves no kept part for this program.
                     let mut cell = cells.remove(&ckey);
-                    // A phase export the kept part read at the version before this one: its delta is given.
-                    let mut given = maintain::Given::new();
-                    for (rel, v) in &phase_versions {
-                        if let (Some((before, plus, minus)), Some(kept)) = (&v.delta, cell.as_ref())
-                            && *before != v.now
-                            && kept.input_digest(rel) == Some(*before)
-                            && let Some(decl) = prog.decls.get(rel)
-                        {
-                            let (plus, minus) = (values_of(decl, plus), values_of(decl, minus));
-                            given.insert(rel.clone(), (atoms_source(&store, decl.len(), plus.iter())?, atoms_source(&store, decl.len(), minus.iter())?));
-                        }
-                    }
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
                     let s = span("bind unchanged inputs");
@@ -4424,7 +4364,7 @@ fn run_observed(
                             eprintln!("O125 step {what} at {:.1} s CPU", cpu);
                         }
                     };
-                    step(&format!("cut: {} of {} strata to run; inputs changed: {}; deltas given: {}", cut.strata.0, cut.strata.1, cut.changed.len(), given.keys().cloned().collect::<Vec<_>>().join(", ")));
+                    step(&format!("cut: {} of {} strata to run; inputs changed: {}", cut.strata.0, cut.strata.1, cut.changed.len()));
                     if std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
                         let read: BTreeSet<&String> = cross.program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| &a.rel).collect();
                         let undigested: Vec<&String> = cross.program.inputs.iter().filter(|r| !digests.contains_key(*r) && read.contains(r)).collect();
@@ -4433,7 +4373,7 @@ fn run_observed(
                     // Changed strata maintain their rows from deltas where they can (stage 2, `maintain`).
                     let s = span("rewrite and old sources");
                     // An input's delta, asked for by the maintained strata that read it (`maintain::rewrite`), in this
-                    // order: an earlier phase's (`given`); read from the changed documents' memo entries
+                    // order: read from the changed documents' memo entries
                     // (`input_delta`), where its rows are each one document's, so no unchanged document's row is
                     // read; found by hashing its documents (`retain::document_delta`); else made by the diff rules.
                     // `RERAIL_DIFF_INPUTS` leaves every one to the rules.
@@ -4447,9 +4387,6 @@ fn run_observed(
                     let (mut from_entries, mut from_entries_rows, mut hashed) = (0usize, 0usize, Vec::<String>::new());
                     let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
                     let mut answer = |rel: &str| -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> {
-                        if let Some((plus, minus)) = given.get(rel) {
-                            return Some((Arc::clone(plus), Arc::clone(minus)));
-                        }
                         if by_rules_only {
                             return None;
                         }

@@ -140,7 +140,7 @@ pub(in crate::code_rule_dsl) fn digest(source: &dyn Source) -> u64 {
 }
 
 /// An input's rows new and its rows gone between its last run's source `old` and this run's `new`, as
-/// `maintain::Given` binds them (`r__plus`, `r__minus`), found document by document: each document's rows (by the
+/// `maintain::rewrite`'s `given` binds them (`r__plus`, `r__minus`), found document by document: each document's rows (by the
 /// one its first column names, `memo::document_of`) are hashed as `digest` hashes rows, and only the documents whose
 /// hashes differ are compared row by row. A pass over the columns, not a join of every new row against every old
 /// one (`r__plus :- r, !r__old`), which read each base relation whole every run however few files changed. Exact

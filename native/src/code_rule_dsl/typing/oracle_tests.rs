@@ -1095,36 +1095,35 @@ rtype(f, a, d) :- types__rtype(f, a, d).
             v
         }).collect()
     };
-    let types = |r: &corpus::Report| -> (Option<(usize, usize)>, (usize, usize, usize), Option<String>) {
+    let types = |r: &corpus::Report| -> (Option<(usize, usize)>, (usize, usize, usize)) {
         let p = r.phase_runs.iter().find(|p| p.name == "types").expect("the typing phase ran");
-        (p.report.cross_strata, p.report.cross_maintained, p.full_because.clone())
+        (p.report.cross_strata, p.report.cross_maintained)
     };
     session::start(&dir.join("session")).unwrap();
     let cold = run();
     println!("P2 cold: {:?}", types(&cold));
     std::fs::write(ws.join("b.py"), "from a import A\nclass B(A):\n    def go(self) -> str: ...\nclass C(B): ...\n").unwrap();
     let edited = run();
-    let (strata, maintained, why) = types(&edited);
-    println!("P2 edited: strata {strata:?}, maintained {maintained:?}, in full because {why:?}");
+    let (strata, maintained) = types(&edited);
+    println!("P2 edited: strata {strata:?}, maintained {maintained:?}");
     let kept = dump();
     assert!(kept[1].iter().any(|l| l == "b.C\ta.A"), "C's ancestors through the edit: {:?}", kept[1]);
-    // A second edit, then none: each run's exports are kept by the granules that changed (`keep_in_session`), and
-    // the unchanged run reads them back from the phase store.
+    // A second edit, then none: the phase's run keeps its relations as the session keeps any run's, so the
+    // unchanged run derives no stratum again.
     std::fs::write(ws.join("a.py"), "class A:\n    def run(self) -> int: ...\nclass Z: ...\n").unwrap();
     let _ = run();
     let second = dump();
     assert!(second[1].iter().any(|l| l == "b.C\ta.A") && second[0].iter().any(|l| l.starts_with("a\tZ\t")), "{second:?}");
     let unchanged = run();
-    let how: Vec<String> = unchanged.phase_runs.iter().map(|p| format!("{} {:?} {:?} {:?}", p.name, p.report.cross_strata, p.full_because, p.report.phases.iter().map(|x| x.0).collect::<Vec<_>>())).collect();
-    assert!(unchanged.phase_runs.iter().any(|p| p.name == "types" && p.report.cross_strata.is_none()), "the typing phase kept as it was: {how:?}");
-    assert_eq!(dump(), second, "read back from the phase store");
+    let how: Vec<String> = unchanged.phase_runs.iter().map(|p| format!("{} {:?} {:?}", p.name, p.report.cross_strata, p.report.phases.iter().map(|x| x.0).collect::<Vec<_>>())).collect();
+    assert!(unchanged.phase_runs.iter().any(|p| p.name == "types" && p.report.cross_strata.is_none_or(|(ran, _)| ran == 0)), "the typing phase kept as it was: {how:?}");
+    assert_eq!(dump(), second, "the unchanged run's exports");
     let full = session::full(run);
     assert_eq!(second, dump(), "the session's maintained typing phase against a full run");
     let _ = full;
     let (run_, all) = strata.expect("the typing phase's run is a session's");
     assert!(maintained.0 > 0, "strata maintained from struct's delta: {maintained:?}");
     assert!(run_ < all, "the edit runs the strata its delta reaches, {run_} of {all}");
-    assert_eq!(why, None, "maintained by the session, not run in full");
     let types_local = edited.phase_runs.iter().find(|p| p.name == "types").unwrap().report.phases.iter().find(|p| p.0 == "local").map_or(0.0, |p| p.1 + p.2);
     assert!(types_local < 0.05, "a phase reading no document has no file-local part: {types_local:.2} s");
     session::stop();
@@ -1580,10 +1579,8 @@ ats(s, p, l) :- struct__at(s, p, l).
         let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
         let rss = p.report.phases.iter().map(|x| x.3).fold(0.0, f64::max);
         println!("PHASE {what}: struct {cpu:.1} s CPU (main thread), peak RSS {rss:.0} MB, {} workspace files; modules {}, definitions {}, imports {}", p.report.files, count("modules"), count("defs"), count("imports"));
-        println!("PHASE {what}: freshness: definitions {} ({} changed, {} gone); granules {} ({} changed, frontier {}, unattributed {}); bookkeeping {:.2} s",
-            p.units.0, p.units.1, p.units.2, p.granules.0, p.granules.1, p.granules.2, p.granules.3, p.bookkeeping);
-        let changed: Vec<String> = p.exports.iter().filter(|e| e.2 + e.3 > 0).map(|(rel, n, add, gone)| format!("{rel} {n} (+{add} -{gone})")).collect();
-        println!("PHASE {what}: exports changed: {}; how: {}", if changed.is_empty() { "none".to_owned() } else { changed.join(", ") }, p.full_because.as_deref().map_or_else(|| p.report.phases.first().map_or("", |x| x.0).to_owned(), |w| format!("in full: {w}")));
+        let rows: Vec<String> = p.exports.iter().map(|(rel, n)| format!("{rel} {n}")).collect();
+        println!("PHASE {what}: exports: {}; strata {:?}, maintained {:?}", rows.join(", "), p.report.cross_strata, p.report.cross_maintained);
         let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
         println!("PHASE {what}: parts: {}", parts.join(", "));
         let outer: Vec<String> = r.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
@@ -1682,9 +1679,9 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         for p in &r.phase_runs {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
             let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
-            let changed: usize = p.exports.iter().map(|e| e.2 + e.3).sum();
-            println!("T28 {what}: {} {cpu:.2} s CPU, bookkeeping {:.2} s; strata {:?}, maintained {:?}; export rows changed {changed}; {}; parts: {}",
-                p.name, p.bookkeeping, p.report.cross_strata, p.report.cross_maintained, p.full_because.as_deref().map_or("kept or maintained".to_owned(), |w| format!("full run: {w}")), parts.join(", "));
+            let rows: usize = p.exports.iter().map(|e| e.1).sum();
+            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?}, maintained {:?}; export rows {rows}; parts: {}",
+                p.name, p.report.cross_strata, p.report.cross_maintained, parts.join(", "));
         }
         println!("T28 {what}: the reader's run: {:.2} s", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>());
     };

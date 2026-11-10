@@ -170,12 +170,9 @@ fn named_heads(rule: &Rule) -> Rule {
 }
 
 /// `part` (the cut's program) with each changed stratum maintained where it can be, and the old rows it reads.
-/// An input's delta given whole (an earlier phase's, `phases::Versioned`): its rows new and its rows gone, bound as
-/// `r__plus` and `r__minus` in place of their diff of every old and new row.
-pub(in crate::code_rule_dsl) type Given = std::collections::HashMap<String, (Arc<dyn Source>, Arc<dyn Source>)>;
-
-/// `given` answers for an input whose delta it has (`Given`'s, or found by its documents), asked only for the inputs a
-/// maintained stratum reads the delta of.
+/// `given` answers for an input whose delta it has (its rows new and gone, found by its documents), bound as
+/// `r__plus` and `r__minus` in place of their diff of every old and new row; asked only for the inputs a maintained
+/// stratum reads the delta of.
 pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
     let mut part = cut.program(cross);
     let (sccs, _) = front::strata(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
