@@ -42,7 +42,8 @@ export interface EngineService {
  * busy Windows machine outlasts. A session whose end was lost kept its state (its own copy of its checkout's source
  * walk, its conversation history, its evaluator) until the daemon stopped. A closed session's next event opens it again
  * from its ledger. A session waiting on a tool call, or holding a steer for its agent, stays open: its ledger holds
- * neither.
+ * neither. A call that arrives while its rules compile again goes on without code rules; the turn end checks the edit,
+ * and its steer arrives at the agent's next tool call, a turn later (`#codeRuleWorkspaceNow` in runtime.ts).
  */
 export const IDLE_SESSION_MS = 30 * 60_000;
 /** How often the engine service looks for idle sessions. */

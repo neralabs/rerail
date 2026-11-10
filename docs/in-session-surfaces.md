@@ -210,7 +210,7 @@ A steer never becomes your message, before or after the agent compacts its conte
 
 ### Edits made by shell commands and before rules are ready
 
-Rerail checks shell-written files when the command finishes. Edits made while a large repository indexes are checked in the first pass after.
+Rerail checks shell-written files when the command finishes. Edits made while a large repository indexes, or while a session idle for 30 minutes opens again, are checked in the first pass after.
 
 <details>
 <summary>Shell edits and indexing</summary>
@@ -223,6 +223,13 @@ In a large repository, Rerail indexes at session start before code rules can run
 - Edits made meanwhile are not checked at their own result; the first pass after indexing checks every changed file.
 - OMP's footer shows ` · indexing` while it lasts, only if it takes over half a second.
 - The dashboard timeline says code rules were not yet running at those steps.
+
+The daemon closes a session that sends nothing for 30 minutes, and frees a checkout's compiled rules 15 minutes after
+its last session ends. The session's next event opens it again, and its rules compile again (about 12 s of CPU for a
+TypeScript repository's five packs on a Windows laptop); nothing waits for that either.
+
+- An edit made meanwhile is not checked at its own result. The turn's end checks it, and its steer reaches the agent at
+  its next tool call, a turn later than usual.
 
 </details>
 

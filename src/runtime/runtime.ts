@@ -999,9 +999,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * The session's evaluator for a code-rule boundary, without waiting for one still opening (indexing the repository):
-   * such a boundary is answered without code rules and recorded in the session's history, and what it would have
-   * checked is not checked later either, so the agent is never held up by indexing nor steered turns later for it.
+   * The session's evaluator for a code-rule boundary, without waiting for one still opening (indexing the repository,
+   * compiling its rules): such a boundary is answered without code rules and recorded in the session's history, so the
+   * agent is never held up by it. The boundary's own check is skipped, but the file stays checked: the source walk of
+   * the first turn end once the evaluator is open finds the edit and checks it, so its steer can arrive a turn later, at
+   * the agent's next tool call. A session reopened after its idle close (`IDLE_SESSION_MS`) can meet this on its first
+   * edit, most often once its checkout's runtime has retired (`IDLE_RUNTIME_MS`) and its rules compile again.
    */
   async #codeRuleWorkspaceNow(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
     if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
