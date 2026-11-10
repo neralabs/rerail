@@ -2,6 +2,8 @@
 
 
 def policy_filename(check, entry):
+    if check=='serverplan_grammar_surface' and entry in {'_project_facts','_project_messages'}:
+        return 'serverplan-grammar-surface-project.rr'
     if check == 'impl_direct_execution' and entry.startswith('_ratchet_'):
         return 'impl-direct-execution-ratchet.rr'
     if check == 'serverplan_steps' and entry in {'_sign_request','_sign_error','_sign_update'}:

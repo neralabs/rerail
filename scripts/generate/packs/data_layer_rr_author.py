@@ -242,6 +242,14 @@ def main():
             entry.update(status='draft')
             entry.pop('evidence', None)
         entry.update(rulePath=path.as_posix(), ruleSha256=digest)
+        if check=='serverplan_grammar_surface':
+            from data_layer_rr_projection import generate as projection
+            for name,content in projection(ROOT,source).items():
+                companion=dict(destination=name,sha256=sha(content.encode()),origin='authored',sourceCommit=PIN,
+                    upstreamPath='scripts/lint_lib/serverplan_facts.py')
+                match=next((i for i,file in enumerate(manifest['files']) if file['destination']==name),None)
+                if match is None:manifest['files'].append(companion)
+                else:manifest['files'][match]=dict(manifest['files'][match],**companion)
     write_json(ROOT / MANIFEST, manifest)
 
 

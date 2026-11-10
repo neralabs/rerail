@@ -14,14 +14,16 @@ def cases():
     result=reporter_cases()
     for root in ['root','.', '/', '//', 'a/../b']:
         result.append(dict(id='projection-root:'+root,check='serverplan_grammar_surface',messageRoot=root,
-            bundles=[dict(path='a.py',value=dict(path=p,grammar_surface_hits=[dict(kind='k',symbol='s',line='3.0',message='m')]))
-                for p in ['impl/a.py','a/../b.py','//network/a.py','./a//b.py','']]))
+            bundles=[dict(path=f'owner-{i}.py',value=dict(path=p,grammar_surface_hits=[dict(kind='k',symbol='s',line='3.0',message='m')]))
+                for i,p in enumerate(['impl/a.py','a/../b.py','//network/a.py','./a//b.py',''])]))
     for line in ['7.0',True,2**100]:
         result.append(dict(id='projection-models:'+str(line),check='serverplan_grammar_surface',bundles=[dict(path='a.py',value=dict(
             path='a.py',classes=[dict(name='C',qualname='C',line=line,is_step_subclass='YES')],
             functions=[dict(name='f',qualname='C.f',line=line,is_async='off',parameter_names=['x','x'])],
             compile_methods=[dict(class_name='C',class_qualname='C',function_qualname='C.compile',line=line)],
             ignored={'deep':{'line':'not a model field'}}))]))
+    result.append(dict(id='projection-duplicate-view-key',check='serverplan_grammar_surface',bundles=[
+        dict(path='./same.py',value=dict(path='discarded.py')),dict(path='same.py',value=dict(path='kept.py'))]))
     return result
 
 

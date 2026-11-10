@@ -2610,6 +2610,27 @@
       "destination": "docs/rule-syntax/lib/data-layer/surface-supplied-facts.rr",
       "origin": "authored",
       "sha256": "c82e6fa05bea05249b2c5514d535128f498bcb4eb826bc0f61712ec222358dac"
+    },
+    {
+      "destination": "scripts/dsl/data_layer_rr/model_dtos.py",
+      "sha256": "2c4a349815fdcc09d702dcbe3389b245f18514d8487814fb4580eca8033249a5",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_lib/serverplan_facts.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/model-projection.rr",
+      "sha256": "ead9e55adae97af5cadd486521a4db65215a95b84dd8bd4f28a101762c4d6875",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_lib/serverplan_facts.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface-project.rr",
+      "sha256": "f246e64176ee236b96d44ae58bf08a1602f635fbd87bcfdc42a51e014d83140b",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_lib/serverplan_facts.py"
     }
   ],
   "rules": [

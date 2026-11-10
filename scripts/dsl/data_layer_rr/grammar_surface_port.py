@@ -43,18 +43,22 @@ def install(suite, module):
     def project(view, extractor):
         if extractor.extractor_id != spec.extractor_id:
             raise AssertionError('Untranslated ServerPlan fact family')
-        return shared.ProjectServerPlanFacts(files=tuple(sorted((
-            shared.ServerPlanFileFacts.model_validate(bundle.facts[spec.extractor_id])
-            for bundle in view.files.values() if spec.extractor_id in bundle.facts), key=lambda f: f.path)))
+        import json
+        from model_transport import encode_models
+        from projection_port import project_rows
+        bundles=[dict(path=str(path),value=bundle.facts.get(spec.extractor_id)) for path,bundle in view.files.items()]
+        rows=suite.native(CHECK,'_project_facts',[dict(path='reporter-facts.json',
+            source=json.dumps(dict(bundles=encode_models(bundles)),ensure_ascii=False))])
+        return project_rows(rows,shared)
 
     def messages(root, facts):
-        from text_cli_port import columns
-        data = [(root / str(file.path), hit.line, hit.message)
-                for file in facts.files for hit in file.grammar_surface_hits]
-        rows = suite.native(CHECK, '_surface_messages', [], columns(data, ['File', 'Line', 'Message']))
-        if any(r['code'] != 'SPG_MESSAGE' for r in rows):
-            raise AssertionError('Unexpected native surface messages')
-        return [r['parameters']['value'] for r in sorted(rows, key=lambda r: r['parameters']['ordinal'])]
+        import json
+        from model_transport import encode_models
+        from projection_port import message_rows
+        bundles=[dict(path=str(i),value=file.model_dump(mode='json')) for i,file in enumerate(facts.files)]
+        rows=suite.native(CHECK,'_project_messages',[dict(path='reporter-facts.json',
+            source=json.dumps(dict(bundles=encode_models(bundles)),ensure_ascii=False))],dict(reportRoot=str(root)))
+        return message_rows(rows)
 
     def view(root, *, required_facts, files=None, fact_store=None, max_workers=None):
         if tuple(required_facts) != (spec,):

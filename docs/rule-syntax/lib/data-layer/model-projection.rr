@@ -1,0 +1,34 @@
+// Generated bounded projection: root -> model tuple -> model -> primitive tuple.
+// Primitive casts are native. Frontends only wrap typed values in passive DTOs.
+.decl mp_boolean(b: number, node: number, value: symbol)
+mp_boolean(b,n,v) :- sv_kind(b,n,"boolean"), sv_raw(b,n,v).
+mp_boolean(b,n,"true") :- sv_kind(b,n,"number"), sv_integer(b,n,"1").
+mp_boolean(b,n,"false") :- sv_kind(b,n,"number"), sv_integer(b,n,"0").
+mp_boolean(b,n,"true") :- sv_kind(b,n,"string"), sv_text(b,n,v), match("(?i:1|on|t|true|y|yes)",v).
+mp_boolean(b,n,"false") :- sv_kind(b,n,"string"), sv_text(b,n,v), match("(?i:0|off|f|false|n|no)",v).
+.decl mp_scalar(b: number, node: number, value: symbol)
+mp_scalar(b,n,v) :- sv_check(b,n,_,_,_,_,"int",_,_), sv_integer(b,n,v).
+mp_scalar(b,n,v) :- sv_check(b,n,_,_,_,_,"bool",_,_), mp_boolean(b,n,v).
+.decl mp_json0(b: number, node: number, value: symbol)
+mp_json0(b,n,v) :- mp_scalar(b,n,v).
+mp_json0(b,n,v) :- sv_raw(b,n,v), !mp_scalar(b,n,_).
+.decl mp_json1(b: number, node: number, value: symbol)
+mp_json1(b,n,v) :- mp_scalar(b,n,v).
+mp_json1(b,n,v) :- sv_raw(b,n,v), !sv_kind(b,n,"object"), !sv_kind(b,n,"array"), !mp_scalar(b,n,_).
+mp_json1(b,n,cat("[",body,"]")) :- sv_kind(b,n,"array"), body = join v by i sep "," : { sv_node(b,c,n,_,i), mp_json0(b,c,v) }.
+mp_json1(b,n,cat("{",body,"}")) :- sv_kind(b,n,"object"), body = join pair by i sep "," : { sv_node(b,c,n,k,i), mp_json0(b,c,v), pair = cat(@json_str(k),":",v) }.
+.decl mp_json2(b: number, node: number, value: symbol)
+mp_json2(b,n,v) :- mp_scalar(b,n,v).
+mp_json2(b,n,v) :- sv_raw(b,n,v), !sv_kind(b,n,"object"), !sv_kind(b,n,"array"), !mp_scalar(b,n,_).
+mp_json2(b,n,cat("[",body,"]")) :- sv_kind(b,n,"array"), body = join v by i sep "," : { sv_node(b,c,n,_,i), mp_json1(b,c,v) }.
+mp_json2(b,n,cat("{",body,"}")) :- sv_kind(b,n,"object"), body = join pair by i sep "," : { sv_node(b,c,n,k,i), mp_json1(b,c,v), pair = cat(@json_str(k),":",v) }.
+.decl mp_json3(b: number, node: number, value: symbol)
+mp_json3(b,n,v) :- mp_scalar(b,n,v).
+mp_json3(b,n,v) :- sv_raw(b,n,v), !sv_kind(b,n,"object"), !sv_kind(b,n,"array"), !mp_scalar(b,n,_).
+mp_json3(b,n,cat("[",body,"]")) :- sv_kind(b,n,"array"), body = join v by i sep "," : { sv_node(b,c,n,_,i), mp_json2(b,c,v) }.
+mp_json3(b,n,cat("{",body,"}")) :- sv_kind(b,n,"object"), body = join pair by i sep "," : { sv_node(b,c,n,k,i), mp_json2(b,c,v), pair = cat(@json_str(k),":",v) }.
+.decl mp_json4(b: number, node: number, value: symbol)
+mp_json4(b,n,v) :- mp_scalar(b,n,v).
+mp_json4(b,n,v) :- sv_raw(b,n,v), !sv_kind(b,n,"object"), !sv_kind(b,n,"array"), !mp_scalar(b,n,_).
+mp_json4(b,n,cat("[",body,"]")) :- sv_kind(b,n,"array"), body = join v by i sep "," : { sv_node(b,c,n,_,i), mp_json3(b,c,v) }.
+mp_json4(b,n,cat("{",body,"}")) :- sv_kind(b,n,"object"), body = join pair by i sep "," : { sv_node(b,c,n,k,i), mp_json3(b,c,v), pair = cat(@json_str(k),":",v) }.

@@ -10318,3 +10318,27 @@ The error results retain exception type, arguments, ordered details, and display
 The native positive failed because the projection policy was absent. This source receipt does not certify native parity.
 The source artifact is `rr-model-projection-source.json.gz`.
 
+# Native shared model projection, Final 041
+
+Replaced the Surface adapter's Python model validation and file sorting with a native projection policy.
+The native policy validates all supplied models and emits normalized integer and Boolean values.
+Four bounded render stages cover the pinned schema's root, model tuples, child models, and primitive tuples.
+The frontend uses storage-only model constructors. It rejects primitive values that native code has not normalized.
+Message selection, syntax-error messages, path joining, and formatting also run in native rules over the whole fact batch.
+No engine implementation, Python detector, or optional execution path was added.
+
+The projection corpus contains 206 source cases, including 124 expected validation errors and 80 nonempty projections.
+It checks complete values, nested model types, frozen metadata, tuple order, duplicates, field presence, and exception text.
+All cases pass. Four controls disable integer conversion, Boolean conversion, file ordering, or model validation.
+All controls fail for their intended reason. Both original-suite APIs pass all nine cases, and all 33 CLI cases pass.
+The checkpoint `rr-model-projection-final041.json.gz` verifies 367 native executions.
+All 240 tooling tests pass, including six checkpoint-integrity checks and three storage-constructor checks.
+
+The ladder also corrected an owner-path fixture collision and exposed a missing syntax-error message in the old formatter adapter.
+The corrected owner cases retain distinct bundles. A separate case checks the view's actual duplicate-key storage behavior.
+The auxiliary API policy has its own identity and is generated mechanically from the canonical rule.
+Generation tests reject divergence between them. It does not define a second engine or a separate detector implementation.
+
+Production and update checks pass on Final 041. The full supplied-reporter corpus is being refreshed before Surface admission.
+Final advanced to `ec3cfe1b7` during this cohort. Results remain bound to the frozen Final 041 engine.
+
