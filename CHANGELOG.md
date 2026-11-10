@@ -6,11 +6,7 @@ Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-0.1.4 steers an agent only for its own work. A file now counts as a session's edit only if it changed while one of that session's tool calls ran (in Codex, during its turn), so an agent that only read code is no longer told about what another session, your editor or a background process wrote. A shell edit to a file that already had unstaged changes is measured from the text the session first saw, so the agent hears about the lines it changed, not every finding in the file.
-
-Steers also arrive on time: one found as a turn ends reaches Claude Code as the turn ends, and the agent acts on it then rather than at your next prompt. The dashboard shows each violation under the tool call its audit followed, and labels a violation "Logged" when the audit that recorded it was in Log mode. Set-up runs on a Linux image with no compiler and says why when no rule pack fits, and `/rerail-create` can now change only where a rule applies, a pack's rule included.
-
-Before you update: bring Claude Code to 2.1.196 or newer, since on an older version Rerail records no prompts or turn ends. If your own code passes an event loop to `serveRerailEventStream`, have it report an inactive session by throwing `InactiveSessionError`, or any error whose `code` is `inactive-session`. An error whose message only starts with `Inactive session:` is now answered as `invalid-event`.
+0.1.4 steers an agent only for its own work. A file that another session, your editor or a background process changed no longer counts as its edit, so an agent that only read code is not told about code it never wrote, and a shell edit to a file that already had unstaged changes is steered only on the lines it changed. A steer found as a turn ends now reaches Claude Code as the turn ends rather than at your next prompt, the dashboard shows each violation under the tool call its audit followed, and set-up runs on a Linux image with no compiler. Before you update: bring Claude Code to 2.1.196 or newer, since on an older version Rerail records no prompts or turn ends. If your own code passes an event loop to `serveRerailEventStream`, have it report an inactive session by throwing `InactiveSessionError` or any error whose `code` is `inactive-session`; one whose message only starts with `Inactive session:` is now answered as `invalid-event`.
 
 ## 0.1.3 (2026-11-06)
 
