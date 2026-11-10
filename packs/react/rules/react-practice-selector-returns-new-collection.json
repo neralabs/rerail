@@ -62,9 +62,92 @@
                   "has": {
                     "field": "property",
                     "kind": "property_identifier",
-                    "regex": "^(?:map|filter|slice|concat|flatMap)$"
+                    "regex": "^(?:map|filter|flatMap)$"
                   }
                 }
+              },
+              {
+                "kind": "call_expression",
+                "any": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^(?:slice|concat)$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "snc-array-shown"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "member_expression",
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^slice$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "kind": "arguments",
+                          "not": {
+                            "has": {
+                              "nthChild": {
+                                "position": 1,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "member_expression",
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^concat$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "kind": "arguments",
+                          "has": {
+                            "kind": "array"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               },
               {
                 "kind": "call_expression",
@@ -121,6 +204,16 @@
                     }
                   ]
                 }
+              }
+            ]
+          },
+          "snc-array-shown": {
+            "any": [
+              {
+                "kind": "array"
+              },
+              {
+                "matches": "snc-new-array-call"
               }
             ]
           },
