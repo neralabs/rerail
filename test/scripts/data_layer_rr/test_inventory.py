@@ -73,6 +73,16 @@ class InventoryTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(['a'], inventory.references(text, owners, ['a'])['detectors'])
 
+    def test_business_error_strings_do_not_own_the_permission_linter(self):
+        owners = {'scripts.lint_permission_error': {'permission_error'}}
+        text = 'assert response["error"] == "permission_error"'
+        self.assertEqual([], inventory.references(text, owners, ['permission_error'])['detectors'])
+
+    def test_named_checks_in_dynamic_linter_imports_still_own_the_suite(self):
+        owners = {'scripts.lint_permission_error': {'permission_error'}}
+        text = 'checks = ["permission_error"]\nfor check in checks:\n    importlib.import_module(f"scripts.lint_{check}")'
+        self.assertEqual(['permission_error'], inventory.references(text, owners, ['permission_error'])['detectors'])
+
 
 if __name__ == '__main__':
     unittest.main()
