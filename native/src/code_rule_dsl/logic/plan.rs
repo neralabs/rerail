@@ -5164,13 +5164,7 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BT
 /// named by its name, its declaration and its facts. `sccs` in the order the strata run.
 pub(in crate::code_rule_dsl) fn identities(prog: &Program, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&Rule>]) -> HashMap<String, [u8; 32]> {
     use sha2::{Digest as _, Sha256};
-    let leaf = |rel: &str| -> [u8; 32] {
-        let mut h = Sha256::new();
-        h.update(b"rerail.relation/v1\0leaf\0");
-        h.update(rel.as_bytes());
-        h.update(format!("{:?}\n{:?}", prog.decls.get(rel), prog.facts.get(rel)).as_bytes());
-        h.finalize().into()
-    };
+    let leaf = |rel: &str| leaf_identity(prog, rel);
     let mut out: HashMap<String, [u8; 32]> = HashMap::new();
     for (scc, rules) in sccs.iter().zip(by_stratum) {
         let mut h = Sha256::new();
@@ -5202,6 +5196,17 @@ pub(in crate::code_rule_dsl) fn identities(prog: &Program, sccs: &[BTreeSet<Stri
         }
     }
     out
+}
+
+/// The identity of a relation no rule of `prog` derives (an input, the program's facts): its name, its declaration
+/// and its facts (`identities`).
+pub(in crate::code_rule_dsl) fn leaf_identity(prog: &Program, rel: &str) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.relation/v1\0leaf\0");
+    h.update(rel.as_bytes());
+    h.update(format!("{:?}\n{:?}", prog.decls.get(rel), prog.facts.get(rel)).as_bytes());
+    h.finalize().into()
 }
 
 /// Holds clean relation `rel` in the run as the earlier run kept it, with its statistics; its rows' count.
@@ -6435,6 +6440,23 @@ fn last_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>
         }
     }
     last
+}
+
+/// Kept relations `rels` (outputs of `lowered`, read back from the store, t32 4.1) as `decoded_outputs` gives an
+/// output: held in `db`'s run as the engine's relations and decoded from there. Not `finding`, which SQL decodes.
+#[allow(clippy::type_complexity)]
+pub(in crate::code_rule_dsl) fn decode_kept(
+    db: &Connection,
+    lowered: &lower::Lowered,
+    rels: Vec<(String, std::sync::Arc<super::native::component::InRel>)>,
+) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
+    let names: BTreeSet<String> = rels.iter().map(|(r, _)| r.clone()).filter(|r| r != "finding").collect();
+    for (rel, held) in rels.into_iter().filter(|(r, _)| names.contains(r)) {
+        super::native::component::hold_as(db, &rel, held);
+    }
+    let mut prog = lowered.program.clone();
+    prog.outputs = names.iter().cloned().collect();
+    decoded_outputs(&prog, db, Some(lowered), "", true, &BTreeSet::new(), &names)
 }
 
 /// The program's outputs as text rows, sorted (symbols as text, kinds and fields by name), and per
