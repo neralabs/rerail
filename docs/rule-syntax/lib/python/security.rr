@@ -67,10 +67,15 @@ import_name(a, s) :- kind(a, "aliased_import"), field(a, "name", d), text(d, s).
 // so in `@p.loads(x)` / `def f(): import pickle as p` the decorator sees the alias.
 // first_import(d, how, s, k): the first import of document d that is like (or exactly) s is at visit index k.
 .decl first_import(d: number, how: symbol, s: symbol, k: number)
-first_import(d, "like", s, k) :- like_probe(s), doc(d, _, _),
+// Driven by the documents that hold a matching import (a min over none gives no row), not every document x probe.
+first_import(d, "like", s, k) :- like_import(d, s),
     k = min j : { import_entry(i, e), contains(s, e), docof(i, d), visit_index(i, j) }.
-first_import(d, "exact", s, k) :- exact_probe(s), doc(d, _, _),
+.decl like_import(d: number, s: symbol)
+like_import(d, s) :- like_probe(s), import_entry(i, e), contains(s, e), docof(i, d).
+first_import(d, "exact", s, k) :- exact_import(d, s),
     k = min j : { import_entry(i, s), docof(i, d), visit_index(i, j) }.
+.decl exact_import(d: number, s: symbol)
+exact_import(d, s) :- exact_probe(s), import_entry(i, s), docof(i, d).
 .decl imported_like(n: node, s: symbol)
 imported_like(c, s) :- kind(c, "call"), docof(c, d), first_import(d, "like", s, k), visit_index(c, j), k < j.
 .decl imported_exact(n: node, s: symbol)

@@ -169,13 +169,13 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
     let mut claimed = vec![false; n];
     if fold != Fold::All {
         for l in 1..n {
-            let q = p.parent[l] as usize;
+            let q = p.parent(l) as usize;
             let k = kind(l);
             let owner = |q: usize| {
-                let o = p.parent[q] as usize;
+                let o = p.parent(q) as usize;
                 is_container_owner(kind(o)) && (start[o].is_some() || claimed[o])
             };
-            let in_container = q == 0 || (is_body(kind(q)) && p.parent[q] != super::NONE && owner(q));
+            let in_container = q == 0 || (is_body(kind(q)) && p.parent(q) != super::NONE && owner(q));
             if is_def(k) && !claimed[l] {
                 start[l] = Some(Start::Def);
             } else if in_container && fold == Fold::None {
@@ -200,7 +200,7 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
             starts.push(l as u32);
             starts.len() as u32 - 1
         } else {
-            of[p.parent[l] as usize]
+            of[p.parent(l) as usize]
         };
     }
     // Keys, parents first (preorder).
@@ -208,7 +208,7 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
     let mut seen: HashMap<String, u32> = HashMap::new();
     for g in 1..starts.len() {
         let l = starts[g] as usize;
-        let parent = &keys[of[p.parent[l] as usize] as usize];
+        let parent = &keys[of[p.parent(l) as usize] as usize];
         let base = format!("{parent}/{}:{}", kind(l), name(p, dialect, &of, &starts, g));
         let ord = seen.entry(base.clone()).or_insert(0);
         keys.push(format!("{base}#{ord}"));
@@ -293,9 +293,11 @@ fn own_digest(p: &Projected, of: &[u32], starts: &[u32], g: usize) -> String {
     let (start, end) = (f.start[id] as usize, f.end[id] as usize);
     let mut h = Sha256::new();
     let mut at = start;
-    for x in l + 1..=l + p.size[l] as usize {
+    // Core IDs retain preorder. Find this subtree without materializing projection sizes.
+    let until = p.core.partition_point(|&node| node < f.subtree_end[id]);
+    for x in l + 1..until {
         // A nested granule's start whose parent is in this one: cut it out.
-        if of[x] as usize != g && of[p.parent[x] as usize] as usize == g {
+        if of[x] as usize != g && of[p.parent(x) as usize] as usize == g {
             let c = p.core[x] as usize;
             h.update(&f.source.as_bytes()[at..f.start[c] as usize]);
             h.update([0]);

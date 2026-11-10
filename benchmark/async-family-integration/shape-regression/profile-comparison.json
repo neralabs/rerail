@@ -1,0 +1,562 @@
+{
+  "native": {
+    "executions": 3632,
+    "vm": 335793,
+    "localCpu": 1.2380090000000001,
+    "inputs": {},
+    "topLocalSpans": [
+      {
+        "allocatedBytes": 37300016,
+        "calls": 144,
+        "cpuSeconds": 0.1017140000000002,
+        "footprintRiseBytes": 0,
+        "freedBytes": 18903184,
+        "name": "local/run/stratum s_rr_scope_in/native/engine run (joins)",
+        "ownAllocatedBytes": 37300016,
+        "ownCpuSeconds": 0.1017140000000002,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 0,
+        "calls": 71,
+        "cpuSeconds": 0.09168800000000132,
+        "footprintRiseBytes": 0,
+        "freedBytes": 2272,
+        "name": "local/release freed pages",
+        "ownAllocatedBytes": 0,
+        "ownCpuSeconds": 0.09168800000000132,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 59422904,
+        "calls": 72,
+        "cpuSeconds": 0.08359400000000106,
+        "footprintRiseBytes": 0,
+        "freedBytes": 38894400,
+        "name": "local/run/stratum q0_rr_python_qualified_async_reference_async_api_target",
+        "ownAllocatedBytes": 57764352,
+        "ownCpuSeconds": 0.07902100000000056,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 162207848,
+        "calls": 77,
+        "cpuSeconds": 0.0776820000000007,
+        "footprintRiseBytes": 0,
+        "freedBytes": 85033032,
+        "name": "local/run/stratum async_open_receiver/native/engine run (joins)",
+        "ownAllocatedBytes": 162207848,
+        "ownCpuSeconds": 0.0776820000000007,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 717626480,
+        "calls": 72,
+        "cpuSeconds": 1.0184790000000004,
+        "footprintRiseBytes": 0,
+        "freedBytes": 592776184,
+        "name": "local/run",
+        "ownAllocatedBytes": 24757728,
+        "ownCpuSeconds": 0.05492399999999109,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 27875096,
+        "calls": 72,
+        "cpuSeconds": 0.05157299999999787,
+        "footprintRiseBytes": 0,
+        "freedBytes": 27765312,
+        "name": "local/run/stratum q1_rr_python_qualified_async_reference_async_api_target",
+        "ownAllocatedBytes": 27098456,
+        "ownCpuSeconds": 0.048591999999998636,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 25474544,
+        "calls": 72,
+        "cpuSeconds": 0.044465000000000976,
+        "footprintRiseBytes": 0,
+        "freedBytes": 25355128,
+        "name": "local/run/stratum q2_rr_python_qualified_async_reference_async_api_target",
+        "ownAllocatedBytes": 24697904,
+        "ownCpuSeconds": 0.04120000000000079,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 56304,
+        "calls": 72,
+        "cpuSeconds": 0.04184800000000077,
+        "footprintRiseBytes": 0,
+        "freedBytes": 3212023816,
+        "name": "local/export to cross",
+        "ownAllocatedBytes": 40128,
+        "ownCpuSeconds": 0.041183999999999,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 73715392,
+        "calls": 72,
+        "cpuSeconds": 0.037690999999999364,
+        "footprintRiseBytes": 0,
+        "freedBytes": 58060176,
+        "name": "local/run/statistics and plan/statistics/logical key and scalar analysis",
+        "ownAllocatedBytes": 73715392,
+        "ownCpuSeconds": 0.037690999999999364,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 23060840,
+        "calls": 72,
+        "cpuSeconds": 0.03515100000000071,
+        "footprintRiseBytes": 0,
+        "freedBytes": 22990912,
+        "name": "local/run/stratum q3_rr_python_qualified_async_reference_async_api_target",
+        "ownAllocatedBytes": 23060840,
+        "ownCpuSeconds": 0.03515100000000071,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 16148352,
+        "calls": 72,
+        "cpuSeconds": 0.023073000000000343,
+        "footprintRiseBytes": 0,
+        "freedBytes": 13266872,
+        "name": "local/run/stratum rr_python_origins_async_receiver_demand_",
+        "ownAllocatedBytes": 16121648,
+        "ownCpuSeconds": 0.022712999999999872,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 20532064,
+        "calls": 72,
+        "cpuSeconds": 0.022546000000000066,
+        "footprintRiseBytes": 0,
+        "freedBytes": 10559216,
+        "name": "local/run/stratum async_site/native/engine open (load inputs, build indexes)",
+        "ownAllocatedBytes": 20532064,
+        "ownCpuSeconds": 0.022546000000000066,
+        "ownFootprintRiseBytes": 0
+      }
+    ]
+  },
+  "before": {
+    "executions": 81,
+    "vm": 4971727,
+    "localCpu": 1.1413189999999998,
+    "inputs": {
+      "doc": [
+        219,
+        0,
+        13564,
+        24578
+      ],
+      "fl138_violation_at": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "fl139_violation_at": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "fl140_violation_at": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "fl141_violation_at": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "node": [
+        27,
+        0,
+        33988,
+        27
+      ],
+      "py_attribute": [
+        73,
+        0,
+        268338,
+        309884
+      ],
+      "py_call_site": [
+        65412,
+        0,
+        65401,
+        261600
+      ],
+      "py_exec_context": [
+        73,
+        0,
+        65399,
+        392394
+      ],
+      "rr_diagnostic_at": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "strtest_0": [
+        6131,
+        0,
+        6131,
+        6131
+      ],
+      "text": [
+        49513,
+        0,
+        49513,
+        99026
+      ]
+    },
+    "topLocalSpans": [
+      {
+        "allocatedBytes": 1098292208,
+        "calls": 73,
+        "cpuSeconds": 0.8721119999999989,
+        "footprintRiseBytes": 0,
+        "freedBytes": 952028248,
+        "name": "local/run/setup/composed relational query",
+        "ownAllocatedBytes": 1090871568,
+        "ownCpuSeconds": 0.8673319999999991,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 0,
+        "calls": 72,
+        "cpuSeconds": 0.10958099999999926,
+        "footprintRiseBytes": 0,
+        "freedBytes": 2304,
+        "name": "local/release freed pages",
+        "ownAllocatedBytes": 0,
+        "ownCpuSeconds": 0.10958099999999926,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 8560,
+        "calls": 73,
+        "cpuSeconds": 0.039055999999999425,
+        "footprintRiseBytes": 0,
+        "freedBytes": 3233216504,
+        "name": "local/export to cross",
+        "ownAllocatedBytes": 8560,
+        "ownCpuSeconds": 0.039055999999999425,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 1127282264,
+        "calls": 73,
+        "cpuSeconds": 0.9035340000000005,
+        "footprintRiseBytes": 0,
+        "freedBytes": 985784176,
+        "name": "local/run/setup",
+        "ownAllocatedBytes": 17885520,
+        "ownCpuSeconds": 0.02342000000000155,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 1146411328,
+        "calls": 73,
+        "cpuSeconds": 0.9260189999999993,
+        "footprintRiseBytes": 0,
+        "freedBytes": 1004847152,
+        "name": "local/run",
+        "ownAllocatedBytes": 19120888,
+        "ownCpuSeconds": 0.02174899999999924,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 4130840,
+        "calls": 1,
+        "cpuSeconds": 0.007612000000000063,
+        "footprintRiseBytes": 0,
+        "freedBytes": 4130120,
+        "name": "local/measure node (py/6)",
+        "ownAllocatedBytes": 4130840,
+        "ownCpuSeconds": 0.007612000000000063,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 3541784,
+        "calls": 1,
+        "cpuSeconds": 0.007021999999999973,
+        "footprintRiseBytes": 0,
+        "freedBytes": 3540680,
+        "name": "local/measure node (py/5)",
+        "ownAllocatedBytes": 3541784,
+        "ownCpuSeconds": 0.007021999999999973,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 11104536,
+        "calls": 1,
+        "cpuSeconds": 0.008002000000000065,
+        "footprintRiseBytes": 0,
+        "freedBytes": 10316608,
+        "name": "local/run/setup/compile composed query",
+        "ownAllocatedBytes": 9153376,
+        "ownCpuSeconds": 0.006268999999999969,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 2359952,
+        "calls": 1,
+        "cpuSeconds": 0.00595100000000004,
+        "footprintRiseBytes": 0,
+        "freedBytes": 2359696,
+        "name": "local/measure line (py/6)",
+        "ownAllocatedBytes": 2359952,
+        "ownCpuSeconds": 0.00595100000000004,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 1966736,
+        "calls": 1,
+        "cpuSeconds": 0.005344000000000015,
+        "footprintRiseBytes": 0,
+        "freedBytes": 1966480,
+        "name": "local/measure line (py/5)",
+        "ownAllocatedBytes": 1966736,
+        "ownCpuSeconds": 0.005344000000000015,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 7420640,
+        "calls": 73,
+        "cpuSeconds": 0.004779999999999784,
+        "footprintRiseBytes": 0,
+        "freedBytes": 6951520,
+        "name": "local/run/setup/composed relational query/composed query preparation",
+        "ownAllocatedBytes": 7420640,
+        "ownCpuSeconds": 0.004779999999999784,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 2925184,
+        "calls": 1,
+        "cpuSeconds": 0.00459900000000002,
+        "footprintRiseBytes": 0,
+        "freedBytes": 2428856,
+        "name": "local/measure constants (py/6)",
+        "ownAllocatedBytes": 2925184,
+        "ownCpuSeconds": 0.00459900000000002,
+        "ownFootprintRiseBytes": 0
+      }
+    ]
+  },
+  "fixed": {
+    "executions": 81,
+    "vm": 3393841,
+    "localCpu": 1.127948,
+    "inputs": {
+      "doc": [
+        192,
+        0,
+        12262,
+        24524
+      ],
+      "fl138_violation_at": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "fl139_violation_at": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "fl140_violation_at": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "fl141_violation_at": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "py_attribute": [
+        65399,
+        0,
+        31393,
+        94189
+      ],
+      "py_call_site": [
+        65412,
+        0,
+        65401,
+        261600
+      ],
+      "py_exec_context": [
+        73,
+        0,
+        65399,
+        392394
+      ],
+      "rr_diagnostic_at": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "strtest_0": [
+        6131,
+        0,
+        6131,
+        6131
+      ],
+      "text": [
+        31393,
+        0,
+        31393,
+        62786
+      ]
+    },
+    "topLocalSpans": [
+      {
+        "allocatedBytes": 1028707400,
+        "calls": 73,
+        "cpuSeconds": 0.8583470000000009,
+        "footprintRiseBytes": 0,
+        "freedBytes": 883621472,
+        "name": "local/run/setup/composed relational query",
+        "ownAllocatedBytes": 1021310544,
+        "ownCpuSeconds": 0.8540000000000023,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 0,
+        "calls": 72,
+        "cpuSeconds": 0.10539899999999891,
+        "footprintRiseBytes": 0,
+        "freedBytes": 2304,
+        "name": "local/release freed pages",
+        "ownAllocatedBytes": 0,
+        "ownCpuSeconds": 0.10539899999999891,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 7392,
+        "calls": 73,
+        "cpuSeconds": 0.037767999999998914,
+        "footprintRiseBytes": 0,
+        "freedBytes": 3232039784,
+        "name": "local/export to cross",
+        "ownAllocatedBytes": 7392,
+        "ownCpuSeconds": 0.037767999999998914,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 1057667912,
+        "calls": 73,
+        "cpuSeconds": 0.8908140000000042,
+        "footprintRiseBytes": 0,
+        "freedBytes": 917351632,
+        "name": "local/run/setup",
+        "ownAllocatedBytes": 17885456,
+        "ownCpuSeconds": 0.024125000000003283,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 1076507088,
+        "calls": 73,
+        "cpuSeconds": 0.9136799999999985,
+        "footprintRiseBytes": 0,
+        "freedBytes": 936124960,
+        "name": "local/run",
+        "ownAllocatedBytes": 18832168,
+        "ownCpuSeconds": 0.022241999999993656,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 4130840,
+        "calls": 1,
+        "cpuSeconds": 0.008072999999999997,
+        "footprintRiseBytes": 0,
+        "freedBytes": 4130120,
+        "name": "local/measure node (py/6)",
+        "ownAllocatedBytes": 4130840,
+        "ownCpuSeconds": 0.008072999999999997,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 3541784,
+        "calls": 1,
+        "cpuSeconds": 0.0071309999999999985,
+        "footprintRiseBytes": 0,
+        "freedBytes": 3540680,
+        "name": "local/measure node (py/5)",
+        "ownAllocatedBytes": 3541784,
+        "ownCpuSeconds": 0.0071309999999999985,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 11075056,
+        "calls": 1,
+        "cpuSeconds": 0.008342000000000072,
+        "footprintRiseBytes": 0,
+        "freedBytes": 10290840,
+        "name": "local/run/setup/compile composed query",
+        "ownAllocatedBytes": 9124024,
+        "ownCpuSeconds": 0.006587999999998928,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 2359952,
+        "calls": 1,
+        "cpuSeconds": 0.005796000000000134,
+        "footprintRiseBytes": 0,
+        "freedBytes": 2359696,
+        "name": "local/measure line (py/6)",
+        "ownAllocatedBytes": 2359952,
+        "ownCpuSeconds": 0.005796000000000134,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 2701328,
+        "calls": 1,
+        "cpuSeconds": 0.005439999999999889,
+        "footprintRiseBytes": 0,
+        "freedBytes": 2304840,
+        "name": "local/measure constants (py/5)",
+        "ownAllocatedBytes": 2701328,
+        "ownCpuSeconds": 0.005439999999999889,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 1967248,
+        "calls": 1,
+        "cpuSeconds": 0.0047839999999998994,
+        "footprintRiseBytes": 0,
+        "freedBytes": 1966480,
+        "name": "local/measure line (py/5)",
+        "ownAllocatedBytes": 1967248,
+        "ownCpuSeconds": 0.0047839999999998994,
+        "ownFootprintRiseBytes": 0
+      },
+      {
+        "allocatedBytes": 7396856,
+        "calls": 73,
+        "cpuSeconds": 0.0043469999999985465,
+        "footprintRiseBytes": 0,
+        "freedBytes": 6928376,
+        "name": "local/run/setup/composed relational query/composed query preparation",
+        "ownAllocatedBytes": 7396856,
+        "ownCpuSeconds": 0.0043469999999985465,
+        "ownFootprintRiseBytes": 0
+      }
+    ]
+  }
+}

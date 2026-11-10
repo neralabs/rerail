@@ -39,6 +39,12 @@ pub mod stream;
 #[cfg(test)]
 mod stream_tests;
 pub mod stream_ir;
+/// Which tier 1 values are token-level checks (doc 25): local windows, anchors, readers.
+pub mod token_local;
+#[cfg(test)]
+mod token_local_tests;
+#[cfg(test)]
+mod remade_tests;
 
 pub use error::Error;
 

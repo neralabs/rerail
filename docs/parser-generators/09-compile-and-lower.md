@@ -336,7 +336,7 @@ Two steps, as for tree transducers (`spec-transducer.md` §10):
      operations.
 2. **Generated MSL.**
    - It follows the pattern of `metal_register_codegen.rs`: source text compiled with
-     `new_library_with_source` and cached by digest (`metal_backend.rs`).
+     `new_library_with_source` and cached by digest (the Metal crate's `runtime.rs`).
    - Each pass becomes one kernel. With early exit per chunk, a pass group is one dispatch with a
      bounded loop over rounds inside it.
 
@@ -373,7 +373,7 @@ What it shares with tree transducers:
 | interpreted first, JIT in the background | `resolve_plan` and a `rerail-compile` thread (decision 0012) | the same function, with a new binding kind |
 | backend selection | `ExecutionBackend` | the same enum |
 | text form and verifier | `rir`, `Program::validate` | a printed form of the IR; a verifier that checks carry types and the absence of data-dependent loops |
-| Metal pipeline cache | `metal_backend.rs`, keyed by source digest | the same |
+| Metal pipeline cache | `rerail-metal`'s `runtime.rs`, keyed by source digest | the same |
 | launch budget | `metal_launch_budget.rs` | the same, one launch per pass group |
 | device input | residency slabs | the same slabs, source bytes only |
 | bitset steps | `SetStep` (`metal_set_steps.metal`): `And`/`Or`/`AndNot`/`Fill` over `u64` slots, one dispatch with barriers | the stream program's logic is a superset: shifts and scans added; the slot layout and barrier pattern can be copied |

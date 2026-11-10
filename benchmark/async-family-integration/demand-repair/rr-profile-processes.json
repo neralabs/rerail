@@ -1,0 +1,25 @@
+[
+  {
+    "name": "rr-profile",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-4f1d47ecdb5c7ca6",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 18.899972200393677,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/demand-repair/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_PROF_CHUNKS": "1",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/demand-repair/rr-profile.json",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/demand-repair/rr-profile",
+      "RERAIL_PROFILE": "/Users/jeremy/orca/artifacts/async-family-comparison/demand-repair/rr-profile/profile"
+    }
+  }
+]

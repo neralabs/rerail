@@ -18,6 +18,8 @@ fn u32s(document: &Resident, offset: u32, count: usize) -> Vec<u32> {
     document.bytes_at(offset, 4 * count).chunks_exact(4).map(|word| u32::from_le_bytes(word.try_into().unwrap())).collect()
 }
 
+use std::sync::Mutex;
+
 /// The residency is process-wide: the tests that admit and drop take turns. Other tests' label
 /// runs admit their batches alongside, so counts are at least this test's.
 static SERIAL: Mutex<()> = Mutex::new(());

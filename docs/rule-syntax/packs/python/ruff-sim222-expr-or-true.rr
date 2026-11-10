@@ -34,4 +34,6 @@ short_circuit(t, i, v) :- stop(t, i, v), i = min j : { stop(t, j, _) }.
 // from(t, i, at): the finding starts at the operand after the last one passed over before i, else at t.
 .decl from(t: node, i: number, at: node)
 from(t, i, t) :- short_circuit(t, i, _), count : { pass_over(t, k), k < i } = 0.
-from(t, i, at) :- short_circuit(t, i, _), k = max j : { pass_over(t, j), j < i }, sim_operand(t, "or", k + 1, at).
+.decl last_pass(t: node, i: number, k: number)
+last_pass(t, i, k) :- short_circuit(t, i, _), pass_over(t, k), k < i, count : { pass_over(t, j), j > k, j < i } = 0.
+from(t, i, at) :- last_pass(t, i, k), sim_operand(t, "or", m, at), m = k + 1.

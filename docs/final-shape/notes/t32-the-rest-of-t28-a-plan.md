@@ -6,9 +6,10 @@ t28 made Python typing three phases: P1 `struct.rr`, P2 `types.rr`, P3 `calls_p3
 `calls_cx.rr` answers (6,410 agree), and a session maintains P2 from struct's delta (a function added: 9.4 s to
 2.5 s). This note plans what is left, under two constraints:
 
-- **A cache is two rules** (decision 0103). The key rule derives the key from the input facts; the output rule
-  derives the result from the key. The engine keeps both as relations and runs the output rule for new keys only.
-  Nothing else may be a cache: no table of a cache's own, no digest compared in Rust, no map in memory that
+- **A cache is two rules** (decision 0103). The key rule derives the key from the input facts and carries a
+  version tag; the output rule derives the result from the key. Both are ordinary relations: evaluated, kept and
+  maintained as every relation is. Bumping the version derives the cache again. Nothing else may be a cache: no
+  table of a cache's own, no digest compared in Rust, no rewrite or hook for caches, no map in memory that
   outlives a run. What a session holds in memory is the resident copy of stored relations.
 - **Stay compatible with the sibling worktrees.** This plan builds on their parts and makes no second copy of any.
 
@@ -28,10 +29,8 @@ rr-align undid that form (37f8b67d8) for the reason 0103 gives: it was one more 
 | Typing-support | per-definition node ids (uncommitted `syntax/granules.rs`) | uncommitted |
 | Current-state-benchmarks | t31, the one-file-edit workplan: B4 keeps relations between processes "as column blocks" | a note |
 
-Nobody else edits `typing/programs/*.rr`, `phases.rs` or `session.rs`. This branch's 0103 work adds two small
-blocks to code others are changing: one at the start of `maintain::rewrite`'s loop (a cache's stratum), and one
-where `plan::run` opens its kept strata (a cache's last rows). Both are insertions, so a merge with Two-pass's
-"derive again" should only touch their edges.
+Nobody else edits `typing/programs/*.rr`, `phases.rs` or `session.rs`. This branch's 0103 work adds nothing to
+code others are changing: a cache needs no engine code, and its lint is in `front::caches`.
 
 ## Principles
 
@@ -55,11 +54,11 @@ exports against a full run; CPU and instructions retired, cold, warm and after t
 
 | Step | Change | State |
 |---|---|---|
-| 1.1 | `.cache C by K` read and checked (`front::caches`); a broken form refuses the program | built, tested |
-| 1.2 | In a session, a cache's stratum maintained by its key (`maintain::rewrite`); counting leaves it alone | built, tested |
-| 1.3 | Without a session and in the file-local part: the same rules, `C__old` read where `C` is already kept (kept strata; the file's previous rows in the per-file memo). No storage of a cache's own | **not built.** A `cache_rows` table and lookup hook were built and removed (a cache mechanism beside the facts) |
-| 1.4 | No copy while the key stands: in a session a cache with no key delta stays an input, kept as it is | built, tested |
-| 1.5 | `corpus::cache_architecture`: the tables and freshness calls made before 0103 (may only shrink), and no cache table, store, hook or lookup anywhere | built |
+| 1.1 | `.cache C by K` linted (`front::caches`): the key rule has a version tag, the output rule reads the key | built, tested |
+| 1.2 | No engine special case: maintenance, retention and support counting treat a cache as any relation. A `cache_rows` table, a lookup hook and a key-only maintenance rewrite were built and removed | built, tested: rows equal a run with nothing kept; a version bump derives them again |
+| 1.3 | The `tape` column type: `core.rr`'s tape columns, checked before lowering (`rr::tape_type`), stored as before | built, tested |
+| 1.4 | `digest` and `blob` column types, when the first cache that needs one moves (0103 §3) | open |
+| 1.5 | `corpus::cache_architecture`: the tables and freshness calls made before 0103 (may only shrink); no cache table, store, hook or lookup; only the lint knows a relation is a cache | built |
 
 ### Stage 2. P3 and P2 rules (this branch, now)
 
@@ -101,7 +100,7 @@ kept relations' encoding, not a format of their own.
 
 | Step | Change | Owner |
 |---|---|---|
-| 5.1 | Caches in the file-local part: `C__old` from the file's previous rows in the per-file memo, so the per-file memo can be one | engine (1.3) |
+| 5.1 | Caches in the file-local part: plain rules there already; the per-file memo keeps their rows as any relation's | engine |
 | 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §8) | engine |
 | 5.3 | Each other cache of 0103 §8 | its owner |
 

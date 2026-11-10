@@ -61,6 +61,12 @@ fn check(source: &str, what: &str) -> usize {
     let facts = core::from_tape(root.root().get_doc(), Arc::new(LineTable::new(source, Terminators::of(GrammarDialect::Python)))).unwrap();
     let grammar = Grammar::new(tape_tag(GrammarDialect::Python).unwrap(), &GrammarDialect::Python.kinds());
     let rows = rows(&grammar, &facts);
+    let basic=structure(&grammar,&facts);
+    assert!(basic.arg.is_empty(),"call structure must not extract arguments");
+    assert_eq!(basic.call,rows.call);
+    let selected:Vec<_>=rows.call.iter().take(2).map(|r|r[0]).collect();
+    assert_eq!(arguments(&grammar,&facts,&selected),rows.arg.iter().copied().filter(|r|selected.contains(&r[0])).collect::<Vec<_>>());
+    assert!(arguments(&grammar,&facts,&[]).is_empty());
     let (expected, args) = oracle(&root);
     assert_eq!(sorted(&rows.call), sorted(&expected.call), "{what}: py_call");
     assert_eq!(sorted(&rows.site), sorted(&expected.site), "{what}: py_call_site");

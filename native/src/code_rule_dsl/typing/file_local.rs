@@ -572,10 +572,17 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
             }
         }
     }
-    // A relation made natively (`dfs_first`) reads the whole program's rows: never file-local.
-    let mut local: BTreeSet<String> = derived.iter().filter(|r| !prog.natives.contains_key(**r)).map(|r| (*r).to_owned()).collect();
+    // Python fact operators preserve each demanded node's document. Their proof rules must still
+    // pass the ordinary dependency/location checks below. Other native operators remain cross-file.
     let constants = constant_relations(prog);
-    let mut causes: BTreeMap<String, String> = derived.iter().filter(|r| prog.natives.contains_key(**r)).map(|r| ((*r).to_owned(), "made natively".to_owned())).collect();
+    let cross_native = |r: &str| prog.natives.get(r).is_some_and(|n| match n {
+        crate::code_rule_dsl::logic::front::Native::PythonCandidates { targets, .. } => !constants.contains(targets) && !(prog.facts.contains_key(targets) && !prog.inputs.contains(targets)),
+        crate::code_rule_dsl::logic::front::Native::Python { targets, .. } => targets.as_ref().is_some_and(|t|
+            !constants.contains(t) && !(prog.facts.contains_key(t) && !prog.inputs.contains(t))),
+        _ => true,
+    });
+    let mut local: BTreeSet<String> = derived.iter().filter(|r| !cross_native(r)).map(|r| (*r).to_owned()).collect();
+    let mut causes: BTreeMap<String, String> = derived.iter().filter(|r| cross_native(r)).map(|r| ((*r).to_owned(), "made natively".to_owned())).collect();
     let mut dirty: Option<BTreeSet<usize>> = None;
     loop {
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> Result<(), String> {
@@ -732,7 +739,7 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
     // A relation made natively (`dfs_first`) is cross-file, and reads its inputs there: they are exported too.
     let native_reads = |mut reads: BTreeSet<String>| {
-        reads.extend(prog.natives.values().flat_map(|n| n.reads()).map(str::to_owned));
+        reads.extend(prog.natives.iter().filter(|(rel, _)| in_cross(rel)).flat_map(|(_, n)| n.reads()).map(str::to_owned));
         reads
     };
     let cross_reads = native_reads(read(&mut prog.rules.iter().filter(|r| in_cross(&r.head.rel))));
@@ -749,11 +756,13 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     // file-local part then has nothing to give them to.
     let constants = if no_document { Default::default() } else { constant_relations(prog) };
     l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(&r.head.rel));
+    l.natives.retain(|rel, _| is_local(rel));
     l.lattice.retain(|rel, _| is_local(rel));
     l.gates.retain(|(rel, _)| is_local(rel));
     l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();
     let mut c = prog.clone();
     c.rules.retain(|r| in_cross(&r.head.rel));
+    c.natives.retain(|rel, _| in_cross(rel));
     c.lattice.retain(|rel, _| !is_local(rel));
     c.gates.retain(|(rel, _)| !is_local(rel));
     c.outputs.retain(|o| !is_local(o));
@@ -1441,6 +1450,23 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                     }
                 }
                 if iface.is_empty() {
+                    continue;
+                }
+                // A composition the rule filters from outside is left (t31 A1): its atoms join on a variable the
+                // rule projects away, and a positive read the chunks do not have (a cross-file relation) binds every
+                // variable of its interface. Pushed, it is exported unfiltered: F823's
+                // `outer(f, x) :- outer_cand(f, x), inside(f, p, fscope), bound_in(p, x)` exported every function x
+                // every name bound around it, 15 M rows for one 291 KB file, 55% of the per-file memo. Left, the
+                // cross part starts from the filter and probes the two.
+                let joined_away = vars.iter().any(|v| {
+                    !iface.contains(v) && atoms.iter().filter(|a| a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))).count() >= 2
+                });
+                let filtered = rule.body.iter().enumerate().any(|(j, l)| {
+                    !lits.contains(&j)
+                        && matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(&a.rel) && !candidate(l)
+                            && iface.iter().all(|v| a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))))
+                });
+                if joined_away && filtered {
                     continue;
                 }
                 let typed: Option<Vec<(String, String)>> = iface

@@ -592,4 +592,3 @@ impl PlaneFormulas {
         }
     }
 }
-

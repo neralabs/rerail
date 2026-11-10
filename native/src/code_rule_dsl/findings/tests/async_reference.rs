@@ -788,3 +788,9 @@ mod native_oracle;
 mod s_native_oracle;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod compiler_admission;
+
+#[cfg(test)]
+mod rr_comparison;

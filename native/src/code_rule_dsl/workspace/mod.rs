@@ -413,8 +413,7 @@ struct WorkspaceState {
     /// or the budget's query.
     relation_plans: BTreeMap<(usize, String), Vec<ClauseId>>,
     /// File-partitioned relations cache final findings, rather than repository-sized syntax rows.
-    /// P's per-file relational results (test-only, open item O18).
-    #[cfg(test)]
+    /// Cached compatibility relational results, keyed by source version.
     file_relation_results: BTreeMap<(usize, String, String), (documents::FileVersion, Evaluation)>,
     /// Per synthetic clause, the files it has evidence in: witnesses, or unknown. It outlives the
     /// files' residency, so eviction keeps cross-file clauses answerable.
