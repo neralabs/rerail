@@ -204,7 +204,11 @@ export class SqliteSessionStore {
   readonly path: string;
   readonly #database: RerailDatabase;
   readonly #repositoryId: string | null;
-  /** Each session's repository as it opened here, to restore its row after a reset. */
+  /**
+   * Each open session's repository as it opened here, to restore its row after a reset. A session's entry goes when it
+   * closes, at its end or idle, so a daemon's map holds its open sessions only; what is recorded for a closed session
+   * carries its repository in its attribution.
+   */
   readonly #sessionRepositories = new Map<string, string | null>();
 
   constructor(path: string, { repositoryId }: { repositoryId?: string | undefined } = {}) {
@@ -343,6 +347,7 @@ export class SqliteSessionStore {
   }
 
   closeSession(sessionId: string, endedAt = Date.now()): void {
+    this.#sessionRepositories.delete(sessionId);
     this.#database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run();
   }
 
