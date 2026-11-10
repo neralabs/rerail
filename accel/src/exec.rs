@@ -561,7 +561,7 @@ impl Claims {
     fn item(&self, i: usize, lane: Lane) -> Item {
         let k = &self.kernels[i];
         let c = self.costs[i][lane.index()].unwrap_or_default();
-        Item { form: k.form().name(), units: k.units(), estimate: c.wall, host: c.host }
+        Item { form: k.name(), units: k.units(), estimate: c.wall, host: c.host }
     }
 
     /// Claims launch `i` for `lane`: its plan's reservation is released.

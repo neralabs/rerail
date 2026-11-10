@@ -162,6 +162,14 @@ impl Kernel {
         }
     }
 
+    /// The name its prices, samples and the profile know it by: a program's own, else its form's.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Kernel::Program(p) => p.0.name(),
+            _ => self.form().name(),
+        }
+    }
+
     /// The kernel's size in the unit its prices are per ([`crate::price`]):
     ///
     /// - bit product: bit operations, `a.rows × b.rows × words × 64`;

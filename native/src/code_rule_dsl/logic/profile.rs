@@ -1155,6 +1155,10 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let _ = writeln!(r, "{score}");
     }
 
+    // The cost statistics (decision 0100 §14): the store, the samples read, and the rates learned in place of priors.
+    let _ = writeln!(r, "\n== Cost statistics (RERAIL_COSTS)");
+    r.push_str(&super::costs::summary());
+
     // Waits that ran others' jobs (decision 0100 §12): a thread waiting on the pool runs queued jobs meanwhile, and a
     // long one makes its own wait end late. Per site: its waits, the jobs they ran, and how late those made them.
     let (waits, late_by) = rerail_accel::exec::waits();
