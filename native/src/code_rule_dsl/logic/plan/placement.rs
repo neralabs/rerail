@@ -68,9 +68,10 @@ impl Form {
     }
 }
 
-/// The forms the Metal backend runs. Empty: no relational kernel is built yet (0095's order of work adds them, and
-/// each one added here moves the strata that need only these to the device).
-const DEVICE_FORMS: &[Form] = &[];
+/// The forms the Metal backend runs (`setfix::device`, `metal_join`): joins of atoms by their keys (or whole),
+/// negated atoms and atoms that bind nothing (anti- and semi-joins by the same keys), and comparisons, `in` and
+/// document tests as row programs. A stratum that needs any other form stays on the CPU, named in the profile.
+const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison];
 
 /// A join step as the planner estimates it: the bindings it reads, the rows of the relation it reads, the rows it
 /// makes, its key columns, and whether it reads a range inside a document (`Mode::Range`).
@@ -133,6 +134,18 @@ const TILE_HOST_PER_VALUE: f64 = 5e-9;
 const TILE_PER_COMPARE: f64 = 0.4e-9;
 const TILE_COMPARES_PER_PAIR: f64 = 70.0;
 
+/// The device's stratum, as `setfix::device` runs it (every seed join in one submission, its relations kept on the
+/// device across the chunk's strata), in seconds of the host's CPU: a submission (the batch, its commit, the wait
+/// and the completion's wake), a rule's tables and words, a stage's encoding (count, scan, scatter, about four
+/// dispatches at 1.5 µs and their buffers), a sort's encoding (a hash and the radix passes, about 25 dispatches), and
+/// a head row read back into the store. Measured on the Python pack's placed strata (`== Placement`'s "Strata run on
+/// the GPU": host CPU against rules, stages and rows).
+const DEVICE_SUBMISSION: f64 = 100e-6;
+const DEVICE_RULE: f64 = 6e-6;
+const DEVICE_STAGE: f64 = 8e-6;
+const DEVICE_SORT: f64 = 45e-6;
+const DEVICE_ROW_BACK: f64 = 40e-9;
+
 /// CPU: seconds per unit of planned work, and per stratum (measured; see the module's comment).
 const CPU_PER_WORK: f64 = 100e-9;
 const CPU_PER_STRATUM: f64 = 0.13e-3;
@@ -165,12 +178,28 @@ pub(in crate::code_rule_dsl) struct Shape {
     pub(in crate::code_rule_dsl) rules: usize,
     /// Its join steps' estimates, when the planner recorded them (profiling, or a run that may use the device).
     pub(in crate::code_rule_dsl) joins: Vec<JoinEst>,
+    /// Its rules' steps, all told: on the device, about a stage each.
+    pub(in crate::code_rule_dsl) steps: usize,
+    /// The rows its rules' last steps make (the planner's estimate): what the device reads back.
+    pub(in crate::code_rule_dsl) rows: f64,
+}
+
+/// Whether a term is row code on the device: a variable, a constant, `@doc(x)` of a variable, or a set of constants
+/// (`@in(x, {…})`). Anything else computes a value the device has no form for.
+fn row_term(t: &Term) -> bool {
+    match t {
+        Term::Call(f, args) if f == "doc" => matches!(args.as_slice(), [Term::Var(_)]),
+        Term::Call(f, args) if f == crate::code_rule_dsl::logic::strings::SET => args.iter().all(|a| !matches!(a, Term::Call(..))),
+        Term::Call(..) => false,
+        _ => true,
+    }
 }
 
 impl Shape {
     /// Adds one planned rule: its steps in order, its head's terms and its planned work.
     pub(in crate::code_rule_dsl) fn add(&mut self, order: &[Step], head: &[Term], work: f64, recursive: bool) {
         self.rules += 1;
+        self.steps += order.len();
         self.work += work.max(0.0);
         if recursive {
             self.forms.insert(Form::Recursion);
@@ -193,7 +222,7 @@ impl Shape {
                     }
                 }
                 Literal::Cmp { l, r, .. } => {
-                    let computed = [l, r].iter().any(|t| matches!(t, Term::Call(..)));
+                    let computed = [l, r].iter().any(|t| !row_term(t));
                     self.forms.insert(if computed { Form::Computed } else { Form::Comparison });
                 }
                 Literal::Agg { op, atom, .. } => {
@@ -214,6 +243,12 @@ impl Shape {
 }
 
 impl Shape {
+    /// Whether the device has every form the stratum uses.
+    #[cfg(test)]
+    fn missing_none(&self) -> bool {
+        self.forms.iter().all(|f| DEVICE_FORMS.contains(f))
+    }
+
     /// Adds a planned rule's join steps: `order` its steps, `plan` the planner's record of them (one per step, its
     /// access and rows out), `card` a relation's rows.
     pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: &[Step], plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64) {
@@ -230,6 +265,7 @@ impl Shape {
             }
             input = priced.rows;
         }
+        self.rows += input.max(0.0);
     }
 }
 
@@ -296,8 +332,11 @@ pub(in crate::code_rule_dsl) fn gpu_price(runs: u64, work: f64) -> f64 {
 }
 
 /// Places a stratum of `shape`. Its join steps are priced on each form (`price_join`), a relation sorted once for
-/// every probe of it by the same keys; the GPU's estimate is its joins' on their cheapest device form and the rest
-/// of its work at the GPU's unit price. Without join estimates every unit is priced alike.
+/// every probe of it by the same keys: the form each would take, for the profile. The stratum's GPU estimate is what
+/// the device's run of it costs (`setfix::device`): one submission, its rules and stages encoded, each relation it
+/// reads by keys sorted once, the joins' device work (left rows searched, pairs made, rows sorted), the rest of its
+/// work at the GPU's unit price, and its rows read back. The stratum's floor (planning, opening, closing) is paid
+/// wherever its joins run, so the choice weighs the joins alone: the GPU when its part is cheaper by `MARGIN`.
 pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
     let cpu_s = CPU_PER_STRATUM + CPU_PER_WORK * shape.work;
     let mut sorted: BTreeSet<(&str, usize)> = BTreeSet::new();
@@ -309,11 +348,21 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
         c
     }).collect();
     let join_work: f64 = shape.joins.iter().map(|j| j.input + j.output).sum();
-    let device_joins: f64 = joins.iter().map(|c| c.probe_s.into_iter().chain(c.tile_s).fold(f64::INFINITY, f64::min)).filter(|p| p.is_finite()).sum();
-    let gpu_s = GPU_PER_SUBMISSION + device_joins + GPU_PER_WORK * (shape.work - join_work).max(0.0);
+    let mut sorts: BTreeSet<(&str, usize)> = BTreeSet::new();
+    let mut device_joins = 0.0;
+    for j in &shape.joins {
+        let keys = j.keys as f64;
+        device_joins += j.input * (keys * UPLOAD_PER_VALUE + PROBE_PER_ROW) + j.output.min(1e12) * PROBE_PER_PAIR;
+        if sorts.insert((j.rel.as_str(), j.keys)) {
+            device_joins += DEVICE_SORT + j.relation * (keys * UPLOAD_PER_VALUE + SORT_PER_ROW);
+        }
+    }
+    let device_s = DEVICE_SUBMISSION + DEVICE_RULE * shape.rules as f64 + DEVICE_STAGE * shape.steps as f64 + device_joins
+        + GPU_PER_WORK * (shape.work - join_work).max(0.0) + DEVICE_ROW_BACK * shape.rows.min(1e12);
+    let gpu_s = CPU_PER_STRATUM + device_s;
     let missing: Vec<Form> = shape.forms.iter().copied().filter(|f| !DEVICE_FORMS.contains(f)).collect();
     let device = DEVICE.with(Cell::get);
-    let gpu_cheaper = gpu_s * MARGIN < cpu_s;
+    let gpu_cheaper = device_s * MARGIN < CPU_PER_WORK * shape.work;
     Placement { gpu: device && gpu_cheaper && missing.is_empty(), gpu_cheaper, missing, cpu_s, gpu_s, device, joins }
 }
 
@@ -334,12 +383,32 @@ mod tests {
         assert_eq!(big.forms, [Form::Join, Form::Negation, Form::TextTest].into_iter().collect());
         let p = place(&big);
         assert!(p.gpu_cheaper && !p.gpu, "{p:?}");
-        assert_eq!(p.missing, vec![Form::Join, Form::Negation, Form::TextTest]);
-        assert!(p.why().contains("no join, no negation, no text test"), "{}", p.why());
-        // A tiny stratum stays on the CPU: the submission costs more than the work.
+        assert_eq!(p.missing, vec![Form::TextTest]);
+        assert!(p.why().contains("no text test"), "{}", p.why());
+        // Without the text test, under the Metal binding, the device takes it; under the CPU binding it does not.
+        let mut plain = Shape::default();
+        plain.add(&[atom("kind", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
+        assert!(plain.missing_none());
+        let was = set_device(true);
+        let p = place(&plain);
+        set_device(was);
+        assert!(p.gpu && p.missing.is_empty(), "{p:?}");
+        assert!(!place(&plain).gpu, "the CPU binding keeps it");
+        // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code; `@cat(x, y)` is not.
+        let cmp = |l: Term, r: Term| Step { at: 0, lit: Literal::Cmp { l, op: "=", r }, mode: None };
+        let doc = |v: &str| Term::Call("doc".into(), vec![Term::Var(v.into())]);
+        let mut docs = Shape::default();
+        docs.add(&[atom("kind", false), cmp(doc("x"), doc("y"))], &[], 1.0, false);
+        assert!(docs.forms.contains(&Form::Comparison) && !docs.forms.contains(&Form::Computed));
+        let mut cat = Shape::default();
+        cat.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("cat".into(), vec![Term::Var("x".into()), Term::Var("y".into())]))], &[], 1.0, false);
+        assert!(cat.forms.contains(&Form::Computed));
+        // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();
         small.add(&[atom("kind", false)], &[], 10.0, false);
+        let was = set_device(true);
         let p = place(&small);
+        set_device(was);
         assert!(!p.gpu_cheaper && !p.gpu);
         assert_eq!(p.why(), "CPU: cheaper");
         // Join steps priced on each form: a large equi-join takes the sort and probe, its second probe of the same
@@ -356,4 +425,11 @@ mod tests {
         rec.add(&[atom("edge", false)], &[Term::Call("add".into(), vec![])], 1.0, true);
         assert!(rec.forms.contains(&Form::Recursion) && rec.forms.contains(&Form::Computed));
     }
+}
+
+/// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
+/// so a run can be paired against the same binding with them on. Placement still prices and reports as usual.
+pub(crate) fn device_joins_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("RERAIL_DEVICE_JOINS").is_ok_and(|v| v == "off"))
 }

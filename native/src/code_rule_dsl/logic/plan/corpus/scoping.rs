@@ -218,9 +218,22 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         added
     };
     let mut rules = all.rules.clone();
-    for (heads, outside) in &groups {
-        let added: usize = rules.iter_mut().filter(|r| heads.contains(&r.head.rel)).map(|r| guard_rule(r, heads, outside)).sum();
-        report.guarded.push((outside.clone(), added));
+    // Each rule's groups, in order: one pass over the rules, not one per group.
+    let mut groups_of: rustc_hash::FxHashMap<&str, Vec<usize>> = Default::default();
+    for (k, (heads, _)) in groups.iter().enumerate() {
+        for h in heads {
+            groups_of.entry(h.as_str()).or_default().push(k);
+        }
+    }
+    let mut added = vec![0usize; groups.len()];
+    for r in rules.iter_mut() {
+        let Some(ks) = groups_of.get(r.head.rel.as_str()) else { continue };
+        for &k in ks {
+            added[k] += guard_rule(r, &groups[k].0, &groups[k].1);
+        }
+    }
+    for ((_, outside), n) in groups.iter().zip(added) {
+        report.guarded.push((outside.clone(), n));
     }
     drop(place);
     all.rules = rules;

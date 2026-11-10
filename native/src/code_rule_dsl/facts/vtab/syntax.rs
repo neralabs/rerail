@@ -366,7 +366,7 @@ pub(crate) fn numbering(doc: &Document) -> StoreResult<Numbering> {
         return Ok(Numbering { nodes: Vec::new(), back: None });
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
-    let dialect = Dialect::new(tag)?;
+    let dialect = Dialect::kept(tag)?;
     // A guest's nodes are its root's subtree.
     let guest = doc.guest.as_deref().map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), &dialect, Shape::Core, false, guest);
@@ -456,6 +456,20 @@ struct Dialect {
     codes: HashMap<u16, Vec<u16>>,
 }
 impl Dialect {
+    /// The dialect of `tag`, made once per thread: making one walks the grammar's kinds (a millisecond in a debug
+    /// build), and a chunk's guests number every host they are made in (`numbering`).
+    fn kept(tag: u8) -> StoreResult<std::rc::Rc<Self>> {
+        thread_local! {
+            static KEPT: std::cell::RefCell<HashMap<u8, std::rc::Rc<Dialect>>> = std::cell::RefCell::new(HashMap::new());
+        }
+        if let Some(d) = KEPT.with(|k| k.borrow().get(&tag).cloned()) {
+            return Ok(d);
+        }
+        let d = std::rc::Rc::new(Self::new(tag)?);
+        KEPT.with(|k| k.borrow_mut().insert(tag, std::rc::Rc::clone(&d)));
+        Ok(d)
+    }
+
     fn new(tag: u8) -> StoreResult<Self> {
         let catalog = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?.kinds();
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
@@ -893,7 +907,7 @@ impl Batch {
                     use crate::code_rule_dsl::logic::front::SpanIn;
                     let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
                     let prefilter = match within {
-                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::compile(re, *within == SpanIn::Line),
+                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::compile(re, *within == SpanIn::Line).map(Arc::new),
                         _ => None,
                     };
                     regex::Regex::new(re).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
@@ -904,24 +918,27 @@ impl Batch {
         };
         // The AST patterns, compiled once per grammar; one a grammar does not parse matches nothing there.
         let mut ast_patterns: HashMap<u8, Vec<(&str, ast_grep_core::matcher::Pattern)>> = HashMap::new();
-        // Every prefiltered pattern's marks over every file, in one batch of block programs (decision 0081 §3): on Metal
-        // under the device binding, the CPU interpreter otherwise. `span_ends[doc][pattern]`.
+        // Every prefiltered pattern's marks over every file, in one batch of block programs (decision 0081 §3): one
+        // launch of the executor (decision 0100 §13), on the cores or, under the device binding, the GPU, as its price
+        // places it. `span_ends[doc][pattern]`.
         let span_ends: Vec<Vec<Option<Vec<u64>>>> = {
-            use crate::code_rule_dsl::transducer::packed::regex_block::{RanOn, SpanPrefilter, ends_batch};
-            let filters: Vec<(usize, &SpanPrefilter)> = rx_spans.iter().enumerate().filter_map(|(i, (_, _, _, f))| f.as_ref().map(|f| (i, f))).collect();
+            use crate::code_rule_dsl::transducer::packed::regex_block::{RanOn, SpanPrefilter, ends_launch};
+            let filters: Vec<(usize, &Arc<SpanPrefilter>)> = rx_spans.iter().enumerate().filter_map(|(i, (_, _, _, f))| f.as_ref().map(|f| (i, f))).collect();
             let mut out: Vec<Vec<Option<Vec<u64>>>> = vec![vec![None; rx_spans.len()]; documents.len()];
             if !filters.is_empty() {
                 let mut at = Vec::new();
-                let mut files: Vec<(&[u8], usize)> = Vec::new();
+                let mut sources: Vec<Arc<String>> = Vec::new();
+                let mut files: Vec<(usize, usize)> = Vec::new();
                 for (j, d) in documents.iter().enumerate().filter(|(_, d)| d.guest.is_none()) {
+                    sources.push(Arc::clone(&d.facts.source));
                     for (f, _) in filters.iter().enumerate() {
                         at.push((j, filters[f].0));
-                        files.push((d.facts.source.as_bytes(), f));
+                        files.push((sources.len() - 1, f));
                     }
                 }
                 let _span = crate::code_rule_dsl::logic::profile::span(|| "span prefilter".into());
-                let programs: Vec<&SpanPrefilter> = filters.iter().map(|(_, f)| *f).collect();
-                let (ends, ran) = ends_batch(&programs, &files, metal);
+                let programs: Vec<Arc<SpanPrefilter>> = filters.iter().map(|(_, f)| Arc::clone(f)).collect();
+                let (ends, ran) = ends_launch(crate::code_rule_dsl::logic::lanes::executor_for(metal), &programs, &sources, &files, metal).map_err(StoreError::Invalid)?;
                 crate::code_rule_dsl::logic::profile::decision("span prefilter", || match ran {
                     RanOn::Metal => "metal".into(),
                     RanOn::Cpu => "cpu".into(),
@@ -1187,15 +1204,37 @@ impl Batch {
         }
     }
     /// The document and its row index of `row`.
+    /// Rows are read in runs of one document, so the last document found (per thread, per offsets array) is tried
+    /// before the search: its range is checked against the offsets, so a stale hint costs a comparison, never a
+    /// wrong document. The search per row was 13 s of the pack's cold run.
     fn locate(&self, view: View, row: usize) -> (&Projected, usize) {
         let offsets = self.offsets(view);
-        let doc = offsets.partition_point(|&o| o <= row) - 1;
+        let key = offsets.as_ptr() as usize;
+        let doc = LOCATED.with(|h| {
+            let (k, d) = h.get();
+            if k == key && d + 1 < offsets.len() && offsets[d] <= row && row < offsets[d + 1] {
+                return d;
+            }
+            let d = offsets.partition_point(|&o| o <= row) - 1;
+            h.set((key, d));
+            d
+        });
         (&self.docs[doc], row - offsets[doc])
     }
-    /// The document of key `d`, by index.
+    /// The document of key `d`, by index (the last one found tried first, as `locate`).
     fn doc(&self, d: i64) -> Option<usize> {
         let d = u32::try_from(d).ok()?;
-        self.docs.binary_search_by_key(&d, |p| p.key).ok()
+        let key = self.docs.as_ptr() as usize;
+        let hit = DOC.with(|h| {
+            let (k, i) = h.get();
+            (k == key && self.docs.get(i).is_some_and(|p| p.key == d)).then_some(i)
+        });
+        if hit.is_some() {
+            return hit;
+        }
+        let i = self.docs.binary_search_by_key(&d, |p| p.key).ok()?;
+        DOC.with(|h| h.set((key, i)));
+        Some(i)
     }
     /// The document index and node of id `n`.
     fn node(&self, n: i64) -> Option<(usize, u32)> {
@@ -1774,3 +1813,10 @@ pub(crate) fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Si
 
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod tests;
+
+thread_local! {
+    /// `Batch::locate`'s hint: the offsets array (its address) and the document last found in it.
+    static LOCATED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// `Batch::doc`'s hint: the documents (their address) and the index last found.
+    static DOC: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}

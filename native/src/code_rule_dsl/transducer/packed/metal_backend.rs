@@ -29,6 +29,12 @@ static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(test))]
 static METAL_BUFFER_PEAK: AtomicUsize = AtomicUsize::new(0);
 
+/// The bytes the device's buffers hold now, of `METAL_BUFFER_LIMIT`: a user of them that can wait (the logic
+/// engine's device joins) keeps within what is left.
+pub(super) fn reserved() -> usize {
+    pool().load(Ordering::Acquire)
+}
+
 /// The pool's ledger: the bytes reserved now.
 #[cfg(not(test))]
 fn pool() -> &'static AtomicUsize {

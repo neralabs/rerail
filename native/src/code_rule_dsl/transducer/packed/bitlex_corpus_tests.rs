@@ -27,21 +27,8 @@ use std::collections::HashMap;
 
 const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/code_rule_dsl/transducer/packed/bitlex_corpus");
 
-/// A seeded xorshift: the corpus is the same on every run.
-pub(super) struct Rng(pub(super) u64);
-
-impl Rng {
-    pub(super) fn below(&mut self, n: u64) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0 % n
-    }
-
-    pub(super) fn pick<'a, T>(&mut self, xs: &'a [T]) -> &'a T {
-        &xs[self.below(xs.len() as u64) as usize]
-    }
-}
+// The seeded xorshift and the ids by name are the compiler crate's (`rerail_compiler::ladder`).
+pub(super) use rerail_compiler::ladder::{Ids, Rng};
 
 /// The classes most programs read: bytes the inputs hold often, a high range, `0x00`.
 const CLASSES: &str = "class quote = '\"'
@@ -668,17 +655,6 @@ fn executors_equal_the_interpreter(metal: bool) {
 /// The tree grammars the compiler refuses today, by reason (docs/parser-generators/20-the-ir.md §7).
 const GAPS: [&str; 0] = [];
 
-/// Ids by name, for a corpus grammar: each kind or field is numbered at its first use, from 1.
-#[derive(Default)]
-pub(super) struct Ids(pub(super) std::cell::RefCell<HashMap<String, u16>>);
-
-impl Ids {
-    pub(super) fn of(&self, name: &str) -> u16 {
-        let mut m = self.0.borrow_mut();
-        let n = m.len() as u16 + 1;
-        *m.entry(name.to_owned()).or_insert(n)
-    }
-}
 
 /// A node as ids: kind, field, supertypes (sorted), start, end, size.
 type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);

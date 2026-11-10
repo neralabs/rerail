@@ -482,6 +482,11 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
             "  {phase:<6} {user:.2} s user + {sys:.2} s sys; peak RSS {rss:.0} MB; {statements} SQLite statements\n"
         );
     }
+    // Retired instructions and cycles of the whole process: steadier than CPU time on a loaded machine, so a change
+    // is compared by them (macOS; nothing elsewhere).
+    if let Some((instructions, cycles)) = process_counters() {
+        text += &format!("  process {:.2} G instructions, {:.2} G cycles\n", instructions as f64 / 1e9, cycles as f64 / 1e9);
+    }
     for (name, _) in &report.typing_runs {
         text += &format!("  typing program {name} run first, for the relations it gives\n");
     }
@@ -492,6 +497,19 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
         text += "  (planner statistics and node ids read from the T facts file)\n";
     }
     Ok(text)
+}
+
+/// The process's retired instructions and cycles so far (macOS `proc_pid_rusage`).
+fn process_counters() -> Option<(u64, u64)> {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: a zeroed `rusage_info_v4` is a valid out-value, and the flavour matches it.
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
+        if unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+            return Some((info.ri_instructions, info.ri_cycles));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -531,6 +549,14 @@ const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
 /// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063).
 pub fn cli(args: &[String]) -> Result<String, String> {
+    // However the command ends, the cost samples it made are written (decision 0100 §14).
+    struct Flush;
+    impl Drop for Flush {
+        fn drop(&mut self) {
+            crate::code_rule_dsl::logic::costs::flush();
+        }
+    }
+    let _flush = Flush;
     if let Some(dir) = std::env::var_os("RERAIL_SESSION") {
         crate::code_rule_dsl::logic::plan::corpus::session::start(std::path::Path::new(&dir))?;
     }

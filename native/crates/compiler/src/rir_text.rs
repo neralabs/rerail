@@ -1,0 +1,75 @@
+//! The `rir` rows of tier 2's tables and of quoted strings, as the transducer's assembler
+//! reads them.
+
+use std::fmt::Write as _;
+
+/// `bytes` as a quoted string: printable ASCII as itself, `"` and `\` escaped, the rest `\xNN`.
+pub fn quote(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() + 2);
+    out.push('"');
+    for &byte in bytes {
+        match byte {
+            b'"' => out.push_str("\\\""),
+            b'\\' => out.push_str("\\\\"),
+            0x20..=0x7e => out.push(byte as char),
+            _ => {
+                let _ = write!(out, "\\x{byte:02x}");
+            }
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// A target of a switch: `@PC`, or `refuse`.
+fn switch_target(t: u16) -> String {
+    if t == crate::stream_ir::REFUSE { "refuse".to_owned() } else { format!("@{t:04}") }
+}
+
+/// Switch table `at` (decision 0087): `switch N at OFFSET end TARGET`, then a row per run of
+/// bytes with one target, `switch N 0xLO-0xHI TARGET`; bytes in no row refuse.
+pub fn switch_rows(out: &mut String, at: usize, s: &crate::stream_ir::ByteSwitch) {
+    let _ = writeln!(out, "  switch {at} at {} end {}", s.offset, switch_target(s.end));
+    let mut b = 0usize;
+    while b < 256 {
+        let t = s.targets[b];
+        let mut e = b;
+        while e + 1 < 256 && s.targets[e + 1] == t {
+            e += 1;
+        }
+        if t != crate::stream_ir::REFUSE {
+            let _ = writeln!(out, "  switch {at} {b:#04x}-{e:#04x} {}", switch_target(t));
+        }
+        b = e + 1;
+    }
+}
+
+/// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,
+/// `reading N field #F as #G`; then `provisional #F`; then `extra #K`, the extras' kinds.
+pub fn reading_rows(out: &mut String, readings: &crate::stream_ir::Readings) {
+    use std::fmt::Write as _;
+    for (at, r) in readings.maps.iter().enumerate() {
+        // A reading with no row would be lost: a kind row each has one (the compiler's).
+        for &(k, m) in &r.kinds {
+            let _ = match m {
+                crate::stream_ir::KEEP => writeln!(out, "  reading {at} #{k} keep"),
+                crate::stream_ir::GONE => writeln!(out, "  reading {at} #{k} gone"),
+                m => writeln!(out, "  reading {at} #{k} as #{m}"),
+            };
+        }
+        for &(f, g) in &r.fields {
+            let _ = writeln!(out, "  reading {at} field #{f} as #{g}");
+        }
+        let _ = match r.root {
+            None => Ok(()),
+            Some(crate::stream_ir::GONE) => writeln!(out, "  reading {at} root gone"),
+            Some(m) => writeln!(out, "  reading {at} root as #{m}"),
+        };
+    }
+    for f in &readings.provisional {
+        let _ = writeln!(out, "  provisional #{f}");
+    }
+    for k in &readings.extras {
+        let _ = writeln!(out, "  extra #{k}");
+    }
+}

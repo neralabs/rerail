@@ -1,7 +1,7 @@
 //! The regex helpers' calls reach their callees however far apart the code is mapped
-//! (`rerail_tier1::native_cpu_codegen::relocations`).
+//! (`rerail_compiler::native_cpu_codegen::relocations`).
 
-use rerail_tier1::native_cpu_codegen::relocations::{Recording, assert_targets, separated_module};
+use rerail_compiler::native_cpu_codegen::relocations::{Recording, assert_targets, separated_module};
 
 #[test]
 fn production_regex_helpers_reach_distant_callees() {

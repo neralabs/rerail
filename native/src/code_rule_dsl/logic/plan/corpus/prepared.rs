@@ -72,6 +72,7 @@ pub(super) fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("prepared_set_kind", &["k:int", "i:int", "kind:int"]),
         ("prepared_demanded", &["k:int", "rel:sym"]),
         ("prepared_pushed", &["k:int", "rel:sym"]),
+        ("prepared_factorized", &["k:int", "line:sym"]),
         ("prepared_located", &["ok:int"]),
         ("prepared_located_rel", &["k:int", "rel:sym"]),
         ("prepared_merged", &["relations:int", "classes:int"]),
@@ -143,6 +144,9 @@ pub(super) fn facts_of(prepared: &Prepared) -> Facts {
     }
     for (k, rel) in prepared.pushed.iter().enumerate() {
         row("prepared_pushed", vec![n(k), s(rel)]);
+    }
+    for (k, line) in prepared.factorized.iter().enumerate() {
+        row("prepared_factorized", vec![n(k), s(line)]);
     }
     let (ok, located) = match &prepared.located {
         Ok(rels) => (1, rels),
@@ -315,6 +319,7 @@ pub(super) fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prep
         sets,
         demanded: list("prepared_demanded")?,
         pushed: list("prepared_pushed")?,
+        factorized: list("prepared_factorized")?,
         located,
         merged,
         split,
@@ -353,21 +358,36 @@ fn document_facts(store: &ContentStore, document: SourceId, text: Option<&str>) 
 /// of text, whose one tape peaked at 1.5 GB).
 const PART_ROWS: usize = 20_000;
 
-/// `facts` in parts of at most `PART_ROWS` rows, in order: relations in their order, each one's rows in theirs.
-fn parts(facts: &Facts) -> Vec<Facts> {
-    let mut out: Vec<Facts> = vec![Facts::new()];
-    let mut held = 0;
-    for (rel, rows) in facts {
-        for row in rows {
-            if held == PART_ROWS {
-                out.push(Facts::new());
-                held = 0;
+/// `facts` in parts of at most `PART_ROWS` rows, in order: relations in their order, each one's rows in theirs. The
+/// parts are made as they are asked for, from the rows moved out of `facts`: a part is written and dropped before the
+/// next is made, so the program's facts are held once, not once more as parts (on the Python pack the copy was 2.6 GB
+/// allocated and 442 MB on the peak).
+fn parts(facts: Facts) -> impl Iterator<Item = Facts> {
+    let mut rels = facts.into_iter();
+    let mut current: Option<(String, std::vec::IntoIter<Vec<crate::code_rule_dsl::logic::front::Value>>)> = None;
+    // At least one part, as for a program of no facts.
+    let mut first = true;
+    std::iter::from_fn(move || {
+        let mut part = Facts::new();
+        let mut held = 0;
+        while held < PART_ROWS {
+            if current.as_ref().is_none_or(|(_, rows)| rows.len() == 0) {
+                match rels.next() {
+                    Some((rel, rows)) => current = Some((rel, rows.into_iter())),
+                    None => break,
+                }
+                continue;
             }
-            out.last_mut().expect("a part").entry(rel.clone()).or_default().push(row.clone());
-            held += 1;
+            let (rel, rows) = current.as_mut().expect("a relation");
+            let take: Vec<_> = rows.by_ref().take(PART_ROWS - held).collect();
+            held += take.len();
+            part.entry(rel.clone()).or_default().extend(take);
         }
-    }
-    out
+        (held > 0 || std::mem::take(&mut first)).then(|| {
+            first = false;
+            part
+        })
+    })
 }
 
 /// The program `key` names, prepared for `dialect`, as an earlier process stored it under `source`; `None` when none
@@ -398,6 +418,11 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     Ok(prepared_of(&facts, dialect).ok().map(|p| (p, documents)))
 }
 
+/// What the write of the program `key` is queued under (`write_back`, decision 0102).
+pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"facts_memo/prepared", key])
+}
+
 /// Stores `prepared` as the program `key` names under `source`: its documents, one a part (`PART_ROWS`), each one's
 /// facts, and the pointer to the documents; the documents' sources, which the run's manifest names so collection
 /// keeps them. A document's tape is made when its facts are read and the store has lost them.
@@ -406,7 +431,7 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     let facts = facts_of(prepared);
     let mut documents = Vec::new();
     let mut entry = Vec::new();
-    for part in parts(&facts) {
+    for part in parts(facts) {
         let text = program_facts::document(&part, &schema()).map_err(invalid)?;
         let document = super::memo::source(store, &text)?;
         // The facts read off the document are the part (`a_prepared_program_reads_back_from_its_facts_and_its_tape`
@@ -528,7 +553,7 @@ mod tests {
         assert_eq!(format!("{:?}", back.prog), format!("{:?}", prepared.prog), "the front program");
         assert_eq!(format!("{:?}", back.lowered.program), format!("{:?}", prepared.lowered.program), "the lowered program");
         assert_eq!(back.lowered.domains, prepared.lowered.domains);
-        assert_eq!((back.sets, back.demanded, back.pushed, back.located, back.merged, back.interned), (prepared.sets.clone(), prepared.demanded.clone(), prepared.pushed.clone(), prepared.located.clone(), prepared.merged, prepared.interned.clone()));
+        assert_eq!((back.sets, back.demanded, back.pushed, back.factorized, back.located, back.merged, back.interned), (prepared.sets.clone(), prepared.demanded.clone(), prepared.pushed.clone(), prepared.factorized.clone(), prepared.located.clone(), prepared.merged, prepared.interned.clone()));
         assert_eq!(back.vocabulary.specs, prepared.vocabulary.specs);
         assert_eq!(format!("{:?}", back.split.local), format!("{:?}", prepared.split.local), "the split's local program");
         assert_eq!(format!("{:?}", back.split.cross), format!("{:?}", prepared.split.cross), "the split's cross-file program");
@@ -560,7 +585,7 @@ mod tests {
         let mut facts = Facts::new();
         facts.insert("a".into(), (0..super::PART_ROWS as i64 + 7).map(|i| vec![Value::Int(i)]).collect());
         facts.insert("b".into(), (0..super::PART_ROWS as i64 * 2).map(|i| vec![Value::Str(format!("s{i}"))]).collect());
-        let parts = super::parts(&facts);
+        let parts: Vec<Facts> = super::parts(facts.clone()).collect();
         assert_eq!(parts.len(), 4);
         assert!(parts.iter().all(|p| p.values().map(Vec::len).sum::<usize>() <= super::PART_ROWS));
         let mut joined = Facts::new();

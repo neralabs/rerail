@@ -3,10 +3,13 @@
 //! `sql` is the typed SQL its plans emit.
 
 pub(in crate::code_rule_dsl) mod derived;
+#[cfg(test)]
+mod facts_only;
 pub(in crate::code_rule_dsl) mod analysis;
 // Nothing emits SQL through them until the planner (Phase 6) does.
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod front;
+pub(in crate::code_rule_dsl) mod costs;
 pub(in crate::code_rule_dsl) mod lanes;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod answers;

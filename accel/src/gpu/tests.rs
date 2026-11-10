@@ -92,6 +92,7 @@ fn check(ks: &[Kernel]) -> Stats {
                 Output::Pairs(p) => format!("{} pairs, first {:?}", p.len(), p.iter().take(4).collect::<Vec<_>>()),
                 Output::View(v) => format!("{} pairs, first {:?}", v.len(), v.iter().take(4).collect::<Vec<_>>()),
                 Output::Bits(b) => format!("bits {}x{}, ones {}", b.rows, b.words, b.data.iter().map(|w| w.count_ones()).sum::<u32>()),
+                Output::Program(_) => "a program's result".to_owned(),
             };
             panic!("launch {i} ({}): gpu {} vs reference {}", k.form().name(), brief(o), brief(&want));
         }
