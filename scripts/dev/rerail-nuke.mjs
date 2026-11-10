@@ -74,28 +74,43 @@ export function configBackupName(path, home) {
  * one `/`, in lower case.
  */
 export function rerailHomeMatcher(rerailHome, home, platform = process.platform) {
-  const paths = platform === "win32" ? win32 : posix;
-  const spelled = platform === "win32" ? text => text.replaceAll(/[\\/]+/gu, "/").toLowerCase() : text => text;
-  const roots = new Set([paths.resolve(rerailHome)]);
-  try {
-    roots.add(realpathSync(rerailHome));
-  } catch {
-    // A missing home has no other spelling.
-  }
-  const needles = [];
-  for (const root of roots) {
-    needles.push(spelled(`${root}${paths.sep}`));
-    const inside = paths.relative(home, root);
-    if (inside !== "" && !inside.startsWith("..") && !paths.isAbsolute(inside)) {
-      for (const prefix of ["~", "$HOME", "${HOME}"]) needles.push(spelled(`${prefix}/${inside.split(paths.sep).join("/")}/`));
-    }
-  }
+  const { paths, spelled } = pathRules(platform);
+  const roots = homeRoots(paths, rerailHome);
+  const needles = [...roots].flatMap(root => {
+    const inside = underHome(paths, home, root);
+    const fromHome = inside === undefined ? [] : ["~", "$HOME", "${HOME}"].map(prefix => `${prefix}/${inside}/`);
+    return [`${root}${paths.sep}`, ...fromHome].map(spelled);
+  });
   const spelledRoots = new Set([...roots].map(spelled));
   return text => {
     if (typeof text !== "string") return false;
     const value = spelled(text);
     return spelledRoots.has(value) || needles.some(needle => value.includes(needle));
   };
+}
+
+/** `platform`'s path functions, and `spelled`, which gives every spelling of one path the same text. */
+function pathRules(platform) {
+  if (platform !== "win32") return { paths: posix, spelled: text => text };
+  return { paths: win32, spelled: text => text.replaceAll(/[\\/]+/gu, "/").toLowerCase() };
+}
+
+/** The Rerail home's resolved path and, when it exists, its realpath. */
+function homeRoots(paths, rerailHome) {
+  const roots = new Set([paths.resolve(rerailHome)]);
+  try {
+    roots.add(realpathSync(rerailHome));
+  } catch {
+    // A missing home has no other spelling.
+  }
+  return roots;
+}
+
+/** `root` relative to `home`, with `/` between its parts, when it lies under `home`. */
+function underHome(paths, home, root) {
+  const inside = paths.relative(home, root);
+  if (inside === "" || inside.startsWith("..") || paths.isAbsolute(inside)) return undefined;
+  return inside.split(paths.sep).join("/");
 }
 
 function referencesDeep(value, matches) {
