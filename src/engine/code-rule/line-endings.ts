@@ -36,11 +36,11 @@ export function textAs(blob: Buffer, form: LineForm): string {
 
 /**
  * The ids of the blobs a file holding `text` (as UTF-8) can have been checked out from: the id of `text` itself and,
- * where `crlf` says a checkout writes CRLF and `text` has CRLF line breaks, the id of the LF text an add stores for it.
+ * where `crlf` says a checkout writes CRLF, the id of the LF blob a checkout writes as `text` ({@link checkedOutFrom}).
  */
 export function blobIds(text: string, algorithm: BlobIdAlgorithm, crlf: boolean): string[] {
-  const stored = crlf ? lfStored(text) : undefined;
-  return stored === undefined ? [blobId(text, algorithm)] : [blobId(text, algorithm), blobId(stored, algorithm)];
+  const source = crlf ? checkedOutFrom(text) : undefined;
+  return source === undefined ? [blobId(text, algorithm)] : [blobId(text, algorithm), blobId(source, algorithm)];
 }
 
 /** Git names a blob by the hash of a `blob <size>\0` header followed by its bytes. */
@@ -62,7 +62,12 @@ function crlfCheckout(blob: Buffer): Buffer | undefined {
   return Buffer.from(blob.toString("latin1").replaceAll("\n", "\r\n"), "latin1");
 }
 
-/** The text a `core.autocrlf=true` add stores for `text`: every CRLF an LF. Undefined when `text` holds none. */
-function lfStored(text: string): string | undefined {
-  return text.includes("\r\n") ? text.replaceAll("\r\n", "\n") : undefined;
+/**
+ * The text of the blob a `core.autocrlf=true` checkout writes as `text`: every CRLF an LF. Undefined when no blob checks
+ * out as `text`: it holds no CRLF, or holds an LF without its CR, a lone CR or a NUL, none of which `crlfCheckout` writes.
+ */
+function checkedOutFrom(text: string): string | undefined {
+  if (!text.includes("\r\n")) return undefined;
+  const source = text.replaceAll("\r\n", "\n");
+  return crlfCheckout(Buffer.from(source, "utf8"))?.equals(Buffer.from(text, "utf8")) === true ? source : undefined;
 }

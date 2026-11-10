@@ -1071,6 +1071,16 @@ describe("CodeRuleBridge and Git's own writes under core.autocrlf", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
+  it("audits a shell write with an LF line a checkout never writes, though another branch holds its text with LF", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // `other` holds "old\nviolation\n", which a checkout here writes with a CRLF after each line.
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nviolation\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\r\n", generatedText: "old\r\nviolation\n" }],
+    ]);
+  });
+
   it("gives a shell write the preimage Git holds, in the CRLF line breaks the file held it in", async () => {
     const root = await crlfBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);

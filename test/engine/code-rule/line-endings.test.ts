@@ -75,7 +75,7 @@ describe("the ids of the blobs a file's text can come from", () => {
     expect(blobIds("hello\n", "sha256", false)).toEqual([HELLO_LF_SHA256]);
   });
 
-  it("adds the LF blob an add stores for CRLF text, where a checkout writes CRLF", () => {
+  it("adds the LF blob a checkout writes as CRLF text, where the repository has a checkout write CRLF", () => {
     expect(blobIds("hello\r\n", "sha1", true)).toEqual([HELLO_CRLF_SHA1, HELLO_LF_SHA1]);
     expect(blobIds("hello\r\n", "sha1", false)).toEqual([HELLO_CRLF_SHA1]);
   });
@@ -83,5 +83,12 @@ describe("the ids of the blobs a file's text can come from", () => {
   it("names one blob for text with no CRLF in it", () => {
     expect(blobIds("hello\n", "sha1", true)).toEqual([HELLO_LF_SHA1]);
     expect(blobIds("hello", "sha1", true)).toHaveLength(1);
+  });
+
+  it("names one blob for text a checkout never writes: an LF without its CR, a lone CR, or a NUL", () => {
+    // A checkout writes every LF of an LF blob as CRLF, and a blob with a CR or a NUL as it is (`heldAs`).
+    expect(blobIds("hello\r\nworld\n", "sha1", true)).toHaveLength(1);
+    expect(blobIds("hello\rworld\r\n", "sha1", true)).toHaveLength(1);
+    expect(blobIds("hello\0\r\n", "sha1", true)).toHaveLength(1);
   });
 });
