@@ -3118,3 +3118,14 @@ The CLI adapter's I/O coverage does not certify native production inventory erro
 Earlier supplied-fact control receipts retain their original engine identities; this receipt does not refresh those controls.
 The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
 No full-repository cold benchmark ran. No Linear ticket was created.
+
+### Production inventory I/O failure ladder, 2026-11-10
+
+A new independent corpus contains 19 production reporter cases. Every case includes an actual source-scanner positive.
+Both native APIs fail nine cases: two directory cases, one permission failure, and six malformed UTF-8 inputs.
+Directory inventories silently return scanner findings. The other failures become generic runtime errors and lose the source exception payload.
+Ten normal cases pass, including missing files, dangling links, symlink loops, and nonempty inventories.
+[The failing checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-inventory-io-finald03-red.json.gz) retains all source and native results.
+The next implementation extends the existing repository input reader with typed read errors.
+It will share its existing read cache and preserve the exact offending bytes only when an error consumer needs them.
+Dispatch remains a draft. No Linear ticket was created.
