@@ -9,8 +9,8 @@
  * - `<home>/machine-id` (`0600`): a random UUID made once, which names this machine to every remote.
  */
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { replaceFileSync } from "../engine/file-replace.js";
+import { linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { renameWithRetrySync, replaceFileSync } from "../engine/file-replace.js";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "../engine/child-process.js";
@@ -185,24 +185,48 @@ export function setRepositoryExcluded(repositoryKey: string, excluded: boolean, 
   writeRemoteConfig(home, { ...config, exclusions });
 }
 
-/** This machine's id for remotes, made once and kept in the home. */
-export function machineId(home: string = defaultRerailHome()): string {
-  const file = join(home, MACHINE_ID_FILE);
+const MACHINE_ID = /^[0-9a-f-]{36}$/u;
+
+/** What the machine-id file holds, trimmed; undefined when there is none. */
+function readMachineIdFile(file: string): string | undefined {
   try {
-    const existing = readFileSync(file, "utf8").trim();
-    if (/^[0-9a-f-]{36}$/u.test(existing)) return existing;
+    return readFileSync(file, "utf8").trim();
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
   }
-  makeRerailHome(home);
-  const id = randomUUID();
+}
+
+/** Links `from` in as `to` unless a file is there already: another process made it first, and its content stands. */
+function linkUnlessThere(from: string, to: string): void {
   try {
-    // Exclusive create: two processes making it at once agree on the first one's id.
-    writeFileSync(file, `${id}\n`, { mode: 0o600, flag: "wx" });
+    linkSync(from, to);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    return readFileSync(file, "utf8").trim();
   }
+}
+
+/**
+ * This machine's id for remotes, made once and kept in the home. The id is written whole under a temporary name, then
+ * linked in only if no file is there: two processes making it at once agree on the first one's id, and neither can read
+ * the file before the id is in it. A file with no id in it, left by a process that died writing one in place, is
+ * replaced.
+ */
+export function machineId(home: string = defaultRerailHome()): string {
+  const file = join(home, MACHINE_ID_FILE);
+  const existing = readMachineIdFile(file);
+  if (existing !== undefined && MACHINE_ID.test(existing)) return existing;
+  makeRerailHome(home);
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, `${randomUUID()}\n`, { mode: 0o600, flag: "wx" });
+  try {
+    if (existing === undefined) linkUnlessThere(temporary, file);
+    else renameWithRetrySync(temporary, file);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+  const id = readMachineIdFile(file);
+  if (id === undefined || !MACHINE_ID.test(id)) throw new Error(`${file} holds no machine id`);
   return id;
 }
 
