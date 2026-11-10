@@ -170,7 +170,16 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   idleSessionMs?: number;
   /** The clock idle sessions are measured by; defaults to `Date.now`. */
   now?: () => number;
+  /** How long a checkout's runtime stays open once no session uses it; {@link IDLE_RUNTIME_MS} by default. */
+  idleRuntimeMs?: number;
 };
+
+/**
+ * How long a checkout's runtime stays open after its last session ends. A session that starts there again within it
+ * finds its rules compiled and its checkout walked: the five packs a TypeScript repository adds take 12 s of CPU to
+ * compile on a Windows laptop. After it the runtime closes.
+ */
+export const IDLE_RUNTIME_MS = 15 * 60_000;
 
 interface EngineRoutingState {
   runtimes: Map<string, RerailRuntime>;
@@ -180,6 +189,10 @@ interface EngineRoutingState {
   lastEventAt: Map<string, number>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
+  /** The runtimes no session uses, each with the timer that closes it. */
+  idle: Map<string, NodeJS.Timeout>;
+  /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
+  idleRuntimeMs: number;
 }
 
 /** The lane one session's work in one runtime runs in, one at a time. */
@@ -218,7 +231,7 @@ function resolveRuntimeRoute(
     }
     return { runtimeKey: configuredRuntimeKey ?? candidates!.values().next().value! };
   }
-  const { accessToken: _accessToken, idleSessionMs: _idleSessionMs, now: _now, ...serviceDefaults } = options;
+  const { accessToken: _accessToken, idleSessionMs: _idleSessionMs, now: _now, idleRuntimeMs: _idleRuntimeMs, ...serviceDefaults } = options;
   const runtimeOptions: RerailRuntimeOptions = configuration === undefined
     ? {
         ...serviceDefaults,
@@ -251,6 +264,8 @@ async function routeEngineEvent(
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
   const lane = laneOf(runtimeKey, sessionId);
+  clearTimeout(state.idle.get(runtimeKey));
+  state.idle.delete(runtimeKey);
   const execution = state.lanes.run(lane, () => {
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
@@ -283,7 +298,7 @@ function track(state: EngineRoutingState, work: Promise<unknown>): void {
   void settled.then(() => state.pending.delete(settled));
 }
 
-/** `sessionId` no longer uses the runtime at `runtimeKey`, which closes when no other session does. */
+/** `sessionId` no longer uses the runtime at `runtimeKey`, which closes once no session has used it a while. */
 function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, runtimeKey: string): void {
   const keys = state.runtimeKeysBySession.get(sessionId);
   keys?.delete(runtimeKey);
@@ -292,8 +307,8 @@ function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, run
 }
 
 /**
- * Closes, as its end would, each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`), and then its runtime
- * when no other session uses it. The check runs again in the session's lane, so an event that came in meanwhile keeps the
+ * Closes, as its end would, each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`), and then retires its
+ * runtime as an end does. The check runs again in the session's lane, so an event that came in meanwhile keeps the
  * session open. A close that fails is reported and tried again on the next sweep.
  */
 async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now: () => number): Promise<void> {
@@ -318,14 +333,33 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
   }));
 }
 
+function runtimeInUse(state: EngineRoutingState, runtimeKey: string): boolean {
+  for (const keys of state.runtimeKeysBySession.values()) if (keys.has(runtimeKey)) return true;
+  return false;
+}
+
 /**
- * Disposes the runtime at `runtimeKey` once no session uses it. A runtime holds its checkout's whole source walk (one
- * observation for every file of the working tree, ignored ones included, about 100,000 in a large repository), so a
- * daemon that kept the runtime of every checkout and worktree it ever served grew until its heap ran out. The next
- * event for that checkout makes a new runtime, as the first one did.
+ * Disposes the runtime at `runtimeKey` once no session has used it for `state.idleRuntimeMs`. A runtime holds its
+ * checkout's whole source walk (one observation for every file of the working tree, ignored ones included, about
+ * 100,000 in a large repository) and its compiled rules, so a daemon that kept the runtime of every checkout and
+ * worktree it ever served grew until its heap ran out. The next event for that checkout makes a new runtime, as the
+ * first one did.
  */
 function retireUnusedRuntime(state: EngineRoutingState, runtimeKey: string): void {
-  for (const keys of state.runtimeKeysBySession.values()) if (keys.has(runtimeKey)) return;
+  if (runtimeInUse(state, runtimeKey) || !state.runtimes.has(runtimeKey) || state.idle.has(runtimeKey)) return;
+  if (state.idleRuntimeMs <= 0) {
+    disposeRuntime(state, runtimeKey);
+    return;
+  }
+  const timer = setTimeout(() => {
+    state.idle.delete(runtimeKey);
+    if (!runtimeInUse(state, runtimeKey)) disposeRuntime(state, runtimeKey);
+  }, state.idleRuntimeMs);
+  timer.unref();
+  state.idle.set(runtimeKey, timer);
+}
+
+function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
   const runtime = state.runtimes.get(runtimeKey);
   if (runtime === undefined) return;
   state.runtimes.delete(runtimeKey);
@@ -453,6 +487,8 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     lastEventAt: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
+    idle: new Map(),
+    idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
   };
   const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   const server = createServer(async (incoming, response) => {
@@ -501,6 +537,8 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       const closed = Promise.withResolvers<void>();
       server.close((error) => (error ? closed.reject(error) : closed.resolve()));
       await closed.promise;
+      for (const timer of routing.idle.values()) clearTimeout(timer);
+      routing.idle.clear();
       await Promise.allSettled(routing.pending);
       await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     },

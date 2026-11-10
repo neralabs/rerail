@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterEvent } from "../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../src/runtime/engine-service.js";
 import { testEmbedder } from "../support/hook-events.js";
@@ -17,34 +17,41 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 10 })));
 });
 
+/** An engine service over two started checkouts, `first` and `second`, whose runtimes stay `idleRuntimeMs` unused. */
+async function twoCheckouts(idleRuntimeMs: number) {
+  const root = await mkdtemp(join(tmpdir(), "rerail-runtimes-"));
+  roots.push(root);
+  const databasePath = join(root, "rerail.sqlite");
+  const [first, second] = [join(root, "first"), join(root, "second")];
+  for (const checkout of [first, second]) {
+    await mkdir(checkout);
+    startTestRepository(checkout, databasePath);
+  }
+  const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-runtimes-${process.pid}-${Date.now()}` : join(root, "engine.sock");
+  const service = await startEngineService({
+    socketPath,
+    storageRoot: join(root, "state"),
+    databasePath,
+    embedder: testEmbedder,
+    idleRuntimeMs,
+    createAuditor: () => ({
+      openWorkspace: async () => undefined,
+      acceptsPath: () => true,
+      auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+      close: async () => undefined,
+    }),
+  });
+  services.push(service);
+  const send = (event: AdapterEvent) => ingestEngineEvent({ socketPath }, event);
+  const session = (sessionId: string, cwd: string) => ({ host: "claude-code" as const, sessionId, cwd });
+  const start = (sessionId: string, cwd: string) => send({ kind: "session-start", eventId: `${sessionId}:start`, session: session(sessionId, cwd) });
+  const end = (sessionId: string, cwd: string) => send({ kind: "session-end", eventId: `${sessionId}:end`, sessionId, session: session(sessionId, cwd) });
+  return { service, first, second, start, end, send, session };
+}
+
 describe("the engine service's runtimes", () => {
   it("closes a checkout's runtime when its last session ends, so a daemon serving many worktrees does not keep them all", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-runtimes-"));
-    roots.push(root);
-    const databasePath = join(root, "rerail.sqlite");
-    const [first, second] = [join(root, "first"), join(root, "second")];
-    for (const checkout of [first, second]) {
-      await mkdir(checkout);
-      startTestRepository(checkout, databasePath);
-    }
-    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-runtimes-${process.pid}-${Date.now()}` : join(root, "engine.sock");
-    const service = await startEngineService({
-      socketPath,
-      storageRoot: join(root, "state"),
-      databasePath,
-      embedder: testEmbedder,
-      createAuditor: () => ({
-        openWorkspace: async () => undefined,
-        acceptsPath: () => true,
-        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
-        close: async () => undefined,
-      }),
-    });
-    services.push(service);
-    const send = (event: AdapterEvent) => ingestEngineEvent({ socketPath }, event);
-    const session = (sessionId: string, cwd: string) => ({ host: "claude-code" as const, sessionId, cwd });
-    const start = (sessionId: string, cwd: string) => send({ kind: "session-start", eventId: `${sessionId}:start`, session: session(sessionId, cwd) });
-    const end = (sessionId: string, cwd: string) => send({ kind: "session-end", eventId: `${sessionId}:end`, sessionId, session: session(sessionId, cwd) });
+    const { service, first, second, start, end, send, session } = await twoCheckouts(0);
 
     await start("a", first);
     await start("b", second);
@@ -79,6 +86,8 @@ describe("the engine service's runtimes", () => {
       databasePath,
       embedder: testEmbedder,
       idleSessionMs: 60_000,
+      // The runtime closes when its last session does, so the closed session's runtime goes with it.
+      idleRuntimeMs: 0,
       now: () => now,
       createAuditor: () => ({
         openWorkspace: async () => undefined,
@@ -108,6 +117,32 @@ describe("the engine service's runtimes", () => {
     await prompt("a", first, "back");
     expect(service.openRuntimes()).toBe(2);
     expect(ended("a")).toBeNull();
+  });
+
+  // A runtime holds its checkout's compiled rules, 12 s of CPU to compile for the five packs a TypeScript repository
+  // adds: a session started soon after the last one ended reuses it, and the runtime closes once it was unused a while.
+  it("keeps a checkout's runtime until no session has used it for the idle time, so a session that comes back soon reuses it", async () => {
+    // Only the idle timer is faked: the runtime's own timers are intervals, and the HTTP client's are the socket's.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { service, first, start, end } = await twoCheckouts(60_000);
+
+      await start("a", first);
+      await end("a", first);
+      vi.advanceTimersByTime(59_999);
+      expect(service.openRuntimes()).toBe(1);
+      await start("b", first);
+      vi.advanceTimersByTime(5 * 60_000);
+      expect(service.openRuntimes()).toBe(1);
+      // The idle time counts from the last session's end.
+      await end("b", first);
+      vi.advanceTimersByTime(59_999);
+      expect(service.openRuntimes()).toBe(1);
+      vi.advanceTimersByTime(1);
+      expect(service.openRuntimes()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
