@@ -508,8 +508,10 @@ pub(super) fn check_shape(name: &str, c: &Compiled) {
         };
         assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
     }
-    for (tier, asm) in [("tier 1", &c.parser.tier1.disassembly), ("tier 2", &c.parser.tier2.disassembly)] {
-        assert!(!asm.contains(" bl ") && !asm.contains("blr") && !asm.contains(" br "), "{name}: {tier} calls or jumps out");
+    // Tier 1 calls only its own outlined functions (`native_cpu_block::general`); tier 2 nothing.
+    for (tier, asm, own) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls()), ("tier 2", &c.parser.tier2.disassembly, 0)] {
+        assert!(!asm.contains(" bl ") && !asm.contains(" br "), "{name}: {tier} jumps out");
+        assert_eq!(asm.matches("blr").count(), own, "{name}: {tier} calls out");
     }
 }
 

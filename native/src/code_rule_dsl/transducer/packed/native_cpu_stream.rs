@@ -1590,7 +1590,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         f.ins().return_(&[pc]);
         f.seal_all_blocks();
         f.finalize();
-        shape = super::native_cpu_shape::check(&context.func, &heads);
+        shape = super::native_cpu_shape::check(&context.func, &heads, &[]);
     }
     shape.map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
     let clif = context.func.display().to_string();

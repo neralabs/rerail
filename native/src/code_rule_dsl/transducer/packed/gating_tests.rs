@@ -7,13 +7,13 @@ use super::native_cpu_block::{self, State};
 use super::native_ir::{self, BlockNative, Pass};
 
 /// A small grammar: its block program, its native form, and its named values.
-struct Small {
-    block: BlockProgram,
-    native: BlockNative,
+pub(super) struct Small {
+    pub(super) block: BlockProgram,
+    pub(super) native: BlockNative,
     values: Vec<bitlex_compile::Named>,
 }
 
-fn small(text: &str) -> Small {
+pub(super) fn small(text: &str) -> Small {
     let stmts = ::bitlex::syntax::parse(text).expect("parses");
     let compiled = bitlex_compile::compile(&stmts, &[FALLBACK], None).expect("compiles");
     let program = super::rir::assemble(&compiled.text()).expect("assembles");
@@ -44,7 +44,7 @@ fn regions(native: &BlockNative) -> Vec<(usize, Vec<usize>)> {
 }
 
 /// simdjson's escape scanner, in small: a `\u`'s hex digits checked only where a `\u` is.
-const ESCAPES: &str = "lexer t
+pub(super) const ESCAPES: &str = "lexer t
 class bs  = '\\\\'
 class u   = 'u'
 class hex = '0'..'9' 'a'..'f'
@@ -67,7 +67,7 @@ fn a_rare_escape_gates_its_check_on_the_vectors() {
 }
 
 /// `ESCAPES` with eight more checks of `ue`, each read after any region on it.
-fn many() -> String {
+pub(super) fn many() -> String {
     let mut text = String::from(ESCAPES);
     text.push_str("class z = 'z'\n");
     for k in 1..=8 {
@@ -129,7 +129,7 @@ fn rr_gates_its_unicode_escape_check() {
 
 /// The gate after a `back_fill`, as `.rr`'s `uesc` is (a string's fill comes after one): the
 /// hex check, made from the bytes alone, must not be made in the first pass and stored.
-const LATE: &str = "lexer t
+pub(super) const LATE: &str = "lexer t
 class bs  = '\\\\'
 class u   = 'u'
 class hex = '0'..'9' 'a'..'f'

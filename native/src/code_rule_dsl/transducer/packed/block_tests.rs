@@ -295,7 +295,9 @@ fn check_lowering(name: &str, p: &Program) {
         }
     }
     println!("== {name}: machine code ==\n{}", compiled.disassembly);
-    assert!(!compiled.disassembly.contains(" bl ") && !compiled.disassembly.contains("blr"), "{name}: no calls");
+    // The only calls: of the functions made from the same program (the general body).
+    assert!(!compiled.disassembly.contains(" bl "), "{name}: no near calls");
+    assert_eq!(compiled.disassembly.matches("blr").count(), compiled.own_calls(), "{name}: a call of no function of the program's");
 
     let instructions = compiled.disassembly.lines().filter(|l| l.starts_with("  ") && !l.contains("unwind")).count();
     println!("== {name}: {instructions} machine instructions in the function ==");
