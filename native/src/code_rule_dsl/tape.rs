@@ -24,8 +24,9 @@ use std::sync::{Arc, Weak};
 use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// v9np (decision 0025): structure-only, regular columns, no parent column; 10: supertype
-/// memberships folded into the codes.
-pub(super) const TAPE_FORMAT_VERSION: u32 = 12;
+/// memberships folded into the codes; 13: a named-only gap deeper than `tokens::RECOGNIZE_DEPTH`
+/// is kept, and hidden text is matched by `tokens::HiddenText` (RER-131).
+pub(super) const TAPE_FORMAT_VERSION: u32 = 13;
 const TAPE_MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// The image header: magic, language, the three column widths, version, source length and
 /// digest, and five table lengths: nodes, codes, the code table's bytes, aliases, the alias
@@ -2355,10 +2356,29 @@ impl TapeDoc {
         Self::restore_tree_as(source, grammar, image, lines, Shape::Named, budget)
     }
 
+    /// Tests: `source` parsed and restored named-only in memory (`restore_named`); `None` where its
+    /// image keeps every token (a grammar without automata) or it does not encode.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn named_only_for_test(lang: GrammarDialect, source: &str) -> Option<Self> {
+        let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
+        let grammar = Grammar::new(lang).ok()?;
+        let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).ok()?;
+        if !image.primary.is_named_only() {
+            return None;
+        }
+        Self::restore_named(Arc::new(source.to_owned()), grammar, &image.primary, &|| false).ok()
+    }
+
     /// Whether the records leave tokens out (RER-131 option B): readers of preorder records see
     /// named nodes and kept tokens only, and read the others through [`Self::transducer_tokens`].
     pub(crate) fn is_named_only_in_memory(&self) -> bool {
         self.tokens.is_some()
+    }
+
+    /// A named-only document's token tables for the device (`token_parts`): where it recognizes
+    /// its tokens, Metal does too, from these.
+    pub(in crate::code_rule_dsl) fn device_tokens(&self) -> Option<Arc<tokens::DeviceTokens>> {
+        self.tokens.as_ref().map(|grammar| grammar.device())
     }
 
     /// `node`'s children in source order, recognized tokens included: [`tokens::Item::Child`]

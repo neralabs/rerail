@@ -134,7 +134,8 @@ enum Tally {
 }
 
 /// Where a clause's passes run. On Metal every pass is a kernel in one command buffer
-/// (`roots_metal`); pattern leaves are matched on the host first, as `demand`'s pattern producers.
+/// (`roots_metal`), patterns included (over a named-only document, on the tokens `token_parts`
+/// recognizes); no pass is evaluated on the host (`metal_host_guard_tests`).
 #[derive(Clone, Copy, Debug)]
 pub(in crate::code_rule_dsl) enum Backend {
     Cpu,
@@ -1275,7 +1276,8 @@ fn metal<'a>(
         }))
     };
     let index = |label: u16| u32::from(label - LABEL_BASE);
-    // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`).
+    // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`). The
+    // one host evaluation left on the Metal path (`metal_host_guard_tests::REMAINING`), to port.
     let facts = fact_rows(clauses.iter().flat_map(|clause| clause.labels.facts()), tapes);
     let mut slots = 0_u32;
     let mut patterns = Vec::new();
@@ -1292,41 +1294,6 @@ fn metal<'a>(
                     let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
                     for (node, targets) in facts.get(&key).into_iter().flat_map(|found| found.rows()) {
                         rows.push((base + node, targets.iter().zip(labels).map(|(target, label)| (base + target, index(*label))).collect()));
-                    }
-                }
-                Pass::Fact { target, rows }
-            }
-            // On named-only documents the device's pattern kernel would compare stored children, which
-            // hold no recognized token: the host matches the pattern (`execute_ast_pattern` recognizes
-            // them) and the device tests its rows as a fact's. A label domain is the root's own row
-            // target; a constraint, its capture's (as the CPU pass: an unbound or multi-node capture
-            // is not checked).
-            Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) if tapes.iter().any(TapeDoc::is_named_only_in_memory) => {
-                let constraints: &[(String, u16)] = match clause.labels.def(id) {
-                    Label::Constrained(_, _, constraints) => constraints,
-                    _ => &[],
-                };
-                let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
-                let (bounded, within) = match starts {
-                    Domain::Label(label) => (clause.labels.bound(starts, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())), Some(index(*label))),
-                    other => (other.clone(), None),
-                };
-                let mut rows = Vec::new();
-                for (file, (tape, base)) in tapes.iter().zip(&bases).enumerate() {
-                    if !active.is_none_or(|active| active[at][file]) {
-                        continue;
-                    }
-                    for node in domain(&bounded, tape, &[]) {
-                        let Some(captures) = pattern.execute_ast_pattern(tape, node)? else {
-                            continue;
-                        };
-                        let mut targets: Vec<(u32, u32)> = within.map(|label| (base + node, label)).into_iter().collect();
-                        for (name, label) in constraints {
-                            if let Some(capture) = captures.iter().find(|capture| capture.label == *name).filter(|capture| !capture.multi) {
-                                targets.push((base + capture.node, index(*label)));
-                            }
-                        }
-                        rows.push((base + node, targets));
                     }
                 }
                 Pass::Fact { target, rows }

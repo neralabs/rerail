@@ -17,6 +17,10 @@
 //! reclassification.
 
 use super::Pending;
+pub(in crate::code_rule_dsl) use device::{DeviceTokens, HiddenText, NO_SYM};
+
+#[path = "tokens_device.rs"]
+mod device;
 use crate::code_rule_dsl::language::GrammarDialect;
 use std::sync::{Arc, LazyLock, Mutex};
 use rustc_hash::FxHashMap;
@@ -59,9 +63,11 @@ pub(in crate::code_rule_dsl) struct TokenGrammar {
     /// Per field symbol: its tree-sitter field id.
     field_id: FxHashMap<Sym, u16>,
     /// Hidden text recognition can read (see `Builder::hidden_edge`).
-    hidden_text: FxHashMap<Sym, regex::bytes::Regex>,
+    hidden_text: FxHashMap<Sym, HiddenText>,
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
     language: Language,
+    /// The tables Metal recognizes tokens from (`device`), built on first use.
+    device: std::sync::OnceLock<Arc<DeviceTokens>>,
 }
 
 /// What [`fold`] kept and left out.
@@ -125,7 +131,7 @@ struct Builder<'g> {
     texts: Vec<String>,
     recursive: bool,
     /// Hidden text (a pattern or hidden token that makes no node), by its label's symbol.
-    hidden_text: FxHashMap<Sym, regex::bytes::Regex>,
+    hidden_text: FxHashMap<Sym, HiddenText>,
 }
 
 /// A token rule as a regex (Rust dialect), anchored at the start; `None` where it has a part this
@@ -215,11 +221,11 @@ impl<'g> Builder<'g> {
         let known = self.names.contains_key(&key);
         let name = self.sym(&key);
         if !known {
-            match regex::bytes::Regex::new(&format!("^(?:{pattern})")) {
-                Ok(regex) => {
-                    self.hidden_text.insert(name, regex);
+            match HiddenText::new(&pattern) {
+                Some(text) => {
+                    self.hidden_text.insert(name, text);
                 }
-                Err(_) => return,
+                None => return,
             }
         } else if !self.hidden_text.contains_key(&name) {
             return;
@@ -481,7 +487,7 @@ impl TokenGrammar {
         let field_id = (1..=language.field_count() as u16)
             .filter_map(|id| language.field_name_for_id(id).and_then(|name| names.get(name).map(|&sym| (sym, id))))
             .collect();
-        Ok(Self { names, texts, kinds, kind_sym, field_sym, token_id, field_id, hidden_text, unsupported, language: language.clone() })
+        Ok(Self { names, texts, kinds, kind_sym, field_sym, token_id, field_id, hidden_text, unsupported, language: language.clone(), device: std::sync::OnceLock::new() })
     }
 
     pub(in crate::code_rule_dsl) fn kind_count(&self) -> usize {
@@ -719,7 +725,11 @@ fn skip_white(source: &[u8], mut at: usize, end: usize) -> usize {
 
 /// Search steps per gap: recognition gives up (and `fold` keeps the gap) past this, the same way
 /// on both sides.
-const RECOGNIZE_STEPS: u32 = 4096;
+pub(in crate::code_rule_dsl) const RECOGNIZE_STEPS: u32 = 4096;
+/// The search's depth (a token or hidden text a level): a branch that would go deeper fails, on
+/// the host as on the device, whose search keeps this many frames (`token_parts`). A gap of more
+/// tokens than this is one recognition cannot read, so `fold` keeps it.
+pub(in crate::code_rule_dsl) const RECOGNIZE_DEPTH: u32 = 64;
 
 /// Whether `source[at..]` spells `text`: exactly, or (keywords of case-insensitive grammars, such
 /// as PHP's and SQL's) ignoring ASCII case.
@@ -751,8 +761,9 @@ fn recognize(
         next: Option<Label>,
         out: &mut Vec<(Label, u32, u32)>,
         steps: &mut u32,
+        depth: u32,
     ) -> Option<u32> {
-        if *steps == 0 {
+        if *steps == 0 || depth == RECOGNIZE_DEPTH {
             return None;
         }
         *steps -= 1;
@@ -765,11 +776,11 @@ fn recognize(
             return fits.then_some(state);
         }
         for &(label, to) in &automaton.tokens[state as usize] {
-            if let Some(regex) = grammar.hidden_text.get(&label.name) {
+            if let Some(hidden) = grammar.hidden_text.get(&label.name) {
                 // Hidden text: read, but no token of its own.
-                if let Some(found) = regex.find(&source[at..limit])
-                    && !found.is_empty()
-                    && let Some(end) = walk(grammar, automaton, source, to, at + found.end(), limit, next, out, steps)
+                if let Some(found) = hidden.find(&source[at..limit])
+                    && found > 0
+                    && let Some(end) = walk(grammar, automaton, source, to, at + found, limit, next, out, steps, depth + 1)
                 {
                     return Some(end);
                 }
@@ -780,7 +791,7 @@ fn recognize(
                 continue;
             }
             out.push((label, at as u32, text.len() as u32));
-            if let Some(end) = walk(grammar, automaton, source, to, at + text.len(), limit, next, out, steps) {
+            if let Some(end) = walk(grammar, automaton, source, to, at + text.len(), limit, next, out, steps, depth + 1) {
                 return Some(end);
             }
             out.pop();
@@ -789,7 +800,7 @@ fn recognize(
     }
     let mut out = Vec::new();
     let mut steps = RECOGNIZE_STEPS;
-    walk(grammar, automaton, source, state, at, limit, next, &mut out, &mut steps).map(|end| (out, end))
+    walk(grammar, automaton, source, state, at, limit, next, &mut out, &mut steps, 0).map(|end| (out, end))
 }
 
 fn children_of(nodes: &[Pending]) -> Vec<Vec<u32>> {

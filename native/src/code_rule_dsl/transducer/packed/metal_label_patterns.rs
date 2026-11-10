@@ -16,22 +16,39 @@ using namespace metal;
 // A binding: mode 1 one node `a`, mode 2 the `n` children of node `a` from its child `from`.
 struct Var { uint mode,a,from,n,multi; };
 // The item's document (decision 0032): nodes are the batch's numbering, read at `node - d.nodeBase`.
-struct Ctx { Slabs s; DocView d; constant uchar* text; device atomic_uint* flags; };
+// tokIndex, toks: a named-only document's recognized tokens (`token_parts`), per record (first,
+// count) and each `slot << 10 | kind`.
+struct Ctx { Slabs s; DocView d; constant uchar* text; device atomic_uint* flags; device const uint2* tokIndex; device const uint* toks; };
+// A recognized token as a candidate: TOKEN_BIT | its kind (`tape::RECOGNIZED_TOKEN`). It has a
+// kind, and is neither named nor extra; no binding holds it.
+constant uint TOKEN_BIT=0x80000000u;
+inline bool c_tok(uint node){return (node&TOKEN_BIT)!=0u;}
 // A pattern pass (its roots: segments at `root` in `segs`, decision 0033) or a fact's root (`root`,
 // one thread); its threads from `threadStart`.
 struct Item { uint pattern,target,root,constraintStart,constraintCount,threadStart; };
 struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps; };
 inline uint c_local(Ctx c,uint node){return node-c.d.nodeBase;}
 inline uint c_global(Ctx c,uint local){return local==TAPE_NONE?TAPE_NONE:local+c.d.nodeBase;}
-inline uint c_kind(Ctx c,uint node){return tape_kind(c.s,c.d,c_local(c,node));}
-inline uint c_flags(Ctx c,uint node){return tape_flags(c.s,c.d,c_local(c,node));}
+inline uint c_kind(Ctx c,uint node){return c_tok(node)?(node&1023u):tape_kind(c.s,c.d,c_local(c,node));}
+inline uint c_flags(Ctx c,uint node){return c_tok(node)?0u:tape_flags(c.s,c.d,c_local(c,node));}
 inline uint c_count(Ctx c,uint node){return tape_child_count(c.s,c.d,c_local(c,node));}
 inline uint c_first(Ctx c,uint node){return c_global(c,tape_first_child(c.s,c.d,c_local(c,node)));}
 inline uint c_next(Ctx c,uint node){return c_global(c,tape_next(c.s,c.d,c_local(c,node)));}
-inline uint c_child(Ctx c,uint node,uint k){return c_global(c,tape_child(c.s,c.d,c_local(c,node),k));}
-// A parent's children read in order: the last one read is kept, so a scan hops once a child.
-struct Kids { uint parent,at,node; };
-static uint kid(Ctx c,thread Kids& k,uint i){if(k.at==0xffffffffu||i<k.at){k.at=0u;k.node=c_first(c,k.parent);}while(k.at<i&&k.node!=TAPE_NONE){k.node=c_next(c,k.node);k.at++;}return k.node;}
+// A record's recognized tokens (first, count in `toks`): none outside a named-only document.
+inline uint2 c_tokens(Ctx c,uint node){return (c.d.widths&8192u)!=0u?c.tokIndex[node]:uint2(0u,0u);}
+// A record's parts, as a pattern compares them (`TapeDoc::pattern_children`): its records and its
+// recognized tokens, each token at its slot.
+inline uint c_parts(Ctx c,uint node){return c_count(c,node)+c_tokens(c,node).y;}
+// A parent's parts read in order: the last one read is kept, so a scan hops once a part.
+struct Kids { uint parent,at,node,child,tok,first,count; };
+inline Kids kids_of(uint parent){Kids k;k.parent=parent;k.at=0xffffffffu;k.node=TAPE_NONE;k.child=TAPE_NONE;k.tok=0u;k.first=0u;k.count=0u;return k;}
+static void kids_pick(Ctx c,thread Kids& k){uint t=k.tok<k.count?c.toks[k.first+k.tok]:0u;k.node=(k.tok<k.count&&(t>>10)==k.at)?(TOKEN_BIT|(t&1023u)):k.child;}
+static uint kid(Ctx c,thread Kids& k,uint i){
+  if(k.at==0xffffffffu||i<k.at){uint2 t=c_tokens(c,k.parent);k.at=0u;k.child=c_first(c,k.parent);k.tok=0u;k.first=t.x;k.count=t.y;kids_pick(c,k);}
+  while(k.at<i&&k.node!=TAPE_NONE){if(c_tok(k.node))k.tok++;else k.child=c_next(c,k.child);k.at++;kids_pick(c,k);}
+  return k.node;
+}
+static uint part_at(Ctx c,uint parent,uint i){Kids k=kids_of(parent);return kid(c,k,i);}
 static bool kinds_match(uint goal,uint kind){return goal==kind||goal==65535u;}
 static bool named_leaf(Ctx c,uint node){return (c_flags(c,node)&1u)!=0u&&tape_size(c.s,c.d,c_local(c,node))==1u;}
 static bool same_text(Ctx c,uint left,uint right){uint l=c_local(c,left),r=c_local(c,right);uint ls=tape_start(c.s,c.d,l),rs=tape_start(c.s,c.d,r);uint n=tape_end(c.s,c.d,l)-ls;if(n!=tape_end(c.s,c.d,r)-rs)return false;device const uchar* source=tape_source(c.s,c.d);for(uint i=0u;i<n;i++)if(source[ls+i]!=source[rs+i])return false;return true;}
@@ -40,8 +57,11 @@ static bool text_is(Ctx c,uint node,uint start,uint length){uint l=c_local(c,nod
 // pair by pair the same kind and child count, the same text at a named leaf, a node shared by
 // both skipped whole. No stack: thread memory is the driver's scratch for every thread in flight.
 static bool exact(Ctx c,uint left,uint right){uint a=c_local(c,left),b=c_local(c,right);uint aEnd=a+tape_size(c.s,c.d,a),bEnd=b+tape_size(c.s,c.d,b);while(a<aEnd&&b<bEnd){if(a==b){uint n=tape_size(c.s,c.d,a);a+=n;b+=n;continue;}uint x=c_global(c,a),y=c_global(c,b);if(named_leaf(c,x)||named_leaf(c,y)){if(!same_text(c,x,y))return false;a+=tape_size(c.s,c.d,a);b+=tape_size(c.s,c.d,b);continue;}if(c_kind(c,x)!=c_kind(c,y)||c_count(c,x)!=c_count(c,y))return false;a++;b++;}return a==aEnd&&b==bEnd;}
-static uint var_at(Ctx c,Var v,uint i){return v.mode==1u?v.a:c_child(c,v.a,v.from+i);}
-static bool bind_single(Ctx c,thread Var& v,uint node){if(v.mode!=0u)return v.n==1u&&exact(c,var_at(c,v,0u),node);v.mode=1u;v.a=node;v.from=0u;v.n=1u;v.multi=0u;return true;}
+static uint var_at(Ctx c,Var v,uint i){return v.mode==1u?v.a:part_at(c,v.a,v.from+i);}
+// A bound variable's one node, where it holds exactly one (recognized tokens are not held: the
+// host's `bind_multi` drops them).
+static bool var_single(Ctx c,Var v,thread uint& only){uint held=0u;for(uint i=0u;i<v.n;i++){uint node=var_at(c,v,i);if(!c_tok(node)){only=node;held++;}}return held==1u;}
+static bool bind_single(Ctx c,thread Var& v,uint node){if(v.mode!=0u){uint only=TAPE_NONE;return var_single(c,v,only)&&exact(c,only,node);}v.mode=1u;v.a=node;v.from=0u;v.n=1u;v.multi=0u;return true;}
 static bool bind_multi(Ctx c,thread Var& v,uint mode,uint a,uint from,uint n){
   if(v.mode==0u){v.mode=mode;v.a=a;v.from=from;v.n=n;v.multi=1u;return true;}
   Var w;w.mode=mode;w.a=a;w.from=from;w.n=n;w.multi=1u;uint i=0u,j=0u;
@@ -84,7 +104,7 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize) -> (String, Vec<
     out.push_str(&bodies);
     let _ = write!(
         out,
-        "kernel void {KERNEL}(device const DocView* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],device const uint4* segs [[buffer(6)]],constant Shape& shape [[buffer(7)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){{\n  if(tid>=shape.itemCount||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;\n  uint low=0u,high=shape.taskCount;while(high-low>1u){{uint middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}\n  Item item=items[low];Ctx c;c.s=Slabs{{s0,s1,s2,s3}};c.text=TEXT;c.flags=flags;\n  if(item.pattern=={FACT}u)c.d=doc_of(docs,shape.fileCount,item.root);\n  else{{uint i=tid-item.threadStart;uint4 seg=segs[root_segment(segs,item.root,i)];c.d=docs[seg.x];item.root=c.d.nodeBase+root_local(c.s,c.d,segs,seg,i-seg.w);}}\n  switch(item.pattern){{\n"
+        "kernel void {KERNEL}(device const DocView* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],device const uint4* segs [[buffer(6)]],device const uint2* tokIndex [[buffer(7)]],device const uint* toks [[buffer(8)]],constant Shape& shape [[buffer(9)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){{\n  if(tid>=shape.itemCount||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;\n  uint low=0u,high=shape.taskCount;while(high-low>1u){{uint middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}\n  Item item=items[low];Ctx c;c.s=Slabs{{s0,s1,s2,s3}};c.text=TEXT;c.flags=flags;c.tokIndex=tokIndex;c.toks=toks;\n  if(item.pattern=={FACT}u)c.d=doc_of(docs,shape.fileCount,item.root);\n  else{{uint i=tid-item.threadStart;uint4 seg=segs[root_segment(segs,item.root,i)];c.d=docs[seg.x];item.root=c.d.nodeBase+root_local(c.s,c.d,segs,seg,i-seg.w);}}\n  switch(item.pattern){{\n"
     );
     for (index, vars) in names.iter().enumerate() {
         let index = first + index;
@@ -138,8 +158,9 @@ fn emit(
             text.extend_from_slice(literal.as_bytes());
             let _ = writeln!(
                 out,
-                "{}if(kinds_match({kind}u,kind)&&({}||text_is(c,node,{start}u,{}u)))return 0;if((flags&2u)!=0u||(flags&1u)==0u)return 3;return 4;}}",
+                "{}if(c_tok(node))return {};if(kinds_match({kind}u,kind)&&({}||text_is(c,node,{start}u,{}u)))return 0;if((flags&2u)!=0u||(flags&1u)==0u)return 3;return 4;}}",
                 head(id),
+                if *named { "3".to_owned() } else { format!("kinds_match({kind}u,kind)?0:3") },
                 !named,
                 literal.len()
             );
@@ -154,8 +175,9 @@ fn emit(
             };
             let _ = writeln!(
                 out,
-                "{}if(!root&&(flags&2u)!=0u)return 3;if({named}&&(flags&1u)==0u)return 4;{bind}}}",
-                head(id)
+                "{}if(c_tok(node))return {};if(!root&&(flags&2u)!=0u)return 3;if({named}&&(flags&1u)==0u)return 4;{bind}}}",
+                head(id),
+                if *named { 4 } else { 0 }
             );
             id
         }
@@ -166,7 +188,7 @@ fn emit(
                 None => "return 0;".to_owned(),
                 Some(_) => format!("return bind_multi(c,b.v[{}],1u,node,0u,1u)?0:4;", var(vars, name)),
             };
-            let _ = writeln!(out, "{}(void)kind;(void)flags;if(!root)return 1;{bind}}}", head(id));
+            let _ = writeln!(out, "{}(void)kind;(void)flags;if(!root||c_tok(node))return 1;{bind}}}", head(id));
             id
         }
         PackedPattern::Internal { kind, children } => {
@@ -181,7 +203,7 @@ fn emit(
                 // No goals: `children` holds wherever there are candidates.
                 let _ = writeln!(
                     out,
-                    "{}(void)flags;if(!kinds_match({kind}u,kind))return 4;return c_first(c,node)!=TAPE_NONE?0:4;}}",
+                    "{}(void)flags;if(c_tok(node)||!kinds_match({kind}u,kind))return 4;return c_parts(c,node)!=0u?0:4;}}",
                     head(id)
                 );
                 return id;
@@ -217,7 +239,7 @@ fn emit(
             let _ = writeln!(
                 out,
                 r#"static bool c{index}_{id}(Ctx c,uint base,uint count,thread B{index}& b){{
-  if(count==0u)return false;const uint G={count}u;uint goal=0u,candidate=0u;Kids kids={{base,0xffffffffu,TAPE_NONE}};
+  if(count==0u)return false;const uint G={count}u;uint goal=0u,candidate=0u;Kids kids=kids_of(base);
   while(goal<G){{
     if({e}[goal]!=0xfffffffeu){{
       uint name={e}[goal];goal++;
@@ -244,7 +266,7 @@ fn emit(
             );
             let _ = writeln!(
                 out,
-                "{}(void)flags;if(!kinds_match({kind}u,kind))return 4;return c{index}_{id}(c,node,c_count(c,node),b)?0:4;}}",
+                "{}(void)flags;if(c_tok(node)||!kinds_match({kind}u,kind))return 4;return c{index}_{id}(c,node,c_parts(c,node),b)?0:4;}}",
                 head(id)
             );
             id

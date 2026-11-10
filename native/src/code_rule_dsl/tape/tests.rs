@@ -10,7 +10,7 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     let (_, tape, image, grammar) = fixture(source, GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
     assert_eq!(&bytes[..8], b"TMPTAP9N");
-    assert_eq!(TAPE_FORMAT_VERSION, 12);
+    assert_eq!(TAPE_FORMAT_VERSION, 13);
 
     let memberships = tape.transducer_supertypes().collect::<Vec<_>>();
     assert!(!memberships.is_empty());
@@ -235,11 +235,12 @@ fn persisted_image_round_trips_without_parsing() {
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`,
     // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape format (7: one
     // document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes; 11: columns at 16 bytes,
-    // decision 0032; 12: named-only, no source digest, RER-131) changes
+    // decision 0032; 12: named-only, no source digest, RER-131; 13: the version alone, recognition bounded
+    // alike on host and device) changes
     // the bytes.
     assert_eq!(
         digest,
-        "d1a0eb2ead797113aa9e1cb653789de5581e4a0fa0d4e1e9ad696093638421e0"
+        "537a50a67cae7420141c7ad8ac6153335d8d563b592e209bbc63a9d3595a20de"
     );
 }
 

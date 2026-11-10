@@ -31,6 +31,9 @@ pub(in crate::code_rule_dsl) struct Layout {
     pub(in crate::code_rule_dsl) widths: [u8; 3],
     /// Tails are measured from the node's own start (`TAIL_FROM_START`).
     pub(in crate::code_rule_dsl) from_start: bool,
+    /// The image holds named nodes and kept tokens only (`NAMED_ONLY`, RER-131): the device
+    /// recognizes the rest (`token_parts`).
+    pub(in crate::code_rule_dsl) named_only: bool,
     pub(in crate::code_rule_dsl) code: usize,
     pub(in crate::code_rule_dsl) size: usize,
     pub(in crate::code_rule_dsl) base: usize,
@@ -44,7 +47,9 @@ pub(in crate::code_rule_dsl) struct Layout {
 }
 
 /// A code as the device reads it: 24 bytes, fixed. `flags` are `TapeDoc::transducer_flags`' bits
-/// (named, extra, missing, error); `kind` is `transducer_kind`'s (ERROR is `ERROR_SYMBOL`).
+/// (named, extra, missing, error) and, in a named-only image, `DEVICE_TOKENS_KEPT`; `kind` is
+/// `transducer_kind`'s (ERROR is `ERROR_SYMBOL`). `reserved` is, in a named-only image, the
+/// record's name in the grammar's token tables (`TokenGrammar::device_sym`), else `NO_SYM`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(in crate::code_rule_dsl) struct DeviceCode {
@@ -56,6 +61,8 @@ pub(in crate::code_rule_dsl) struct DeviceCode {
     pub(in crate::code_rule_dsl) classes: [u16; MAX_NODE_SUPERTYPES],
 }
 const _: () = assert!(std::mem::size_of::<DeviceCode>() == 24);
+/// A named-only record that keeps all of its tokens (`CODE_TOKENS`): none is recognized.
+pub(in crate::code_rule_dsl) const DEVICE_TOKENS_KEPT: u8 = 16;
 
 fn u64_at(bytes: &[u8], at: usize) -> Result<usize, String> {
     let value = u64::from_le_bytes(bytes.get(at..at + 8).ok_or("truncated tape image")?.try_into().expect("eight bytes"));
@@ -70,6 +77,7 @@ pub(in crate::code_rule_dsl) fn layout(bytes: &[u8]) -> Result<Layout, String> {
     }
     // A named-only image (RER-131) has the same columns over its named nodes and kept tokens: the records a
     // named-only document holds in memory, so the device reads it in place.
+    let named_only = bytes[header::WIDTHS] & NAMED_ONLY != 0;
     let widths = [bytes[header::WIDTHS] & !NAMED_ONLY, bytes[header::WIDTHS + 1], bytes[header::WIDTHS + 2]];
     if !matches!(widths[0], 2 | 4) || !matches!(widths[1], 2 | 4) || !matches!(widths[2] & !TAIL_FROM_START, 2 | 4) {
         return Err("noncanonical tape image header".into());
@@ -105,6 +113,7 @@ pub(in crate::code_rule_dsl) fn layout(bytes: &[u8]) -> Result<Layout, String> {
         nodes: nodes as u32,
         widths: [widths[0], widths[1], tail_width],
         from_start: widths[2] & TAIL_FROM_START != 0,
+        named_only,
         code: starts[0],
         size: starts[1],
         base: starts[2],
@@ -122,14 +131,23 @@ pub(in crate::code_rule_dsl) fn layout(bytes: &[u8]) -> Result<Layout, String> {
 /// flag, else the grammar's).
 pub(in crate::code_rule_dsl) fn device_codes(bytes: &[u8], layout: &Layout, grammar: &Grammar) -> Result<Vec<DeviceCode>, String> {
     let truncated = || "truncated tape image".to_owned();
-    // The aliases' named flags, in order.
+    // The aliases' named flags and names, in order.
     let mut named = Vec::with_capacity(layout.alias_count);
+    let mut names = Vec::with_capacity(layout.alias_count);
     let mut at = layout.aliases;
     for _ in 0..layout.alias_count {
         named.push(*bytes.get(at).ok_or_else(truncated)? == 1);
         let length = u32::from_le_bytes(bytes.get(at + 1..at + 5).ok_or_else(truncated)?.try_into().expect("four bytes"));
+        names.push(std::str::from_utf8(bytes.get(at + 5..at + 5 + length as usize).ok_or_else(truncated)?).map_err(|_| "noncanonical tape alias")?);
         at += 5 + length as usize;
     }
+    // A named-only image's token tables name each record (`reserved`).
+    let tokens = if layout.named_only {
+        let language = grammar.kinds.grammar().ok_or("a named-only tape of a grammar tree-sitter does not parse")?;
+        Some(tokens::TokenGrammar::of(grammar.lang, language).ok_or("a named-only tape without its grammar's automata")?)
+    } else {
+        None
+    };
     let mut codes = Vec::with_capacity(layout.code_count);
     let mut at = layout.codes;
     for _ in 0..layout.code_count {
@@ -154,12 +172,17 @@ pub(in crate::code_rule_dsl) fn device_codes(bytes: &[u8], layout: &Layout, gram
         } else {
             *named.get(usize::from(alias)).ok_or("noncanonical tape code")?
         };
+        let alias_name = (alias != SENTINEL).then(|| names[usize::from(alias)]);
         codes.push(DeviceCode {
             kind,
             field: kf >> 10,
-            flags: u8::from(is_named) | (u8::from(flags & CODE_EXTRA != 0) << 1) | (u8::from(flags & CODE_MISSING != 0) << 2) | (u8::from(error) << 3),
+            flags: u8::from(is_named)
+                | (u8::from(flags & CODE_EXTRA != 0) << 1)
+                | (u8::from(flags & CODE_MISSING != 0) << 2)
+                | (u8::from(error) << 3)
+                | if layout.named_only && flags & CODE_TOKENS != 0 { DEVICE_TOKENS_KEPT } else { 0 },
             class_count,
-            reserved: 0,
+            reserved: tokens.as_ref().map_or(tokens::NO_SYM, |tokens| tokens.device_sym(kf & 1023, alias_name, error)),
             classes,
         });
     }
