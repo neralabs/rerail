@@ -325,7 +325,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
 }
 
 /// `core.rr`'s base relations over a Python file (decision 0046): comments are nodes and children, `text` is every
-/// node's, `op` every stored token's (a token the grammar implies is in no tape, RER-131), literals decode, and
+/// node's, `op` every token's (one the grammar implies is in no tape, RER-131: from the gaps), literals decode, and
 /// the source-text, token and place relations agree.
 #[test]
 fn core_rr_relations_hold_what_core_rr_says() {
@@ -339,9 +339,9 @@ fn core_rr_relations_hold_what_core_rr_says() {
     has("next_sibling", "comment'# top' import_statement'import os.path as p'");
     has("op", "comparison_operator'a not in b' not in");
     has("op_at", "comparison_operator'a not in b' 0 not in");
-    // `def`, the parentheses and the separators are implied.
-    lacks("op", "function_definition def");
-    lacks("op", "argument_list'(*a, f\"v{a}w\", 0xff)' ,");
+    // `def`, the parentheses and the separators are implied: no tape holds them, `op` has them from the gaps.
+    has("op", "function_definition def");
+    has("op", "argument_list'(*a, f\"v{a}w\", 0xff)' ,");
     has("str", "string'\"\"\"d\\x41\"\"\"' dA");
     has("value", "string'\"\"\"d\\x41\"\"\"' dA");
     has("strprefix", "string'f\"v{a}w\"' f");

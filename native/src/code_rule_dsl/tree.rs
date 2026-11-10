@@ -13,9 +13,8 @@
 //! - **Named children:** [`Tree::named`] (all), [`Tree::named_code`] (not comments),
 //!   [`Tree::first_named`], [`Tree::last_named`], [`Tree::first_code`].
 //! - **Tokens:** [`Tree::tokens`], [`Tree::has_token`], [`Tree::has_any_token`],
-//!   [`Tree::count_tokens`], [`Tree::first_token`], [`Tree::operator`], [`Tree::operator_token`].
-//! - **Tokens beside a node:** [`Tree::token_before`], [`Tree::token_after`],
-//!   [`Tree::count_tokens_before`].
+//!   [`Tree::first_token`], [`Tree::operator`], [`Tree::operator_token`].
+//! - **Tokens beside a node:** [`Tree::token_before`], [`Tree::token_after`].
 //! - **Layout:** [`Tree::parts`], named nodes and tokens in source order ([`Part`]).
 //!
 //! A [`Token`] is a value: its kind, text and span. Code that edits a token edits its span.
@@ -74,10 +73,6 @@ impl<'r, D: Doc> Token<'r, D> {
             Held::Stored(node) => node.range(),
             Held::Implied { range, .. } => range.clone(),
         }
-    }
-    /// Whether the token is punctuation ([`is_punctuation`]).
-    pub(crate) fn is_punctuation(&self) -> bool {
-        is_punctuation(&self.kind())
     }
 }
 
@@ -157,12 +152,6 @@ pub(crate) trait Tree<'r, D: Doc> {
     /// The children in source order, named nodes and tokens interleaved: for a reader of a node's
     /// layout (a string's delimiters and pieces, say).
     fn parts(&self) -> impl Iterator<Item = Part<'r, D>> + '_;
-    /// How many tokens of kind `kind` come before `child` (one of this node's children): an
-    /// argument's index by its commas, say.
-    fn count_tokens_before(&self, child: &Node<'r, D>, kind: &str) -> usize {
-        let start = child.range().start;
-        self.tokens().take_while(|token| token.range().end <= start).filter(|token| token.kind() == kind).count()
-    }
     /// Whether the node has a token of kind `kind`.
     fn has_token(&self, kind: &str) -> bool {
         self.tokens().any(|token| token.kind() == kind)
@@ -170,10 +159,6 @@ pub(crate) trait Tree<'r, D: Doc> {
     /// Whether the node has a token of any of `kinds`.
     fn has_any_token(&self, kinds: &[&str]) -> bool {
         self.tokens().any(|token| kinds.contains(&token.kind().as_ref()))
-    }
-    /// How many of the node's tokens are of kind `kind` (commas, say).
-    fn count_tokens(&self, kind: &str) -> usize {
-        self.tokens().filter(|token| token.kind() == kind).count()
     }
     /// The node's first token.
     fn first_token(&self) -> Option<Token<'r, D>> {

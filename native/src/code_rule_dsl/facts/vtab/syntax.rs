@@ -2553,4 +2553,4 @@ pub(in crate::code_rule_dsl) mod tests;
 pub(crate) mod annotation;
 pub(crate) mod cpython;
 mod fstring;
-mod tree;
+pub(super) mod tree;

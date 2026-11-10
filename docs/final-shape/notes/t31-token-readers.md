@@ -20,10 +20,11 @@ pair's key:
 Such a test now fails silently. The rule loses findings, or under a `not` it gains false ones.
 A crafted Python file loses `ruff-e722`, and the JavaScript pack loses 117 of 906 keys on 15 files.
 
-This plan finds every such test before changing anything (D). Each one is then rewritten to ask
-the question it was really asking, about named nodes, and each pack is checked against its
-upstream cases. Afterwards D becomes a compile-time refusal, so no new rule can read an implied
-token.
+This plan first finds every such test (D). Most ask whether a token sits next to a node. The
+grammar answers that from the parent's named children alone: the token is in the gap between
+them (the gap test, below). Rules that report the token itself are rewritten to report the named
+node that holds it. Afterwards D becomes a compile-time refusal, so no new rule can read a token
+that nothing answers.
 
 Neither the engine nor the tapes put the tokens back. An earlier attempt (`a124ac96a`, removed in
 `1b9c360dc`) kept the old meaning by recognising tokens from the source whenever a rule asked. That
@@ -73,31 +74,106 @@ backend (interpreter, Cranelift, Metal). None needs a new primitive.
 
 ## How each category is addressed
 
-1. **`gap`: codemod into the structural forms above.** A one-off script rewrites each recurring
-   shape, idiom by idiom, under the parent D names. Shapes the script doesn't know are rewritten
-   by hand. The script is not shipped. If a gap test is left that no structural form can express,
-   it gets one small engine primitive: whether a given token is in the gap before or after a node,
-   answered from the parent's automaton state, which is a table lookup over the parent's named
-   children with no source read. It is added only if such a test turns up, and then on every
-   backend.
-2. **`gap?`: settle the parent first.** Most are tests on a named node's text that D couldn't
-   place: `^global$` is the identifier in `global.Array`, not TypeScript's `declare global`. D
-   learns to follow kinds through utils. What is left is reviewed by hand.
-3. **`root`: re-root on the named node.** The rule matches the parent (`except_clause` with no
-   type; `else_clause`; `sequence_expression`; `variable_declaration` of `var`) and reports there.
-   A finding key holds the line, and the token is on its parent's first line in these rules. A few
-   are D misreads (kinds given in a util: `ytt101`'s `^\*…`, Rust's digit regexes) and drop out
-   with item 2's fix.
-4. **`below`: a descendant kind.** The token implies its parent's kind, so "a `:` anywhere below"
-   becomes "a descendant of the kind that holds it". Rewritten by hand.
-5. **`layout ... to: token`: the one engine change.** It measures line breaks from a node to the
-   token beside it. Where that token is implied, it lies in the gap before the next stored node,
-   and its position is the first non-space, non-comment byte of that gap. Layout reads that
-   bounded window, with word operations rather than a per-byte loop. Nothing is cached, and the
-   change applies wherever layout runs.
-6. **`incidental`: review.** `regex: "."` on a sibling used to mean "any sibling, token or named";
-   now it means a named one. Each such rule is checked for whether that changes its answer.
-7. **`stored` and `never`: nothing to change.**
+The census found far fewer shapes than rules. Most tests ask one question: "is this token next to
+this node?" That is answered from the tree without the token being stored.
+
+### The gap test
+
+A parent's stored children are a word of its grammar: the kind's automaton reads them in order.
+Where the automaton must pass a token between two children (the `,` between arguments), the gap
+there holds it. `TokenGrammar::gaps` reads that from the parent's named children alone. It
+reads no source, keeps no cache and builds no index. On 5.0 million parents in 2,578 files across
+six dialects, its tokens equal tree-sitter's.
+
+The compiler adds the test beside a relation whose target is a token regex
+(`compile::ast_rule::gap_test`):
+
+```jsonc
+// The argument after a comma: the comma is implied in argument_list.
+{ "follows": { "stopBy": "neighbor", "regex": "^,$" } }
+// compiles to: the relation as before (a stored comma still matches as a node),
+// or the gap before the node holds a comma.
+```
+
+A regex that also matches a name or a number (`(?s).*`, `^_`) is a test of node text. It is not
+lowered: the tape's dropping a token does not change what it means.
+
+### A token and more: the parts walk
+
+Some targets say more about the token than its text:
+
+```jsonc
+// eslint-no-eval: the second argument, by the comma after the first one.
+{ "follows": { "regex": "^,$", "follows": { "matches": "first-arg" } } }
+```
+
+Such a relation also walks the parent's parts: its stored children with the implied tokens
+between them (`Tree::parts`). An implied token is tested by what the target says of its text and
+of the parts around it (`follows`, `precedes`, `inside`, `not`, `all`, `any`, utilities). Nothing
+else holds of a token. `has` past the neighbours descends the subtree in the same way.
+
+At the top level the walk tests only implied tokens; the relation beside it answers for stored
+ones. A walk whose target no token can pass (a target with a `kind`) answers false at once.
+
+### Layout
+
+`layout ... to: token` measures line breaks to the token beside a node. An implied token is the
+first text that is not space between the node and the next stored leaf, so layout reads that
+bounded window. Blank lines are counted only between leaves.
+
+### Rules rewritten
+
+Where the token *is* the node reported, the rule is re-rooted on the named node that holds it,
+and reports where the token sits:
+
+| Rule | Before | Now |
+|---|---|---|
+| E722, F707 | the `except` keyword | an `except_clause` with no value |
+| no-sequences | the first `,` of a sequence | the sequence's first expression, at its end |
+| require-await, explicit-function-return-type | the `=>` | the parameters before it, at their end |
+| COM818 | a `,` ending the line | also the target before an implied `,`, at its end |
+
+The four rules with the deleted `tokens:` key are rewritten the same way.
+
+### The Datalog side
+
+core.rr's `op`, `op_at`, `token` and `prev_token` hold the implied tokens too: their producer
+reads each parent's gaps (`facts::vtab::syntax::tree::parts`). The converter writes a gap test
+over them: `prev_token` for the token before a node, the parent's `token` rows for those after it.
+
+### Where the census stands
+
+| Category | Rules | Tests |
+|---|---:|---:|
+| `lowered` (gap test or parts walk) | 303 | 1,379 |
+| `layout` (gap window) | 13 | 22 |
+| `excluder` (`not` over a token: an implied one is in no set) | 147 | 305 |
+| `root` (the token stored there: holes, trailing commas, modifiers) | 6 | 8 |
+| `incidental` | 3 | 3 |
+| `gap`, `gap?`, `below` | 0 | 0 |
+
+### Checks
+
+Each step compares the original rules on full tapes with the current rules on named-only tapes,
+as finding keys:
+
+- JavaScript: 1,229 = 1,229 keys on 100 files.
+- TypeScript: 302 = 302 keys on 100 files.
+- Python: 885 cases from Ruff's and Bandit's generators (the inline cases in `generate.py`), equal
+  in every chunk. Two chunks hit a stale-store error in both modes (`noqa-PTH113.py`).
+- The data-layer replay sample: 268 of 268 events give their recorded findings.
+
+### Open
+
+- The guard below is not built yet.
+- `first_token`, `last_token`, `token_before`, `token_after` relate nodes, and an implied token
+  has none.
+- A gap test on the Metal path is a fact, and facts are still made on the host there
+  (`metal_host_guard_tests`' remaining entry).
+- A gap's word placed against comments is approximate: before them, with the gap's span.
+- A clause the transducer lowering refuses loses its findings in the slice runner rather than
+  falling back.
+- `fixtures:pull` needs AWS credentials (`s3://nera-test-fixtures`), which this checkout lacks.
 
 ## Other readers found on the way
 
@@ -110,30 +186,19 @@ backend (interpreter, Cranelift, Metal). None needs a new primitive.
   rest.
 - `compare` with `text: "tokens"` (`matcher::compare::tokens`) already reads the text between
   leaves, so it sees implied tokens without any tree change. It stays.
-- `tree.rs` still has token helpers that nothing calls (`count_tokens_before`, `count_tokens`,
-  `token_after`, `is_punctuation`). They are deleted.
+- `tree.rs` had token helpers that nothing called (`count_tokens_before`, `count_tokens`,
+  `Token::is_punctuation`). They are deleted; the others answer implied tokens from the gaps.
 
 ## The guard
 
-Once the rules are rewritten, D's classification moves into rule compilation. A token test whose
-token the grammar implies where the rule looks becomes a compile error naming the rule and the
-test. A rule whose parent can't be placed (today's `gap?`) has to say its parent. After that, a
+D's classification moves into rule compilation. A token test whose token the grammar implies
+where the rule looks, and that neither the gap test nor the parts walk answers, becomes a compile
+error naming the rule and the test. A rule whose parent can't be placed (today's `gap?`) has to say its parent. After that, a
 rule can't depend on a token the tapes don't hold, and a grammar update that implies a new token
 shows up at compile time.
 
-## Checking
+## Checking still to do
 
-The oracle is each pack's upstream cases with the linter's own findings (`fixtures.expected.json`,
-`npm run fixtures:pull` from S3). They are not in any checkout here. Each pack's rewrite is
-checked against them, and against key sets on the corpus samples. S7, the data-layer checks and a
-CPU measurement against a same-window baseline close the work.
-
-## Order
-
-1. D follows kinds through utils; `gap?` and the root misreads shrink.
-2. Pull the upstream cases.
-3. `gap` codemod, pack by pack (Python, JavaScript, TypeScript, then the rest), each checked.
-4. `root`, `below`, `incidental` and the leftover rules, by hand.
-5. Layout's gap window.
-6. The guard, and unknown rule keys refused.
-7. S7 on all backends, the data-layer checks, the CPU measurement.
+The upstream cases with the linters' own findings (`fixtures.expected.json`, `npm run
+fixtures:pull` from S3) are not in this checkout. S7 on every backend, the full data-layer checks
+and a CPU measurement against a same-window baseline close the work.

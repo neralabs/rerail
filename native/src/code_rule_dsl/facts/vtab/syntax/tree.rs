@@ -258,17 +258,17 @@ impl Order<'_> {
 }
 
 /// One of a parent's parts: a stored child (`child`), or a token its grammar implies in a gap.
-struct Part<'a> {
-    child: Option<u32>,
-    text: &'a str,
-    start: u32,
-    end: u32,
+pub(super) struct Part<'a> {
+    pub(super) child: Option<u32>,
+    pub(super) text: &'a str,
+    pub(super) start: u32,
+    pub(super) end: u32,
 }
 
 /// `id`'s parts in order: its stored children, and in each gap between them the tokens the kind's automaton implies
 /// there (`TokenGrammar::gaps`), placed after the last child before the gap that is no extra, with the gap's range.
 /// The stored children alone where the grammar has no automaton for the kind or refuses the children.
-fn parts<'a>(f: &'a Facts, dialect: &'a Dialect, id: u32) -> Vec<Part<'a>> {
+pub(super) fn parts<'a>(f: &'a Facts, dialect: &'a Dialect, id: u32) -> Vec<Part<'a>> {
     let children = f.children(id);
     let stored = |c: u32| Part { child: Some(c), text: f.text(c), start: f.start[c as usize], end: f.end[c as usize] };
     let field = |c: u32| match f.field[c as usize] {
@@ -281,7 +281,7 @@ fn parts<'a>(f: &'a Facts, dialect: &'a Dialect, id: u32) -> Vec<Part<'a>> {
     let mut out: Vec<Part<'a>> = Vec::with_capacity(children.len());
     // Where the next gap's words go (after the last child that is no extra), and where its range starts.
     let (mut at, mut from) = (0usize, f.start[id as usize]);
-    let mut place = |out: &mut Vec<Part<'a>>, at: usize, words: &[(&'a str, &'a str)], from: u32, to: u32| {
+    let place = |out: &mut Vec<Part<'a>>, at: usize, words: &[(&'a str, &'a str)], from: u32, to: u32| {
         for (k, (word, _)) in words.iter().enumerate() {
             out.insert(at + k, Part { child: None, text: word, start: from, end: to });
         }
