@@ -908,12 +908,14 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
     }
 
     // Merge states that act alike (Moore's refinement), then number them from the start, in
-    // the order they are reached.
+    // the order they are reached. States of different levels act alike when their arms do and
+    // they end alike: the root's apart, a level with a node of its own apart from one without
+    // (its end closes it), and the marks refused the same.
     let mut class: Vec<usize> = Vec::new();
     {
-        let mut keys: Vec<(usize, Option<u8>)> = Vec::new();
+        let mut keys: Vec<(bool, bool, Option<u8>, &[u16])> = Vec::new();
         for r in &raw {
-            let k = (r.level, r.end);
+            let k = (r.level == 0, levels[r.level].own, r.end, levels[r.level].refuses.as_slice());
             let c = keys.iter().position(|x| *x == k).unwrap_or_else(|| {
                 keys.push(k);
                 keys.len() - 1
@@ -955,11 +957,31 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
             queue.extend(p.iter().copied());
         }
     }
+    // Levels that share a state are one level from here on: a state that ends returns to the
+    // states any of them returns to (`bitlex_masks`'s modes follow returns by level).
+    let mut joined: Vec<usize> = (0..levels.len()).collect();
+    fn find(joined: &mut [usize], l: usize) -> usize {
+        let mut r = l;
+        while joined[r] != r {
+            r = joined[r];
+        }
+        joined[l] = r;
+        r
+    }
+    let mut first_of: HashMap<usize, usize> = HashMap::new();
+    for (i, r) in raw.iter().enumerate() {
+        let other = *first_of.entry(class[i]).or_insert(r.level);
+        let (a, b) = (find(&mut joined, other), find(&mut joined, r.level));
+        if a != b {
+            joined[a.max(b)] = a.min(b);
+        }
+    }
     let mut states = Vec::new();
     let mut arms = Vec::new();
     for (s, &i) in order.iter().enumerate() {
         let r = &raw[i];
-        states.push(StateRow { level: levels[r.level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone() });
+        let level = find(&mut joined, r.level);
+        states.push(StateRow { level: levels[level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone() });
         for (token, acts, q, p) in &r.arms {
             arms.push(ArmRow { from: s as u16, token: *token, acts: acts.clone(), to: number[&class[*q]], push: p.iter().map(|&p| number[&class[p]]).collect() });
         }

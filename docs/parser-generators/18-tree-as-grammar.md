@@ -58,11 +58,13 @@ tree json {
   `.rr`'s expressions and aggregates are used in many places. With every rule inlined, its
   machine had 858 states and 8,370 arms; shared, 438 and 4,014.
 
-  States of different levels that act alike stay apart, measured and not taken. Merging them
-  (a level's identity left out of the merge, levels that share a state joined) takes `.rr`
-  from 438 states to 284 and from 4,014 arms to 2,881. But tier 2's words do not change
-  (12,915 either way): its words are merged where they act alike (`merge_words`), so those
-  states were one copy of code already.
+  States of different levels that act alike are one state. A level's identity is left out of
+  the merge, and levels that share a state are joined into one level. Each still ends as its
+  own does: the root apart, a level with a node of its own apart from one without (its end
+  closes the node), and levels that refuse different marks apart. This takes `.rr` from 438
+  states to 284 and from 4,014 arms to 2,881; JSON's object and array share their end, 19
+  states to 18. Tier 2's words do not change (they were merged already, `merge_words`); the
+  machine, and every table made from it, is smaller.
 
 - **Shared arms.** Tier 2's code also has one copy of each arm body. An arm is a run of
   plain words (its span, keyword check and acts) ending in a `GOTO`. Runs with the same words

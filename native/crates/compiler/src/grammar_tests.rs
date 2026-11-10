@@ -111,3 +111,44 @@ fn rules_are_decided_from_the_inside_out() {
     let outer = format!("node outer = inner {TEN}");
     assert_eq!(shared("p outer | q outer", &[&outer, &inner]), ["outer"]);
 }
+
+/// The state machine of a tree section, as `grammar::text` prints it, kinds and fields numbered
+/// in order of first use.
+fn machine(src: &str) -> String {
+    let ids = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
+    let id = |n: &str| -> Result<u16, String> {
+        let mut m = ids.borrow_mut();
+        let k = m.len() as u16 + 1;
+        Ok(*m.entry(n.to_owned()).or_insert(k))
+    };
+    let tokens: Vec<String> = TOKENS.iter().map(|t| t.to_string()).collect();
+    let is_token = |n: &str| TOKENS.contains(&n);
+    let reading = |n: &str| Err(format!("no reading {n}"));
+    let g = grammar::Ids { kind: &id, field: &id, is_token: &is_token, tokens: &tokens, reading: &reading };
+    let (states, arms, _) = grammar::build(&tree(src), &g).expect("builds");
+    grammar::text(&states, &arms)
+}
+
+#[test]
+fn levels_that_end_alike_share_their_states() {
+    // Two nested levels, each a keyword and then the same ten tokens: the states after the
+    // keyword act alike, in either level. One copy of the ten, and one level.
+    let src = format!("tree t {{\n  node root = (one | two)*\n  node one nested = p {TEN}\n  node two nested = q {TEN}\n}}");
+    let m = machine(&src);
+    let states = m.lines().filter(|l| l.starts_with("state ")).count();
+    // The root's start and the state after a call (alike: the root goes on the same way after
+    // either), and one level's keyword and ten tokens, shared by both.
+    assert_eq!(states, 2 + 11, "{m}");
+    let levels: std::collections::BTreeSet<&str> = m.lines().filter(|l| l.starts_with("state ")).map(|l| l.split(' ').nth(3).expect("a level")).collect();
+    assert_eq!(levels.len(), 2, "the root's and one other: {m}");
+}
+
+#[test]
+fn levels_with_a_node_and_without_keep_apart() {
+    // The same tails, but one level opens a node and the other does not: their ends differ (one
+    // closes its node), so their states do too.
+    let src = format!("tree t {{\n  node root = (one | two)*\n  node one nested = p {TEN}\n  choice two nested = q {TEN}\n}}");
+    let m = machine(&src);
+    let states = m.lines().filter(|l| l.starts_with("state ")).count();
+    assert_eq!(states, 2 + 2 * 11, "{m}");
+}
