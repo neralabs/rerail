@@ -4052,9 +4052,11 @@ fn run_observed(
                     }
                     // A relation of no columns is a flag its rows' count holds, which columns do not: derived again.
                     // A relation the engine holds is kept as it is, with its indexes (decision 0090 step 3); one the
-                    // run left in a table (an output) is read from there.
+                    // run left in a table (an output) is read from there. One the run recomputed in its readers
+                    // (decision 0099) has neither: it is not kept, as one past the budget, and the next run derives it.
                     let rows = derived
                         .iter()
+                        .filter(|rel| !got.inlined.contains(rel.as_str()))
                         .map(|rel| (rel, part.program.decls[rel].len()))
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| {
