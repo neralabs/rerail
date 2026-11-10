@@ -1,0 +1,1807 @@
+{
+  "format": "rerail.recorded-original-admission/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "mode": "workspace",
+  "exitCode": 0,
+  "engineSha256": "74bdcc6367bdc37cd788ae59b417a1d6fb19e6dfd8455de9f85e40ea17c674f2",
+  "policySha256": {
+    "no_blanket_grammar_bypass": "7d502cf7942d00f16149158507b511152f960e5a7306169c2c91a5e41a0a71a9"
+  },
+  "cases": {
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_clean_repo": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allow_direct_execution_kwarg_is_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_trailing_comment_after_code_is_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_excluded_directories_are_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_both_tokens_on_separate_lines_flagged_separately": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_all_forbidden_public_methods_are_detected": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_private_direct_hooks_produce_no_violations": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_sql_connection_file_constant_points_at_sql_connection_module": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_is_set": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_all_start_with_execute_grammar": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_has_both_sync_and_async_variants": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_line_number_fidelity": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_non_python_file_not_scanned": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_multiple_files_aggregate": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_syntax_error_in_sql_connection_is_ignored": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_violation_line_number_for_public_method": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_check_with_bypass_violation_returns_one": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_prints_method_violations": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_linter_exports_cli_main": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_entries_under_scripts": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_sql_connection_file_uses_forward_slashes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_no_leading_underscore": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_not_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_indented_comment_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_skipped_tmp_subtree": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_trailing_comment_with_allow_direct_execution": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_returns_list": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_ignores_private_direct_hook_names": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_clean_prints_ok_message": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_violations_counts_in_header": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_check_clean_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_invokes_both_check_functions": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_exact_cardinality": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_base_and_with_params_forms": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_underscore_token_in_substring_of_longer_name_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_empty_string_does_not_match": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_git_subtree_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_venv_substring_in_name_also_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_module_level_function_still_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_empty_class_body_clean": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_multiple_classes_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_unknown_flag_raises_system_exit": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_with_only_method_no_bypass_section": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_banner_uses_70_char_separator": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_values_are_strings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_entries_are_non_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_distinct": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_sql_connection_file_not_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_check_no_public_grammar_methods_is_callable": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_empty_directory": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_violation_has_line_number": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_reports_both_tokens_on_adjacent_lines": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_large_file_performance": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_flags_direct_suffixed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_empty_file_clean": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_message_has_file_prefix": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_returns_int_type": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_violations_banner_uppercase": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_with_method_only_violations_returns_one_on_check": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_clean_output_uses_ok_prefix": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allow_direct_execution_constant_is_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_comment_only_mention_is_not_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_are_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_undecodable_file_is_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_missing_sql_connection_file_reported": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_private_methods_are_not_considered_public": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_contains_self_and_sibling_linter": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_is_set": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_include_direct_names": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_both_tokens_on_same_line": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_empty_file_clean": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_nested_directory_scan": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_nested_class_methods_also_walked": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_module_level_function_not_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_clean_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_default_with_violation_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_prints_both_sections_when_both_present": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_entries_use_forward_slashes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_entries_are_python_files": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_sql_connection_file_refers_to_sql_dialect_layer": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_all_identifiers": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_includes_canonical_names": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_in_string_literal_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_returns_list": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_handles_deep_trees": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_detects_each_forbidden_name_individually": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_async_function_def_detected": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_violations_print_fix_hint": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_method_violations_count_in_header": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_default_method_violation_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_exact_cardinality": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_includes_all_fetch_forms": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_tab_indented_comment_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_preserves_line_content_in_message": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_files_iteration_order_is_not_asserted": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_pycache_anywhere_in_path_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_all_16_forbidden_names_one_by_one": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_multiple_methods_aggregated": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_missing_file_message_format": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_help_exits_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_with_only_bypass_no_method_violations_section": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_clean_does_not_print_violations_banner": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_module_has_docstring": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_values_are_strings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_entries_are_non_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_sql_connection_file_is_string": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_check_no_bypass_references_is_callable": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_multiple_occurrences_same_line_flagged_once": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_skips_non_py_files": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_violation_has_relative_path": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_skips_sibling_tmp_dir": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_handles_decorated_method": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_ignores_underscore_prefixed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_returns_list_type": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_is_callable": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_clean_check_returns_zero_exit": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_fix_hint_mentions_txn_plan": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_output_contains_both_hint_lines": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "collected": [
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_clean_repo",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allow_direct_execution_constant_is_flagged",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allow_direct_execution_kwarg_is_flagged",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_comment_only_mention_is_not_flagged",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_trailing_comment_after_code_is_flagged",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_are_skipped",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_excluded_directories_are_skipped",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_undecodable_file_is_skipped",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_both_tokens_on_separate_lines_flagged_separately",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_flagged",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_all_forbidden_public_methods_are_detected",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_missing_sql_connection_file_reported",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_private_direct_hooks_produce_no_violations",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_private_methods_are_not_considered_public",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_sql_connection_file_constant_points_at_sql_connection_module",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_contains_self_and_sibling_linter",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_is_set",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_is_set",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_all_start_with_execute_grammar",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_include_direct_names",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_has_both_sync_and_async_variants",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_both_tokens_on_same_line",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_line_number_fidelity",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_empty_file_clean",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_non_python_file_not_scanned",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_nested_directory_scan",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_multiple_files_aggregate",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_nested_class_methods_also_walked",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_syntax_error_in_sql_connection_is_ignored",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_module_level_function_not_flagged",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_violation_line_number_for_public_method",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_clean_returns_zero",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_check_with_bypass_violation_returns_one",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_default_with_violation_returns_zero",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_prints_method_violations",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_prints_both_sections_when_both_present",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_linter_exports_cli_main",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_entries_use_forward_slashes",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_entries_under_scripts",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_entries_are_python_files",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_sql_connection_file_uses_forward_slashes",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_sql_connection_file_refers_to_sql_dialect_layer",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_no_leading_underscore",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_all_identifiers",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_not_empty",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_includes_canonical_names",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_indented_comment_skipped",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_in_string_literal_flagged",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_skipped_tmp_subtree",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_returns_list",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_trailing_comment_with_allow_direct_execution",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_handles_deep_trees",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_returns_list",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_detects_each_forbidden_name_individually",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_ignores_private_direct_hook_names",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_async_function_def_detected",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_clean_prints_ok_message",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_violations_print_fix_hint",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_violations_counts_in_header",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_method_violations_count_in_header",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_check_clean_returns_zero",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_default_method_violation_returns_zero",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_invokes_both_check_functions",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_exact_cardinality",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_exact_cardinality",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_includes_all_fetch_forms",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_base_and_with_params_forms",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_tab_indented_comment_skipped",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_underscore_token_in_substring_of_longer_name_flagged",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_preserves_line_content_in_message",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_empty_string_does_not_match",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_files_iteration_order_is_not_asserted",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_git_subtree_skipped",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_pycache_anywhere_in_path_skipped",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_venv_substring_in_name_also_skipped",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_all_16_forbidden_names_one_by_one",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_module_level_function_still_flagged",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_multiple_methods_aggregated",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_empty_class_body_clean",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_missing_file_message_format",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_multiple_classes_file",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_help_exits_zero",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_unknown_flag_raises_system_exit",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_with_only_bypass_no_method_violations_section",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_with_only_method_no_bypass_section",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_clean_does_not_print_violations_banner",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_banner_uses_70_char_separator",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_module_has_docstring",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_values_are_strings",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_values_are_strings",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_allowed_files_entries_are_non_empty",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_entries_are_non_empty",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_forbidden_public_methods_distinct",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_sql_connection_file_is_string",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_sql_connection_file_not_empty",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_check_no_bypass_references_is_callable",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_check_no_public_grammar_methods_is_callable",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_multiple_occurrences_same_line_flagged_once",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_empty_directory",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_skips_non_py_files",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_violation_has_line_number",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_violation_has_relative_path",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_reports_both_tokens_on_adjacent_lines",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_skips_sibling_tmp_dir",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_bypass_ref_large_file_performance",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_handles_decorated_method",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_flags_direct_suffixed",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_ignores_underscore_prefixed",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_empty_file_clean",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_returns_list_type",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_public_grammar_methods_message_has_file_prefix",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_is_callable",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_returns_int_type",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_clean_check_returns_zero_exit",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_violations_banner_uppercase",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_fix_hint_mentions_txn_plan",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_with_method_only_violations_returns_one_on_check",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_output_contains_both_hint_lines",
+    "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_main_clean_output_uses_ok_prefix"
+  ],
+  "semanticFallbacks": [],
+  "missingResults": [],
+  "retainedCaseIds": [],
+  "checkpoint": {
+    "path": "gate/data-layer/fixtures/host/data-layer-port/rr-blanket-complete-finalec3.json.gz",
+    "sha256": "bfa0fa996fb5b043d3e70485414cde18c84e42cbddcb119768b42de8d446068d"
+  }
+}

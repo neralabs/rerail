@@ -10,7 +10,7 @@ from validate_supplied_facts_checkpoint import require, equal
 
 MODES = {'snapshot', 'workspace'}
 SPECS = {
-    'rerail.blanket-admission/v1': dict(check='no_blanket_grammar_bypass',public=182,original=119,originalObservations=128,
+    'rerail.blanket-admission/v1': dict(check='no_blanket_grammar_bypass',public=192,original=119,originalObservations=128,
         positive=31,production=97,parts=8,originalParts=2,productionParts=4,publicPrefix='accepted',
         prefix='accepted-',label='blanket-finalec3',
         pairs={'constant':(1,0),'argument':(1,0),'method':(1,0),'allowed-file':(0,1),'comment':(0,1),
@@ -165,6 +165,9 @@ def validate(value):
             if check=='no_blanket_grammar_bypass' and row['input']['kind']=='cli':
                 require(len(row['native'])==(0 if any(a in {'--help','--bad-flag'} for a in row['input']['args']) else 5),
                         'Bypass CLI batch execution count differs')
+            if check=='no_blanket_grammar_bypass' and row['input']['kind']=='callback-cli':
+                require(len(row['native'])==(0 if any(a in {'--help','--bad'} for a in row['input']['protocol']['args']) else 1),
+                        'Bypass callback protocol execution count differs')
             for native in row['native']: execution(native)
     for mode in MODES: require(Counter(seen[mode])==Counter(expected.keys()), 'Public cases omitted or repeated')
 

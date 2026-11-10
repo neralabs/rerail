@@ -10751,3 +10751,49 @@ Only affected rule kernels ran. No full-repository cold benchmark or new Linear 
 Next: refresh the remaining first-batch drafts, including `no_blanket_grammar_bypass`.
 The composition application-probe boundary remains unresolved. Its separate 486-execution receipt preserves that failure.
 The complete 100-port migration remains open.
+# Blanket bypass rule admission and logical-owner correction, 2026-11-10
+
+`no_blanket_grammar_bypass` now passes its complete admission gate on root CLI `74bdcc6367bdc37c…`.
+The receipt `rr-blanket-complete-finalec3.json.gz` validates 1,635 native executions.
+All 119 original tests pass through both APIs, including 128 complete recorded calls and 31 finding-positive original cases.
+The 192 supplemental cases also pass through both APIs.
+Production checks cover 97 recorded cases and five additional Unicode and alias probes.
+All 16 supplied-fact cases, 14 persistent steps, and 16 controls pass.
+All 372 migration tooling tests pass.
+
+The original suite initially passed while 19 supplemental cases failed.
+The failures exposed missing collector execution, supplied text being used as the disk AST, unnormalized method names,
+reads of allowlisted files, directory handling, and paths outside the temporary corpus directory.
+The initial red receipt retains all 171 source cases and their actual native failures.
+The corpus then grew to cover event phases, complete file groups, target scope, and caller-provided CLI callbacks.
+
+The native rule now distinguishes supplied-text documents from disk documents and binds both to the caller's logical path.
+One batched query selects reads before the host opens files. One further query evaluates the document batch.
+The collector and production reporter share their existing typed producer relations.
+Native rows construct complete fact JSON and extractor metadata.
+References precede method events within each file, and each file's group remains contiguous.
+FactEngine may permute complete file groups; the comparison retains every row, duplicate, and order inside each group.
+A two-file test caught interleaving in the new transport. Native file-order fields fixed it.
+
+Five production probes then exposed an alias defect that the 97 recorded production cases did not cover.
+The generated public-method join matched the SQL target but emitted the result for every alias of its physical AST.
+Both alias directions produced an extra finding. The red alias receipt preserves those results.
+Binding `ppe_path=p` retains the selected logical owner when the AST is shared.
+The corrected probes and a control that removes that binding prove the distinction.
+All acceptance families were rerun after this policy change. Earlier policy hashes were not reused for admission.
+
+Two original missing-file calls have complete string-list return values that the old finding normalizer cannot represent.
+Their observations now compare the exact recorded source value and inputs under an explicit `source-value` comparison.
+No finding DTO is fabricated. Tests reject changed messages and unmarked attempts to replace missing normalized evidence.
+All original observations pass, with no retained assertions or semantic fallbacks.
+
+The real CLI makes five native calls independent of file count: two selection/evaluation pairs and one rendering query.
+Caller-provided scanner callbacks use the native rendering query and retain their complete observable protocol.
+Admission enforces both call counts. The controls also cover normalized names, supplied-source gates, parser gating,
+allowlists, comments, suffix selection, collector order, extractor metadata, rendering, check status, aliases, and reporting.
+
+Final rerail shape remains `ec3cfe1b7`, already merged. It was fetched before and after this work.
+No engine code or binary changed during this rule's acceptance cohort. No Linear tickets were created.
+The inventory is now 11 accepted ports, 84 drafts, and five absent translations.
+The 100-port migration remains open, including the unresolved composition application-probe boundary.
+The five absent translations are state tripwires, dispatch architecture, quality, target architecture, and legacy execution surfaces.

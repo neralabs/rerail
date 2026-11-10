@@ -52,6 +52,8 @@ def cases(module):
         add('methods','target-methods-'+target,target=target,source='def execute_grammar(): pass\n')
         add('content','target-content-'+target,target=target,source='execute_grammar',disk='def execute_grammar(): pass\n')
     add('fact-batch','fact-batch-groups')
+    from blanket_bypass_cli_contract import CASES as callback_cases
+    for case in callback_cases:add('callback-cli','callback-'+case['id'],protocol=case)
     add('configuration','configuration')
     return rows
 
@@ -103,6 +105,9 @@ def exercise(module,case,temporary):
                     return original(path,*a,**kw)
                 stack.enter_context(patch.object(Path,'read_text',read))
             action=lambda:module.check_no_bypass_references(root)
+        elif kind=='callback-cli':
+            from blanket_bypass_cli_contract import exercise as callback_cli
+            action=lambda:callback_cli(module,case['protocol'],root)
         elif kind=='cli':
             group=case['group'];write(target,'def execute_grammar(): pass\n' if group in {'both','methods'} else 'pass\n')
             if group in {'both','references'}:write(root/'api/a.py','_ALLOW_DIRECT_EXECUTION\n')
@@ -130,4 +135,4 @@ def install(backend,module,detectors=False):
 if __name__=='__main__':
     from contract_runner import main
     main(CHECK,'rerail.blanket-contract/v1',cases,exercise,install,
-        ['blanket_contract.py','blanket_bypass_port.py','contract_runner.py'])
+        ['blanket_contract.py','blanket_bypass_port.py','blanket_bypass_cli_contract.py','contract_runner.py'])

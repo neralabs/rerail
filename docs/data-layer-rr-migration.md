@@ -2749,3 +2749,24 @@ The new single-rule production runner refreshes the selected rule's corpus witho
 
 All 357 migration tooling tests pass. The inventory is ten accepted ports, 85 drafts, and five absent translations.
 The composition application probe and the rest of the 100-port migration remain open.
+
+### 2026-11-10 — Blanket bypass passes full admission after scope fixes
+
+`no_blanket_grammar_bypass` passes the fixed original-test inventory gate on root CLI `74bdcc6367bdc37c…`.
+Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-blanket-complete-finalec3.json.gz) validates 1,635 native executions.
+All 119 original tests and 192 supplemental cases pass through both APIs.
+The receipt also covers 102 production cases, 16 supplied-fact cases, 14 persistent steps, and 16 controls.
+The original calls include 31 finding-positive cases. No original assertion is skipped, retained, or delegated.
+
+The source API now combines supplied text with the correct disk AST and preserves complete collector file groups.
+Read selection, normalization, scope, fact construction, metadata, and CLI reporting execute native relations.
+The [initial red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-blanket-source-red-finalec3.json.gz) preserves 19 failures missed by the original suite.
+The [alias red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-blanket-alias-red-finalec3.json.gz) preserves false positives from an unconstrained logical-owner join.
+The generated method producer now keeps the matched owner attached to its shared AST.
+All acceptance families were rerun against the corrected policy.
+
+The real CLI uses five native calls regardless of file count. Caller-supplied callbacks retain their exact protocol.
+Two missing-file tests compare their complete string-list results under an explicit source-value contract.
+The validator does not invent normalized findings for those infrastructure messages.
+All 372 migration tooling tests pass. Final `ec3cfe1b7` remains current and merged.
+The inventory is 11 accepted ports, 84 drafts, and five absent translations. The full migration remains open.

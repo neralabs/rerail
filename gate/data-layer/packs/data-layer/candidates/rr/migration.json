@@ -3046,9 +3046,57 @@
       "batch": 1,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-no-blanket-grammar-bypass.json",
       "legacySha256": "700460f3a9868afe3abd8254af2b39324ee22cc13ba4132867b8870a2d4d96da",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
-      "ruleSha256": "7d502cf7942d00f16149158507b511152f960e5a7306169c2c91a5e41a0a71a9"
+      "ruleSha256": "7d502cf7942d00f16149158507b511152f960e5a7306169c2c91a5e41a0a71a9",
+      "evidence": {
+        "assertions": 119,
+        "positives": 31,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "7d502cf7942d00f16149158507b511152f960e5a7306169c2c91a5e41a0a71a9",
+        "engineCommit": "8e70be75afeaa201ede6abf4a6fbd8ef3d19a065",
+        "corpusSha256": "7ab8a8d70e96be369bd1c688976efdd1bfde7965185a05969974ac8e83cda4e0",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "74bdcc6367bdc37cd788ae59b417a1d6fb19e6dfd8455de9f85e40ea17c674f2",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-blanket-finalec3-native-snapshot.json",
+            "sha256": "beba1d686d2e186b8835926e558a0dfb0ba913d005b9fc424115bd524bf8a4e5"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-blanket-finalec3-native-workspace.json",
+            "sha256": "622d66d1973f4c8c8471fedbe0116acf24565c4f03493fa52f132e6d493fc7ca"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-blanket-complete-finalec3.json.gz",
+            "sha256": "bfa0fa996fb5b043d3e70485414cde18c84e42cbddcb119768b42de8d446068d"
+          }
+        ],
+        "supplemental": {
+          "publicCasesPerAPI": 192,
+          "originalCasesPerAPI": 119,
+          "originalFindingPositiveCases": 31,
+          "productionCases": 102,
+          "suppliedFactCases": 16,
+          "persistentSteps": 14,
+          "controls": 16,
+          "nativeExecutions": 1635,
+          "fullMigrationAcceptance": false
+        },
+        "scope": "All original assertions through both APIs. Recorded raw references, disk ASTs, supplied text, complete collector groups, scopes, native metadata and DTOs, CLI, reporter, production and persistent updates."
+      },
+      "migrationProgress": {
+        "status": "full-contract-passed",
+        "verifiedNativeExecutions": 1635
+      }
     },
     {
       "check": "serverplan_grammar_surface",
@@ -4292,7 +4340,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
-    "status": "Root CLI 74bdcc6367bdc37c registered from committed sources on Final ec3cfe1b7. Its cohort passes 29 syntax unit tests, the 486-execution composition progress receipt, and the 705-execution complete hasattr_async admission. Historical receipts retain their stated source, harness and engine cohorts.",
+    "status": "Committed root CLI 74bdcc6367bdc37c on Final ec3cfe1b7. Its current receipts verify 705 native executions for hasattr_async and 1635 for no_blanket_grammar_bypass; the separate 486-execution composition progress receipt retains its application-probe gap. Historical receipts retain their stated program, harness and engine cohorts.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
