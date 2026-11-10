@@ -1,7 +1,7 @@
 import { execFileSync, fork } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import Database from "better-sqlite3";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { existsSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
@@ -227,7 +227,8 @@ function completedDirectories(): number {
 /** Another process that takes the content store's write lock (`lock`) and gives it back (`release`) on request. */
 interface StoreWriterHolder {
   request(command: "lock" | "release"): Promise<void>;
-  close(): void;
+  /** Ends the process and settles once it has exited, so it holds neither the store nor its script's folder. */
+  close(): Promise<void>;
 }
 
 async function storeWriterHolder(storePath: string): Promise<StoreWriterHolder> {
@@ -265,7 +266,12 @@ async function storeWriterHolder(storePath: string): Promise<StoreWriterHolder> 
       child.send(command);
       await replied;
     },
-    close: () => child.kill(),
+    async close() {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const exited = once(child, "exit");
+      child.kill();
+      await exited;
+    },
   };
 }
 
@@ -1300,7 +1306,7 @@ describe("mechanical code rule regressions", () => {
       expect(completedDirectories()).toBeGreaterThan(before);
     } finally {
       binding.mockRestore();
-      holder.close();
+      await holder.close();
       await enforcer.close();
     }
   }, 30_000);
@@ -1334,7 +1340,7 @@ describe("mechanical code rule regressions", () => {
     } finally {
       stderr.mockRestore();
       await holder.request("release").catch(() => undefined);
-      holder.close();
+      await holder.close();
       await enforcer.close();
     }
   }, 60_000);
@@ -1362,7 +1368,7 @@ describe("mechanical code rule regressions", () => {
       });
     } finally {
       binding.mockRestore();
-      holder.close();
+      await holder.close();
       await enforcer.close();
     }
   }, 30_000);
