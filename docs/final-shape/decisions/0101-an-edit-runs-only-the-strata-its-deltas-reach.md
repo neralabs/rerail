@@ -1,7 +1,6 @@
 # 0101: An edit runs only the strata its deltas reach
 
-Status: draft (2026-11-09), a spec. Nothing in it is built yet but the measurement behind it
-(`RERAIL_SPIKE_DELTA`'s `O125 cutoff` line).
+Status: draft (2026-11-09), a spec. §1 and §2 are built (2026-11-10, "Built: §1 and §2" below); §3 is not.
 
 ## Intro
 
@@ -140,6 +139,85 @@ pack's cross-file rules over the data layer's 9,010 files.
 
 **The end target** stays 0090's: a one-function edit under 5% of a cold cross part. At O125 that is under 0.3 s
 against the full run's 5–7 s. Today a one-file step is 1.28 s.
+
+## Built: §1 and §2 (2026-11-10)
+
+**What was built.**
+
+- **§1, the skip.** A stratum left with only survivor rules, each over an empty `h__del`, is passed on: each
+  `h` is its kept `h__old`, the same engine relation with its indexes. Nothing of it is planned, specified or
+  opened, and its readers are planned from the kept relation's statistics, as an opened one's would be.
+- **§2, the passes.** The inline choice (0099) and the demand split (0048) are made once per program in a
+  session. A later run of the same program takes them as they are.
+- **§2, made cheap where they are not kept.** The inline choice now estimates only what it prices. Before, it
+  estimated every derived relation of the program; now only the relations whose shape leaves the choice open,
+  and the relations their rules and readers read.
+
+**Why the second part of §2 was needed.** The cross part's program is the maintenance rewrite of the edited
+files, so it differs from step to step and the kept passes never match it at O125. Its 17,340 rules are nearly
+all maintenance pieces that the inline choice's shape rules (at most 4 rules, at most 8 reader copies, no
+refusal) already exclude. Yet it estimated all of them, which took 3 s a step, to inline nothing.
+
+**How the skip works.** The skip is in `native_stratum_`, after the existing skip of rules over empty
+relations, which already holds a stratum empty when nothing is left of it. Where only survivor rules are left:
+
+```rust
+// Each relation of the stratum is a survivor `h :- h__old, !h__del`
+// whose `h__del` holds no rows, natively, as an input delta, or in a
+// table a SQL stratum wrote; and no fact or seed adds to `h`.
+// Then `h` is `h__old` itself, shared:
+component::hold_as(db, "h", held("h__old"));
+```
+
+The kept relation must have all its rows in the engine (`InRel::none_stored`). One whose rows are partly in
+its table is opened as before. `InRel::delta_since` gives an empty change for the relation it started as, so a
+session's statistics, patched by delta, carry over unchanged.
+
+**Switches.**
+
+| switch | effect |
+|---|---|
+| `RERAIL_KEEP_QUIET_STRATA` | opens quiet strata as before |
+| `RERAIL_PASSES_EACH_RUN` | makes the passes every run |
+
+**The tests.**
+
+- `a_session_passes_on_a_quiet_stratum`, which fails with either switch set. An edit adds an import that
+  `via_h` filters out, so `seen` deletes and derives nothing. Four strata are passed on, and the findings are a
+  full run's. The second run's file-local program takes the first run's passes.
+- The inline choice's 75 tests (`keeps`) pass unchanged.
+
+**Measured.** O125 replay, steps 01–03, debug build, CPU, load 11–105. Every step is the same as a full run.
+
+The inline choice made the same choices both ways. With every relation estimated and with the narrowed
+estimates, all 1,764 decision lines of a session run, and all 1,873 with the full run, are identical, work
+figures included.
+
+| span (per step) | before | after |
+|---|---:|---:|
+| cross part, `demand` (the inline choice) | 3.25–3.79 s | 0.18–0.26 s |
+| file-local part, `demand` | 0.28–0.32 s | 0.001 s (kept) |
+| quiet strata skipped | — | 471–592 |
+| those strata's CPU | 0.12–0.23 s | 0.05–0.07 s |
+
+Whole steps at this load move by more than the saving from run to run: the cold run measured 5.5 s and 8.1 s
+of cross part on the same code. The spans above are the comparison.
+
+**What the skip does not do.** It saves less than §1's target, for two reasons:
+
+- the earlier skip of rules over empty relations already held most quiet strata empty, so ≈ 500 a step were
+  left;
+- a survivors open copies memory, it does not rehash, so each one cost ≈ 0.2–0.4 ms. Peak memory did not
+  move measurably (1.20 against 1.21 GB maximum resident).
+
+**Where the cross part's CPU is now.** It is in the strata's planning and joins: `plan` and `replan` spans,
+and the few large components (one `attr_open` component is 0.5 s). §3 and the per-stratum fixed cost are what
+is left of 0101.
+
+**A pitfall found on the way.** The first version passed `h` on without its readers' statistics, so their
+plans read it as one row. One recursive stratum (`attr_open`) then took 6.0 s instead of 0.23 s at step 03.
+The skip now records the kept relation's row count and per-column statistics (`prior_stats`), as the opening
+path does.
 
 ## Open
 

@@ -540,6 +540,12 @@ pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
 
+/// Quiet strata passed on unchanged in this process (decision 0101 §1), for tests.
+static QUIET_STRATA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub(in crate::code_rule_dsl) fn quiet_strata() -> usize {
+    QUIET_STRATA.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A survivors rule of a maintained stratum, `h(v..) :- h__old(v..), !h__del(v..)` (decision 0077's rewrite): the
 /// kept relation native, the deleted one of a lower stratum.
 fn survivors(r: &Rule, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<(String, String)> {
@@ -659,16 +665,103 @@ thread_local! {
     static SESSION_PLANS: std::cell::RefCell<Option<(u64, rustc_hash::FxHashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
 }
 
+/// The whole-program passes' results for one program (decision 0101 §2): the inline choice (0099), the program it
+/// left and that program's analysis, then the demand split (0048) and its program. A session runs the same programs
+/// again (its file-local part every run, a cross part's rewrite while the same files change), and the passes'
+/// choices, made from the first run's estimates, are kept as they are: each choice gives the same rows, only a
+/// different cost.
+struct Passes {
+    inlined: Option<(std::rc::Rc<Program>, Vec<String>, std::sync::Arc<super::analysis::ProgramAnalysis>)>,
+    split: Option<(std::rc::Rc<Program>, Vec<String>)>,
+}
+
+/// The passes kept on this thread: at most this many programs, the last used at the end.
+const KEEP_PASSES: usize = 8;
+
+thread_local! {
+    /// A session's whole-program passes by program (`passes_key`), with the session's generation; and whether a run
+    /// of that session is under way (`KeepPlans`). Outside a session's run nothing is kept: a chunk's estimates are
+    /// its own.
+    static SESSION_PASSES: std::cell::RefCell<(Option<u64>, bool, Vec<(u128, std::rc::Rc<Passes>)>)> = const { std::cell::RefCell::new((None, false, Vec::new())) };
+}
+
+/// The key of a program's whole-program passes: its analysis digest (`program_digest`), and what else they read.
+fn passes_key(prog: &Program) -> u128 {
+    let analysed = program_digest(prog);
+    super::derived::digest(|d| {
+        d.u64(analysed as u64);
+        d.u64((analysed >> 64) as u64);
+        prog.outputs.iter().for_each(|r| d.str(r));
+        d.u64(prog.qualifiers.len() as u64);
+        for (rel, q) in &prog.qualifiers {
+            d.str(rel);
+            q.iter().for_each(|x| d.str(x));
+        }
+        d.u64(prog.gates.len() as u64);
+        prog.gates.iter().for_each(|(g, _)| d.str(g));
+        d.u64(prog.answers.len() as u64);
+        prog.answers.keys().for_each(|r| d.str(r));
+        prog.demand.iter().for_each(|r| d.str(r));
+        prog.nullary.iter().for_each(|r| d.str(r));
+    })
+}
+
+/// Runs that took their whole-program passes from an earlier one (decision 0101 §2), in this process, for tests.
+static PASSES_TAKEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub(in crate::code_rule_dsl) fn passes_taken() -> usize {
+    PASSES_TAKEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The passes kept for `key` in this session's run, if any.
+fn kept_passes(key: u128) -> Option<std::rc::Rc<Passes>> {
+    SESSION_PASSES.with(|s| {
+        let mut s = s.borrow_mut();
+        if !s.1 {
+            return None;
+        }
+        let at = s.2.iter().position(|(k, _)| *k == key)?;
+        let hit = s.2.remove(at);
+        let passes = std::rc::Rc::clone(&hit.1);
+        s.2.push(hit);
+        PASSES_TAKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(passes)
+    })
+}
+
+/// Keeps `passes` for `key`, in a session's run only.
+fn keep_passes(key: u128, passes: std::rc::Rc<Passes>) {
+    SESSION_PASSES.with(|s| {
+        let mut s = s.borrow_mut();
+        if !s.1 {
+            return;
+        }
+        if s.2.len() >= KEEP_PASSES {
+            s.2.remove(0);
+        }
+        s.2.push((key, passes));
+    });
+}
+
 impl KeepPlans {
     pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
         let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
         PLANS.with(|p| *p.borrow_mut() = Some(kept.unwrap_or_default()));
+        SESSION_PASSES.with(|s| {
+            let mut s = s.borrow_mut();
+            // Another session's passes are dropped; a run of no session (a full run) leaves them as they are.
+            if across.is_some() && s.0 != across {
+                s.2.clear();
+                s.0 = across;
+            }
+            s.1 = across.is_some() && std::env::var_os("RERAIL_PASSES_EACH_RUN").is_none();
+        });
         KeepPlans(across)
     }
 }
 
 impl Drop for KeepPlans {
     fn drop(&mut self) {
+        SESSION_PASSES.with(|s| s.borrow_mut().1 = false);
         let plans = PLANS.with(|p| p.borrow_mut().take());
         if let (Some(g), Some(plans)) = (self.0, plans) {
             SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans)));
@@ -1658,16 +1751,10 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
     src
 }
 
-/// `ProgramAnalysis::analyze`'s result for `prog`, kept for the programs analysed last: a session's runs plan the
-/// same programs again (its file-local part every run, a maintained part while the same strata change), and the
-/// analysis is a function of what the digest reads (each relation's columns and lattice keys, the inputs, the
-/// relations with facts, the natives, and the rules in order).
-fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
-    type Kept = Vec<(u128, std::sync::Arc<super::analysis::ProgramAnalysis>)>;
-    /// The programs analysed last, newest at the end: a few, as each holds a result per rule.
-    const KEEP: usize = 4;
-    static KEPT: std::sync::Mutex<Kept> = std::sync::Mutex::new(Vec::new());
-    let key = super::derived::digest(|d| {
+/// A digest of what a program's analysis and its whole-program passes read: each relation's columns and lattice
+/// keys, the inputs, the relations with facts, the natives, and the rules in order.
+fn program_digest(prog: &Program) -> u128 {
+    super::derived::digest(|d| {
         d.u64(prog.decls.len() as u64);
         for (rel, cols) in &prog.decls {
             d.str(rel);
@@ -1692,7 +1779,19 @@ fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAn
             d.u64(r.body.len() as u64);
             r.body.iter().for_each(|l| digest_literal(d, l));
         }
-    });
+    })
+}
+
+/// `ProgramAnalysis::analyze`'s result for `prog`, kept for the programs analysed last: a session's runs plan the
+/// same programs again (its file-local part every run, a maintained part while the same strata change), and the
+/// analysis is a function of what the digest reads (each relation's columns and lattice keys, the inputs, the
+/// relations with facts, the natives, and the rules in order).
+fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
+    type Kept = Vec<(u128, std::sync::Arc<super::analysis::ProgramAnalysis>)>;
+    /// The programs analysed last, newest at the end: a few, as each holds a result per rule.
+    const KEEP: usize = 4;
+    static KEPT: std::sync::Mutex<Kept> = std::sync::Mutex::new(Vec::new());
+    let key = program_digest(prog);
     let mut kept = KEPT.lock().unwrap();
     if let Some(at) = kept.iter().position(|(k, _)| *k == key) {
         let hit = kept.remove(at);
@@ -3630,6 +3729,39 @@ impl Run<'_, '_> {
             self.native_rels.extend(scc.iter().cloned());
             return Ok(true);
         }
+        // A quiet stratum (decision 0101 §1): only survivors are left, and each `h__del` is empty. Each `h` is then
+        // its kept `h__old`, the same relation with its indexes; nothing is specified, planned or opened. A kept
+        // relation whose rows are partly in a table (`stored`) is opened as before, so its readers see them all.
+        // `RERAIL_KEEP_QUIET_STRATA` opens it as before (to measure what the skip saves).
+        if rules.is_empty() && !based.is_empty() && gates.is_empty() && !asks && std::env::var_os("RERAIL_KEEP_QUIET_STRATA").is_none() {
+            let held = |rel: &str| super::native::component::held(self.db, rel);
+            let quiet: Option<Vec<(&String, Arc<super::native::component::InRel>)>> = rels.iter().map(|r| match based.get(*r) {
+                Some((old, gone)) => {
+                    // The rows gone are a native relation's, an input delta's, or a table's that a SQL stratum wrote.
+                    let gone_empty = match held(gone) {
+                        Some(g) => g.rows() == 0,
+                        None if self.inputs.contains(gone.as_str()) => crate::code_rule_dsl::facts::vtab::bound_source(self.db, gone).is_some_and(|s| s.len() == 0),
+                        None => self.db.query_row(&format!("SELECT NOT EXISTS (SELECT 1 FROM {})", super::sql::table(gone)), [], |row| row.get::<_, bool>(0)).unwrap_or(false),
+                    };
+                    let unseeded = prog.facts.get(*r).is_none_or(|f| f.is_empty());
+                    held(old).filter(|o| gone_empty && unseeded && o.none_stored()).map(|o| (*r, o))
+                }
+                None => None,
+            }).collect();
+            if let Some(quiet) = quiet {
+                for (r, o) in quiet {
+                    // Its readers are planned from its rows, as an opened stratum's would be (`prior_stats`).
+                    let seeded = (o.rows() as f64).max(1.0);
+                    let card = prior_stats(&mut self.model, prog, r).map_or(seeded, |n| n.max(seeded));
+                    self.model.stats.card.insert(r.clone(), card);
+                    super::native::component::hold_as(self.db, r, o);
+                }
+                QUIET_STRATA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                super::profile::stratum(&stratum_key(scc), "native set engine", || "quiet: nothing deleted, nothing to derive; each relation is its kept one".to_owned());
+                self.native_rels.extend(scc.iter().cloned());
+                return Ok(true);
+            }
+        }
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
         // is the joins' specs and their checks; planning is in its `plan #…` spans).
         let spec_span = super::profile::span(|| "spec".into());
@@ -4597,40 +4729,68 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
     // 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
-    let split;
     let corpus = PLANS.with(|p| p.borrow().is_some());
     // What each derived relation keeps (decision 0099): stored, or inlined into its readers, from this plan's
     // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
-    let inlined;
+    // A session's run takes both passes' results from an earlier run of the same program (decision 0101 §2);
+    // `RERAIL_PASSES_EACH_RUN` makes them every run.
+    let key = if corpus { Some(passes_key(prog)) } else { None };
     let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
-    let prog: &Program = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
-        Some((p, done)) => {
-            super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
-            inlined_rels = done.into_iter().collect();
-            inlined = p;
-            // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
-            if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                    for r in &inlined.rules {
-                        let _ = writeln!(f, "{r}");
+    let passes: std::rc::Rc<Passes> = match key.and_then(kept_passes) {
+        Some(p) => {
+            super::profile::decision("whole-program passes (decision 0101 §2)", || "kept: the same program's inline choice and demand split, from an earlier run of the session".into());
+            p
+        }
+        None => {
+            let inlined = {
+                let _s = super::profile::span(|| "inline or store".into());
+                if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None }
+            };
+            let inlined = inlined.map(|(p, done)| {
+                // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
+                if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                        for r in &p.rules {
+                            let _ = writeln!(f, "{r}");
+                        }
                     }
                 }
+                let analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&p));
+                (std::rc::Rc::new(p), done, analysis)
+            });
+            if let Some((_, _, analysis)) = &inlined {
+                model.analysis = std::sync::Arc::clone(analysis).into();
             }
-            model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&inlined)).into();
-            &inlined
+            let split = {
+                let _s = super::profile::span(|| "demand split".into());
+                let over: &Program = inlined.as_ref().map_or(prog, |(p, _, _)| p);
+                if corpus { demand::split_negations(over, &model) } else { None }
+            };
+            let passes = std::rc::Rc::new(Passes { inlined, split: split.map(|(p, d)| (std::rc::Rc::new(p), d)) });
+            if let Some(key) = key {
+                keep_passes(key, std::rc::Rc::clone(&passes));
+            }
+            passes
+        }
+    };
+    let prog: &Program = match &passes.inlined {
+        Some((p, done, analysis)) => {
+            super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
+            inlined_rels = done.iter().cloned().collect();
+            model.analysis = std::sync::Arc::clone(analysis).into();
+            p
         }
         None => prog,
     };
-    let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
+    let prog: &Program = match &passes.split {
         Some((p, demanded)) => {
             super::profile::decision("demand (decision 0048)", || {
                 format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
             });
-            split = p;
             // The program run is the split one: its analysis is that program's, made when asked.
             model.analysis = std::sync::OnceLock::new();
-            &split
+            p
         }
         None => prog,
     };

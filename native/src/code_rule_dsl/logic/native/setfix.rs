@@ -1497,6 +1497,12 @@ pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
     ADOPTED.lock().unwrap().insert((at, table.to_owned()));
 }
 
+/// Holds `table` in `conn`'s run as `rel`, a relation it already holds under another name: a quiet stratum's
+/// relation is its kept one, unchanged (decision 0101 §1), shared with its indexes.
+pub fn hold_as(conn: &Connection, table: &str, rel: Arc<InRel>) {
+    DERIVED.lock().unwrap().insert((scope(conn), table.to_owned()), rel);
+}
+
 /// Holds `table` in `conn`'s run as a relation with no rows, as a component that derived none would leave it: for a
 /// stratum with nothing to run, which opens no component.
 pub fn hold_empty(conn: &Connection, table: &str, types: Vec<u8>) {
@@ -1531,6 +1537,10 @@ impl InRel {
     }
     pub fn rows(&self) -> usize {
         self.len() - self.ndead
+    }
+    /// Whether none of its rows are in its table: a reader of it sees them all only in the engine.
+    pub fn none_stored(&self) -> bool {
+        self.stored == 0
     }
 }
 
@@ -1676,6 +1686,10 @@ impl InRel {
         let at = old as *const InRel as usize;
         if self.k != old.k || self.view.is_some() {
             return None;
+        }
+        // The same relation, held on unchanged (a quiet stratum's, decision 0101 §1): no change.
+        if std::ptr::eq(self, old) {
+            return Some((Vec::new(), Vec::new()));
         }
         let k = self.k;
         match &self.from {
@@ -3041,7 +3055,7 @@ mod posted_tests {
         assert_eq!(rows(&mut added), vec![vec![5, 2], vec![100, 1]]);
         assert_eq!(rows(&mut removed), vec![vec![2, 2], vec![5, 2], vec![30, 0]]);
         assert_eq!(new.live_rows().expect("flat").len(), (40 - 3 + 2) * 2);
-        assert!(new.delta_since(&gone).is_none() && old.delta_since(&old).is_none());
+        assert!(new.delta_since(&gone).is_none() && old.delta_since(&old) == Some((Vec::new(), Vec::new())));
         // Too many dead to keep in place: made from the survivors, the same delta.
         let mut most = Rel::new("g", b"ii");
         for i in 0..20 {

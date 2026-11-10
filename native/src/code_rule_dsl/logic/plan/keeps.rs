@@ -81,12 +81,32 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     }
     // Estimated rows and work of every derived relation, in evaluation order; observed rows where an earlier chunk
     // measured them. The estimates are the planner's while it prices the readers, then taken back.
-    let (estimates, inserted) = estimate(prog, model, &rules_of, &sccs);
+    // `RERAIL_INLINE_ONLY=r,…` (the lab's comparison): those relations inlined where they can be, every other stored.
+    let only: Option<Vec<String>> = std::env::var("RERAIL_INLINE_ONLY").ok().map(|v| v.split(',').map(str::to_owned).collect());
+    // The relations priced below: those whose shape leaves the choice to the estimates. Only they, and the derived
+    // relations their rules and their readers' rules read, are estimated (decision 0101 §2): a maintained program
+    // has some 17,000 rules, nearly all of pieces no shape lets inline, and estimating every one was 3 s a step.
+    let priced: Vec<&str> = rules_of.iter().filter(|(rel, rules)| {
+        let rel = **rel;
+        let open = only.is_none() && !prog.qualified(rel, "inline") && !prog.qualified(rel, "no_inline") && !reasons.contains_key(rel);
+        open && readers.get(rel).is_some_and(|reads| !reads.is_empty() && reads.iter().map(|&(ri, i)| unfold(&prog.rules[ri], i, rules, 0).map(|c| c.len())).sum::<Option<usize>>().is_some_and(|copies| rules.len() <= K && copies <= COPIES))
+    }).map(|(rel, _)| *rel).collect();
+    let mut needed: BTreeSet<&str> = BTreeSet::new();
+    let mut todo: Vec<&str> = priced.clone();
+    for rel in &priced {
+        for &(ri, _) in readers.get(rel).into_iter().flatten() {
+            todo.extend(prog.rules[ri].body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()));
+        }
+    }
+    while let Some(rel) = todo.pop() {
+        if let Some(rules) = rules_of.get(rel) && needed.insert(rel) {
+            todo.extend(rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()));
+        }
+    }
+    let (estimates, inserted) = estimate(prog, model, &rules_of, &sccs, &needed);
     let mut inline: BTreeSet<String> = BTreeSet::new();
     let mut lines: Vec<String> = Vec::new();
     let mut refused_inline: Vec<String> = Vec::new();
-    // `RERAIL_INLINE_ONLY=r,…` (the lab's comparison): those relations inlined where they can be, every other stored.
-    let only: Option<Vec<String>> = std::env::var("RERAIL_INLINE_ONLY").ok().map(|v| v.split(',').map(str::to_owned).collect());
     for (rel, rules) in &rules_of {
         let rel = *rel;
         if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == rel)) {
@@ -476,14 +496,14 @@ struct Inserted {
     ndv: Vec<(String, usize)>,
 }
 
-/// Each derived relation's estimated (rows, work to build it), in evaluation order; each estimate is the planner's
+/// Each derived relation of `needed`'s estimated (rows, work to build it), in evaluation order; each estimate is the planner's
 /// statistics while its readers are priced (`unestimate` takes them back). A relation an earlier chunk measured keeps
 /// its measured rows.
-fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTreeSet<String>]) -> (BTreeMap<String, (f64, f64)>, Inserted) {
+fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTreeSet<String>], needed: &BTreeSet<&str>) -> (BTreeMap<String, (f64, f64)>, Inserted) {
     let mut out = BTreeMap::new();
     let mut inserted = Inserted { card: Vec::new(), ndv: Vec::new() };
     for scc in sccs {
-        for rel in scc {
+        for rel in scc.iter().filter(|r| needed.contains(r.as_str())) {
             let Some(rules) = rules_of.get(rel.as_str()) else { continue };
             let (mut rows, mut work) = (0.0, 0.0);
             for r in rules {
