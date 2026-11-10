@@ -105,6 +105,8 @@ A conversation rule file:
 | `sample.boundary` (inspection boundary) | `sentence`, `message`, `turn`, `tool-call` |
 | `repeat` | `once`, `always`, `{ "mode": "after-gap", "gapTurns": 3 }` |
 
+A turn, for `sample.boundary: "turn"` and `gapTurns`, is counted at each turn end the coding agent reports. In Claude Code and Codex that is each `Stop`, including each one after a Stop hook kept the turn going; in OMP and Pi it is each model call.
+
 </details>
 
 Every rule, conversation or code, needs a `mode`:

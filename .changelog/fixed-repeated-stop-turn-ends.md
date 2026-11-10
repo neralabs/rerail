@@ -1,1 +1,1 @@
-When Stop hooks keep a Claude Code or Codex turn going, Rerail now records and checks each time the turn ends again. Before, it dropped every one after the first in Claude Code, and every one after the second in Codex.
+When Stop hooks keep a Claude Code or Codex turn going, Rerail now records each time the turn ends again and checks it against conversation rules. Before, it recorded none of these turn ends after the first one in Claude Code, and none after the second in Codex.

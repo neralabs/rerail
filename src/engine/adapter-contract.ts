@@ -184,10 +184,11 @@ export function hookText(host: string) {
 }
 
 /**
- * What tells a `Stop` that ends a turn a Stop hook kept going (`stop_hook_active`) from the first one, and each such
- * continuation from the next, in a turn-end event id. Neither coding agent counts continuations, so one is told apart
- * by the final message it ended on: the same `Stop` delivered twice keeps one id, and a continuation that ends on the
- * very message an earlier continuation of the turn ended on is taken for that one.
+ * The suffix a `Stop` adds to its turn-end id when a Stop hook kept the turn going (`stop_hook_active`): empty for a
+ * turn's first `Stop`, otherwise a hash of the message the continuation ended on. Neither coding agent counts
+ * continuations, so the same `Stop` delivered twice keeps one id, and continuations that said different things each
+ * get their own. Two continuations of one turn that ended on the same message, or on none (Codex sends `null`), share
+ * an id: the second is still walked, but not recorded or sampled for conversation rules.
  */
 export function stopContinuation(stopHookActive: unknown, lastAssistantMessage: unknown): string {
   if (stopHookActive !== true) return "";
