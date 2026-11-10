@@ -313,9 +313,10 @@ OMP and Pi load Rerail as an extension and run no hook command; a steer writes t
   the profile folder. The Codex plugin uses the brace form `${PLUGIN_ROOT}`, the only form Codex replaces: neither
   PowerShell nor cmd.exe expands `$PLUGIN_ROOT`.
 - **Set-up's answers.** On Windows, Codex's and Cursor's `/rerail-start` passes `--powershell`, so every answer command
-  set-up prints is `& '<rerail.cmd>' setup ...` and carries the flag on. Without it, Claude Code's case, set-up writes
-  each answer as POSIX words, so a Windows path goes in single quotes for Git Bash. `CARRIED_FLAGS` in
-  `src/cli/setup-cli.ts` names the on-off flags every answer carries.
+  set-up prints is `& '<node>' '<cli.js>' setup ...` and carries the flag on: the installed CLI, or the one running
+  set-up until it has installed one, never `rerail.cmd`, whose arguments cmd.exe reads again. Without the flag, Claude
+  Code's case, set-up writes each answer as POSIX words, so a Windows path goes in single quotes for Git Bash.
+  `CARRIED_FLAGS` in `src/cli/setup-cli.ts` names the on-off flags every answer carries.
 
 </details>
 

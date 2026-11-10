@@ -313,8 +313,8 @@ Each answer run starts from what it is told, so running one twice repeats no ear
 Code's, Cursor's and Codex's `/rerail-start` runs `rerail start --relay`, and every answer command carries `--relay`,
 so an agent running commands in a terminal gets these questions, not a prompt waiting on input. On Windows Codex's and
 Cursor's `/rerail-start` runs `rerail start --relay --powershell`, since they run PowerShell there: each answer
-command is then written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`) and carries
-`--powershell` too. Every value PowerShell would read goes in single quotes, as
+command is then written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`, or the CLI
+running set-up until set-up has installed one) and carries `--powershell` too. Every value PowerShell would read goes in single quotes, as
 `--packs 'typescript@0.1.1,complexity@0.1.1'`, since PowerShell passes a bare `a,b` to a program as two arguments; so
 does the value the agent writes in (`--packs '<packs>'`). PowerShell ends a single-quoted value at any of `'`, `‘`, `’`,
 `‚` and `‛`, so the answer for a folder the person names tells the agent to write each of them twice in it (a folder

@@ -1024,6 +1024,16 @@ describe("Claude Code commands", () => {
     for (const { words } of [answer, powershell]) expect(words[0]).not.toMatch(/\.(?:cmd|bat)$/iu);
   });
 
+  it("starts a PowerShell answer with this run's node and CLI until set-up has installed one, never with a bare rerail", async () => {
+    const { home, root } = await fixture();
+    const rerailHome = join(home, "rerail home");
+    // Nothing installed yet: in PowerShell a bare `rerail` is rerail.cmd, whose arguments cmd.exe reads again.
+    const updater = new ManagedUpdater({ home: rerailHome, packageRoot: root, packageVersion: "1.0.0", platform: "win32" });
+    const powershell = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true, powershell: true })!;
+    expect(commandLine(powershell.shell, powershell.words))
+      .toBe(`& ${shellWord("powershell", pinnedNodePath())} ${shellWord("powershell", join(root, ENTRY_POINTS.cli))} setup --relay --powershell`);
+  });
+
   it("writes Codex's and Cursor's commands on Windows for PowerShell, and Claude Code's for Git Bash", async () => {
     const { home, root } = await fixture();
     const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
