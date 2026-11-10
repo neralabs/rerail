@@ -165,7 +165,7 @@ as finding keys:
 
 ### Open
 
-- The guard below is not built yet.
+- The guard is a test for now (below), not yet a compile-time refusal.
 - `first_token`, `last_token`, `token_before`, `token_after` relate nodes, and an implied token
   has none.
 - A gap test on the Metal path is a fact, and facts are still made on the host there
@@ -191,7 +191,11 @@ as finding keys:
 
 ## The guard
 
-D's classification moves into rule compilation. A token test whose token the grammar implies
+`no_rule_reads_a_token_the_tape_may_leave_out` runs D over every pack rule. It fails on any
+`root`, `below`, `gap` or `gap?` test that is not one of eight listed by rule and path
+(`READS_STORED`), each with the reason its token is stored there.
+
+Next, D's classification moves into rule compilation. A token test whose token the grammar implies
 where the rule looks, and that neither the gap test nor the parts walk answers, becomes a compile
 error naming the rule and the test. A rule whose parent can't be placed (today's `gap?`) has to say its parent. After that, a
 rule can't depend on a token the tapes don't hold, and a grammar update that implies a new token

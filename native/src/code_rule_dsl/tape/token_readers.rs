@@ -288,18 +288,12 @@ fn node_kind(map: &Map<String, Value>, utils: &Map<String, Value>, depth: usize)
 /// The worst category of a rule's tests, in the order they cost to fix.
 const ORDER: [&str; 10] = ["root", "below", "layout", "gap", "gap?", "incidental", "excluder", "lowered", "stored", "never"];
 
-/// RER-131 D (ignored): every token test of every pack rule, its category, and where its token is
-/// implied, to `RERAIL_TOKEN_READERS` (a TSV); a summary per pack and category on stderr.
-#[test]
-#[ignore = "census: RERAIL_TOKEN_READERS=<tsv>"]
-fn token_readers() {
-    let out = std::env::var("RERAIL_TOKEN_READERS").expect("RERAIL_TOKEN_READERS");
+/// Every token test of every pack rule (`packs/*/rules`, `packs/*/candidates/rules`): `each` gets the
+/// pack's label, the rule's name, its language and the test, a test reached in several contexts
+/// once, in its worst category.
+fn census(mut each: impl FnMut(&str, &str, &str, Test)) {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
     let mut langs: BTreeMap<String, Option<Lang>> = BTreeMap::new();
-    let mut tsv = String::from("pack\trule\tlanguage\tcategory\tnegated\trelation\tregex\timplied (parent token)\tpath\n");
-    // (pack, category) -> (tests, rules by worst category)
-    let mut tests_by: BTreeMap<(String, &str), usize> = BTreeMap::new();
-    let mut rules_by: BTreeMap<(String, &str), usize> = BTreeMap::new();
     let mut packs: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
     packs.sort();
     for pack in packs {
@@ -321,7 +315,6 @@ fn token_readers() {
                         }
                     }
                 }
-                let mut worst: Option<usize> = None;
                 let mut found: BTreeMap<(String, String), (String, Test)> = BTreeMap::new();
                 for (at, clause) in clauses.iter().enumerate() {
                     let Some(ast) = clause.pointer("/forbid/ast").and_then(Value::as_object) else { continue };
@@ -349,18 +342,35 @@ fn token_readers() {
                     }
                 }
                 for (language, test) in found.into_values() {
-                    let implied: Vec<String> = test.implied.iter().take(8).map(|(parent, token)| format!("{parent} {token}")).collect();
-                    let more = if test.implied.len() > 8 { format!(" +{}", test.implied.len() - 8) } else { String::new() };
-                    writeln!(tsv, "{label}\t{name}\t{language}\t{}\t{}\t{}\t{}\t{}{more}\t{}", test.category, test.negated, test.relation, test.regex, implied.join(", "), test.path).unwrap();
-                    *tests_by.entry((label.clone(), test.category)).or_default() += 1;
-                    let rank = ORDER.iter().position(|c| *c == test.category).unwrap();
-                    worst = Some(worst.map_or(rank, |w| w.min(rank)));
-                }
-                if let Some(rank) = worst {
-                    *rules_by.entry((label.clone(), ORDER[rank])).or_default() += 1;
+                    each(&label, &name, &language, test);
                 }
             }
         }
+    }
+}
+
+/// RER-131 D (ignored): every token test of every pack rule, its category, and where its token is
+/// implied, to `RERAIL_TOKEN_READERS` (a TSV); a summary per pack and category on stderr.
+#[test]
+#[ignore = "census: RERAIL_TOKEN_READERS=<tsv>"]
+fn token_readers() {
+    let out = std::env::var("RERAIL_TOKEN_READERS").expect("RERAIL_TOKEN_READERS");
+    let mut tsv = String::from("pack\trule\tlanguage\tcategory\tnegated\trelation\tregex\timplied (parent token)\tpath\n");
+    // (pack, category) -> tests; (pack, rule) -> its worst category's rank.
+    let mut tests_by: BTreeMap<(String, &str), usize> = BTreeMap::new();
+    let mut worst: BTreeMap<(String, String), usize> = BTreeMap::new();
+    census(|label, name, language, test| {
+        let implied: Vec<String> = test.implied.iter().take(8).map(|(parent, token)| format!("{parent} {token}")).collect();
+        let more = if test.implied.len() > 8 { format!(" +{}", test.implied.len() - 8) } else { String::new() };
+        writeln!(tsv, "{label}\t{name}\t{language}\t{}\t{}\t{}\t{}\t{}{more}\t{}", test.category, test.negated, test.relation, test.regex, implied.join(", "), test.path).unwrap();
+        *tests_by.entry((label.to_owned(), test.category)).or_default() += 1;
+        let rank = ORDER.iter().position(|c| *c == test.category).unwrap();
+        let entry = worst.entry((label.to_owned(), name.to_owned())).or_insert(rank);
+        *entry = (*entry).min(rank);
+    });
+    let mut rules_by: BTreeMap<(String, &str), usize> = BTreeMap::new();
+    for ((label, _), rank) in worst {
+        *rules_by.entry((label, ORDER[rank])).or_default() += 1;
     }
     std::fs::write(&out, tsv).unwrap();
     let labels: BTreeSet<&String> = rules_by.keys().map(|(pack, _)| pack).collect();
@@ -375,4 +385,33 @@ fn token_readers() {
     let total = |c: &str, map: &BTreeMap<(String, &str), usize>| map.iter().filter(|((_, k), _)| *k == c).map(|(_, n)| n).sum::<usize>();
     let row: Vec<String> = ORDER.iter().map(|c| format!("{c} {} ({})", total(c, &rules_by), total(c, &tests_by))).collect();
     eprintln!("  all: {}", row.join(", "));
+}
+
+/// The token tests that still read a token as a node although the tape may not hold it, by pack,
+/// rule and path, and why each holds anyway: the token is stored where the rule looks (a hole, a
+/// trailing comma, an optional modifier, a for-in head's keyword), or the regex reads a node's text.
+const READS_STORED: [(&str, &str, &str, &str); 8] = [
+    ("javascript", "eslint-no-sparse-arrays", "clauses/0/rule", "a comma after `[` or a comma: a hole, stored"),
+    ("javascript", "eslint-one-var", "utils/r16/all/0", "`const` in a for-in head (`inside` in a sibling item), stored"),
+    ("javascript", "eslint-one-var", "utils/r17/all/0", "`var` in a for-in head, stored"),
+    ("node/candidates", "n-no-unsupported-features-es-syntax", "clauses/205/rule", "a trailing comma before `)`, stored"),
+    ("python", "ruff-com818-trailing-comma-on-bare-tuple", "clauses/0/rule", "a trailing comma ending a statement, stored"),
+    ("python", "ruff-com818-trailing-comma-on-bare-tuple", "clauses/2/rule", "a trailing comma in targets, stored; an implied one has its own clause"),
+    ("typescript", "typescript-eslint-explicit-member-accessibility", "clauses/2/rule/all/0/any/0", "optional modifiers, stored"),
+    ("typescript", "typescript-eslint-explicit-module-boundary-types", "clauses/2/rule", "a regex over a declaration's text"),
+];
+
+/// The guard (t31): no pack rule tests, as a node or in a gap nothing answers, a token the tape
+/// may leave out. D's `root`, `below`, `gap` and `gap?` tests are each a rule in
+/// [`READS_STORED`], whose token is stored where it looks; anything else is to be rewritten or
+/// answered by the gap test or the parts walk (`matcher::gap`).
+#[test]
+fn no_rule_reads_a_token_the_tape_may_leave_out() {
+    let mut unanswered = BTreeSet::new();
+    census(|label, name, _, test| {
+        if matches!(test.category, "root" | "below" | "gap" | "gap?") && !READS_STORED.iter().any(|(pack, rule, path, _)| *pack == label && *rule == name && *path == test.path) {
+            unanswered.insert(format!("{label}/{name} {} {} at {}", test.category, test.regex, test.path));
+        }
+    });
+    assert!(unanswered.is_empty(), "token tests nothing answers: {unanswered:#?}");
 }
