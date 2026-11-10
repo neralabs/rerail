@@ -38,6 +38,8 @@ def cases(_module):
     for kind in ['file', 'content']:
         rows.append(dict(kind=kind, id=kind+'-missing', disk=None, supplied=BAD))
         rows.append(dict(kind=kind, id=kind+'-invalid-utf8', binary='ff', supplied=BAD))
+    for path in ['tests/a.py','a.pyi']:
+        rows.append(dict(kind='content',id='content-excluded-unreadable-'+path,path=path,binary='ff',supplied=BAD))
     return rows
 
 
