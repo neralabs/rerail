@@ -68,6 +68,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
+mod choices;
 mod demand;
 pub(in crate::code_rule_dsl) mod keeps;
 pub(in crate::code_rule_dsl) mod sketch;
@@ -4536,6 +4537,87 @@ pub(in crate::code_rule_dsl) struct Hooks<'a> {
     pub(in crate::code_rule_dsl) unload: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Answers the requests a component makes, inside the fixpoint (decision 0065 §2a).
     pub(in crate::code_rule_dsl) answer: Option<Answer<'a>>,
+    /// The strata an earlier run of the program kept (decision 0077 §4): a stratum whose reads are unchanged is not run.
+    pub(in crate::code_rule_dsl) strata: Option<&'a mut dyn KeptStrata>,
+}
+
+/// What an earlier run of a program kept of its strata, and what this run gives back (decision 0077 §4).
+pub(in crate::code_rule_dsl) trait KeptStrata {
+    /// The program the run evaluates, as the whole-program choices left it: what was kept is of that program.
+    fn program(&mut self, digest: &[u8; 32]);
+    /// Input `rel`'s digest in this run (`None`: not known).
+    fn input(&mut self, rel: &str) -> Option<u64>;
+    /// The digest relation or input `rel` had in the earlier run.
+    fn was(&self, rel: &str) -> Option<u64>;
+    /// Whether the earlier run's rows of `rel` are kept.
+    fn has_rows(&self, rel: &str) -> bool;
+    /// The earlier run's rows of `rel`: its columns' types, the rows flat, and their count.
+    fn rows(&mut self, rel: &str) -> Option<(Vec<u8>, Vec<i64>, usize)>;
+    /// This run derived `rel`: its digest, and its rows (types, flat, count), or `None` when SQL derived it.
+    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Vec<i64>, usize)>);
+    /// The run's end: the strata it evaluated, of all.
+    fn counted(&mut self, evaluated: usize, of: usize);
+}
+
+/// The relations a stratum's rules read: atoms (an aggregate's too), `node` and `child` for a `nearest` climb, a
+/// native operator's inputs.
+fn stratum_reads(prog: &Program, scc: &BTreeSet<String>, rules: &[&Rule]) -> BTreeSet<String> {
+    let mut out: BTreeSet<String> = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.clone())).collect();
+    if rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Nearest { .. }))) {
+        out.extend(["node".to_owned(), "child".to_owned()]);
+    }
+    for rel in scc {
+        if let Some(native) = prog.natives.get(rel) {
+            out.extend(native.reads().into_iter().map(str::to_owned));
+        }
+    }
+    out
+}
+
+/// After a stratum ran: each of its relations' digest and rows, given to `ks` (and to this run's `fresh`).
+fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BTreeSet<String>, fresh: &mut HashMap<String, Option<u64>>) {
+    for r in scc {
+        let got = if run.native_rels.contains(r) { super::native::component::kept_rows(db, r) } else { None };
+        let got = got.map(|(types, rows, n)| (rows_digest(types.len(), &rows, n), types, rows, n));
+        fresh.insert(r.clone(), got.as_ref().map(|g| g.0));
+        ks.ran(r, got);
+    }
+}
+
+/// Holds clean relation `rel` in the run as the earlier run kept it, with its statistics; its rows' count.
+fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel: &str) -> Result<usize> {
+    let (types, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
+    let k = types.len();
+    let mut ndv = Vec::with_capacity(k);
+    for c in 0..k {
+        let distinct: rustc_hash::FxHashSet<i64> = rows.iter().skip(c).step_by(k).copied().collect();
+        ndv.push(distinct.len() as i64);
+    }
+    super::native::component::hold_rows(db, rel, types, rows, n);
+    run.native_rels.insert(rel.to_owned());
+    run.model.stats.card.insert(rel.to_owned(), (n as f64).max(1.0));
+    for (c, d) in ndv.into_iter().enumerate() {
+        run.model.ndv.insert((rel.to_owned(), c), d.max(1) as f64);
+        run.model.stats.fan.insert((rel.to_owned(), c), if d > 0 { n as f64 / d as f64 } else { 1.0 });
+        run.model.stats.dfreq.remove(&(rel.to_owned(), c));
+    }
+    Ok(n)
+}
+
+/// An order-independent digest of rows (a set), as `corpus::retain::digest` takes a source's.
+pub(in crate::code_rule_dsl) fn rows_digest(width: usize, rows: &[i64], n: usize) -> u64 {
+    let mut sum: u64 = 0;
+    if width > 0 {
+        for row in rows.chunks_exact(width) {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for v in row {
+                h = (h ^ *v as u64).wrapping_mul(0x0000_0100_0000_01b3);
+                h ^= h >> 29;
+            }
+            sum = sum.wrapping_add(h.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        }
+    }
+    sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
 }
 
 /// `run_atoms_native_over`, telling `hooks` of each kept relation and input as its last reader runs, and of each
@@ -4702,33 +4784,63 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     if super::profile::on() {
         super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
     }
-    // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
-    // 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
-    let split;
     let corpus = PLANS.with(|p| p.borrow().is_some());
-    // What each derived relation keeps (decision 0097): stored, or inlined into its readers, from this plan's
-    // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
-    let inlined;
-    let prog: &Program = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
-        Some((p, done)) => {
-            super::profile::decision("inline or store (decision 0097)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
-            inlined = p;
-            model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&inlined)).into();
-            &inlined
+    // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
+    // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
+    let chosen_key = corpus.then(|| choices::key(prog));
+    let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
+    let chosen: Option<std::sync::Arc<Program>>;
+    let prog: &Program = match reused {
+        Some(c) => {
+            let nodes = model.stats.nodes;
+            super::profile::decision("planning choices (decision 0090 §5)", || format!("kept: inline or store and demand as chosen at {:.0} nodes, taken at {nodes:.0}", c.nodes));
+            if !c.inlined.is_empty() {
+                super::profile::decision("inline or store (decision 0097)", || format!("{} relations recomputed in their readers: {}", c.inlined.len(), c.inlined.join(", ")));
+            }
+            if !c.demanded.is_empty() {
+                super::profile::decision("demand (decision 0048)", || format!("{} relations computed only for the keys their readers reach: {}", c.demanded.len(), c.demanded.join(", ")));
+            }
+            if c.program.is_some() {
+                // The program run is the rewritten one: its analysis is that program's, made when asked.
+                model.analysis = std::sync::OnceLock::new();
+            }
+            chosen = c.program;
+            chosen.as_deref().unwrap_or(prog)
         }
-        None => prog,
-    };
-    let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
-        Some((p, demanded)) => {
-            super::profile::decision("demand (decision 0048)", || {
-                format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
-            });
-            split = p;
-            // The program run is the split one: its analysis is that program's, made when asked.
-            model.analysis = std::sync::OnceLock::new();
-            &split
+        None => {
+            // What each derived relation keeps (decision 0097): stored, or inlined into its readers, from this plan's
+            // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
+            let mut inlined_names = Vec::new();
+            let inlined = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
+                Some((p, done)) => {
+                    super::profile::decision("inline or store (decision 0097)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
+                    model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&p)).into();
+                    inlined_names = done;
+                    Some(p)
+                }
+                None => None,
+            };
+            // Relations computed for every node that rules only negate, computed for the keys those rules reach
+            // (decision 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
+            let mut demanded_names = Vec::new();
+            let split = match if corpus { demand::split_negations(inlined.as_ref().unwrap_or(prog), &model) } else { None } {
+                Some((p, demanded)) => {
+                    super::profile::decision("demand (decision 0048)", || {
+                        format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
+                    });
+                    // The program run is the split one: its analysis is that program's, made when asked.
+                    model.analysis = std::sync::OnceLock::new();
+                    demanded_names = demanded;
+                    Some(p)
+                }
+                None => None,
+            };
+            chosen = split.or(inlined).map(std::sync::Arc::new);
+            if let Some(k) = chosen_key {
+                choices::remember(k, choices::Chosen { program: chosen.clone(), inlined: inlined_names, demanded: demanded_names, nodes: model.stats.nodes });
+            }
+            chosen.as_deref().unwrap_or(prog)
         }
-        None => prog,
     };
     drop(demand_span);
     let strata_span = super::profile::span(|| "strata".into());
@@ -4908,6 +5020,23 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // Relations no stratum reads, of strata that finished after the stratum following them ran: released or read
     // out at the next stratum, as they would have been at the one following them.
     let mut carry: Vec<String> = Vec::new();
+    // Strata kept from an earlier run of the program (`Hooks::strata`, decision 0077 §4): a stratum whose every read
+    // has the rows it had then is not run, its relations' rows taken from what was kept when a stratum that runs
+    // reads them (or the run's end keeps them); a stratum that runs gives its rows' digest, so one whose rows came
+    // out the same leaves its readers clean (early cutoff).
+    let mut strata_kept = hooks.strata.take().filter(|_| prog.gates.is_empty());
+    if let Some(ks) = strata_kept.as_deref_mut() {
+        ks.program(&choices::key(prog));
+    }
+    let input_set: BTreeSet<&str> = prog.inputs.iter().map(String::as_str).collect();
+    let produced_here = super::answers::produced(prog);
+    // This run's digest of each derived relation (`None`: not known, as for a stratum SQL ran); clean relations not
+    // yet held; the strata evaluated whose rows' digests are not taken yet. A stratum waiting on its device wave has
+    // no rows yet: its digest is taken once its wave ran (a stratum that reads it finishes the wave first).
+    let mut fresh: HashMap<String, Option<u64>> = HashMap::new();
+    let mut deferred: BTreeSet<String> = BTreeSet::new();
+    let mut evaluated: Vec<usize> = Vec::new();
+    let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
     for (at, scc) in sccs.iter().enumerate() {
         if !waiting.is_empty() {
             let reads_waiting = || {
@@ -4919,6 +5048,13 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
         super::lanes::prof::level(Some(level_of[at]));
+        if let Some(ks) = strata_kept.as_deref_mut() {
+            let (done, still): (Vec<usize>, Vec<usize>) = std::mem::take(&mut evaluated).into_iter().partition(|k| !waiting.iter().any(|w| w.0 == *k));
+            evaluated = still;
+            for k in done {
+                kept_strata_ran(ks, db, &run, &sccs[k], &mut fresh);
+            }
+        }
         let candidates: Vec<String> = if at == 0 {
             run.native_rels.iter().cloned().collect()
         } else {
@@ -4971,6 +5107,46 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         }
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
+        if let Some(ks) = strata_kept.as_deref_mut() {
+            let reads = stratum_reads(prog, scc, &rules);
+            // A stratum the engine makes otherwise (a native operator, a lattice, a view, a produced request, a
+            // tree pattern read off the documents) always runs.
+            let plain = !scc.iter().any(|r| prog.natives.contains_key(r) || prog.lattice.contains_key(r) || run.views.contains(r) || produced_here.contains_key(r.as_str()))
+                && !rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Ast { .. })));
+            let mut clean = plain && !rules.is_empty() && scc.iter().all(|r| ks.has_rows(r));
+            for r in &reads {
+                if !clean {
+                    break;
+                }
+                let now = if fresh.contains_key(r) {
+                    fresh[r]
+                } else if input_set.contains(r.as_str()) {
+                    ks.input(r)
+                } else if rules_by.contains_key(r.as_str()) {
+                    None
+                } else {
+                    // Neither derived nor an input: the program's own facts, which its key holds.
+                    Some(0)
+                };
+                clean = now.is_some() && now == ks.was(r);
+            }
+            if clean {
+                for r in scc {
+                    fresh.insert(r.clone(), ks.was(r));
+                    deferred.insert(r.clone());
+                }
+                clean_strata += 1;
+                continue;
+            }
+            // A clean relation this stratum reads is held now, as the last run derived it.
+            let wanted: Vec<String> = reads.iter().filter(|r| deferred.contains(*r)).cloned().collect();
+            for r in wanted {
+                held_rows += kept_strata_hold(ks, db, &mut run, &r)?;
+                deferred.remove(&r);
+                held_again += 1;
+            }
+            evaluated.push(at);
+        }
         let _stratum = super::profile::span(|| format!("stratum {}", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
         // A produced relation above its request (decision 0065 §2a): its request is whole, so it is answered once, or
         // holds what a component's pauses answered. An input's rows are the caller's to write.
@@ -5139,6 +5315,22 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last)?;
     super::lanes::prof::level(None);
+    if let Some(ks) = strata_kept.as_deref_mut() {
+        for k in std::mem::take(&mut evaluated) {
+            kept_strata_ran(ks, db, &run, &sccs[k], &mut fresh);
+        }
+        // What stays to the run's end (outputs, relations kept for the caller) is held again if it was clean.
+        let wanted: Vec<String> = deferred.iter().filter(|r| stays.contains(*r)).cloned().collect();
+        for r in wanted {
+            held_rows += kept_strata_hold(ks, db, &mut run, &r)?;
+            deferred.remove(&r);
+            held_again += 1;
+        }
+        ks.counted(sccs.len() - clean_strata, sccs.len());
+        super::profile::decision("cross-file strata kept across runs (decision 0077 §4)", || {
+            format!("{clean_strata} of {} strata not run: their reads had the rows they had; {held_again} of their relations held again ({held_rows} rows)", sccs.len())
+        });
+    }
     let _outputs = super::profile::span(|| "outputs".into());
     let kept = run.model.inputs.kept.clone();
     outcome.kept = kept.iter().filter(|r| run.native_rels.contains(*r)).cloned().collect();

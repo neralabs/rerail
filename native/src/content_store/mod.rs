@@ -19,6 +19,7 @@ pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, R
 pub(crate) use connection::sqlite_on_jemalloc;
 mod cross_rows;
 mod derivation;
+mod kept_strata;
 mod facts_memo;
 mod objects;
 pub(crate) mod observe;
@@ -56,6 +57,7 @@ mod workspaces;
 pub(crate) mod working_set;
 
 pub(crate) use compression::compress;
+pub use kept_strata::{KeptPut, KeptRows};
 pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;
 pub use atoms::Sym;
