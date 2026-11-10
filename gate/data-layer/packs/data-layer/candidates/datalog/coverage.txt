@@ -4,7 +4,7 @@ gaps (clauses):
 
 approximations (rules):
       1  a metavariable twice: equal names
-     20  a regex on a node of any kind as a name
+     21  a regex on a node of any kind as a name
       1  a run of one character read as at most three
      31  neighbours among named children
       2  nthChild among named children
