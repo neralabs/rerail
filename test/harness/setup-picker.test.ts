@@ -15,6 +15,7 @@ import { removeInstalledPacks } from "../support/installed-packs.js";
 import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
+import { shellWord } from "../../src/engine/index.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
 const TS_PACKS = ["typescript"];
@@ -236,7 +237,8 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     vi.stubEnv("HOME", join(setup.root, "user"));
     const io = { lane: "agent" as const, say: (text: string) => { said.push(text); }, close: () => {} };
     expect(await runSetupCommand(["--repository", "--database", other, "--repo", worktree], setup.context, io)).toBe(0);
-    expect(said.join("\n")).toContain(`setup --relay --database ${other} --repository --answer start --repo ${worktree}`);
+    // The agent runs answers in a POSIX shell, Git Bash on Windows, which needs a Windows path in quotes.
+    expect(said.join("\n")).toContain(`setup --relay --database ${shellWord("posix", other)} --repository --answer start --repo ${shellWord("posix", worktree)}`);
   });
 
   it("carries each on-off flag of `start` into every answer, and on through the run that answer starts", async () => {
