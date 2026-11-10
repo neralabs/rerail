@@ -158,6 +158,8 @@ const NOT_YET_TABLES_PIN: usize = 68;
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
+    // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
+    ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),

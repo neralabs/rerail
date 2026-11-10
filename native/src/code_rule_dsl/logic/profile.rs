@@ -602,6 +602,11 @@ fn hazards(r: &mut String, state: &State) {
     let _ = writeln!(r, "Costliest (of {}):\n       ms     runs  kind / span / statement", all.len());
     for ((class, path, text), (n, t)) in all.iter().take(40) {
         let _ = writeln!(r, "  {:>7.1} {n:>8}  {class}\n                    {path}\n                    {}", *t as f64 / 1e6, short(text, 160));
+    }    // The run's own connection's, every one: few, and each a relation the engine should hold instead.
+    let own: Vec<_> = all.iter().filter(|((_, _, text), _)| text.starts_with("run: ")).collect();
+    let _ = writeln!(r, "On the run's connection (all {}):\n       ms     runs  kind / span / statement", own.len());
+    for ((class, path, text), (n, t)) in own {
+        let _ = writeln!(r, "  {:>7.1} {n:>8}  {class}\n                    {path}\n                    {}", *t as f64 / 1e6, short(text, 160));
     }
 }
 

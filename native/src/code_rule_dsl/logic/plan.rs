@@ -3163,7 +3163,7 @@ impl<'a> Run<'a, '_> {
     fn ensure<'r>(&mut self, rels: impl IntoIterator<Item = &'r String>) -> Result<()> {
         for r in rels {
             if let Some(create) = self.pending.remove(r) {
-                self.db.execute(&create, [])?;
+                self.db.execute_batch(&create)?;
             }
         }
         Ok(())
@@ -3655,6 +3655,12 @@ impl<'a> Run<'a, '_> {
     /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it. The stratum
     /// may come back waiting on its device wave (`Native::Waiting`); `native_resume` finishes it once the wave ran.
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule]) -> Result<Native<'a>> {
+        // The views it reads are SQL's: made when a stratum first reads one (decision 0104: none made that none reads).
+        let views: Vec<String> = rules.iter().flat_map(|r| &r.body).filter_map(|l| match l {
+            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.clone()),
+            _ => None,
+        }).filter(|r| self.views.contains(r)).collect();
+        self.ensure(&views)?;
         let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
         self.lent(reads.then(|| scc.clone()), |this, native_rels, numbers| this.native_stratum_(scc, rules, native_rels, numbers))
     }
@@ -4835,9 +4841,6 @@ pub(in crate::code_rule_dsl) fn insert_many(db: &Connection, insert: &str, rows:
     Ok(())
 }
 
-/// Positions in a symbol, for splitting one at its dots (`$m = @cat($q, $x)` with only $m bound).
-const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT INTO rdl_int WITH RECURSIVE i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM i WHERE i < 4096) SELECT i FROM i;";
-
 /// The relations a single rule projects from one input atom, as views (`CREATE TEMP VIEW`), with
 /// their statistics, input columns and document columns recorded in `model`.
 /// A view's statement.
@@ -4889,35 +4892,98 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     Ok(views)
 }
 
+/// The connections (by `setfix_scope`) whose last run left tables or views in SQL: the next run there asks which,
+/// and drops them. A connection not here left none, and is not asked (decision 0104: no SQL in a run's waves that
+/// nothing needs).
+static TEMP_LEFT: std::sync::Mutex<BTreeSet<usize>> = std::sync::Mutex::new(BTreeSet::new());
+
+/// At a run's end: its connection is in `TEMP_LEFT` when the run made a table or a view, or kept one.
+struct TempLeft {
+    scope: usize,
+    made: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for TempLeft {
+    fn drop(&mut self) {
+        if self.made.load(std::sync::atomic::Ordering::Relaxed) {
+            TEMP_LEFT.lock().expect("temp_left").insert(self.scope);
+        }
+    }
+}
+
+/// Whether the run's model has the native engine (any native mode).
+fn model_native_on(run: &Run) -> bool {
+    !run.model.inputs.native.is_empty()
+}
+
+/// Each relation of `prog` with rules and stated facts gets its facts apart, in `rel__stated`, and the rule
+/// `rel(x…) :- rel__stated(x…)` (a lattice relation keeps them): the pairs `(rel, rel__stated)`.
+fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
+    let ruled: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let moved: Vec<String> = prog.facts.iter().filter(|(r, f)| !f.is_empty() && ruled.contains(*r) && !prog.lattice.contains_key(*r)).map(|(r, _)| r.clone()).collect();
+    let mut out = Vec::new();
+    for rel in moved {
+        let apart = format!("{rel}__stated");
+        let facts = prog.facts.remove(&rel).expect("stated facts");
+        let cols = prog.decls[&rel].clone();
+        let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("rr_s{i}"))).collect();
+        prog.decls.insert(apart.clone(), cols);
+        prog.facts.insert(apart.clone(), facts);
+        prog.rules.push(Rule {
+            head: Atom { rel: rel.clone(), args: args.clone(), neg: false, gated: false },
+            body: vec![Literal::Atom(Atom { rel: apart.clone(), args, neg: false, gated: false })],
+        });
+        out.push((rel, apart));
+    }
+    out
+}
+
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hooks: Hooks<'_>) -> Result<Outcome> {
-    let (normalized,sentinels)=sql_kernel::normalize(prog)?;
+    let (mut normalized,sentinels)=sql_kernel::normalize(prog)?;
+    // A relation of rules and stated facts: its facts are a relation of facts alone, read by one rule, so the engine
+    // holds them as it holds every relation, and no table is loaded with them in the run's waves (decision 0104).
+    let stated = if inputs.atoms.is_some() && !inputs.native.is_empty() { stated_apart(&mut normalized) } else { Vec::new() };
     let prog=&normalized;
     let adjusted=lowered.map(|l|{
         let mut domains=l.domains.clone();
         for rel in &sentinels {if let Some(columns)=domains.get_mut(rel){while columns.len()<prog.decls[rel].len(){columns.insert(0,lower::Domain::Int);}}}
+        for (rel, apart) in &stated {if let Some(columns)=domains.get(rel).cloned(){domains.insert(apart.clone(),columns);}}
         lower::Lowered{program:prog.clone(),domains,ops:l.ops,dialect:l.dialect}
     });
     let lowered=adjusted.as_ref();
     let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;
     super::native::aggregation::register_sum(db)?;
-    // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
-    // positions table (`rdl_int`) is the same for every run.
-    let temp: Vec<(String, String, String)> = db
-        .prepare("SELECT type, name, coalesce(sql, '') FROM temp.sqlite_master WHERE type IN ('table', 'view')")?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-        .collect::<rusqlite::Result<_>>()?;
+    // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`). A
+    // connection whose runs left nothing in SQL is not asked what they left (`temp_left`).
+    let scope = super::native::setfix_scope(db);
+    let left = TEMP_LEFT.lock().expect("temp_left").remove(&scope);
+    let temp: Vec<(String, String, String)> = if !left {
+        Vec::new()
+    } else {
+        db.prepare("SELECT type, name, coalesce(sql, '') FROM temp.sqlite_master WHERE type IN ('table', 'view')")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let made_temp = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        use rusqlite::hooks::{AuthAction, Authorization};
+        let made = std::sync::Arc::clone(&made_temp);
+        db.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| {
+            if matches!(ctx.action, AuthAction::CreateTempTable { .. } | AuthAction::CreateTempView { .. } | AuthAction::CreateTempIndex { .. } | AuthAction::CreateTable { .. } | AuthAction::CreateView { .. }) {
+                made.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            Authorization::Allow
+        }));
+    }
+    let _left_after = TempLeft { scope, made: std::sync::Arc::clone(&made_temp) };
     let mut old_views: HashMap<String, String> = HashMap::new();
     for (ty, name, sql) in temp {
         if ty == "view" {
             old_views.insert(name, sql);
-        } else if name != "rdl_int" {
+        } else {
             db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{}", crate::code_rule_dsl::logic::sql::ident(&name)))?;
         }
-    }
-    // Positions in a symbol, for splitting one at its dots (`$m = @cat($q, $x)` with only $m bound).
-    if !db.prepare("SELECT 1 FROM temp.sqlite_master WHERE name = 'rdl_int'")?.exists([])? {
-        db.execute_batch(RDL_INT)?;
     }
     let atoms = inputs.atoms.is_some();
     let facts = inputs.facts.clone();
@@ -5033,9 +5099,17 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
-        if old_views.remove(&rel).as_deref() != Some(&view.replacen("CREATE TEMP VIEW", "CREATE VIEW", 1)) {
-            db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{}", crate::code_rule_dsl::logic::sql::ident(&rel)))?;
-            db.execute(&view, [])?;
+        if old_views.remove(&rel).as_deref() == Some(&view.replacen("CREATE TEMP VIEW", "CREATE VIEW", 1)) {
+            // Kept as the last run made it: still in SQL, so the next run asks what is left.
+            made_temp.store(true, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            let drop_make = format!("DROP VIEW IF EXISTS temp.{}; {view}", crate::code_rule_dsl::logic::sql::ident(&rel));
+            if !(atoms && model_native_on(&run)) {
+                db.execute_batch(&drop_make)?;
+            } else {
+                // Made when SQL first reads it (`ensure`): a native run reads the inputs where they are.
+                run.pending.insert(rel.clone(), drop_make);
+            }
         }
         run.views.insert(rel);
     }
@@ -5080,6 +5154,46 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         // A rule's head is made when SQL first needs it; a relation of facts alone, or of neither, now.
         // (Over atoms: T's extension, over text, reads its relations' tables itself.)
         if atoms && rules_by.contains_key(rel.as_str()) && prog.facts.get(rel).is_none_or(|f| f.is_empty()) {
+            run.pending.insert(rel.clone(), create);
+            continue;
+        }
+        // A relation of stated facts alone is held in the engine, as any relation is, when the run has it: its
+        // facts are not loaded into a SQL table inside the run's waves (decision 0104). SQL that reads it has it made
+        // then (`materialize`).
+        if atoms && !native.is_empty() && !cols.is_empty() && prog.facts.get(rel).is_some_and(|f| !f.is_empty()) && !rules_by.contains_key(rel.as_str()) && !prog.lattice.contains_key(rel) {
+            let facts = prog.facts.get(rel).map(Vec::as_slice).unwrap_or_default();
+            let texts: Vec<&str> = facts.iter().flatten().filter_map(|v| if let Value::Str(s) = v { Some(s.as_str()) } else { None }).collect();
+            let mut ids = super::native::intern_batch(db, texts.iter().copied())?.into_iter();
+            let mut rows: Vec<i64> = Vec::with_capacity(facts.len() * cols.len());
+            for row in facts {
+                for v in row {
+                    rows.push(match v {
+                        Value::Int(i) => *i,
+                        Value::Str(_) => ids.next().expect("one atom per text"),
+                    });
+                }
+            }
+            let types: Vec<u8> = cols.iter().map(|(_, t)| sym_char(&run.model.inputs, t) as u8).collect();
+            let mut set: rustc_hash::FxHashSet<&[i64]> = rustc_hash::FxHashSet::default();
+            let mut unique: Vec<i64> = Vec::with_capacity(rows.len());
+            if cols.is_empty() {
+                // A relation of no columns holds its one fact or none.
+            } else {
+                for row in rows.chunks_exact(cols.len()) {
+                    if set.insert(row) {
+                        unique.extend_from_slice(row);
+                    }
+                }
+            }
+            let n = if cols.is_empty() { usize::from(!facts.is_empty()) } else { unique.len() / cols.len() };
+            for c in 0..cols.len() {
+                let d = unique.iter().skip(c).step_by(cols.len()).copied().collect::<rustc_hash::FxHashSet<i64>>().len().max(1) as f64;
+                run.model.ndv.insert((rel.clone(), c), d);
+                run.model.stats.fan.insert((rel.clone(), c), (n as f64 / d).max(1.0));
+            }
+            run.model.stats.card.insert(rel.clone(), (n as f64).max(1.0));
+            super::native::component::hold_rows(db, rel, types, unique, n);
+            run.native_rels.insert(rel.clone());
             run.pending.insert(rel.clone(), create);
             continue;
         }
@@ -5450,7 +5564,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             })
             .chain(scc.iter().cloned())
             .collect();
+        // A stratum of views alone is SQL's to read in place where a rule joins it (below): nothing is made for it now.
+        let read: Vec<String> = if scc.iter().all(|r| run.views.contains(r)) { Vec::new() } else { read };
         run.ensure(&read)?;
+        // What it reads that the engine holds (a relation of facts alone, decision 0104) is moved to its table first.
+        run.materialize(&read)?;
         // A relation made natively (`dfs_first`): its inputs' rows in, the operator's rows out; its rule only
         // ordered it after them.
         if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
@@ -5557,6 +5675,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         BTreeSet::new()
     };
     let to_sql: Vec<String> = written.iter().filter(|r| !native_out.contains(*r)).cloned().collect();
+    // A view that stays (an output, a relation kept for the caller, or one they read) is made now, after the last
+    // wave, for its readers' SQL; one no SQL read was never made (decision 0104).
+    let stay_views: Vec<String> = pinned.iter().filter(|r| run.views.contains(*r)).cloned().collect();
+    run.ensure(&stay_views)?;
     run.materialize(&to_sql)?;
     let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms, &kept, &native_out)?;
     let mut outputs=outputs;let mut nodes=nodes;
