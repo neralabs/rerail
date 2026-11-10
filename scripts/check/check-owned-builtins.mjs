@@ -202,7 +202,11 @@ class Walk {
     }
   }
 
-  /** Records every binding to a watched module, repeated until none is added, so a use above its binding resolves too. */
+  /**
+   * Records every binding to a watched module before {@link check} reads a use, so a use above its binding resolves.
+   * The walk repeats until it adds none: an alias written above the binding it copies (`const n = m` in a function
+   * above `const m = require(...)`) is bound only on the second pass, and a use written above the alias needs it.
+   */
   bind() {
     const ignore = () => {};
     for (let size = -1; size !== this.bindings.size;) {

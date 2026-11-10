@@ -34,8 +34,16 @@ const FORMS = {
   "destructured binding": (module, [head, ...rest]) => (rest.length === 0
     ? { text: `import * as m from "${module}";\nconst { ${head}: h } = m;\n`, line: 2 }
     : { text: `import * as m from "${module}";\nconst { ${head}: h } = m;\n${member("h", rest)};\n`, line: 3 }),
+  "computed key": (module, [head, ...rest]) => (rest.length === 0
+    ? { text: `import * as m from "${module}";\nconst { ["${head}"]: h } = m;\n`, line: 2 }
+    : { text: `import * as m from "${module}";\nconst { ["${head}"]: h } = m;\n${member("h", rest)};\n`, line: 3 }),
+  "rest element": (module, path) => ({ text: `import * as m from "${module}";\nconst { ...n } = m;\n${member("n", path)};\n`, line: 3 }),
   "alias": (module, path) => ({ text: `import * as m from "${module}";\nconst n = m;\n${member("n", path)};\n`, line: 3 }),
+  "cast": (module, path) => ({ text: `import * as m from "${module}";\n${member("(<typeof m>(m satisfies object) as typeof m)!", path)};\n`, line: 2 }),
   "use above its binding": (module, path) => ({ text: `function f() {\n  return ${member("m", path)};\n}\nconst m = require("${module}");\n`, line: 2 }),
+  "use above an alias of a later binding": (module, path) => ({
+    text: `function f() {\n  const g = () => ${member("n", path)};\n  const n = m;\n  return g();\n}\nconst m = require("${module}");\n`, line: 2,
+  }),
   "re-export": (module, [head]) => ({ text: `export { ${head} } from "${module}";\n`, line: 1 }),
   "export *": module => ({ text: `export * from "${module}";\n`, line: 1 }),
   "export * as": module => ({ text: `export * as m from "${module}";\n`, line: 1 }),
@@ -95,12 +103,13 @@ describe("check-owned-builtins", () => {
       { path: "src/k.cjs", text: 'const cp = module.require("child_process");\n' },
       { path: "src/l.ts", text: "const cp = require(`node:child_process`);\n" },
       { path: "src/m.ts", text: 'import "node:child_process";\nexport * from "child_process";\n' },
+      { path: "src/n.ts", text: 'import {} from "node:child_process";\nexport {} from "child_process";\n' },
     ]);
     expect(rules(problems)).toEqual([
       "src/a.ts:1:child-process", "src/b.ts:1:child-process", "src/c.ts:1:child-process", "src/d.mjs:1:child-process",
       "src/e.ts:1:child-process", "src/f.ts:1:child-process", "src/g.ts:2:child-process", "src/h.ts:2:child-process",
       "src/i.ts:2:child-process", "src/j.ts:1:child-process", "src/k.cjs:1:child-process", "src/l.ts:1:child-process",
-      "src/m.ts:1:child-process", "src/m.ts:2:child-process",
+      "src/m.ts:1:child-process", "src/m.ts:2:child-process", "src/n.ts:1:child-process", "src/n.ts:2:child-process",
     ]);
     expect(problems[0].message).toContain(rule("child-process").owner);
   });
