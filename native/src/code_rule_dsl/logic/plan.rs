@@ -541,17 +541,36 @@ pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
 
-/// A survivors rule of a maintained stratum, `h(v..) :- h__old(v..), !h__del(v..)` (decision 0077's rewrite), over
-/// native relations: the kept relation and the deleted one.
+/// A survivors rule of a maintained stratum, `h(v..) :- h__old(v..), !h__del(v..)` (decision 0077's rewrite): the
+/// kept relation native, the deleted one of a lower stratum.
+/// Under decision 0090's levels the rows gone are `h__gone`'s, decided in level order, not `h__del`'s.
+/// A levels stratum's kept rows to check against, `h__live(v..) :- h__old(v..), !h__gone(v..)` with the negation
+/// gated (it only places `h__live` in the stratum): `(h__old, "-")`, the kept relation with no row gone.
 fn survivors(r: &Rule, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<(String, String)> {
     let h = &r.head.rel;
-    let (old, gone) = (format!("{h}__old"), format!("{h}__del"));
     let vars: Vec<&str> = r.head.args.iter().map(|t| match t { Term::Var(v) => Some(v.as_str()), _ => None }).collect::<Option<_>>()?;
     let distinct = vars.iter().collect::<BTreeSet<_>>().len() == vars.len();
     let [Literal::Atom(a), Literal::Atom(b)] = r.body.as_slice() else { return None };
-    (distinct && scc.contains(h) && !a.neg && b.neg && a.rel == old && b.rel == gone && a.args == r.head.args && b.args == r.head.args
-        && native_rels.contains(&old) && native_rels.contains(&gone))
-        .then_some((old, gone))
+    if !(distinct && scc.contains(h) && !a.neg && b.neg && a.args == r.head.args && b.args == r.head.args) {
+        return None;
+    }
+    if let Some(base) = h.strip_suffix("__live") {
+        let (old, gone) = (format!("{base}__old"), format!("{base}__gone"));
+        return (b.gated && a.rel == old && b.rel == gone && native_rels.contains(&old)).then(|| (old, "-".to_owned()));
+    }
+    // The kept relation is native, read in place; the deleted one is of a lower stratum, native or a table.
+    let old = format!("{h}__old");
+    [format!("{h}__del"), format!("{h}__gone")]
+        .into_iter()
+        .find(|gone| a.rel == old && &b.rel == gone && native_rels.contains(&old) && !scc.contains(gone))
+        .map(|gone| (old, gone))
+}
+
+/// A levels stratum's relations of `h`, when `scc` has all five (`native::setfix::Levels`): cand, chk, held, gone,
+/// live.
+fn levels_of(h: &str, scc: &BTreeSet<String>) -> Option<[String; 5]> {
+    let names = ["cand", "chk", "held", "gone", "live"].map(|s| format!("{h}__{s}"));
+    names.iter().all(|n| scc.contains(n)).then_some(names)
 }
 
 /// The variable `l = r` assigns from its right side: `r` an unbound variable and `l` a bound variable or a constant
@@ -1080,6 +1099,33 @@ impl Model {
                 if c != first {
                     rows /= self.ndv_or_1(&a.rel, c);
                 }
+            }
+            // A relation of the component being solved, probed by a value an earlier step bound: a column's fanout
+            // is the rows per value it holds (`fan`), so a probe is priced as if it always hits. Most do not where
+            // the binding ranges over more values than the column holds: `fbind`'s `fcall($c, $f, $i, $a)` by `$a`,
+            // 399 rows, probed by `pv($a, "inst", $k)`'s 280,000, was priced at a row a probe and planned after
+            // `tfix` by `$k` (19 M rows of work for 220). The probes that hit are the column's share of the binding's
+            // values (containment): its distinct values over the binding's, where both are measured (live counts),
+            // the binding's by the fewest distinct values of an atom of bound variables that holds it.
+            if stats.solving.contains(&a.rel) {
+                let mut hit = 1.0f64;
+                for &c in &cols {
+                    let Term::Var(v) = &a.args[c] else { continue };
+                    let Some(&here) = self.ndv.get(&(a.rel.clone(), c)) else { continue };
+                    let from = body
+                        .iter()
+                        .filter_map(|l| match l {
+                            Literal::Atom(b) if !b.neg && !std::ptr::eq(b, a) && b.vars().iter().all(|x| bound.contains(x)) => {
+                                b.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).and_then(|c2| self.ndv.get(&(b.rel.clone(), c2)).copied())
+                            }
+                            _ => None,
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    if from.is_finite() && from > here.max(1.0) {
+                        hit = hit.min(here.max(1.0) / from);
+                    }
+                }
+                rows *= hit;
             }
             // Every column bound: a membership test, at most one row of a set.
             if cols.len() == a.args.len() && !prog.lattice.contains_key(&a.rel) {
@@ -2389,6 +2435,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) kept: BTreeSet<String>,
     /// The kept relations handed to the caller during the run (`run_atoms_native_handing`), no longer held.
     pub(in crate::code_rule_dsl) handed: BTreeSet<String>,
+    /// The relations recomputed in their readers (decision 0099): no table and no engine rows hold them.
+    pub(in crate::code_rule_dsl) inlined: BTreeSet<String>,
 }
 
 /// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
@@ -2399,7 +2447,8 @@ struct Fx<'a> {
     direct: bool,
 }
 impl Fx<'_> {
-    /// The planner's spec goes to the engine as values in process; through the SQL function as its text.
+    /// The planner's spec goes to the engine as values in process. Over text symbols the SQL functions are T's
+    /// extension's own engine (`native/extension`, a copy with its own components), which reads the spec's text.
     fn open(&self, spec: &ComponentSpec) -> Result<()> {
         let _span = super::profile::span(|| "engine open (load inputs, build indexes)".into());
         if self.direct {
@@ -2902,7 +2951,9 @@ fn prior_stats(model: &mut Model, prog: &Program, r: &str) -> Option<f64> {
     // A maintained relation starts as its old rows (`rel r … base r__old r__del`), which are measured under that
     // name: without them every column read as one value, so a bound column narrowed nothing (`cfn($c, $e, $f)` with
     // `$c` bound priced as all 2,139 rows, and the plan took cross products of `rpvar` and `attr_of__plus` instead).
-    let cols = measured(r).or_else(|| measured(&format!("{r}__old")))?;
+    // A levels stratum's `h__live` (decision 0090) is `h__old`'s rows too.
+    let old = format!("{}__old", r.strip_suffix("__live").unwrap_or(r));
+    let cols = measured(r).or_else(|| measured(&old))?;
     let rows = cols.first().map_or(0, |m| m[0]);
     for (c, [n, ndv, sq, _]) in cols.into_iter().enumerate() {
         model.ndv.insert((r.to_owned(), c), ndv.max(1) as f64);
@@ -3573,6 +3624,7 @@ impl<'a> Run<'a, '_> {
                 continue;
             }
             let Ok(((order, _, _), _)) = self.model.plan_rule_reused(prog, &r.head, &r.body, None) else { continue };
+            // The level batch keys its pairs by the spec's digest, as the stratum's join does.
             if let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &self.native_rels) {
                 out.push(spec);
             }
@@ -3637,6 +3689,11 @@ impl<'a> Run<'a, '_> {
         gates.sort_by(|a, b| (a.1.level, &a.0).cmp(&(b.1.level, &b.0)));
         // A gate's rule only placed it here.
         let rules: Vec<&'a Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
+        // A levels stratum (decision 0090): per relation `h`, `h__chk` and `h__gone` are written by the engine's
+        // driver; their rules only placed them here.
+        let levels: Vec<[String; 5]> = scc.iter().filter_map(|r| r.strip_suffix("__cand")).filter_map(|h| levels_of(h, scc)).collect();
+        let placed: BTreeSet<&String> = levels.iter().flat_map(|l| [&l[1], &l[3]]).collect();
+        let rules: Vec<&'a Rule> = rules.into_iter().filter(|r| !placed.contains(&r.head.rel)).collect();
         // A maintained stratum's survivors (`h :- h__old, !h__del`, decision 0077): the relation starts as the kept
         // `h__old` with `h__del`'s rows dead in place (decision 0090 step 4), not derived row by row.
         // `RERAIL_DRED_COPY`: derive them by the rule (to measure what starting in place saves).
@@ -3685,7 +3742,7 @@ impl<'a> Run<'a, '_> {
         // Nothing left to run (every rule joined an empty relation): the stratum's relations are held with no rows,
         // and no component is specified or opened. `RERAIL_KEEP_EMPTY_JOINS` opens it as before.
         let asks = scc.iter().any(|r| prog.answers.contains_key(r) || super::answers::produced(prog).contains_key(r.as_str()));
-        if rules.is_empty() && based.is_empty() && gates.is_empty() && !asks && std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_none() {
+        if rules.is_empty() && based.is_empty() && gates.is_empty() && levels.is_empty() && !asks && std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_none() {
             for r in &rels {
                 super::native::component::hold_empty(self.db, r, types(r).into_bytes());
             }
@@ -3792,7 +3849,8 @@ impl<'a> Run<'a, '_> {
             } else if let Some((old, gone)) = based.get(*r) {
                 // Its survivors rule is gone: it starts from the kept relation, plus what facts or SQL seeds wrote.
                 let seeded = !(prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r));
-                rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::Base { old: old.clone(), gone: gone.clone(), seeded } });
+                let gone = (gone != "-").then(|| gone.clone());
+                rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::Base { old: old.clone(), gone, seeded } });
             } else {
                 let empty = prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r);
                 rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: if empty { Start::Empty } else { Start::Rows } });
@@ -3855,6 +3913,9 @@ impl<'a> Run<'a, '_> {
                 sql_probe.push(false);
             }
         }
+        for l in &levels {
+            lines.push(SpecLine::Levels(l.each_ref().map(|r| ri[r])));
+        }
         for (g, d) in &gates {
             let quiet: Vec<usize> = d.quiet.iter().filter_map(|r| ri.get(r)).copied().collect();
             let after: Vec<usize> = d.deps.iter().filter_map(|x| gates.iter().position(|(g2, _)| g2 == x)).collect();
@@ -3896,7 +3957,7 @@ impl<'a> Run<'a, '_> {
         let counted: Vec<Vec<(u64, u64)>> = Vec::new();
         // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
         let lab = super::native::component::lab::wanted(&name, shape.work)
-            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &spec.to_text(), &path));
+            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &spec, &path));
         // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
         let timed: Vec<f64> = Vec::new();
         self.fx().open(&spec)?;
@@ -4847,10 +4908,13 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let chosen_key = corpus.then(|| choices::key(prog));
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     let chosen: Option<std::sync::Arc<Program>>;
+    // The relations inlined, for the outcome (a session stores, never inlines, what it keeps: decision 0099).
+    let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
     let prog: &Program = match reused {
         Some(c) => {
             let nodes = model.stats.nodes;
             super::profile::decision("planning choices (decision 0090 §5)", || format!("kept: inline or store and demand as chosen at {:.0} nodes, taken at {nodes:.0}", c.nodes));
+            inlined_rels = c.inlined.iter().cloned().collect();
             if !c.inlined.is_empty() {
                 super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", c.inlined.len(), c.inlined.join(", ")));
             }
@@ -4902,6 +4966,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 None => None,
             };
             chosen = split.or(inlined).map(std::sync::Arc::new);
+            inlined_rels = inlined_names.iter().cloned().collect();
             if let Some(k) = chosen_key {
                 choices::remember(k, choices::Chosen { program: chosen.clone(), inlined: inlined_names, demanded: demanded_names, nodes: model.stats.nodes });
             }
@@ -5417,8 +5482,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             format!("{clean_strata} of {} strata not run: their reads had the rows they had; {held_again} of their relations held again ({held_rows} rows)", sccs.len())
         });
     }
-    // The chunk's end: pairs no seed took, and what the lanes kept for the chunk's joins.
+    // The chunk's end: pairs no seed took, and what the lanes kept for the chunk's joins; the executor's scoreboard
+    // so far, to its trace (`RERAIL_SCOREBOARD`).
     super::native::component::level_clear();
+    super::lanes::executor().note("a chunk's end");
     if let Some(path) = level_trace() {
         use std::io::Write as _;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
@@ -5440,6 +5507,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     outcome.outputs = outputs;
     outcome.nodes = nodes;
     outcome.handed = handed;
+    outcome.inlined = inlined_rels;
     Ok(outcome)
 }
 

@@ -141,6 +141,45 @@ pub struct Submitted {
     command: metal::CommandBuffer,
     done: Option<std::sync::mpsc::Receiver<()>>,
     reads: Vec<Column>,
+    /// The host clock at its commit (`host_clock`).
+    committed: f64,
+}
+
+/// The host clock Metal's command buffer times are on (`mach_absolute_time`, in seconds).
+pub fn host_clock() -> f64 {
+    #[repr(C)]
+    struct Timebase {
+        numer: u32,
+        denom: u32,
+    }
+    unsafe extern "C" {
+        fn mach_timebase_info(info: *mut Timebase) -> i32;
+        fn mach_absolute_time() -> u64;
+    }
+    static RATIO: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    let ratio = *RATIO.get_or_init(|| {
+        let mut info = Timebase { numer: 0, denom: 0 };
+        // SAFETY: fills the struct.
+        unsafe { mach_timebase_info(&mut info) };
+        f64::from(info.numer) / f64::from(info.denom.max(1)) / 1e9
+    });
+    // SAFETY: no arguments.
+    (unsafe { mach_absolute_time() }) as f64 * ratio
+}
+
+/// A completed command buffer's timeline, as wall-only phases of the job (`crate::score`): commit to the system's
+/// scheduling (`kernelStartTime`), to the device's start, the device's run, and its end to the host's wait returning.
+#[allow(unexpected_cfgs)] // `msg_send!` expands to a `cargo-clippy` cfg check.
+pub fn add_timeline(command: &CommandBufferRef, committed: f64, returned: f64) {
+    use objc::{msg_send, sel, sel_impl};
+    let (k, s, e): (f64, f64, f64) = unsafe { (msg_send![command, kernelStartTime], msg_send![command, GPUStartTime], msg_send![command, GPUEndTime]) };
+    if k <= 0.0 || s <= 0.0 || e <= 0.0 {
+        return;
+    }
+    crate::score::add("gpu submit", 0.0, (k - committed).max(0.0));
+    crate::score::add("gpu schedule", 0.0, (s - k).max(0.0));
+    crate::score::add("gpu run", 0.0, (e - s).max(0.0));
+    crate::score::add("gpu wake", 0.0, (returned - e).max(0.0));
 }
 
 impl Submitted {
@@ -155,21 +194,25 @@ impl Submitted {
             command.add_completed_handler(&block);
             rx
         });
-        shared::guard()?;
-        command.commit();
-        Ok(Submitted { command: command.to_owned(), done, reads: Vec::new() })
+        crate::score::phase("gpu commit", || -> Result<(), String> {
+            shared::guard()?;
+            command.commit();
+            Ok(())
+        })?;
+        Ok(Submitted { command: command.to_owned(), done, reads: Vec::new(), committed: host_clock() })
     }
 
     /// Waits for it; its GPU seconds. The buffers it read return to the pool after.
     pub fn wait(self) -> f64 {
-        match self.done {
+        crate::score::phase("gpu wait", || match &self.done {
             Some(rx) if self.command.status() != metal::MTLCommandBufferStatus::Completed => {
                 let _ = rx.recv();
                 // The handler runs as the buffer completes: its status may lag a moment.
                 self.command.wait_until_completed();
             }
             _ => self.command.wait_until_completed(),
-        }
+        });
+        add_timeline(&self.command, self.committed, host_clock());
         gpu_seconds(&self.command)
     }
 }
@@ -209,8 +252,15 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
 /// buffer that reads it has completed (`Submitted::reads`, `Keyed`'s drop): the next lease's host writes are not
 /// ordered after a GPU read.
 pub struct Held {
-    _lease: shared::Pooled,
+    _lease: Lease,
     pub buffer: Buffer,
+}
+
+/// What keeps a held buffer's memory: a lease of the pool, or a staged column whose shared buffer the device reads
+/// in place (`crate::col`).
+enum Lease {
+    Pooled(#[allow(dead_code)] shared::Pooled),
+    Col(#[allow(dead_code)] crate::col::Col),
 }
 
 impl Held {
@@ -219,7 +269,15 @@ impl Held {
         device()?;
         let lease = shared::lease(bytes)?;
         let buffer = lease.buffer().clone();
-        Ok(Held { _lease: lease, buffer })
+        Ok(Held { _lease: Lease::Pooled(lease), buffer })
+    }
+
+    /// A buffer of at least `bytes`, its first `bytes` zero.
+    pub fn zeroed(bytes: usize) -> Result<Held, String> {
+        device()?;
+        let lease = shared::lease_zeroed(bytes)?;
+        let buffer = lease.buffer().clone();
+        Ok(Held { _lease: Lease::Pooled(lease), buffer })
     }
 
     /// A buffer holding `values`, written by the host.
@@ -849,7 +907,9 @@ impl ProbeJob {
     pub fn rescatter(mut self, pass: &Pass<'_>, left: &[Column], right: &Keyed) -> Result<ProbeJob, String> {
         let total = self.total();
         let out = Held::new(8 * total)?;
-        let (Some(counts), Some(scatter)) = (&self.counts, &self.scatter) else { return Ok(self) };
+        let (Some(counts), Some(scatter)) = (&self.counts, &self.scatter) else {
+            return Ok(self);
+        };
         let mut with = Self::inputs(left, right);
         with.extend([&*counts.buffer, &*out.buffer]);
         pass.run(scatter, &with, &[self.nl as u32, total as u32], &self.bases, groups(self.nl));
@@ -861,10 +921,598 @@ impl ProbeJob {
     /// The pairs, (left row, right host row), in left row order: after the command buffer completed.
     pub fn pairs(&self) -> Vec<(u32, u32)> {
         let total = self.total();
-        let Some(space) = &self.space else { return Vec::new() };
+        let Some(space) = &self.space else {
+            return Vec::new();
+        };
         // SAFETY: `total` pairs, written by a completed scatter into space for at least that many.
         let flat = unsafe { std::slice::from_raw_parts(space.buffer.contents().cast::<[u32; 2]>(), total) };
         flat.iter().map(|p| (p[0], p[1])).collect()
+    }
+}
+
+/// The rows a one-dispatch sort takes at most (`small_sort`): one threadgroup, the keys and their rows in
+/// threadgroup memory (20 KB: 2,048 `long` keys and `ushort` rows).
+pub const SMALL: usize = 2048;
+
+/// The one-dispatch probe: a thread per four left rows, unsorted, finds its key's run (a bounded binary search) and
+/// counts the run's rows whose other keys match; a scan over the threadgroup's rows; one atomic reserves the
+/// threadgroup's pairs in the batch's arena, and the threadgroup writes them there in its rows' order, each row's in
+/// the run's order. The threadgroup's place and count go to `blocks`, so the host reads a probe's pairs block by
+/// block, in left row order. When the arena is full, the threadgroup writes only its count and raises `flags`.
+/// Buffers: as `probe_source`'s inputs, then the arena, its head, the blocks and the flags; after them (left rows,
+/// the arena's capacity in pairs, the probe's first block), and the keys' bases.
+fn probe_one_source(left: &[Width], key: Width, right: &[Width]) -> String {
+    let k = left.len();
+    let kt = key.ty();
+    let lcols: String = left.iter().enumerate().map(|(i, w)| format!(", device const {}* l{i} [[buffer({})]]", w.ty(), 4 + i)).collect();
+    let rcols: String = right.iter().enumerate().map(|(i, w)| format!(", device const {}* r{} [[buffer({})]]", w.ty(), i + 1, 4 + k + i)).collect();
+    let n = 4 + k + right.len();
+    let mut test = String::from("true");
+    for i in 1..k {
+        test.push_str(&format!(" && ulong(l{i}[r]) + ulong(base[{i}]) == ulong(r{i}[q]) + ulong(base[{}])", k + i));
+    }
+    format!(
+        r#"#include <metal_stdlib>
+using namespace metal;
+
+static inline bool find(ulong key, device const {kt}* rkeys, uint runs, long rbase, thread uint& lo) {{
+    lo = 0;
+    uint hi = runs;
+    for (uint s = 0; s < 34 && lo < hi; s++) {{
+        uint mid = (lo + hi) / 2;
+        long v = long(ulong(rkeys[mid]) + ulong(rbase));
+        if (v < long(key)) lo = mid + 1; else hi = mid;
+    }}
+    return lo < runs && long(ulong(rkeys[lo]) + ulong(rbase)) == long(key);
+}}
+
+kernel void probe_one(device const {kt}* rkeys [[buffer(0)]], device const uint* starts [[buffer(1)]], device const uint* nruns [[buffer(2)]],
+                      device const uint* perm [[buffer(3)]]{lcols}{rcols},
+                      device uint* arena [[buffer({n})]], device atomic_uint* head [[buffer({n1})]], device uint* blocks [[buffer({n2})]],
+                      device atomic_uint* flags [[buffer({n3})]], constant uint* p [[buffer({n4})]], constant long* base [[buffer({n5})]],
+                      uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
+                      uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {{
+    threadgroup uint part[8];
+    threadgroup uint place[2];
+    uint nl = p[0];
+    uint runs = nruns[0];
+    uint at = tg * 1024 + t * 4;
+    uint run[4];
+    uint c[4];
+    uint mine = 0;
+    for (uint i = 0; i < 4; i++) {{
+        uint r = at + i;
+        c[i] = 0;
+        run[i] = 0xFFFFFFFFu;
+        uint lo;
+        if (r < nl && find(ulong(l0[r]) + ulong(base[0]), rkeys, runs, base[{k}], lo)) {{
+            run[i] = lo;
+            for (uint q = starts[lo]; q < starts[lo + 1]; q++) c[i] += uint({test});
+        }}
+        mine += c[i];
+    }}
+    uint inc = simd_prefix_inclusive_sum(mine);
+    if (lane == 31) part[sg] = inc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint off = 0;
+    for (uint s = 0; s < sg; s++) off += part[s];
+    if (t == 255) {{
+        uint total = off + inc;
+        uint b = total > 0 ? atomic_fetch_add_explicit(head, total, memory_order_relaxed) : 0;
+        bool fits = ulong(b) + ulong(total) <= ulong(p[1]);
+        if (!fits) atomic_store_explicit(flags, 1, memory_order_relaxed);
+        blocks[2 * (p[2] + tg)] = fits ? b : 0xFFFFFFFFu;
+        blocks[2 * (p[2] + tg) + 1] = total;
+        place[0] = b;
+        place[1] = uint(fits);
+    }}
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (place[1] == 0) return;
+    uint o = place[0] + off + inc - mine;
+    for (uint i = 0; i < 4; i++) {{
+        if (run[i] == 0xFFFFFFFFu) continue;
+        uint r = at + i;
+        for (uint q = starts[run[i]]; q < starts[run[i] + 1]; q++) {{
+            if ({test}) {{ arena[2 * o] = r; arena[2 * o + 1] = perm[q]; o++; }}
+        }}
+    }}
+}}
+"#,
+        n1 = n + 1,
+        n2 = n + 2,
+        n3 = n + 3,
+        n4 = n + 4,
+        n5 = n + 5,
+    )
+}
+
+// ---- The small path (decision 0100 §9): a sort in one dispatch, a probe in one, raw columns, one arena. ----
+
+impl Column {
+    /// `col` on the device as raw 64-bit values (base 0): no span is taken and nothing narrowed. A staged column is
+    /// its own shared buffer, read in place; a host column is copied once.
+    pub fn raw(col: &crate::col::Col) -> Result<Column, String> {
+        let rows = col.len();
+        if let Some(p) = col.shared() {
+            let buffer = p.buffer().clone();
+            return Ok(Column { buffer: Held { _lease: Lease::Col(col.clone()), buffer }, width: Width::W64, base: 0, bits: 64, rows });
+        }
+        let buffer = Held::new((rows * 8).max(8))?;
+        // SAFETY: the buffer holds `rows` longs, and nothing else refers to it yet.
+        unsafe { std::ptr::copy_nonoverlapping(col.as_ptr(), buffer.buffer.contents().cast::<i64>(), rows) };
+        Ok(Column { buffer, width: Width::W64, base: 0, bits: 64, rows })
+    }
+}
+
+fn probe_one_pipe(left: &[Width], key: Width, right: &[Width]) -> Result<ComputePipelineState, String> {
+    pipeline(&format!("probe one {left:?} {key:?} {right:?}"), "probe_one", || probe_one_source(left, key, right))
+}
+
+/// Compiles the small path's pipelines and the scans ahead of their first use, on a thread of its own: the first
+/// chunk's joins do not wait for Metal's compiler.
+pub fn prewarm() {
+    let _ = std::thread::Builder::new().name("rerail-accel gpu prewarm".into()).spawn(|| {
+        objc::rc::autoreleasepool(|| {
+            let _ = fused_pipe("sort_all");
+            let _ = fused_pipe("probe_all");
+            let _ = pipeline("scan", "scan_block", || SCAN_SOURCE.to_owned());
+            let _ = pipeline("scan", "scan_add", || SCAN_SOURCE.to_owned());
+        })
+    });
+}
+
+/// A batch's pairs: one buffer the probes reserve their threadgroups' pairs in with one atomic each, so no probe
+/// needs a second command buffer to learn its size. `cap` is what the host expects in all; a probe whose pairs do
+/// not fit raises the flag, and only it runs again, into space of its exact size.
+pub struct Arena {
+    pairs: Held,
+    head: Held,
+    flags: Held,
+    blocks: Held,
+    pub cap: usize,
+    /// Blocks handed out so far.
+    used: usize,
+}
+
+impl Arena {
+    /// An arena for `cap` pairs, and `blocks` threadgroups in all.
+    pub fn new(cap: usize, blocks: usize) -> Result<Arena, String> {
+        let cap = cap.clamp(1, u32::MAX as usize / 2);
+        Ok(Arena { pairs: Held::new(8 * cap)?, head: Held::zeroed(4)?, flags: Held::zeroed(4)?, blocks: Held::new(8 * blocks.max(1))?, cap, used: 0 })
+    }
+
+    /// Whether any probe's pairs did not fit (after the command buffer completed).
+    pub fn overflowed(&self) -> bool {
+        // SAFETY: one word, zeroed by the host and written by the device, its command buffer completed.
+        unsafe { *self.flags.buffer.contents().cast::<u32>() != 0 }
+    }
+}
+
+/// The threadgroups a probe of `nl` left rows takes (1,024 rows each).
+pub fn probe_blocks(nl: usize) -> usize {
+    nl.div_ceil(TILE).max(1)
+}
+
+/// A probe in one dispatch, its pairs in an arena.
+pub struct ProbeOne {
+    nl: usize,
+    first: usize,
+    blocks: usize,
+}
+
+impl ProbeOne {
+    /// The probe of `right` by `left` (raw or narrowed columns), encoded after `pass`'s sort of `right`.
+    pub fn encode(pass: &Pass<'_>, left: &[Column], right: &Keyed, arena: &mut Arena) -> Result<ProbeOne, String> {
+        let k = left.len();
+        if k == 0 || k != 1 + right.others.len() {
+            return Err(format!("a probe of {k} keys against a sort of {}", 1 + right.others.len()));
+        }
+        let nl = left[0].rows;
+        let blocks = probe_blocks(nl);
+        let first = arena.used;
+        arena.used += blocks;
+        if nl == 0 || right.rows == 0 {
+            // No pairs: the blocks say so without a dispatch.
+            // SAFETY: the blocks' words for this probe, the host's alone before the command buffer is committed.
+            let b = unsafe { std::slice::from_raw_parts_mut(arena.blocks.buffer.contents().cast::<u32>(), 2 * arena.used) };
+            for i in first..first + blocks {
+                b[2 * i] = 0;
+                b[2 * i + 1] = 0;
+            }
+            return Ok(ProbeOne { nl, first, blocks });
+        }
+        let (lw, rw): (Vec<Width>, Vec<Width>) = (left.iter().map(|c| c.width).collect(), right.others.iter().map(|c| c.width).collect());
+        let pipe = probe_one_pipe(&lw, right.key, &rw)?;
+        let bases: Vec<i64> = left.iter().map(|c| c.base).chain([right.base]).chain(right.others.iter().map(|c| c.base)).collect();
+        let mut with: Vec<&BufferRef> = vec![&right.rkeys.buffer, &right.starts.buffer, &right.nruns.buffer, &right.perm.buffer];
+        with.extend(left.iter().map(|c| &*c.buffer.buffer));
+        with.extend(right.others.iter().map(|c| &*c.buffer.buffer));
+        with.extend([&*arena.pairs.buffer, &*arena.head.buffer, &*arena.blocks.buffer, &*arena.flags.buffer]);
+        pass.run(&pipe, &with, &[nl as u32, arena.cap as u32, first as u32], &bases, blocks);
+        Ok(ProbeOne { nl, first, blocks })
+    }
+
+    /// Whether this probe's pairs did not all fit, and how many it found (after the command buffer completed).
+    pub fn spilled(&self, arena: &Arena) -> (bool, usize) {
+        let b = self.read_blocks(arena);
+        (b.iter().any(|&(at, n)| at == u32::MAX && n > 0), b.iter().map(|&(_, n)| n as usize).sum())
+    }
+
+    fn read_blocks(&self, arena: &Arena) -> Vec<(u32, u32)> {
+        // SAFETY: this probe's blocks, written by the device (or the host for an empty probe), the command buffer
+        // completed.
+        let b = unsafe { std::slice::from_raw_parts(arena.blocks.buffer.contents().cast::<u32>(), 2 * (self.first + self.blocks)) };
+        (self.first..self.first + self.blocks).map(|i| (b[2 * i], b[2 * i + 1])).collect()
+    }
+
+    /// The pairs, in left row order (block by block), after the command buffer completed. `None` when they did not
+    /// fit.
+    pub fn pairs(&self, arena: &Arena) -> Option<Vec<(u32, u32)>> {
+        let blocks = self.read_blocks(arena);
+        let total: usize = blocks.iter().map(|&(_, n)| n as usize).sum();
+        let mut out = Vec::with_capacity(total);
+        for (at, n) in blocks {
+            if n == 0 {
+                continue;
+            }
+            if at == u32::MAX {
+                return None;
+            }
+            // SAFETY: `n` pairs at `at`, inside the arena (the device checked the capacity), written by it.
+            let flat = unsafe { std::slice::from_raw_parts(arena.pairs.buffer.contents().cast::<[u32; 2]>().add(at as usize), n as usize) };
+            out.extend(flat.iter().map(|p| (p[0], p[1])));
+        }
+        let _ = self.nl;
+        Some(out)
+    }
+}
+
+// ---- One dispatch for a batch's small sorts, one for its probes (decision 0100 §9). ----
+//
+// Each job's buffers are reached through device pointers in a table the host writes (their `gpu_address`), and
+// made resident with one `use_resources` call: a batch of any number of joins costs the host two dispatches.
+
+/// The source of the fused sort and probe: `sort_all` (a threadgroup a small sort) and `probe_all` (a threadgroup
+/// a block of 1,024 left rows of any probe).
+const FUSED_SOURCE: &str = r#"#include <metal_stdlib>
+using namespace metal;
+
+struct SortJob {
+    device const long* c[3];
+    device uint* perm;
+    device uint* starts;
+    device ulong* rkeys;
+    device uint* nruns;
+    device long* o[2];
+    uint n, m, k, pad;
+};
+
+struct ProbeJob {
+    device const uchar* rkeys;
+    device const uint* starts;
+    device const uint* nruns;
+    device const uint* perm;
+    device const ulong* l[3];
+    device const uchar* r[2];
+    long lbase[3];
+    long kbase;
+    long rbase[2];
+    uint nl, k, kw, pad;
+    uint rw[2];
+    uint pad2[2];
+};
+
+static inline ulong ld(device const uchar* p, uint w, uint i) {
+    switch (w) {
+        case 2: return ((device const ushort*)p)[i];
+        case 4: return ((device const uint*)p)[i];
+        default: return ((device const ulong*)p)[i];
+    }
+}
+
+kernel void sort_all(device const SortJob* jobs [[buffer(0)]],
+                     uint g [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
+                     uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    threadgroup long K[2048];
+    threadgroup ushort I[2048];
+    threadgroup uint part[8];
+    device const SortJob& j = jobs[g];
+    uint n = j.n, m = j.m;
+    for (uint i = t; i < m; i += 256) {
+        bool live = i < n;
+        K[i] = live ? j.c[0][i] : LONG_MAX;
+        I[i] = live ? ushort(i) : ushort(0xFFFF);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint size = 2; size <= m; size <<= 1) {
+        for (uint stride = size >> 1; stride > 0; stride >>= 1) {
+            for (uint q = t; q < m / 2; q += 256) {
+                uint lo = 2 * q - (q & (stride - 1));
+                uint hi = lo + stride;
+                bool up = (lo & size) == 0;
+                long ka = K[lo], kb = K[hi];
+                ushort ia = I[lo], ib = I[hi];
+                bool gt = ka > kb || (ka == kb && ia > ib);
+                if (gt == up) { K[lo] = kb; K[hi] = ka; I[lo] = ib; I[hi] = ia; }
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+    }
+    uint i0 = t * 8;
+    uint mine = 0, heads = 0;
+    for (uint q = 0; q < 8; q++) {
+        uint i = i0 + q;
+        bool h = i < n && (i == 0 || K[i] != K[i - 1]);
+        heads |= uint(h) << q;
+        mine += uint(h);
+    }
+    uint inc = simd_prefix_inclusive_sum(mine);
+    if (lane == 31) part[sg] = inc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint off = 0;
+    for (uint s = 0; s < sg; s++) off += part[s];
+    uint run = off + inc - mine;
+    for (uint q = 0; q < 8; q++) {
+        uint i = i0 + q;
+        if (i >= n) break;
+        uint pi = I[i];
+        j.perm[i] = pi;
+        for (uint c = 1; c < j.k; c++) j.o[c - 1][i] = j.c[c][pi];
+        if ((heads >> q) & 1) { j.starts[run] = i; j.rkeys[run] = ulong(K[i]) ^ 0x8000000000000000ul; run++; }
+    }
+    if (t == 255) {
+        uint total = 0;
+        for (uint s = 0; s < 8; s++) total += part[s];
+        j.nruns[0] = total;
+        j.starts[total] = n;
+    }
+}
+
+static inline bool find(ulong key, device const ProbeJob& j, uint runs, thread uint& lo) {
+    lo = 0;
+    uint hi = runs;
+    for (uint s = 0; s < 34 && lo < hi; s++) {
+        uint mid = (lo + hi) / 2;
+        long v = long(ld(j.rkeys, j.kw, mid) + ulong(j.kbase));
+        if (v < long(key)) lo = mid + 1; else hi = mid;
+    }
+    return lo < runs && long(ld(j.rkeys, j.kw, lo) + ulong(j.kbase)) == long(key);
+}
+
+static inline bool same(device const ProbeJob& j, uint r, uint q) {
+    for (uint c = 1; c < j.k; c++) {
+        if (j.l[c][r] + ulong(j.lbase[c]) != ld(j.r[c - 1], j.rw[c - 1], q) + ulong(j.rbase[c - 1])) return false;
+    }
+    return true;
+}
+
+// The table: per threadgroup, (job, the block's number in the arena's blocks, its number in the job). p: the arena's
+// capacity in pairs.
+kernel void probe_all(device const ProbeJob* jobs [[buffer(0)]], device const uint4* table [[buffer(1)]],
+                      device uint* arena [[buffer(2)]], device atomic_uint* head [[buffer(3)]], device uint* blocks [[buffer(4)]],
+                      device atomic_uint* flags [[buffer(5)]], constant uint* p [[buffer(6)]],
+                      uint g [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
+                      uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    threadgroup uint part[8];
+    threadgroup uint place[2];
+    uint4 e = table[g];
+    device const ProbeJob& j = jobs[e.x];
+    uint nl = j.nl;
+    uint runs = j.nruns[0];
+    uint at = e.z * 1024 + t * 4;
+    uint run[4];
+    uint c[4];
+    uint mine = 0;
+    for (uint i = 0; i < 4; i++) {
+        uint r = at + i;
+        c[i] = 0;
+        run[i] = 0xFFFFFFFFu;
+        uint lo;
+        if (r < nl && find(j.l[0][r] + ulong(j.lbase[0]), j, runs, lo)) {
+            run[i] = lo;
+            for (uint q = j.starts[lo]; q < j.starts[lo + 1]; q++) c[i] += uint(same(j, r, q));
+        }
+        mine += c[i];
+    }
+    uint inc = simd_prefix_inclusive_sum(mine);
+    if (lane == 31) part[sg] = inc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint off = 0;
+    for (uint s = 0; s < sg; s++) off += part[s];
+    if (t == 255) {
+        uint total = off + inc;
+        uint b = total > 0 ? atomic_fetch_add_explicit(head, total, memory_order_relaxed) : 0;
+        bool fits = ulong(b) + ulong(total) <= ulong(p[0]);
+        if (!fits) atomic_store_explicit(flags, 1, memory_order_relaxed);
+        blocks[2 * e.y] = fits ? b : 0xFFFFFFFFu;
+        blocks[2 * e.y + 1] = total;
+        place[0] = b;
+        place[1] = uint(fits);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (place[1] == 0) return;
+    uint o = place[0] + off + inc - mine;
+    for (uint i = 0; i < 4; i++) {
+        if (run[i] == 0xFFFFFFFFu) continue;
+        uint r = at + i;
+        for (uint q = j.starts[run[i]]; q < j.starts[run[i] + 1]; q++) {
+            if (same(j, r, q)) { arena[2 * o] = r; arena[2 * o + 1] = j.perm[q]; o++; }
+        }
+    }
+}
+"#;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct SortDesc {
+    c: [u64; 3],
+    perm: u64,
+    starts: u64,
+    rkeys: u64,
+    nruns: u64,
+    o: [u64; 2],
+    n: u32,
+    m: u32,
+    k: u32,
+    pad: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct ProbeDesc {
+    rkeys: u64,
+    starts: u64,
+    nruns: u64,
+    perm: u64,
+    l: [u64; 3],
+    r: [u64; 2],
+    lbase: [i64; 3],
+    kbase: i64,
+    rbase: [i64; 2],
+    nl: u32,
+    k: u32,
+    kw: u32,
+    pad: u32,
+    rw: [u32; 2],
+    pad2: [u32; 2],
+}
+
+fn fused_pipe(name: &'static str) -> Result<ComputePipelineState, String> {
+    pipeline("fused", name, || FUSED_SOURCE.to_owned())
+}
+
+/// A batch's small sorts and probes, described as they are encoded and dispatched together at the end
+/// ([`Fused::dispatch`]).
+#[derive(Default)]
+pub struct Fused {
+    sorts: Vec<SortDesc>,
+    probes: Vec<ProbeDesc>,
+    /// Per threadgroup of the probe dispatch: (probe, arena block, block in the probe, 0).
+    table: Vec<[u32; 4]>,
+    /// Every buffer the tables point to, made resident with one call.
+    used: Vec<Buffer>,
+}
+
+impl Fused {
+    fn addr(&mut self, b: &Buffer) -> u64 {
+        self.used.push(b.clone());
+        b.gpu_address()
+    }
+
+    /// `columns` (raw 64-bit, at most `SMALL` rows, one to three) to be sorted by column 0 in the batch's sort
+    /// dispatch: the sort, ready for probes encoded after it. Its keys are offsets from `long`'s least.
+    pub fn sort(&mut self, columns: Vec<Column>) -> Result<(Keyed, Vec<Column>), String> {
+        let k = columns.len();
+        let n = columns.first().ok_or("a sort of no columns")?.rows;
+        if !(1..=3).contains(&k) || n > SMALL || columns.iter().any(|c| c.width != Width::W64 || c.base != 0 || c.rows != n) {
+            return Err(format!("a small sort of {k} columns of {n} rows"));
+        }
+        let perm = Held::new(4 * n.max(1))?;
+        let starts = Held::new(4 * (n + 1))?;
+        let rkeys = Held::new(8 * n.max(1))?;
+        let nruns = Held::new(4)?;
+        let others: Vec<Column> = (1..k).map(|_| Held::new(8 * n.max(1)).map(|b| Column { buffer: b, width: Width::W64, base: 0, bits: 64, rows: n })).collect::<Result<_, _>>()?;
+        let mut d = SortDesc { n: n as u32, m: n.next_power_of_two().max(2) as u32, k: k as u32, ..Default::default() };
+        for (i, c) in columns.iter().enumerate() {
+            d.c[i] = self.addr(&c.buffer.buffer);
+        }
+        d.perm = self.addr(&perm.buffer);
+        d.starts = self.addr(&starts.buffer);
+        d.rkeys = self.addr(&rkeys.buffer);
+        d.nruns = self.addr(&nruns.buffer);
+        for (i, c) in others.iter().enumerate() {
+            d.o[i] = self.addr(&c.buffer.buffer);
+        }
+        self.sorts.push(d);
+        let bytes = 4 * n + (n + 1) * 12 + others.iter().map(Column::bytes).sum::<usize>();
+        let keyed = Keyed {
+            rows: n,
+            key: Width::W64,
+            base: i64::MIN,
+            perm,
+            starts,
+            rkeys,
+            nruns,
+            others,
+            pending: std::sync::Mutex::new(None),
+            runs: std::sync::atomic::AtomicUsize::new(usize::MAX),
+            gpu: std::sync::atomic::AtomicU64::new(0),
+            bytes,
+        };
+        Ok((keyed, columns))
+    }
+
+    /// The probe of `right` by `left` (raw columns), its pairs to `arena`, in the batch's probe dispatch.
+    pub fn probe(&mut self, left: &[Column], right: &Keyed, arena: &mut Arena) -> Result<ProbeOne, String> {
+        let k = left.len();
+        if k == 0 || k > 3 || k != 1 + right.others.len() || left.iter().any(|c| c.width != Width::W64) {
+            return Err(format!("a fused probe of {k} keys against a sort of {}", 1 + right.others.len()));
+        }
+        let nl = left[0].rows;
+        let blocks = probe_blocks(nl);
+        let first = arena.used;
+        arena.used += blocks;
+        if nl == 0 || right.rows == 0 {
+            // SAFETY: the blocks' words for this probe, the host's alone before the command buffer is committed.
+            let b = unsafe { std::slice::from_raw_parts_mut(arena.blocks.buffer.contents().cast::<u32>(), 2 * arena.used) };
+            b[2 * first..2 * (first + blocks)].fill(0);
+            return Ok(ProbeOne { nl, first, blocks });
+        }
+        let mut d = ProbeDesc { nl: nl as u32, k: k as u32, kw: right.key.bytes() as u32, kbase: right.base, ..Default::default() };
+        d.rkeys = self.addr(&right.rkeys.buffer);
+        d.starts = self.addr(&right.starts.buffer);
+        d.nruns = self.addr(&right.nruns.buffer);
+        d.perm = self.addr(&right.perm.buffer);
+        for (i, c) in left.iter().enumerate() {
+            d.l[i] = self.addr(&c.buffer.buffer);
+            d.lbase[i] = c.base;
+        }
+        for (i, c) in right.others.iter().enumerate() {
+            d.r[i] = self.addr(&c.buffer.buffer);
+            d.rbase[i] = c.base;
+            d.rw[i] = c.width.bytes() as u32;
+        }
+        let at = self.probes.len() as u32;
+        self.probes.push(d);
+        self.table.extend((0..blocks).map(|b| [at, (first + b) as u32, b as u32, 0]));
+        Ok(ProbeOne { nl, first, blocks })
+    }
+
+    /// Encodes the batch's sort dispatch, then its probe dispatch (a serial encoder: the probes see the sorts), and
+    /// keeps the tables alive in `keep` until the command buffer completes.
+    pub fn dispatch(self, pass: &Pass<'_>, arena: &Arena, keep: &mut Vec<Held>) -> Result<(), String> {
+        let table = |bytes: &[u8]| -> Result<Held, String> {
+            let h = Held::new(bytes.len().max(16))?;
+            // SAFETY: the buffer holds at least `bytes`, and nothing else refers to it yet.
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), h.buffer.contents().cast::<u8>(), bytes.len()) };
+            Ok(h)
+        };
+        // SAFETY: plain `repr(C)` values, read as their bytes.
+        let raw = |p: *const u8, n: usize| unsafe { std::slice::from_raw_parts(p, n) };
+        let mut used: Vec<&metal::ResourceRef> = self.used.iter().map(|b| &***b).collect();
+        used.extend([&**arena.pairs.buffer, &**arena.head.buffer, &**arena.blocks.buffer, &**arena.flags.buffer]);
+        pass.encoder.use_resources(&used, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
+        if !self.sorts.is_empty() {
+            let pipe = fused_pipe("sort_all")?;
+            let t = table(raw(self.sorts.as_ptr().cast(), std::mem::size_of_val(&self.sorts[..])))?;
+            pass.run(&pipe, &[&t.buffer], &[], &[], self.sorts.len());
+            keep.push(t);
+        }
+        if !self.table.is_empty() {
+            let pipe = fused_pipe("probe_all")?;
+            let jobs = table(raw(self.probes.as_ptr().cast(), std::mem::size_of_val(&self.probes[..])))?;
+            let tab = table(raw(self.table.as_ptr().cast(), std::mem::size_of_val(&self.table[..])))?;
+            pass.run(
+                &pipe,
+                &[&jobs.buffer, &tab.buffer, &arena.pairs.buffer, &arena.head.buffer, &arena.blocks.buffer, &arena.flags.buffer],
+                &[arena.cap as u32],
+                &[],
+                self.table.len(),
+            );
+            keep.push(jobs);
+            keep.push(tab);
+        }
+        Ok(())
     }
 }
 

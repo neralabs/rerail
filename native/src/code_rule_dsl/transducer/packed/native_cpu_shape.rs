@@ -1,8 +1,10 @@
 //! The shape every generated parse function must have, checked on its Cranelift IR before code
 //! generation. A function that breaks it is refused, not run:
 //!
-//! - **No calls.** The function calls nothing: no host Rust, no runtime helper, no other
-//!   function. Every operation is the function's own code.
+//! - **No calls out.** The function calls no host Rust and no runtime helper. It may call only
+//!   functions the same lowering made from the same program (`own`): a gated region or the
+//!   general body, outlined so that the hot loop alone is inlined. Those are checked with no
+//!   `own`, so they call nothing, and the calls make no cycle.
 //! - **Every loop is a stated one.** Each cycle of the control-flow graph passes a block the
 //!   lowering named as a progress point, with what it steps:
 //!   - `File`: the next file of a batch;
@@ -20,7 +22,7 @@
 //!   edges.
 
 use cranelift_codegen::flowgraph::ControlFlowGraph;
-use cranelift_codegen::ir::{Block, Function, InstructionData, Opcode};
+use cranelift_codegen::ir::{Block, ExternalName, Function, InstructionData, Opcode, UserExternalName};
 use std::collections::HashMap;
 
 /// What one turn of a loop steps over.
@@ -44,14 +46,22 @@ pub(super) enum Refusal {
     Loop(String),
 }
 
-/// Refuse `func` unless it calls nothing and each of its cycles passes one of `heads`.
-pub(super) fn check(func: &Function, heads: &[(Block, Step)]) -> Result<(), Refusal> {
+/// Refuse `func` unless it calls only `own` functions and each of its cycles passes one of
+/// `heads`.
+pub(super) fn check(func: &Function, heads: &[(Block, Step)], own: &[UserExternalName]) -> Result<(), Refusal> {
     for block in func.layout.blocks() {
         for inst in func.layout.block_insts(block) {
             let data = &func.dfg.insts[inst];
             let calls = matches!(data, InstructionData::Call { .. } | InstructionData::CallIndirect { .. })
                 || matches!(data.opcode(), Opcode::Call | Opcode::CallIndirect | Opcode::ReturnCall | Opcode::ReturnCallIndirect | Opcode::TryCall | Opcode::TryCallIndirect);
-            if calls {
+            let mine = match data {
+                InstructionData::Call { func_ref, .. } => match &func.dfg.ext_funcs[*func_ref].name {
+                    ExternalName::User(r) => own.contains(&func.params.user_named_funcs()[*r]),
+                    _ => false,
+                },
+                _ => false,
+            };
+            if calls && !(mine && data.opcode() == Opcode::Call) {
                 return Err(Refusal::Call(func.dfg.display_inst(inst).to_string()));
             }
         }

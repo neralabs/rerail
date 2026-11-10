@@ -27,7 +27,8 @@
 //! stratum whose spec the lab does not take yet (SQL probes, gates, requests, a relation kept from an earlier run) is
 //! skipped, with its reason on stderr. Captures stop at 2 GB in all.
 
-use super::{DERIVED, InRel, Interner, input, is_dead, scope, symbols, unhex};
+use super::spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Source, Start};
+use super::{DERIVED, InRel, Interner, input_of, is_dead, scope, symbols};
 use rusqlite::{Connection, params_from_iter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -66,10 +67,6 @@ pub(in crate::code_rule_dsl) fn wanted(name: &str, work: f64) -> Option<PathBuf>
     (0..).map(|k| dir.join(format!("{safe}-{k}.sqlite"))).find(|p| !p.exists())
 }
 
-fn hex(s: &str) -> String {
-    s.bytes().map(|b| format!("{b:02x}")).collect()
-}
-
 /// Writes `rows` (each `types.len()` values, symbols as the run's atoms) as table `table` of `out`.
 fn write_rows(out: &Connection, table: &str, types: &[u8], rows: impl Iterator<Item = Vec<i64>>) -> rusqlite::Result<u64> {
     let cols: Vec<String> = (0..types.len()).map(|c| format!("c{c} INTEGER")).collect();
@@ -104,12 +101,12 @@ fn table_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner)
         return Ok(rows_of(&rel).collect());
     }
     let cols: Vec<String> = (0..types.len()).map(|c| format!("c{c}")).collect();
-    let rel = input(conn, &format!("x:{}:{}:{}", hex(table), hex(&cols.join(", ")), String::from_utf8_lossy(types)), syms)?;
+    let rel = input_of(conn, &InputKey { base: false, sql: table.to_owned(), cols: cols.join(", "), types: String::from_utf8_lossy(types).into_owned() }, syms)?;
     Ok(rows_of(&rel).collect())
 }
 
 /// Captures stratum `name`'s sources and seeds before it opens with `spec`, or says why it is not taken.
-pub(in crate::code_rule_dsl) fn capture_inputs(conn: &Connection, name: &str, spec: &str, path: &Path) -> Option<Capture> {
+pub(in crate::code_rule_dsl) fn capture_inputs(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) -> Option<Capture> {
     match capture_(conn, name, spec, path) {
         Ok(c) => Some(c),
         Err(why) => {
@@ -120,111 +117,104 @@ pub(in crate::code_rule_dsl) fn capture_inputs(conn: &Connection, name: &str, sp
     }
 }
 
-fn capture_(conn: &Connection, name: &str, spec: &str, path: &Path) -> Result<Capture, String> {
+/// `join` with each of its sources that is not the component's (a native relation's, an input's) given by `f`.
+fn with_sources(join: &JoinSpec, f: &mut dyn FnMut(&Source) -> Source) -> JoinSpec {
+    let items = join
+        .items
+        .iter()
+        .map(|item| {
+            let mut item = item.clone();
+            if let JoinItem::Atom { src, .. } | JoinItem::Count { src, .. } | JoinItem::Extreme { src, .. } | JoinItem::StrJoin { src, .. } = &mut item
+                && matches!(src, Source::Native(_) | Source::Input(_))
+            {
+                *src = f(src);
+            }
+            item
+        })
+        .collect();
+    JoinSpec { items }
+}
+
+fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) -> Result<Capture, String> {
     let shared = symbols(conn).map_err(|e| e.to_string())?;
     let mut syms = Interner::for_loading(&shared);
     let out = Connection::open(path).map_err(|e| e.to_string())?;
     out.execute_batch("PRAGMA journal_mode = OFF; PRAGMA synchronous = OFF; CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)").map_err(|e| e.to_string())?;
-    let mut sources: Vec<String> = Vec::new();
+    // The joins' sources, in order of first use: each becomes a table of the capture.
+    let mut sources: Vec<Source> = Vec::new();
     let mut rels: Vec<(String, String, Vec<u8>, bool)> = Vec::new();
-    let mut lines: Vec<String> = Vec::new();
-    // The source tokens of a native join (decoded), rewritten to the capture's tables.
-    let rewrite = |join: &str, sources: &mut Vec<String>| -> String {
-        join.lines()
-            .map(|line| {
-                line.split(' ')
-                    .map(|tok| {
-                        if tok.starts_with("r:") || tok.starts_with("t:") {
-                            let k = sources.iter().position(|s| s == tok).unwrap_or_else(|| {
-                                sources.push(tok.to_owned());
-                                sources.len() - 1
-                            });
-                            format!("@SRC{k}@")
-                        } else {
-                            tok.to_owned()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    for line in spec.lines() {
-        let toks: Vec<&str> = line.split(' ').collect();
-        match toks.first().copied() {
-            Some("name") => lines.push(line.to_owned()),
+    for line in &spec.lines {
+        match line {
             // The run held its rows in memory, not in tables; the replay writes them, to compare them.
-            Some("nowrite") => {}
-            // Where the run put it: the replay runs every capture on the CPU, and again on the device.
-            Some("device") => {}
-            Some("rel") => {
-                if toks.len() > 3 && toks[3..].iter().any(|t| *t != "empty") {
-                    return Err(format!("a relation with {:?} (kept or read from a query)", &toks[3..]));
+            Line::NoWrite | Line::Device | Line::Seed { .. } | Line::Join { .. } => {}
+            Line::Rel { name, types, start } => {
+                let empty = match start {
+                    Start::Rows => false,
+                    Start::Empty => true,
+                    _ => return Err("a relation kept or read from a query".to_owned()),
+                };
+                rels.push((name.clone(), format!("r{}", rels.len()), types.as_bytes().to_vec(), empty));
+            }
+            Line::Request(_) => return Err("a `request` line".to_owned()),
+            Line::Produced(_) => return Err("a `produced` line".to_owned()),
+            Line::Probe { .. } => return Err("a `probe` line".to_owned()),
+            Line::Gate { .. } => return Err("a `gate` line".to_owned()),
+            Line::Edge(_) => return Err("a `rule` line".to_owned()),
+            Line::Levels(_) => return Err("a `levels` line".to_owned()),
+        }
+        let joins: Vec<&Arc<JoinSpec>> = match line {
+            Line::Seed { join, .. } => vec![join],
+            Line::Join { join, whole, .. } => std::iter::once(join).chain(whole).collect(),
+            _ => Vec::new(),
+        };
+        for join in joins {
+            with_sources(join, &mut |src| {
+                if !sources.contains(src) {
+                    sources.push(src.clone());
                 }
-                let lab = format!("r{}", rels.len());
-                rels.push((toks[1].to_owned(), lab.clone(), toks[2].as_bytes().to_vec(), toks.get(3) == Some(&"empty")));
-                lines.push(std::iter::once("rel").chain([lab.as_str()]).chain(toks[2..].iter().copied()).collect::<Vec<_>>().join(" "));
-            }
-            Some("seed") if toks.len() == 3 => {
-                let join = unhex(toks[2]).map_err(|e| e.to_string())?;
-                lines.push(format!("seed {} @HEX{}@", toks[1], hex(&rewrite(&join, &mut sources))));
-            }
-            Some("join") if toks.len() >= 4 => {
-                let mut l = format!("join {} {}", toks[1], toks[2]);
-                for t in &toks[3..] {
-                    let join = unhex(t).map_err(|e| e.to_string())?;
-                    l += &format!(" @HEX{}@", hex(&rewrite(&join, &mut sources)));
-                }
-                lines.push(l);
-            }
-            Some(other) => return Err(format!("a `{other}` line")),
-            None => {}
+                src.clone()
+            });
         }
     }
     // Each source as a table of the capture.
-    let mut tables: Vec<String> = Vec::new();
+    let mut tables: Vec<Source> = Vec::new();
     let mut bytes = 0u64;
-    for (k, tok) in sources.iter().enumerate() {
-        let rel: Arc<InRel> = if let Some(t) = tok.strip_prefix("r:") {
-            let table = unhex(t).map_err(|e| e.to_string())?;
-            DERIVED.lock().unwrap().get(&(scope(conn), table.clone())).cloned().ok_or_else(|| format!("no native relation {table}"))?
-        } else {
-            input(conn, &tok[2..], &mut syms).map_err(|e| e.to_string())?
+    for (k, src) in sources.iter().enumerate() {
+        let (rel, base): (Arc<InRel>, bool) = match src {
+            Source::Native(table) => (DERIVED.lock().unwrap().get(&(scope(conn), table.clone())).cloned().ok_or_else(|| format!("no native relation {table}"))?, false),
+            Source::Input(key) => (input_of(conn, key, &mut syms).map_err(|e| e.to_string())?, key.base),
+            _ => unreachable!("only a native relation or an input is a source"),
         };
         let table = format!("s{k}");
         let n = write_rows(&out, &table, &rel.types, rows_of(&rel)).map_err(|e| e.to_string())?;
         bytes += n * 8 * rel.k as u64;
         let cols: Vec<String> = (0..rel.k).map(|c| format!("c{c}")).collect();
-        let flag = if tok.starts_with("t:b:") { "b" } else { "x" };
-        tables.push(format!("t:{flag}:{}:{}:{}", hex(&table), hex(&cols.join(", ")), String::from_utf8_lossy(&rel.types)));
+        tables.push(Source::Input(InputKey { base, sql: table, cols: cols.join(", "), types: String::from_utf8_lossy(&rel.types).into_owned() }));
     }
     for (table, lab, types, empty) in &rels {
         // An `empty` relation starts with no rows: nothing wrote its table, and it may have none.
         let rows = if *empty { Vec::new() } else { table_rows(conn, table, types, &mut syms).map_err(|e| e.to_string())? };
         write_rows(&out, lab, types, rows.into_iter()).map_err(|e| e.to_string())?;
     }
-    // The spec over the capture's tables: each join's source tokens replaced, then hex again.
-    let spec: Vec<String> = lines
+    // The spec over the capture's tables: its relations by their capture names, each join's sources replaced.
+    let to_capture = |join: &JoinSpec| Arc::new(with_sources(join, &mut |src| tables[sources.iter().position(|s| s == src).expect("a source seen")].clone()));
+    let mut r = 0;
+    let lines: Vec<Line> = spec
+        .lines
         .iter()
-        .map(|l| {
-            l.split(' ')
-                .map(|tok| match tok.strip_prefix("@HEX").and_then(|t| t.strip_suffix('@')) {
-                    Some(h) => {
-                        let mut join = unhex(h).unwrap_or_default();
-                        for (k, t) in tables.iter().enumerate() {
-                            join = join.replace(&format!("@SRC{k}@"), t);
-                        }
-                        hex(&join)
-                    }
-                    None => tok.to_owned(),
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
+        .filter_map(|line| match line {
+            Line::NoWrite => None,
+            Line::Rel { types, start, .. } => {
+                r += 1;
+                Some(Line::Rel { name: format!("r{}", r - 1), types: types.clone(), start: start.clone() })
+            }
+            Line::Seed { head, join } => Some(Line::Seed { head: *head, join: to_capture(join) }),
+            Line::Join { head, delta, join, whole } => Some(Line::Join { head: *head, delta: *delta, join: to_capture(join), whole: whole.as_deref().map(to_capture) }),
+            _ => None,
         })
         .collect();
-    let name_line = spec.iter().find_map(|l| l.strip_prefix("name ")).unwrap_or(name).to_owned();
-    for (k, v) in [("name", name_line.as_str()), ("stratum", name), ("spec", &spec.join("\n"))] {
+    let captured = ComponentSpec { name: spec.name.clone(), lines };
+    for (k, v) in [("name", spec.name.as_str()), ("stratum", name), ("spec", &captured.to_text())] {
         out.execute("INSERT INTO meta VALUES (?1, ?2)", [k, v]).map_err(|e| e.to_string())?;
     }
     WRITTEN.fetch_add(bytes, Ordering::Relaxed);

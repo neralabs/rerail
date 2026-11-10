@@ -145,15 +145,10 @@ fn tiling(npa: usize, npb: usize, k32: usize, units: usize) -> (usize, usize) {
 
 impl Sme {
     /// The submission, and the BMOPAs it issued (for the timing test).
+    /// Its phases go to the scoreboard: packing (`pack`), the streaming workers (`stream`, with the spawned workers'
+    /// CPU) and the masks turned into pairs (`pairs`).
     fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, i64), String> {
-        self.run_timed(ks).map(|(o, ops, _)| (o, ops))
-    }
-
-    /// [`Sme::run`], with its phases: packing (encode), the streaming workers (device; the spawned workers' CPU as
-    /// `worker_cpu`), and the masks turned into pairs (decode).
-    fn run_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, i64, crate::exec::Phases), String> {
-        let mut ph = crate::exec::Phases::default();
-        let t = std::time::Instant::now();
+        let (mut c, mut t) = (crate::score::thread_cpu(), std::time::Instant::now());
         // Validate and pack every distinct operand once.
         let mut packed: HashMap<(usize, usize, usize), Packed> = HashMap::new();
         for (n, k) in ks.iter().enumerate() {
@@ -246,8 +241,8 @@ impl Sme {
 
         // The workers: one per unit, one streaming block each. The calling thread (the executor's thread for this
         // lane) is one of them, so a submission of one tile starts no thread.
-        ph.encode = t.elapsed().as_secs_f64();
-        let t = std::time::Instant::now();
+        crate::score::add("pack", crate::score::thread_cpu() - c, t.elapsed().as_secs_f64());
+        (c, t) = (crate::score::thread_cpu(), std::time::Instant::now());
         let tiles = Tiles(tiles);
         let next = AtomicI64::new(0);
         let workers = self.units.min(tiles.0.len());
@@ -260,9 +255,9 @@ impl Sme {
             let hs: Vec<_> = (1..workers)
                 .map(|_| {
                     s.spawn(move || {
-                        let c = crate::exec::thread_cpu();
+                        let c = crate::score::thread_cpu();
                         let n = work();
-                        (n, crate::exec::thread_cpu() - c)
+                        (n, crate::score::thread_cpu() - c)
                     })
                 })
                 .collect();
@@ -270,8 +265,8 @@ impl Sme {
             hs.into_iter().map(|h| h.join().expect("an SME worker panicked")).fold((mine, 0.0), |(a, c), (n, d)| (a + n, c + d))
         });
         drop(packed);
-        (ph.device, ph.worker_cpu) = (Some(t.elapsed().as_secs_f64()), worker_cpu);
-        let t = std::time::Instant::now();
+        crate::score::add("stream", crate::score::thread_cpu() - c + worker_cpu, t.elapsed().as_secs_f64());
+        (c, t) = (crate::score::thread_cpu(), std::time::Instant::now());
 
         let outs = outs
             .into_iter()
@@ -281,8 +276,8 @@ impl Sme {
                 Out::Mask { rows, npb, masks, .. } => Output::Pairs(pairs(rows, npb, &masks)),
             })
             .collect();
-        ph.decode = t.elapsed().as_secs_f64();
-        Ok((outs, ops, ph))
+        crate::score::add("pairs", crate::score::thread_cpu() - c, t.elapsed().as_secs_f64());
+        Ok((outs, ops))
     }
 }
 
@@ -301,8 +296,5 @@ impl Backend for Sme {
 
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
         self.run(ks).map(|(o, _)| o)
-    }
-    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, crate::exec::Phases), String> {
-        self.run_timed(ks).map(|(o, _, p)| (o, p))
     }
 }

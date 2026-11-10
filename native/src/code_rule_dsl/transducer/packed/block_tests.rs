@@ -263,6 +263,8 @@ const BODY_OPCODES: &[&str] = &[
     // A `prev` of a byte-local value on the byte vectors: the chunk before and this one, shifted
     // by bytes (`ext`).
     "shuffle",
+    // A gated region's call: what it reads and gives through a stack slot.
+    "call", "stack_store", "stack_load", "stack_addr",
     // `within`: the bits below the stream's end, from its length (clamp, two shifts).
     "isub", "smin", "smax", "ishl",
     // The extract pass's size: each extract's popcount, summed as the plane is written.
@@ -295,7 +297,9 @@ fn check_lowering(name: &str, p: &Program) {
         }
     }
     println!("== {name}: machine code ==\n{}", compiled.disassembly);
-    assert!(!compiled.disassembly.contains(" bl ") && !compiled.disassembly.contains("blr"), "{name}: no calls");
+    // The only calls: of the functions made from the same program (the general body).
+    assert!(!compiled.disassembly.contains(" bl "), "{name}: no near calls");
+    assert_eq!(compiled.disassembly.matches("blr").count(), compiled.own_calls(), "{name}: a call of no function of the program's");
 
     let instructions = compiled.disassembly.lines().filter(|l| l.starts_with("  ") && !l.contains("unwind")).count();
     println!("== {name}: {instructions} machine instructions in the function ==");

@@ -742,7 +742,38 @@ impl BlockNative {
     /// pass, each level's `back_fill`s in a backward pass after the level before, its other
     /// values in a forward pass after that. A value read in a later pass, and an output made
     /// before the last, has a slot. A program without `back_fill` is one forward pass.
+    ///
+    /// Some values made from the bytes and positions alone are remade where they are read, not
+    /// stored (`native_cpu_lanes::remade`): simdjson keeps nothing between its phases that it
+    /// can cheaply remake from the input, and a later pass's gate can then skip it.
     pub(super) fn passes(&self) -> Passes {
+        self.passes_with(&super::native_cpu_lanes::remade(self))
+    }
+
+    /// The values made from the bytes and positions alone: byte tests, classes, constants,
+    /// `within`, and logic and `prev`s of them. Any forward pass can make one.
+    pub(super) fn pure(&self) -> Vec<bool> {
+        let n = self.insts.len();
+        let mut pure = vec![false; n];
+        for x in 0..n {
+            pure[x] = match self.insts[x] {
+                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
+                BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) | BlockInst::Prev(..) => self.insts[x].operands().into_iter().all(|o| pure[o]),
+                _ => false,
+            };
+        }
+        for g in &self.groups {
+            for &m in &g.members {
+                pure[m] = false;
+            }
+        }
+        pure
+    }
+
+    /// The passes, with the `remade` values (pure ones) made in each forward pass that reads
+    /// them instead of stored by the first and loaded: only a `back_fill`'s operand among them is
+    /// stored, by the first forward pass that makes it.
+    pub(super) fn passes_with(&self, remade: &[bool]) -> Passes {
         let n = self.insts.len();
         let back = |x: usize| matches!(self.insts[x], BlockInst::BackFill(..));
         let mut level = vec![0usize; n];
@@ -772,9 +803,32 @@ impl BlockNative {
         if top == 0 {
             return Passes { passes: vec![Pass::Forward { body: self.clone(), stores: Vec::new() }], slots: 0, origins: vec![(0..n as u32).collect()] };
         }
-        // Each value's pass: level L's `back_fill`s in pass 2L - 1, its others in pass 2L.
+        // Each value's pass: level L's `back_fill`s in pass 2L - 1, its others in pass 2L. A
+        // remade value's passes are its readers': `made[p][x]`.
         let pass = |x: usize| 2 * level[x] - usize::from(back(x));
         let last = 2 * top;
+        let mut made = vec![vec![false; n]; last + 1];
+        for x in (0..n).filter(|&x| !remade[x]) {
+            made[pass(x)][x] = true;
+        }
+        for &v in self.outputs.iter().filter(|&&v| remade[usize::from(v)]) {
+            made[last][usize::from(v)] = true;
+        }
+        for x in (0..n).rev() {
+            for o in self.insts[x].operands().into_iter().filter(|&o| remade[o]) {
+                if back(x) {
+                    made[pass(x) - 1][o] = true;
+                }
+                for p in (0..=last).step_by(2) {
+                    if made[p][x] {
+                        made[p][o] = true;
+                    }
+                }
+            }
+        }
+        let in_pass = |x: usize, p: usize| made[p][x];
+        // A remade value with a slot (a `back_fill` reads it) is stored by its first pass.
+        let first = |x: usize| (0..=last).find(|&p| made[p][x]);
         let mut slot: Vec<Option<u16>> = vec![None; n];
         let mut slots = 0u16;
         let mut give = |x: usize, slot: &mut Vec<Option<u16>>| {
@@ -784,14 +838,16 @@ impl BlockNative {
             }
         };
         for x in 0..n {
-            for o in self.insts[x].operands() {
-                if pass(o) != pass(x) {
-                    give(o, &mut slot);
+            for p in (0..=last).filter(|&p| made[p][x]) {
+                for o in self.insts[x].operands() {
+                    if !in_pass(o, p) {
+                        give(o, &mut slot);
+                    }
                 }
             }
         }
         for &v in &self.outputs {
-            if pass(usize::from(v)) != last {
+            if !in_pass(usize::from(v), last) {
                 give(usize::from(v), &mut slot);
             }
         }
@@ -810,18 +866,18 @@ impl BlockNative {
                 origins.push(Vec::new());
                 continue;
             }
-            let mine: Vec<usize> = (0..n).filter(|&x| pass(x) == p).collect();
+            let mine: Vec<usize> = (0..n).filter(|&x| in_pass(x, p)).collect();
             // The values of passes before read here, loaded first; then the pass's own, in order.
-            let mut loads: Vec<usize> = mine.iter().flat_map(|&x| self.insts[x].operands()).filter(|&o| pass(o) != p).collect();
+            let mut loads: Vec<usize> = mine.iter().flat_map(|&x| self.insts[x].operands()).filter(|&o| !in_pass(o, p)).collect();
             if p == last {
-                loads.extend(self.outputs.iter().map(|&v| usize::from(v)).filter(|&v| pass(v) != p));
+                loads.extend(self.outputs.iter().map(|&v| usize::from(v)).filter(|&v| !in_pass(v, p)));
             }
             loads.sort_unstable();
             loads.dedup();
             // Each load just before its first reader (a fixed point's first member, for a value
             // its members read): a word loaded at the body's start lives through all of it.
             let mut first_member: Vec<Option<usize>> = vec![None; n];
-            for g in self.groups.iter().filter(|g| g.members.iter().all(|&m| pass(m) == p)) {
+            for g in self.groups.iter().filter(|g| g.members.iter().all(|&m| in_pass(m, p))) {
                 let first = g.members.iter().copied().min().expect("a member");
                 for &m in &g.members {
                     first_member[m] = Some(first);
@@ -873,7 +929,7 @@ impl BlockNative {
             let groups: Vec<super::block::Group> = self
                 .groups
                 .iter()
-                .filter(|g| g.members.iter().all(|&m| pass(m) == p))
+                .filter(|g| g.members.iter().all(|&m| in_pass(m, p)))
                 .map(|g| super::block::Group { members: g.members.iter().map(|&x| place(x)).collect(), carries: g.carries.iter().map(|&(c, x)| (place(c), place(x))).collect() })
                 .collect();
             let body = |outputs: Vec<u16>, last: bool| BlockNative {
@@ -892,7 +948,7 @@ impl BlockNative {
                 passes.push(Pass::Forward { body: body(outputs, true), stores: Vec::new() });
                 origins.push(origin);
             } else {
-                let stored: Vec<usize> = mine.iter().copied().filter(|&x| slot[x].is_some()).collect();
+                let stored: Vec<usize> = mine.iter().copied().filter(|&x| slot[x].is_some() && first(x) == Some(p)).collect();
                 if stored.is_empty() {
                     continue;
                 }

@@ -4061,8 +4061,21 @@ fn run_observed(
             match session.as_ref().map(|s| &s.cross) {
                 // A session's run evaluates the strata whose inputs changed, the others' rows kept (decision 0077).
                 Some(cell) => {
-                    // `RERAIL_MAINTAIN=count`: exact maintenance by counting, each rule's derivations held as its
-                    // support relation (`supports`), to compare with delete-and-rederive.
+                    // A session maintains its cross-file part from the rows the last run kept: each relation is
+                    // stored, not recomputed in its readers (decision 0099), so the next run has its old rows. An
+                    // inlined one left none, and every stratum over it was derived again (about 100 a step at O125,
+                    // against none stored). A relation the program declares `inline` stays so;
+                    // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare.
+                    let mut stored = cross.clone();
+                    let inline_too = std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on");
+                    for rel in cross.program.rules.iter().map(|r| r.head.rel.clone()).collect::<std::collections::BTreeSet<_>>() {
+                        if !inline_too && !cross.program.qualified(&rel, "inline") {
+                            stored.program.qualifiers.entry(rel).or_default().insert("no_inline".to_owned());
+                        }
+                    }
+                    let cross = stored;
+                    // Exact maintenance by counting (the default), each rule's derivations held as its support
+                    // relation (`supports`); `RERAIL_MAINTAIN=dred` compares with delete-and-rederive.
                     let counted;
                     let cross = if supports::counting() {
                         let (c, through, kept) = supports::supports(&cross);
@@ -4195,7 +4208,7 @@ fn run_observed(
                         hashed.push(rel.to_owned());
                         Some(delta)
                     };
-                    let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;
+                    let mut maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_entries} inputs' deltas read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
                         None => format!("no kept documents: {} inputs' deltas found by hashing their documents", hashed.len()),
@@ -4205,6 +4218,23 @@ fn run_observed(
                         eprintln!("O125 input deltas: {} documents changed ({read} rows in their entries), {from_entries} from entries ({from_entries_rows} rows), by hashing {hashed:?}", changes.as_ref().map_or(0, Vec::len));
                     }
                     drop(s);
+                    // What the session keeps for the next run is stored, never inlined into its readers (decision
+                    // 0099): its rows are read back to be kept, and maintained from next run as `r__old` ("no such
+                    // table: py_f", inlined into `py_true` and `py_false`). So are the measurement aids' deltas.
+                    // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare (as above).
+                    if !std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on") {
+                        let aids = ["RERAIL_SPIKE_DELTA", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_CROSS_VERIFY"].iter().any(|v| std::env::var_os(v).is_some());
+                        let program = &mut maintained.program.program;
+                        let mut stored: BTreeSet<String> = cut.derived(&cross.program)?.into_iter().chain(wanted.iter().cloned()).collect();
+                        if aids {
+                            stored.extend(program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
+                        }
+                        for rel in stored {
+                            let q = program.qualifiers.entry(rel).or_default();
+                            q.remove("inline");
+                            q.insert("no_inline".to_owned());
+                        }
+                    }
                     let part = &maintained.program;
                     step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules, {} old sources", maintained.maintained, maintained.recursive, maintained.derived_again, part.program.rules.len(), maintained.sources.len()));
                     let mut stats = cross_stats;
@@ -4233,6 +4263,21 @@ fn run_observed(
                             stats.measured(&rel, names.iter().cloned().zip(cols.iter().copied()), vals.iter().map(|(c, v, n)| (names[*c].clone(), *v, *n)));
                         } else {
                             let patched = held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.patched(&rel, h)).filter(|p| p.tested == tested).cloned());
+                            // Not kept by delta yet: counted from the engine's postings of it, in place of measuring it,
+                            // and patched by this run's delta (decision 0096 step 4): a relation's first count costs
+                            // about what a measure did, once.
+                            let patched = patched.or_else(|| {
+                                // Only a relation this run maintains (it has an overdelete): one derived again is measured.
+                                let of = rel.strip_suffix("__old")?;
+                                let h = held.as_ref().filter(|_| part.program.decls.contains_key(&format!("{of}__del")))?;
+                                let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
+                                let names = source.columns();
+                                // One the engine kept no index on (no later stratum read it) is measured: its count is
+                                // taken from this run's relation, made with its indexes.
+                                let stats = super::statkeep::RelStats::from_postings(names, h.rows() as i64, &mut |c, visit| h.each_posting(c, visit))?;
+                                let counts = constant_counts(Some(&tested), source.as_ref());
+                                Some(retain::Patched { at: Arc::as_ptr(h) as *const u8 as usize, stats, counts, tested: tested.clone() })
+                            });
                             if let (Some(h), Some(of)) = (&held, rel.strip_suffix("__old")) {
                                 bound_old.insert(of.to_owned(), (Arc::clone(h), patched.clone()));
                             }
@@ -4270,6 +4315,11 @@ fn run_observed(
                     let spike = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
                     let probes: Vec<String> = if spike { part.program.decls.keys().filter(|r| r.ends_with("__del") || r.ends_with("__ins")).cloned().collect() } else { Vec::new() };
                     keep.extend(probes.iter().cloned());
+                    // A delta made in the run: what a stratum's maintenance reads besides old rows.
+                    let in_run_delta = |r: &str| ["__plus", "__minus", "__del", "__ins", "__redo", "__lost", "__held"].iter().any(|x| r.ends_with(x)) || r.contains("__grp");
+                    if spike {
+                        keep.extend(part.program.decls.keys().filter(|r| in_run_delta(r)).cloned());
+                    }
                     step("bound; running");
                     if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() || std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
                         keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
@@ -4286,6 +4336,36 @@ fn run_observed(
                     if spike {
                         for (rel, why) in &maintained.again {
                             eprintln!("O125 derived-again {rel}: {why}");
+                        }
+                        // The strata an early cutoff would skip: every delta a stratum reads (`__plus`, `__minus`, its
+                        // own `__del`, `__ins`, an aggregate's groups, …) came out empty. "Given": a delta bound as an
+                        // input (an earlier phase's, or found by its documents). "No delta": derived again.
+                        let delta_rows: HashMap<&str, Option<usize>> = part
+                            .program
+                            .decls
+                            .keys()
+                            .filter(|r| in_run_delta(r))
+                            .map(|r| (r.as_str(), got.kept.contains(r.as_str()).then(|| held_rows(&db, &got, r, part.program.decls[r].len()).map(|v| v.len()).unwrap_or(0))))
+                            .collect();
+                        if let Ok((sccs, _)) = crate::code_rule_dsl::logic::front::strata(&part.program) {
+                            let (mut quiet, mut moving, mut none, mut given) = (0, 0, 0, 0);
+                            for scc in &sccs {
+                                let reads: BTreeSet<&str> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).flat_map(|r| r.body.iter().filter_map(|l| match l {
+                                    crate::code_rule_dsl::logic::front::Literal::Atom(a) | crate::code_rule_dsl::logic::front::Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
+                                    _ => None,
+                                })).filter(|r| delta_rows.contains_key(r)).collect();
+                                if reads.is_empty() {
+                                    none += 1;
+                                } else if reads.iter().any(|r| delta_rows[r].is_none()) {
+                                    given += 1;
+                                } else if reads.iter().all(|r| delta_rows[r] == Some(0)) {
+                                    quiet += 1;
+                                } else {
+                                    moving += 1;
+                                }
+                            }
+                            let empty = delta_rows.values().filter(|n| **n == Some(0)).count();
+                            eprintln!("O125 cutoff: {} strata: {quiet} read only empty deltas, {moving} a non-empty one, {given} a given delta, {none} no delta; {empty} of {} deltas empty", sccs.len(), delta_rows.len());
                         }
                         let (mut tdel, mut tins, mut tgone, mut tnew) = (0usize, 0usize, 0usize, 0usize);
                         let mut lines = Vec::new();
@@ -4321,13 +4401,22 @@ fn run_observed(
                     }
                     // A relation of no columns is a flag its rows' count holds, which columns do not: derived again.
                     // A relation the engine holds is kept as it is, with its indexes (decision 0090 step 3); one the
-                    // run left in a table (an output) is read from there.
+                    // run left in a table (an output) is read from there. One the run recomputed in its readers
+                    // (decision 0099) has neither: it is not kept, as one past the budget, and the next run derives it.
                     let rows = derived
                         .iter()
+                        .filter(|rel| !got.inlined.contains(rel.as_str()))
                         .map(|rel| (rel, part.program.decls[rel].len()))
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| {
-                            let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten();
+                            // An output of a stratum maintained by levels (decision 0090) is still held with its rows' levels, which its
+                            // table does not keep: taken from the engine too.
+                            let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten()
+                                .or_else(|| {
+                                    // Only a relation this run maintained by levels (it has `h__gone`): any other the engine
+                                    // holds may be a copy left by an earlier run (a stratum that ran in SQL this time).
+                                    part.program.decls.contains_key(&format!("{rel}__gone")).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten().filter(|h| h.has_levels())
+                                });
                             let held = match held {
                                 Some(h) => h,
                                 None => {
@@ -4470,8 +4559,12 @@ fn run_observed(
                             None if new.delta_since(old).is_some() => new.live_rows().map(|live| {
                                 let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
                                 let names: Vec<String> = (0..*width).map(|c| super::sql_col(&name, c)).collect();
-                                let mut stats = super::statkeep::RelStats::paired(names.clone());
-                                stats.documents(&live, *width, 1);
+                                // From its postings, else its rows.
+                                let stats = super::statkeep::RelStats::from_postings(names.clone(), new.rows() as i64, &mut |c, visit| new.each_posting(c, visit)).unwrap_or_else(|| {
+                                    let mut stats = super::statkeep::RelStats::paired(names.clone());
+                                    stats.documents(&live, *width, 1);
+                                    stats
+                                });
                                 let tested = constants.get(name.as_str()).cloned().unwrap_or_default();
                                 let counts = constant_counts(Some(&tested), new.source(names).as_ref());
                                 retain::Patched { at: Arc::as_ptr(new) as *const u8 as usize, stats, counts, tested }

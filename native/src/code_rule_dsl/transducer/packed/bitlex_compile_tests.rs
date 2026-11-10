@@ -1095,11 +1095,12 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns, no
-    // reorder). Its loop heads are the stream's and the masks', and the table's final pass's
-    // two (parents and extras: a record and a pop a step).
+    // reorder). Its loop heads are the stream's and the masks'. The table's final pass
+    // (parents and extras) is a function of its own, called once: its loops are not the
+    // token loop's.
     assert!(!tier2.wraps);
-    assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block | native_cpu_shape::Step::Node)), "{:?}", tier2.heads);
-    assert_eq!(tier2.heads.iter().filter(|h| h.1 == native_cpu_shape::Step::Node).count(), 2, "the final pass's loops alone: {:?}", tier2.heads);
+    assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
+    assert_eq!(tier2.own_calls, 1, "the final pass's call alone");
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs()[0].run_files(&[f]).remove(0);
