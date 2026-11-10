@@ -13,7 +13,7 @@
 //!    the same serial encoder as the probes that read it, so they follow it.
 //!    - A right side of at most 2,048 rows and three keys is sorted in one dispatch (`small_sort`), its raw 64-bit
 //!      values read as they are; a larger one by the radix sort, narrowed first.
-//!    - A probe is one dispatch (`probe_one`): each threadgroup counts its rows' pairs, reserves them in the
+//!    - Every probe is in one dispatch (`probe_all`): each threadgroup counts its rows' pairs, reserves them in the
 //!      batch's arena with one atomic, and writes them there.
 //! 2. Only when needed: the scatters of the tile joins, sized from their counts, and the probes whose pairs did not
 //!    fit the arena, each into space of its exact size.
@@ -267,7 +267,19 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
     drop(tables);
     // The second pass, only when needed: the tiles' scatters, and the probes whose pairs did not fit the arena.
     let overflowed = arena.overflowed();
-    let mut spill: Vec<(usize, Arena)> = Vec::new();
+    // The probes whose pairs did not fit run again in one fused dispatch (the pipeline every probe uses, compiled
+    // ahead), into one arena of their exact total.
+    let spilled: Vec<bool> = jobs.iter().map(|j| matches!(j, Job::Probe { job, .. } if overflowed && job.spilled(&arena).0)).collect();
+    let (mut cap2, mut blocks2) = (0usize, 0usize);
+    for (j, _) in jobs.iter().zip(&spilled).filter(|(_, s)| **s) {
+        if let Job::Probe { left, job, .. } = j {
+            cap2 += job.spilled(&arena).1;
+            blocks2 += super::join::probe_blocks(left[0].rows);
+        }
+    }
+    let mut spill = if blocks2 > 0 { Some(Arena::new(cap2, blocks2)?) } else { None };
+    let mut respill = Fused::default();
+    let mut tables2: Vec<super::join::Held> = Vec::new();
     let mut second = false;
     let need = overflowed || jobs.iter().any(|j| matches!(j, Job::Tile { .. }));
     let mut done = Vec::with_capacity(ks.len());
@@ -278,22 +290,25 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
         let pass = crate::score::phase("encode", || Pass::new(command));
         for (i, j) in jobs.into_iter().enumerate() {
             done.push(match j {
-                Job::Probe { left, right, job } if overflowed && job.spilled(&arena).0 => {
+                Job::Probe { left, right, .. } if spilled[i] => {
                     second = true;
-                    let total = job.spilled(&arena).1;
-                    let mut own = Arena::new(total, super::join::probe_blocks(left[0].rows))?;
-                    let job = crate::score::phase("encode", || ProbeOne::encode(&pass, &left, &right, &mut own))?;
-                    spill.push((i, own));
+                    let own = spill.as_mut().expect("the spills' arena");
+                    let job = crate::score::phase("encode", || respill.probe(&left, &right, own))?;
                     Job::Probe { left, right, job }
                 }
                 Job::Tile { left, right, job } => {
                     let keys: Vec<usize> = (0..left.columns.len()).collect();
                     let job = crate::score::phase("encode", || job.scatter(&pass, &left, &keys, &right, &keys))?;
+                    // Into the kernel's order on the device, after the scatter.
+                    let job = crate::score::phase("encode", || job.sort(&pass, left.rows, right.rows))?;
                     second |= job.total > 0;
                     Job::Tile { left, right, job }
                 }
                 other => other,
             });
+        }
+        if let Some(own) = &spill {
+            crate::score::phase("encode", || std::mem::take(&mut respill).dispatch(&pass, own, &mut tables2))?;
         }
         crate::score::phase("encode", || pass.end());
         if second {
@@ -309,19 +324,16 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
             space.put(id, by, rows, bytes, entry);
         }
     });
+    // Each probe's pairs as a view of its arena: no copy (decision 0100 §9).
     crate::score::phase("read pairs", || {
         done.into_iter()
             .enumerate()
             .map(|(i, j)| match j {
                 Job::Probe { job, .. } => {
-                    let from = spill.iter().find(|(s, _)| *s == i).map_or(&arena, |(_, a)| a);
-                    job.pairs(from).map(Output::Pairs).ok_or_else(|| format!("join {i}: its pairs did not fit their exact space"))
+                    let from = if spilled[i] { spill.as_ref().expect("the spills' arena") } else { &arena };
+                    job.view(from).map(Output::View).ok_or_else(|| format!("join {i}: its pairs did not fit their exact space"))
                 }
-                Job::Tile { job, .. } => {
-                    let mut p = job.pairs();
-                    p.sort_unstable();
-                    Ok(Output::Pairs(p))
-                }
+                Job::Tile { job, .. } => Ok(Output::Pairs(job.pairs())),
             })
             .collect()
     })

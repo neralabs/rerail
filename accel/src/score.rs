@@ -449,7 +449,7 @@ impl Scoreboard {
             // The lane's latency, from a device's own timeline; a device job's thread CPU.
             // A cold job (a pipeline compiled, a pool buffer made) is not what the lane costs warm: it stays out of
             // the averages.
-            let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "new buffer"));
+            let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
             let lat: f64 = phases.iter().filter(|p| matches!(p.0, "gpu submit" | "gpu schedule" | "gpu wake")).map(|p| p.3).sum();
             let u = &mut s.units[t.lane.index()];
             if lat > 0.0 && !cold {

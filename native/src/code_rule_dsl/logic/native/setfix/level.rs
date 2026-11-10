@@ -20,7 +20,7 @@
 use super::spec::{JoinItem, JoinSpec, Source};
 use super::{InRel, Interner, Key, Result, Src, Step, err, is_dead};
 use rerail_accel::kernel::{JoinBy, Keys};
-use rerail_accel::{Batch, Kernel, Launch, Output};
+use rerail_accel::{Batch, Kernel, Launch, Pairs};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
@@ -54,23 +54,22 @@ pub fn on() -> bool {
 /// A level's batch of seed joins, running until the first seed that reads it waits.
 struct LevelBatch {
     running: Mutex<Option<rerail_accel::exec::Running>>,
-    outs: OnceLock<std::result::Result<Vec<Output>, String>>,
+    /// Each launch's pairs, taken once by its seed: a view of the lane's buffer when the GPU ran it, so nothing is
+    /// copied (decision 0100 §9).
+    outs: OnceLock<std::result::Result<Vec<Mutex<Option<Pairs>>>, String>>,
 }
 
 impl LevelBatch {
-    fn out(&self, i: usize) -> Result<Vec<(u32, u32)>> {
+    fn out(&self, i: usize) -> Result<Pairs> {
         let outs = self.outs.get_or_init(|| {
             let running = self.running.lock().unwrap().take();
             match running {
-                Some(r) => r.wait().map(|(done, _)| done.into_iter().map(|d| d.out).collect()),
+                Some(r) => r.wait().map(|(done, _)| done.into_iter().map(|d| Mutex::new(d.out.into_pairs())).collect()),
                 None => Err("a level's joins were already collected".into()),
             }
         });
         match outs {
-            Ok(o) => match &o[i] {
-                Output::Pairs(p) => Ok(p.clone()),
-                _ => Err(err("a level's join gave no pairs")),
-            },
+            Ok(o) => o[i].lock().unwrap().take().ok_or_else(|| err("a level's join gave no pairs, or they were taken")),
             Err(e) => Err(err(format!("a level's joins: {e}"))),
         }
     }
@@ -91,7 +90,7 @@ static PENDING: LazyLock<Mutex<HashMap<u64, Pending>>> = LazyLock::new(Default::
 /// A seed's pairs, taken: its first atom's row ids, and the pairs (an index into them, the second atom's row id).
 pub struct Paired {
     pub lids: Vec<u32>,
-    pub pairs: Vec<(u32, u32)>,
+    pub pairs: Pairs,
 }
 
 /// The digest of a join's spec: the key its pairs are kept by.

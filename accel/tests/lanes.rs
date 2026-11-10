@@ -149,7 +149,7 @@ fn joins_keep_their_right_sides_across_batches_and_match_the_reference() {
         }
         let (done, _) = ex.run(Batch(launches)).unwrap();
         for (i, (d, w)) in done.iter().zip(&want).enumerate() {
-            let rerail_accel::Output::Pairs(p) = &d.out else { panic!("pairs") };
+            let p = d.out.pairs().expect("pairs");
             assert!(!p.is_empty(), "batch {batch} launch {i}: no pairs");
             assert_eq!(&d.out, w, "batch {batch} launch {i} on {}", d.lane.name());
         }
@@ -246,7 +246,7 @@ fn small_joins_and_staged_columns_match_the_reference() {
     let mut rng = Rng(0x5eed);
     let mut col = |n: usize, m: u64| -> Vec<i64> { (0..n).map(|_| rng.below(m) as i64 - (m as i64) / 2).collect() };
     let mut cases: Vec<(Vec<Vec<i64>>, Vec<Vec<i64>>)> = Vec::new();
-    for (nl, nr, k, m) in [(1500, 2048, 1, 700), (3000, 1000, 2, 40), (10, 1, 3, 3), (0, 50, 1, 9), (40, 0, 2, 9), (5000, 1999, 3, 6)] {
+    for (nl, nr, k, m) in [(1500, 2048, 1, 700), (3000, 1000, 2, 40), (10, 1, 3, 3), (0, 50, 1, 9), (40, 0, 2, 9), (5000, 1999, 3, 6), (6000, 5000, 1, 50), (4000, 9000, 2, 30)] {
         cases.push(((0..k).map(|_| col(nl, m)).collect(), (0..k).map(|_| col(nr, m)).collect()));
     }
     let host = |cols: &[Vec<i64>]| -> Keys { cols.iter().map(|c| rerail_accel::Col::from(c.clone())).collect::<Vec<_>>().into() };
@@ -330,3 +330,4 @@ fn warm_small_gpu_jobs() {
     eprintln!("warm gpu job: {:.1} us host cpu", (s.units[Lane::Gpu.index()].cpu - before) * 1e6 / n as f64);
     eprintln!("{s}");
 }
+
