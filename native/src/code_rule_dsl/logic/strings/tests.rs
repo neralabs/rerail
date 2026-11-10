@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn python_numeric_keys_preserve_constant_equality_without_float_rounding() {
+    use rusqlite::types::Value;
+    let key = |source| functions::eval("python_number_key", &[source], &[]);
+    assert!(functions::signature("python_number_key").is_some());
+    for (left,right,equal) in [
+        ("True","1",true),("False","0.0",true),("0j","False",true),
+        ("0xff","255.0",true),("0b1_000","8",true),("0o10","8.",true),
+        ("1e0","1",true),("1j","1.0j",true),("1j","1",false),
+        ("1e309","2e309",true),("1e309","1e308",false),
+        ("9007199254740992","9007199254740992.0",true),
+        ("9007199254740993","9007199254740992.0",false),
+        ("1.5","1.500_0",true),("1.5","1",false),
+        ("-0.0","0",true),("-0j","0",true),
+    ] {
+        let (a,b)=(key(left),key(right));
+        assert_ne!(a,Value::Null,"{left}");assert_ne!(b,Value::Null,"{right}");
+        assert_eq!(a==b,equal,"{left} == {right}");
+    }
+    let huge_decimal=(num_bigint::BigUint::from(1u8)<<5000usize).to_string();
+    let huge_hex=format!("0x1{}","0".repeat(1250));
+    assert_ne!(key(&huge_decimal),Value::Null);
+    assert_eq!(key(&huge_decimal),key(&huge_hex));
+    for invalid in ["","nan","None","thing","1+2j","1.0+2.0","--1"] {
+        assert_eq!(key(invalid),Value::Null,"{invalid}");
+    }
+}
+
+#[test]
 fn byte_ranges_preserve_exact_unicode_source_segments() {
     let source="é😀ctx.backend_type == 'sqlite'";
     assert_eq!(functions::byte_slice(source,6,source.len() as i64).as_deref(),Some("ctx.backend_type == 'sqlite'"));
