@@ -312,6 +312,22 @@ default 450,092 rows ("this stratum": derived in the same fixpoint, so no statis
 tell `fcall` bound by `a` from `tfix` by `k`. Still the statistics branches' question: estimates for relations of the
 running stratum.
 
+Fixed here on 2026-11-09 (e0694e8ab), after merging serverplan-quality, More-ergonomic and Parser-generators again.
+The default sizes were only the first plan's: every later wave searched `fbind`'s delta plan again from live counts
+and still chose `tfix` first. A lookup was priced at the rows per value its column holds, as if every probe hit,
+and `fcall`'s `a` (399 rows) is probed by `pv`'s 280,000 `inst` rows, nearly all of which miss. A lookup on a relation
+of the component being solved is now scaled by the share of the binding's values its column holds: its distinct
+values over the binding's (containment), where both are measured. `fbind` now reads `pv`, `fcall` by `a`, `tfix`,
+`fgp`: 0.87 M rows of work, not 19.2 M (6.3 s to 0.29 s CPU). All of calls_cx's native work went from 96.2 M to
+76.5 M rows; its answers are unchanged (6,299 agree), and so are P3's (6,390, cold and warm). Main-thread CPU on these
+runs is not comparable with the ones above: the machine's load was 37 to 140, not 11 to 19, and every phase was
+about 1.4 times slower, setup included. P3's instructions retired are 805 G cold, 200 G warm (820 G and 274 G
+before).
+
+The merge also needed two mends: `corpus.rs`'s window-at-a-time memo lookups (serverplan-quality) and the document
+builders on `RERAIL_THREADS`' helpers (More-ergonomic) now share one resolver, and serverplan-quality's tip did
+not compile (structured join specs against the level batch's text specs).
+
 Likely conflicts when these meet: `plan/corpus.rs` (every branch), `phases.rs` (Typing-support), `plan.rs`
 (the search here, statistics in Two-pass and wolfeel), and `typing/file_local.rs` (Typing-support, wolfeel).
 
