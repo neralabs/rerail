@@ -498,6 +498,8 @@ interface RuntimeSessionState {
   /** The evaluator is still opening and owns its own release: closing the session does not wait for it. */
   codeRuleOpening: boolean;
   ownerClaim: PolicyOwnerClaim | undefined;
+  /** The database's `data_version` this session's settings and audit queue were last read at; undefined to read on the next tick. */
+  controlsVersion: number | undefined;
   auditRequestWork: Promise<void> | undefined;
   repositoryAudit: Promise<void> | undefined;
   pendingCodeRuleCalls: Array<{ id: string; toolName: string }>;
@@ -811,10 +813,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       catalogs?.close();
       throw error;
     }
-    this.#controlTimer = setInterval(() => {
-      for (const sessionId of this.#sessions.keys()) this.#scheduleAuditRequests(sessionId);
-    }, 250);
+    this.#controlTimer = setInterval(() => this.#pollAuditControls(), 250);
     this.#controlTimer.unref?.();
+  }
+
+  /**
+   * One tick of the control timer. A session's saved settings and its queued audit requests change only through a
+   * commit by another connection (`rerail settings`, `rerail scan`, the daemon's API), so a session read at the
+   * database's current `data_version` is not read again until it moves: an idle daemon then makes one pragma call per
+   * tick, however many sessions it holds open.
+   */
+  #pollAuditControls(): void {
+    const version = this.#controls.dataVersion();
+    for (const [sessionId, state] of this.#sessions) {
+      if (state.controlsVersion !== version) this.#scheduleAuditRequests(sessionId, version);
+    }
   }
 
   /** Stopped repositories record and steer nothing, even in sessions that attached before the stop. */
@@ -1445,6 +1458,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       codeRuleSourceVersions: new Map(),
       undeliveredSources: new Set(),
       ownerClaim: undefined,
+      controlsVersion: undefined,
       codeRuleWorkspace: Promise.resolve(undefined),
       codeRuleReady: false,
       codeRuleOpening: false,
@@ -1715,14 +1729,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     state.eventDeliveries.set(sample.eventId, deliveries);
   }
 
-  /** Internal testing: explicit audit requests, the work behind `rerail scan` and `audit_requests_create`. */
-  #scheduleAuditRequests(sessionId: string): void {
+  /**
+   * Internal testing: explicit audit requests, the work behind `rerail scan` and `audit_requests_create`. `version` is
+   * the database's `data_version` the control timer read; the session counts as read at it once its queue is claimed
+   * from, and a session busy with a request is read again on the next tick.
+   */
+  #scheduleAuditRequests(sessionId: string, version?: number): void {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
     const settings = this.#controls.hasUserSettings(sessionId) ? this.#controls.getSettings(sessionId).settings : this.#auditSettings;
     state.steerStrategy = effectiveSteerStrategy(settings);
     state.codeRuleBridge?.updateSettings(settings);
     if (state.auditRequestWork !== undefined) return;
+    if (version !== undefined) state.controlsVersion = version;
     const work = this.#runAuditRequests(sessionId);
     state.auditRequestWork = work;
     void work.catch((error: unknown) => {
@@ -1736,6 +1755,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
     const request = this.#controls.claim(sessionId, state.ownerClaim);
     if (request === undefined) return;
+    // A claim takes the oldest queued request; one queued behind it is announced by no later commit, so the next tick
+    // reads the queue again.
+    state.controlsVersion = undefined;
     if (request.scope === "ai-output") {
       this.#controls.finish(request.id, "failed", [], "Explicit ai-output scans are not supported");
       return;

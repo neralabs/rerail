@@ -116,6 +116,14 @@ export class SqliteAuditControlStore {
   readonly #database: RerailDatabase;
   constructor(databasePath: string, database?: RerailDatabase) { this.path = databasePath; this.#database = database ?? openRerailDatabase(databasePath); }
 
+  /**
+   * SQLite's `PRAGMA data_version` on this store's connection: it changes when any other connection commits to the
+   * database, and stays put otherwise, so a poller can tell that nothing it reads here changed without reading it.
+   */
+  dataVersion(): number {
+    return z.number().int().parse(this.#database.$client.pragma("data_version", { simple: true }));
+  }
+
   #interruptOwned(sessionId: string, error: string): void {
     const update = { status: "interrupted" as const, finishedAt: Date.now(), error };
     for (const status of ["queued", "running"] as const)
