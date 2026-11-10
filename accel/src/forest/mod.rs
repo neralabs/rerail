@@ -5,6 +5,12 @@
 //! build step preprocesses `randomforest_kernels.metal` with the Metal shim into Metal source, compiled here once
 //! per process on the shared device (`gpu::shared`).
 
+// The copied host sources, each translated to Rust where it sits (upstream paths under `mldb/`).
+#[path = "mldb/utils/fixed_point_accum.rs"]
+pub mod fixed_point_accum;
+#[path = "mldb/arch/bit_range_ops.rs"]
+pub mod bit_range_ops;
+
 use metal::{ComputePipelineState, Library};
 use std::sync::OnceLock;
 
