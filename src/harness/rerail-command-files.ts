@@ -1,4 +1,5 @@
-import { ADAPTER_CAPABILITIES, type CommandShell } from "../engine/adapter-contract.js";
+import { ADAPTER_CAPABILITIES } from "../engine/adapter-contract.js";
+import type { Shell } from "../engine/command-line.js";
 import {
   bugReportInstructions,
   createRuleInstructions,
@@ -32,7 +33,7 @@ export interface CommandFileContext {
 }
 
 /** What a command's body is built from: the context, with the launcher written for the agent's shell. */
-type AgentCommandContext = CommandFileContext & { shell: CommandShell };
+type AgentCommandContext = CommandFileContext & { shell: Shell };
 
 /** Marks a Codex skill as installed by Rerail, so registration only ever replaces or removes its own. */
 export const MANAGED_SKILL_MARKER = "<!-- Managed by @neralabs/rerail -->";
@@ -61,7 +62,7 @@ function runOne(command: string, lead: string): string {
  * answer's command. `--relay` keeps set-up in the agent lane even where the coding agent runs commands in a terminal, and
  * every answer command set-up prints carries it.
  */
-function startBody(cli: string, setupLauncher: string, shell: CommandShell): CommandBody {
+function startBody(cli: string, setupLauncher: string, shell: Shell): CommandBody {
   const start = `${cli} start ${SETUP_FLAGS.relay}${shell === "powershell" ? ` ${SETUP_FLAGS.powershell}` : ""}`;
   return {
     text: [

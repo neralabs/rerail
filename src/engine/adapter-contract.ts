@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { steers, type RuleMode } from "./catalog/rule-mode.js";
+import type { Shell } from "./command-line.js";
 
 /** Every coding agent Rerail works with. */
 export const RERAIL_HOSTS = ["omp", "pi", "claude-code", "codex", "cursor"] as const;
@@ -45,9 +46,6 @@ export type CommandSigil = "/" | "$";
  */
 export type ObservedFileWrite = "edit-tool" | "shell";
 
-/** The shell a coding agent runs commands in: a POSIX shell (sh, bash, or Git Bash on Windows), or PowerShell. */
-export type CommandShell = "posix" | "powershell";
-
 export interface AdapterCapabilityProfile {
   host: RerailHost;
   assistantObservation: AssistantObservation;
@@ -62,10 +60,10 @@ export interface AdapterCapabilityProfile {
   observedFileWrite: ObservedFileWrite;
   /**
    * The shell this coding agent runs the commands Rerail names in on Windows (steers, command files, set-up answers):
-   * Git Bash or PowerShell. Off Windows every agent runs a POSIX shell. Hooks are separate: their commands are
-   * registered per agent in `harness-registration.ts`.
+   * Git Bash (`posix`) or PowerShell. Off Windows every agent runs a POSIX shell. Hooks are separate: their commands
+   * are registered per agent in `harness-registration.ts`.
    */
-  windowsCommandShell: CommandShell;
+  windowsCommandShell: Shell;
 }
 
 export const ADAPTER_CAPABILITIES = {

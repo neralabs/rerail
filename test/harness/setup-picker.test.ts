@@ -239,6 +239,18 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(said.join("\n")).toContain(`setup --relay --database ${other} --repository --answer start --repo ${worktree}`);
   });
 
+  it("writes each answer for PowerShell under `--powershell`, with the packs the agent names inside quotes", async () => {
+    const setup = await machine();
+    const said: string[] = [];
+    vi.stubEnv("HOME", join(setup.root, "user"));
+    const io = { lane: "agent" as const, say: (text: string) => { said.push(text); }, close: () => {} };
+    expect(await runSetupCommand(["--powershell", "--answer", "yes", "--repo", setup.repo], setup.context, io)).toBe(0);
+    const text = said.join("\n");
+    expect(text).toMatch(/^1\. & .*rerail(?:\.cmd)?'? setup --relay --powershell --answer start /mu);
+    // PowerShell hands a program `a@1,b@2` as two arguments, split at the comma, unless it is quoted.
+    expect(text).toContain(` --answer choose --repo ${setup.repo} --packs '<packs>', with comma-separated packs from: `);
+  });
+
   it("carries `start --agents` through every answer, so set-up connects only the coding agents named", async () => {
     const setup = await machine();
     const environment = fakeSetupEnvironment();

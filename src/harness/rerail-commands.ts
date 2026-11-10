@@ -5,8 +5,8 @@
  * everywhere.
  */
 
-import type { CommandShell, CommandSigil, ObservedFileWrite } from "../engine/adapter-contract.js";
-import { powershellQuotesTwice } from "../engine/command-line.js";
+import type { CommandSigil, ObservedFileWrite } from "../engine/adapter-contract.js";
+import { powershellQuotesTwice, type Shell } from "../engine/command-line.js";
 
 export type RerailCommandName =
   | "rerail"
@@ -171,7 +171,7 @@ export interface ShowMeInstructionsInput {
   /** How the agent writes the demo file so the hooks see it: its capability profile's `observedFileWrite`. */
   write: ObservedFileWrite;
   /** The shell the agent runs commands in: PowerShell for Codex on Windows (`windowsCommandShell`), which has no heredoc. */
-  shell?: CommandShell;
+  shell?: Shell;
 }
 
 /**

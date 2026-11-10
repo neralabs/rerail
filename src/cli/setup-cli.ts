@@ -18,7 +18,7 @@ import {
   seenCodingAgents,
 } from "../setup/coding-agents.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
-import { powershellLiteral } from "../engine/command-line.js";
+import { commandLine, powershellLiteral } from "../engine/command-line.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
@@ -57,7 +57,7 @@ import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
-import { powershellCommand, renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
+import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
@@ -411,7 +411,7 @@ function isRerailHomeEntry(name: string): boolean {
  * and, unlike cmd's `rmdir`, expands no `%NAME%` in the path.
  */
 export function cleanupCommand(path: string, link: boolean, platform: NodeJS.Platform = process.platform): string {
-  if (platform !== "win32") return `rm -rf ${shellQuote(path, platform)}`;
+  if (platform !== "win32") return commandLine("posix", ["rm", "-rf", path]);
   const powershell = powershellLiteral(path);
   return link ? `[System.IO.Directory]::Delete(${powershell})` : `Remove-Item -LiteralPath ${powershell} -Recurse -Force`;
 }
@@ -821,16 +821,15 @@ function carriedArgs(carry: SetupCarry): string[] {
 
 /**
  * What the coding agent runs to answer a set-up question: the launcher setup wrote, which stays put
- * between answers (an `npx` copy may not), with what this run carries, quoted for `platform`'s shell,
- * or for PowerShell when the run carries `--powershell`. `rerail setup` until the launcher exists.
+ * between answers (an `npx` copy may not), with what this run carries, for the shell the agent runs it in:
+ * PowerShell when the run carries `--powershell`, else a POSIX shell, Git Bash on Windows (`windowsCommandShell`).
+ * `rerail setup` until the launcher exists.
  */
-export function setupAnswerCommand(context: SetupContext, carry: SetupCarry = {}, platform: NodeJS.Platform = process.platform): string | undefined {
+export function setupAnswerCommand(context: SetupContext, carry: SetupCarry = {}): SetupCommand | undefined {
   const args = carriedArgs(carry);
   const launcher = existsSync(context.updater.launcherPath) ? context.updater.launcherPath : undefined;
   if (launcher === undefined && args.length === 0) return undefined;
-  if (carry.powershell === true) return powershellCommand([launcher ?? "rerail", "setup", ...args]);
-  const carried = args.map(arg => shellQuote(arg, platform));
-  return [launcher === undefined ? "rerail" : shellQuote(launcher, platform), "setup", ...carried].join(" ");
+  return { words: [launcher ?? "rerail", "setup", ...args], shell: carry.powershell === true ? "powershell" : "posix" };
 }
 
 /** `--json` on `rerail setup` and `rerail start`: one `SetupStep` on stdout instead of text. */

@@ -1,7 +1,49 @@
 import { describe, expect, it } from "vitest";
-import { POWERSHELL_QUOTES, powershellLiteral, powershellQuotesTwice } from "../../src/engine/command-line.js";
+import {
+  commandLine,
+  placeholderWord,
+  POWERSHELL_QUOTES,
+  powershellLiteral,
+  powershellQuotesTwice,
+  shellWord,
+} from "../../src/engine/command-line.js";
 
 const QUOTES = ["'", "\u2018", "\u2019", "\u201A", "\u201B"];
+
+describe("one word in each shell", () => {
+  // A value, then the one word a POSIX shell (sh, bash, Git Bash) and PowerShell each read it from.
+  const WORDS: ReadonlyArray<readonly [string, string, string]> = [
+    ["--answer", "--answer", "--answer"],
+    ["/Users/me/code/acme-web", "/Users/me/code/acme-web", "/Users/me/code/acme-web"],
+    [String.raw`C:\Users\me\.rerail\bin\rerail.cmd`, String.raw`'C:\Users\me\.rerail\bin\rerail.cmd'`, String.raw`C:\Users\me\.rerail\bin\rerail.cmd`],
+    // PowerShell reads a bare comma as an array, and hands a program each element as an argument of its own.
+    ["typescript@0.1.1,complexity@0.1.1", "typescript@0.1.1,complexity@0.1.1", "'typescript@0.1.1,complexity@0.1.1'"],
+    ["@acme/rerail-pack-sql@1.0.0", "@acme/rerail-pack-sql@1.0.0", "'@acme/rerail-pack-sql@1.0.0'"],
+    ["/code/acme web", "'/code/acme web'", "'/code/acme web'"],
+    ["/home/a$b/`c`", "'/home/a$b/`c`'", "'/home/a$b/`c`'"],
+    ["/tmp/it's mine", String.raw`'/tmp/it'\''s mine'`, "'/tmp/it''s mine'"],
+    ["/tmp/it\u2019s", "'/tmp/it\u2019s'", "'/tmp/it\u2019\u2019s'"],
+    ["say \"hi\"", "'say \"hi\"'", "'say \"hi\"'"],
+    ["~/code", "'~/code'", "'~/code'"],
+    ["", "''", "''"],
+  ];
+
+  it.each(WORDS)("writes %j for a POSIX shell and for PowerShell", (value, posix, powershell) => {
+    expect(shellWord("posix", value)).toBe(posix);
+    expect(shellWord("powershell", value)).toBe(powershell);
+  });
+
+  it("starts a PowerShell line with the call operator, which runs a quoted program path; a POSIX line needs none", () => {
+    const words = [String.raw`C:\Program Files\nodejs\node.exe`, String.raw`C:\rerail\cli.js`, "setup", "--packs", "a@1,b@2"];
+    expect(commandLine("powershell", words)).toBe(String.raw`& 'C:\Program Files\nodejs\node.exe' C:\rerail\cli.js setup --packs 'a@1,b@2'`);
+    expect(commandLine("posix", words)).toBe(String.raw`'C:\Program Files\nodejs\node.exe' 'C:\rerail\cli.js' setup --packs a@1,b@2`);
+  });
+
+  it("leaves a placeholder bare for a POSIX shell and puts it in single quotes for PowerShell, where the agent's value goes", () => {
+    expect(placeholderWord("posix", "<packs>")).toBe("<packs>");
+    expect(placeholderWord("powershell", "<packs>")).toBe("'<packs>'");
+  });
+});
 
 describe("PowerShell literals", () => {
   it("names the five characters PowerShell reads as a single quote", () => {

@@ -17,7 +17,7 @@ import { userInfo } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { spawnSync } from "../engine/child-process.js";
 import { windowsPowerShell } from "../engine/system-programs.js";
-import { shellQuote } from "../harness/setup-screens.js";
+import { shellWord } from "../engine/command-line.js";
 import { writeTextFile } from "./harness-registration.js";
 
 const BLOCK_START = "# >>> rerail >>>";
@@ -178,7 +178,7 @@ interface StartupFile {
 }
 
 function posixBlock(binDir: string): string {
-  const quoted = shellQuote(binDir, "linux");
+  const quoted = shellWord("posix", binDir);
   return [
     BLOCK_START,
     "# The `rerail` launcher, added by `rerail setup`; `rerail install --remove` takes it out.",

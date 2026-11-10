@@ -105,6 +105,7 @@ export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.j
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
 export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD } from "./transcript-boundary.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
+export { commandLine, shellWord, type Shell } from "./command-line.js";
 export {
   databaseInstalledAt,
   defaultRerailDatabasePath,

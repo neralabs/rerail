@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import ignore from "ignore";
 import { sql } from "drizzle-orm";
-import { openSqliteDatabase } from "../../src/engine/index.js";
+import { commandLine, openSqliteDatabase, shellWord } from "../../src/engine/index.js";
 import {
   CURSOR_HOOK_EVENTS,
   HARNESSES,
@@ -22,7 +22,7 @@ import {
   readClaudeStatusRegistration,
   writeClaudeStatusRegistration,
 } from "../../src/setup/claude-status-store.js";
-import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS, readRepoQuestion, renderQuestion, shellQuote } from "../../src/harness/index.js";
+import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS, readRepoQuestion, renderQuestion } from "../../src/harness/index.js";
 import { runInstallCommand, setupAnswerCommand } from "../../src/cli/index.js";
 import { ManagedUpdater } from "../../src/setup/updater.js";
 import { stubUserHome } from "../support/user-home.js";
@@ -953,13 +953,13 @@ describe("Claude Code commands", () => {
     expect(bareAnswers).toHaveLength(3);
     for (const line of [...launcherAnswers, ...bareAnswers]) expect(granted(line), line).toBe(true);
     expect(granted(`${nodePath} ${join(root, "dist", "cli", "cli.js")} start --relay`)).toBe(true);
-    expect(granted(`${shellQuote(join(rerailHome, "bin", "rerail"))} daemon stop`)).toBe(false);
+    expect(granted(`${shellWord("posix", join(rerailHome, "bin", "rerail"))} daemon stop`)).toBe(false);
 
     expect(start).toContain("relay it to the person as written and wait for their reply");
     expect(start).toContain("run only the one command the output gives for that answer");
   });
 
-  it("grants the answer commands set-up prints on Windows, the launcher double-quoted as cmd.exe runs it", async () => {
+  it("grants the answer commands set-up prints on Windows, the launcher quoted for Git Bash, where Claude Code runs them", async () => {
     const { home, root, nodePath } = await fixture();
     const rerailHome = join(home, "rerail home");
     vi.stubEnv("RERAIL_HOME", rerailHome);
@@ -970,12 +970,13 @@ describe("Claude Code commands", () => {
     await mkdir(dirname(updater.launcherPath), { recursive: true });
     await writeFile(updater.launcherPath, "");
 
-    const command = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true }, "win32")!;
-    expect(command).toBe(`"${join(rerailHome, "bin", "rerail.cmd")}" setup --relay`);
+    const answer = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true })!;
+    const command = commandLine(answer.shell, answer.words);
+    expect(command).toBe(`'${join(rerailHome, "bin", "rerail.cmd")}' setup --relay`);
     expect(allowed).toContain(`${command} *`);
     // Codex and Cursor run the answers in PowerShell, which refuses a line that starts with a quoted path.
-    expect(setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true, powershell: true }, "win32"))
-      .toBe(`& '${join(rerailHome, "bin", "rerail.cmd")}' setup --relay --powershell`);
+    const powershell = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true, powershell: true })!;
+    expect(commandLine(powershell.shell, powershell.words)).toBe(`& '${join(rerailHome, "bin", "rerail.cmd")}' setup --relay --powershell`);
   });
 
   it("writes Codex's and Cursor's commands on Windows for PowerShell, and Claude Code's for Git Bash", async () => {
@@ -983,6 +984,7 @@ describe("Claude Code commands", () => {
     const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
     await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code", "cursor", "codex"] });
     const cli = join(root, "dist", "cli", "cli.js");
+    // PowerShell's call operator, then each path quoted where PowerShell would read it: a space, and `@neralabs`.
     const powershell = `& '${nodePath}' '${cli}'`;
     const codexManage = await readFile(join(home, ".codex", "skills", "rerail-manage", "SKILL.md"), "utf8");
     const cursorStart = await readFile(join(home, ".cursor", "commands", "rerail-start.md"), "utf8");

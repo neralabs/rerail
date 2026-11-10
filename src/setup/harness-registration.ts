@@ -28,8 +28,8 @@ import {
 import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettingsEntries } from "./settings-entries-store.js";
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
-import { andList, shellQuote } from "../harness/setup-screens.js";
-import { powershellLiteral } from "../engine/command-line.js";
+import { andList } from "../harness/setup-screens.js";
+import { commandLine, powershellLiteral, shellWord } from "../engine/command-line.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -194,17 +194,26 @@ function assertInside(path: string, container: string, label: string): void {
 }
 
 /**
- * One shell word. Windows gets double quotes, as cmd.exe and Git Bash both read a quoted path; `%` stays single, since
+ * How a word of a generated hook command is quoted, part of the stored format registration recognises by its exact
+ * text. `posix` leaves a plain word bare and puts any other in double quotes, with `"`, `\`, `$` and backticks escaped.
+ * `cmd` always uses double quotes, which cmd.exe and Git Bash both read for a Windows path; `%` stays single, since
  * only a batch file turns `%%` back into `%`, and none of the shells these words reach is one.
  */
-function shellArgument(value: string, platform: NodeJS.Platform): string {
-  if (platform === "win32") return `"${value}"`;
+type HookQuoting = "posix" | "cmd";
+
+/** The quoting of the hook commands written for `platform`: `cmd` on Windows. */
+const hookQuoting = (platform: NodeJS.Platform): HookQuoting => (platform === "win32" ? "cmd" : "posix");
+
+/** `value` as one word of a generated hook command ({@link HookQuoting}). */
+function hookWord(value: string, quoting: HookQuoting): string {
+  if (quoting === "cmd") return `"${value}"`;
   return /^[\w./:@+=-]+$/.test(value) ? value : `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
-/** `<recorded node> <root>/<executable>`, both quoted for the platform's shell; `executable` is an `ENTRY_POINTS` path. */
+/** `<recorded node> <root>/<executable>`, both quoted for the platform's hooks; `executable` is an `ENTRY_POINTS` path. */
 function directCommand(context: HookCommandContext, executable: string): string {
-  return `${shellArgument(context.nodePath, context.platform)} ${shellArgument(join(context.root, executable), context.platform)}`;
+  const quoting = hookQuoting(context.platform);
+  return `${hookWord(context.nodePath, quoting)} ${hookWord(join(context.root, executable), quoting)}`;
 }
 
 /** The package root of a registered `script` when it is that package's `executable`; undefined for any other script. */
@@ -278,7 +287,7 @@ function unquoteShellWord(word: string, windows = false): string {
   return windows ? value : value.replace(/\\(["\\$`])/gu, "$1");
 }
 
-/** The words of `text` as `shellArgument` writes them, still quoted: double-quoted or bare, and always quoted on Windows. */
+/** The words of `text` as `hookWord` writes them, still quoted: double-quoted or bare, and always quoted on Windows. */
 function shellWords(text: string, windows: boolean): string[] {
   return text.match(windows ? /"[^"]+"/gu : /"(?:\\["\\$`]|[^"\\$`])*"|[\w./:@+=-]+/gu) ?? [];
 }
@@ -332,7 +341,7 @@ function shellHookTarget(context: Pick<Context, "platform">, command: string, ex
   if (command.startsWith(fallbackPrefix)) direct = command.slice(fallbackPrefix.length);
   if (powershellFallback !== null && windows) {
     direct = [powershellFallback[1]!, powershellFallback[2]!]
-      .map(word => shellArgument(word.slice(1, -1).replace(/(['\u2018-\u201B])\1/gu, "$1"), "win32"))
+      .map(word => hookWord(word.slice(1, -1).replace(/(['\u2018-\u201B])\1/gu, "$1"), "cmd"))
       .join(" ");
   }
   const words = shellWords(direct, windows);
@@ -390,8 +399,9 @@ async function isRerailHookEntry(context: Context, entry: JsonObject, executable
  * through the fallback; `exec` also leaves stdio alone, so hook input still arrives on stdin.
  */
 export function hookCommand(context: HookCommandContext, executable: string): string {
-  const node = shellArgument(context.nodePath, context.platform);
-  const hook = shellArgument(join(context.root, executable), context.platform);
+  const quoting = hookQuoting(context.platform);
+  const node = hookWord(context.nodePath, quoting);
+  const hook = hookWord(join(context.root, executable), quoting);
   if (context.platform === "win32") return windowsCmdHookCommand(node, hook);
   return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`;
 }
@@ -453,9 +463,7 @@ function commandContext(context: Context): CommandFileContext {
     cli: directCommand(context, ENTRY_POINTS.cli),
     packageRoot: context.root,
     setupLauncher: setupLauncher(context),
-    ...(context.platform === "win32"
-      ? { powershellCli: `& ${powershellLiteral(context.nodePath)} ${powershellLiteral(join(context.root, ENTRY_POINTS.cli))}` }
-      : {}),
+    ...(context.platform === "win32" ? { powershellCli: commandLine("powershell", [context.nodePath, join(context.root, ENTRY_POINTS.cli)]) } : {}),
   };
 }
 
@@ -464,9 +472,12 @@ function rerailHomeDirectory(context: Context): string {
   return process.env.RERAIL_HOME === undefined ? join(context.home, ".rerail") : resolve(process.env.RERAIL_HOME);
 }
 
-/** The launcher set-up's answer commands start with (`Updater.launcherPath`), quoted as set-up prints it. */
+/**
+ * The launcher set-up's answer commands start with (`Updater.launcherPath`), quoted as set-up prints it for a POSIX
+ * shell (`setupAnswerCommand`): only Claude Code's command files grant it, and Claude Code runs Git Bash on Windows.
+ */
 function setupLauncher(context: Context): string {
-  return shellQuote(join(rerailHomeDirectory(context), "bin", context.platform === "win32" ? "rerail.cmd" : "rerail"), context.platform);
+  return shellWord("posix", join(rerailHomeDirectory(context), "bin", context.platform === "win32" ? "rerail.cmd" : "rerail"));
 }
 
 function describe(context: Context, detail: string): string {
@@ -675,7 +686,7 @@ const CLAUDE_STATUS_FALLBACK = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; 
 /** The status line command for the settings at `path`: the fallback, then node, the script and a project's settings path. */
 function claudeStatusCommand(context: Context, path: string): string {
   // A POSIX word on every platform: Git Bash reads it on Windows, and keeps each backslash it escapes.
-  const word = (value: string): string => shellArgument(value, "linux");
+  const word = (value: string): string => hookWord(value, "posix");
   const settings = path === join(context.home, ".claude", "settings.json") ? "" : ` ${word(path)}`;
   return `${CLAUDE_STATUS_FALLBACK}${word(context.nodePath)} ${word(join(context.root, ENTRY_POINTS.claudeStatus))}${settings}`;
 }

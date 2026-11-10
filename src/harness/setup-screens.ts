@@ -1,5 +1,5 @@
 import { ADAPTER_CAPABILITIES, type CommandSigil, type RerailHost } from "../engine/adapter-contract.js";
-import { powershellLiteral } from "../engine/command-line.js";
+import { commandLine, placeholderWord, type Shell } from "../engine/command-line.js";
 import type { SetupOption, SetupOptionInput, SetupQuestion, SetupQuestionId } from "./setup-step.js";
 import { RERAIL_BRAND_FOREGROUND } from "../presentation/terminal-brand.generated.js";
 import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
@@ -62,8 +62,17 @@ export interface DashboardLink {
   readonly linkOnly?: boolean;
 }
 
-/** The command a coding agent runs to answer a question; set-up's own invocation. */
-export const SETUP_COMMAND = "rerail setup";
+/**
+ * How a coding agent runs set-up again to answer a question: the words before an answer's own (the launcher, `setup`
+ * and what the run carries), unquoted, and the shell the agent runs them in, which they are quoted for.
+ */
+export interface SetupCommand {
+  readonly words: readonly string[];
+  readonly shell: Shell;
+}
+
+/** The set-up command an answer runs when the run names none: `rerail setup` in a POSIX shell. */
+const SETUP_COMMAND: SetupCommand = { words: ["rerail", "setup"], shell: "posix" };
 
 /**
  * The flags the agent lane's answer commands use; set-up's argument parser reads the same ones. `relay` picks the
@@ -140,28 +149,6 @@ function agentNames(agents: readonly CodingAgent[]): string[] {
   return agents.map(agent => clean(agent.name));
 }
 
-const SHELL_SAFE = /^[\w@%+=:,./~-]+$/;
-/**
- * One shell word; set-up quotes the launcher path it hands the coding agent with it too. POSIX shells get single
- * quotes. Windows gets double quotes, as cmd.exe (and Git Bash) take a quoted path, like every command Rerail writes
- * for Windows (`harness-registration.ts`); a Windows path cannot contain `"`.
- */
-export function shellQuote(value: string, platform: NodeJS.Platform = process.platform): string {
-  if (SHELL_SAFE.test(value)) return value;
-  return platform === "win32" ? `"${value}"` : `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-/** What PowerShell reads as one plain word: no `@`, `,`, `$`, quote or other character it gives a meaning to. */
-const POWERSHELL_SAFE = /^[\w./:\\-]+$/u;
-
-/**
- * A command line PowerShell runs as written: the call operator `&` first, since PowerShell takes a line that starts with
- * a quoted path for a string and refuses the words after it, then each word quoted where PowerShell would read it.
- */
-export function powershellCommand(words: readonly string[]): string {
-  return ["&", ...words.map(word => (POWERSHELL_SAFE.test(word) ? word : powershellLiteral(word)))].join(" ");
-}
-
 // ── Questions ───────────────────────────────────────────────────────────────
 
 /** What an answer asks the person for, plus what the agent lane writes in its place. */
@@ -190,16 +177,20 @@ export interface QuestionForm {
   readonly trail: readonly string[];
   readonly choices: readonly Choice[];
   /** Overrides `rerail setup` in the agent lane's answer commands. */
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
 }
 
 const AGENT_QUESTION_INTRO = "Rerail set-up is waiting for the person’s answer. Ask them this, as written, and wait for their reply:";
 const AGENT_QUESTION_OUTRO = "Do not choose for them. When they answer, run set-up again with their answer:";
 
-/** What the coding agent runs for one answer: the command, the answer's arguments, and the value it names. */
+/**
+ * What the coding agent runs for one answer: the set-up command and the answer's arguments as one line for the agent's
+ * shell, then the value it names, where the agent writes it.
+ */
 function agentCommand(form: QuestionForm, choice: Choice): string {
-  const input = choice.input === undefined ? [] : [choice.input.flag, choice.input.placeholder];
-  const command = [form.setupCommand ?? SETUP_COMMAND, ...choice.args.map(arg => shellQuote(arg)), ...input].join(" ");
+  const { words, shell } = form.setupCommand ?? SETUP_COMMAND;
+  const line = commandLine(shell, [...words, ...choice.args]);
+  const command = choice.input === undefined ? line : `${line} ${choice.input.flag} ${placeholderWord(shell, choice.input.placeholder)}`;
   return choice.agentText === undefined ? command : choice.agentText(command);
 }
 
@@ -340,7 +331,7 @@ export function renderOnPath(input: OnPathInput, lane: SetupLane): string {
 export interface SessionsInput {
   /** What every answer carries on, so the run picks up where it was: `--repo <folder>` when one was named. */
   readonly carriedArgs: readonly string[];
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
   /**
    * Internal testing: the hosts of the remotes this computer sends Rerail's data to (`rerail remote`), so the screen
    * never says nothing is sent when something is; null when the remote configuration could not be read.
@@ -401,7 +392,7 @@ export interface ReadRepoInput {
   readonly repoName: string;
   readonly repoPath: string;
   /** Overrides `rerail setup` in the agent lane's answer commands. */
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
 }
 
 /** T3 / C3: Rerail names the repo, says what scanning it does, and asks before reading it. */
@@ -460,7 +451,7 @@ export interface RecommendedPacksInput {
   readonly withoutRules?: readonly string[];
   /** The coding agents "Yes" connects. */
   readonly agentsFound: readonly CodingAgent[];
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
   /** The rule settings starting Rerail takes from the repository's lint config; nothing shown when empty. */
   readonly lintConfig?: LintConfigInput;
 }
@@ -643,7 +634,7 @@ export interface PacksNotDownloadedInput {
   readonly repoPath: string;
   /** Why npm gave no rule pack, each distinct reason once. */
   readonly reasons: readonly string[];
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
 }
 
 /** The not-downloaded question's answers, in its order: "yes" scans again, as at the read-repo question. */
@@ -1017,7 +1008,7 @@ export function renderWslNote(input: WslNoteInput, lane: SetupLane): string {
 // ── E3 · No repo here ──────────────────────────────────────────────────────
 
 export interface NoRepoInput {
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
 }
 
 /** E3: no repo where set-up ran; ask which project to start with. Choosing a folder is the go-ahead to read it. */
@@ -1052,7 +1043,7 @@ export interface PickPacksInput {
   /** The names of the rule packs that have no rules yet, so are not offered. */
   readonly withoutRules?: readonly string[];
   /** Overrides `rerail setup` in the agent lane's answer commands. */
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
 }
 
 /**
