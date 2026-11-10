@@ -25,6 +25,46 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[1]["result"],vec!["1\t99\t3\t17\t3\t7","2\t99\t1\t-2\t-2\t-2","4\t99\t3\t9223372036854775807\t-1\t9223372036854775807"]);
 }
 
+/// Device waves (decision 0095 §5): three closures of one level, each over a graph with a fork and a cycle, wait
+/// for their bit rows' launches, which run as one batch when the level ends; the rows are SQL's.
+#[test]
+fn closures_of_one_level_launch_in_one_wave() {
+    let mut src = String::new();
+    for (k, edges) in [(1, "(1,2),(1,3),(2,4),(3,4),(4,1),(5,6)"), (2, "(10,11),(10,12),(12,13),(13,10)"), (3, "(20,21),(21,22),(21,23),(23,20),(24,24)")] {
+        src += &format!(".decl e{k}(a: number, b: number)\n");
+        for e in edges.split("),(") {
+            src += &format!("e{k}({}).\n", e.trim_matches(|c| c == '(' || c == ')'));
+        }
+        src += &format!(".decl r{k}(a: number, b: number)\nr{k}(a, b) :- e{k}(a, b).\nr{k}(a, c) :- r{k}(a, b), e{k}(b, c).\n");
+    }
+    src += ".decl o(k: number, a: number, b: number)\no(1, a, b) :- r1(a, b).\no(2, a, b) :- r2(a, b).\no(3, a, b) :- r3(a, b).\n.output o\n";
+    let p = parse(&src).unwrap();
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let before = super::super::lanes::wave::flushed();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let after = super::super::lanes::wave::flushed();
+        if !modes.is_empty() {
+            for r in ["r1", "r2", "r3"] {
+                assert!(got.native.contains(r), "{r} runs natively");
+            }
+            assert_eq!((after.0 - before.0, after.1 - before.1), (1, 3), "the level's three closures in one wave of three launches");
+        }
+        let mut o = got.outputs["o"].clone();
+        o.sort();
+        outputs.push(o);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1].len(), 17 + 12 + 13, "{:?}", outputs[1]);
+}
+
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
 }
