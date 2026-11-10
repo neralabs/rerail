@@ -12,6 +12,7 @@ import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedC
 import { cursorRelayed, steerLine, steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
+import { testEngineEndpoint } from "../test/support/platform/engine-endpoint.js";
 const originalRerailHome = process.env.RERAIL_HOME;
 let isolatedRerailHome: string;
 
@@ -51,7 +52,7 @@ describe("engine service", () => {
   it("preserves code rule correlation across one-shot hook connections", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-resident-kernel-"));
     seedContractCodeRule(isolatedRerailHome, root);
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const engine = { socketPath };
     const storageRoot = join(root, ".rerail", "sessions");
     let service: { close(): Promise<void> } | undefined;
@@ -110,7 +111,7 @@ describe("engine service", () => {
   it("keeps code rule state when each Codex hook invocation closes its client", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-resident-hooks-"));
     seedContractCodeRule(isolatedRerailHome, root);
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
     try {
@@ -155,8 +156,8 @@ describe("engine service", () => {
         options,
       );
       const next = await runCodexHook({ ...common, hook_event_name: "UserPromptSubmit", turn_id: "turn-2", prompt: "next" }, options);
-      const steer = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5");
-      const late = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5", { kind: "late" });
+      const steer = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5", { host: "codex" });
+      const late = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5", { trigger: { kind: "late" }, host: "codex" });
       const shown = expect.stringContaining(await steerLine(CONTRACT_CURSOR_EXECUTE_RULE_ID, common.cwd, "plain"));
       // Policy evaluation settles in the background: the steer returns as PostToolUse context when it is ready by
       // then; otherwise its line shows at Stop and its block, led as late, goes out with the next message. Never as a
@@ -219,7 +220,7 @@ describe("engine service", () => {
   it("retains captured pre-edit source when the daemon restarts during a tool call", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-kernel-restart-"));
     seedContractCodeRule(isolatedRerailHome, root);
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const engine = { socketPath };
     const options = { socketPath, storageRoot: join(root, ".rerail/sessions"), modelPath: resolve("model") };
     let service: { close(): Promise<void> } | undefined;
@@ -276,7 +277,7 @@ describe("engine service", () => {
   }, 30_000);
   it("isolates identical session IDs in different projects served by one daemon", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-kernel-projects-"));
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const engine = { socketPath };
     let service: { close(): Promise<void> } | undefined;
     try {
@@ -331,7 +332,7 @@ describe("engine service", () => {
 
   it("defers Cursor failure-event steers to the next supported tool context", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-cursor-delivery-"));
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
     try {
@@ -370,7 +371,7 @@ describe("engine service", () => {
         },
         options,
       );
-      const recovery = await cursorRelayed(steerText("recovery", "CURSOR_RECOVERY", undefined, { kind: "tool", tool: "Write" }), "recovery", common.workspace_roots[0]!);
+      const recovery = await cursorRelayed(steerText("recovery", "CURSOR_RECOVERY", undefined, { trigger: { kind: "tool", tool: "Write" }, host: "cursor" }), "recovery", common.workspace_roots[0]!);
       let pollCount = 0;
       await expect.poll(
         async () => {
@@ -394,7 +395,7 @@ describe("engine service", () => {
   it("observes Cursor Read and Write phases sharing one native tool call ID", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-cursor-phases-")));
     seedContractCodeRule(isolatedRerailHome, root);
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
     try {
@@ -466,7 +467,7 @@ describe("engine service", () => {
 
   it("shows a turn-boundary conversation rule's line at Codex's Stop and gives its steer with the next message", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-codex-stop-rule-"));
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const storageRoot = join(root, ".rerail/sessions");
     let service: { close(): Promise<void> } | undefined;
     try {
@@ -485,7 +486,7 @@ describe("engine service", () => {
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = { cwd: root, session_id: "stop-rule", turn_id: "turn" };
       await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
-      const content = steerText("turn-steer", "CONTINUE_AFTER_STOP");
+      const content = steerText("turn-steer", "CONTINUE_AFTER_STOP", undefined, { host: "codex" });
       expect(
         await runCodexHook(
           { ...common, hook_event_name: "Stop", last_assistant_message: "Preserve database transaction atomicity" },
@@ -530,7 +531,7 @@ describe("engine service", () => {
   }, 30_000);
   it("recovers real Cursor transcript records after the host omits prompt and response hooks", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-cursor-transcript-")));
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const storageRoot = join(root, ".rerail/sessions");
     const databasePath = join(root, ".rerail/rerail.sqlite");
     const transcriptPath = join(root, "cursor-transcript.jsonl");
@@ -609,7 +610,7 @@ describe("engine service", () => {
           },
           options,
         ),
-      ).toEqual({ additional_context: await cursorRelayed(steerText("transcript-prompt", marker), "transcript-prompt", common.workspace_roots[0]!) });
+      ).toEqual({ additional_context: await cursorRelayed(steerText("transcript-prompt", marker, undefined, { host: "cursor" }),"transcript-prompt", common.workspace_roots[0]!) });
       expect(
         await runCursorHook(
           {
@@ -650,7 +651,7 @@ describe("engine service", () => {
 
   it("keeps native Cursor prompt mode authoritative when its transcript repeats the prompt", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-cursor-native-")));
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const storageRoot = join(root, ".rerail/sessions");
     const databasePath = join(root, ".rerail/rerail.sqlite");
     const transcriptPath = join(root, "cursor-transcript.jsonl");
@@ -715,7 +716,7 @@ describe("engine service", () => {
           },
           options,
         ),
-      ).toEqual({ additional_context: await cursorRelayed(steerText("native-prompt", marker), "native-prompt", common.workspace_roots[0]!) });
+      ).toEqual({ additional_context: await cursorRelayed(steerText("native-prompt", marker, undefined, { host: "cursor" }),"native-prompt", common.workspace_roots[0]!) });
       expect(
         await runCursorHook(
           {
