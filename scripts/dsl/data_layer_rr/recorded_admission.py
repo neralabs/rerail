@@ -10,6 +10,14 @@ from validate_supplied_facts_checkpoint import require, equal
 
 MODES = {'snapshot', 'workspace'}
 SPECS = {
+    'rerail.blanket-admission/v1': dict(check='no_blanket_grammar_bypass',public=182,original=119,originalObservations=128,
+        positive=31,production=97,parts=8,originalParts=2,productionParts=4,publicPrefix='accepted',
+        prefix='accepted-',label='blanket-finalec3',
+        pairs={'constant':(1,0),'argument':(1,0),'method':(1,0),'allowed-file':(0,1),'comment':(0,1),
+               'nfkc-method':(1,0),'supplied-gate':(2,4),'collector-parse':(0,2),'read-allowlist':(1,2),'fact-suffix':(1,2),'alias-scope':(1,2)},
+        productionSupplement=dict(ids=['unicode-on','unicode-off','alias-from-sql','alias-to-sql','allowed-alias'],findings=[1,0,1,1,1]),
+        cliControl='bypass-check-flag',extraControls=['bypass-collector-order','bypass-extractor','bypass-renderer'],
+        scope='Recorded raw references, disk ASTs, supplied text, complete collector groups, scopes, native metadata and DTOs, CLI, reporter, production and persistent updates.'),
     'rerail.hasattr-admission/v1': dict(check='hasattr_async',public=110,original=145,originalObservations=38,
         positive=17,production=44,parts=4,originalParts=2,productionParts=2,publicPrefix='accepted',
         prefix='accepted-',label='hasattr-finalec3',
@@ -77,7 +85,11 @@ def validate_original_observations(owned,observations):
             'Original observations omitted or repeated')
     for row in observations:
         source=wanted[(row['test'],row['entry'],row['ordinal'])]
-        if 'findings' in source:findings=source['findings']
+        if row.get('comparisonKind')=='source-value':
+            require('findings' not in source and bool(source.get('retained_reason')) and 'sourceResult' in source,
+                    'Source protocol does not match its original record')
+            findings=source['sourceResult']
+        elif 'findings' in source:findings=source['findings']
         else:
             require(source.get('sourceResult')==[] and source.get('files')==[], 'Normalized source findings missing')
             findings=[]
@@ -150,6 +162,9 @@ def validate(value):
             if check=='hasattr_async' and row['input']['kind']=='cli':
                 expected_calls=0 if row['input'].get('arg') else 4 if row['input']['group']=='default' else 3
                 require(len(row['native'])==expected_calls,'CLI batch execution count differs')
+            if check=='no_blanket_grammar_bypass' and row['input']['kind']=='cli':
+                require(len(row['native'])==(0 if any(a in {'--help','--bad-flag'} for a in row['input']['args']) else 5),
+                        'Bypass CLI batch execution count differs')
             for native in row['native']: execution(native)
     for mode in MODES: require(Counter(seen[mode])==Counter(expected.keys()), 'Public cases omitted or repeated')
 
@@ -242,6 +257,20 @@ def validate(value):
             original,changed=metadata(a),metadata(b)
             require(original['implementation_version']=='hasattr-async-v3' and
                     changed==dict(original,implementation_version='broken-version'), 'Extractor metadata control differs')
+        elif row['name']=='bypass-check-flag':
+            def exits(rows):return [r['parameters']['value'] for r in rows if r['code']=='NGB_EXIT']
+            require(exits(a)==[0] and exits(b)==[1],'Bypass check flag differs')
+        elif row['name']=='bypass-collector-order':
+            def lines(rows):return [r['line'] for r in sorted((r for r in rows if r['code']=='NGB_FACT'),
+                key=lambda r:tuple(r['parameters'][k] for k in ['file_order','phase','order0','order1']))]
+            require(lines(a)==[2,1] and lines(b)==[1,2],'Bypass collector order differs')
+        elif row['name']=='bypass-extractor':
+            def metadata(rows):return json.loads(next(r['parameters']['value'] for r in rows if r['code']=='NGB_EXTRACTOR'))
+            original,changed=metadata(a),metadata(b)
+            require(original['implementation_version']=='no-blanket-grammar-bypass-v2' and
+                    changed==dict(original,implementation_version='broken-version'),'Bypass extractor metadata differs')
+        elif row['name']=='bypass-renderer':
+            require(any(r['code']=='NGB_OUTPUT' for r in a) and not any(r['code']=='NGB_OUTPUT' for r in b),'Bypass renderer control failed')
         elif row['name']=='collector-order':
             def lines(rows):return [r['line'] for r in sorted(rows,key=lambda r:(r['parameters']['collector_order0'],r['parameters']['collector_order1']))]
             require(lines(a)==[2,5,4] and lines(b)==[2,4,5], 'Collector-order control failed for another reason')

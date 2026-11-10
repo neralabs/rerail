@@ -1,4 +1,4 @@
-"""Transport blanket-bypass CLI arguments; native rules format and enforce results."""
+"""Transport bypass files, source roles and DTOs; native relations own the rule."""
 from pathlib import Path
 import os
 import json
@@ -90,7 +90,7 @@ def install(suite,module,detectors=False):
         if set(values(key))!=getattr(module,name):raise ValueError('Native bypass configuration differs: '+name)
     if values('sql')!=[module.SQL_CONNECTION_FILE]:raise ValueError('Native SQL connection path differs')
     if hasattr(suite,'configuration_bindings'):
-        suite.configuration_bindings.setdefault(check,dict(nativeCall=len(suite.calls)-1,names=['ALLOWED_FILES','FORBIDDEN_PUBLIC_METHODS','SQL_CONNECTION_FILE']))
+        suite.configuration_bindings.setdefault(check,dict(nativeCall=len(suite.calls)-1,names=['ALLOWED_FILES','FORBIDDEN_PUBLIC_METHODS','SQL_CONNECTION_FILE','NO_BLANKET_GRAMMAR_BYPASS_EXTRACTOR']))
     suite.replace(module,'_facts_for_files',lambda root,files:fact_files(suite,module,root,files))
     if detectors:
         suite.replace(module,'check_no_bypass_references',lambda project_root:scan(suite,module,'check_no_bypass_references',dict(project_root=project_root)))

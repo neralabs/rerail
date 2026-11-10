@@ -1469,7 +1469,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
-      "sha256": "8651009f627d0c35a9b6ee5701b1509e450cea67eb4be02f1ce4e17be644047f",
+      "sha256": "7d502cf7942d00f16149158507b511152f960e5a7306169c2c91a5e41a0a71a9",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_blanket_grammar_bypass.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -3048,7 +3048,7 @@
       "legacySha256": "700460f3a9868afe3abd8254af2b39324ee22cc13ba4132867b8870a2d4d96da",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
-      "ruleSha256": "8651009f627d0c35a9b6ee5701b1509e450cea67eb4be02f1ce4e17be644047f"
+      "ruleSha256": "7d502cf7942d00f16149158507b511152f960e5a7306169c2c91a5e41a0a71a9"
     },
     {
       "check": "serverplan_grammar_surface",

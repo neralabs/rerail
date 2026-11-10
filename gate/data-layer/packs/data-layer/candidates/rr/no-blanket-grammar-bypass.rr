@@ -67,7 +67,7 @@ bypass_method_trigger(d) :- split_line(d, _, t),
 .violation BypassPublic(at: node, name: symbol, ordinal: number, collector_order0: number, collector_order1: number, collector_order2: number) code "NGB001" "public method {name}() still exists"
 ppe_BypassPublic(ppe_path,ppe_line,1,ppe_method_order,0,n,2,f) :- bypass_doc(d,p), bypass_method_doc(d), bypass_selected(d), bypass_sql_target(p), bypass_method_trigger(d),
     docof(f, d), kind(f, "function_definition"), def_name(f, raw), n=@nfkc(raw), bypass_public_name(n), !syntax_error(d, _, _),
-    !option("entryPoint", "check_no_bypass_references"), docof(f,ppe_doc), bypass_doc(ppe_doc,ppe_path), line(f,ppe_line), visit_index(f,ppe_method_order).
+    !option("entryPoint", "check_no_bypass_references"), docof(f,ppe_doc), bypass_doc(ppe_doc,ppe_path), line(f,ppe_line), ppe_path=p, visit_index(f,ppe_method_order).
 
 .violation BypassMissing(at: span) code "NGB001" "file not found"
 BypassMissing(@place(p, 0)) :- option("entryPoint", "check_no_public_grammar_methods"), bypass_missing(p).

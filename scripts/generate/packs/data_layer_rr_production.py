@@ -133,6 +133,7 @@ def production(source, check, text):
                 path, line = 'ppe_path', 'ppe_line'
                 owner='bypass_doc' if check=='no_blanket_grammar_bypass' else 'pp_doc'
                 body += f', docof({terms[0]},ppe_doc), {owner}(ppe_doc,ppe_path), line({terms[0]},ppe_line)'
+                if check=='no_blanket_grammar_bypass':body+=', ppe_path=p'
             else:
                 assert terms[0].startswith('@place('), clause
                 path, line = arguments(terms[0][7:-1])
