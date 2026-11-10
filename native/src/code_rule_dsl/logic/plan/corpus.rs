@@ -1821,6 +1821,7 @@ fn run_observed(
             kept.insert(prepared_key, prepared.clone());
             drop(kept);
             if let Some(source) = durable {
+                let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the prepared program in the store (decision 0073)".into());
                 // A document whose tape does not give back its facts is a bug of `program_facts`: said, not stored.
                 match prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))? {
                     Some(documents) => program_sources.extend(documents),

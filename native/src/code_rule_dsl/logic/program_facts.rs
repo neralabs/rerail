@@ -677,7 +677,8 @@ pub(in crate::code_rule_dsl) fn document_facts(text: &str) -> Result<Facts, Stri
 
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
 pub(in crate::code_rule_dsl) fn encode(facts: &Facts) -> Vec<u8> {
-    let mut strings: BTreeMap<&str, u32> = BTreeMap::new();
+    // Ids by first use (the map's order is not read).
+    let mut strings: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
     for (rel, rows) in facts {
         let next = strings.len() as u32;
         strings.entry(rel).or_insert(next);
