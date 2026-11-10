@@ -55,7 +55,8 @@ export interface CheckoutContext {
 }
 
 /** `not-set-up`: started, but the repository has no configuration, so nothing runs. */
-export type RepositoryStartState = "started" | "stopped" | "not-set-up";
+export const REPOSITORY_START_STATES = ["started", "stopped", "not-set-up"] as const;
+export type RepositoryStartState = (typeof REPOSITORY_START_STATES)[number];
 
 export interface RepositoryStatus {
   readonly started: boolean;

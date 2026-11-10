@@ -94,7 +94,7 @@
     "build:test-host": "esbuild integration/support/omp-host-extension.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
     "build:events": "esbuild src/harness/event-stream.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/harness/event-stream.js",
     "build:cursor": "esbuild src/hosts/cursor/cursor-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/hosts/cursor/cursor-hook.js",
-    "build:claude": "esbuild src/hosts/claude/claude-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/hosts/claude/claude-hook.js",
+    "build:claude": "esbuild src/hosts/claude/claude-hook.ts src/hosts/claude/claude-status.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outdir=dist/hosts/claude",
     "build:codex": "esbuild src/hosts/codex/codex-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/hosts/codex/codex-hook.js",
     "check": "tsc --noEmit && npm run check:boundaries && npm run check:structure && npm run check:windows-paths && npm run check:owned-builtins && npm run check:internal-refs && npm run check:pins && npm run check:ci-paths",
     "check:boundaries": "node scripts/check/check-boundaries.mjs",

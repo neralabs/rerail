@@ -23,6 +23,7 @@ import {
 import { RULE_MODES } from "../catalog/rule-mode.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
 import type { RuleDocument } from "../catalog/rule-store.js";
+import { PRESENTATION_PRESENCES } from "./presentation-presence.js";
 
 /**
  * One machine database holds the rule catalog and every repository's execution history.
@@ -44,7 +45,7 @@ export type RuleScope = (typeof RULE_SCOPES)[number];
 const inList = (values: readonly string[]): string => values.map(value => `'${value}'`).join(", ");
 
 export const PRESENTATION_HOSTS = ["", ...Object.keys(ADAPTER_CAPABILITIES) as RerailHost[]] as const;
-export const PRESENTATION_PRESENCES = ["compact", "silent"] as const;
+export { PRESENTATION_PRESENCES };
 
 /** Empty repository/host keys select database-local defaults for that dimension. */
 export const presentationPreferences = sqliteTable(

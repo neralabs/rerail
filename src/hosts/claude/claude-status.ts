@@ -1,7 +1,7 @@
-import { realpathSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { endProcessTree, spawn } from "../../engine/child-process.js";
 import { gitBash } from "../../engine/git.js";
@@ -9,7 +9,8 @@ import { processState } from "../../engine/process-liveness.js";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
 import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../../engine/catalog/repository-model.js";
-import { REQUIRED_NODE_MAJOR } from "../../engine/package-root.js";
+import { ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "../../engine/package-root.js";
+import type * as StartStateReader from "../../runtime/start-state-reader.js";
 
 /**
  * The checkout's start state from the database, read-only: the status line refreshes often and must never
@@ -19,8 +20,11 @@ import { REQUIRED_NODE_MAJOR } from "../../engine/package-root.js";
  * bundled `start-state-reader.js`, so the run resolves no Drizzle module at run time (285 MB when it did).
  */
 async function localStartState(root: string): Promise<RepositoryStartState | undefined> {
-  // Static import cannot work here: it would load Drizzle and SQLite on every status-line run, daemon or not.
-  const reader = await import("../../runtime/start-state-reader.js");
+  const readerPath = join(PACKAGE_ROOT, ENTRY_POINTS.startStateReader);
+  if (!existsSync(readerPath)) return undefined;
+  // Runtime-selected on purpose: this file is bundled, and a static or literal import would put Drizzle and SQLite in
+  // the bundle, loaded on every status-line run, daemon or not.
+  const reader = await import(pathToFileURL(readerPath).href) as typeof StartStateReader;
   return reader.readOnlyStartState(root);
 }
 

@@ -4,20 +4,21 @@ import { z } from "zod";
 import { ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type RerailHost } from "../engine/adapter-contract.js";
 import {
   presentationDaemonSchema,
-  presentationResponseSchema,
+  presentationReadSchema,
   rulesDashboardUrl,
+  type PresentationRead,
+  type PresentedSession,
   type RulesDashboardScope,
-  type sessionResponseSchema,
-} from "../api/session-contracts.js";
+} from "../api/presentation-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
-import type { PresentationPresence } from "../engine/storage/schema.js";
+import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
 import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
-export type { PresentationPresence } from "../engine/storage/schema.js";
+export type { PresentationPresence } from "../engine/storage/presentation-presence.js";
 
 /**
  * The footer's state (design A1f): on here, not on here (stopped in this checkout, or never started; the ambient
@@ -167,7 +168,7 @@ async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origi
  */
 function onPresentation(
   origin: URL,
-  { session, hud }: z.infer<typeof sessionResponseSchema>,
+  { session, hud }: PresentedSession,
   scope: RulesDashboardScope | null,
   presence: PresentationPresence,
   health: string[],
@@ -253,7 +254,7 @@ async function dashboardScope(daemon: VerifiedDaemon): Promise<RulesDashboardSco
  * simplify, or keep off generated or vendored files.
  */
 async function healthItems(
-  { audit: run }: z.infer<typeof sessionResponseSchema>, nativeOk: boolean, workspace: string,
+  { audit: run }: PresentedSession, nativeOk: boolean, workspace: string,
 ): Promise<string[]> {
   const items = nativeOk ? [] : ["engine unavailable"];
   const counted = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
@@ -373,7 +374,7 @@ export async function readRepositoryState(cwd: string, host: RerailHost): Promis
   try {
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string" || !(await recordedDaemonAlive(daemon.state))) return null;
-    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationResponseSchema);
+    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema);
     return response.repositoryState;
   } catch {
     return null;
@@ -424,7 +425,7 @@ function isPresentationRequest(sessionId: unknown, host: RerailHost, cwd: unknow
     && typeof cwd === "string" && isAbsolute(cwd);
 }
 
-type PresentationResponse = z.infer<typeof presentationResponseSchema>;
+type PresentationResponse = PresentationRead;
 type AnsweredSession = NonNullable<NonNullable<PresentationResponse["context"]>["session"]>;
 /** A live daemon of this checkout, and what it answered for the session. */
 type LiveResponse = { daemon: VerifiedDaemon; response: PresentationResponse };
@@ -436,7 +437,7 @@ async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: Pres
   if (typeof daemon === "string" || !(await recordedDaemonAlive(daemon.state))) return undefined;
   const response = await get(daemon, `/api/presentation?${new URLSearchParams({
     repository: daemon.workspace, host, sessionId, onDemand: String(onDemand),
-  })}`, presentationResponseSchema);
+  })}`, presentationReadSchema);
   const context = response.context;
   return context === undefined || context.daemon.pid !== daemon.state.pid ? undefined : { daemon, response };
 }
