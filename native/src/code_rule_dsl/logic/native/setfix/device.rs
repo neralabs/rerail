@@ -167,10 +167,12 @@ fn binds(d: &mut mj::Stage, f: &rowcode::Fused, filter: bool) {
     d.nbinds = n as u32;
 }
 
-/// Whether the device can read `rel` whole: not a source that makes its rows on lookup (a scan would make them all).
-fn readable(rel: &InRel) -> Result<(), String> {
+/// Whether the device can read `rel` whole for an atom with `keys` bound: a source that makes its rows on lookup (an
+/// axis, `within`) is read by the CPU a key at a time, and the device's upload would make every row of it. Read
+/// whole (no keys), the CPU makes them all too, and the device takes it.
+fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
     match &rel.view {
-        Some(v) if v.src.made_on_lookup() => Err("an atom over a relation made on lookup".into()),
+        Some(v) if keys > 0 && v.src.made_on_lookup() => Err("an atom read by keys over a relation made on lookup".into()),
         _ => Ok(()),
     }
 }
@@ -189,7 +191,7 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
             }
             Step::Atom { src, neg, keys, binds: atom_binds, tests } => {
                 let Src::In(rel, _) = src else { return Err("an atom over the component's own relation (recursion)".into()) };
-                readable(rel)?;
+                readable(rel, keys.len())?;
                 if keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS || atom_binds.len() > mj::MAX_BINDS {
                     return Err("an atom with more keys, tests or binds than a stage holds".into());
                 }
