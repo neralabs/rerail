@@ -31,16 +31,26 @@ export interface WindowsAcl {
 
 let userSid: string | undefined;
 
-/** This process's user SID, from `whoami /user`. */
-function currentUserSid(): string {
-  if (userSid !== undefined) return userSid;
-  const output = execFileSync(windowsSystemProgram("whoami.exe"), ["/user", "/fo", "csv", "/nh"], {
-    encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000,
-  });
-  const sid = /S-1-5-\d+(?:-\d+)*/u.exec(output)?.[0];
+/**
+ * The SID in what `whoami /user /fo csv /nh` prints, `"<domain>\<name>","<SID>"`: its last field. Any SID counts,
+ * `S-1-`, the identifier authority, then the sub-authorities: a local or domain account's starts `S-1-5-21-`, a
+ * Microsoft Entra ID (Azure AD) account's, as on most company laptops, `S-1-12-1-`.
+ */
+export function whoamiUserSid(output: string): string {
+  const sid = /"(S-1-\d+(?:-\d+)+)"\s*$/u.exec(output)?.[1];
   if (sid === undefined) throw new Error("whoami did not report this user's SID");
-  userSid = sid;
   return sid;
+}
+
+/**
+ * This process's user SID, from `whoami /user`, which reads it from the process's token as .NET's `WindowsIdentity`
+ * does, for any kind of account, and starts in milliseconds where Windows PowerShell takes up to seconds.
+ */
+function currentUserSid(): string {
+  userSid ??= whoamiUserSid(execFileSync(windowsSystemProgram("whoami.exe"), ["/user", "/fo", "csv", "/nh"], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000,
+  }));
+  return userSid;
 }
 
 /** Access-mask bits that let an account read a file's data: FILE_READ_DATA, GENERIC_ALL and GENERIC_READ. */

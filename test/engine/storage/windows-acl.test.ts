@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeLedgerFolder } from "../../../src/engine/storage/ledger-paths.js";
 import { keepFolderPrivate, makeRerailHome, openToOthers } from "../../../src/engine/storage/private-files.js";
-import { insideProfile, sddlOtherReaders, WINDOWS_ACL, type WindowsAcl } from "../../../src/engine/storage/windows-acl.js";
+import { insideProfile, sddlOtherReaders, whoamiUserSid, WINDOWS_ACL, type WindowsAcl } from "../../../src/engine/storage/windows-acl.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const USER = "S-1-5-21-1-2-3-1001";
+/** A Microsoft Entra ID (Azure AD) account's SID, as on a laptop joined to a company's Entra ID. */
+const ENTRA_USER = "S-1-12-1-1111111111-2222222222-3333333333-4444444444";
 /** A profile no test folder is under, so every folder here counts as outside it. */
 const ELSEWHERE = String.raw`C:\Users\nobody-here`;
 
@@ -39,6 +41,16 @@ describe("who an ACL lets read a file", () => {
     const harmless = `O:${USER}D:(A;OICIIO;GA;;;CO)(D;;FA;;;WD)(A;;0x100000;;;WD)(A;;FA;;;OW)`;
     expect(sddlOtherReaders(harmless, USER)).toEqual([]);
     expect(sddlOtherReaders(`O:BAD:(A;;FR;;;S-1-5-21-9-9-9-1002)`, USER)).toEqual(["S-1-5-21-9-9-9-1002"]);
+    const entraOnly = `O:${ENTRA_USER}D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;${ENTRA_USER})`;
+    expect(sddlOtherReaders(entraOnly, ENTRA_USER)).toEqual([]);
+  });
+});
+
+describe("this user's SID", () => {
+  it("is read from whoami for a local, domain or Microsoft Entra ID account", () => {
+    expect(whoamiUserSid(`"desktop-1\\me","${USER}"\r\n`)).toBe(USER);
+    expect(whoamiUserSid(`"azuread\\janedoe","${ENTRA_USER}"\r\n`)).toBe(ENTRA_USER);
+    expect(() => whoamiUserSid("")).toThrow("whoami did not report this user's SID");
   });
 });
 

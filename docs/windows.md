@@ -467,6 +467,8 @@ preimages and held steers.
 - `src/engine/storage/windows-acl.ts` sets an ACL with `icacls`: protected, granting the person's SID, SYSTEM and
   Administrators full control, inherited by everything in the folder. It reads one with Windows PowerShell's
   `Get-Acl` in SDDL, which names accounts by SID in any language. Both run by their System32 paths.
+- The person's SID comes from `whoami /user`, whatever the account: `S-1-5-21-...` for a local or domain account,
+  `S-1-12-1-...` for a Microsoft Entra ID (Azure AD) account, as on most company laptops.
 - A Rerail home or `.rerail\sessions` folder Rerail makes outside the profile gets the ACL when it is made, and a home
   an earlier release made gets it at the next daemon launch. `rerail remote add` gives the `remote-tokens` folder the
   ACL before it writes a token there, so a remote's token is private before any daemon launch. A failure is reported on
