@@ -179,12 +179,13 @@ impl Frame {
         w: &mut Work<'_>,
         store: &versions::Store,
         relations: &BTreeMap<String, Relation>,
-        steps: &[(schedule::Step, Query)],
+        steps: &[(schedule::Step, Option<Query>)],
         desired: Option<Versions>,
         external: &BTreeMap<String, Delta>,
         active: &BTreeSet<usize>,
         preparing: bool,
         templates: &BTreeMap<usize, Prepared>,
+        publications: &mut opaque::Publications,
         limit: u32,
     ) -> Result<()> {
         let _scope = store.activate(self.scope)?;
@@ -217,7 +218,7 @@ impl Frame {
             }
         }
         self.advance_phase(
-            w, store, relations, steps, desired, external, active, preparing, templates, limit,
+            w, store, relations, steps, desired, external, active, preparing, templates, publications, limit,
         )
     }
 

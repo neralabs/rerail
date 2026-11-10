@@ -122,3 +122,148 @@ fn producer_preparation_uses_current_declared_names_without_replacing_catalog_vi
         json!([[1, 2]])
     );
 }
+
+#[test]
+fn producers_keep_checked_regions_retained_through_chains_and_external_edits() {
+    let (_dir, mut e) = executor();
+    edge(&mut e, json!([[1, 2], [2, 3], [3, 4]]));
+    e.bind_relation(json!({"name":"limits","columns":["n"],"rows":[[2]]}).to_string())
+        .unwrap();
+    let program = CLOSURE.to_owned()
+        + r#"
+.decl fanout(src:number,n:number)
+.input fanout(IO=sql,query="SELECT src,count(*) FROM rr_rel_reach GROUP BY src")
+.decl cap(n:number)
+.input cap(IO=sql,query="SELECT max(n) FROM limits")
+.decl selected(src:number)
+selected(s) :- fanout(s,n),cap(c),n>=c.
+.decl summary(n:number)
+.input summary(IO=sql,query="SELECT count(*) FROM selected")
+.decl absent(src:number)
+absent(s) :- fanout(s,_),!selected(s).
+.output fanout,cap,selected,summary,absent
+"#;
+    let result: Value =
+        serde_json::from_str(&e.run(program.clone(), "python".into(), None).unwrap()).unwrap();
+    assert_eq!(result["preparation"]["initial_execution"], "retained");
+    assert!(e.executions[0].temporal.contains_key(&0));
+    let trace = e.executions[0].temporal[&0].explain();
+    assert_eq!(trace["acyclic_stages"]["fanout"]["proven"], false);
+    for patch in [
+        json!([{"name":"edge","insert":[[4,5]]}]),
+        json!([{"name":"limits","insert":[[3]],"delete":[[2]]}]),
+        json!([{"name":"edge","delete":[[1,2],[2,3],[3,4],[4,5]]}]),
+        json!([{"name":"edge","insert":[[1,2],[2,3],[3,4]]}]),
+        json!([{"name":"limits","insert":[[2]],"delete":[[3]]}]),
+    ] {
+        let report: Value =
+            serde_json::from_str(&e.apply_changes(patch.to_string(), None).unwrap()).unwrap();
+        assert_eq!(
+            report["programs"][0]["refreshed_strata"],
+            json!([]),
+            "{report}"
+        );
+        let (_dir, mut oracle) = executor();
+        oracle.cold_oracle = true;
+        edge(&mut oracle, rows(&mut e, "SELECT * FROM edge"));
+        oracle
+            .bind_relation(
+                json!({"name":"limits","columns":["n"],"rows":rows(&mut e,"SELECT * FROM limits")})
+                    .to_string(),
+            )
+            .unwrap();
+        oracle.run(program.clone(), "python".into(), None).unwrap();
+        for (r, width) in &e.executions[0].logical_relations.as_ref().clone() {
+            let order = (1..=*width)
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let query = format!("SELECT * FROM {} ORDER BY {order}", quote(r));
+            assert_eq!(rows(&mut e, &query), rows(&mut oracle, &query), "{r}");
+        }
+    }
+}
+
+#[test]
+fn producer_boundaries_publish_inputs_once_and_rollback_early_publication() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (_dir, mut e) = executor();
+    edge(&mut e, json!([[1, 2], [2, 3]]));
+    let fail = Arc::new(AtomicBool::new(false));
+    let failed = fail.clone();
+    e.connection()
+        .create_scalar_function(
+            "producer_guard",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            move |ctx| {
+                if failed.load(Ordering::Relaxed) {
+                    Err(rusqlite::Error::UserFunctionError(
+                        "producer failure".into(),
+                    ))
+                } else {
+                    ctx.get::<i64>(0)
+                }
+            },
+        )
+        .unwrap();
+    let program = CLOSURE.to_owned()
+        + ".decl total(n:number)\n.input total(IO=sql,query=\"SELECT producer_guard(count(*)) FROM temp.reach\")\n.output total\n";
+    e.run(program, "python".into(), None).unwrap();
+    assert!(e.executions[0].temporal.contains_key(&0));
+    assert_eq!(rows(&mut e, "SELECT * FROM total"), json!([[3]]));
+    e.connection().execute_batch("CREATE TEMP TABLE audit(kind TEXT,a INTEGER,b INTEGER); CREATE TEMP TRIGGER reach_insert AFTER INSERT ON reach BEGIN INSERT INTO audit VALUES('insert',new.c0,new.c1); END; CREATE TEMP TRIGGER reach_delete AFTER DELETE ON reach BEGIN INSERT INTO audit VALUES('delete',old.c0,old.c1); END;").unwrap();
+    let before = rows(&mut e, "SELECT * FROM reach ORDER BY c0,c1");
+    let patch = json!([{"name":"edge","insert":[[3,4]]}]).to_string();
+    fail.store(true, Ordering::Relaxed);
+    assert!(
+        e.apply_changes(patch.clone(), None)
+            .unwrap_err()
+            .reason
+            .contains("producer failure")
+    );
+    assert_eq!(rows(&mut e, "SELECT * FROM reach ORDER BY c0,c1"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM total"), json!([[3]]));
+    assert_eq!(rows(&mut e, "SELECT count(*) FROM audit"), json!([[0]]));
+    assert_eq!(
+        rows(&mut e, "SELECT count(*) FROM edge WHERE src=3"),
+        json!([[0]])
+    );
+    fail.store(false, Ordering::Relaxed);
+    e.apply_changes(patch, None).unwrap();
+    assert_eq!(rows(&mut e, "SELECT * FROM total"), json!([[6]]));
+    assert_eq!(
+        rows(&mut e, "SELECT kind,count(*) FROM audit GROUP BY kind"),
+        json!([["insert", 3]])
+    );
+    e.connection().execute_batch("DELETE FROM audit").unwrap();
+    e.apply_changes(json!([{"name":"edge","delete":[[3,4]]}]).to_string(), None)
+        .unwrap();
+    assert_eq!(rows(&mut e, "SELECT * FROM total"), json!([[3]]));
+    assert_eq!(
+        rows(&mut e, "SELECT kind,count(*) FROM audit GROUP BY kind"),
+        json!([["delete", 3]])
+    );
+}
+
+#[test]
+fn producer_reads_of_projection_views_keep_the_projection_gate() {
+    let (_dir, mut e) = executor();
+    edge(&mut e, json!([[1, 2], [2, 3], [3, 4]]));
+    let program = ".decl edge(src:number,dst:number)\n.input edge\n.decl projected(src:number)\nprojected(s) :- edge(s,_).\n.decl total(n:number)\n.input total(IO=sql,query=\"SELECT count(*) FROM rr_rel_projected\")\n.output total\n";
+    e.run(program.into(), "python".into(), None).unwrap();
+    assert!(e.executions[0].temporal.contains_key(&0));
+    assert_eq!(rows(&mut e, "SELECT * FROM total"), json!([[3]]));
+    for (patch, count) in [
+        (json!([{"name":"edge","insert":[[1,9]]}]), 3),
+        (json!([{"name":"edge","insert":[[4,5]]}]), 4),
+        (
+            json!([{"name":"edge","delete":[[1,2],[1,9],[2,3],[3,4],[4,5]]}]),
+            0,
+        ),
+        (json!([{"name":"edge","insert":[[7,8]]}]), 1),
+    ] {
+        e.apply_changes(patch.to_string(), None).unwrap();
+        assert_eq!(rows(&mut e, "SELECT * FROM total"), json!([[count]]));
+    }
+}

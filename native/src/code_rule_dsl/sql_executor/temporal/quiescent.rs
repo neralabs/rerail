@@ -26,6 +26,7 @@ impl operator::Operator {
         store: &versions::Store,
     ) -> Result<bool> {
         self.empty_body = false;
+        if self.opaque.is_some() {return Ok(false);}
         let native_empty = self
             .run
             .reductions

@@ -11,6 +11,7 @@ pub(super) mod initial;
 mod operator;
 mod quiescent;
 mod pipeline;
+mod opaque;
 use frame::Frame;
 const UNSUPPORTED: &str = "unsupported temporal retention: ";
 
@@ -131,7 +132,9 @@ pub(super) struct Trace {
     prefix: String,
     emitted: Arc<plan::emit::Emitted>,
     relations: BTreeMap<String, Relation>,
-    steps: Arc<Vec<(schedule::Step, Query)>>,
+    steps: Arc<Vec<(schedule::Step, Option<Query>)>>,
+    producers: Arc<BTreeMap<String, Vec<String>>>,
+    publications: opaque::Publications,
     stage_decisions: BTreeMap<String, crate::code_rule_dsl::logic::analysis::Decision>,
     components: Arc<crate::code_rule_dsl::logic::analysis::stages::Components>,
     after: BTreeSet<(u32, u32)>,
@@ -139,11 +142,10 @@ pub(super) struct Trace {
     limit: u32,
 }
 
-fn components(steps: &[(schedule::Step, Query)]) -> crate::code_rule_dsl::logic::analysis::stages::Components {
+fn components(steps: &[(schedule::Step, Option<Query>)]) -> crate::code_rule_dsl::logic::analysis::stages::Components {
     let mut edges = BTreeMap::<String, BTreeSet<String>>::new();
     for (s, q) in steps {
-        edges.entry(s.output.clone()).or_default().extend(q.reads().iter()
-            .filter_map(|r| r.program_relation()).map(str::to_owned));
+        edges.entry(s.output.clone()).or_default().extend(plan::acyclic::reads(s,q.as_ref()));
     }
     crate::code_rule_dsl::logic::analysis::stages::Components::analyze(&edges)
 }
@@ -186,7 +188,7 @@ impl Trace {
             .filter(|s|seen.insert(Arc::as_ptr(&s.analysis) as usize)).map(|s|json!(s)).collect()
     }
     pub(in crate::code_rule_dsl::sql_executor) fn explain(&self) -> Value {
-        json!({"execution_shape":if self.whole {"One retained relation graph, including checked projections"} else {"Retained recursive component"},"native_relation_facades":self.native_relations,"acyclic_stages":self.stage_decisions,"acyclic_sql_depth_bound":pipeline::Pipeline::MAX_DEPTH,"sql_phase_expansion_budget":phase::Phase::EXPANSION_BUDGET,"dependency_components":self.components.as_ref(),"journal_policy":"Share empty-journal inputs and cancel equal roots; bulk set composition for large deltas; sparse patches for small deltas","public_storage":if self.whole {"Declared outputs keep SQL result tables and hooks; intermediate relations are immutable query facades"}else{"SQL-owned component results"},"phase_policy":"Compatible acyclic stages pass signed deltas through one SQL graph; recursive steps read frozen preceding-frame inputs; bounded batches preserve staged deltas","scalar_storage_boundary":"Wave gates reuse transitions only for equal input versions, prior summary roots, and pending journals", "summary_transition_proof":crate::code_rule_dsl::logic::analysis::scalars::maintenance_equivalent(true,true),"frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"native_scope":f.scope(),"composed":f.composed,"phase_batches":f.phase_batches,"acyclic_pipeline":f.pipeline,"work":f.observation,"key_set_decisions":f.key_set_decisions,"publication_decisions":f.publication_decisions,"operators":f.operators.iter().enumerate().map(|(id,op)|json!({"relation":self.steps[id].0.output,"result_root":op.result,"active":op.active,"empty_positive_body":op.empty_body,"phase_eligible":op.phase_eligible,"boundary":if op.sql_kernel {"One recursive SQL kernel; versioned result root"}else if op.phase_eligible {"Composed support and fold"}else{"Separate retained operator evaluation; shared wave publication"},"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+        json!({"execution_shape":if self.whole {"One retained relation graph, including checked projections"} else {"Retained recursive component"},"native_relation_facades":self.native_relations,"acyclic_stages":self.stage_decisions,"acyclic_sql_depth_bound":pipeline::Pipeline::MAX_DEPTH,"sql_phase_expansion_budget":phase::Phase::EXPANSION_BUDGET,"dependency_components":self.components.as_ref(),"journal_policy":"Share empty-journal inputs and cancel equal roots; bulk set composition for large deltas; sparse patches for small deltas","public_storage":if self.whole {"Declared outputs keep SQL result tables and hooks; intermediate relations are immutable query facades"}else{"SQL-owned component results"},"phase_policy":"Compatible acyclic stages pass signed deltas through one SQL graph; recursive steps read frozen preceding-frame inputs; bounded batches preserve staged deltas","scalar_storage_boundary":"Wave gates reuse transitions only for equal input versions, prior summary roots, and pending journals", "summary_transition_proof":crate::code_rule_dsl::logic::analysis::scalars::maintenance_equivalent(true,true),"frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"native_scope":f.scope(),"composed":f.composed,"phase_batches":f.phase_batches,"acyclic_pipeline":f.pipeline,"work":f.observation,"key_set_decisions":f.key_set_decisions,"publication_decisions":f.publication_decisions,"operators":f.operators.iter().enumerate().map(|(id,op)|json!({"relation":self.steps[id].0.output,"result_root":op.result,"active":op.active,"empty_positive_body":op.empty_body,"phase_eligible":op.phase_eligible,"boundary":if op.opaque.is_some() {"Opaque SQL producer; frozen SQL inputs at resolved dependency gate"}else if op.sql_kernel {"One recursive SQL kernel; versioned result root"}else if op.phase_eligible {"Composed support and fold"}else{"Separate retained operator evaluation; shared wave publication"},"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
     }
     pub fn stable_phases(&self, program: &schedule::Program) -> bool {
         self.whole
@@ -304,6 +306,7 @@ impl Trace {
                     &active,
                     preparing,
                     &self.templates,
+                    &mut self.publications,
                     limit,
                 )
                 .map_err(|e| Error::new(e.status, format!("{} frame {at}: {e}", self.prefix)))?;
@@ -313,7 +316,7 @@ impl Trace {
             let recursive_components = active.iter().filter_map(|&id| {
                 let (s, q) = &self.steps[id];
                 let members = &components.members[&s.output];
-                q.reads().iter().filter_map(|r| r.program_relation()).any(|r| members.contains(r))
+                plan::acyclic::reads(s,q.as_ref()).iter().any(|r| members.contains(r))
                     .then(|| members.clone())
             }).collect::<BTreeSet<_>>();
             let component_work = recursive_components.iter().map(|members| {
@@ -325,7 +328,7 @@ impl Trace {
                 for &id in &active {
                     let (s,q) = &self.steps[id];
                     if !members.contains(&s.output) { continue; }
-                    let reads = q.reads().into_iter().filter(|r| r.program_relation().is_some_and(|r| members.contains(r))).collect::<Vec<_>>();
+                    let reads = q.iter().flat_map(|q|q.reads()).filter(|r| r.program_relation().is_some_and(|r| members.contains(r))).collect::<Vec<_>>();
                     if reads.is_empty() { seed_steps += 1; } else {
                         recursive_steps += 1;
                         recursive_candidate_rows += store.version_at(frame.scope(), &frame.operators[id].improvements).len();
@@ -427,6 +430,9 @@ impl Trace {
         let mut outputs = BTreeMap::new();
         for (r, spec) in &self.relations {
             let d = delta(w, &before.published[r], &after.published[r])?;
+            if self.whole && !self.native_relations.contains(r) {
+                self.publications.publish(w,r,after.published[r].clone())?;
+            }
             if d.inserted + d.deleted == 0 && !spec.widening() {
                 outputs.insert(r.clone(), d);
                 continue;
@@ -436,7 +442,7 @@ impl Trace {
                 let _scope = store.activate(0)?;
                 store.alias_readonly(w.db,r,after.published[r].clone(),
                     (0..spec.width).map(|c|format!("c{c}")).collect())?;
-            } else {
+            } else if !self.whole {
             if d.deleted > 0 {
                 w.db.execute(
                     &format!(
@@ -529,12 +535,12 @@ pub(super) fn prepare(
             .filter(|(s, _)| group.contains(&s.output))
             .map(|(s, q)| {
                 q.clone()
-                    .map(|q| (s.clone(), q))
+                    .map(|q| (s.clone(), Some(q)))
                     .ok_or_else(|| error("temporal constants require checked queries"))
             })
             .collect::<Result<Vec<_>>>()?;
         let recursive = steps.iter().any(|(_, q)| {
-            q.reads()
+            q.as_ref().unwrap().reads()
                 .iter()
                 .filter_map(|r| r.program_relation())
                 .any(|r| group.contains(r))
@@ -542,11 +548,11 @@ pub(super) fn prepare(
         let nonmonotone = group
             .iter()
             .any(|r| e.program.lattices.iter().any(|(n, _, _)| n == r))
-            || steps.iter().any(|(_, q)| maintenance::barrier(q));
+            || steps.iter().any(|(_, q)| maintenance::barrier(q.as_ref().unwrap()));
         if !recursive || !nonmonotone {
             continue;
         }
-        let probes = indexes::native(steps.iter().map(|(_, q)| q));
+        let probes = indexes::native(steps.iter().filter_map(|(_, q)| q.as_ref()));
         let relations = e
             .program
             .relations
@@ -598,6 +604,8 @@ pub(super) fn prepare(
         }
         let mut trace = Trace {
             whole: false,
+            producers: Arc::new(BTreeMap::new()),
+            publications: opaque::Publications::default(),
             native_relations: BTreeSet::new(),
             templates: Arc::new(BTreeMap::new()),
             prefix: format!("__it{namespace}_s{stratum}"),

@@ -113,7 +113,7 @@ impl Store {
         writable: bool,
     ) -> Result<()> {
         if self.contains(name) {
-            return Err(error("versioned table already exists"));
+            return Err(error(format!("versioned table {name} already exists in scope {}",self.current_scope())));
         }
         if self
             .slots

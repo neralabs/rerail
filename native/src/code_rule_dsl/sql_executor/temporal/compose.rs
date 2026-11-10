@@ -54,12 +54,13 @@ impl Frame {
         w: &mut Work<'_>,
         store: &versions::Store,
         relations: &BTreeMap<String, Relation>,
-        steps: &[(schedule::Step, Query)],
+        steps: &[(schedule::Step, Option<Query>)],
         desired: Option<frame::Versions>,
         _external: &BTreeMap<String, Delta>,
         active: &BTreeSet<usize>,
         preparing: bool,
         templates: &BTreeMap<usize, frame::Prepared>,
+        publications: &mut opaque::Publications,
         limit: u32,
     ) -> Result<()> {
         let mut phase = super::super::phase::Phase::default();
@@ -116,7 +117,8 @@ impl Frame {
             if phase.arm_bound() > 0
                 && (phase.arm_bound() + op.phase_arms.max(4) + overlays.len() + 1 + pipeline.changes.len()*2 >= 470
                     || pipeline.depth(&op.run.inputs) >= super::pipeline::Pipeline::MAX_DEPTH
-                    || phase.expansion_cost() >= phase::Phase::EXPANSION_BUDGET)
+                    || phase.expansion_cost() >= phase::Phase::EXPANSION_BUDGET
+                    || op.opaque.is_some() && enabled)
             {
                 pipeline.retain_from(id, &last_reads);
                 let slots = pipeline.stage(&mut phase, w, store)?;
@@ -226,6 +228,9 @@ impl Frame {
                 }
             } else if !op.phase_eligible {
                 // This boundary consumes its own journals. Compatible neighbors remain in this phase.
+                if enabled && let Some(plan)=&op.opaque {
+                    plan.publish_inputs(w,store,publications)?;
+                }
                 op.update(w, store, &BTreeMap::new(), enabled, preparing, limit)?;
                 changes(
                     w,

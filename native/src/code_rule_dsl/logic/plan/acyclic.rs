@@ -36,14 +36,16 @@ fn effect_safe(block: &Select, checked: bool) -> bool {
     safe
 }
 
-pub(in crate::code_rule_dsl) fn order(steps: &mut [(schedule::Step, Query)]) {
+pub(in crate::code_rule_dsl) fn reads(step:&schedule::Step,query:Option<&Query>)->BTreeSet<String> {
+    query.map_or_else(||step.reads.iter().cloned().collect(),|q|q.reads().iter()
+        .filter_map(|r|r.program_relation().map(str::to_owned)).collect())
+}
+
+pub(in crate::code_rule_dsl) fn order(steps: &mut [(schedule::Step, Option<Query>)]) {
     let mut edges = BTreeMap::<String, BTreeSet<String>>::new();
     for (s, q) in steps.iter() {
         edges.entry(s.output.clone()).or_default().extend(
-            q.reads()
-                .iter()
-                .filter_map(|r| r.program_relation())
-                .map(str::to_owned),
+            reads(s,q.as_ref()),
         );
     }
     let components = Components::analyze(&edges);
@@ -58,25 +60,24 @@ pub(in crate::code_rule_dsl) fn order(steps: &mut [(schedule::Step, Query)]) {
 }
 /// Select stages whose incremental positive-support transitions can compose.
 pub(in crate::code_rule_dsl) fn analyze(
-    steps: &[(schedule::Step, Query)],
+    steps: &[(schedule::Step, Option<Query>)],
     widths: &BTreeMap<String, usize>,
     lattices: &BTreeSet<String>,
 ) -> BTreeMap<String, Decision> {
     let mut edges = BTreeMap::<String, BTreeSet<String>>::new();
-    let mut rules = BTreeMap::<String, Vec<&Query>>::new();
+    let mut rules = BTreeMap::<String, Vec<Option<&Query>>>::new();
     for (s, q) in steps {
         edges.entry(s.output.clone()).or_default().extend(
-            q.reads()
-                .iter()
-                .filter_map(|r| r.program_relation())
-                .filter(|r| widths.contains_key(*r))
-                .map(str::to_owned),
+            reads(s,q.as_ref()).into_iter().filter(|r| widths.contains_key(r)),
         );
-        rules.entry(s.output.clone()).or_default().push(q);
+        rules.entry(s.output.clone()).or_default().push(q.as_ref());
     }
     let components = Components::analyze(&edges);
     rules.iter().map(|(name, qs)| {
-        let reason = if components.recursive.contains(name) { Some("Recursive component retains fixed-point iteration") }
+        let opaque=qs.iter().any(Option::is_none);
+        let qs=qs.iter().flatten().copied().collect::<Vec<_>>();
+        let reason = if opaque { Some("Opaque SQL producer retains its resolved dependency gate and SQL visibility boundary") }
+            else if components.recursive.contains(name) { Some("Recursive component retains fixed-point iteration") }
             else if lattices.contains(name) { Some("Lattice merge and widening retain their stage boundary") }
             else if qs.len() != 1 { Some("Multiple producers retain their general support reconciliation boundary") }
             else if qs.iter().any(|q| !q.ctes.is_empty()) { Some("Generated CTE keeps its existing kernel boundary") }

@@ -1,4 +1,4 @@
-//! Preparation-only schemas. No SQL tables, views, or execution roots are created.
+//! Preparation-only native schemas. Explicit temp qualification uses rolled-back views.
 use super::*;
 use crate::code_rule_dsl::facts::vtab::Modules;
 
@@ -11,11 +11,19 @@ pub(super) fn with_schema<T>(
 ) -> Result<T> {
     let modules = Modules::default();
     let mut registered = Vec::new();
+    let mut qualified_scope = false;
     let result = (|| {
         let named = producers
             .iter()
             .flat_map(|p| words(&p.query))
             .collect::<BTreeSet<_>>();
+        // Explicit temp qualification bypasses both eponymous modules and CTE aliases.
+        // Keep that SQL interface with a small, rolled-back facade only for named reads.
+        if named.contains("temp") {
+            db.execute_batch("SAVEPOINT rr_producer_qualified_schema")
+                .map_err(error)?;
+            qualified_scope = true;
+        }
         let mut aliases = Vec::new();
         for (rel, width) in emitted.program.relations.iter().cloned().chain(
             emitted
@@ -46,6 +54,18 @@ pub(super) fn with_schema<T>(
                     .map_err(error)?;
                 registered.push(rel.clone());
             }
+            if qualified_scope
+                && db
+                    .prepare(&format!("SELECT * FROM temp.{} LIMIT 0", quote(&rel)))
+                    .is_err()
+            {
+                db.execute_batch(&format!(
+                    "CREATE TEMP VIEW {} AS SELECT * FROM main.{}",
+                    quote(&rel),
+                    quote(&rel)
+                ))
+                .map_err(error)?;
+            }
             if named.contains(&typed.to_ascii_lowercase())
                 && let Some(decl) = program.decls.get(&rel)
             {
@@ -60,6 +80,9 @@ pub(super) fn with_schema<T>(
                     quote(&typed),
                     quote(&rel)
                 ));
+                if qualified_scope {
+                    db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{}; CREATE TEMP VIEW {}({names}) AS SELECT * FROM {}",quote(&typed),quote(&typed),quote(&rel))).map_err(error)?;
+                }
             }
         }
         if emitted
@@ -76,8 +99,16 @@ pub(super) fn with_schema<T>(
         };
         prepare(db, &prefix)
     })();
+    let qualified_cleanup = if qualified_scope {
+        db.execute_batch(
+            "ROLLBACK TO rr_producer_qualified_schema; RELEASE rr_producer_qualified_schema",
+        )
+        .map_err(error)
+    } else {
+        Ok(())
+    };
     // Unregister every temporary module, including after a failed prepare or partial setup.
-    let mut cleanup = Ok(());
+    let mut cleanup = qualified_cleanup;
     for name in registered.into_iter().rev() {
         if let Err(err) = modules.unregister(db, &name) {
             cleanup = Err(error(err));

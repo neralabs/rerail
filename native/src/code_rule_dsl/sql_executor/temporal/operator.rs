@@ -14,6 +14,7 @@ pub(super) struct Operator {
     pub(super) phase_eligible: bool,
     pub(super) phase_arms: usize,
     pub(super) sql_kernel: bool,
+    pub(super) opaque: Option<opaque::Plan>,
     pub(super) seen: BTreeMap<String, versions::Version>,
     pub(super) pending: BTreeMap<String, Pending>,
 }
@@ -149,19 +150,26 @@ impl Operator {
     ) -> Result<Self> {
         let (step, query) = &trace.steps[id];
         let spec = &trace.relations[&step.output];
-        let sql_kernel = !spec.lattice && walks::kernel(query);
+        let opaque=if query.is_none() {
+            if !trace.producers.contains_key(&step.output) {return Err(error("unchecked retained step is not a SQL producer"));}
+            Some(opaque::Plan::new(step,inputs)?)
+        } else {None};
+        let sql_kernel = !spec.lattice && query.as_ref().is_some_and(walks::kernel);
         let result = format!("{prefix}_o{id}");
         let mut query = query.clone();
-        bind(&mut query, inputs);
-        order(&mut query, w.db);
+        if let Some(query)=&mut query {
+            bind(query, inputs);
+            order(query, w.db);
+        }
         let mut emitted = (*trace.emitted).clone();
         emitted.setup.clear();
         emitted.views.clear();
-        let dependencies = query
-            .reads()
-            .iter()
-            .filter_map(|r| r.program_relation().map(str::to_owned))
-            .collect::<BTreeSet<_>>();
+        let dependencies = if let Some(query)=&query {
+            query.reads().iter().filter_map(|r|r.program_relation().map(str::to_owned)).collect::<BTreeSet<_>>()
+        } else {
+            opaque.as_ref().unwrap().inputs.values().cloned()
+                .chain(trace.producers[&step.output].iter().cloned()).collect()
+        };
         let mut properties = crate::code_rule_dsl::logic::analysis::ProgramAnalysis::default();
         for relation in &dependencies {
             let original = inputs.iter().find(|(_, table)| *table == relation).map_or(relation.as_str(), |(logical, _)| logical.as_str());
@@ -201,9 +209,9 @@ impl Operator {
             output: result.clone(),
             stratum: 1,
             reads: dependencies.iter().cloned().collect(),
-            sql: format!("INSERT OR IGNORE INTO new_{result} {}", query.render()),
+            sql: format!("INSERT OR IGNORE INTO new_{result} {}", query.as_ref().map(Query::render).unwrap_or_else(||opaque.as_ref().unwrap().select.clone())),
         }];
-        emitted.queries = vec![Some(query)];
+        emitted.queries = vec![query];
         let mut run = session::Execution {
             logical_relations: Arc::new(emitted.program.relations.clone()),
             inputs: dependencies,
@@ -219,7 +227,7 @@ impl Operator {
             program: Arc::new(crate::code_rule_dsl::logic::front::Program::default()),
             producers: BTreeMap::new(),
         };
-        let planned = if sql_kernel { reductions::pool::Plans::default() } else { reductions::planned(w.db, &run, true)? };
+        let planned = if sql_kernel || opaque.is_some() { reductions::pool::Plans::default() } else { reductions::planned(w.db, &run, true)? };
         let phase_eligible = planned.get(&result).is_some_and(|s| s.common_phase().proven);
         let phase_arms = planned.get(&result).map_or(0, |s| s.phase_arms());
         // This wrapper never executes a cold INSERT frontier. It initializes
@@ -260,7 +268,9 @@ impl Operator {
         store.restrict_indexes(&improvements, &[])?;
         run.reductions = (!planned.is_empty()).then_some(planned.clone());
         Ok(Self {
-            logical_analysis: trace.frames.first().and_then(|f|f.operators.get(id)).map(|op|Arc::clone(&op.logical_analysis)).unwrap_or_else(||Arc::new(if sql_kernel { json!({"execution":"recursive SQL kernel","proof":"Generated walk CTEs and allowlisted pure expressions; set output with original SQL UNION and NULL semantics","invalidation":"Equal input versions and empty journals skip evaluation","limits":"SQL step, time and memory guards; outer Datalog wave limits remain unchanged","storage":"One result root; no lifted walk or support tables"}) } else {json!(planned.values().map(reductions::Retained::explain).collect::<Vec<_>>())})),
+            logical_analysis: trace.frames.first().and_then(|f|f.operators.get(id)).map(|op|Arc::clone(&op.logical_analysis)).unwrap_or_else(||Arc::new(if opaque.is_some() {
+                json!({"execution":"opaque SQL producer","dependency_gate":step.stratum,"resolved_reads":step.reads,"external_inputs":trace.producers[&step.output],"invalidation":"Changed input versions or pending external journals","visibility":"Publish frozen SQL-owned dependencies before the producer SELECT; avoid duplicate final publication","storage":"One retained result root; checked neighbors retain their own maintenance"})
+            } else if sql_kernel { json!({"execution":"recursive SQL kernel","proof":"Generated walk CTEs and allowlisted pure expressions; set output with original SQL UNION and NULL semantics","invalidation":"Equal input versions and empty journals skip evaluation","limits":"SQL step, time and memory guards; outer Datalog wave limits remain unchanged","storage":"One result root; no lifted walk or support tables"}) } else {json!(planned.values().map(reductions::Retained::explain).collect::<Vec<_>>())})),
             run,
             result,
             improvements,
@@ -271,11 +281,17 @@ impl Operator {
             phase_eligible,
             phase_arms,
             sql_kernel,
+            opaque,
             seen,
             pending,
         })
     }
     fn initialize(&mut self, w: &mut Work<'_>, store: &versions::Store) -> Result<()> {
+        if self.opaque.is_some() {
+            self.evaluate_kernel(w,store)?;
+            self.ready=true;
+            return Ok(());
+        }
         order(
             Arc::make_mut(&mut self.run.emitted).queries[0]
                 .as_mut()
@@ -352,8 +368,8 @@ impl Operator {
         Ok(())
     }
     fn evaluate_kernel(&mut self, w: &mut Work<'_>, store: &versions::Store) -> Result<()> {
-        let _context = w.profile_scope(|| json!({"stage":"recursive SQL kernel","logicalAnalysis":self.logical_analysis.as_ref()}));
-        let query = self.run.emitted.queries[0].as_ref().unwrap().render();
+        let _context = w.profile_scope(|| json!({"stage":if self.opaque.is_some(){"opaque SQL producer"}else{"recursive SQL kernel"},"logicalAnalysis":self.logical_analysis.as_ref()}));
+        let query = self.opaque.as_ref().map(|p|p.select.clone()).unwrap_or_else(||self.run.emitted.queries[0].as_ref().unwrap().render());
         // Match the original INSERT OR IGNORE: a NULL head does not publish a row.
         let count = store.select_available(w.db, &self.result, &query, true, true)?;
         self.run.counts.insert(self.result.clone(), count as u64);
@@ -393,7 +409,7 @@ impl Operator {
                 ));
             }
             self.initialize(w, store)?;
-        } else if self.sql_kernel {
+        } else if self.sql_kernel || self.opaque.is_some() {
             if self.seen.iter().any(|(r,v)| !v.same(&store.version(r)))
                 || self.pending.values().any(|p| store.version(&p.plus).len() + store.version(&p.minus).len() > 0) {
                 self.evaluate_kernel(w, store)?;

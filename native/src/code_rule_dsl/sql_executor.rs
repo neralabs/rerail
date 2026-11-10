@@ -712,9 +712,11 @@ impl CodeRuleSqlExecutor {
             let native_frontiers = retained && !self.legacy_initial;
             #[cfg(not(test))]
             let native_frontiers = retained;
-            let minimal_setup = emitted.queries.iter().zip(&emitted.program.steps).all(|(q,s)| q.is_some() || retained && emitted.constant_rows.contains_key(&s.output));
+            let minimal_setup = emitted.queries.iter().zip(&emitted.program.steps).all(|(q,s)| q.is_some() || retained && (emitted.constant_rows.contains_key(&s.output) || producers.contains_key(&s.output)));
+            let producer_reads=emitted.program.steps.iter().filter(|s|producers.contains_key(&s.output))
+                .flat_map(|s|s.reads.iter().cloned()).collect::<BTreeSet<_>>();
             let native_relations = if retained && minimal_setup && temporal::initial::eligible(&emitted,&producers) {
-                emitted.program.relations.iter().filter(|(r,_)|!outputs.contains(r)).map(|(r,_)|r.clone()).collect::<BTreeSet<_>>()
+                emitted.program.relations.iter().filter(|(r,_)|!outputs.contains(r) && !producer_reads.contains(r)).map(|(r,_)|r.clone()).collect::<BTreeSet<_>>()
             } else if native_frontiers {
                 emitted.views.iter().filter(|(r,_)|r.starts_with("__sql_")).map(|(r,_)|r.clone()).collect()
             } else { BTreeSet::new() };

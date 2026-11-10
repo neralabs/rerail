@@ -104,8 +104,8 @@ fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Pr
     use rusqlite::hooks::{AuthAction, Authorization};
     let tables: BTreeMap<String, String> =
         emitted.program.relations.iter().map(|(r, _)| (r.to_ascii_lowercase(), r.clone())).collect();
-    let views: BTreeMap<String, &select::Query> =
-        emitted.views.iter().map(|(r, q)| (r.to_ascii_lowercase(), q)).collect();
+    let views: BTreeMap<String, (&String,&select::Query)> =
+        emitted.views.iter().map(|(r, q)| (r.to_ascii_lowercase(), (r,q))).collect();
     schema::with_schema(db,emitted,program,producers,|db,prefix| {
         let mut out = Vec::new();
         for p in producers {
@@ -133,10 +133,13 @@ fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Pr
                 if !visited.insert(name.clone()) {
                     continue;
                 }
-                if let Some(rel) = tables.get(&name) {
-                    reads.insert(rel.clone());
-                } else if let Some(q) = views.get(&name) {
+                if let Some((rel,q)) = views.get(&name) {
+                    // Session normalization schedules the projection as a retained relation.
+                    // Keep its own gate as well as the dependencies needed by cold SQL views.
+                    reads.insert((*rel).clone());
                     pending.extend(q.reads().into_iter().filter_map(|r| r.program_relation().map(str::to_ascii_lowercase)));
+                } else if let Some(rel) = tables.get(&name) {
+                    reads.insert(rel.clone());
                 } else if !name.starts_with("sqlite_") {
                     other.insert(name);
                 }
@@ -212,13 +215,17 @@ pub(super) fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, progra
             ),
         });
         emitted.queries.push(None);
-        for rel in reads {
-            if let Some(decl) = program.decls.get(rel) {
-                let view = quote(&format!("{}rel_{rel}", catalog::PREFIX));
-                let names = catalog::view_columns(decl).iter().map(|c| quote(c)).collect::<Vec<_>>().join(", ");
-                emitted.setup.push(format!("DROP VIEW IF EXISTS temp.{view}"));
-                emitted.setup.push(format!("CREATE TEMP VIEW {view}({names}) AS SELECT * FROM {}", quote(rel)));
-            }
+    }
+    let named=producers.iter().flat_map(|p|words(&p.query)).collect::<BTreeSet<_>>();
+    let typed_reads=all_reads.iter().flatten().cloned().chain(emitted.views.iter()
+        .filter(|(r,_)|named.contains(&format!("{}rel_{}",catalog::PREFIX,r.to_ascii_lowercase())))
+        .map(|(r,_)|r.clone())).collect::<BTreeSet<_>>();
+    for rel in typed_reads {
+        if let Some(decl)=program.decls.get(&rel) {
+            let view=quote(&format!("{}rel_{rel}",catalog::PREFIX));
+            let names=catalog::view_columns(decl).iter().map(|c|quote(c)).collect::<Vec<_>>().join(", ");
+            emitted.setup.push(format!("DROP VIEW IF EXISTS temp.{view}"));
+            emitted.setup.push(format!("CREATE TEMP VIEW {view}({names}) AS SELECT * FROM {}",quote(&rel)));
         }
     }
     renumber(&mut emitted.program.steps)?;

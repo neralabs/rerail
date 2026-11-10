@@ -649,7 +649,13 @@ Explain reports this adapter under `cold_frontiers`; the original compiled relat
 The independent cold oracle and explicit legacy adapter tests retain writable SQL storage.
 Opaque-producer fallback keeps generated private projections in native roots.
 SQL ANALYZE applies to SQL-owned relations. Native sources supply their own cardinality and index statistics.
-Opaque producers still prevent whole-program retained composition, so mixed programs can require substantially more SQL submissions.
+Opaque producers execute at their resolved dependency gates inside the retained graph.
+Checked rules before and after each producer keep their retained maintenance state.
+Producer inputs keep SQL-owned logical tables so raw SQL, qualified names, and callbacks observe completed dependencies.
+The executor tracks early publications and avoids repeated final writes and trigger calls.
+Changed input versions and external journals invalidate a producer result. Unchanged inputs retain the result.
+Producer preparation uses temporary native schemas and query-local typed aliases.
+Explicit `temp` qualification uses temporary views inside a rolled-back preparation savepoint.
 
 The explain output includes `dependency_components`, `acyclic_stages`, `acyclic_sql_depth_bound`, and per-operator `common_wave_phase` decisions.
 Dependent incremental batches currently contain at most three stages because SQLite expands nested CTE references during preparation.

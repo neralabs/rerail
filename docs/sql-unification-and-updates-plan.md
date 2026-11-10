@@ -2917,3 +2917,50 @@ Two debug regressions pass. A 43-relation program prepares within two SQL submis
 The regressions also cover malformed SQL, temporary binding cleanup, live results, renamed declaration columns, and subsequent edits.
 The existing producer regression covers external tables, interned symbols, derived reads, aggregate consumers, updates, and rejected recursion through SQL.
 This change removes schema preparation overhead. Opaque execution still needs explicit retained boundaries.
+
+#### Retained opaque producer boundaries
+
+The whole-program eligibility check previously rejected every program with a SQL producer.
+The retained graph now represents an opaque producer explicitly, without a fabricated checked query.
+Shared component analysis uses SQLite-resolved dependencies for opaque steps. Explain rejects stage composition at each producer gate.
+Checked regions retain their existing support indexes, summaries, and signed deltas.
+The producer retains one result root and reevaluates after a changed input version or external journal.
+
+Producer inputs keep SQL-owned logical tables. This preserves raw queries, typed views, qualified names, and callback visibility.
+Before a producer runs, the executor publishes its frozen dependency versions into those tables.
+An exact version ledger records the SQL contents. Final publication uses that ledger and avoids duplicate writes and trigger calls.
+Rollback restores both SQL contents and the retained execution state.
+The enclosing retained attempt owns final publication scratch allocations. A separate scratch pool caused collisions during initial verification.
+
+Projection reads retain their own dependency gate as well as their underlying reads.
+Runtime setup creates each required typed view once across all producers.
+Explicit `temp` qualification requires preparation views because qualified names bypass CTE aliases and native eponymous modules.
+Only named reads use those views, inside a rolled-back savepoint.
+Ordinary unqualified preparation retains the two-submission bound from the preceding regressions.
+
+The focused regressions cover producer chains, external input edits, negative consumers, empty-state recovery, and comparison with the independent cold scheduler.
+They also cover callback failure, early-publication rollback, and exact trigger counts after successful insertion and deletion.
+The one-file corpus replay uses `json/decoder.py`, the workload program, and a constant SQL producer that returns `1`.
+It follows the existing corpus replay sequence and adds a final query for the producer result.
+All forty-four relations match the independent cold scheduler at seven checkpoints.
+The replay covers execution-limit failure, retry, unchanged file publication, restoration, deletion, and snapshot recovery.
+
+| Complete mixed session | Setup | Transactions | Evaluation and cleanup | Total | Allowance of 100 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| One Python file and one opaque producer | 9 | 17 | 109 | 135 | Fail |
+
+The earlier audit of this workload shape used 2,395 submissions. This replay uses the integrated SQLite version and new preparation bounds.
+The current capture contains eighty-four fused relational phases and one producer SELECT across the complete session.
+It contains no private helper DDL, unknown origins, incomplete operations, or unexpected explanation failures.
+The driver exits with a budget failure after complete parity verification. The execution allowance remains unchanged.
+These traces do not establish a CPU speedup or whole-product performance acceptance.
+
+The final debug suite passes 173 SQL-executor tests, fourteen shared-analysis tests, twelve SQL-profiler tests, and forty-four JavaScript tests.
+One profiler child remains ignored as a standalone test. Its parent invokes it and passes.
+The statistics regression now covers retained producer execution and explicitly selects the cold adapter for its existing conversion check.
+The debug session verifier uses explicit hexadecimal digest formatting after the integrated SHA-256 API change.
+
+Recursive execution remains open. The mixed one-file replay records thirty-six productive-feedback frames, with no claim of a semantic minimum.
+The next comparison must measure component scheduling and a genuine SQL loop over immutable version references.
+The SQL loop must keep joins, projections, negative probes, and novelty checks in SQL.
+Native helpers can construct storage roots. They must not execute nested rule SQL that hides submissions.

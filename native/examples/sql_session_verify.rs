@@ -12,6 +12,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
+fn sha256_hex(bytes:impl AsRef<[u8]>)->String {
+    Sha256::digest(bytes).iter().map(|byte|format!("{byte:02x}")).collect()
+}
 
 fn snapshot(
     session: &CodeRuleSqlExecutor,
@@ -191,7 +194,7 @@ fn main() -> Result<()> {
         return Err("the independent oracle must run without SQL capture".into());
     }
     let bytes = std::fs::read(&args[2])?;
-    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let digest = sha256_hex(&bytes);
     let request: Value = serde_json::from_slice(&bytes)?;
     // Every requested action must have replay coverage. Unknown fields cannot
     // silently turn a partial execution into a complete parity claim.
@@ -359,7 +362,7 @@ fn main() -> Result<()> {
     }
     println!(
         "{}",
-        json!({"format":"rerail.sql-session-observation/v1","requestSha256":digest,"mode":args[0],"runnerSha256":format!("{:x}",Sha256::digest(std::fs::read(std::env::current_exe()?)?)),"inputs":session.verification_inputs(),"relations":execution["program"]["relations"],"outputs":execution["outputs"],"checks":checks,"queries":queries})
+        json!({"format":"rerail.sql-session-observation/v1","requestSha256":digest,"mode":args[0],"runnerSha256":sha256_hex(std::fs::read(std::env::current_exe()?)?),"inputs":session.verification_inputs(),"relations":execution["program"]["relations"],"outputs":execution["outputs"],"checks":checks,"queries":queries})
     );
     Ok(())
 }

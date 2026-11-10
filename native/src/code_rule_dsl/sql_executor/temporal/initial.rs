@@ -5,8 +5,8 @@ pub(in crate::code_rule_dsl::sql_executor) fn eligible(
     e: &plan::emit::Emitted,
     producers: &BTreeMap<String, Vec<String>>,
 ) -> bool {
-    if !producers.is_empty() || e.queries.iter().zip(&e.program.steps)
-        .any(|(q,s)| q.is_none() && !e.constant_rows.contains_key(&s.output)) || e.program.steps.is_empty() {
+    if e.queries.iter().zip(&e.program.steps)
+        .any(|(q,s)| q.is_none() && !e.constant_rows.contains_key(&s.output) && !producers.contains_key(&s.output)) || e.program.steps.is_empty() {
         return false;
     }
     let positions = e.program.steps.iter().map(|s|(s.output.as_str(),s.stratum)).collect::<BTreeMap<_,_>>();
@@ -17,6 +17,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn eligible(
         e.program.lattices.iter().any(|(r,_,_)|positions.get(r.as_str())==Some(&s.stratum))) {
         return true;
     }
+    if !producers.is_empty() { return true; }
     // Preserve the specialized walk and partition kernels beyond the checked phase-size boundary.
     let composable=e.program.steps.len()<=32 && e.queries.iter().flatten().all(|q|q.ctes.is_empty());
     if !recursive_steps.is_empty() {
@@ -44,19 +45,13 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         .iter()
         .zip(&e.queries)
         .filter(|(s, _)| outputs.contains(&s.output))
-        .map(|(s, q)| {
-            Ok((
-                s.clone(),
-                q.clone()
-                    .ok_or_else(|| error("unchecked initial constant"))?,
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .map(|(s, q)| (s.clone(),q.clone()))
+        .collect::<Vec<_>>();
     plan::acyclic::order(&mut steps);
     let stage_decisions = plan::acyclic::analyze(&steps,
         &original.relations.iter().cloned().collect(),
         &original.lattices.iter().map(|(r,_,_)| r.clone()).collect());
-    let probes = indexes::native(steps.iter().map(|(_, q)| q));
+    let probes = indexes::native(steps.iter().filter_map(|(_, q)| q.as_ref()));
     let relations = original
         .relations
         .iter()
@@ -106,6 +101,8 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
     }
     let mut trace = Trace {
         whole: true,
+        producers: Arc::new(run.producers.clone()),
+        publications: opaque::Publications::default(),
         native_relations,
         templates: Arc::new(BTreeMap::new()),
         prefix: format!("__it{namespace}_global"),
@@ -149,7 +146,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
                     (0..spec.width).map(|c|format!("c{c}")).collect())?;
             } else {
                 let _scope = store.activate(frame.scope())?;
-                w.db.execute(&format!("INSERT INTO {} SELECT * FROM {}",quote(r),quote(&frame.published[r])),[]).map_err(error)?;
+                trace.publications.publish(&mut attempt,r,final_versions.published[r].clone())?;
             }
             if spec.widening() {
                 let counters=final_versions.counters[r].clone();
