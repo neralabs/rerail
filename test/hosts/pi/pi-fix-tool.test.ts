@@ -48,14 +48,17 @@ describe("rerail_fix", () => {
     expect(piFixInvocation("Fix it.", {}, "/opt/pi/bin/pi", undefined).command).toBe("/opt/pi/bin/pi");
   });
 
-  it("starts a Bun-compiled pi.exe on Windows without its virtual entry, which Bun reports as existing", () => {
-    const entry = "B:/~BUN/root/pi.exe";
-    vi.mocked(fs.existsSync).mockImplementation(path => path === entry);
+  it("starts a Bun-compiled pi without its virtual entry, which Bun reports as existing, on POSIX and on Windows", () => {
+    // Bun's virtual root: `/$bunfs/root/` on POSIX, `B:/~BUN/root/` on Windows, with either slash after the drive.
+    const binaries = [["/opt/pi/bin/pi", "/$bunfs/root/pi"], ["C:\\pi\\pi.exe", "B:/~BUN/root/pi.exe"], ["C:\\pi\\pi.exe", "B:\\~BUN\\root\\pi.exe"]] as const;
     try {
-      expect(piFixInvocation("Fix it.", {}, "C:\\pi\\pi.exe", entry)).toEqual({
-        command: "C:\\pi\\pi.exe",
-        args: ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", "read,edit,write,grep,find,ls", expect.stringContaining("Fix it.")],
-      });
+      for (const [binary, entry] of binaries) {
+        vi.mocked(fs.existsSync).mockImplementation(path => path === entry);
+        expect(piFixInvocation("Fix it.", {}, binary, entry)).toEqual({
+          command: binary,
+          args: ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", "read,edit,write,grep,find,ls", expect.stringContaining("Fix it.")],
+        });
+      }
     } finally {
       vi.mocked(fs.existsSync).mockRestore();
     }
