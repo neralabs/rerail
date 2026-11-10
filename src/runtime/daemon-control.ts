@@ -886,6 +886,9 @@ let autostartAttempted = false;
  * is visible there and through `rerail status`, never in the host. The
  * launcher starts as the daemon does ({@link launchDetached}), so on Windows
  * the SQLite probe, npm and the managed-version dispatch it runs open no window.
+ * The launcher runs in the Rerail home, as the daemon does ({@link launchDaemonProcess}): Windows holds a process's
+ * current folder open, so one started in the session's folder kept that checkout from being deleted or renamed while
+ * it ran. The session's folder goes to it as `--workspace-root`, which the daemon serves and looks for Git from.
  *
  * Every session records into the one database in the Rerail home, and the one
  * daemon serves every repository; sessions in any repository reuse it for their
@@ -900,8 +903,8 @@ export function autostartDaemon(platform: NodeJS.Platform = process.platform): v
   try {
     makeRerailHome(home);
     launchDetached({
-      args: [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "daemon", "start"],
-      cwd: undefined,
+      args: [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "daemon", "start", "--workspace-root", process.cwd()],
+      cwd: home,
       env: process.env,
       logFile: join(home, DAEMON_LOG_FILE),
     }, platform);

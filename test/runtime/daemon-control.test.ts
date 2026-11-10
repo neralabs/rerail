@@ -736,19 +736,19 @@ describe("autostartDaemon", () => {
     vi.unstubAllEnvs();
   });
 
-  it("launches the daemon verb, never `rerail start`, and on Windows through the native spawn, never Node's detached one", async () => {
+  it("launches the daemon verb, never `rerail start`, in the Rerail home, and on Windows through the native spawn, never Node's detached one", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
     vi.stubEnv("RERAIL_HOME", home);
     vi.stubEnv("RERAIL_AUTOSTART", "1");
-    const spawned: Array<readonly string[]> = [];
+    const spawned: Array<{ args: readonly string[]; cwd: string | null }> = [];
     // Node's `detached: true` on Windows gives the launcher no console, so every console program it starts opens a window.
     const detachedByNode: Array<readonly string[]> = [];
     opener.intercept = (_command, args) => {
       detachedByNode.push(args);
       return Object.assign(new EventEmitter(), { unref() {} }) as unknown as ChildProcess;
     };
-    native.spawnDetached = (_program, args) => {
-      spawned.push(args);
+    native.spawnDetached = (_program, args, cwd) => {
+      spawned.push({ args, cwd });
       return DEAD_PID;
     };
     try {
@@ -756,8 +756,11 @@ describe("autostartDaemon", () => {
       autostartDaemon("win32");
       expect(detachedByNode).toEqual([]);
       expect(spawned).toHaveLength(1);
-      expect(spawned[0]!.slice(1)).toEqual(["daemon", "start"]);
-      expect(spawned[0]![0]).toMatch(/[\\/]dist[\\/]cli[\\/]cli\.js$/u);
+      // Windows holds a process's current folder open: a launcher started in the session's folder kept that checkout
+      // from being deleted or renamed while it ran. The session's folder goes to it by name, as the daemon's workspace.
+      expect(spawned[0]!.cwd).toBe(home);
+      expect(spawned[0]!.args.slice(1)).toEqual(["daemon", "start", "--workspace-root", process.cwd()]);
+      expect(spawned[0]!.args[0]).toMatch(/[\\/]dist[\\/]cli[\\/]cli\.js$/u);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
