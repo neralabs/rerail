@@ -260,18 +260,43 @@ replaces; `wbind` alone is 2.7 M join work units for 23 rows (t27).
 
 ### Maintenance of P2
 
-`maintain` reruns only changed documents when every output is a union of per-file rows. P2's outputs are not:
-an MRO or an alias chain crosses modules. The first version runs P2 again whenever struct's exports changed, and
-not at all when they did not. That second case is what the new upstream key makes correct. Deriving P2 from
-struct's delta (0083 §2) waits on the maintenance decision (0094 §4, DRed or counting).
+Done (2026-11-10, 6afe7e79f), in a session. `maintain` reruns only changed documents when every output is a union of
+per-file rows, and P2's are not (an MRO or an alias chain crosses modules). A session maintains P2 instead, from
+struct's delta, by counting (0090):
+- P2's run is a run of the session: struct's exports are bound with their delta applied, and its cross part's
+  retained strata are maintained from it. That already held; what made it pay nothing was the split.
+- **A program that reads no document has no file-local part.** P2's relations made from struct's exports alone
+  were constants to the split, and constants are derived in both parts. Over no document the file-local copy was
+  waste, 7–8 s every run, cold or maintained, and outside maintenance.
+- **The bookkeeping diffs in memory.** The session keeps each phase's last exports, so a run's rows are diffed
+  there, and only the granules that changed are read, compared and written in the phase store.
+- A phase run the session maintained is reported maintained, not run in full.
+
+Over the 84 files (`spike_t28_a_session_maintains_the_typing_phase`, edits as O125's), P2's CPU:
+
+| run | before | after |
+|---|---:|---:|
+| cold | 12.2 s | 5.6 s |
+| E1, a function added (3 export rows change) | 9.4 s | 2.5 s |
+| E2, a comment; E3, a statement in a body (none change) | 2.0 s | 0.2 s |
+| a full run, for comparison | 10.2 s | 3.8 s |
+| bookkeeping, each run | 1.1 s | 0.3 s |
+
+After each edit P2's exports equal a full run's. P3's answers are unchanged (6,410 agree), and P3 cold costs 713 G
+instructions (794–838 G before), since P2's cold run no longer derives its relations twice.
+
+Still open:
+- E1 maintains 92 of 99 strata for a 3-row delta, 2.4 s against a full run's 2.9 s. That is 0101's fixed cost per
+  stratum (skip a stratum whose deltas are all empty), on the integration branch, not redone here.
+- Outside a session (a new process) P2 runs in full on any struct change: maintenance holds its fixed point in
+  memory. Keeping it across processes waits on what SQLite keeps durable (memory ahead of the store).
 
 ### Engine checks the design needs
 
 Done on this branch: refusing loads in a later phase, listing phases flat, checking an upstream phase once.
 Still to come:
-- **Maintaining P2 from struct's delta.** `maintain` refuses a phase that reads phases, so P2 runs in full
-  (10 s) whenever any struct export changes. A workspace edit changes struct's rows for that file only. With the
-  Typing-support export deltas now merged, P2 can take struct's delta once 0094 §4 settles DRed or counting.
+- **Maintaining P2 across processes.** In a session P2 is maintained from struct's delta ("Maintenance of P2"); a
+  new process runs it in full on any struct change.
 
 ## The order
 
@@ -283,7 +308,7 @@ Still to come:
 | 4 | spike, done | P1 → P2 → a reader over the 84 files | 99.3% of imports present, 91.2% of annotations |
 | 5 | done here | P3 `calls_p3.rr`: no loads, library values as symbols from `types.` | 6,380 agree (calls_cx 6,299); 43.3 s cold, 15.2 s warm; with generics, overloads and the memo 6,390, 41.8 s and 16.3 s; 6,410 on 2026-11-10 |
 | 6 | engine | searches (`inst`, `mro_find`) as the on-demand path (t26) | `wbind`/`gpar` work gone |
-| 7 | after 0094 §4 | P2 from struct's delta | an edit's cost in P2 |
+| 7 | done here, in a session | P2 from struct's delta | a function added 9.4 s to 2.5 s; a comment 2.0 s to 0.2 s |
 
 Step 5 paid for itself. Cold, P1 + P2 + P3 cost half of calls_cx's main-thread CPU (43.3 s against 87.0 s).
 Warm, with P1 and P2 kept, P3 costs a sixth of it (15.2 s), because calls_cx gains nothing from a kept store. The
