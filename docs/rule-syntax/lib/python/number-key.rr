@@ -1,0 +1,4 @@
+// Equality classes of valid Python numeric literal tokens. In particular,
+// True == 1 == 1.0, but 9007199254740993 != 9007199254740992.0.
+// Integers retain arbitrary precision. No source code executes.
+.functor python_number_key(source: symbol): symbol

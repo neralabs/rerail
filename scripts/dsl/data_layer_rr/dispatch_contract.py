@@ -95,7 +95,33 @@ def cases(module):
         ('module-alias','engine=make_backend_executor()\nengine.transport\n'),
         ('module-kill','engine=make_backend_executor()\nengine=rendering\nengine.transport\n'),
         ('base-invalid','def broken(:\n'),
+        ('class-before-import','class Derived(Alias): pass\nfrom x import BackendExecutor as Alias\ndef f(engine:Derived):\n engine.transport\n'),
+        ('class-after-import','from x import BackendExecutor as Alias\nclass Derived(Alias): pass\ndef f(engine:Derived):\n engine.transport\n'),
+        ('class-after-alias-assignment','Alias=BackendExecutor\nclass Derived(Alias): pass\ndef f(engine:Derived):\n engine.transport\n'),
+        ('class-chain','class A(BackendExecutor): pass\nclass B(A): pass\ndef f(engine:B):\n engine.transport\n'),
+        ('class-reverse-chain','class B(A): pass\nclass A(BackendExecutor): pass\ndef f(engine:B):\n engine.transport\n'),
+        ('nested-import-breadth','class Container:\n from x import BackendExecutor as Alias\nclass Derived(Alias): pass\ndef f(engine:Derived):\n engine.transport\n'),
+        ('vararg','def f(*backend):\n backend.transport\n'),
+        ('kwarg','def f(**backend):\n backend.transport\n'),
+        ('kwonly','def f(*,backend):\n backend.transport\n'),
     ]:add('executor-'+name,source,base)
+    for name,body in [
+        ('walrus-no-runtime-write','selected=rendering\n(selected:=backend)\nselected.transport'),
+        ('runner-binding','compiled,selected=_pipeline_runner_args()\nselected.transport'),
+        ('runner-rebind','selected=rendering\ncompiled,selected=_pipeline_runner_args()\nselected.transport'),
+        ('unpack-swap','first=backend\nsecond=rendering\nfirst,second=second,first\nsecond.transport'),
+        ('unpack-unequal','selected,other=(backend,rendering,rendering)\nselected.transport'),
+        ('unpack-star','selected,*others=(backend,rendering)\nselected.transport'),
+        ('match-late-local','selected=rendering\nmatch backend:\n case selected:\n  selected.transport\nselected=rendering'),
+        ('augmented-store','selected=backend\nselected+=rendering\nselected.transport'),
+        ('with-store','selected=backend\nwith rendering as selected:\n selected.transport'),
+        ('ann-no-name-target','mapping["engine"]:BackendExecutor=backend'),
+        ('empty-key-splat','selected={**backend}["missing"]\nselected.transport'),
+    ]:executor(name,body)
+    for key,index in [('None','None'),('...','...'),('b"k"','b"\\x6b"'),('0x2','2'),('2.0','2'),
+        ('9007199254740993','9007199254740992.0'),('9007199254740992','9007199254740992.0'),
+        ('0j','False'),('1j','1.0j'),('1e309','2e309')]:
+        executor('numeric-first-'+key+'-'+index,'selected={'+key+':rendering,"owner":backend}['+index+']\nselected.transport')
     return rows
 
 

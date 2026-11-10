@@ -3,7 +3,8 @@
 #include "python/source-range.rr"
 .decl sd_document(d: number, path: symbol)
 sd_document(d,p) :- doc(d,_,_), option("dispatchPath",p).
-sd_document(d,p) :- doc(d,p,_), !option("dispatchPath",_).
+sd_document(d,p) :- doc(d,input,_),option_item("dispatchDocuments",i,input),option_item("dispatchPaths",i,p).
+sd_document(d,p) :- doc(d,p,_), !option("dispatchPath",_),!option_item("dispatchDocuments",_,_).
 .decl sd_selected(d: number)
 sd_selected(d) :- sd_document(d,p), sd_root(root), prefix(cat(root,"/"),p), !sd_late(p),
     !contains("/tests/",cat("/",p,"/")), !contains("/test/",cat("/",p,"/")), !syntax_error(d,_,_).
@@ -88,13 +89,14 @@ sd_extent(n,layer,a,b) :- node(_,n,"dotted_name",a,_), py_ast_attribute(n,_,laye
 .decl sd_event(n: node, layer: number, code: symbol, scope: symbol, expression: symbol, normalized: symbol, line: number, order: number)
 sd_event(n,layer,code,scope,expression,normal,l,i) :- sd_hit(n,layer,code), docof(n,d), sd_selected(d), sd_scope(n,scope),
     sd_extent(n,layer,a,b), source(d,sp), text(sp,src), expression=@byte_slice(src,a,b), sd_whitespace(w),
-    normal=@replace_all(@replace_all(expression,w," "),"^ +| +$",""), line(n,l), visit_index(n,i).
+    normal=@replace_all(@replace_all(expression,w," "),"^ +| +$",""), line(n,l), visit_index(n,i),
+    (code!="SPD005";sd_document(d,p),sd_base(p)).
 .decl sd_occurrence(n: node, layer: number, code: symbol, count: number)
-sd_occurrence(n,k,c,prev+1) :- sd_event(n,k,c,s,e,normal,l,i),
-    prev=count : {sd_event(m,j,c,s,e2,normal,l2,i2), (l2<l;l2=l,e2<e;l2=l,e2=e,i2<i;l2=l,e2=e,i2=i,j<k)}.
-.violation Dispatch(at: span, code_value: symbol, scope: symbol, expression: symbol, occurrence: number, inventory: symbol, message: symbol) code {code_value} "{message}"
-Dispatch(@place(p,l),c,s,e,occ,cat(c,"|",p,"|",s,"|",normal,"|occurrence=",to_string(occ)),message) :-
-    sd_event(n,k,c,s,e,normal,l,_), sd_occurrence(n,k,c,occ), docof(n,d), sd_document(d,p), sd_message(c,message).
+sd_occurrence(n,k,c,prev+1) :- sd_event(n,k,c,s,e,normal,l,i),docof(n,d),
+    prev=count : {sd_event(m,j,c,s,e2,normal,l2,i2),docof(m,d),(l2<l;l2=l,e2<e;l2=l,e2=e,i2<i;l2=l,e2=e,i2=i,j<k)}.
+.violation Dispatch(at: span, code_value: symbol, scope: symbol, expression: symbol, occurrence: number, inventory: symbol, message: symbol, document: symbol) code {code_value} "{message}"
+Dispatch(@place(p,l),c,s,e,occ,cat(c,"|",p,"|",s,"|",normal,"|occurrence=",to_string(occ)),message,document) :-
+    sd_event(n,k,c,s,e,normal,l,_), sd_occurrence(n,k,c,occ), docof(n,d), sd_document(d,p), sd_message(c,message),doc(d,document,_).
 .violation DispatchNonempty(at: span) code "DISPATCH_NONEMPTY" "inventory is not empty"
 DispatchNonempty(@place("",0)) :- option("entryPoint","inventory_is_empty"), option_item("dispatchInventory",_,_).
 .violation DispatchUnapproved(at: span, ordinal: number) code "DISPATCH_UNAPPROVED" "unapproved finding"
