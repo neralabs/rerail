@@ -1,0 +1,26 @@
+.decl name_actual_name(d: number, path: symbol, basename: symbol)
+name_actual_name(d,p,b) :- pp_doc(d,p), pp_run(), b=@replace_all(p,".*/","").
+name_actual_name(d,p,b) :- pp_doc(d,p), pp_api(), option_item("nameDocs",i,p), option_item("nameBasenames",i,b).
+name_actual_name(d,p,b) :- pp_doc(d,p), pp_api(), !option_item("nameDocs",_,_), b=@replace_all(p,".*/","").
+.violation NameConfig(at: span, key: symbol, ordinal: number, value: symbol) code "NINF_CONFIG" "configuration"
+NameConfig(@place("",0),k,i,v) :- option("entryPoint","_name_configuration"), name_config(k,i,v).
+.violation NamePath(at: span, ordinal: number, value: symbol) code "NINF_PATH" "default path"
+NamePath(@place("",0),i,p) :- option("entryPoint","_name_paths"), option_item("namePaths",i,p),
+    !match("(?s)(?:.*/)?(?:tests|__pycache__)(?:/.*)?",p).
+.decl ninf_finding(p: symbol, line: number, ordinal: number, code: symbol, message: symbol)
+.violation NameText(at: span, value: symbol) code "NINF_TEXT" "{value}"
+NameText(@place(p,l),cat(b,":",to_string(l),": ",c," ",m)) :- option("entryPoint","violations"),
+    ninf_finding(p,l,_,c,m), pp_doc(d,p), name_actual_name(d,p,b).
+.violation NameFact(at: span, ordinal: number, value_json: symbol) code "NINF_FACT" "fact"
+NameFact(@place(p,l),i,cat("{\"line\":",to_string(l),",\"code\":",@json_str(c),",\"message\":",@json_str(m),"}")) :-
+    option("entryPoint","_extract_name_inference_facts"), ninf_finding(p,l,i,c,m).
+.decl ninf_cli_count(n: number)
+ninf_cli_count(n) :- option("entryPoint","_name_cli"), n=count : { option_item("nameMessages",_,_) }.
+.violation NameOutput(at: span, ordinal: number, stdout: symbol) code "NINF_OUTPUT" "CLI output"
+NameOutput(@place("",0),0,"No ServerPlan name-inference violations found.\n") :- ninf_cli_count(0).
+NameOutput(@place("",0),0,"ServerPlan name-inference violations:\n") :- ninf_cli_count(n), n>0.
+NameOutput(@place("",0),i+1,cat("  ",m,"\n")) :- ninf_cli_count(n), n>0, option_item("nameMessages",i,m).
+.violation NameExit(at: span, value: number) code "NINF_EXIT" "CLI status"
+NameExit(@place("",0),0) :- ninf_cli_count(0).
+NameExit(@place("",0),0) :- ninf_cli_count(n), n>0, option("checkMode","0").
+NameExit(@place("",0),1) :- ninf_cli_count(n), n>0, option("checkMode","1").

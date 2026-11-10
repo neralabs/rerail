@@ -1,0 +1,142 @@
+{
+  "format": "rerail.recorded-original-admission/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "mode": "workspace",
+  "exitCode": 0,
+  "engineSha256": "82179e5e6ef15dec415e7929d508e826a6dfebef2b1a8843547b668081ec7476",
+  "policySha256": {
+    "serverplan_name_inference": "3cb896a587d85f9389f4e0c154efc85789f5efb5f7ca9d66752619288ec0fda4"
+  },
+  "cases": {
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_column_shape_as_a_semantic_type_tag": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_row_key_set_as_a_semantic_type_tag": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_reference_suffix_parsing": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_reference_suffix_parsing_after_explicit_text_conversion": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_reference_component_parsing": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_conventional_reference_construction": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_sql_type_inference_from_column_spelling": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_accepts_locked_column_lookup_and_explicit_reference": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "collected": [
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_column_shape_as_a_semantic_type_tag",
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_row_key_set_as_a_semantic_type_tag",
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_reference_suffix_parsing",
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_reference_suffix_parsing_after_explicit_text_conversion",
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_reference_component_parsing",
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_conventional_reference_construction",
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_sql_type_inference_from_column_spelling",
+    "scripts/tests/test_lint_serverplan_name_inference.py::test_accepts_locked_column_lookup_and_explicit_reference"
+  ],
+  "semanticFallbacks": [],
+  "missingResults": [],
+  "retainedCaseIds": [],
+  "checkpoint": {
+    "path": "gate/data-layer/fixtures/host/data-layer-port/rr-name-inference-complete-finalec3.json.gz",
+    "sha256": "32898c9ff9736b8becda78373103a753dd0d4602ce3a2d1ff5edca9819bb3df7"
+  }
+}

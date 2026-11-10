@@ -42,6 +42,13 @@ SPECS = {
                'direct-dotfile':(0,1),'batch-read':(1,2)},
         cliControl='backend-check-flag',extraControls=['backend-fact-type'],
         scope='Recorded raw-text scanner, regex metadata, skip paths, batched discovery and CLI scans, fact DTOs, reporter, production and persistent updates.'),
+    'rerail.name-inference-admission/v1': dict(check='serverplan_name_inference',public=193,original=8,
+        positive=7,production=21,parts=8,prefix='',label='name-inference-finalec3',
+        productionSupplement=dict(ids=['column','parse','synthesis','type','upper-off','upper-on','type-alias','type-alias-reverse'],
+                                  findings=[1,1,1,1,0,1,1,1]),
+        pairs={**{'family-'+str(i):(1,0) for i in range(1,4)},'filename':(0,1),'comment':(0,1),'default-scope':(2,4)},
+        cliControl='name-check-flag',extraControls=['name-fact-line'],
+        scope='Recorded scanner families, filename gates, default iterable semantics, native formatting and facts, CLI, reporter, production aliases and persistent updates.'),
 }
 
 
@@ -230,6 +237,12 @@ def validate(value):
             def facts(rows):return json.loads(next(r['parameters']['value_json'] for r in rows if r['code']=='BTS_FACT'))
             require(facts(a)['line'] is True and type(facts(b)['line']) is int and facts(b)['line']==1,
                     'Backend fact type control differs')
+        elif row['name']=='name-check-flag':
+            def statuses(rows):return [r['parameters']['value'] for r in rows if r['code']=='NINF_EXIT']
+            require(statuses(a)==[0] and statuses(b)==[1], 'Name-inference CLI flag differs')
+        elif row['name']=='name-fact-line':
+            def facts(rows):return json.loads(next(r['parameters']['value_json'] for r in rows if r['code']=='NINF_FACT'))
+            require(facts(a)['line']==2 and facts(b)['line']==1,'Name-inference fact line differs')
         else:
             def stdout(rows): return ''.join(r['parameters']['stdout'] for r in sorted(
                 (r for r in rows if r['code']=='RCS_OUTPUT'),key=lambda r:(r['parameters']['phase'],r['parameters']['ordinal'])))

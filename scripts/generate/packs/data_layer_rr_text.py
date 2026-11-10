@@ -146,10 +146,23 @@ def serverplan_name_inference(source, target, header):
         if index == 1:
             body += f', match({quote(search(original._CONTROL_LITERAL_RE))}, t)'
         if index == 4:
-            body += ', file_name(d, "sql_column_type_hints.py")'
+            body += ', name_actual_name(d,p,"sql_column_type_hints.py")'
         text += f'\n.violation NameInference{index}(at: span) code "SPNI00{index}"\n    {quote(message)}\nNameInference{index}(@place(p, l)) :- {body}.\n'
     from data_layer_rr_production import production
-    return production(source, 'serverplan_name_inference', (text))
+    text=production(source, 'serverplan_name_inference', text)
+    from dataclasses import asdict
+    text+='\n.decl name_config(key: symbol, ordinal: number, value: symbol)\n'
+    config={name:list(getattr(original,name)) for name in ['_CONTROL_COLUMNS','_REFERENCE_SUFFIXES','_REFERENCE_TEXT_METHODS']}
+    config.update(_SCAN_DIRECTORIES=[p.as_posix() for p in original._SCAN_DIRECTORIES],
+        EXTRACTOR=[json.dumps(asdict(original.NAME_INFERENCE_EXTRACTOR))],description=[original.__doc__],
+        check_help=['Exit nonzero on violations'])
+    for name in ['_COLUMN_SHAPE_RE','_CONTROL_LITERAL_RE','_REFERENCE_PARSE_RE','_REFERENCE_SYNTHESIS_RE','_COLUMN_TYPE_RE']:
+        pattern=getattr(original,name);config[name+'.pattern']=[pattern.pattern];config[name+'.flags']=[str(pattern.flags)]
+    for key,values in config.items():
+        for i,value in enumerate(values):text+=f'name_config({quote(key)},{i},{quote(value)}).\n'
+    for i,(_,message) in enumerate(patterns,1):
+        text+=f'ninf_finding(p,l,{i-1},"SPNI00{i}",{quote(message)}) :- ppe_NameInference{i}(p,l,_,_,_).\n'
+    return text+'#include "data-layer/name-inference-api.rr"\n'
 
 
 def hasattr_async(source, target, header):

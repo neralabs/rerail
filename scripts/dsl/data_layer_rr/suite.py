@@ -272,6 +272,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check=='serverplan_name_inference':
+            from name_inference_port import scan
+            return scan(self,entry,module,arguments)
         if check=='transaction_callback_wrappers':
             from callback_wrappers_port import scan
             return scan(self,entry,module,arguments)
@@ -536,26 +539,13 @@ class Suite:
                              line_content=r['parameters']['snippet'], pattern_name=r['parameters']['label']) for r in rows]
             return [(originals[r['path']], r['line'], r['parameters']['snippet'], r['parameters']['label']) for r in rows]
 
-        if check == 'serverplan_name_inference':
-            if entry == '_scan_source':
-                rows = self.native(check, entry, [dict(path=path.name, source=arguments['source'])])
-                return [(r['line'], r['code'], r['message']) for r in sorted(rows, key=lambda r: (r['line'], r['code']))]
-            paths = arguments.get('paths')
-            if paths is None:
-                paths = (p for root in module._SCAN_ROOTS for p in root.rglob('*.py')
-                         if 'tests' not in p.parts and '__pycache__' not in p.parts)
-            # The source API's public result deliberately contains basenames only.
-            files, names = [], {}
-            for index, item in enumerate(paths):
-                name = f'input-{index}/{item.name}'
-                files.append(dict(path=name, source=item.read_text()))
-                names[name] = item.name
-            rows = self.native(check, entry, files)
-            return sorted(f"{names[r['path']]}:{r['line']}: {r['code']} {r['message']}" for r in rows)
         raise AssertionError(f'No native assertion adapter: {check}:{entry}')
 
     def pytest_configure(self):
         self.modules = {check: importlib.import_module('scripts.lint_' + check) for check in self.checks}
+        if 'serverplan_name_inference' in self.modules:
+            from name_inference_port import install
+            install(self,self.modules['serverplan_name_inference'])
         bind_aliases(self.modules)
         originals = codes(self.modules)
         if 'serverplan_grammar_surface' in self.modules:

@@ -1738,7 +1738,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
-      "sha256": "7a90ef42bc612bb04ea9435ac368ed15a9d8202598673a734f4c3d3de20e6ee4",
+      "sha256": "3cb896a587d85f9389f4e0c154efc85789f5efb5f7ca9d66752619288ec0fda4",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2885,9 +2885,57 @@
       "batch": 1,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-name-inference.json",
       "legacySha256": "c1326f54d9381d1efad6d898b9bb0c7d61cd801243d4cf7a9b5132499cef351c",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
-      "ruleSha256": "7a90ef42bc612bb04ea9435ac368ed15a9d8202598673a734f4c3d3de20e6ee4"
+      "ruleSha256": "3cb896a587d85f9389f4e0c154efc85789f5efb5f7ca9d66752619288ec0fda4",
+      "evidence": {
+        "assertions": 8,
+        "positives": 7,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "3cb896a587d85f9389f4e0c154efc85789f5efb5f7ca9d66752619288ec0fda4",
+        "engineCommit": "c5c8b30306e2ca3da48375d75f43e4692a81dc48",
+        "corpusSha256": "6b70f3b63aaad63cf77f0ff0e18f4f67bb8eaeb2e42b9b4f6148a671ffa77d69",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "82179e5e6ef15dec415e7929d508e826a6dfebef2b1a8843547b668081ec7476",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-name-inference-finalec3-native-snapshot.json",
+            "sha256": "9655fbb4dcc819688d1879d1b117265d824af766954548b7a2825701005d215f"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-name-inference-finalec3-native-workspace.json",
+            "sha256": "e37a7f0a989d7608e71ef4a428f47223e5d6e742588aeb0b78a1f355b156ca0f"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-name-inference-complete-finalec3.json.gz",
+            "sha256": "32898c9ff9736b8becda78373103a753dd0d4602ce3a2d1ff5edca9819bb3df7"
+          }
+        ],
+        "supplemental": {
+          "publicCasesPerAPI": 193,
+          "originalCasesPerAPI": 8,
+          "originalFindingPositiveCases": 7,
+          "productionCases": 29,
+          "suppliedFactCases": 16,
+          "persistentSteps": 14,
+          "controls": 9,
+          "nativeExecutions": 541,
+          "fullMigrationAcceptance": false
+        },
+        "scope": "All original assertions through both APIs. Recorded scanner families, filename gates, default iterable semantics, native formatting and facts, CLI, reporter, production aliases and persistent updates."
+      },
+      "migrationProgress": {
+        "status": "full-contract-passed",
+        "verifiedNativeExecutions": 541
+      }
     },
     {
       "check": "no_blanket_grammar_bypass",

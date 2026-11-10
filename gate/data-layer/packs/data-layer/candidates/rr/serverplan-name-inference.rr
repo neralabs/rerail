@@ -32,7 +32,7 @@ ppe_NameInference2(p,l,l,1,0) :- name_scan(d, l, t), pp_doc(d,p), match("(?s:.*)
 ppe_NameInference3(p,l,l,2,0) :- name_scan(d, l, t), pp_doc(d,p), match("(?s:.*)(?:(?:[Rr][Ee][Ff]|[Rr][Ee][Ff][Ss\u017f])[^\\n]*?\\.(?:[Gg][Ee][Tt]|[Pp][Oo][Pp]|[Ss\u017f][Ee][Tt][Dd][Ee][Ff][Aa][Uu][Ll][Tt])[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*\\([\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*[Ff]['\\\"][^\\n]*?\\{[^}]*[Rr][Ee][Ff][^}]*\\}[^\\n]*?(?:\\.[Rr][Aa][Ww]|\\.[Rr][Aa][Ww]_[Rr][Oo][Ww][Ss\u017f]|\\.[Ww][Rr][Ii\u0130\u0131][Tt][Ee]|\\.[Uu][Pp][Dd][Aa][Tt][Ee][Dd]_[Rr][Oo][Ww][Ss\u017f]|\\.[Uu][Pp][Dd][Aa][Tt][Ee][Dd]_[Cc][Oo][Uu][Nn][Tt]|_[Cc][Oo][Uu][Nn][Tt]|_[Uu][Pp][Dd][Aa][Tt][Ee][Dd]_[Rr][Oo][Ww][Ss\u017f]|_[Uu][Pp][Dd][Aa][Tt][Ee][Dd]_[Cc][Oo][Uu][Nn][Tt]))(?s:.*)", t).
 
 .violation NameInference4(at: span, collector_order0: number, collector_order1: number, collector_order2: number) code "SPNI004" "SQL type is inferred from column spelling"
-ppe_NameInference4(p,l,l,3,0) :- name_scan(d, l, t), pp_doc(d,p), match("(?s:.*)(?:[Cc][Oo][Ll][Uu][Mm][Nn][^\\n]*?\\.(?:[Ee][Nn][Dd][Ss\u017f][Ww][Ii\u0130\u0131][Tt][Hh]|[Pp][Aa][Rr][Tt][Ii\u0130\u0131][Tt][Ii\u0130\u0131][Oo][Nn]|[Rr][Ee][Mm][Oo][Vv][Ee][Pp][Rr][Ee][Ff][Ii\u0130\u0131][Xx]|[Rr][Ee][Mm][Oo][Vv][Ee][Ss\u017f][Uu][Ff][Ff][Ii\u0130\u0131][Xx]|[Rr][Pp][Aa][Rr][Tt][Ii\u0130\u0131][Tt][Ii\u0130\u0131][Oo][Nn]|[Rr][Ss\u017f][Pp][Ll][Ii\u0130\u0131][Tt]|[Ss\u017f][Pp][Ll][Ii\u0130\u0131][Tt]|[Ss\u017f][Tt][Aa][Rr][Tt][Ss\u017f][Ww][Ii\u0130\u0131][Tt][Hh])[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*\\()(?s:.*)", t), suffix("/sql_column_type_hints.py",cat("/",p)).
+ppe_NameInference4(p,l,l,3,0) :- name_scan(d, l, t), pp_doc(d,p), match("(?s:.*)(?:[Cc][Oo][Ll][Uu][Mm][Nn][^\\n]*?\\.(?:[Ee][Nn][Dd][Ss\u017f][Ww][Ii\u0130\u0131][Tt][Hh]|[Pp][Aa][Rr][Tt][Ii\u0130\u0131][Tt][Ii\u0130\u0131][Oo][Nn]|[Rr][Ee][Mm][Oo][Vv][Ee][Pp][Rr][Ee][Ff][Ii\u0130\u0131][Xx]|[Rr][Ee][Mm][Oo][Vv][Ee][Ss\u017f][Uu][Ff][Ff][Ii\u0130\u0131][Xx]|[Rr][Pp][Aa][Rr][Tt][Ii\u0130\u0131][Tt][Ii\u0130\u0131][Oo][Nn]|[Rr][Ss\u017f][Pp][Ll][Ii\u0130\u0131][Tt]|[Ss\u017f][Pp][Ll][Ii\u0130\u0131][Tt]|[Ss\u017f][Tt][Aa][Rr][Tt][Ss\u017f][Ww][Ii\u0130\u0131][Tt][Hh])[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*\\()(?s:.*)", t), name_actual_name(d,p,"sql_column_type_hints.py").
 
 name_selected(d) :- pp_run(), pp_doc(d,_), pp_fact_present(d).
 
@@ -88,3 +88,48 @@ sf_config("strict_line","true").
 sf_config("order","bundle").
 sf_strict("code").
 sf_strict("message").
+
+.decl name_config(key: symbol, ordinal: number, value: symbol)
+name_config("_CONTROL_COLUMNS",0,"count").
+name_config("_CONTROL_COLUMNS",1,"deleted_count").
+name_config("_CONTROL_COLUMNS",2,"ok").
+name_config("_CONTROL_COLUMNS",3,"message").
+name_config("_CONTROL_COLUMNS",4,"__exists").
+name_config("_CONTROL_COLUMNS",5,"__result").
+name_config("_REFERENCE_SUFFIXES",0,".raw").
+name_config("_REFERENCE_SUFFIXES",1,".raw_rows").
+name_config("_REFERENCE_SUFFIXES",2,".write").
+name_config("_REFERENCE_SUFFIXES",3,".updated_rows").
+name_config("_REFERENCE_SUFFIXES",4,".updated_count").
+name_config("_REFERENCE_SUFFIXES",5,"_count").
+name_config("_REFERENCE_SUFFIXES",6,"_updated_rows").
+name_config("_REFERENCE_SUFFIXES",7,"_updated_count").
+name_config("_REFERENCE_TEXT_METHODS",0,"endswith").
+name_config("_REFERENCE_TEXT_METHODS",1,"partition").
+name_config("_REFERENCE_TEXT_METHODS",2,"removeprefix").
+name_config("_REFERENCE_TEXT_METHODS",3,"removesuffix").
+name_config("_REFERENCE_TEXT_METHODS",4,"rpartition").
+name_config("_REFERENCE_TEXT_METHODS",5,"rsplit").
+name_config("_REFERENCE_TEXT_METHODS",6,"split").
+name_config("_REFERENCE_TEXT_METHODS",7,"startswith").
+name_config("_SCAN_DIRECTORIES",0,"l2060_query_builder").
+name_config("_SCAN_DIRECTORIES",1,"l2070_batching").
+name_config("_SCAN_DIRECTORIES",2,"impl/common/l2070_server_plan").
+name_config("EXTRACTOR",0,"{\"extractor_id\": \"serverplan_name_inference.violations\", \"schema_version\": \"1\", \"implementation_version\": \"serverplan-name-inference-v1\", \"parser_mode\": \"source\", \"source_triggers\": [\"column\", \"ref\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"574e5db90e8d0137\"}").
+name_config("description",0,"Reject ServerPlan semantics inferred from column or reference spelling.").
+name_config("check_help",0,"Exit nonzero on violations").
+name_config("_COLUMN_SHAPE_RE.pattern",0,"(?:column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\)).*(?:==|!=)|(?:==|!=).*?(?:column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\))").
+name_config("_COLUMN_SHAPE_RE.flags",0,"34").
+name_config("_CONTROL_LITERAL_RE.pattern",0,"['\\\"](?:count|deleted_count|ok|message|__exists|__result)['\\\"]").
+name_config("_CONTROL_LITERAL_RE.flags",0,"32").
+name_config("_REFERENCE_PARSE_RE.pattern",0,"ref[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\([^\\n]*?['\\\"](?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)['\\\"]").
+name_config("_REFERENCE_PARSE_RE.flags",0,"34").
+name_config("_REFERENCE_SYNTHESIS_RE.pattern",0,"(?:ref|refs)[^\\n]*?\\.(?:get|pop|setdefault)\\s*\\(\\s*f['\\\"][^\\n]*?\\{[^}]*ref[^}]*\\}[^\\n]*?(?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)").
+name_config("_REFERENCE_SYNTHESIS_RE.flags",0,"34").
+name_config("_COLUMN_TYPE_RE.pattern",0,"column[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\(").
+name_config("_COLUMN_TYPE_RE.flags",0,"34").
+ninf_finding(p,l,0,"SPNI001","column shape selects semantic behavior") :- ppe_NameInference1(p,l,_,_,_).
+ninf_finding(p,l,1,"SPNI002","reference text selects semantic behavior") :- ppe_NameInference2(p,l,_,_,_).
+ninf_finding(p,l,2,"SPNI003","semantic reference is synthesized from text") :- ppe_NameInference3(p,l,_,_,_).
+ninf_finding(p,l,3,"SPNI004","SQL type is inferred from column spelling") :- ppe_NameInference4(p,l,_,_,_).
+#include "data-layer/name-inference-api.rr"

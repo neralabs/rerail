@@ -14,7 +14,9 @@ class NameInferenceBatchTests(unittest.TestCase):
         calls=[]
         class Backend:
             def native(self,check,entry,files,options=None):
-                calls.append((entry,files,options));return []
+                calls.append((entry,files,options))
+                if entry=='_name_paths':return [dict(code='NINF_PATH',parameters=dict(ordinal=i,value=p)) for i,p in enumerate(options['namePaths'])]
+                return []
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);(root/'a.py').write_text('column == "count"')
             module=SimpleNamespace(_SCAN_ROOTS=(root,))

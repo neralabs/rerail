@@ -10567,3 +10567,23 @@ The archived observations and hashes remain validated. No old receipt was relabe
 All 302 migration tooling tests pass. The inventory is eight accepted ports, 87 drafts, and five absent translations.
 The full 100-rule migration remains unfinished. No full-repository cold benchmark was run in this cohort.
 
+# Name-inference full-contract admission, 2026-11-10
+
+The red commit `dac8ea54c` exposes an existing default-path bug: an empty list suppressed the scan instead of requesting defaults.
+The adapter now preserves empty-list, empty-tuple, and empty-generator behavior. It submits each file batch in one scan.
+Native relations select default paths, apply basename conditions, construct fact rows, format public findings, and render CLI output.
+The host retains filesystem access, passive metadata, argument parsing, and caller-supplied callback protocols.
+This uses the current root engine and introduces no engine implementation or algorithm flags.
+
+All eight unchanged original tests pass through both APIs, including seven finding-positive tests.
+All 193 supplemental cases also pass through both APIs. They cover every control literal, reference suffix, reference method, and synthesis method.
+They also cover Unicode folds, line separators, raw text, malformed Python, duplicate basenames, lexical line ordering, and non-Python filenames.
+The 29 production cases include all four finding families, raw source-trigger gating, and both filename-alias directions.
+Both alias arrangements retain the source's single basename-dependent finding.
+
+The receipt `rr-name-inference-complete-finalec3.json.gz` records 541 native executions.
+It includes 16 supplied-fact cases, 14 persistent steps, eight behavior controls, and one reporter control.
+All 309 migration tooling tests pass. Policy generation retains identical bytes and the independent inventory gate admits this port.
+Final remains at `ec3cfe1b7`. The inventory is nine accepted ports, 86 drafts, and five absent translations.
+The full 100-rule migration remains open. Only the affected kernel ran in this acceptance cohort.
+
