@@ -1,7 +1,7 @@
 # 0100: One executor for a chunk's strata: levels sent to every lane at once, relations kept on the GPU
 
 Status: draft (2026-11-09). It builds 0095 §5 (device waves) on the executor of 0098 §6. The order of work is
-below; steps 1–5 and 7–12 are built, and step 6 is measured.
+below; steps 1–5 and 7–14 are built, and step 6 is measured.
 
 ## Intro
 
@@ -158,8 +158,8 @@ reads the shared symbol table, and new symbols take its write lock, so the gain 
 
 The executor runs **jobs**, and each lane's jobs run beside every other lane's:
 
-- **The cores** have one pool for the process, of `RERAIL_THREADS` threads (4 when unset). Both of the engine's
-  executors (the CPU binding's and the Metal binding's) share it. Each launch placed on the cores is a job of its
+- **The cores** are the process's one pool (§12), of `RERAIL_THREADS` threads (the machine's cores when unset).
+  Both of the engine's executors (the CPU binding's and the Metal binding's) share it, with every other job. Each launch placed on the cores is a job of its
   own, so a batch's launches there run on every thread at once, beside other batches' launches. A kernel that splits
   its work splits it over the same threads.
 - **SME, the GPU and the Neural Engine** each have one worker thread. A batch's share of such a lane is one job, one
@@ -297,17 +297,27 @@ So placement makes a **plan**, and the lanes **claim** launches as they reach th
   that lane is **behind its plan** by more than the taker's own time for the launch (at least 0.2 ms).
 - A claim is one atomic exchange, so no launch runs twice. A pinned launch stays on its lane.
 
+When a launch falls due: on a device, once the work outstanding there is done; on the cores, once one of the
+pool's threads is free. The outstanding work is spread over the threads, then the batch's launches, largest
+first, each go on the thread free soonest.
+
 Who takes what:
 
 - **The cores' pool** takes its own launches, then any launch of a device whose worker has not reached the batch
   in time.
 - **A device** takes, after each submission of its own, the cores' launches their pool has not reached. A device
-  is sent a batch only when it has launches planned in it.
+  is sent every batch it could take a launch of, planned there or not. It keeps a batch while a launch in it may
+  yet be left for it, and sleeps until the soonest of those falls due.
 - **The waiting caller** runs free launches itself, on the cores, instead of stalling. It takes the cores' own
   ones, and those of a lane behind its plan.
 
 With no spike the plan stands: a device starts a batch within microseconds, so its launches are never late, and
 nothing moves. The claims only move work when a lane falls behind.
+
+**Two submissions deep.** A device's worker begins its next submission (the GPU's: encoded and committed)
+before it reads the one in flight (`Backend::start`, `Pending::finish`). Each of the two has its own scratch
+buffers. The right sides a submission sorts are kept at once; a later read of their runs waits for its command
+buffer.
 
 **Chaining levels.** A level's batch also carries the next level's seed joins whose relations are already held.
 Their launch, and the device's 1.7 ms of submit and schedule, then run under this level's strata instead of at the
@@ -320,6 +330,59 @@ digest and its relations' identity, as any other (§5). If either changed, the s
   the caller ran while it waited.
 - In the trace, the same per batch.
 - The level joins' decision line says how many of a batch's joins were the next level's.
+
+### 12. One pool for every job of a run
+
+Before this, a corpus run used several thread pools and threads of its own, each sized on its own:
+
+- rayon's global pool (the machine's cores), for the parallel loops;
+- the executor's pool (4 threads), for the cores' launches;
+- a work pool (4 threads), for the workspace's and the store's parallel loops;
+- a thread for the chunk builder, one per document builder (cores − 2), a thread for the cone of requests, one
+  for the store's collection, one per background compilation, and one to warm the GPU's kernels.
+
+So the run used far more threads than `RERAIL_THREADS`, and the executor's model of the cores (4 threads) was not
+the cores that ran its launches.
+
+Now there is **one pool**, rayon's global pool, made by `rerail_accel::exec::configure`: `RERAIL_THREADS`
+threads, else the machine's cores, named `rerail-cpu <i>`. Every job runs on it:
+
+- the cores' launches, and the executor's host jobs;
+- every parallel loop of the engine (the work pool is gone; its loops run on the one pool);
+- the chunk builder's work: each window of files resolved, each document parsed and made facts, each chunk
+  projected, as a job of its own;
+- each chunk's sources in the waves' schedule, the store's collection, background compilations, and the GPU's
+  kernel warm-up.
+
+The process's main thread is the pool's thread 0 (rayon's `use_current_thread`): the rules it runs, and the
+jobs it runs while it waits, are the pool's. The pool is made as the library loads, before `main` in the engine's
+binary, so nothing makes it first.
+
+**Waits run jobs.** A job that waits for others (a chunk, a batch's launches, a host job) runs the pool's queued
+jobs meanwhile (`exec::help_until`), and sleeps between polls a little more each time, from 20 µs to 1 ms. So no
+thread holds its place idle while work queues. The CPU of the jobs a thread runs for others while it waits is
+counted apart (`exec::helped`), so the run's phases count only the main thread's own work.
+
+**No thread waits for another's turn.** A job that waits for a job could run that job inside its own wait, on its
+own stack. Two jobs that each wait for the other would then never end. So nothing that waits for another long
+job is a job:
+
+- **The chunk builder has no thread.** It is a state behind a lock. Whichever job ends (a window, a document, a
+  projection), or the main thread when it asks for a chunk, advances it: the documents taken in order, cut into
+  chunks, a chunk projected as a job, handed on in the order cut. The main thread takes one chunk at a time, as
+  through a channel of one.
+- **The windows are resolved one at a time**, each a job started when the last ends. A window's statements may
+  run a parallel loop, whose wait may run another job: if that job resolved a window too, it would wait for a
+  lock its own thread holds.
+- **The cone of requests** takes turns with the main thread: it asks, the main thread answers. It runs on
+  another of the pool's threads, and the main thread runs no job until it has started, so it never runs inside
+  the main thread's wait. With one thread, it gets a thread of its own: one thread cannot hold both stacks.
+
+**What stays a thread of its own.** None of these runs a run's work on the cores:
+
+- each device lane's worker (SME, the GPU, the Neural Engine), which submits to its device and waits for it;
+- the transducer's Metal dispatcher, which does the same for the parser's GPU path;
+- the profile's watchers and the residency's drop timer, which sleep until their deadline.
 
 ## Order of work
 
@@ -495,7 +558,30 @@ digest and its relations' identity, as any other (§5). If either changed, the s
       and the callers' stall was 16 ms (82 ms before, with the pool alone).
     - Chaining puts up to 13 of the next level's joins in a level's batch. The run sends 153 launches and runs 132
       seeds from their pairs, the same as without chaining.
-13. **Gates:**
+13. **Late work, pool threads, two deep (§11).** *Built*:
+    - A device is sent every batch it could take a launch of. A test plans 8 launches on the cores, holds every
+      pool thread, and has the caller wait late: the device, with nothing planned, takes all 8.
+    - The cores' due times model the pool's threads.
+    - A device's worker begins its next submission before it reads the one in flight. A test logs a fake
+      device's starts and ends: start, start, end, end.
+    - The pack's findings are identical, unpinned and pinned to the GPU. Pinned, the callers' stall is 99 ms
+      (101 ms before): the pack rarely has a second batch waiting for the GPU.
+14. **One pool (§12).** *Built*:
+    - In a sample of the pack's run, the process has the main thread and 17 `rerail-cpu` threads (18, the
+      machine's cores), the four device lanes' workers, the profile's watchers and the system's own threads.
+      Before, it had about 30 threads of the run's own: rayon's 18, the executor's 4, and the chunk worker beside
+      the main thread.
+    - Tests: jobs that start jobs end with their scope; a job beside its caller takes turns with it; the corpus
+      tests, the cone of requests' among them; the waves' schedule; background compilation.
+    - The pack's findings are identical. CPU (user + sys), the two builds run in turn at a load of 81–92:
+
+      | | Run 1 | Run 2 |
+      |---|---|---|
+      | Before (several pools) | 65.9 s | 64.6 s |
+      | One pool | 63.3 s | 59.8 s |
+
+      The load moves the CPU by more than the change: the build before took 53.2 s at a load of 53.
+15. **Gates:**
    - The pack's findings are identical, and so are the data layer's at scale.
    - Host CPU (user + sys) of the device joins is below the CPU radix sort join's, on the lab's 232 joins and on
      the pack.
@@ -503,12 +589,11 @@ digest and its relations' identity, as any other (§5). If either changed, the s
 
 ## Open
 
-- **A device that had nothing planned** in a batch is not sent it, so it cannot take the cores' late launches
-  there; the waiting caller does instead. Sending it would hold its worker on a batch it may never serve.
-- **Late is measured against the plan's own model** of the cores (one queue of their estimates), so they are
-  rarely late. Whether to model the pool's threads is open.
-- **Pipelining the GPU's submissions.** The GPU's worker waits for each command buffer before it takes the next
-  batch. Chaining gives a batch more of the next level's joins instead.
+- **Which waits run jobs.** A thread waiting on the pool may run a long job of another's, and its own work then
+  waits for it. On the pack this costs nothing measurable; a critical path that suffers from it would wait
+  without running jobs, at the cost of a thread.
+- **The parser's Metal dispatcher** (`tempo-metal-dispatch`) is a thread of its own, as the device lanes'
+  workers are. Whether it becomes a lane of the executor is open.
 
 - **Count tables and the scalar summaries overlap.** The engine's per-key memo of scalar summaries answers a count
   once per key, and a count table answers it once per relation. Since the merge, a count the memo serves never walks

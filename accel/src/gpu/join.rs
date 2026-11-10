@@ -1031,12 +1031,14 @@ impl Column {
 }
 
 
-/// Compiles every pipeline a batch's joins use ahead of their first use, on a thread of its own: the small path's,
+/// Compiles every pipeline a batch's joins use ahead of their first use, as a job on the pool: the small path's,
 /// the scans', the radix sort's of each width with the gathers, and the tile pairs' sort. A job that needs one
-/// still being compiled waits for it (`pipeline wait`) rather than compiling it again.
+/// still being compiled waits for it (`pipeline wait`) rather than compiling it again. A panic leaves them to be
+/// compiled where they are needed (a job's panic would end the process).
 pub fn prewarm() {
-    let _ = std::thread::Builder::new().name("rerail-accel gpu prewarm".into()).spawn(|| {
-        objc::rc::autoreleasepool(|| {
+    crate::exec::configure(false);
+    rayon::spawn(|| {
+        let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
             let _ = fused_pipe("sort_all");
             let _ = fused_pipe("probe_all");
             let _ = pipeline("scan", "scan_block", || SCAN_SOURCE.to_owned());
@@ -1046,7 +1048,7 @@ pub fn prewarm() {
                 let _ = gather_pipe(w);
             }
             super::tile::prewarm();
-        })
+        }));
     });
 }
 

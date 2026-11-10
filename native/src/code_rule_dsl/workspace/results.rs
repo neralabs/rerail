@@ -5,7 +5,6 @@ use super::crossfile::CrossFileScheduler;
 use super::ingest::{candidate_dispatch, make_file};
 use super::persisted::{candidate_catalog, restore_complete_results};
 use super::{CandidateSets, ClauseId, FileState, WorkspaceState};
-use crate::WORK_POOL;
 use crate::code_rule_dsl::eval::{
     coverage, evaluation_json, failure, file_language, result_order, violation_from_witness,
 };
@@ -473,7 +472,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
     };
     // Each witness's violation is rendered and serialized on the worker pool, one at a time, so the
     // index never holds the violations as JSON values.
-    let mut entries = WORK_POOL.install(|| {
+    let mut entries = (|| {
         witnesses
             .par_iter()
             .filter(|&&(rule, _, _)| allowed(rule))
@@ -481,7 +480,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
                 page_entry(&violation_from_witness(code_rule, clause, witness.clone()))
             })
             .collect::<Result<Vec<_>>>()
-    })?;
+    })()?;
     for (&index, global) in &state.global_results {
         for violation in &global.violations {
             if allowed(&state.code_rules[index]) {
