@@ -1407,4 +1407,3 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);
     }
 }
-

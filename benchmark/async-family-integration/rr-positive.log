@@ -1,0 +1,6 @@
+
+running 1 test
+test code_rule_dsl::findings::async_reference::rr_comparison::authored_rr_batched_positive_documents_preserve_all_four_labels ... rerail: atoms: a commit that writes the store without its pending atoms was refused (decision 0049)
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3140 filtered out; finished in 0.70s

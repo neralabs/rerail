@@ -60,4 +60,4 @@ stdlib_known(m) :- target_minor(t), stdlib_module_in(m, t).
 .decl shown(t: node, at: node)
 shown(t, m) :- ann_strip(t, m), !head_q(t, "typing.Annotated"), !parsed(m, "annotation", _).
 shown(t, at) :- head_q(t, "typing.Annotated"), type_app(t, _, 0, a), shown(a, at).
-shown(t, at) :- ann_strip(t, s), parsed(s, "annotation", r), shown(r, at).
+shown(t, at) :- ann_strip(t, s), str_node(s), parsed(s, "annotation", r), shown(r, at).

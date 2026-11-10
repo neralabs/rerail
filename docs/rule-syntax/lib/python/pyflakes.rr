@@ -149,8 +149,13 @@ field_name(x) :- kind(n, "identifier"), text(n, x).
 unbound_ref(n, x) :- load_ref(n, x), miss(n, x), !annotated_on_chain(n, x).
 unbound_ref(n, x) :- load_ref(n, x), look(n, x, s), nearest(n, s, scope), (kind(s, "module") ; kind(s, "class_definition")),
     x != "__qualname__", x != "__module__",
-    count : { binding(s, x, b, _), b < n, !within(n, b) } = 0, count : { inside(s, p, lfscope), bound_in(p, x) } = 0,
+    count : { binding(s, x, b, _), b < n, !within(n, b) } = 0, !outer_bound(s, x),
     !annotated_on_chain(n, x).
+// outer_bound(s, x): an enclosing scope of s binds x; asked only for the (s, x) unbound_ref's second rule tests.
+.decl ub_cand(s: node, x: symbol)
+ub_cand(s, x) :- load_ref(n, x), look(n, x, s), nearest(n, s, scope), (kind(s, "module") ; kind(s, "class_definition")).
+.decl outer_bound(s: node, x: symbol)
+outer_bound(s, x) :- ub_cand(s, x), inside(s, p, lfscope), bound_in(p, x).
 // load_ref(n, x): n reads x: an `ast.Name` in load context, or the target of `x += 1`, which reads x first.
 // The names of `from __future__ import ...` are not reads.
 .decl load_ref(n: node, x: symbol)

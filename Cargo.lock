@@ -3206,7 +3206,10 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-compiler",
+ "rerail-metal",
  "rerail-parser-tests",
+ "rerail-prof",
+ "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
  "ruff_python_ast",
@@ -3232,14 +3235,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-metal"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "libc",
+ "metal",
+ "rerail-accel",
+ "rerail-compiler",
+ "rerail-prof",
+ "serde",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "rerail-parser-tests"
 version = "0.1.0"
 dependencies = [
  "bitlex",
  "rerail-compiler",
+ "rerail-metal",
  "rerail-rr-syntax",
  "tree-sitter",
  "tree-sitter-json",
+]
+
+[[package]]
+name = "rerail-prof"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "rerail-rr-parser"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "libc",
+ "rerail-compiler",
+ "rerail-metal",
+ "rerail-rr-syntax",
 ]
 
 [[package]]

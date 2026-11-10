@@ -2324,8 +2324,11 @@ fn a_grammar_the_registry_does_not_have_is_refused() {
 fn a_nested_aggregate_keeps_the_rules_variables_it_reads() {
     let p = parse(".decl ident(x: symbol)\nident(\"a\").\n.decl fn(f: number)\n.decl ref(n: number, f: number, x: symbol)\n.input fn, ref\n.decl hit(f: number)\n.output hit\nhit(f) :- fn(f), count : { ident(x), count : { ref(n, f, x) } = 0 } > 0.\n").unwrap();
     let shown: Vec<String> = p.rules.iter().map(ToString::to_string).collect();
-    let helper = shown.iter().find(|r| r.contains("count { ref(")).expect("the inner count's rule");
-    assert!(helper.starts_with("rr_agg") && helper.contains("($f, $x) :- rr_ctx"), "{shown:#?}");
+    // The inner count-zero lowers to anti-existence. Its helper still carries both outer keys.
+    let helper = p.rules.iter().find(|r| r.body.iter().any(|l|
+        matches!(l, Literal::Atom(a) if a.neg && a.rel == "ref"))).expect("the inner anti-existence rule");
+    assert!(helper.head.rel.starts_with("rr_agg") && helper.head.vars() == BTreeSet::from(["f".into(), "x".into()]), "{shown:#?}");
+    assert!(helper.body.iter().filter_map(Literal::atom).any(|a| a.rel.starts_with("rr_ctx")), "{shown:#?}");
     let hit = shown.iter().find(|r| r.starts_with("hit(")).unwrap();
     assert!(hit.contains("($f, _)"), "the outer count groups by f: {hit}");
 }

@@ -1,0 +1,661 @@
+{
+  "profiled": true,
+  "files": 5725,
+  "executions": 3849,
+  "execution_budget_100_met": false,
+  "cpu_seconds": 9.248855,
+  "wall_seconds": 7.828101166,
+  "vm_steps": 336517,
+  "candidate_sql_vm": 0,
+  "candidate_sql": [],
+  "demand_reads": [
+    {
+      "count": 70,
+      "text": "async_constructor_demand: retained rows=0",
+      "topic": "native demand read"
+    },
+    {
+      "count": 2,
+      "text": "async_constructor_demand: retained rows=1",
+      "topic": "native demand read"
+    },
+    {
+      "count": 67,
+      "text": "async_receiver_demand: retained rows=0",
+      "topic": "native demand read"
+    },
+    {
+      "count": 2,
+      "text": "async_receiver_demand: retained rows=1",
+      "topic": "native demand read"
+    },
+    {
+      "count": 2,
+      "text": "async_receiver_demand: retained rows=2",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_receiver_demand: retained rows=4",
+      "topic": "native demand read"
+    },
+    {
+      "count": 36,
+      "text": "async_reference: cache rows=0",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=10",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1013",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1062",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1072",
+      "topic": "native demand read"
+    },
+    {
+      "count": 6,
+      "text": "async_reference: cache rows=12",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1204",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1306",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1330",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1361",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=14",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1434",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1438",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=15",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1511",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1530",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1533",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1572",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1586",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=168",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1731",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=188",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=1967",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=2",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=2067",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=2177",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=2264",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=229",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=2353",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=2471",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=252",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=281",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=3053",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=315",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=32",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=332",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=3603",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=411",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=412",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=420",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=4306",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=449",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=4568",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=4790",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=54",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=56",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=562",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=564",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=601",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=605",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=620",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=63",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=75",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=758",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=775",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=777",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=838",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=96",
+      "topic": "native demand read"
+    },
+    {
+      "count": 3,
+      "text": "async_reference: cache rows=991",
+      "topic": "native demand read"
+    },
+    {
+      "count": 12,
+      "text": "async_reference: retained rows=0",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=10",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1013",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1062",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1072",
+      "topic": "native demand read"
+    },
+    {
+      "count": 2,
+      "text": "async_reference: retained rows=12",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1204",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1306",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1330",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1361",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=14",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1434",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1438",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=15",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1511",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1530",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1533",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1572",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1586",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=168",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1731",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=188",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=1967",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=2",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=2067",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=2177",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=2264",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=229",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=2353",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=2471",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=252",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=281",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=3053",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=315",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=32",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=332",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=3603",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=411",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=412",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=420",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=4306",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=449",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=4568",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=4790",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=54",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=56",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=562",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=564",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=601",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=605",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=620",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=63",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=75",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=758",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=775",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=777",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=838",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=96",
+      "topic": "native demand read"
+    },
+    {
+      "count": 1,
+      "text": "async_reference: retained rows=991",
+      "topic": "native demand read"
+    },
+    {
+      "count": 72,
+      "text": "p1_async_argument_demand: retained rows=0",
+      "topic": "native demand read"
+    },
+    {
+      "count": 72,
+      "text": "p1_async_mode_demand: retained rows=0",
+      "topic": "native demand read"
+    },
+    {
+      "count": 72,
+      "text": "p1_async_mode_value_demand: retained rows=0",
+      "topic": "native demand read"
+    }
+  ],
+  "candidate_snapshot_loads": 72,
+  "candidate_snapshot_cache_hits": 216,
+  "passed": true
+}

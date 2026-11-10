@@ -39,6 +39,10 @@ pub(super) struct Native<'a> {
     paths: &'a [String],
     modules: &'a BTreeMap<u32, ModulePath>,
     corpus: Arc<Corpus>,
+    // Corpus selection caches are keyed by plan identity. Preserve the adapted
+    // plans for this oracle's lifetime, as the original compiled grammar did.
+    plans: BTreeMap<u32, Vec<Arc<AnchorPlan>>>,
+    by_matcher: std::collections::HashMap<usize, Arc<AnchorPlan>>,
     /// CPU time publishing the input tapes into one reusable production index.
     pub index_ns: u64,
     pub index_wall_ns: u64,
@@ -93,6 +97,7 @@ impl<'a> Native<'a> {
                 .put(path, root.root().get_doc(), &|| false)
                 .expect("publish native oracle tape");
         }
+        let (plans, by_matcher) = anchor_plans(&compiled.inner);
         let index_ns = super::cpu_ns().saturating_sub(started);
         let index_wall_ns = wall.elapsed().as_nanos() as u64;
         Self {
@@ -101,6 +106,8 @@ impl<'a> Native<'a> {
             paths,
             modules,
             corpus,
+            plans,
+            by_matcher,
             index_ns,
             index_wall_ns,
         }
@@ -112,9 +119,9 @@ impl<'a> Native<'a> {
         let roots_before = matcher::roots_matched();
         let compile_before = phase_clock::ANCHOR_COMPILE.load(Ordering::Relaxed);
         let preparing = super::cpu_ns();
-        let (plans, by_matcher) = anchor_plans(&self.compiled.inner);
+        let (plans, by_matcher) = (&self.plans, &self.by_matcher);
         self.corpus
-            .prepare(&plans)
+            .prepare(plans)
             .expect("prepare native oracle anchors");
         let prepare_total = super::cpu_ns().saturating_sub(preparing);
         let compile_ns = phase_clock::ANCHOR_COMPILE

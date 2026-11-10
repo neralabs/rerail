@@ -49,7 +49,7 @@ after:  each value at its own delay; outputs and fallback masks never aligned;
 3. **Byte classes fold.** A value computed from bytes alone keeps its byte set, and combining
    two such values gives one class: one lookup per table, one bitmask.
 4. **`prev` folds.** `prev(prev(x, a), b)` is `prev(x, a + b)`, on `x`'s carried word.
-5. **The guards** (`bitlex_compile_tests::json_compiles_to_simdjsons_shape`):
+5. **The guards** (`json_compiles_to_simdjsons_shape`, now in `rerail_parser_tests::compile_tests`):
    - **No violations, for every compiled program:**
      - no output is a `prev`;
      - no `prev` of `within`;
@@ -61,7 +61,7 @@ after:  each value at its own delay; outputs and fallback masks never aligned;
      lowers the constants in the same commit.
 6. **Cranelift's loop keeps simdjson's machine shape**
    (`block_tests::stage1_loop_keeps_values_in_registers`,
-   `bitlex_compile_tests::json_loop_keeps_values_in_registers`):
+   `json_loop_keeps_values_in_registers`, the same file):
    - **One carried word per `prev` base**, shared by every distance, as simdjson's one
      `prev_in_string` word. The body's block parameters are exactly the carried words plus one
      count per extract.

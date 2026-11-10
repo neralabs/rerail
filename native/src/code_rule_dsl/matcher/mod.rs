@@ -34,6 +34,8 @@ mod lower;
 mod memo;
 mod nth_child;
 mod parse;
+#[cfg(test)]
+pub(crate) mod python_facts;
 mod relation;
 mod resolve;
 mod run;
