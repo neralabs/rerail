@@ -252,20 +252,20 @@ pc_nl(c, n) :- pc_bop(_, _, c), n = count : { pc_loop(c, _) }.
 .decl pc_lf(c: node, j: number, k: number)
 pc_lf(c, 0, 1) :- pc_bop(_, _, c), !pc_inwhile(c).
 pc_lf(c, j + 1, t) :- pc_lf(c, j, k), j < 100000, pc_lj(c, f, j), field(f, "right", it), len_of(it, w), t = k * w,
-    len_num(t).
+    t >= 0, t <= 100000.
 .decl pc_grow(c: node, k: number)
 pc_grow(c, m) :- pc_lf(c, n, m), pc_nl(c, n), callee(c, h), attr_of(h, _, "append").
 pc_grow(c, t) :- pc_lf(c, n, m), pc_nl(c, n), callee(c, h), attr_of(h, _, "extend"), posarg(c, 0, a), len_of(a, w),
-    t = m * w, len_num(t).
+    t = m * w, t >= 0, t <= 100000.
 pc_grow(c, t) :- pc_lf(c, n, m), pc_nl(c, n), kind(c, "augmented_assignment"), field(c, "right", r), len_of(r, w),
-    t = m * w, len_num(t).
+    t = m * w, t >= 0, t <= 100000.
 .decl pc_bj(g: node, x: symbol, c: node, j: number)
 pc_bj(g, x, c, j) :- pc_bop(g, x, c), j = count : { pc_bop(g, x, c2), c2 < c }.
 .decl pc_nb(g: node, x: symbol, n: number)
 pc_nb(g, x, n) :- pc_bld(g, x, _), n = count : { pc_bop(g, x, _) }.
 .decl pc_bf(g: node, x: symbol, j: number, k: number)
 pc_bf(g, x, 0, k) :- pc_bld(g, x, l), len_of(l, k).
-pc_bf(g, x, j + 1, t) :- pc_bf(g, x, j, k), j < 100000, pc_bj(g, x, c, j), pc_grow(c, w), t = k + w, len_num(t).
+pc_bf(g, x, j + 1, t) :- pc_bf(g, x, j, k), j < 100000, pc_bj(g, x, c, j), pc_grow(c, w), t = k + w, t >= 0, t <= 100000.
 len_of(e, k) :- pc_local(e, g, x), pc_bf(g, x, n, k), pc_nb(g, x, n).
 
 

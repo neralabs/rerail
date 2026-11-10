@@ -13,7 +13,6 @@ use super::{
     packed_batch::{PackedBatch, PackedExecution, PackedResultPage},
     value_packing::PackedValueTables,
 };
-use crate::WORK_POOL;
 use crate::code_rule_dsl::tape::TapeDoc;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
@@ -3169,7 +3168,7 @@ fn execute_batch_packed_with_work_limit(
             return Err(Error::BackendFailure);
         }
     }
-    let task_outputs = WORK_POOL.install(|| {
+    let task_outputs = (|| {
         spans
             .into_par_iter()
             .map(|span| span.iter_mut().map(|(program, context)| {
@@ -3232,7 +3231,7 @@ fn execute_batch_packed_with_work_limit(
                 })
             }).collect::<Result<Vec<_>, Error>>())
             .collect::<Result<Vec<Vec<_>>, Error>>()
-    })?
+    })()?
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();

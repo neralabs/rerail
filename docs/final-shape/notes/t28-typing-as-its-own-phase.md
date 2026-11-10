@@ -136,7 +136,51 @@ Against Jedi over the 84 files (dev build, load 15–30), with each run's store 
 No call is answered worse than calls_cx answers it: no line has more "no edge" or "another definition" answers.
 97 calls that calls_cx does not agree on now agree, and 16 it agreed on are now unknown. Those 16 are mostly generics
 instantiated through a library class (`Mapping.get`, `Future.result`, `IO.fileno` on `open()`'s overloads), which
-P3 does not do yet.
+P3 did not do then (next section).
+
+### P3 with library generics, overloads, `async` and the cross-file memo
+
+After the open items below were taken on, and after the merge of More-ergonomic-rule-syntax and final-rerail-shape
+(2026-11-09; dev build, load 15–20, the cross-file memo on, `RERAIL_PYTHON_CROSS_MEMO=*`):
+
+| | P3, cold | P3, warm |
+|---|---|---|
+| agree | 6,390 | 6,390 |
+| program unknown, Jedi decided | 633 | 633 |
+| program no edge, Jedi a definition | 412 | 412 |
+| program another definition | 2 | 2 |
+| main-thread CPU | 41.8 s | 16.3 s |
+| process user CPU | 52.6 s | 17.0 s |
+| components (cross-file memo) | 59 derived | 59 found |
+| peak footprint / resident set | 371 MB / 450 MB | 299 MB / 370 MB |
+
+What was added:
+- **struct** marks `flag(f, "async")` and `flag(f, "overload")` (the decorator, by name or attribute), each function's
+  positional `shape(f, need, cap, kw)`, and `tvar(s)`, a module-level `TypeVar(...)`.
+- **types** gives a class its type parameters, `tparam(c, i, y)` (its `Generic[...]`/`Protocol[...]` base, else its first
+  generic base's), maps them through its bases, `tmap(k, i, a, y)` (dict's parameter 1 is Mapping's `_VT_co`), and
+  marks returns that name them: `rvar(f, y)` (`-> _VT | None`) and `rgen(f, k, j, y)` (`-> Iterator[_T]`). `ropen(f)`
+  replaces the `""` row: a return with an alternative that is no class, None nor type variable.
+- **calls_p3** fits overloads by positional arity (`lcfn`, `lfit`; a method's receiver counted); a call no overload
+  fits is open. An `async def`'s call is open. A workspace annotation naming a library generic (`d: dict[str, C]`)
+  is a generic value; a library method returning its class's type variable holds what the value binds it to, and
+  one returning a generic of it holds that generic, bound (a loop's `__next__` over `list[C]` is a C). A union's
+  members each count. An imported library value is known (`bknown`), not open.
+- The cross-file memo works with P3: 59 components derived cold, all found warm, and `RERAIL_CROSS_MEMO=verify`
+  finds the replayed rows equal to those derived. Its plan is now digested under the phase exports the cross-file
+  rules read (`types__attr`, `types__tmap`: a library's stubs, which no component's documents hold), so a stub edit
+  misses the stored rows. Coarse: any change to such an export misses every component.
+
+Of the 16 calls above, 10 now agree. The rest need a constructor's type variables inferred from its arguments
+(`frozenset(dir(cls))`'s str methods: calls_cx's `fbind`, for library classes), `NoneType.__new__`, and
+`ContextVar.get` through a module annotation whose value is a call.
+
+**Memory, measured.** The process's peaks are sampled every 5 ms (`RERAIL_PROF_MEMORY_MS`) by a thread that charges
+each rise of the high-water mark to the spans open on every thread (the profile's "Sampled every…" section, and
+`memory.tsv`); `profile::peaks()` prints the footprint, `ru_maxrss` and the sampled peak at a run's end. The 1.08 GB
+warm peak was the profiler's own: the roofline's `Literal` roof cloned 2^20 literals three times over (~650 MB),
+measured at a profile's write whenever its cache missed, and the benchmark's fresh engine copy always missed it. It
+now clones 2^16. The engine's peak is P3's cross stratum `tbv/tqv/tv`: 371 MB footprint cold, 299 MB warm.
 
 Faults found on the way, all fixed:
 - **The constants' run started the phases** (engine, `phases::facts`). The constants' own run passes its options
@@ -150,25 +194,41 @@ Faults found on the way, all fixed:
   assignment of that module: 65.8 s. The aliases are now made first and keyed by the name they read (4.5 s).
 - **A join order scanned every class**: `lattr` put `struct__def(t, "class")` before `types__vtype` (16.3 s for 288 k
   rows). The program now joins on a relation made first (`ldecl`); the planner's choice is noted below.
+- **`lmethod` split every library function's symbol in every chunk** (30.4 s local, 6.7 s cross, cold). It is asked
+  only of overloads, so it now starts from them, by `struct__member`.
+
+Faults the 2026-11-09 merge brought, all fixed here:
+- **A projection dropped a location column** (simplify, decision 0098 §1). `py_docmod(d, p, q)` is read only as
+  `py_docmod(_, p, q)`, so it lost `d`, and a load could not hand on a document's rows ("py_docmod: no location
+  column", every run that loads). A relation whose read columns hold no location keeps its first. Test:
+  `simplify::tests::a_projection_keeps_a_location_column`.
+- **Inlining (decision 0099) removed a memoised relation's table** ("no such table: rr_in_annotation_0_ext_import",
+  `calls_open`): the cross-file memo reads their derived rows from it to record them. A memoised relation is now
+  `no_inline`. Test: the end of `cross_file_rows_are_memoised_per_import_component`, with `RERAIL_INLINE_ONLY`.
+- **Inlining a recursion's join relation made it scan.** `parent` unfolded into `owner`'s recursion scanned every
+  definition per new row (445 M rows, 311 s of P3's cold run); `rr_cx_edge` unfolded into `rr_cx_reach` scanned every
+  document's module (133 M rows, 277 s of calls_cx's). Both are `no_inline` now, and `cross_memo::add` carries
+  `components.rr`'s qualifiers. Keeps priced the first at "readers add 0 work" and the second at −7.8 M: a pricing
+  question for keeps (final-rerail-shape), not changed here.
 
 ## What is missing
 
 ### P3 still to come
 
-- Generic instantiation through a library's classes (`list[C]`'s `__iter__`, `dict[str, C].get`, the `gpar`,
-  `wbind` and `fbind` machinery on stub nodes): needs P2's schemes. These are most of the 16 calls above.
-- Overloads fitted by arity. Today the returns of every overload are taken, and any open one makes the call open.
-- `async def` in stubs: struct does not mark it, so an awaited library call's value is typed as its return.
-- The cross-file memo per import component (`RERAIL_PYTHON_CROSS_MEMO`) is not used with P3 yet; the runs above are
-  without it.
-- The warm run's process peaked at 1.08 GB RSS, though the run reports 352 MB: what holds the rest (the phase rows
-  read back from the store, most likely) is not measured yet. It is over the 1 GB budget.
+- A constructor's type variables inferred from its arguments, for library classes (`frozenset(xs)` of a `list[str]`:
+  calls_cx's `fbind`). Generic instantiation by annotations, returns and bases is done (above).
+- Overloads by keyword or by argument type: fitted by positional arity only.
+- An awaited call's value: an `async def`'s call is open today, not its return.
+- The cross-file memo's plan misses every component when any phase export it reads changes; finer, a component would
+  be keyed by the export rows its documents read.
+- Nested runs (a phase's) have spans, but the sampler charges a rise to the innermost span open on each thread;
+  a rise in a phase's worker shows under the phase.
 
 ### P2 still to come
 
-- Overloads (`@overload` stubs): struct does not mark them yet.
 - `__all__`, which narrows `import *`.
-- Generic signatures held as schemes. Today a generic annotation is kept as text, its head resolved.
+- Generic signatures held as schemes. Type parameters, their maps through bases, and returns naming them are
+  facts (`tparam`, `tmap`, `rvar`, `rgen`); parameters naming them (for a constructor's inference) are not yet.
 
 ### P3 without libraries
 
@@ -219,7 +279,7 @@ Still to come:
 | 2 | engine, done | phase runs flat; an upstream phase checked once; loads refused in a later phase; kept when unchanged | phase tests |
 | 3 | done here | `types.rr` (P2): binds, bases/anc, attr, sig/rtype/vtype, owner | 10.3 s cold, 0.11 s unchanged |
 | 4 | spike, done | P1 → P2 → a reader over the 84 files | 99.3% of imports present, 91.2% of annotations |
-| 5 | done here | P3 `calls_p3.rr`: no loads, library values as symbols from `types.` | 6,380 agree (calls_cx 6,299); 43.3 s cold, 15.2 s warm |
+| 5 | done here | P3 `calls_p3.rr`: no loads, library values as symbols from `types.` | 6,380 agree (calls_cx 6,299); 43.3 s cold, 15.2 s warm; with generics, overloads and the memo 6,390, 41.8 s and 16.3 s |
 | 6 | engine | searches (`inst`, `mro_find`) as the on-demand path (t26) | `wbind`/`gpar` work gone |
 | 7 | after 0094 §4 | P2 from struct's delta | an edit's cost in P2 |
 
@@ -244,6 +304,13 @@ After the 2026-11-09 merge of Typing-support and serverplan-quality, `fbind` is 
 (6.4 s, 20 M work, where t27 had it off the list). Its delta plan reads `pv(a, "inst", k)`, then `tfix(k, …)`, then
 `fgp`, then `fcall(c, f, i, a)`, though `fcall` is bound by `a` straight after `pv`. That is a pricing question for
 the statistics branches (serverplan-quality, wolfeel), not changed here. P3 does not run `fbind` over library rows.
+
+Remeasured after merging final-rerail-shape (its planner statistics, b88aba452 and d7fe3054d) on 2026-11-09: calls_cx
+takes 63.4 s main-thread CPU (87.0 s before; same answers; 780 MB resident at most), but `fbind` keeps its order and
+its work (19.2 M: 5.5 M rows out of `fgp` for 220 out of `fcall`). Every relation of its stratum is priced at the
+default 450,092 rows ("this stratum": derived in the same fixpoint, so no statistics yet), so the planner has nothing to
+tell `fcall` bound by `a` from `tfix` by `k`. Still the statistics branches' question: estimates for relations of the
+running stratum.
 
 Likely conflicts when these meet: `plan/corpus.rs` (every branch), `phases.rs` (Typing-support), `plan.rs`
 (the search here, statistics in Two-pass and wolfeel), and `typing/file_local.rs` (Typing-support, wolfeel).

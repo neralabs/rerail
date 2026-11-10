@@ -316,6 +316,7 @@ pub(in crate::code_rule_dsl) fn span(name: impl FnOnce() -> String) -> Span {
         return Span(false);
     }
     let name = name();
+    memory::sample();
     STACK.with(|s| {
         let mut s = s.lock();
         let path = match s.opens.last() {
@@ -359,6 +360,30 @@ impl Drop for Span {
             t.own_rise += rise.saturating_sub(open.children_rise);
         });
     }
+}
+
+/// Each live thread's innermost open span, as `thread: path` (for the memory sampler).
+fn open_paths() -> (Vec<String>, usize) {
+    let all: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
+    (all.iter().filter_map(|t| { let t = t.lock(); t.opens.last().map(|o| format!("{}: {}", t.name, o.path)) }).collect(), all.len())
+}
+
+/// The process's peaks so far, for a caller to print after a run (the run's report is written before its caller's
+/// own work): the high-water mark of the footprint and of the resident set, and the sampler's peak with what was
+/// open then. Also rewrites `memory.tsv` in the profile directory, so the timeline covers the caller's work too.
+pub(in crate::code_rule_dsl) fn peaks() -> String {
+    let (now, max) = memory::footprint();
+    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+    // SAFETY: fills a `rusage` for this process.
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+    // macOS reports bytes, Linux kilobytes.
+    let rss = if cfg!(target_os = "macos") { usage.ru_maxrss as f64 } else { usage.ru_maxrss as f64 * 1024.0 };
+    let mut r = format!("process: footprint {} MB now, {} MB at most; resident set {} MB at most\n", memory::mb(now as f64), memory::mb(max as f64), memory::mb(rss));
+    memory::sampled_report(&mut r);
+    if let Some(dir) = directory() {
+        let _ = std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv());
+    }
+    r
 }
 
 /// This thread's open span's path, `-` outside any.
@@ -887,6 +912,7 @@ fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     for (p, t) in rose.iter().take(15) {
         let _ = writeln!(r, "{:>10} MB  {}", memory::mb(t.own_rise as f64), short(p, 140));
     }
+    memory::sampled_report(r);
 }
 
 /// CPU (user + system) of the thread with Mach port `port` (macOS), read from another thread; `None` elsewhere.
@@ -965,6 +991,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let _ = writeln!(spans_tsv, "{p}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}", t.calls, t.total, t.own, t.alloc, t.own_alloc, t.freed, t.rise, t.own_rise);
     }
     std::fs::write(dir.join("spans.tsv"), spans_tsv)?;
+    std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv())?;
     let mut sql: Vec<_> = state.sql.iter().collect();
     sql.sort_by_key(|(_, s)| std::cmp::Reverse(s.ns));
     let mut sql_tsv = String::from("span\truns\tms\tvm_steps\tfullscan_steps\tsorts\tautoindex_rows\tsql\n");
@@ -1116,6 +1143,18 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         }
     }
 
+    // The executor's scoreboard (rerail-accel): every job on every lane, its thread CPU and its phases. On a device
+    // lane, `cpu s` is the host CPU the device cost; `wall` phases with no CPU are the device's own timeline.
+    let _ = writeln!(r, "\n== Executor (rerail-accel): jobs per lane, host CPU per phase");
+    let scores = super::lanes::scores();
+    if scores.is_empty() {
+        r.push_str("(no executor)\n");
+    }
+    for (binding, score) in scores {
+        let _ = writeln!(r, "-- {binding}");
+        let _ = writeln!(r, "{score}");
+    }
+
     // Warnings: the shapes that usually explain a slow rule.
     let _ = writeln!(r, "\n== Warnings");
     let mut warned = 0;
@@ -1238,6 +1277,25 @@ mod tests {
 
     /// Decision 0084: a span charges the bytes its thread allocated, its own apart from its children's, and what it
     /// freed; a dump lists the spans still open on every thread, with the SQL statement running.
+    #[test]
+    fn the_memory_sampler_charges_a_rise_to_the_span_open_on_its_thread() {
+        let _serial = one_run();
+        set(true);
+        {
+            let _s = span(|| "sampler probe: a big allocation".into());
+            // Touched pages, held for several sampling periods, well above anything before it in this test process.
+            let big = std::hint::black_box(vec![7u8; 256 << 20]);
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            drop(big);
+        }
+        let s = memory::SAMPLED.lock().unwrap();
+        assert!(s.every_ms > 0);
+        let charged: Vec<&String> = s.rise.iter().filter(|(p, (r, _))| p.ends_with("sampler probe: a big allocation") && *r > 0).map(|(p, _)| p).collect();
+        assert!(!charged.is_empty(), "the rise is charged to the open span: {:?}", s.rise.keys().collect::<Vec<_>>());
+        drop(s);
+        set(false);
+    }
+
     #[test]
     fn spans_charge_memory_and_a_dump_lists_what_is_open() {
         let _serial = one_run();

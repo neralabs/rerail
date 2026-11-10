@@ -40,7 +40,6 @@ use crate::code_rule_dsl::value::names;
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
 use crate::content_store::{CandidateCatalogIdentity, HashKey, StoredLocalResult};
-use crate::{WORK_POOL, WORKER_THREADS};
 use ast_grep_core::AstGrep as Root;
 use ast_grep_language::LanguageExt;
 use napi::Result;
@@ -51,6 +50,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tree_sitter::{ParseOptions, Parser, Point};
+
+/// Fewer jobs than this run one after another: too few to be worth the pool.
+const PARALLEL_FROM: usize = 4;
 
 /// The matcher and anchor plan for this file's grammar; candidates only exist for supported grammars.
 pub(super) fn candidate_grammar<'a>(
@@ -221,17 +223,17 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     let work = |job: Job, grammars: &mut BTreeMap<String, Arc<tape::Grammar>>| {
         run_job(job, grammars, context, &prefetched)
     };
-    Ok(if jobs.len() < WORKER_THREADS {
+    Ok(if jobs.len() < PARALLEL_FROM {
         let mut grammars = BTreeMap::new();
         jobs.into_iter()
             .map(|job| work(job, &mut grammars))
             .collect()
     } else {
-        WORK_POOL.install(|| {
+        (|| {
             jobs.into_par_iter()
                 .map_init(BTreeMap::new, |grammars, job| work(job, grammars))
                 .collect()
-        })
+        })()
     })
 }
 
@@ -328,19 +330,19 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         CrossFileScheduler::retain_scopes(&mut file, consumes);
         (path, file, work)
     };
-    Ok(if jobs.len() < WORKER_THREADS {
+    Ok(if jobs.len() < PARALLEL_FROM {
         let mut grammars = BTreeMap::new();
         jobs.into_iter()
             .zip(storage_times)
             .map(|job| work(job, &mut grammars))
             .collect()
     } else {
-        WORK_POOL.install(|| {
+        (|| {
             jobs.into_par_iter()
                 .zip(storage_times.into_par_iter())
                 .map_init(BTreeMap::new, |grammars, job| work(job, grammars))
                 .collect()
-        })
+        })()
     })
 }
 
