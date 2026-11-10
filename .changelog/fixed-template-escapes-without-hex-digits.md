@@ -1,0 +1,1 @@
+JavaScript and TypeScript files whose template holds a `\x` or `\u` with no hex digits after it, as ``String.raw`C:\x\users` `` does for a Windows path, now parse. Rules that read names reported "file has syntax errors" for such a file and skipped it whole.
