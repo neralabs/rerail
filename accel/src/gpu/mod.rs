@@ -101,7 +101,11 @@ fn gpu() -> Option<&'static Gpu> {
 
 /// This lane's backend, when this machine has a Metal device and the kernels compiled.
 pub fn backend() -> Option<Arc<dyn Backend>> {
-    gpu().map(|gpu| Arc::new(GpuBackend { gpu, space: Default::default() }) as Arc<dyn Backend>)
+    gpu().map(|gpu| {
+        // The joins' small path compiles in the background, so the first chunk's batch does not wait for it.
+        join::prewarm();
+        Arc::new(GpuBackend { gpu, space: Default::default() }) as Arc<dyn Backend>
+    })
 }
 
 /// The gpu lane.
@@ -161,7 +165,9 @@ impl Backend for GpuBackend {
                 off.len() as u64 == n + 1 && u32ok(n * words * 2) && fits(n * words * 8)
             }
             Kernel::Join { left, right, by, .. } => {
-                let Ok((nl, nr)) = Kernel::join_shape(left, right) else { return false };
+                let Ok((nl, nr)) = Kernel::join_shape(left, right) else {
+                    return false;
+                };
                 // The pairs' space (two a left row to start) and the columns at 64 bits.
                 let shape = fits(nl as u64 * 16) && fits(nr as u64 * 8) && (nl as u64) < (u32::MAX as u64) / 2;
                 shape && (*by == JoinBy::Probe || left.len() <= 3)

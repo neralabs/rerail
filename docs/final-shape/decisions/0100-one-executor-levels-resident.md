@@ -1,7 +1,7 @@
 # 0100: One executor for a chunk's strata: levels sent to every lane at once, relations kept on the GPU
 
 Status: draft (2026-11-09). It builds 0095 §5 (device waves) on the executor of 0098 §6. The order of work is
-below; steps 1–5 and 7 are built, and step 6 is measured.
+below; steps 1–5 and 7–10 are built, and step 6 is measured.
 
 ## Intro
 
@@ -187,6 +187,101 @@ The variable is the engine's thread setting from the rule-syntax work, where it 
 (the machine's cores when unset). The executor reads the same variable, so the two agree once both are merged. The
 executor's default is 4, which is what was asked for.
 
+### 9. Placement by host CPU, and GPU jobs of a few µs
+
+On a shared machine the cores are busy and the GPU is mostly idle. So the scarce thing is the host's CPU, not wall
+time, and a device's latency costs the host nothing while it works on. Placement weighs each launch by three
+numbers on each lane (`Prices::cost`):
+
+- **finish:** when it would be done, counting what is queued on the lane, the lane's latency, and its work. The
+  cores' work is stretched by the machine's load (the load average over the cores, at least 1).
+- **wall:** its seconds of work there.
+- **host:** the host CPU it costs there. On the cores and SME that is their work. On the GPU it is the job's
+  encoding, commit and reads, plus copying host columns (about 1 ns a row). On the Neural Engine it is its
+  submission.
+
+The rule (`Prices::choose_host`) is:
+
+1. The **deadline** is the later of two times: the parity band times the first lane to finish, and the
+   batch's **slack**.
+2. Of the lanes done by the deadline, the one of **least host CPU** wins, then the one of least energy.
+
+The slack is how long the batch's caller works before it waits. A lane done by then costs the caller no wall
+time. Each kind of batch (`Executor::begin_as`, such as "level joins") has its own slack: the lower quartile of
+its last 32 overlaps (begin to wait). The quartile is used, not the mean, because some callers of a kind wait at
+once and others much later. The mean would give the first sort the second's slack.
+
+**Measured, not assumed.** The scoreboard keeps three moving averages per lane, and placement reads them:
+
+- the lane's latency (the GPU's submit, schedule and wake);
+- a device job's thread CPU;
+- the job's host CPU over the price's estimate. This scales that lane's host estimates.
+
+A cold job is left out of all three: one that compiled a pipeline or made a pool buffer. One cold sample would
+otherwise keep the GPU from ever being chosen again.
+
+**A GPU job's host CPU** is cut by doing the batch's work in two dispatches, whatever its number of joins:
+
+- `sort_all`: one threadgroup per right side of at most 2,048 rows and three keys. A bitonic sort of (key, row)
+  runs in threadgroup memory (20 KB), so the order is stable. It writes the runs, the order and the other columns
+  gathered.
+- `probe_all`: one threadgroup per 1,024 left rows of any probe in the batch. It counts its rows' pairs, reserves
+  them in the batch's arena with one atomic, and writes them there. The host reads each probe's pairs block by
+  block, in left row order. So no probe needs a second command buffer to learn its size. Only a probe whose pairs
+  did not fit the arena runs again, into space of its exact size.
+- Each job's buffers are reached through device pointers in a table the host writes. One `use_resources` call
+  makes them resident.
+
+Indirect command buffers were not needed: the descriptor tables fold the batch into two dispatches, which is
+fewer calls than encoding one command per join. Larger right sides keep the radix sort, and the probes over them
+join the same probe dispatch.
+
+The rest of a job's host work:
+
+- Left columns go up raw, 64 bits, with no span taken and no narrowing.
+- The fused pipelines compile on a thread of their own when the lane starts.
+- The second command buffer is made only for tile scatters and spilled probes.
+
+### 10. Commit first, fill after
+
+A batch's columns can be **staged** (`rerail_accel::col`). Their sizes are known when the batch is begun, and
+their values are written after it.
+
+- A `Gate` makes staged columns (`Gate::column`). Each is a pool buffer the device reads in place, and one
+  `Writer` fills it. The gate opens once: when the caller calls `Opener::open`, or when the opener drops, so a
+  device never waits forever on an error.
+- The GPU lane's command buffer waits at its head on each closed gate's shared event. The lane encodes and
+  commits at once. When the gate opens, its event is signalled, and the device starts.
+- On the host, reading a staged column waits for its gate. A right side too large for the fused sort is
+  narrowed from its values, so for that one the lane waits for the fill before encoding (`wait for fill`).
+
+The level batch begins with staged columns, then fills them from the relations, and opens the gate. The lane's
+encoding and commit run while the host fills, instead of after it. The submission and scheduling delay
+(about 1.7 ms under load) runs while the caller goes on to its strata.
+
+**What the explain output shows** (the profile's executor section, and the scoreboard trace):
+
+- The measured averages per lane: latency, a device job's host CPU, and actual over estimated host CPU.
+- Per lane and form, host CPU estimated against actual.
+- Per phase:
+  - fill after begin;
+  - wait for fill;
+  - fill after commit (how long the device waited for the host);
+  - pipeline compile;
+  - new buffer;
+  - the sorts by kind;
+  - second command buffers.
+- Per kind of batch:
+  - launches per lane;
+  - launches not on their fastest lane;
+  - host CPU as placed, against placing each on its fastest lane;
+  - the wall time that adds;
+  - the slack used;
+  - the overlap and the stall;
+  - batches stalled, and the longest stall;
+  - the slack now.
+- In the trace, a line per batch with its overlap and stall.
+
 ## Order of work
 
 1. **Merge the executor's branch** and renumber its decisions to 0098 and 0099. *Done*: findings identical on the
@@ -302,13 +397,50 @@ executor's default is 4, which is what was asked for.
      plans over 0.1 s each take 4 s. The rest average about 1 ms a plan. The scalar summaries take 2.3 s. The
      statistics and plans take 3.1 s and SQL 0.35 s. The executor's launches take 0.05 s, and building the level
      batch's key columns 0.03 s.
-8. **Gates:**
+8. **Placement by host CPU (§9).** *Built*:
+   - A unit test shows the rule's three cases. Within the slack, the lane of least host CPU wins though it
+     finishes later. With no slack, a lane far slower is not a candidate. Load stretches the cores' wall time.
+   - The pack under `--metal`, the floor at 0, findings identical in every run (load 70–130):
+
+     | | GPU pinned | Cores pinned | Unpinned |
+     |---|---|---|---|
+     | Level joins on the GPU | 153 | 0 | 28 |
+     | Host CPU of the launches | 25 ms | 47 ms | 27 ms |
+     | Filling the columns | 3.3 ms | 3.2 ms | 2.9 ms |
+     | Callers' stall, level joins | 370 ms | 82 ms | 169 ms |
+
+   - Unpinned, 26 of the GPU's 28 joins were not on their fastest lane: the slack let the lane of less host CPU
+     take them. The estimate was 17 ms of host CPU against 39 ms on the fastest lanes.
+   - The cores' actual host CPU is 6 to 15 times the price's estimate at this load. The prices were measured on an
+     idle machine. The measured ratio now corrects them.
+9. **GPU jobs of a few µs (§9).** *Built*:
+   - Tests cover small joins with one to three keys, negative and repeated keys, empty sides and staged columns,
+     on both lanes, against the reference.
+   - A warm loop of one small join a batch (`warm_small_gpu_jobs`, load 65–135):
+     - **33.3 µs** of host CPU a job, or **32.6 µs** staged. It was about 200 µs.
+     - Encoding takes 12.5 µs, commit 5 µs, the wait 4 µs and the reads 1.7 µs.
+   - In the pack's run a job costs more: its jobs carry several launches, and thread CPU swells under a load of
+     100 and more.
+10. **Commit first, fill after (§10).** *Built*:
+    - In the warm loop, 46 of 10,050 batches reached their commit before the host had filled them. The device
+      waited on the event for those; the rest were filled while the lane encoded.
+    - In the pack, the fill takes 42 µs a batch on the caller's thread, while the lane encodes and commits.
+11. **Gates:**
    - The pack's findings are identical, and so are the data layer's at scale.
    - Host CPU (user + sys) of the device joins is below the CPU radix sort join's, on the lab's 232 joins and on
      the pack.
    - Submissions per chunk are at most one per lane per level, and the profile shows the space's hits.
 
 ## Open
+
+- **Prewarm the radix sort's pipelines.** Unpinned, the GPU's first large joins compile 12 pipelines (94 ms of
+  wall time), and that is the longest stall (62 ms). Prewarming covers the fused pipelines only.
+- **Reads as views.** A probe's pairs are copied out of the arena (1.7 µs a job, warm). Handing the caller a view
+  of the arena saves that.
+- **Tile pairs sorted on the GPU.** Tiles still sort their pairs on the host. The engine sends no tile joins
+  yet.
+- **Chaining levels.** A level's batch could wait on the event of the level before it, so the next level's
+  launches are committed before the first one's results are read.
 
 - **Count tables and the scalar summaries overlap.** The engine's per-key memo of scalar summaries answers a count
   once per key, and a count table answers it once per relation. Since the merge, a count the memo serves never walks

@@ -114,7 +114,7 @@ fn begun_batches_run_while_the_caller_works_and_match_the_reference() {
 fn nodes(rng: &mut Rng, n: usize, docs: u64, per_doc: u64, small: u64) -> rerail_accel::kernel::Keys {
     let k0: Vec<i64> = (0..n).map(|_| ((rng.below(docs) as i64) << 16) | rng.below(per_doc) as i64).collect();
     let k1: Vec<i64> = (0..n).map(|_| rng.below(small) as i64 - 2).collect();
-    vec![Arc::from(k0), Arc::from(k1)].into()
+    vec![rerail_accel::Col::from(k0), rerail_accel::Col::from(k1)].into()
 }
 
 /// The joins of a level on every lane that has them, by sort and probe and by tiles, the right sides kept by id
@@ -234,4 +234,99 @@ fn host_jobs_wait_for_each_other_on_the_pool_and_a_panic_is_an_error() {
     assert_eq!((cpu.jobs, cpu.failed), (3 * n as u64 + 1, 1));
     assert_eq!(s.forms[&(Lane::Cpu, "child")].launches, 2 * n as u64);
     assert_eq!(s.forms[&(Lane::Cpu, "parent")].launches, n as u64);
+}
+
+/// The small path on every lane: right sides of at most 2,048 rows sorted in one dispatch, with one to three keys,
+/// negative and repeated keys, empty sides, and columns staged behind a gate the host opens after the batch was
+/// begun. Every lane's pairs are the reference's.
+#[test]
+fn small_joins_and_staged_columns_match_the_reference() {
+    use rerail_accel::kernel::{JoinBy, Keys};
+    let ex = Executor::new();
+    let mut rng = Rng(0x5eed);
+    let mut col = |n: usize, m: u64| -> Vec<i64> { (0..n).map(|_| rng.below(m) as i64 - (m as i64) / 2).collect() };
+    let mut cases: Vec<(Vec<Vec<i64>>, Vec<Vec<i64>>)> = Vec::new();
+    for (nl, nr, k, m) in [(1500, 2048, 1, 700), (3000, 1000, 2, 40), (10, 1, 3, 3), (0, 50, 1, 9), (40, 0, 2, 9), (5000, 1999, 3, 6)] {
+        cases.push(((0..k).map(|_| col(nl, m)).collect(), (0..k).map(|_| col(nr, m)).collect()));
+    }
+    let host = |cols: &[Vec<i64>]| -> Keys { cols.iter().map(|c| rerail_accel::Col::from(c.clone())).collect::<Vec<_>>().into() };
+    for lane in ex.lanes() {
+        if !matches!(lane, Lane::Cpu | Lane::Gpu) {
+            continue;
+        }
+        // Host columns.
+        let launches: Vec<Launch> = cases.iter().map(|(l, r)| Launch::on(Kernel::Join { left: host(l), right: host(r), right_id: None, by: JoinBy::Probe }, lane)).collect();
+        let want: Vec<_> = launches.iter().map(|l| cpu::run(&l.kernel)).collect();
+        let (done, _) = ex.run(Batch(launches)).unwrap();
+        for (i, (d, w)) in done.iter().zip(&want).enumerate() {
+            assert_eq!(&d.out, w, "host case {i} on {}", lane.name());
+        }
+        // Staged: begun before the values are written; the gate opened after.
+        let (gate, opener) = rerail_accel::Gate::new();
+        let mut writers = Vec::new();
+        let mut stage = |cols: &[Vec<i64>]| -> Keys {
+            cols.iter()
+                .map(|c| {
+                    let (col, w) = gate.column(c.len()).unwrap();
+                    writers.push((w, c.clone()));
+                    col
+                })
+                .collect::<Vec<_>>()
+                .into()
+        };
+        let launches: Vec<Launch> = cases.iter().map(|(l, r)| Launch::on(Kernel::Join { left: stage(l), right: stage(r), right_id: None, by: JoinBy::Probe }, lane)).collect();
+        let running = ex.begin(Batch(launches)).unwrap();
+        for (mut w, c) in writers {
+            w.values().copy_from_slice(&c);
+        }
+        opener.open();
+        let (done, _) = running.wait().unwrap();
+        for (i, (d, w)) in done.iter().zip(&want).enumerate() {
+            assert_eq!(&d.out, w, "staged case {i} on {}", lane.name());
+        }
+    }
+    eprintln!("{}", ex.score());
+}
+
+/// A warm loop of one small join a batch on the gpu lane, for a profiler (`RERAIL_WARM_LOOP=<batches>`): prints the
+/// host CPU per job and the phases.
+#[test]
+#[ignore = "a measurement: run by name with RERAIL_WARM_LOOP"]
+fn warm_small_gpu_jobs() {
+    use rerail_accel::kernel::{JoinBy, Keys};
+    let n: usize = std::env::var("RERAIL_WARM_LOOP").ok().and_then(|v| v.parse().ok()).unwrap_or(2000);
+    let ex = Executor::new();
+    if !ex.lanes().contains(&Lane::Gpu) {
+        return;
+    }
+    let mut rng = Rng(7);
+    let keys = |rng: &mut Rng, n: usize| -> Keys { vec![rerail_accel::Col::from((0..n).map(|_| rng.below(300) as i64).collect::<Vec<_>>())].into() };
+    let (l, r) = (keys(&mut rng, 600), keys(&mut rng, 400));
+    // `RERAIL_WARM_STAGED=1`: the columns staged behind a gate, opened after the batch is begun (the engine's way).
+    let staged = std::env::var("RERAIL_WARM_STAGED").is_ok_and(|v| v == "1");
+    let run = || {
+        if !staged {
+            ex.run(Batch(vec![Launch::on(Kernel::Join { left: l.clone(), right: r.clone(), right_id: None, by: JoinBy::Probe }, Lane::Gpu)])).unwrap();
+            return;
+        }
+        let (gate, opener) = rerail_accel::Gate::new();
+        let (lc, mut lw) = gate.column(l[0].len()).unwrap();
+        let (rc, mut rw) = gate.column(r[0].len()).unwrap();
+        let k = Kernel::Join { left: vec![lc].into(), right: vec![rc].into(), right_id: None, by: JoinBy::Probe };
+        let running = ex.begin(Batch(vec![Launch::on(k, Lane::Gpu)])).unwrap();
+        lw.values().copy_from_slice(&l[0]);
+        rw.values().copy_from_slice(&r[0]);
+        opener.open();
+        running.wait().unwrap();
+    };
+    for _ in 0..50 {
+        run();
+    }
+    let before = ex.score().units[Lane::Gpu.index()].cpu;
+    for _ in 0..n {
+        run();
+    }
+    let s = ex.score();
+    eprintln!("warm gpu job: {:.1} us host cpu", (s.units[Lane::Gpu.index()].cpu - before) * 1e6 / n as f64);
+    eprintln!("{s}");
 }

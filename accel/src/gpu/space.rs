@@ -7,17 +7,21 @@
 //! at the chunk's end. When the kept bytes pass the limit, the entries least recently read go first, never one the
 //! batch being run reads.
 //!
-//! **A batch's joins** take at most two command buffers, whatever their number:
+//! **A batch's joins** take one command buffer, whatever their number, and a second only when needed:
 //!
-//! 1. The sorts of every right side not kept, then every probe's count, scan and scatter, and every tile join's
-//!    count and scan. A sort is in the same serial encoder as the probes that read it, so they follow it.
-//! 2. Only when needed: the scatters of the tile joins, sized from their counts, and the probes whose pairs
-//!    outgrew the space expected for them.
+//! 1. The sorts of every right side not kept, then every probe and every tile join's count and scan. A sort is in
+//!    the same serial encoder as the probes that read it, so they follow it.
+//!    - A right side of at most 2,048 rows and three keys is sorted in one dispatch (`small_sort`), its raw 64-bit
+//!      values read as they are; a larger one by the radix sort, narrowed first.
+//!    - A probe is one dispatch (`probe_one`): each threadgroup counts its rows' pairs, reserves them in the
+//!      batch's arena with one atomic, and writes them there.
+//! 2. Only when needed: the scatters of the tile joins, sized from their counts, and the probes whose pairs did not
+//!    fit the arena, each into space of its exact size.
 //!
-//! The pairs are each join's own buffers, read after completion. A tile join's pairs come in tile order, so they are
+//! A probe's pairs are read from the arena block by block, in left row order. A tile join's pairs come in tile order, so they are
 //! sorted into the kernel's order (left row, then right row).
 
-use super::join::{Column, Keyed, Pass, ProbeJob, commit_wait, queue};
+use super::join::{Arena, Column, Fused, Keyed, Pass, ProbeOne, commit_wait, queue};
 use super::tile::{Resident, TileJob};
 use crate::kernel::{JoinBy, Keys, Kernel, Output};
 use std::collections::HashMap;
@@ -91,7 +95,9 @@ impl Space {
         self.forget_one(id, by);
         // Least recently read first, never one this batch reads.
         while self.bytes + bytes > LIMIT {
-            let Some((&key, _)) = self.kept.iter().filter(|(_, k)| k.used < self.batch).min_by_key(|(_, k)| k.used) else { break };
+            let Some((&key, _)) = self.kept.iter().filter(|(_, k)| k.used < self.batch).min_by_key(|(_, k)| k.used) else {
+                break;
+            };
             self.forget_one(key.0, key.1);
             self.counts.evicted += 1;
         }
@@ -119,28 +125,77 @@ fn group(keys: &Keys) -> Result<Resident, String> {
 
 /// One join of the batch, between its passes.
 enum Job {
-    Probe { left: Vec<Column>, right: Arc<Keyed>, job: ProbeJob },
+    Probe { left: Vec<Column>, right: Arc<Keyed>, job: ProbeOne },
     Tile { left: Resident, right: Arc<Resident>, job: TileJob },
 }
 
-/// Runs a batch's joins (`ks`, each a `Kernel::Join`) in at most two command buffers: their pairs, in `ks`' order.
+/// The distinct gates of a batch's staged columns.
+fn gates(ks: &[&Kernel]) -> Vec<Arc<crate::col::Gate>> {
+    let mut out: Vec<Arc<crate::col::Gate>> = Vec::new();
+    for k in ks {
+        if let Kernel::Join { left, right, .. } = k {
+            for c in left.iter().chain(right.iter()) {
+                if let Some(g) = c.gate() {
+                    if !out.iter().any(|o| Arc::ptr_eq(o, g)) {
+                        out.push(Arc::clone(g));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether a right side takes the one-dispatch sort: at most `SMALL` rows and three keys.
+fn small(right: &Keys) -> bool {
+    right.len() <= 3 && right.first().is_some_and(|c| c.len() <= super::join::SMALL)
+}
+
+/// Runs a batch's joins (`ks`, each a `Kernel::Join`) in one command buffer, two only when a tile join's scatter or
+/// a probe whose pairs did not fit needs one: their pairs, in `ks`' order.
+///
+/// When the batch has staged columns whose gate is not open (`crate::col`), the command buffer waits at its head
+/// on the gates' events, and it is committed as soon as it is encoded: the host fills the columns while the commit
+/// and the system's scheduling go on. A right side that takes the radix sort is narrowed from its values, so for
+/// one that is staged the lane waits for its gate before encoding (the profile's `wait for fill`).
 pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
     let mut space = space.lock().map_err(|_| "the gpu lane's space was poisoned")?;
     space.batch += 1;
     let queue = queue()?;
     let command = queue.new_command_buffer();
+    let device = &crate::gpu::shared::get().ok_or("no Metal device")?.device;
+    let gates = gates(ks);
+    let held: Vec<&Arc<crate::col::Gate>> = crate::score::phase("encode", || gates.iter().filter(|g| g.hold(command, device)).collect());
     let pass = crate::score::phase("encode", || Pass::new(command));
+    // The arena every probe's pairs go to: two a left row expected, at least 64 a probe.
+    let (mut cap, mut blocks) = (0usize, 0usize);
+    for k in ks {
+        if let Kernel::Join { left, by: JoinBy::Probe, .. } = k {
+            let nl = left.first().map_or(0, |c| c.len());
+            cap += (2 * nl).max(64);
+            blocks += super::join::probe_blocks(nl);
+        }
+    }
+    let mut arena = crate::score::phase("encode", || Arena::new(cap, blocks))?;
+    // The small sorts and every probe, described as they come and dispatched together after the radix sorts.
+    let mut fused = Fused::default();
+    let mut tables: Vec<super::join::Held> = Vec::new();
     let mut jobs = Vec::with_capacity(ks.len());
     // The columns the sorts read: they must outlive the first command buffer.
     let mut reads: Vec<Column> = Vec::new();
     // Built this batch: kept once the command buffer completed.
     let mut built: Vec<(u64, JoinBy, usize, usize, Entry)> = Vec::new();
+    let (mut small_sorts, mut radix_sorts) = (0u64, 0u64);
     for k in ks {
-        let Kernel::Join { left, right, right_id, by } = k else { return Err("gpu space: a launch that is not a join".into()) };
+        let Kernel::Join { left, right, right_id, by } = k else {
+            return Err("gpu space: a launch that is not a join".into());
+        };
         let (_, nr) = Kernel::join_shape(left, right)?;
         let kept = match right_id {
             Some(id) => match built.iter().find(|b| b.0 == *id && b.1 == *by) {
-                Some(b) if b.2 != nr => return Err(format!("join: id {id} names {} rows and {nr} in one batch", b.2)),
+                Some(b) if b.2 != nr => {
+                    return Err(format!("join: id {id} names {} rows and {nr} in one batch", b.2));
+                }
                 Some(b) => Some(b.4.clone()),
                 None => space.get(*id, *by, nr)?,
             },
@@ -148,11 +203,23 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
         };
         let job = match by {
             JoinBy::Probe => {
-                let right = match kept {
+                let right_keyed = match kept {
                     Some(Entry::Sorted(r)) => r,
                     _ => {
-                        let cols = crate::score::phase("upload", || upload(right))?;
-                        let (keyed, read) = crate::score::phase("encode", || Keyed::encode(&pass, cols))?;
+                        let (keyed, read) = if small(right) {
+                            small_sorts += 1;
+                            let cols = crate::score::phase("upload", || right.iter().map(Column::raw).collect::<Result<Vec<_>, _>>())?;
+                            crate::score::phase("encode", || fused.sort(cols))?
+                        } else {
+                            radix_sorts += 1;
+                            for c in right.iter() {
+                                if let Some(g) = c.gate() {
+                                    crate::score::phase("wait for fill", || g.wait());
+                                }
+                            }
+                            let cols = crate::score::phase("upload", || upload(right))?;
+                            crate::score::phase("encode", || Keyed::encode(&pass, cols))?
+                        };
                         reads.extend(read);
                         let keyed = Arc::new(keyed);
                         if let Some(id) = right_id {
@@ -161,9 +228,9 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
                         keyed
                     }
                 };
-                let left = crate::score::phase("upload", || upload(left))?;
-                let job = crate::score::phase("encode", || ProbeJob::encode(&pass, &left, &right, 0))?;
-                Job::Probe { left, right, job }
+                let left = crate::score::phase("upload", || left.iter().map(Column::raw).collect::<Result<Vec<_>, _>>())?;
+                let job = crate::score::phase("encode", || fused.probe(&left, &right_keyed, &mut arena))?;
+                Job::Probe { left, right: right_keyed, job }
             }
             JoinBy::Tile => {
                 let right = match kept {
@@ -184,33 +251,55 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
         };
         jobs.push(job);
     }
+    crate::score::phase("encode", || fused.dispatch(&pass, &arena, &mut tables))?;
     crate::score::phase("encode", || pass.end());
+    crate::score::count("small sorts (fused)", small_sorts);
+    crate::score::count("radix sorts", radix_sorts);
+    let committed = std::time::Instant::now();
     commit_wait(command)?;
-    drop(reads);
-    // The second pass: the tiles' scatters and the probes that overflowed.
-    let command = queue.new_command_buffer();
-    let pass = crate::score::phase("encode", || Pass::new(command));
-    let mut second = false;
-    let mut done = Vec::with_capacity(ks.len());
-    for j in jobs {
-        done.push(match j {
-            Job::Probe { left, right, job } if job.overflowed() => {
-                second = true;
-                let job = crate::score::phase("encode", || job.rescatter(&pass, &left, &right))?;
-                Job::Probe { left, right, job }
-            }
-            Job::Tile { left, right, job } => {
-                let keys: Vec<usize> = (0..left.columns.len()).collect();
-                let job = crate::score::phase("encode", || job.scatter(&pass, &left, &keys, &right, &keys))?;
-                second |= job.total > 0;
-                Job::Tile { left, right, job }
-            }
-            other => other,
-        });
+    // How long the host filled the staged columns after the commit: the delay the early commit hid.
+    for g in &held {
+        if let Some(at) = g.opened_at() {
+            crate::score::add("fill after commit", 0.0, at.saturating_duration_since(committed).as_secs_f64());
+        }
     }
-    crate::score::phase("encode", || pass.end());
-    if second {
-        commit_wait(command)?;
+    drop(reads);
+    drop(tables);
+    // The second pass, only when needed: the tiles' scatters, and the probes whose pairs did not fit the arena.
+    let overflowed = arena.overflowed();
+    let mut spill: Vec<(usize, Arena)> = Vec::new();
+    let mut second = false;
+    let need = overflowed || jobs.iter().any(|j| matches!(j, Job::Tile { .. }));
+    let mut done = Vec::with_capacity(ks.len());
+    if !need {
+        done = jobs;
+    } else {
+        let command = queue.new_command_buffer();
+        let pass = crate::score::phase("encode", || Pass::new(command));
+        for (i, j) in jobs.into_iter().enumerate() {
+            done.push(match j {
+                Job::Probe { left, right, job } if overflowed && job.spilled(&arena).0 => {
+                    second = true;
+                    let total = job.spilled(&arena).1;
+                    let mut own = Arena::new(total, super::join::probe_blocks(left[0].rows))?;
+                    let job = crate::score::phase("encode", || ProbeOne::encode(&pass, &left, &right, &mut own))?;
+                    spill.push((i, own));
+                    Job::Probe { left, right, job }
+                }
+                Job::Tile { left, right, job } => {
+                    let keys: Vec<usize> = (0..left.columns.len()).collect();
+                    let job = crate::score::phase("encode", || job.scatter(&pass, &left, &keys, &right, &keys))?;
+                    second |= job.total > 0;
+                    Job::Tile { left, right, job }
+                }
+                other => other,
+            });
+        }
+        crate::score::phase("encode", || pass.end());
+        if second {
+            crate::score::count("second command buffers", 1);
+            commit_wait(command)?;
+        }
     }
     crate::score::phase("keep", || {
         for (id, by, rows, bytes, entry) in built {
@@ -220,18 +309,22 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
             space.put(id, by, rows, bytes, entry);
         }
     });
-    Ok(crate::score::phase("read pairs", || {
+    crate::score::phase("read pairs", || {
         done.into_iter()
-            .map(|j| match j {
-                Job::Probe { job, .. } => Output::Pairs(job.pairs()),
+            .enumerate()
+            .map(|(i, j)| match j {
+                Job::Probe { job, .. } => {
+                    let from = spill.iter().find(|(s, _)| *s == i).map_or(&arena, |(_, a)| a);
+                    job.pairs(from).map(Output::Pairs).ok_or_else(|| format!("join {i}: its pairs did not fit their exact space"))
+                }
                 Job::Tile { job, .. } => {
                     let mut p = job.pairs();
                     p.sort_unstable();
-                    Output::Pairs(p)
+                    Ok(Output::Pairs(p))
                 }
             })
             .collect()
-    }))
+    })
 }
 
 fn k_len(k: &Kernel) -> usize {

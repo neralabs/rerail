@@ -11,7 +11,13 @@
 //! - what is queued and running now, the most that ever ran at once, and the estimated seconds not yet done (the
 //!   placement starts from these, so a batch begun while another runs is spread over the lanes);
 //! - jobs, launches and failures; seconds busy (summed over jobs) and seconds waited in the queue;
-//! - the price's estimate against the time taken, summed, per lane and per form.
+//! - the price's estimate against the time taken, and its host CPU estimate against the job's thread CPU, per lane
+//!   and per form;
+//! - the lane's latency and a device job's thread CPU, as moving averages, which placement reads.
+//!
+//! And per kind of batch (`Executor::begin_as`): where its launches went, the host CPU placement estimated against
+//! placing each on its fastest lane, the slack it used, and how long its caller worked before it waited (the
+//! overlap, whose average is the next batch's slack) and then stalled.
 //!
 //! **Phases.** A lane's code names the parts of a job's host work ([`phase`]): its thread CPU and its wall seconds,
 //! summed per lane and phase. The GPU lane also adds each command buffer's timeline as wall-only phases (`gpu
@@ -66,6 +72,13 @@ pub struct Unit {
     /// When the lane's first job started and its last ended (seconds from the epoch).
     pub first: Option<f64>,
     pub last: f64,
+    /// Measured, as moving averages: the lane's latency (the GPU's submit, schedule and wake), and a job's thread
+    /// CPU on a device lane. Placement reads them (`Executor::place`).
+    pub latency: Option<f64>,
+    pub job_cpu: Option<f64>,
+    /// A job's thread CPU over the price's host CPU estimate, as a moving average: placement scales the lane's
+    /// host estimates by it.
+    pub host_ratio: Option<f64>,
 }
 
 impl Unit {
@@ -86,6 +99,48 @@ pub struct FormRow {
     pub estimated: f64,
     /// Seconds taken: a submission's time shared among its launches by their estimates.
     pub actual: f64,
+    /// The price's host CPU estimate, and the job's thread CPU shared by those estimates.
+    pub host_estimated: f64,
+    pub host: f64,
+}
+
+/// One kind of batch's counts (`Executor::begin_as`): how its launches were placed, and how long its caller worked
+/// before it waited and then stalled.
+#[derive(Clone, Debug, Default)]
+pub struct TagRow {
+    pub batches: u64,
+    pub launches: [u64; 4],
+    /// Launches whose lane is not the first to finish: the slack or the band let a lane of less host CPU take them.
+    pub not_fastest: u64,
+    /// The host CPU the placement estimated, and what placing every launch on its fastest lane would have cost.
+    pub host: f64,
+    pub host_fastest: f64,
+    /// The wall seconds the placement estimated it adds against the fastest lanes.
+    pub later: f64,
+    /// The slack placement used, summed (seconds), and the deadline's.
+    pub slack: f64,
+    /// Seconds from `begin` to the caller's `wait` (the caller's own work meanwhile), and from the `wait` to the
+    /// outputs (the caller stalled), summed; the longest stall.
+    pub overlap: f64,
+    pub stall: f64,
+    pub max_stall: f64,
+    /// Batches whose caller stalled more than 0.1 ms.
+    pub stalled: u64,
+    /// The last overlaps (at most 32): the next batch's slack is their lower quartile, so a kind whose callers
+    /// sometimes wait at once is not given the slack of its long overlaps.
+    pub recent: std::collections::VecDeque<f64>,
+}
+
+impl TagRow {
+    /// The slack: the lower quartile of the recent overlaps.
+    pub fn slack(&self) -> f64 {
+        if self.recent.is_empty() {
+            return 0.0;
+        }
+        let mut v: Vec<f64> = self.recent.iter().copied().collect();
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 4]
+    }
 }
 
 /// One phase's counts on one lane.
@@ -105,6 +160,8 @@ pub struct Score {
     pub forms: BTreeMap<(Lane, &'static str), FormRow>,
     /// By (lane, phase).
     pub phases: BTreeMap<(Lane, &'static str), PhaseRow>,
+    /// By kind of batch.
+    pub tags: BTreeMap<&'static str, TagRow>,
     /// Seconds since the executor's first job.
     pub elapsed: f64,
 }
@@ -135,14 +192,71 @@ impl std::fmt::Display for Score {
                 u.running
             )?;
         }
-        writeln!(f, "lane  form                  launches  units       estimate s  actual s")?;
+        let measured: Vec<String> = Lane::ALL
+            .iter()
+            .filter(|l| {
+                let u = &self.units[l.index()];
+                u.latency.is_some() || u.job_cpu.is_some() || u.host_ratio.is_some()
+            })
+            .map(|l| {
+                let u = &self.units[l.index()];
+                format!(
+                    "{}: latency {:.0} us, job cpu {:.0} us, host cpu / estimate {:.2}",
+                    l.name(),
+                    u.latency.unwrap_or(0.0) * 1e6,
+                    u.job_cpu.unwrap_or(0.0) * 1e6,
+                    u.host_ratio.unwrap_or(1.0)
+                )
+            })
+            .collect();
+        if !measured.is_empty() {
+            writeln!(f, "measured (moving averages): {}", measured.join("; "))?;
+        }
+        writeln!(f, "lane  form                  launches  units       estimate s  actual s  host est ms  host cpu ms")?;
         for ((l, form), r) in &self.forms {
-            writeln!(f, "{:<4}  {:<20}  {:>8}  {:>10.3e}  {:>10.4}  {:>8.4}", l.name(), form, r.launches, r.units, r.estimated, r.actual)?;
+            writeln!(
+                f,
+                "{:<4}  {:<20}  {:>8}  {:>10.3e}  {:>10.4}  {:>8.4}  {:>11.3}  {:>11.3}",
+                l.name(),
+                form,
+                r.launches,
+                r.units,
+                r.estimated,
+                r.actual,
+                r.host_estimated * 1e3,
+                r.host * 1e3
+            )?;
         }
         if !self.phases.is_empty() {
-            writeln!(f, "lane  phase                 count     cpu ms   wall ms  cpu us each")?;
+            writeln!(f, "lane  phase                         count     cpu ms   wall ms  cpu us each")?;
             for ((l, name), p) in &self.phases {
-                writeln!(f, "{:<4}  {:<20}  {:>6}  {:>9.3}  {:>8.3}  {:>11.1}", l.name(), name, p.count, p.cpu * 1e3, p.wall * 1e3, p.cpu * 1e6 / p.count.max(1) as f64)?;
+                writeln!(f, "{:<4}  {:<28}  {:>6}  {:>9.3}  {:>8.3}  {:>11.1}", l.name(), name, p.count, p.cpu * 1e3, p.wall * 1e3, p.cpu * 1e6 / p.count.max(1) as f64)?;
+            }
+        }
+        if !self.tags.is_empty() {
+            writeln!(
+                f,
+                "batch kind      batches  cpu/sme/gpu/ane launches  not fastest  host est ms  if fastest ms  later ms  slack ms  overlap ms  stall ms  stalled  max stall ms  slack now ms"
+            )?;
+            for (tag, t) in &self.tags {
+                let l = t.launches;
+                writeln!(
+                    f,
+                    "{:<14}  {:>7}  {:>24}  {:>11}  {:>11.3}  {:>13.3}  {:>8.3}  {:>8.3}  {:>10.3}  {:>8.3}  {:>7}  {:>12.3}  {:>12.3}",
+                    tag,
+                    t.batches,
+                    format!("{}/{}/{}/{}", l[0], l[1], l[2], l[3]),
+                    t.not_fastest,
+                    t.host * 1e3,
+                    t.host_fastest * 1e3,
+                    t.later * 1e3,
+                    t.slack * 1e3,
+                    t.overlap * 1e3,
+                    t.stall * 1e3,
+                    t.stalled,
+                    t.max_stall * 1e3,
+                    t.slack() * 1e3
+                )?;
             }
         }
         write!(f, "elapsed {:.3} s", self.elapsed)
@@ -181,6 +295,17 @@ pub fn add(name: &'static str, cpu: f64, wall: f64) {
     });
 }
 
+/// Counts `n` events of `name` on this thread's job (a phase with no time: sorts of a kind, command buffers).
+pub fn count(name: &'static str, n: u64) {
+    if n == 0 {
+        return;
+    }
+    PHASES.with_borrow_mut(|p| match p.iter_mut().find(|e| e.0 == name) {
+        Some(e) => e.1 += n,
+        None => p.push((name, n, 0.0, 0.0)),
+    });
+}
+
 /// Runs `f` as the phase `name` of this thread's job: its thread CPU and wall seconds are counted.
 pub fn phase<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
     let (c0, t0) = (thread_cpu(), Instant::now());
@@ -200,6 +325,8 @@ pub struct Item {
     pub form: &'static str,
     pub units: f64,
     pub estimate: f64,
+    /// The price's host CPU estimate.
+    pub host: f64,
 }
 
 /// A job between its queueing and its end.
@@ -224,6 +351,9 @@ fn epoch() -> Instant {
 }
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
+
+/// The weight of a new sample in the moving averages.
+const AVG: f64 = 0.2;
 
 /// The trace's file, opened once, its header written (`RERAIL_SCOREBOARD`).
 fn trace() -> Option<&'static Mutex<std::fs::File>> {
@@ -294,6 +424,7 @@ impl Scoreboard {
         let ran = end.duration_since(start).as_secs_f64();
         let waited = start.saturating_duration_since(t.queued).as_secs_f64();
         let est: f64 = t.items.iter().map(|i| i.estimate).sum();
+        let host_est: f64 = t.items.iter().map(|i| i.host).sum();
         self.with(|s| {
             let u = &mut s.units[t.lane.index()];
             u.running -= 1;
@@ -312,6 +443,24 @@ impl Scoreboard {
                 r.units += i.units;
                 r.estimated += i.estimate;
                 r.actual += if est > 0.0 { ran * i.estimate / est } else { ran / t.items.len().max(1) as f64 };
+                r.host_estimated += i.host;
+                r.host += if host_est > 0.0 { cpu * i.host / host_est } else { cpu / t.items.len().max(1) as f64 };
+            }
+            // The lane's latency, from a device's own timeline; a device job's thread CPU.
+            // A cold job (a pipeline compiled, a pool buffer made) is not what the lane costs warm: it stays out of
+            // the averages.
+            let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "new buffer"));
+            let lat: f64 = phases.iter().filter(|p| matches!(p.0, "gpu submit" | "gpu schedule" | "gpu wake")).map(|p| p.3).sum();
+            let u = &mut s.units[t.lane.index()];
+            if lat > 0.0 && !cold {
+                u.latency = Some(u.latency.map_or(lat, |a| a + AVG * (lat - a)));
+            }
+            if t.lane != Lane::Cpu && ok && !cold {
+                u.job_cpu = Some(u.job_cpu.map_or(cpu, |a| a + AVG * (cpu - a)));
+            }
+            if ok && !cold && host_est > 0.0 && t.items.iter().all(|i| i.units > 0.0) {
+                let r = (cpu / host_est).clamp(0.05, 50.0);
+                u.host_ratio = Some(u.host_ratio.map_or(r, |a| a + AVG * (r - a)));
             }
             for &(name, n, c, w) in &phases {
                 let p = s.phases.entry((t.lane, name)).or_default();
@@ -342,6 +491,64 @@ impl Scoreboard {
             let _ = f.lock().unwrap_or_else(|p| p.into_inner()).write_all(line.as_bytes());
         }
         ran
+    }
+
+    /// A batch of kind `tag` placed: per launch its lane, its cost there and the fastest lane's, and the slack used.
+    pub fn placed(&self, tag: &'static str, placed: &[(Lane, crate::price::Cost, crate::price::Cost)], slack: f64) {
+        self.with(|s| {
+            let t = s.tags.entry(tag).or_default();
+            t.batches += 1;
+            t.slack += slack;
+            for (lane, c, fastest) in placed {
+                t.launches[lane.index()] += 1;
+                t.host += c.host;
+                t.host_fastest += fastest.host;
+                if c.finish > fastest.finish {
+                    t.not_fastest += 1;
+                    t.later += c.finish - fastest.finish;
+                }
+            }
+        });
+    }
+
+    /// A batch of kind `tag` collected: its caller worked `overlap` seconds before it waited, then stalled `stall`.
+    pub fn collected(&self, tag: &'static str, overlap: f64, stall: f64) {
+        self.with(|s| {
+            let t = s.tags.entry(tag).or_default();
+            t.overlap += overlap;
+            t.stall += stall;
+            t.max_stall = t.max_stall.max(stall);
+            t.stalled += u64::from(stall > 1e-4);
+            if t.recent.len() == 32 {
+                t.recent.pop_front();
+            }
+            t.recent.push_back(overlap);
+        });
+        if let Some(f) = trace() {
+            let line = format!("# batch\t{tag}\toverlap_us={:.1}\tstall_us={:.1}\n", overlap * 1e6, stall * 1e6);
+            let _ = f.lock().unwrap_or_else(|p| p.into_inner()).write_all(line.as_bytes());
+        }
+    }
+
+    /// The slack a batch of kind `tag` has: how long its callers worked before they waited (the lower quartile of
+    /// the recent batches).
+    pub fn slack(&self, tag: &'static str) -> f64 {
+        self.with(|s| s.tags.get(tag).map_or(0.0, TagRow::slack))
+    }
+
+    /// The lanes' measured latency, device job CPU, and host CPU over its estimate, where measured.
+    pub fn measured(&self) -> [(Option<f64>, Option<f64>, Option<f64>); 4] {
+        self.with(|s| std::array::from_fn(|i| (s.units[i].latency, s.units[i].job_cpu, s.units[i].host_ratio)))
+    }
+
+    /// Adds a phase the caller ran outside any job (its host work around a batch) to `lane`'s phases.
+    pub fn add_phase(&self, lane: Lane, name: &'static str, cpu: f64, wall: f64) {
+        self.with(|s| {
+            let p = s.phases.entry((lane, name)).or_default();
+            p.count += 1;
+            p.cpu += cpu;
+            p.wall += wall;
+        });
     }
 
     /// The estimated seconds not yet done, per lane.
@@ -379,7 +586,7 @@ mod tests {
     #[test]
     fn a_job_is_outstanding_until_it_ends_and_counted_on_its_lane() {
         let b = Scoreboard::new([2, 0, 1, 0]);
-        let mut t = b.queue(Lane::Gpu, vec![Item { form: "probe", units: 10.0, estimate: 0.5 }, Item { form: "tile", units: 4.0, estimate: 1.5 }]);
+        let mut t = b.queue(Lane::Gpu, vec![Item { form: "probe", units: 10.0, estimate: 0.5, host: 0.0 }, Item { form: "tile", units: 4.0, estimate: 1.5, host: 0.0 }]);
         assert_eq!(b.outstanding(), [0.0, 0.0, 2.0, 0.0]);
         assert_eq!(b.score().units[Lane::Gpu.index()].queued, 1);
         b.start(&mut t);

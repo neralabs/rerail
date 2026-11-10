@@ -15,6 +15,7 @@
 //! threads), one submission a batch on each other lane. Every lane runs at the same time, and the [`score`] board
 //! counts every job. Every lane's output is the reference's, exactly: the tests compare them.
 
+pub mod col;
 pub mod cpu;
 pub mod exec;
 pub mod kernel;
@@ -33,5 +34,6 @@ pub mod gpu;
 pub mod ane;
 
 pub use exec::{Batch, Done, Executor, Job, Launch};
+pub use col::{Col, Gate};
 pub use kernel::{Bits, Kernel, Output};
 pub use lanes::Lane;
