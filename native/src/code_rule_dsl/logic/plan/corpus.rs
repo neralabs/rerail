@@ -3510,7 +3510,7 @@ fn run_observed(
                     mention(&mut mentioned, rows.as_ref());
                 }
             } else {
-                let rows = Rows::read(&db, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
+                let rows = Rows::of(&db, rel, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
                 let inserted = { let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the export".into()); exports.borrow_mut().add(rel, types.len(), &rows) };
                 { let _s = crate::code_rule_dsl::logic::profile::span(|| "totals".into()); totals.add_rows(rel, inserted, &rows, &types); }
                 { let _s = crate::code_rule_dsl::logic::profile::span(|| "attribute to files".into()); attribute(rel, &rows); }
@@ -5364,7 +5364,7 @@ fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<
     } else if got.kept.contains(rel) {
         return Err(Error::Plan(format!("{rel} is not held")));
     } else {
-        Arc::new(Rows::read(db, &crate::code_rule_dsl::logic::sql::ident(rel))?)
+        Arc::new(Rows::of(db, rel, &crate::code_rule_dsl::logic::sql::ident(rel))?)
     };
     Ok((0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect())
 }
@@ -5423,7 +5423,7 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
             } else if got.kept.contains(rel) {
                 return Err(Error::Plan(format!("{rel} is not held")));
             } else {
-                Arc::new(Rows::read(db, &crate::code_rule_dsl::logic::sql::ident(rel))?)
+                Arc::new(Rows::of(db, rel, &crate::code_rule_dsl::logic::sql::ident(rel))?)
             };
             // Sorted and distinct once: the digest and the next round's `__prev` read them so.
             let mut held: Vec<Vec<i64>> = (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect();
@@ -5723,6 +5723,14 @@ struct Rows {
     values: Vec<Vec<i64>>,
 }
 impl Rows {
+    /// The relation `rel`'s rows: a view the run read in place from its input (`vtab::view_columns`), else its table
+    /// `table`, read by SQL.
+    fn of(db: &Connection, rel: &str, table: &str) -> Result<Self> {
+        if let Some(values) = crate::code_rule_dsl::facts::vtab::view_columns(db, rel) {
+            return Ok(Rows { columns: (0..values.len()).map(|i| format!("c{i}")).collect(), values });
+        }
+        Self::read(db, table)
+    }
     fn read(db: &Connection, table: &str) -> Result<Self> {
         let mut st = db.prepare(&format!("SELECT * FROM {table}"))?;
         let columns: Vec<String> = (0..st.column_count()).map(|i| format!("c{i}")).collect();

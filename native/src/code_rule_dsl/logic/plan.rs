@@ -2795,9 +2795,11 @@ struct Run<'a, 'b> {
     /// Derived relations whose table is made only when SQL first needs it (`ensure`): its `CREATE` statement. A
     /// relation the native engine derives and keeps never has one.
     pending: HashMap<String, String>,
-    /// Relations whose one rule projects one atom (`kind($n, $k) :- node(_, $n, $k, _, _)`, variables distinct): a
-    /// native join reads such a view from its input in place. Found once per program, not per atom of each spec.
-    projections: HashSet<String>,
+    /// Relations whose one rule projects one atom (`kind($n, $k) :- node(_, $n, $k, _, _)`, variables distinct), each
+    /// with the atom's integer constants as (column, value) filters (`isasync($n) :- op($n, 126)`): a native join reads
+    /// such a view from its input in place, filtered, and its rows are counted there (`rows_of`), so no SQL view is
+    /// made. Found once per program, not per atom of each spec.
+    projections: HashMap<String, Vec<(usize, i64)>>,
     /// The program's inputs, as a set: asked per atom of each spec (`prog.inputs` is a list).
     inputs: rustc_hash::FxHashSet<&'a str>,
     /// Each rule's number in the program, by address: for spans, EXPLAIN and the engine's reasons. Made once per
@@ -2840,20 +2842,21 @@ fn answer_pending(db: &Connection, direct: bool, answer: &mut Option<Answer<'_>>
 }
 
 /// The relations of `prog` whose one rule's body is a single atom of distinct variables and wildcards.
-fn projections(prog: &Program) -> HashSet<String> {
+fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
     let mut by_head: HashMap<&str, Vec<&Rule>> = HashMap::new();
     for r in &prog.rules {
         by_head.entry(r.head.rel.as_str()).or_default().push(r);
     }
     by_head
         .into_iter()
-        .filter(|(_, rules)| {
-            matches!(rules.as_slice(), [r] if matches!(r.body.as_slice(), [Literal::Atom(a)] if {
-                let vars: Vec<&String> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
-                a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && vars.iter().collect::<HashSet<_>>().len() == vars.len()
-            }))
+        .filter_map(|(rel, rules)| {
+            let [r] = rules.as_slice() else { return None };
+            let [Literal::Atom(a)] = r.body.as_slice() else { return None };
+            let vars: Vec<&String> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
+            let plain = !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild | Term::Int(_))) && vars.iter().collect::<HashSet<_>>().len() == vars.len();
+            let eqs = a.args.iter().enumerate().filter_map(|(c, t)| if let Term::Int(v) = t { Some((c, *v)) } else { None }).collect();
+            plain.then(|| (rel.to_owned(), eqs))
         })
-        .map(|(rel, _)| rel.to_owned())
         .collect()
 }
 
@@ -2953,6 +2956,49 @@ impl Run<'_, '_> {
         Ok(())
     }
 
+    /// `r`'s rows, read where they are held: the native engine's relation, or the source bound to `r`'s table. SQL's
+    /// `count(*)` only for a table SQL holds: any SQL makes the run wait for the store (write-back cannot lag).
+    fn rows_of(&self, r: &str) -> Result<i64> {
+        if let Some(h) = super::native::component::held(self.db, r) {
+            return Ok(h.rows() as i64);
+        }
+        if let Some(source) = crate::code_rule_dsl::facts::vtab::bound_source(self.db, r) {
+            return Ok(source.len() as i64);
+        }
+        if let Some(n) = self.view_rows(r) {
+            return Ok(n);
+        }
+        self.count(&format!("SELECT count(*) FROM {}", crate::code_rule_dsl::logic::sql::ident(r)))
+    }
+    /// The rows of `r`, a view projecting one bound input (`projections`), counted from the input: its rows that pass
+    /// the view's filters, each projection once (the view is a set when it drops columns).
+    fn view_rows(&self, r: &str) -> Option<i64> {
+        let view = self.unmade_view(r)?;
+        let src = crate::code_rule_dsl::facts::vtab::bound_source(self.db, &view.base)?;
+        let names = src.columns();
+        let (eqs, kept) = (view.eqs, view.cols);
+        let ids = src.filter_eq(&eqs);
+        let whole = (0..names.len()).all(|c| kept.contains(&c) || eqs.iter().any(|e| e.0 == c));
+        if whole {
+            return Some(ids.len() as i64);
+        }
+        let mut seen: HashSet<Vec<i64>> = HashSet::with_capacity(ids.len());
+        for id in ids {
+            seen.insert(kept.iter().map(|&c| src.value(id as usize, c)).collect());
+        }
+        Some(seen.len() as i64)
+    }
+    /// The view `r` (`projections`) on its bound input's columns: what a reader after the run reads in place of SQL's.
+    fn unmade_view(&self, r: &str) -> Option<crate::code_rule_dsl::facts::vtab::UnmadeView> {
+        let eqs = self.projections.get(r)?;
+        let (base, cols) = self.model.view_src.get(r)?;
+        let src = crate::code_rule_dsl::facts::vtab::bound_source(self.db, base)?;
+        let names = src.columns();
+        let at = |c: &str| names.iter().position(|n| n == c);
+        let eqs: Vec<(usize, i64)> = eqs.iter().map(|&(c, v)| Some((at(&self.model.col(base, c))?, v))).collect::<Option<_>>()?;
+        let cols: Vec<usize> = cols.iter().map(|c| at(c.as_deref()?)).collect::<Option<_>>()?;
+        Some(crate::code_rule_dsl::facts::vtab::UnmadeView { base: base.clone(), cols, eqs })
+    }
     fn count(&self, sql: &str) -> Result<i64> {
         Ok(self.db.query_row(sql, [], |r| r.get(0))?)
     }
@@ -2983,12 +3029,7 @@ impl Run<'_, '_> {
         }
         let theta: f64 = std::env::var("RERAIL_AGAIN_THETA").ok().and_then(|t| t.parse().ok()).unwrap_or(0.25);
         let floor: usize = std::env::var("RERAIL_AGAIN_MIN").ok().and_then(|t| t.parse().ok()).unwrap_or(1024);
-        let rows = |r: &str| -> usize {
-            match super::native::component::held(self.db, r) {
-                Some(h) => h.rows(),
-                None => self.count(&format!("SELECT count(*) FROM {}", crate::code_rule_dsl::logic::sql::ident(r))).map_or(0, |n| n as usize),
-            }
-        };
+        let rows = |r: &str| -> usize { self.rows_of(r).map_or(0, |n| n as usize) };
         let estimated: usize = again.reads.iter().filter_map(|r| deferred.get(r)).map(|d| d.2).sum();
         let delta: usize = again.reads.iter().filter(|r| !deferred.contains_key(*r)).map(|r| rows(r)).sum::<usize>() + estimated;
         let old: usize = again.olds.iter().map(|r| rows(r)).sum();
@@ -3183,7 +3224,7 @@ impl Run<'_, '_> {
     }
 
     fn refresh(&mut self, r: &str, at_least_one: bool) -> Result<()> {
-        let n = self.count(&format!("SELECT count(*) FROM {}", crate::code_rule_dsl::logic::sql::ident(r)))? as f64;
+        let n = self.rows_of(r)? as f64;
         self.model.stats.card.insert(r.to_owned(), if at_least_one { n.max(1.0) } else { n });
         Ok(())
     }
@@ -3581,7 +3622,7 @@ impl<'a> Run<'a, '_> {
                 } else {
                     d.u64(2);
                     d.str(&self.model.relation(prog, rel, false).render());
-                    d.u64(u64::from(self.inputs.contains(rel)) | u64::from(self.model.derived.contains(rel)) << 1 | u64::from(self.projections.contains(rel)) << 2);
+                    d.u64(u64::from(self.inputs.contains(rel)) | u64::from(self.model.derived.contains(rel)) << 1 | u64::from(self.projections.contains_key(rel)) << 2);
                     match self.model.view_src.get(rel) {
                         Some((base, cols)) => {
                             d.str(base);
@@ -3709,11 +3750,17 @@ impl<'a> Run<'a, '_> {
             let keep: Vec<usize> = (0..l.args.len()).filter(|&c| !is_const(&l.args[c])).collect();
             // A view that only projects an input (`kind($n, $k) :- node(_, $n, $k, _, _)`) is read from the input,
             // in place: its columns are the input's.
-            let projected = self.model.view_src.get(&l.rel).filter(|(_, vc)| vc.iter().all(Option::is_some)).filter(|_| self.projections.contains(&l.rel));
+            let projected = self.model.view_src.get(&l.rel).filter(|(_, vc)| vc.iter().all(Option::is_some)).filter(|_| self.projections.contains_key(&l.rel));
             let sql_col = |rel: &str, c: usize| match projected { Some((_, vc)) => vc[c].clone().unwrap(), None => self.model.col(rel, c) };
             let cols = keep.iter().map(|&c| sql_col(&l.rel, c)).collect::<Vec<_>>().join(", ");
             let cols = if cols.is_empty() { "1".to_owned() } else { cols };
             let mut wheres = Vec::new();
+            // The view's own filters, on its input's columns.
+            if let Some((base, _)) = projected {
+                for &(c, v) in &self.projections[&l.rel] {
+                    wheres.push(format!("{} = {v}", self.model.col(base, c)));
+                }
+            }
             for (c, t) in l.args.iter().enumerate() {
                 if is_const(t) {
                     wheres.push(format!("{} = {}", sql_col(&l.rel, c), sql_term(t, &HashMap::new(), self.model.inputs.atoms).ok()?.render()));
@@ -4009,12 +4056,18 @@ impl<'a> Run<'a, '_> {
 
     /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it. The stratum
     /// may come back waiting on its device wave (`Native::Waiting`); `native_resume` finishes it once the wave ran.
+    /// Whether a native join reads the view `r` from its input in place (`projections`): no SQL view is made for it
+    /// unless SQL reads it.
+    fn in_place(&self, r: &str) -> bool {
+        self.projections.contains_key(r) && self.model.view_src.get(r).is_some_and(|(_, vc)| vc.iter().all(Option::is_some))
+    }
+
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule]) -> Result<Native<'a>> {
         // The views it reads are SQL's: made when a stratum first reads one (decision 0104: none made that none reads).
         let views: Vec<String> = rules.iter().flat_map(|r| &r.body).filter_map(|l| match l {
             Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.clone()),
             _ => None,
-        }).filter(|r| self.views.contains(r)).collect();
+        }).filter(|r| self.views.contains(r) && !self.in_place(r)).collect();
         self.ensure(&views)?;
         let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
         self.lent(reads.then(|| scc.clone()), |this, native_rels, numbers| this.native_stratum_(scc, rules, native_rels, numbers))
@@ -4329,6 +4382,8 @@ impl<'a> Run<'a, '_> {
                 let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
                     if answering {
                         let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|a| !scc.contains(a)).collect();
+                        // SQL reads the views too (`native_stratum` made only those no native join reads in place).
+                        self.ensure(&reads)?;
                         self.materialize(&reads)?;
                         // The component's own relations are read through its views; only the others take indexes.
                         let outside: Vec<_> = order.iter().filter(|st| st.lit.atom().is_none_or(|b| !scc.contains(&b.rel))).cloned().collect();
@@ -4956,6 +5011,8 @@ impl<'a> Run<'a, '_> {
                 lines.push(SpecLine::Join { head: ri[&r.head.rel], delta: ri[&rel], join: spec, whole: None });
                 continue;
             }
+            let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect();
+            self.ensure(&reads)?;
             self.ensure_indexes(order)?;
             let sql = self.model.sql_select(prog, &r.head, order, Some(*at), Some(&tables))?;
             lines.push(SpecLine::Probe { head: ri[&r.head.rel], delta: ri[&rel], sql });
@@ -5614,6 +5671,8 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     for name in old_views.keys() {
         db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{}", crate::code_rule_dsl::logic::sql::ident(&name)))?;
     }
+    // The last run's views read in place are not this one's.
+    crate::code_rule_dsl::facts::vtab::forget_views(db);
     // Relations the program's rules or outputs name (a part of a split program declares the whole's).
     let named: HashSet<&str> = prog
         .rules
@@ -6314,7 +6373,26 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let to_sql: Vec<String> = written.iter().filter(|r| !native_out.contains(*r)).cloned().collect();
     // A view that stays (an output, a relation kept for the caller, or one they read) is made now, after the last
     // wave, for its readers' SQL; one no SQL read was never made (decision 0104).
-    let stay_views: Vec<String> = pinned.iter().filter(|r| run.views.contains(*r)).cloned().collect();
+    // A view kept only for a session (`inputs.kept`) that a native join read in place (`Run::in_place`) is not made:
+    // a session reads a view of one input from the input (decision 0090), not from SQL. An output's or a gate's is.
+    let read_after: BTreeSet<&String> = {
+        let mut read: BTreeSet<&String> = prog.outputs.iter().chain(&gated).collect();
+        loop {
+            let more: Vec<&String> = prog.rules.iter().filter(|r| read.contains(&r.head.rel) && run.views.contains(&r.head.rel)).flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| &a.rel)).filter(|r| !read.contains(r)).collect();
+            if more.is_empty() {
+                break;
+            }
+            read.extend(more);
+        }
+        read
+    };
+    let mut stay_views: Vec<String> = Vec::new();
+    for r in pinned.iter().filter(|r| run.views.contains(*r)) {
+        match run.unmade_view(r).filter(|_| !read_after.contains(r) && run.in_place(r)) {
+            Some(view) => crate::code_rule_dsl::facts::vtab::note_view(db, r, view),
+            None => stay_views.push(r.clone()),
+        }
+    }
     run.ensure(&stay_views)?;
     run.materialize(&to_sql)?;
     let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms, &kept, &native_out)?;

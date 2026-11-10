@@ -334,6 +334,7 @@ pub(crate) fn connection_scope(db: &Connection) -> usize {
     unsafe extern "C" fn closed(at: *mut std::os::raw::c_void) {
         let at = at as usize;
         BOUND.lock().retain(|(h, _), _| *h != at);
+        VIEWS.lock().retain(|(h, _), _| *h != at);
         crate::code_rule_dsl::logic::native::forget_scope(at);
     }
     let handle = unsafe { db.handle() };
@@ -343,6 +344,45 @@ pub(crate) fn connection_scope(db: &Connection) -> usize {
         }
     }
     handle as usize
+}
+
+/// A view of one bound input that a run read in place and did not make in SQL (`plan`): the input, the input's columns
+/// it keeps (in the view's order), and its (column, value) filters. A reader after the run reads it from the input.
+#[derive(Clone, Debug)]
+pub(crate) struct UnmadeView {
+    pub base: String,
+    pub cols: Vec<usize>,
+    pub eqs: Vec<(usize, i64)>,
+}
+
+static VIEWS: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), UnmadeView>>> = std::sync::LazyLock::new(Default::default);
+
+/// Records `view` as the view `name` on `db`'s connection, until the connection closes or `forget_views`.
+pub(crate) fn note_view(db: &Connection, name: &str, view: UnmadeView) {
+    VIEWS.lock().insert((connection_scope(db), name.to_owned()), view);
+}
+
+/// Drops the views noted on `db`'s connection: a run starts with none.
+pub(crate) fn forget_views(db: &Connection) {
+    let at = connection_scope(db);
+    VIEWS.lock().retain(|(h, _), _| *h != at);
+}
+
+/// The rows of the noted view `name` (`note_view`), read from its bound input: each once, as SQL's view gives them
+/// (a set), column by column.
+pub(crate) fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vec<i64>>> {
+    let view = VIEWS.lock().get(&(connection_scope(db), name.to_owned())).cloned()?;
+    let src = bound_source(db, &view.base)?;
+    let mut rows: Vec<Vec<i64>> = src.filter_eq(&view.eqs).into_iter().map(|id| view.cols.iter().map(|&c| src.value(id as usize, c)).collect()).collect();
+    rows.sort_unstable();
+    rows.dedup();
+    let mut columns = vec![Vec::with_capacity(rows.len()); view.cols.len()];
+    for row in rows {
+        for (c, v) in row.into_iter().enumerate() {
+            columns[c].push(v);
+        }
+    }
+    Some(columns)
 }
 
 static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
