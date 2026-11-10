@@ -1410,6 +1410,63 @@ describe("Cursor hooks.json", () => {
     expect(await readFile(path, "utf8")).toBe(original);
   });
 
+  it("registers Cursor's hooks on Windows for PowerShell, which Cursor pipes the event into", async () => {
+    const { home, root } = await fixture();
+    const nodePath = String.raw`C:\Users\José O'Brien\AppData\Local\nvm\v24.9.0\node.exe`;
+    const path = join(home, ".cursor", "hooks.json");
+    const hookPath = join(root, "dist", "hosts", "cursor", "cursor-hook.js");
+    // The `cmd` form earlier set-ups wrote, which PowerShell breaks at its nested quotes and `$PATH`; registering replaces it.
+    const cmdForm = `cmd /d /c "if exist "${nodePath}" ("${nodePath}" "${hookPath}") else (for %I in (node.exe) do @"%~$PATH:I" "${hookPath}")"`;
+    await seed(path, { version: 1, hooks: { sessionStart: [{ command: cmdForm }] } });
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["cursor"] as const };
+    const commands = async () => Object.values((await readJson(path)).hooks as Record<string, Array<{ command: string }>> | undefined ?? {})
+      .flatMap(entries => entries.map(entry => entry.command));
+
+    await registerHarnesses(windows);
+    // Cursor runs `<event> | & { $input | <command> }`, so the command must hand its input on: Invoke-Command gives it the
+    // script block as `$input`. In single quotes only a quote is special: doubled, it stands for itself.
+    const node = String.raw`'C:\Users\José O''Brien\AppData\Local\nvm\v24.9.0\node.exe'`;
+    const hook = `'${hookPath.replaceAll("'", "''")}'`;
+    const command = `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath ${node}) { $input | & ${node} ${hook} } else { $input | node ${hook} } }`;
+    expect(await commands()).toEqual(Array(CURSOR_HOOK_EVENTS.length).fill(command));
+    expect(change((await registerHarnesses(windows)).changes, "cursor", "hooks.json").action).toBe("unchanged");
+
+    await registerHarnesses({ ...windows, nodePath: String.raw`C:\Program Files\nodejs\node.exe` });
+    expect(await commands()).toEqual(Array(CURSOR_HOOK_EVENTS.length).fill(command.replaceAll(node, String.raw`'C:\Program Files\nodejs\node.exe'`)));
+
+    await unregisterHarnesses(windows);
+    expect(await commands()).toEqual([]);
+  });
+
+  it.runIf(process.platform === "win32")("runs a registered Cursor hook as Cursor does on Windows: in PowerShell, the event piped in", async () => {
+    const base = await mkdtemp(join(tmpdir(), "rerail cursor powershell "));
+    temporaryDirectories.push(base);
+    const root = join(base, "rerail home", "current");
+    const hook = join(root, "dist", "hosts", "cursor", "cursor-hook.js");
+    await mkdir(dirname(hook), { recursive: true });
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+    // Stands in for the hook: answers with the event it read on stdin and the node that ran it.
+    await writeFile(hook, `let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify({event:JSON.parse(s).hook_event_name,node:process.execPath})));\n`);
+    const event = join(base, "event.json");
+    await writeFile(event, JSON.stringify({ hook_event_name: "sessionStart" }));
+    const home = join(base, "home");
+    await mkdir(home);
+    const runInCursor = async (nodePath: string): Promise<{ event: string; node: string }> => {
+      await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["cursor"] });
+      const hooks = (await readJson(join(home, ".cursor", "hooks.json"))).hooks as Record<string, Array<{ command: string }>>;
+      // What Cursor runs for a command hook on Windows: the event file piped into the command.
+      const script = `$OutputEncoding = [System.Text.UTF8Encoding]::new($false); `
+        + `Get-Content -LiteralPath '${event.replaceAll("'", "''")}' -Raw -Encoding UTF8 | & { $input | ${hooks.sessionStart!.at(-1)!.command} }`;
+      const encoded = Buffer.from(script, "utf16le").toString("base64");
+      const { stdout } = await promisify(execFile)("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], { windowsHide: true });
+      return JSON.parse(stdout) as { event: string; node: string };
+    };
+
+    expect(await runInCursor(process.execPath)).toEqual({ event: "sessionStart", node: process.execPath });
+    // Once the recorded node is gone, node from PATH runs the hook.
+    expect((await runInCursor(join(base, "gone", "node.exe"))).event).toBe("sessionStart");
+  }, 60_000);
+
   it("installs every Rerail command as a plain prompt file", async () => {
     const { home, root, nodePath } = await fixture();
     const directory = join(home, ".cursor", "commands");
