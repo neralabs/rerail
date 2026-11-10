@@ -18,9 +18,9 @@ describe("Codex session enforcement golden output", () => {
     await expect(goldenJson(codexHookOutput("PostToolUse", [TWO_RULES]))).toMatchFileSnapshot(`${GOLDEN}/n4b-two-rules.json`);
   });
 
-  it("N4c: a late steer shows its line at Stop; the block waits for the next message", async () => {
+  it("N4c: a turn-end steer shows nothing at Stop; its line and block go out together with the next message", async () => {
     await expect(goldenJson(codexHookOutput("Stop", [NO_EXPLICIT_ANY]))).toMatchFileSnapshot(`${GOLDEN}/n4c-late-steer-stop.json`);
-    await expect(goldenJson(codexHookOutput("PostToolUse", [{ ...NO_EXPLICIT_ANY, shown: true }])))
+    await expect(goldenJson(codexHookOutput("PostToolUse", [{ ...NO_EXPLICIT_ANY, late: true }])))
       .toMatchFileSnapshot(`${GOLDEN}/n4c-late-steer-next-message.json`);
   });
 });
