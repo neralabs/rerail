@@ -541,6 +541,12 @@ pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
 
+/// Quiet strata passed on unchanged in this process (decision 0101 §1), for tests.
+static QUIET_STRATA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub(in crate::code_rule_dsl) fn quiet_strata() -> usize {
+    QUIET_STRATA.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A survivors rule of a maintained stratum, `h(v..) :- h__old(v..), !h__del(v..)` (decision 0077's rewrite): the
 /// kept relation native, the deleted one of a lower stratum.
 /// Under decision 0090's levels the rows gone are `h__gone`'s, decided in level order, not `h__del`'s.
@@ -1720,16 +1726,10 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
     src
 }
 
-/// `ProgramAnalysis::analyze`'s result for `prog`, kept for the programs analysed last: a session's runs plan the
-/// same programs again (its file-local part every run, a maintained part while the same strata change), and the
-/// analysis is a function of what the digest reads (each relation's columns and lattice keys, the inputs, the
-/// relations with facts, the natives, and the rules in order).
-fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
-    type Kept = Vec<(u128, std::sync::Arc<super::analysis::ProgramAnalysis>)>;
-    /// The programs analysed last, newest at the end: a few, as each holds a result per rule.
-    const KEEP: usize = 4;
-    static KEPT: std::sync::Mutex<Kept> = std::sync::Mutex::new(Vec::new());
-    let key = super::derived::digest(|d| {
+/// A digest of what a program's analysis and its whole-program passes read: each relation's columns and lattice
+/// keys, the inputs, the relations with facts, the natives, and the rules in order.
+fn program_digest(prog: &Program) -> u128 {
+    super::derived::digest(|d| {
         d.u64(prog.decls.len() as u64);
         for (rel, cols) in &prog.decls {
             d.str(rel);
@@ -1754,7 +1754,19 @@ fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAn
             d.u64(r.body.len() as u64);
             r.body.iter().for_each(|l| digest_literal(d, l));
         }
-    });
+    })
+}
+
+/// `ProgramAnalysis::analyze`'s result for `prog`, kept for the programs analysed last: a session's runs plan the
+/// same programs again (its file-local part every run, a maintained part while the same strata change), and the
+/// analysis is a function of what the digest reads (each relation's columns and lattice keys, the inputs, the
+/// relations with facts, the natives, and the rules in order).
+fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
+    type Kept = Vec<(u128, std::sync::Arc<super::analysis::ProgramAnalysis>)>;
+    /// The programs analysed last, newest at the end: a few, as each holds a result per rule.
+    const KEEP: usize = 4;
+    static KEPT: std::sync::Mutex<Kept> = std::sync::Mutex::new(Vec::new());
+    let key = program_digest(prog);
     let mut kept = KEPT.lock().unwrap();
     if let Some(at) = kept.iter().position(|(k, _)| *k == key) {
         let hit = kept.remove(at);
@@ -3845,6 +3857,39 @@ impl<'a> Run<'a, '_> {
             super::profile::stratum(&stratum_key(scc), "native set engine", || "every rule joins an empty relation: held empty, no component opened".to_owned());
             self.native_rels.extend(scc.iter().cloned());
             return Ok(Native::Ran);
+        }
+        // A quiet stratum (decision 0101 §1): only survivors are left, and each `h__del` is empty. Each `h` is then
+        // its kept `h__old`, the same relation with its indexes; nothing is specified, planned or opened. A kept
+        // relation whose rows are partly in a table (`stored`) is opened as before, so its readers see them all.
+        // `RERAIL_KEEP_QUIET_STRATA` opens it as before (to measure what the skip saves).
+        if rules.is_empty() && !based.is_empty() && gates.is_empty() && !asks && std::env::var_os("RERAIL_KEEP_QUIET_STRATA").is_none() {
+            let held = |rel: &str| super::native::component::held(self.db, rel);
+            let quiet: Option<Vec<(&String, Arc<super::native::component::InRel>)>> = rels.iter().map(|r| match based.get(*r) {
+                Some((old, gone)) => {
+                    // The rows gone are a native relation's, an input delta's, or a table's that a SQL stratum wrote.
+                    let gone_empty = match held(gone) {
+                        Some(g) => g.rows() == 0,
+                        None if self.inputs.contains(gone.as_str()) => crate::code_rule_dsl::facts::vtab::bound_source(self.db, gone).is_some_and(|s| s.len() == 0),
+                        None => self.db.query_row(&format!("SELECT NOT EXISTS (SELECT 1 FROM {})", super::sql::table(gone)), [], |row| row.get::<_, bool>(0)).unwrap_or(false),
+                    };
+                    let unseeded = prog.facts.get(*r).is_none_or(|f| f.is_empty());
+                    held(old).filter(|o| gone_empty && unseeded && o.none_stored()).map(|o| (*r, o))
+                }
+                None => None,
+            }).collect();
+            if let Some(quiet) = quiet {
+                for (r, o) in quiet {
+                    // Its readers are planned from its rows, as an opened stratum's would be (`prior_stats`).
+                    let seeded = (o.rows() as f64).max(1.0);
+                    let card = prior_stats(&mut self.model, prog, r).map_or(seeded, |n| n.max(seeded));
+                    self.model.stats.card.insert(r.clone(), card);
+                    super::native::component::hold_as(self.db, r, o);
+                }
+                QUIET_STRATA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                super::profile::stratum(&stratum_key(scc), "native set engine", || "quiet: nothing deleted, nothing to derive; each relation is its kept one".to_owned());
+                self.native_rels.extend(scc.iter().cloned());
+                return Ok(Native::Ran);
+            }
         }
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
         // is the joins' specs and their checks; planning is in its `plan #…` spans).
