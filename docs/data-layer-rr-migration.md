@@ -2770,3 +2770,46 @@ Two missing-file tests compare their complete string-list results under an expli
 The validator does not invent normalized findings for those infrastructure messages.
 All 372 migration tooling tests pass. Final `ec3cfe1b7` remains current and merged.
 The inventory is 11 accepted ports, 84 drafts, and five absent translations. The full migration remains open.
+
+### 2026-11-10 — Dispatch scanner parity before the next Final merge
+
+Committed the prior dispatch checkpoint, then fetched and merged Final. Final was already current at ec3cfe1b7.
+The later fetch advanced Final to 0b7fb4dbd. The next checkpoint must validate that newer engine.
+
+The dispatch scanner now implements SPD001–SPD005 in native `.rr`.
+All 49 unchanged original tests pass through both snapshot and workspace APIs.
+Their complete recorded scan results also match, including 38 finding-positive calls.
+The supplemental corpus contains 283 cases, including 198 positive cases. All pass through both APIs.
+The scanner receipt is explicitly a progress receipt, not admission:
+[dispatch scanner evidence](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-scanner-finalec3-progress.json.gz).
+
+The TDD ladder retained the original failures and the expanded scanner failures.
+It exposed positional unpacking, match captures, document-local occurrence counts, numeric dictionary keys, bytes keys,
+breadth-first class discovery, walrus behavior, runner bindings, and sequential alias writes.
+The policy preserves the Python linter's behavior, including behavior that differs from Python runtime assignment.
+Preparation uses a positive fixed point. Runtime writes use an event and target slot, with syntax-derived write barriers.
+The implementation uses the current engine's relations. It adds no graph scheduler or Python callback.
+
+Generic native helpers produce exact numeric equality keys and decoded bytes keys.
+Tests cover booleans, float rounding, complex zero, integers beyond 4,096 bits, raw prefixes, and a 70,000-byte literal.
+The focused string suite passes 17 tests. The optimized numeric build took 163.616 seconds;
+the later bytes-key build took 107.527 seconds. Compilation remains separate from execution.
+The final unit build took 63.390 seconds after fixing a fixture lifetime error.
+A stale cohort adoption was correctly rejected when the sibling Final branch advanced.
+
+The original assertion runner now sends all recorded source inputs in one native batch.
+It routes actual native results back to the unchanged assertions and rejects unrecorded requests.
+Oracle return values never enter the native engine or its response cache.
+Each interface uses four actual executions: one source batch and three inventory-helper requests.
+The corpus runner also batches documents and checks each complete Finding DTO separately.
+No original semantic Python function executes.
+
+Dispatch remains a draft. The next work is:
+1. Record and port repository discovery, selected-file order, complete extracted facts, and plugin metadata.
+2. Port supplied-fact reporting and caller-created Finding projections, including conversion errors.
+3. Port complete CLI streams, signatures, inventory files, callback protocols, and exit decisions.
+4. Test persistent updates, add behavior-removal controls, and validate the fixed original assertion inventory.
+
+The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+The other 89 ports remain unfinished under the complete migration gate.
+No full-repository benchmark ran. No Linear ticket was created.
