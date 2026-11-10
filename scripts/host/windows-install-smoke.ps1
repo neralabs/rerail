@@ -7,8 +7,9 @@
 # windows-host.ps1 on Windows 11 VMs.
 #
 # Only the @neralabs scope resolves through the local registry (Verdaccio), which serves the package and this
-# checkout's published rule packs, as npmjs serves them; every dependency still comes from npmjs, exactly as for a
-# user who installs the published package.
+# checkout's published rule packs as npmjs serves them, its shrinkwrap marked so npm reads it; every dependency still
+# comes from npmjs, exactly as for a user who installs the published package. The runner has Visual Studio, and a
+# user may have neither it nor Python, so any native compile npm starts fails the smoke.
 param([Parameter(Mandatory)][string]$Tarball)
 
 $ErrorActionPreference = "Stop"
@@ -58,8 +59,37 @@ try {
   $env:RERAIL_STORAGE_ROOT = "$project\.rerail\sessions"
   $env:BROWSER = "none"
   Write-RerailUtf8 "$sandbox\.npmrc" "@neralabs:registry=$($registry.Url)/`n"
+  # npm runs `node-gyp`, for an install script or a binding.gyp it builds, by name from a PATH that starts with the
+  # node_modules\.bin of the package's folder and of every folder above it (npm 11 ignores npm_config_node_gyp for a
+  # dependency's scripts). A node-gyp.cmd in $base\node_modules\.bin, above npx's install and the managed one, records
+  # the call and fails it, so a compile fails the smoke on a runner with Visual Studio, as it fails for a user without.
+  $nodeGypRuns = "$base\node-gyp-runs.txt"
+  New-Item -ItemType Directory -Force "$base\node_modules\.bin" | Out-Null
+  Write-RerailUtf8 "$base\refuse-node-gyp.js" ("require('fs').appendFileSync(require('path').join(__dirname, 'node-gyp-runs.txt'), 'node-gyp ' + process.argv.slice(2).join(' ') + ' in ' + process.cwd() + '\n');" +
+    "console.error('windows-install-smoke: npm ran node-gyp, which needs Python and C++ build tools a user may not have');process.exit(1);")
+  Write-RerailUtf8 "$base\node_modules\.bin\node-gyp.cmd" "@node `"%~dp0..\..\refuse-node-gyp.js`" %*`r`n"
   $daemonPort = Get-RerailFreePort
-  Invoke-RerailSetup -Spec "latest" -Project $project -Launcher $launcher -Options @("--port", "$daemonPort") | ForEach-Object { Write-Host $_ }
+  try {
+    Invoke-RerailSetup -Spec "latest" -Project $project -Launcher $launcher -Options @("--port", "$daemonPort") | ForEach-Object { Write-Host $_ }
+  } catch {
+    # npx prints nothing of a failed install script (npm suppresses errors for exec); npm's log names it.
+    $npmLog = Get-ChildItem "$base\npm-cache\_logs" -Filter *.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+    if ($npmLog) { Write-Host "npm's log $($npmLog.FullName), last 30 lines:"; Get-Content -Tail 30 $npmLog.FullName | ForEach-Object { Write-Host $_ } }
+    if (Test-Path $nodeGypRuns) { throw "set-up failed: npm compiled a native addon, which fails without Python and C++ build tools:`n$(Get-Content -Raw $nodeGypRuns)$($_.Exception.Message)" }
+    throw
+  }
+  if (Test-Path $nodeGypRuns) { throw "npm compiled a native addon during set-up, which fails without Python and C++ build tools:`n$(Get-Content -Raw $nodeGypRuns)" }
+
+  Step "Checking npm read the package's npm-shrinkwrap.json, as an install from npmjs does"
+  # npm installs a shrinkwrapped package's dependencies inside it (docs/release.md, "Shrinkwrap"). Beside it, npm
+  # resolved them fresh, and this install says nothing about one from npmjs. npx's install runs install scripts; the
+  # managed one under versions\ does not.
+  $installs = @(Get-ChildItem -Directory "$base\npm-cache\_npx", "$rerailHome\versions" | ForEach-Object { "$($_.FullName)\node_modules\@neralabs\rerail" } | Where-Object { Test-Path $_ })
+  if ($installs.Count -ne 2) { throw "expected npx's and the managed install of @neralabs/rerail, found: $($installs -join ', ')" }
+  foreach ($install in $installs) {
+    if (-not (Test-Path "$install\node_modules\better-sqlite3\prebuilds")) { throw "npm did not read the shrinkwrap for $install`: better-sqlite3 is not inside it" }
+    Write-Host "shrinkwrap read: $install\node_modules\better-sqlite3"
+  }
 
   Step "Checking the managed installation"
   Assert-RerailManagedInstall -RerailHome $rerailHome | ForEach-Object { Write-Host $_ }

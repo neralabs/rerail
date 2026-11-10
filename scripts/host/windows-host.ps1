@@ -55,7 +55,8 @@ function Invoke-RerailCaptured([string]$File, [string[]]$Arguments, [string]$Wor
 }
 
 # A registry on 127.0.0.1 that serves the given tarballs under the @neralabs scope, readable by anyone as npmjs serves
-# a public package. Map the scope to `.Url` in the user's .npmrc; every other package still comes from npmjs.
+# a public package, and marked as npmjs marks a version that ships a shrinkwrap (Set-RerailShrinkwrapFlag). Map the
+# scope to `.Url` in the user's .npmrc; every other package still comes from npmjs.
 function Start-RerailRegistry([string]$Root, [string[]]$Tarballs) {
   $ErrorActionPreference = "Continue"
   $node = Get-RerailNode
@@ -100,12 +101,29 @@ log: { type: stdout, level: warn }
     foreach ($tarball in $Tarballs) {
       $published = (& $node $npmCli publish $tarball --tag latest --registry $url --userconfig "$Root\publisher.npmrc" --loglevel=warn 2>&1) -join "`n"
       if ($LASTEXITCODE -ne 0) { throw "publishing $tarball to $url failed:`n$published" }
+      Set-RerailShrinkwrapFlag -Storage "$Root\storage" -Tarball $tarball
     }
   } catch {
     & taskkill.exe /T /F /PID $process.Id *> $null
     throw
   }
   return @{ Url = $url; Process = $process }
+}
+
+# npmjs marks a version whose tarball ships an npm-shrinkwrap.json with `_hasShrinkwrap: true`, and npm reads a
+# dependency's shrinkwrap only when its registry marks it so; Verdaccio stores no such mark. Setting it in Verdaccio's
+# stored metadata for the version makes an install from the local registry read the shrinkwrap, lay out the tree and
+# run the install scripts an install from npmjs does. Windows' own tar.exe reads a drive-letter path, which Git's GNU
+# tar takes for a remote host.
+function Set-RerailShrinkwrapFlag([string]$Storage, [string]$Tarball) {
+  $ErrorActionPreference = "Continue"
+  $tar = Join-Path $env:SystemRoot "System32\tar.exe"
+  & $tar -tzf $Tarball package/npm-shrinkwrap.json *> $null
+  if ($LASTEXITCODE -ne 0) { return }
+  $manifest = (& $tar -xzOf $Tarball package/package.json) -join "`n" | ConvertFrom-Json
+  $stored = Join-Path $Storage "$($manifest.name)\package.json"
+  & (Get-RerailNode) -e "const fs=require('fs');const [file,version]=process.argv.slice(1);const doc=JSON.parse(fs.readFileSync(file,'utf8'));doc.versions[version]._hasShrinkwrap=true;fs.writeFileSync(file,JSON.stringify(doc,null,2))" $stored $manifest.version
+  if ($LASTEXITCODE -ne 0) { throw "could not mark $($manifest.name)@$($manifest.version) as shipping a shrinkwrap in $stored" }
 }
 
 function Stop-RerailRegistry($Registry) {
@@ -116,9 +134,9 @@ function Stop-RerailRegistry($Registry) {
 # Set-up's machine-readable lane to the end, answering as a person accepting the defaults would (allow sessions, read
 # this repository, start with the packs shown): `npx @neralabs/rerail@<Spec> setup --json`, which installs, then for
 # each answer the launcher command set-up printed for it. `Options` go on the first command (`--port 4799`); set-up
-# carries them into the commands it prints. Writes `step <name>: <screen>` for each step, and each step's JSON to
-# `LogDir` when given; throws unless set-up ends with Rerail on and every command it ran exited 0 (the lane exits 1
-# only on its `error` step, 0 on a question).
+# carries them into the commands it prints. Writes each step's stderr and `step <name>: <screen>`, and each step's
+# JSON to `LogDir` when given; throws unless set-up ends with Rerail on and every command it ran exited 0 (the lane
+# exits 1 only on its `error` step, 0 on a question).
 function Invoke-RerailSetup([string]$Spec, [string]$Project, [string]$Launcher, [string[]]$Options = @(), [string]$LogDir = "") {
   $ErrorActionPreference = "Continue"
   $node = Get-RerailNode
@@ -129,6 +147,9 @@ function Invoke-RerailSetup([string]$Spec, [string]$Project, [string]$Launcher, 
     if ($LogDir) { Write-RerailUtf8 "$LogDir\setup-$i.json" $run.Out }
     # Windows PowerShell's ConvertFrom-Json returns nothing for empty input rather than failing.
     try { $step = $run.Out | ConvertFrom-Json } catch { $step = $null }
+    # Every step's stderr, whatever its exit: npx prints nothing of the install it runs first, even when one of its
+    # dependencies' install scripts fails, so what it did print is the only trace in the log.
+    "stderr (exit $($run.Exit)): $(if ($run.Err.Trim()) { "`n" + $run.Err.TrimEnd() } else { '(empty)' })"
     if ($null -eq $step) { throw "set-up printed no JSON step (exit $($run.Exit)):`n$($run.Out)`n$($run.Err)" }
     "step $($step.step): $($step.screen)"
     if ($run.Exit -ne 0) { throw "set-up exited $($run.Exit) at step $($step.step):`n$($run.Err)" }
