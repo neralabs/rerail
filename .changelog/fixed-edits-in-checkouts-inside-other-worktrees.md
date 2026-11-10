@@ -1,0 +1,1 @@
+In a submodule or nested repository inside one of the repository's other worktrees, Rerail records an agent's shell edit of a file a merge left conflicted, and no longer records what a merge that stopped on a conflict or a branch switch wrote or removed there as the agent's edits.
