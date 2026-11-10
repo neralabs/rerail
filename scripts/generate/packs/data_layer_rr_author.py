@@ -122,7 +122,10 @@ permission_raise(r) :- permission_exc(r, e), kind(e, "call"), field(e, "function
 .decl permission_authorized(r: node)
 permission_authorized(r) :- permission_raise(r), docof(r, d), permission_import(i), docof(i, d), earlier(i, r).
 .decl permission_trigger(d: number)
-permission_trigger(d) :- split_line(d, _, t), contains("PermissionError", t).
+.decl permission_disk_trigger(d: number)
+permission_disk_trigger(d) :- split_line(d, _, t), contains("PermissionError", t).
+permission_trigger(d) :- permission_disk_trigger(d), !option("entryPoint","check_file_content").
+permission_trigger(d) :- permission_disk_trigger(d), option("entryPoint","check_file_content"), option("permissionSuppliedSource",s), contains("PermissionError",s).
 .decl permission_suppressed(d: number, l: number)
 '''
     text += f'permission_suppressed(d, l) :- split_line(d, l, t), contains({json.dumps(suppression)}, t).\n'
@@ -133,7 +136,8 @@ BuiltinPermission(r) :- permission_raise(r), docof(r, d), permission_selected(d)
     !permission_authorized(r), !permission_suppressed(d, l), !permission_suppressed(d, l - 1), !syntax_error(d, _, _).
 '''
     from data_layer_rr_production import production
-    return production(source, 'permission_error', (text))
+    from data_layer_rr_cli import cli_suffix
+    return production(source, 'permission_error', text) + cli_suffix(source, 'permission_error')
 
 
 def main():

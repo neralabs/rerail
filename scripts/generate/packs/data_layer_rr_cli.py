@@ -30,10 +30,11 @@ def cli_suffix(source, check):
     from data_layer_rr_text import module, character_class
     original = module(source, check)
     kind = {'backend_type_strings': 'backend', 'no_source_inspection': 'source', 'hasattr_async': 'async',
-            'serverplan_grammar_surface': 'surface'}[check]
+            'serverplan_grammar_surface': 'surface', 'permission_error': 'permission'}[check]
     descriptions = {'backend': 'Lint for backend type string comparisons',
         'source': 'Lint test files for forbidden source inspection patterns',
-        'async': 'Lint for hasattr/getattr async method detection anti-pattern'}
+        'async': 'Lint for hasattr/getattr async method detection anti-pattern',
+        'permission': 'Check for built-in PermissionError usage'}
     config = {'description': [descriptions[kind]]} if kind != 'surface' else {}
     if kind == 'backend':
         config.update(epilog=[original.__doc__],
@@ -54,6 +55,10 @@ def cli_suffix(source, check):
             pattern = getattr(original, name)
             config[name + '.pattern'] = [pattern.pattern]
             config[name + '.flags'] = [str(pattern.flags)]
+    elif kind == 'permission':
+        config['check_help'] = ['Exit 1 if violations found']
+        config['exclude'] = ['tmp', '.claude', 'data_history', '.venv', '.venv314',
+                             '.venv-docker', '__pycache__', '.git', 'docs', 'browser_build']
     else:
         from scripts.lint_lib.architectural_rules import linter_guidance_lines
         config['guidance'] = linter_guidance_lines(check)
@@ -62,4 +67,6 @@ def cli_suffix(source, check):
     for key, values in config.items():
         for i, value in enumerate(values):
             text += f'tcli_config({json.dumps(key)},{i},{json.dumps(value)}).\n'
-    return text + '#include "data-layer/text-cli.rr"\n'
+    text += '#include "data-layer/text-cli.rr"\n'
+    if kind == 'permission': text += '#include "data-layer/permission-error-api.rr"\n'
+    return text

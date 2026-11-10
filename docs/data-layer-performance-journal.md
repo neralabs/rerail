@@ -1,5 +1,28 @@
 # Data-layer performance journal
 
+## PermissionError native CLI and content repair: 2026-11-10
+
+Final `ec3cfe1b7` is still the latest fetched engine tip. It is already merged.
+The worktree was clean at the start of this continuation. No empty commit or redundant merge was needed.
+
+The PermissionError adapter incorrectly scanned the supplied text in `check_file_content`.
+The source uses that text as a trigger, then reads the file again. Native rules now preserve this behavior.
+The CLI uses native configuration, discovery filtering, ordering, formatting, and exit decisions.
+The frontend performs file I/O, argparse processing, and passive DTO construction.
+All file candidates enter discovery in one batch. All files enter a scan in one batch.
+
+The [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-permission-public-finalec3.json.gz) records these passing checks:
+
+- All five original tests through snapshot and workspace APIs, including three finding-positive tests.
+- Fifty source-derived public contract cases through each API, including exact CLI streams and partial output before errors.
+- Eighteen production cases, with 36 native executions.
+- Sixteen supplied-fact reporter cases.
+- Fourteen persistent update steps, with 28 native executions.
+
+The new transport regression failed before implementation and passes after it.
+Fact-conversion helpers, disabled-behavior controls, and the admission audit remain open.
+This checkpoint does not admit PermissionError or complete the migration.
+
 The [incremental SQL preparation design](sql-preparation-architecture.md) and its
 [implementation spikes](sql-preparation-spikes.md) distinguish accepted changes from rejected retention experiments.
 

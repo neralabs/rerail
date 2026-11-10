@@ -36,7 +36,10 @@ permission_raise(r) :- permission_exc(r, e), kind(e, "call"), field(e, "function
 .decl permission_authorized(r: node)
 permission_authorized(r) :- permission_raise(r), docof(r, d), permission_import(i), docof(i, d), earlier(i, r).
 .decl permission_trigger(d: number)
-permission_trigger(d) :- split_line(d, _, t), contains("PermissionError", t).
+.decl permission_disk_trigger(d: number)
+permission_disk_trigger(d) :- split_line(d, _, t), contains("PermissionError", t).
+permission_trigger(d) :- permission_disk_trigger(d), !option("entryPoint","check_file_content").
+permission_trigger(d) :- permission_disk_trigger(d), option("entryPoint","check_file_content"), option("permissionSuppliedSource",s), contains("PermissionError",s).
 .decl permission_suppressed(d: number, l: number)
 permission_suppressed(d, l) :- split_line(d, l, t), contains("lint: allow-builtin-permission-error", t).
 
@@ -81,3 +84,21 @@ sf_config("message","field").
 sf_config("code","builtin_permission_error").
 sf_config("order","line").
 sf_default("message","Raises built-in PermissionError").
+
+.decl tcli_kind(value: symbol)
+tcli_kind("permission").
+.decl tcli_config(key: symbol, ordinal: number, value: symbol)
+tcli_config("description",0,"Check for built-in PermissionError usage").
+tcli_config("check_help",0,"Exit 1 if violations found").
+tcli_config("exclude",0,"tmp").
+tcli_config("exclude",1,".claude").
+tcli_config("exclude",2,"data_history").
+tcli_config("exclude",3,".venv").
+tcli_config("exclude",4,".venv314").
+tcli_config("exclude",5,".venv-docker").
+tcli_config("exclude",6,"__pycache__").
+tcli_config("exclude",7,".git").
+tcli_config("exclude",8,"docs").
+tcli_config("exclude",9,"browser_build").
+#include "data-layer/text-cli.rr"
+#include "data-layer/permission-error-api.rr"

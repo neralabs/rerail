@@ -1,0 +1,35 @@
+// PermissionError uses string path ordering, numeric lines, and stable ties.
+.decl permission_cli_row(i: number, path: symbol, line: number)
+permission_cli_row(i,p,to_number(l)) :- tcli_kind("permission"), tcli_file(i,p,_), option_item("cliLine",i,l).
+.decl permission_cli_before(a: number, b: number)
+permission_cli_before(a,b) :- permission_cli_row(a,p,l), permission_cli_row(b,q,m),
+    (@str_cmp(p,q) < 0 ; (p = q, l < m) ; (p = q, l = m, a < b)).
+.decl permission_cli_rank(i: number, ordinal: number)
+permission_cli_rank(i,n) :- permission_cli_row(i,_,_), n = count : { permission_cli_before(_,i) }.
+.decl permission_cli_path(i: number, path: symbol)
+permission_cli_path(i,".") :- permission_cli_row(i,p,_), option("sourceRoot",p).
+permission_cli_path(i,@slice(p,strlen(root)+1,strlen(p))) :- permission_cli_row(i,p,_), option("sourceRoot",root), root != "/", prefix(cat(root,"/"),p).
+permission_cli_path(i,@slice(p,1,strlen(p))) :- permission_cli_row(i,p,_), option("sourceRoot","/"), prefix("/",p), !prefix("//",p).
+permission_cli_path(i,p) :- permission_cli_row(i,p,_), option("sourceRoot","."), !prefix("/",p).
+.decl permission_cli_error(rank: number)
+permission_cli_error(n) :- permission_cli_rank(i,n), !permission_cli_path(i,_).
+.decl permission_cli_blocked(rank: number)
+permission_cli_blocked(n) :- permission_cli_rank(_,n), permission_cli_error(e), e < n.
+TextCliPathError(@place("",0),n,p) :- permission_cli_error(n), !permission_cli_blocked(n), permission_cli_rank(i,n), permission_cli_row(i,p,_).
+TextCliOutput(@place("",0),0,0,0,"No PermissionError violations found.\n","") :- tcli_kind("permission"), tcli_count(0).
+TextCliOutput(@place("",0),0,0,0,cat("Found ",to_string(n)," PermissionError violation(s):\n\n"),"") :- tcli_kind("permission"), tcli_count(n), n > 0.
+TextCliOutput(@place("",0),1,0,n,cat("  ",p,":",line,": ",message,"\n"),"") :- permission_cli_rank(i,n), permission_cli_path(i,p), !permission_cli_blocked(n), option_item("cliLine",i,line), option_item("cliMessage",i,message).
+TextCliOutput(@place("",0),2,0,0,"\nFix: Add 'from l1100_exceptions.exceptions import PermissionError'\n     to each file that raises PermissionError.\n\nSee GitHub Issue #1181 for details.\n","") :- tcli_kind("permission"), tcli_count(n), n > 0, !permission_cli_error(_).
+TextCliExit(@place("",0),0) :- tcli_kind("permission"), tcli_count(n), n > 0, !permission_cli_error(_), option("checkMode","0").
+TextCliExit(@place("",0),1) :- tcli_kind("permission"), tcli_count(n), n > 0, !permission_cli_error(_), option("checkMode","1").
+
+// Discovery receives the complete I/O batch, with no semantic filtering in Python.
+.decl permission_file(i: number, path: symbol, key: symbol)
+permission_file(i,p,@replace_all(p,"/","\u0000")) :- option("entryPoint","_permission_files"), option_item("candidateFiles",i,p).
+.decl permission_file_excluded(i: number)
+permission_file_excluded(i) :- permission_file(i,p,_), option_item("excludeDirs",_,e),
+    (p = e ; prefix(cat(e,"/"),p) ; contains(cat("/",e,"/"),p) ; suffix(cat("/",e),p)).
+.decl permission_file_selected(i: number, path: symbol, key: symbol)
+permission_file_selected(i,p,k) :- permission_file(i,p,k), !permission_file_excluded(i).
+.violation PermissionFile(at: span, ordinal: number, value: symbol) code "PERMISSION_FILE" "selected file"
+PermissionFile(@place("",0),n,p) :- permission_file_selected(i,p,k), n = count : { permission_file_selected(j,_,other), (@str_cmp(other,k) < 0 ; (other = k, j < i)) }.

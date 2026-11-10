@@ -113,7 +113,7 @@ def main():
         compare(sha(path.read_bytes()), baseline['sourceSha256'])
         compare(cases(), [r['input'] for r in baseline['cases']])
         def guard(frame, event, _arg):
-            if event == 'call' and frame.f_code in original_codes:
+            if event == 'call' and frame.f_code in original_codes and not original_codes[frame.f_code][2]:
                 raise AssertionError('Original linter semantics executed: '+frame.f_code.co_name)
     dependencies = [Path(__file__), *[Path(__file__).with_name(n) for n in
                     ['replay.py', 'migration.py', 'policy_routes.py', 'permission_port.py'] if Path(__file__).with_name(n).exists()]]

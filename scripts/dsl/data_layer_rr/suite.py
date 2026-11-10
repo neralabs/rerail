@@ -492,16 +492,8 @@ class Suite:
             rows.sort(key=lambda r: (r['line'], 0 if r['code'] == 'hasattr' else 1))
             return [(r['line'], r['code'], r['parameters']['method']) for r in rows]
         if check == 'permission_error':
-            if 'source' in arguments:
-                source = arguments['source']
-            else:
-                try:
-                    source = path.read_text(encoding='utf-8')
-                except (OSError, UnicodeDecodeError):
-                    return []
-            rows = self.native(check, entry, [dict(path=path.name, source=source)])
-            rows.sort(key=lambda r: (r['line'], r['at']))
-            return [module.Violation(path, r['line'], r['message']) for r in rows]
+            from permission_port import scan_file
+            return scan_file(self, module, entry, path, arguments.get('source'), arguments.get('tree'))
         if check in {'removed_compat_surfaces', 'versioned_lifecycle_legacy_surfaces'}:
             if 'source' in arguments:
                 source = arguments['source']
@@ -574,6 +566,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'permission_error':
+                from permission_port import install
+                install(self, module)
             if check=='no_blanket_grammar_bypass':
                 from blanket_bypass_port import install
                 install(self,module)

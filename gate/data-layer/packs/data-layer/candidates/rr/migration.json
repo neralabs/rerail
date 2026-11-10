@@ -1374,7 +1374,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
-      "sha256": "621b6b414c03b22cf1e55d96e122c54707b055d84aec369e9cf113cc3fdf6c5d",
+      "sha256": "1547b712b8483e7af58692ae3bfc97fd235e193bf62a9924108d1623fe378817",
       "origin": "authored",
       "upstreamPath": "scripts/lint_permission_error.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2775,7 +2775,7 @@
       "legacySha256": "f95c0bc0626da3c96900d5bbe3aa72fd9709a3aad7557c0930e4d00db34de3f1",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
-      "ruleSha256": "621b6b414c03b22cf1e55d96e122c54707b055d84aec369e9cf113cc3fdf6c5d"
+      "ruleSha256": "1547b712b8483e7af58692ae3bfc97fd235e193bf62a9924108d1623fe378817"
     },
     {
       "check": "dynamic_module_loading",

@@ -1,5 +1,4 @@
 """Regressions for the PermissionError public API transport."""
-import importlib.util
 from pathlib import Path
 import sys
 import tempfile
