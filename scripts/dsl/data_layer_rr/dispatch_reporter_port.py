@@ -14,9 +14,11 @@ def encode_cases(module,cases):
     for case in cases:
         bundles=[]
         for bundle in bundle_map(module,case).values():
-            raw=bundle.facts[module.DISPATCH_EXTRACTOR.extractor_id]
-            rows=[dict(key=str(key),kind=kind(row),fields=[dict(key=str(k),value=encode(v)) for k,v in members(row)]) for key,row in members(raw)]
-            bundles.append(dict(path=str(bundle.path),kind=kind(raw),rows=rows))
+            families=[]
+            for name,raw in bundle.facts.items():
+                rows=[dict(key=str(key),kind=kind(row),fields=[dict(key=str(k),value=encode(v)) for k,v in members(row)]) for key,row in members(raw)]
+                families.append(dict(name=name,kind=kind(raw),rows=rows))
+            bundles.append(dict(path=str(bundle.path),facts=families))
         item=dict(root=str(Path(case['root'])),bundles=bundles,inventory=case.get('inventory') or '')
         if 'signature' in case:item['signature']=case['signature']
         result.append(item)

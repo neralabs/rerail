@@ -32,6 +32,13 @@ def cases(module):
         dict(id='path-error-before-malformed-container',root='/repo',bundles=[dict(path='/outside.py',value=None)]),
         dict(id='late-boundary-before-invalid-values',root='/repo',bundles=[dict(path=sorted(module._LATE_BOUNDARY_FILES)[0],value=[dict(hit,line=None)])]),
     ])
+    for field in ['line','occurrence']:
+        for j,value in enumerate(['7'*4301,1e308,-1e308,5e-324,-0.0,'nan','inf']):
+            add(field+'-extended-'+str(j),[dict(hit,**{field:value})])
+    add('nested-nonfinite',[dict(hit,message={'nan':float('nan'),'values':[float('inf'),-0.0,float('-inf')]})])
+    add('literal-tag-collision',[dict(hit,message=['float','7ff0000000000000'])])
+    for name,facts in [('missing',{}),('foreign',{'other':[hit]}),('foreign-first',{'other':[dict(hit,line=None)],module.DISPATCH_EXTRACTOR.extractor_id:[hit]})]:
+        rows.append(dict(id='extractor-'+name,root='/repo',bundles=[dict(path='a.py',facts=facts)]))
     for value in [None,'','# comment\n \n','entry\nentry\n','\u2000# ignored\u0085a\u2028b\u2029','a\0b\n']:
         add('inventory-'+str(len(rows)),[hit],inventory=value)
     for signature in ['', 'UNSIGNED','NEEDS_SIGNING','!!!!','AAAA']:
@@ -43,7 +50,7 @@ def cases(module):
 def bundle_map(module,case):
     from scripts.lint_lib.linter_plugin import PerFileFactBundle
     return {Path(b.get('key',b['path'])):PerFileFactBundle(Path(b['path']),'supplied',
-        facts={module.DISPATCH_EXTRACTOR.extractor_id:b['value']}) for b in case['bundles']}
+        facts=b['facts'] if 'facts' in b else {module.DISPATCH_EXTRACTOR.extractor_id:b['value']}) for b in case['bundles']}
 
 
 def source_case(module,case):
@@ -85,7 +92,10 @@ def main():
                 fallbacks.append(frame.f_code.co_qualname);raise AssertionError('Original semantics executed')
         sys.setprofile(guard)
         try:actual,execution=execute_batch(a.engine.absolute(),module,corpus,a.mode)
+        except Exception as error:
+            actual=[dict(nativeFailure=dict(type=type(error).__name__,detail=str(error))) for _ in corpus]
         finally:sys.setprofile(None)
+        compare(len(actual),len(corpus))
         for c,wanted,value in zip(corpus,baseline['cases'],actual):
             expected=wanted['expected'];rows.append(dict(input=c,expected=expected,actual=value,passed=json.dumps(value,sort_keys=True)==json.dumps(expected,sort_keys=True)))
     files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['migration.py','dto.py','replay.py']]]
