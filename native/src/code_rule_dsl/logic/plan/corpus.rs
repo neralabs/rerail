@@ -3926,7 +3926,7 @@ fn run_observed(
                         hashed.push(rel.to_owned());
                         Some(delta)
                     };
-                    let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;
+                    let mut maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_entries} inputs' deltas read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
                         None => format!("no kept documents: {} inputs' deltas found by hashing their documents", hashed.len()),
@@ -3936,6 +3936,22 @@ fn run_observed(
                         eprintln!("O125 input deltas: {} documents changed ({read} rows in their entries), {from_entries} from entries ({from_entries_rows} rows), by hashing {hashed:?}", changes.as_ref().map_or(0, Vec::len));
                     }
                     drop(s);
+                    // What the session keeps for the next run is stored, never inlined into its readers (decision
+                    // 0099): its rows are read back to be kept, and maintained from next run as `r__old` ("no such
+                    // table: py_f", inlined into `py_true` and `py_false`). So are the measurement aids' deltas.
+                    {
+                        let aids = ["RERAIL_SPIKE_DELTA", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_CROSS_VERIFY"].iter().any(|v| std::env::var_os(v).is_some());
+                        let program = &mut maintained.program.program;
+                        let mut stored: BTreeSet<String> = cut.derived(&cross.program)?.into_iter().chain(wanted.iter().cloned()).collect();
+                        if aids {
+                            stored.extend(program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
+                        }
+                        for rel in stored {
+                            let q = program.qualifiers.entry(rel).or_default();
+                            q.remove("inline");
+                            q.insert("no_inline".to_owned());
+                        }
+                    }
                     let part = &maintained.program;
                     step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules, {} old sources", maintained.maintained, maintained.recursive, maintained.derived_again, part.program.rules.len(), maintained.sources.len()));
                     let mut stats = cross_stats;
