@@ -2042,6 +2042,126 @@ impl InRel {
     /// (`ordered`) and by today's per-column chains, timed on keys of its own rows (every `stride`th), with the
     /// counts checked equal; and its dedup test by the set and by the order holding every column. A line, and the
     /// orders' bytes; `None` for a view.
+    /// The index-cost spike's growth (`RERAIL_INDEX_GROW`): the relation's rows again, wave by wave (by the level each
+    /// row was pushed at; 4096 rows a wave without levels), with as many duplicates offered as its derivations had
+    /// (`RERAIL_SPIKE_DERIVATIONS`), into today's dedup set and chains (`Rel::push`, the engine's own) and into the
+    /// mixed shape grown (`Growing` for the whole row and `hot`, `Runs` for the `orders`, each wave's run its delta).
+    fn grow_spike(&self, name: &str, hot: &[Vec<usize>], orders: Vec<Vec<usize>>) -> String {
+        let (k, n, rows) = (self.k, self.n, &self.rows);
+        // Waves: runs of one level, or of 4096 rows.
+        let mut waves: Vec<(usize, usize)> = Vec::new();
+        let mut lo = 0;
+        for id in 1..=n {
+            let cut = id == n || if self.level.len() == n { self.level[id] != self.level[lo] } else { id - lo >= 4096 };
+            if cut {
+                waves.push((lo, id));
+                lo = id;
+            }
+        }
+        // Duplicates offered: (derived - new) / new of the relation's derivations, spread evenly, each a row of an
+        // earlier wave.
+        let dup = DERIVATIONS.lock().unwrap().get(name).map_or(0.0, |&(d, nw)| if nw > 0 { d.saturating_sub(nw) as f64 / nw as f64 } else { 0.0 });
+        let mut offers: Vec<Vec<u32>> = Vec::with_capacity(waves.len());
+        let mut owed = 0.0f64;
+        let mut seed = 0x9e37_79b9u64;
+        for &(lo, hi) in &waves {
+            let mut o: Vec<u32> = (lo as u32..hi as u32).collect();
+            owed += dup * (hi - lo) as f64;
+            while owed >= 1.0 && hi > 0 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                o.push(((seed >> 33) % hi as u64) as u32);
+                owed -= 1.0;
+            }
+            offers.push(o);
+        }
+        let offered: usize = offers.iter().map(Vec::len).sum();
+        // Today: a fresh relation with the kept one's composite chains, the engine's own push.
+        let t = Instant::now();
+        let mut now = Rel::new(name, &self.types);
+        now.leveled = false;
+        for ix in &self.chains {
+            if ix.cols.len() > 1 { now.add_multi(&ix.cols); }
+        }
+        let mut held_now = 0usize;
+        for o in &offers {
+            let lo = now.n;
+            now.reserve(o.len());
+            for &id in o {
+                held_now += usize::from(now.push(&rows[id as usize * k..][..k]));
+            }
+            let hi = now.n;
+            now.set_delta(lo, hi);
+        }
+        let now_ms = t.elapsed().as_secs_f64() * 1e3;
+        let now_bytes = now.set.capacity() * 5 + now.idx.iter().map(|ix| ix.next.capacity() * 4 + ix.table.capacity() * (std::mem::size_of::<Post>() + 1)).sum::<usize>();
+        drop(now);
+        // The mixed shape. Ids are the kept relation's: a duplicate offer is an earlier row's id again.
+        let id_bits = 32 - (n as u32 + 1).leading_zeros();
+        let t = Instant::now();
+        let mut set = ordered::Growing::new((0..k).collect(), id_bits);
+        let mut placed: Vec<ordered::Growing> = hot.iter().map(|c| ordered::Growing::new(c.clone(), id_bits)).collect();
+        let mut runs: Vec<ordered::Runs> = orders.into_iter().map(ordered::Runs::new).collect();
+        let mut held_new = 0usize;
+        let (mut t_set, mut t_placed, mut t_runs) = (0.0f64, 0.0f64, 0.0f64);
+        let mut seen = vec![0u64; n.div_ceil(64)];
+        for o in &offers {
+            let t0 = Instant::now();
+            // The wave's rows by hash, so the inserts walk the table forward.
+            let mut hs: Vec<(u64, u32)> = o.iter().map(|&id| (ordered::key_hash(rows[id as usize * k..][..k].iter().copied()), id)).collect();
+            hs.sort_unstable();
+            set.reserve(rows, k, hs.len());
+            let mut fresh: Vec<u32> = Vec::with_capacity(hs.len());
+            for &(h, id) in &hs {
+                // A duplicate offer names an earlier row; its own id was placed then.
+                let first = seen[id as usize / 64] & (1 << (id % 64)) == 0;
+                if first && set.insert(rows, k, id, h, true) {
+                    seen[id as usize / 64] |= 1 << (id % 64);
+                    fresh.push(id);
+                } else if !first {
+                    // Probe only: found, so not inserted (`insert` returns false before placing a duplicate).
+                    std::hint::black_box(set.insert_probe(rows, k, id, h));
+                }
+            }
+            held_new += fresh.len();
+            let t1 = Instant::now();
+            for p in &mut placed {
+                let mut hs: Vec<(u64, u32)> = fresh.iter().map(|&id| (ordered::key_hash(p.cols.iter().map(|&c| rows[id as usize * k + c])), id)).collect();
+                hs.sort_unstable();
+                p.reserve(rows, k, hs.len());
+                for &(h, id) in &hs {
+                    p.insert(rows, k, id, h, false);
+                }
+            }
+            let t2 = Instant::now();
+            for r in &mut runs {
+                r.add_wave(rows, k, fresh.clone());
+            }
+            t_runs += t2.elapsed().as_secs_f64();
+            t_placed += (t2 - t1).as_secs_f64();
+            t_set += (t1 - t0).as_secs_f64();
+        }
+        let new_ms = t.elapsed().as_secs_f64() * 1e3;
+        let new_bytes = set.bytes() + placed.iter().map(ordered::Growing::bytes).sum::<usize>() + runs.iter().map(ordered::Runs::bytes).sum::<usize>();
+        GROWN.with(|g| { let mut g = g.borrow_mut(); g.0 += now_ms; g.1 += new_ms; g.2 += offered; g.3 += held_now; g.4 += now_bytes; g.5 += new_bytes; g.6 += t_set * 1e3; g.7 += t_placed * 1e3; g.8 += t_runs * 1e3; });
+        format!(
+            "grown over {} waves, {offered} offers ({dup:.2} duplicates a row): today {now_ms:.1} ms {:.1} B/row ({held_now} held), mixed {new_ms:.1} ms = set {:.1} + {} placed {:.1} + {} orders {:.1} ms, {:.1} B/row ({held_new} held; set grew {}x, runs {:?})",
+            waves.len(),
+            now_bytes as f64 / held_now.max(1) as f64,
+            t_set * 1e3,
+            placed.len(),
+            t_placed * 1e3,
+            runs.len(),
+            t_runs * 1e3,
+            new_bytes as f64 / held_new.max(1) as f64,
+            set.grew,
+            runs.iter().map(|r| r.runs.len()).collect::<Vec<_>>()
+        )
+    }
+    /// The spike's growth totals since the last take: today's ms, the mixed ms, offers, rows held, today's bytes, the
+    /// mixed bytes, and the mixed ms by part (set, placed, orders).
+    pub fn index_spike_grown() -> (f64, f64, usize, usize, usize, usize, f64, f64, f64) {
+        GROWN.with(|g| std::mem::take(&mut *g.borrow_mut()))
+    }
     /// The spike's mixed shape's bytes and probe-weighted ns, summed over the relations measured since the last take.
     pub fn index_spike_mixed() -> (usize, f64) {
         MIXED.with(|m| std::mem::take(&mut *m.borrow_mut()))
@@ -2166,6 +2286,12 @@ impl InRel {
             mixed_bytes += chains.len() * live_n * 4 + chains.len() * (live_n / ordered::FENCE + 1) * 8;
         }
         MIXED.with(|m| { let mut m = m.borrow_mut(); m.0 += mixed_bytes; m.1 += mixed_ns; });
+        if std::env::var_os("RERAIL_INDEX_GROW").is_some() {
+            let hot: Vec<Vec<usize>> = measured.iter().filter(|(_, d, f, p, c)| !*d && *c as usize >= live_n && p < f).map(|m| m.0.clone()).collect();
+            let mut chains = ordered::cover(&rest, k);
+            chains.retain(|o| rest.iter().any(|s| o[..s.len()].iter().all(|c| s.contains(c))));
+            parts.push(self.grow_spike(name, &hot, chains));
+        }
         parts.push(format!("mixed {:.1} B/row", mixed_bytes as f64 / live_n as f64));
         Some((
             format!(
@@ -2225,6 +2351,8 @@ pub fn prefetch_tables(conn: &Connection, wants: &std::collections::BTreeSet<(St
 thread_local! {
     /// The index-cost spike's mixed shape totals (`InRel::index_spike`).
     static MIXED: std::cell::RefCell<(usize, f64)> = const { std::cell::RefCell::new((0, 0.0)) };
+    /// Its growth totals (`InRel::grow_spike`).
+    static GROWN: std::cell::RefCell<(f64, f64, usize, usize, usize, usize, f64, f64, f64)> = const { std::cell::RefCell::new((0.0, 0.0, 0, 0, 0, 0, 0.0, 0.0, 0.0)) };
 }
 
 /// Tests: this thread's count steps build their tables at their first probe.
