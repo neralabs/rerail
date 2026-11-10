@@ -4377,7 +4377,7 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
+    "upstreamCommit": "0b7fb4dbddde9385877bf6e3e317cbc9c5defac5",
     "status": "Checked byte-range source extraction committed; new CLI build and dispatch acceptance are pending.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
@@ -4470,7 +4470,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
-        "sha256": "2b1c64e36adaa290c11a5f579e2290d133becaac6bbabd67e460d87766a40cc1"
+        "sha256": "85df013719b9b9a62ecd4ca2043e4a75a9d399215ac38df7a48d1c8a8d11ca00"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
@@ -4490,11 +4490,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "2c91a3697489f15f9143582c7a91ebb1ac066589410ea4b9bcabc0de5daab83d"
+        "sha256": "8108c88f9ffb5009acecc36ef2d663e355f83f2a819c18b79cb47f09f5c2554e"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "f6187cb61fb448b517f34d1eb07ff37593e21e35be2a25ffd42727a7e0d8e8ca"
+        "sha256": "b1c632a6e7e098a8443a61efffb63f4ced8ce691a6c6b5a05c8cb2fbdadb614e"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -4542,7 +4542,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "d0fc8d9eae51e4358d7b330d7c6500036480b77e257d9c13523c54412add3f7e"
+        "sha256": "b3658ce6306d282fe5b0ae59d4f9e61764fcf27eef59f59f06388c9556d1971a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
@@ -4590,8 +4590,8 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "c582595a5521f8ab38fba56ec33104ddfa3b5328",
-    "previousUpstreamCommit": "93cadec3793c11867cc45314ec566084f77afd03",
+    "upstreamMerge": "8d2c124fa822399d4da1d79c3de6dd01c9b5844e",
+    "previousUpstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
     "artifactHistory": [
       {
         "engineCommit": "1954d7c425c81efe98232d0ef6ff1a5c270e2c1a",
@@ -4622,10 +4622,10 @@
     ],
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
-      "engineCommit": "f0dd12a881f227204a16612933545c272165e9a4",
+      "upstreamCommit": "0b7fb4dbddde9385877bf6e3e317cbc9c5defac5",
+      "engineCommit": "97ba4580f5df566805d172cbf205005f4571a540",
       "sourceTrees": {
-        "native": "547f1d007d8b995638ff6f86a4fc3e41235ad5a0",
+        "native": "caaa2d32f6bb0a7c9d29785dd86dcf044a114d35",
         "accel": "c1cee95408206eb36c760b1db94154751cf5b5b7",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
@@ -4633,17 +4633,17 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "f0dd12a881f227204a16612933545c272165e9a4",
-      "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
+      "engineCommit": "97ba4580f5df566805d172cbf205005f4571a540",
+      "upstreamCommit": "0b7fb4dbddde9385877bf6e3e317cbc9c5defac5",
       "sourceTrees": {
-        "native": "547f1d007d8b995638ff6f86a4fc3e41235ad5a0",
+        "native": "caaa2d32f6bb0a7c9d29785dd86dcf044a114d35",
         "accel": "c1cee95408206eb36c760b1db94154751cf5b5b7",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-ee5dbadb317ff96f",
-      "sha256": "ee5dbadb317ff96f526d238d2e0f4cd097188b71af6e9358e0ea5255cb3651d3",
+      "path": ".rerail/modern-engine-alignment/cli-c6b17a2359f0acbd",
+      "sha256": "c6b17a2359f0acbd74921e19d6e7c14057c7547794b8bf13e06f9fcd43950abd",
       "command": [
         "cargo",
         "build",
@@ -4656,7 +4656,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 107.527
+      "seconds": 584.725
     }
   },
   "engineSourceSnapshots": [

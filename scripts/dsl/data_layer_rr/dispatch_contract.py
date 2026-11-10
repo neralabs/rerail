@@ -36,6 +36,10 @@ def cases(module):
         ('clean','pass\n'),('syntax','def broken(:\n')]:add(label,source)
     for i,path in enumerate(['other/a.py','impl/common/l2070_server_plan/backend_profiles.py','l2070_batching/a.py',
         'impl/common/l2070_server_plan/steps/tests/a.py']):add('scope-'+str(i),'ctx.is_sql_backend\n',path)
+    for part in ['.git','.venv','venv','__pycache__','tmp','.hidden','node_modules','conform','test','tests']:
+        add('scope-directory-'+part,'ctx.is_sql_backend\n',module._GENERIC_DIRS[0]+'/'+part+'/example.py')
+    for name in ['.py','.hidden.py','a.PY','a.pyi','notes.txt']:
+        add('scope-filename-'+name,'ctx.is_sql_backend\n',module._GENERIC_DIRS[0]+'/'+name)
     add('executor-connection','def f(executor):\n executor._conn\n',module._BASE_SERVER_PLAN_FILE)
     base=module._BASE_SERVER_PLAN_FILE
     def executor(name,body,parameters='backend, rendering'):
