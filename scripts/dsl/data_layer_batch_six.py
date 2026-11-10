@@ -10,9 +10,12 @@ import inspect
 import json
 from pathlib import Path
 import re
+import subprocess
 import time
 import sys
 from weakref import WeakKeyDictionary
+
+from data_layer_rr.dto import canonical
 
 BATCH_SIX = (
     'serverplan_bypass', 'serverplan_steps', 'serverplan_state_tripwires',
@@ -66,6 +69,23 @@ def install(recorder):
     recorder.originals.append((ast,'parse',original_parse));ast.parse=parsed
     modules={name:importlib.import_module(path) for name,path in MODULES.items()}
     for name,module in modules.items():sys.modules.setdefault(MODULES[name].removeprefix('scripts.'),module)
+    legacy = modules['legacy_execution_surfaces']
+    legacy_path = Path(legacy.__file__).resolve()
+    relative = legacy_path.relative_to(recorder.root).as_posix()
+    # Signing tests mock the signer. Supply the committed source before pytest
+    # enables its subprocess guard so the real allowlist comparison still runs.
+    committed_source = subprocess.check_output(
+        ['git', 'show', f'HEAD:{relative}'], cwd=recorder.root, text=True, encoding='utf-8')
+    original_head_text = legacy.git_head_text
+
+    def head_text(path, repo_root):
+        if path.resolve() == legacy_path and repo_root.resolve() == recorder.root:
+            return committed_source
+        return original_head_text(path, repo_root)
+
+    recorder.originals.append((legacy, 'git_head_text', original_head_text))
+    legacy.git_head_text = head_text
+
     def snapshot(module,entry,arguments):
         pairs=arguments.get('file_sources')
         if pairs is not None:
@@ -143,6 +163,9 @@ def install(recorder):
                 except Exception as error:event['retained_reason']='Output adapter: '+type(error).__name__+': '+str(error)
                 if entry=='conditional_architecture_findings':
                     for finding in event.get('findings',[]):finding['code']='SPQ-029'
+            event['sourceResult'] = canonical(result, root)
+            if raw is not result:
+                event['sourceMutations'] = canonical(raw, root)
             recorder.events.append(event)
             return result
         return observed

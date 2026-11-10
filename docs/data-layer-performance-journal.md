@@ -11459,3 +11459,11 @@ The unsharded native attempts reached the 115-second limit. The bounded shards p
 All 119 policy files pass the reader, including auxiliary policies. The migration tooling passes 409 tests and 165 subtests.
 The [progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-finalfc6-shared-cohort-progress.json.gz) binds these results to Final `fc6c1e0d9` and the recorded CLI.
 The branch has 96 translations, 13 full admissions, and four missing translations. The rest of the original suites and production contracts still require acceptance.
+
+### Original source recording for the four remaining translations, 2026-11-10
+
+All 528 original cases pass across five modules, including the conditional-architecture shared suite.
+The recorder preserves 356 complete returns and output-parameter changes. It captures 254 calls with findings and 102 clean calls.
+The other 181 tests do not call the recorded entries. Their assertions still need native acceptance where they exercise rule behavior.
+The two legacy signing tests use the exact committed source as their Git input. Their original signer mocks and allowlist comparison still run.
+The [original recording](../gate/data-layer/fixtures/host/data-layer-port/rr-missing-four-original-recording.json.gz) has no source mismatches.
