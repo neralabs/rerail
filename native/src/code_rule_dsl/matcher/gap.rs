@@ -16,6 +16,8 @@
 //! The compiler adds the test beside the relation's own walk (`compile::ast_rule`), so a stored
 //! token still matches as a node and an implied one through its gap.
 
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::matcher::AstMatcher;
 use crate::code_rule_dsl::tape::tokens::{Gaps, TokenGrammar};
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
@@ -44,6 +46,10 @@ pub(in crate::code_rule_dsl) struct GapTest {
     pub(in crate::code_rule_dsl) place: Place,
     pub(in crate::code_rule_dsl) regex: Regex,
     pub(in crate::code_rule_dsl) grammar: Arc<TokenGrammar>,
+    pub(in crate::code_rule_dsl) dialect: GrammarDialect,
+    /// A neighbour walk's `stopBy: {not: X}`: X, which must name only extras (comments), so the
+    /// walk passes them. `None`: a plain neighbour, where an extra beside the node is the neighbour.
+    pub(in crate::code_rule_dsl) past: Option<Box<AstMatcher>>,
 }
 
 impl std::fmt::Debug for GapTest {
@@ -56,6 +62,12 @@ impl GapTest {
     /// Whether an implied token the regex matches is at the test's place.
     pub(in crate::code_rule_dsl) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
         let matches = |token: &(&str, &str)| self.regex.is_match(token.0);
+        let past = match &self.past {
+            None => false,
+            Some(stop) if self.only_extras(stop, 0) => true,
+            // A walk that stops at other kinds is not a gap's question.
+            Some(_) => return false,
+        };
         match &self.place {
             Place::Own | Place::Field(_) => {
                 let Some((_, gaps)) = stored_gaps(&self.grammar, node) else { return false };
@@ -70,18 +82,42 @@ impl GapTest {
                 let Some((children, gaps)) = stored_gaps(&self.grammar, &parent) else { return false };
                 let Some(at) = children.iter().position(|child| child.node_id() == node.node_id()) else { return false };
                 match self.place {
+                    // An extra right before the node is its neighbour, unless the walk passes it;
+                    // the gap's word comes before the extras between the two stored children.
+                    Place::Before if !past && at > 0 && self.grammar.is_extra(&children[at - 1].kind()) => false,
                     Place::Before => gaps.before[at].last().is_some_and(matches),
                     Place::Earlier => gaps.before[..=at].iter().flatten().any(matches),
                     Place::Later => gaps.before[at + 1..].iter().flatten().chain(&gaps.end).any(matches),
                     // The gap after the node: before the next child, or the end. A stored token
                     // or an extra next is a stored gap, which the relation's own walk reads.
-                    _ => match children.get(at + 1) {
-                        Some(next) if next.is_named() => gaps.before[at + 1].first().is_some_and(matches),
-                        Some(_) => false,
-                        None => gaps.end.first().is_some_and(matches),
-                    },
+                    _ => {
+                        let next = children[at + 1..].iter().position(|child| !(past && self.grammar.is_extra(&child.kind()))).map(|step| at + 1 + step);
+                        match next.map(|next| (next, &children[next])) {
+                            Some((next, child)) if child.is_named() && !self.grammar.is_extra(&child.kind()) => gaps.before[next].first().is_some_and(matches),
+                            Some(_) => false,
+                            None => gaps.end.first().is_some_and(matches),
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+impl GapTest {
+    /// Whether `rule` matches nodes by kind alone, and only the grammar's extras.
+    fn only_extras(&self, rule: &AstMatcher, depth: usize) -> bool {
+        use ast_grep_core::matcher::Matcher;
+        if depth > 32 {
+            return false;
+        }
+        match rule {
+            AstMatcher::Kind(kind) => kind.potential_kinds().is_some_and(|set| {
+                set.iter().all(|id| u16::try_from(id).ok().and_then(|id| self.dialect.kind_name(id)).is_some_and(|name| self.grammar.is_extra(name)))
+            }),
+            AstMatcher::Any(rules) => rules.iter().all(|rule| self.only_extras(rule, depth + 1)),
+            AstMatcher::Util(util) => util.with_target(|rule| self.only_extras(rule, depth + 1)).unwrap_or(false),
+            _ => false,
         }
     }
 }

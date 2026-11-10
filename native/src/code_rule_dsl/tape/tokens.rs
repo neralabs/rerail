@@ -63,6 +63,8 @@ pub(in crate::code_rule_dsl) struct TokenGrammar {
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
     /// The grammar's extras (comments and the like): in no automaton, anywhere among children.
     extras: BTreeSet<String>,
+    /// Every token text some kind's automaton implies somewhere.
+    implied_texts: BTreeSet<String>,
 }
 
 /// A parent's gaps ([`TokenGrammar::gaps`]): per stored child, the implied word just before it
@@ -350,7 +352,13 @@ impl TokenGrammar {
         let field_sym = (0..=language.field_count() as u16)
             .map(|id| language.field_name_for_id(id).and_then(|name| names.get(name).copied()).unwrap_or(0))
             .collect();
-        Ok(Self { names, texts, kinds, field_sym, unsupported, extras })
+        let implied_texts = kinds
+            .values()
+            .flat_map(|automaton| automaton.implied.to.values().chain(automaton.implied.end.iter().flatten()))
+            .flatten()
+            .map(|label| texts[label.name as usize].clone())
+            .collect();
+        Ok(Self { names, texts, kinds, field_sym, unsupported, extras, implied_texts })
     }
 
     pub(in crate::code_rule_dsl) fn kind_count(&self) -> usize {
@@ -415,6 +423,11 @@ impl TokenGrammar {
 }
 
 impl TokenGrammar {
+    /// Every token text some kind's automaton implies somewhere: what a tape may leave out.
+    pub(in crate::code_rule_dsl) fn implied_texts(&self) -> &BTreeSet<String> {
+        &self.implied_texts
+    }
+
     /// Whether `kind` is one of the grammar's extras (a comment and the like).
     pub(in crate::code_rule_dsl) fn is_extra(&self, kind: &str) -> bool {
         self.extras.contains(kind)
@@ -630,6 +643,12 @@ pub(in crate::code_rule_dsl) fn grammar_json(lang: GrammarDialect) -> Option<&'s
 }
 
 impl TokenGrammar {
+    /// A dialect's automata, for its tape grammar's tree-sitter language; `None` where it has none.
+    pub(in crate::code_rule_dsl) fn of_dialect(lang: GrammarDialect) -> Option<Arc<Self>> {
+        let grammar = super::Grammar::new(lang).ok()?;
+        Self::of(lang, grammar.kinds.grammar()?)
+    }
+
     /// A dialect's automata, built once per process from its `grammar.json`; `None` where there
     /// is none (a dialect with its own parser, or no grammar on disk).
     pub(in crate::code_rule_dsl) fn of(lang: GrammarDialect, language: &Language) -> Option<Arc<Self>> {

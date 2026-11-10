@@ -33,6 +33,7 @@ use std::fmt::Write as _;
 
 /// One dialect's automata, as the census asks them.
 struct Lang {
+    dialect: GrammarDialect,
     implied: BTreeMap<String, BTreeSet<(String, String)>>,
     parents: BTreeMap<String, BTreeSet<String>>,
     tokens: BTreeSet<String>,
@@ -42,7 +43,7 @@ impl Lang {
     fn of(lang: GrammarDialect) -> Option<Self> {
         let language = Grammar::new(lang).ok()?.kinds.grammar()?.clone();
         let grammar = TokenGrammar::of(lang, &language)?;
-        Some(Self { implied: grammar.implied_tokens(), parents: grammar.parents(), tokens: grammar.token_texts() })
+        Some(Self { dialect: lang, implied: grammar.implied_tokens(), parents: grammar.parents(), tokens: grammar.token_texts() })
     }
 
     /// The parents among `parents` (all kinds where `None`) where a token `regex` matches is
@@ -100,6 +101,9 @@ struct Walk<'a> {
     active: Vec<String>,
     /// A util already walked in a context (its name and the context, printed): walked once.
     seen: BTreeSet<String>,
+    /// Relations the compiler also asks of the gaps (`compile::ast_rule::gap_test`), by path:
+    /// a token test that is their target, or an `any` alternative of it, is `lowered`.
+    lowered: BTreeSet<String>,
 }
 
 const COMPOSITE: [&str; 3] = ["all", "any", "not"];
@@ -151,6 +155,9 @@ impl Walk<'_> {
             let here = format!("{path}/{key}");
             match key.as_str() {
                 "has" | "follows" | "precedes" | "inside" => {
+                    if crate::code_rule_dsl::compile::ast_rule::gap_test(key, value, self.lang.dialect, Some(Box::new(crate::code_rule_dsl::matcher::AstMatcher::Never))).is_some() {
+                        self.lowered.insert(here.clone());
+                    }
                     let field = value.get("field").and_then(Value::as_str).map(str::to_owned);
                     let end = value.get("stopBy").is_some_and(|stop| stop != "neighbor");
                     let (next, child) = match key.as_str() {
@@ -217,8 +224,11 @@ impl Walk<'_> {
                 (if parents.is_some() { "gap" } else { "gap?" }, relation, self.lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
             }
         };
+        let target = path.rsplit_once("/any/").filter(|(_, at)| at.parse::<usize>().is_ok()).map_or(path, |(relation, _)| relation);
         let category = if category != "never" && implied.is_empty() {
             "stored"
+        } else if self.lowered.contains(path) || self.lowered.contains(target) {
+            "lowered"
         } else if negated && (category == "root" || (category != "never" && !matches!(rel, Rel::Sibling { end: false, .. }))) {
             // A `not` on the token's own node, over a set (the node matched, a node's children,
             // its earlier or later siblings): it kept tokens out of the set, and an implied token
@@ -263,7 +273,7 @@ fn node_kind(map: &Map<String, Value>, utils: &Map<String, Value>, depth: usize)
 }
 
 /// The worst category of a rule's tests, in the order they cost to fix.
-const ORDER: [&str; 9] = ["root", "below", "layout", "gap", "gap?", "incidental", "excluder", "stored", "never"];
+const ORDER: [&str; 10] = ["root", "below", "layout", "gap", "gap?", "incidental", "excluder", "lowered", "stored", "never"];
 
 /// RER-131 D (ignored): every token test of every pack rule, its category, and where its token is
 /// implied, to `RERAIL_TOKEN_READERS` (a TSV); a summary per pack and category on stderr.
@@ -304,7 +314,7 @@ fn token_readers() {
                     let Some(ast) = clause.pointer("/forbid/ast").and_then(Value::as_object) else { continue };
                     let Some(language) = ast.get("language").and_then(Value::as_str) else { continue };
                     let Some(lang) = langs.entry(language.to_owned()).or_insert_with(|| dialect_by_label(language).and_then(Lang::of)).as_ref() else { continue };
-                    let mut walk = Walk { lang, utils: &utils, tests: BTreeSet::new(), active: Vec::new(), seen: BTreeSet::new() };
+                    let mut walk = Walk { lang, utils: &utils, tests: BTreeSet::new(), active: Vec::new(), seen: BTreeSet::new(), lowered: BTreeSet::new() };
                     let base = format!("clauses/{at}");
                     if let Some(rule) = ast.get("rule") {
                         walk.rule(rule, &Rel::Root("rule"), &Frame::default(), &Frame::default(), false, &format!("{base}/rule"));

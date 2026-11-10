@@ -620,8 +620,18 @@ pub(crate) fn compile_ast_rule(
     for (key, constructor) in AST_RELATIONS {
         if let Some(relation) = rule.get(key) {
             let relation_path = format!("{path}/{key}");
-            terms.push(
-                match compile_relation(relation, language, &relation_path, gaps, utils)? {
+            let compiled = compile_relation(relation, language, &relation_path, gaps, utils)?;
+            // A bare token regex whose token the tape may leave out is also asked of the gaps (t31).
+            let past = match &compiled.1 {
+                StopBy::Rule(rule) => match rule.as_ref() {
+                    AstMatcher::Not(inner) => Some(inner.clone()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let gap = gap_test(key, relation, language, past);
+            terms.push(with_gap(
+                match compiled {
                     (AstMatcher::Never, _, _) => AstMatcher::Never,
                     (inner, stop, None) => constructor(Related::new(inner), stop),
                     // ast-grep-config's `field_name_to_id`: a name the grammar lacks is refused.
@@ -641,7 +651,8 @@ pub(crate) fn compile_ast_rule(
                         ),
                     },
                 },
-            );
+                gap,
+            ));
             group_paths.push(relation_path);
         }
     }
@@ -1238,5 +1249,69 @@ mod tests {
             reason.ends_with("(typescript, tsx, javascript grammars)"),
             "{reason}"
         );
+    }
+}
+
+/// The gap test a relation to a bare token regex also needs (t31): `None` unless the target is
+/// a bare regex (or `any` alternatives of one) that matches a token the dialect's grammar implies
+/// somewhere, and the relation is `has` (a neighbour, or a field), or `follows`/`precedes`.
+/// `has` to the end and `inside` are left as written; the guard refuses what they cannot reach.
+pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: GrammarDialect, past: Option<Box<AstMatcher>>) -> Option<crate::code_rule_dsl::matcher::gap::GapTest> {
+    use crate::code_rule_dsl::matcher::gap::{GapTest, Place};
+    let object = relation.as_object()?;
+    // `stopBy: {not: X}` walks past X; the test holds only where X names extras (comments).
+    let past_extras = object.get("stopBy").and_then(Value::as_object).is_some_and(|stop| stop.len() == 1 && stop.contains_key("not"));
+    let end = match object.get("stopBy").and_then(Value::as_str) {
+        None if object.contains_key("stopBy") && !past_extras => return None,
+        None | Some("neighbor") => false,
+        Some("end") => true,
+        Some(_) => return None,
+    };
+    let field = object.get("field").and_then(Value::as_str);
+    let place = match (key, end, field) {
+        ("has", false, Some(field)) => Place::Field(field.to_owned()),
+        (_, _, Some(_)) => return None,
+        ("has", false, None) => Place::Own,
+        ("follows", false, None) => Place::Before,
+        ("follows", true, None) => Place::Earlier,
+        ("precedes", false, None) => Place::After,
+        ("precedes", true, None) => Place::Later,
+        _ => return None,
+    };
+    let bare = |rule: &Value| -> Option<String> {
+        let rule = rule.as_object()?;
+        if rule.len() != 1 {
+            return None;
+        }
+        rule.get("regex")?.as_str().map(|regex| format!("(?:{regex})"))
+    };
+    let target: serde_json::Map<String, Value> = object.iter().filter(|(key, _)| !matches!(key.as_str(), "stopBy" | "field")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let regexes: Vec<String> = match bare(&Value::Object(target.clone())) {
+        Some(regex) => vec![regex],
+        None if target.len() == 1 => target.get("any")?.as_array()?.iter().filter_map(bare).collect(),
+        None => return None,
+    };
+    if regexes.is_empty() {
+        return None;
+    }
+    let regex = Regex::new(&regexes.join("|")).ok()?;
+    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language)?;
+    if !grammar.implied_texts().iter().any(|token| regex.is_match(token)) {
+        return None;
+    }
+    let past = if past_extras { Some(past?) } else { None };
+    if past.is_some() && !matches!(place, Place::Before | Place::After) {
+        return None;
+    }
+    Some(GapTest { place, regex, grammar, dialect: language, past })
+}
+
+/// A relation's term, or it or the gap test.
+fn with_gap(term: AstMatcher, gap: Option<crate::code_rule_dsl::matcher::gap::GapTest>) -> AstMatcher {
+    use crate::code_rule_dsl::matcher::Semantic;
+    match (term, gap) {
+        (term, None) => term,
+        (AstMatcher::Never, Some(gap)) => AstMatcher::Semantic(Semantic::Gap(Box::new(gap))),
+        (term, Some(gap)) => AstMatcher::Any(vec![term, AstMatcher::Semantic(Semantic::Gap(Box::new(gap)))]),
     }
 }

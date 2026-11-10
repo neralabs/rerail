@@ -1,5 +1,5 @@
 mod arguments;
-mod ast_rule;
+pub(in crate::code_rule_dsl) mod ast_rule;
 #[cfg(test)]
 mod binding_tests;
 mod binds;
