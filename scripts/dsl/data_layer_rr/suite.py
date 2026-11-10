@@ -90,6 +90,7 @@ class Suite:
         self.originals, self.calls, self.cases, self.translations = [], [], {}, []
         self.collected = []
         self.semantic_fallbacks = []
+        self.host_protocol_calls = []
         self.item = None
         self.inputs = {}
         raw = baseline.read_bytes()
@@ -631,6 +632,9 @@ class Suite:
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])
+            if not passive:
+                self.host_protocol_calls.append(dict(test=self.item.nodeid if self.item else '<configuration>',check=check,entry=name))
+        self.guard = guard
         sys.setprofile(guard)
         threading.setprofile(guard)
 
@@ -774,6 +778,8 @@ class Suite:
     @pytest.hookimpl(tryfirst=True)
     def pytest_runtest_setup(self, item):
         self.item = item
+        sys.setprofile(self.guard)
+        threading.setprofile(self.guard)
 
     def pytest_runtest_logreport(self, report):
         self.cases.setdefault(report.nodeid, []).append(dict(phase=report.when, outcome=report.outcome))
@@ -799,6 +805,7 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--checks', required=True)
+    parser.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot')
     parser.add_argument('--tests', nargs='+', help='Explicit unchanged modules or pytest node IDs; defaults to each check\'s direct module')
     parser.add_argument('--rule-root', type=Path, default=ROOT / 'gate/data-layer/packs/data-layer/candidates/rr',
                         help='Rule directory to execute; mutation tests supply a directory of disabled policies')
@@ -833,7 +840,7 @@ def main():
                                  (r'''getattr\(graph_scheme, ['\"]resolve_context_async''', "getattr(graph_scheme, 'resolve_context_async")]:
             if pattern not in module.ALLOWED_PATTERNS or re.search(pattern, f'    if hasattr(txn, "{witness}"):') is None:
                 raise AssertionError('The source no longer validates this skipped-case witness')
-    backend = Suite(source, engine, checks, args.part, args.parts, args.baseline.resolve(), args.rule_root.resolve())
+    backend = Suite(source, engine, checks, args.part, args.parts, args.baseline.resolve(), args.rule_root.resolve(),execution_mode=args.mode)
     os.chdir(source)
     code = pytest.main(['--rootdir', str(source), '-c', str(source / 'pyproject.toml'), '-q', *map(str, tests)], plugins=[backend])
     from data_layer_probe_record import verify_sources
@@ -856,7 +863,8 @@ def main():
         engineSha256=digest, exitCode=int(code), sourceFiles=source_hashes,
         ruleRoot=str(args.rule_root.resolve()),
         testTargets=targets,
-        api='snapshot-cli', harnessFiles=harness_hashes,
+        api=args.mode+'-cli', mode=args.mode, harnessFiles=harness_hashes,
+        policySha256={check:sha((args.rule_root/(check.replace('_','-')+'.rr')).read_bytes()) for check in checks},
         sourceFilesChecked=source_checked, missingResults=[dict(test=k[0], check=k[1], entry=k[2], count=n-backend.observed[k])
             for k, n in wanted.items() if n != backend.observed[k]],
         collected=backend.collected, part=args.part, parts=args.parts, cases=backend.cases,
@@ -867,6 +875,7 @@ def main():
         pythonHashSeed=os.environ.get('PYTHONHASHSEED'),
         executionIsolation='One owned persistent cache per assertion shard; shared-cache concurrency is tested separately',
         semanticFallbacks=backend.semantic_fallbacks,
+        hostProtocolCalls=backend.host_protocol_calls,
         casesWithoutNativeCalls=[case for case in backend.cases if not any(c['test'] == case for c in backend.calls)]))
     raise SystemExit(code)
 
