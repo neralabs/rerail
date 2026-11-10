@@ -57,6 +57,12 @@ tree json {
 
   `.rr`'s expressions and aggregates are used in many places. With every rule inlined, its
   machine had 858 states and 8,370 arms; shared, 438 and 4,014.
+
+  States of different levels that act alike stay apart, measured and not taken. Merging them
+  (a level's identity left out of the merge, levels that share a state joined) takes `.rr`
+  from 438 states to 284 and from 4,014 arms to 2,881. But tier 2's words do not change
+  (12,915 either way): its words are merged where they act alike (`merge_words`), so those
+  states were one copy of code already.
 - **Every token is a leaf node,** as before; `skip` bytes are in none.
 - The root spans the file from its first token to the file's end, as tree-sitter's does
   (trailing whitespace included).
