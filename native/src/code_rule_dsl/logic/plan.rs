@@ -23,6 +23,8 @@
 
 use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, strata};
 use super::native::TOP;
+use super::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
+use std::sync::Arc;
 use indexmap::IndexMap;
 use rusqlite::Connection;
 use rusqlite::types::Value as SqlValue;
@@ -106,16 +108,6 @@ fn native_modes(modes: &str) -> BTreeSet<String> {
         native.extend(["nearest", "setfix", "join"].map(str::to_owned));
     }
     native
-}
-
-/// Lowercase hex of a string's bytes (Python's `s.encode().hex()`).
-fn hex(s: &str) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = Vec::with_capacity(2 * s.len());
-    for b in s.bytes() {
-        out.extend_from_slice(&[DIGITS[usize::from(b >> 4)], DIGITS[usize::from(b & 15)]]);
-    }
-    String::from_utf8(out).expect("hex digits")
 }
 
 /// A string from its hex (Python's `bytes.fromhex(v).decode()`).
@@ -2375,12 +2367,13 @@ struct Fx<'a> {
     direct: bool,
 }
 impl Fx<'_> {
-    fn open(&self, spec: &str) -> Result<()> {
+    /// The planner's spec goes to the engine as values in process; through the SQL function as its text.
+    fn open(&self, spec: &ComponentSpec) -> Result<()> {
         let _span = super::profile::span(|| "engine open (load inputs, build indexes)".into());
         if self.direct {
-            super::native::component::open(self.db, spec)?;
+            super::native::component::open_spec(self.db, spec)?;
         } else {
-            self.db.query_row("SELECT set_fixpoint_open(?1)", [spec], |_| Ok(()))?;
+            self.db.query_row("SELECT set_fixpoint_open(?1)", [spec.to_text()], |_| Ok(()))?;
         }
         Ok(())
     }
@@ -2412,11 +2405,12 @@ impl Fx<'_> {
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
         Ok(text.split('\n').enumerate().map(|(i, line)| LiveRel::parse(line, &|c| symbols_text(i, c))).collect())
     }
-    fn reprobe(&self, name: &str, i: usize, kind: &str, body: &str) -> Result<()> {
+    fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
         let _span = super::profile::span(|| "engine reprobe".into());
         if self.direct {
-            super::native::component::reprobe(self.db, name, i, kind, body)?;
+            super::native::component::reprobe_spec(self.db, name, i, new)?;
         } else {
+            let (kind, body) = new.text();
             self.db.query_row("SELECT set_fixpoint_reprobe(?1, ?2, ?3, ?4)", rusqlite::params![name, i as i64, kind, body], |_| Ok(()))?;
         }
         Ok(())
@@ -3127,10 +3121,10 @@ fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
     }
 }
 
-fn const_tok(t: &Term) -> Option<String> {
+fn const_tok(t: &Term) -> Option<Tok> {
     match t {
-        Term::Int(i) => Some(format!("i:{i}")),
-        Term::Str(s) => Some(format!("x:{}", hex(s))),
+        Term::Int(i) => Some(Tok::Int(*i)),
+        Term::Str(s) => Some(Tok::Sym(s.clone())),
         _ => None,
     }
 }
@@ -3167,7 +3161,7 @@ impl Run<'_, '_> {
     /// top): that probe stays SQL.
     /// `join_spec` for a whole body: `None` too when a head variable is bound by none of its steps (the native join
     /// would read past its slots). A prefix of a body (the probe for how far a body runs natively) is not checked.
-    fn whole_join_spec(&self, h: &Atom, order: &[Step], at: Option<usize>, ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<String> {
+    fn whole_join_spec(&self, h: &Atom, order: &[Step], at: Option<usize>, ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<Arc<JoinSpec>> {
         let mut bound = BTreeSet::new();
         for s in order {
             let mut add = |t: &Term| if let Term::Var(v) = t { bound.insert(v.clone()); };
@@ -3199,7 +3193,7 @@ impl Run<'_, '_> {
         ri: &BTreeMap<String, usize>,
         scc: &BTreeSet<String>,
         native_rels: &BTreeSet<String>,
-    ) -> Option<String> {
+    ) -> Option<Arc<JoinSpec>> {
         let prog = self.prog;
         let inputs = |d: &mut super::derived::Inputs| {
             digest_atom(d, h);
@@ -3255,7 +3249,7 @@ impl Run<'_, '_> {
                 }
             }
         };
-        super::derived::value("join spec", inputs, || self.join_spec_made(h, order, at, ri, scc, native_rels))
+        super::derived::value("join spec", inputs, || self.join_spec_made(h, order, at, ri, scc, native_rels).map(Arc::new))
     }
 
     fn join_spec_made(
@@ -3266,7 +3260,7 @@ impl Run<'_, '_> {
         ri: &BTreeMap<String, usize>,
         scc: &BTreeSet<String>,
         native_rels: &BTreeSet<String>,
-    ) -> Option<String> {
+    ) -> Option<JoinSpec> {
         let prog = self.prog;
         let mut slots: HashMap<String, usize> = HashMap::new();
         let typ = |t: &Term| -> Option<String> {
@@ -3288,12 +3282,12 @@ impl Run<'_, '_> {
                 _ => None,
             }
         };
-        fn tok(t: &Term, slots: &mut HashMap<String, usize>) -> Option<String> {
+        fn tok(t: &Term, slots: &mut HashMap<String, usize>) -> Option<Tok> {
             match t {
-                Term::Wild => Some("_".to_owned()),
+                Term::Wild => Some(Tok::Wild),
                 Term::Var(n) => {
                     let len = slots.len();
-                    Some(format!("v{}", *slots.entry(n.clone()).or_insert(len)))
+                    Some(Tok::Slot(*slots.entry(n.clone()).or_insert(len)))
                 }
                 Term::Int(_) | Term::Str(_) => const_tok(t),
                 _ => None,
@@ -3303,16 +3297,16 @@ impl Run<'_, '_> {
         // bound arguments, nested on either side, as `func` steps, inner ones first, each into a slot of its own
         // (`rr_fn<step>_<k>`): the term of its value. A bound variable or a constant is itself; anything else (an
         // unbound variable, a call with no native function) has none.
-        fn expr(t: &Term, idx: usize, slots: &mut HashMap<String, usize>, lines: &mut Vec<String>) -> Option<Term> {
+        fn expr(t: &Term, idx: usize, slots: &mut HashMap<String, usize>, lines: &mut Vec<JoinItem>) -> Option<Term> {
             match t {
                 Term::Var(v) => slots.contains_key(v).then(|| t.clone()),
                 Term::Int(_) | Term::Str(_) => Some(t.clone()),
                 Term::Call(f, args) => {
                     let name = call_name(f, args.len())?;
                     let made: Vec<Term> = args.iter().map(|a| expr(a, idx, slots, lines)).collect::<Option<_>>()?;
-                    let toks: Vec<String> = made.iter().map(|a| tok(a, slots)).collect::<Option<_>>()?;
+                    let args: Vec<Tok> = made.iter().map(|a| tok(a, slots)).collect::<Option<_>>()?;
                     let out = Term::Var(format!("rr_fn{idx}_{}", lines.len()));
-                    lines.push(format!("func {name} {} {}", tok(&out, slots)?, toks.join(" ")));
+                    lines.push(JoinItem::Func { name: name.to_owned(), out: tok(&out, slots)?, args });
                     Some(out)
                 }
                 _ => None,
@@ -3333,13 +3327,14 @@ impl Run<'_, '_> {
         }
         // The atom's source and tokens. An input relation is loaded with its constant columns as a filter and
         // projected away (`field($n, "path", $p)` loads the `path` edges only), so it is read in the size it is used.
-        let atom = |l: &Atom, idx: Option<usize>, slots: &mut HashMap<String, usize>| -> Option<(String, Vec<String>, Vec<usize>)> {
+        let args = |l: &Atom, slots: &mut HashMap<String, usize>| l.args.iter().map(|t| tok(t, slots).map(Arg::Tok)).collect::<Option<Vec<_>>>();
+        let atom = |l: &Atom, idx: Option<usize>, slots: &mut HashMap<String, usize>| -> Option<(JoinSource, Vec<Arg>, Vec<usize>)> {
             if scc.contains(&l.rel) {
-                let src = format!("{}{}", if idx.is_some() && idx == at { "d" } else { "c" }, ri[&l.rel]);
-                return Some((src, l.args.iter().map(|t| tok(t, slots)).collect::<Option<_>>()?, (0..l.args.len()).collect()));
+                let src = if idx.is_some() && idx == at { JoinSource::Delta(ri[&l.rel]) } else { JoinSource::Full(ri[&l.rel]) };
+                return Some((src, args(l, slots)?, (0..l.args.len()).collect()));
             }
             if native_rels.contains(&l.rel) {
-                return Some((format!("r:{}", hex(&l.rel)), l.args.iter().map(|t| tok(t, slots)).collect::<Option<_>>()?, (0..l.args.len()).collect()));
+                return Some((JoinSource::Native(l.rel.clone()), args(l, slots)?, (0..l.args.len()).collect()));
             }
             let is_const = |t: &Term| matches!(t, Term::Int(_) | Term::Str(_));
             let keep: Vec<usize> = (0..l.args.len()).filter(|&c| !is_const(&l.args[c])).collect();
@@ -3367,14 +3362,14 @@ impl Run<'_, '_> {
             if !wheres.is_empty() {
                 sel += &format!(" WHERE {}", wheres.join(" AND "));
             }
-            let mut toks: Vec<String> = keep.iter().map(|&c| tok(&l.args[c], slots)).collect::<Option<_>>()?;
+            let mut toks: Vec<Arg> = keep.iter().map(|&c| tok(&l.args[c], slots).map(Arg::Tok)).collect::<Option<_>>()?;
             if toks.is_empty() {
-                toks.push("_".to_owned());
+                toks.push(Arg::Tok(Tok::Wild));
             }
-            let base = if self.inputs.contains(l.rel.as_str()) || self.model.view_src.contains_key(&l.rel) { "b" } else { "d" };
-            Some((format!("t:{base}:{}:{}:{types}", hex(&sel), hex(&cols)), toks, keep))
+            let base = self.inputs.contains(l.rel.as_str()) || self.model.view_src.contains_key(&l.rel);
+            Some((JoinSource::Input(InputKey { base, sql: sel, cols, types }), toks, keep))
         };
-        let kinds = |kset: &str| hex(&prog.kindsets[kset].join(","));
+        let kinds = |kset: &str| prog.kindsets[kset].join(",");
         let mut lines = Vec::new();
         for (idx, s) in order.iter().enumerate() {
             match &s.lit {
@@ -3382,8 +3377,8 @@ impl Run<'_, '_> {
                     if s.mode == Some(Mode::Range) {
                         return None;
                     }
-                    let (sc, toks, _) = atom(l, Some(idx), &mut slots)?;
-                    lines.push(format!("{} {sc} {}", if l.neg { "neg" } else { "pos" }, toks.join(" ")));
+                    let (src, args, _) = atom(l, Some(idx), &mut slots)?;
+                    lines.push(JoinItem::Atom { neg: l.neg, src, args });
                 }
                 Literal::Cmp { l: Term::Call(fl, xl), op, r: Term::Call(fr, xr) }
                     if (*op == "=" || *op == "!=") && fl == "doc" && fr == "doc" && xl.len() == 1 && xr.len() == 1 =>
@@ -3393,16 +3388,16 @@ impl Run<'_, '_> {
                     if !bound(&xl[0]) || !bound(&xr[0]) {
                         return None;
                     }
-                    let (ta, tb) = (tok(&xl[0], &mut slots)?, tok(&xr[0], &mut slots)?);
-                    lines.push(format!("{} {ta} {tb}", if *op == "=" { "deq" } else { "dne" }));
+                    let (a, b) = (tok(&xl[0], &mut slots)?, tok(&xr[0], &mut slots)?);
+                    lines.push(JoinItem::Doc { a, b, eq: *op == "=" });
                 }
                 Literal::Cmp { l: Term::Var(d), op: "=", r: Term::Call(f, args) } if f == "doc" && args.len() == 1 => {
                     // `$d = @doc($n)` (the cross-file memo's guard, decision 0076): n bound; d bound or tested.
                     if !matches!(&args[0], Term::Var(v) if slots.contains_key(v)) {
                         return None;
                     }
-                    let tn = tok(&args[0], &mut slots)?;
-                    lines.push(format!("docof {} {tn}", tok(&Term::Var(d.clone()), &mut slots)?));
+                    let n = tok(&args[0], &mut slots)?;
+                    lines.push(JoinItem::DocOf { out: tok(&Term::Var(d.clone()), &mut slots)?, n });
                 }
                 Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
                     if (f == "in" || f == "equals")
@@ -3412,8 +3407,8 @@ impl Run<'_, '_> {
                         && matches!(x, Term::Var(v) if slots.contains_key(v)) =>
                 {
                     // `@equals($q, {"a", "b"}) = 1` once lowered (the strings are symbols): membership, natively.
-                    let members: Vec<String> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
-                    lines.push(format!("in {} {want} {}", tok(x, &mut slots)?, members.join(" ")));
+                    let set: Vec<Tok> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
+                    lines.push(JoinItem::In { a: tok(x, &mut slots)?, want: *want == 1, set });
                 }
                 Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
                     if crate::code_rule_dsl::logic::strings::is_test(f)
@@ -3424,8 +3419,8 @@ impl Run<'_, '_> {
                 {
                     // `@contains($w, {"dolt_", "dolt log"}) = 1` once lowered (the patterns are symbols): one matcher
                     // of the symbols' names, made with the spec.
-                    let members: Vec<String> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
-                    lines.push(format!("testset {f} {} {want} {}", tok(x, &mut slots)?, members.join(" ")));
+                    let members: Vec<Tok> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
+                    lines.push(JoinItem::TestSet { op: f.clone(), s: tok(x, &mut slots)?, want: *want == 1, members });
                 }
                 Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
                     if crate::code_rule_dsl::logic::strings::is_test(f) && args.len() == 2 =>
@@ -3449,7 +3444,7 @@ impl Run<'_, '_> {
                         return None;
                     }
                     let (ts, tp) = (tok(&tested, &mut slots)?, tok(&pattern, &mut slots)?);
-                    lines.push(format!("test {f} {ts} {tp} {want}"));
+                    lines.push(JoinItem::Test { op: f.clone(), s: ts, p: tp, want: *want == 1 });
                 }
                 Literal::Cmp { l, op, r } if (*op == "=" || *op == "!=") && !matches!(r, Term::Call(f, _) if f == "cat") => {
                     // `$v = @f(…)` (a text or number function, `@concat`, nested calls): the call's value straight into
@@ -3462,8 +3457,8 @@ impl Run<'_, '_> {
                     {
                         let name = call_name(f, args.len())?;
                         let made: Vec<Term> = args.iter().map(|a| expr(a, idx, &mut slots, &mut lines)).collect::<Option<_>>()?;
-                        let toks: Vec<String> = made.iter().map(|a| tok(a, &mut slots)).collect::<Option<_>>()?;
-                        lines.push(format!("func {name} {} {}", tok(l, &mut slots)?, toks.join(" ")));
+                        let args: Vec<Tok> = made.iter().map(|a| tok(a, &mut slots)).collect::<Option<_>>()?;
+                        lines.push(JoinItem::Func { name: name.to_owned(), out: tok(l, &mut slots)?, args });
                     } else {
                         // The bound side goes right.
                         let (a, b) = if unbound(r, &slots) { (r, l) } else { (l, r) };
@@ -3472,8 +3467,8 @@ impl Run<'_, '_> {
                         }
                         let b = expr(b, idx, &mut slots, &mut lines)?;
                         let a = if unbound(a, &slots) { a.clone() } else { expr(a, idx, &mut slots, &mut lines)? };
-                        let (ta, tb) = (tok(&a, &mut slots)?, tok(&b, &mut slots)?);
-                        lines.push(format!("{} {ta} {tb}", if *op == "=" { "eq" } else { "ne" }));
+                        let (a, b) = (tok(&a, &mut slots)?, tok(&b, &mut slots)?);
+                        lines.push(JoinItem::Eq { a, b, ne: *op != "=" });
                     }
                 }
                 Literal::Cmp { l, op: "=", r: Term::Call(f, args) } if f == "cat" => {
@@ -3481,8 +3476,8 @@ impl Run<'_, '_> {
                         return None;
                     }
                     let (a, b) = (&args[0], &args[1]);
-                    let (tl, ta) = (tok(l, &mut slots)?, tok(a, &mut slots)?);
-                    lines.push(format!("cat {tl} {ta} {}", tok(b, &mut slots)?));
+                    let (out, a) = (tok(l, &mut slots)?, tok(a, &mut slots)?);
+                    lines.push(JoinItem::Cat { out, a, b: tok(b, &mut slots)? });
                 }
                 Literal::Cmp { l, op, r } if matches!(*op, "<" | "<=" | ">" | ">=") => {
                     // Integers (and nodes) only: symbols are numbered in the order they are met. A number function's
@@ -3499,7 +3494,7 @@ impl Run<'_, '_> {
                     let (l, r) = (expr(l, idx, &mut slots, &mut lines)?, expr(r, idx, &mut slots, &mut lines)?);
                     let (a, b) = if matches!(*op, "<" | "<=") { (&l, &r) } else { (&r, &l) };
                     let ta = tok(a, &mut slots)?;
-                    lines.push(format!("{} {ta} {}", if matches!(*op, "<" | ">") { "lt" } else { "le" }, tok(b, &mut slots)?));
+                    lines.push(JoinItem::Lt { a: ta, b: tok(b, &mut slots)?, or_eq: !matches!(*op, "<" | ">") });
                 }
                 Literal::Agg { var, op: op @ (AggOp::Count | AggOp::Sum | AggOp::Min | AggOp::Max), over, atom: a } => {
                     // The over-variable belongs to the bag even if an outer step bound the same name.
@@ -3517,18 +3512,20 @@ impl Run<'_, '_> {
                         if matches!(term, Term::Var(v) if Some(&*v)==over.as_ref()) { *term=Term::Wild; }
                     }
                     if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v))) { return None; }
-                    // Use atom's retained column map for every projected aggregate.
-                    let (sc, mut toks, columns) = atom(&a, None, &mut slots)?;
+                    // Every aggregate addresses the retained row, after constant filters.
+                    let (src, mut args, columns) = atom(&a, None, &mut slots)?;
                     let value_col = col.and_then(|c| columns.iter().position(|&original| original == c));
                     if local.len()>1 {
                         for c in local {
                             let c=columns.iter().position(|&original| original == c)?;
-                            toks[c]="a0".into();
+                            args[c]=Arg::Local("0".into());
                         }
                     }
-                    let name=match op {AggOp::Count=>"count",AggOp::Sum=>"sum",AggOp::Min=>"min",_=>"max"};
-                    let value=if *op==AggOp::Count {String::new()} else {format!(" {}",value_col?)};
-                    lines.push(format!("{name} {sc} {}{value} {}",toks.join(" "),tok(&Term::Var(var.clone()),&mut slots)?));
+                    let out=tok(&Term::Var(var.clone()),&mut slots)?;
+                    lines.push(match op {
+                        AggOp::Count => JoinItem::Count { src, args, out },
+                        _ => JoinItem::Extreme { op: match op {AggOp::Sum=>Extreme::Sum,AggOp::Min=>Extreme::Min,_=>Extreme::Max}, src, args, col: value_col?, out },
+                    });
                 }
                 Literal::Agg { var, op: AggOp::Join { by, sep }, over: Some(o), atom: a } => {
                     // `$s = join $x by ($k…) sep "…" : { atom }`: x and the unbound k are the atom's own columns, one
@@ -3548,31 +3545,29 @@ impl Run<'_, '_> {
                     let mut bycols = Vec::new();
                     for b in by.iter().filter(|b| !slots.contains_key(*b)) {
                         let c = column(b)?;
-                        bycols.push((c, sym(c)));
+                        bycols.push((c, sym(c) == 1));
                     }
                     let mut a = a.clone();
                     for v in &local {
                         let c = column(v)?;
                         a.args[c] = Term::Wild;
                     }
-                    let (sc, toks, columns) = atom(&a, None, &mut slots)?;
-                    // Table inputs remove constant-filtered columns. Both the
-                    // value and ordering keys address that projected row.
+                    let (src, args, columns) = atom(&a, None, &mut slots)?;
                     let project = |c| columns.iter().position(|&original| original == c);
-                    let value_kind = sym(xc);
+                    let kind = sym(xc) == 1;
                     let xc = project(xc)?;
-                    let bycols = bycols.into_iter().map(|(c, kind)| project(c).map(|c| format!("{c}:{kind}"))).collect::<Option<Vec<_>>>()?;
+                    let bycols = bycols.into_iter().map(|(c, kind)| project(c).map(|c| (c, kind))).collect::<Option<Vec<_>>>()?;
                     let sep = const_tok(&Term::Str(sep.clone()))?;
-                    let bylist = if bycols.is_empty() { "-".to_owned() } else { bycols.join(",") };
-                    lines.push(format!("strjoin {sc} {} {xc}:{value_kind} {bylist} {sep} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
+                    let out = tok(&Term::Var(var.clone()), &mut slots)?;
+                    lines.push(JoinItem::StrJoin { src, args, x: (xc, kind), by: bycols, sep, out });
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
                     let tn = tok(&Term::Var(n.clone()), &mut slots)?;
-                    lines.push(format!("near {tn} {} {}", tok(&Term::Var(a.clone()), &mut slots)?, kinds(kindset)));
+                    lines.push(JoinItem::Near { down: false, n: tn, a: tok(&Term::Var(a.clone()), &mut slots)?, kinds: kinds(kindset) });
                 }
                 Literal::Nearest { n, a, kindset } if slots.contains_key(a) && !slots.contains_key(n) => {
                     let tn = tok(&Term::Var(n.clone()), &mut slots)?;
-                    lines.push(format!("down {tn} {} {}", tok(&Term::Var(a.clone()), &mut slots)?, kinds(kindset)));
+                    lines.push(JoinItem::Near { down: true, n: tn, a: tok(&Term::Var(a.clone()), &mut slots)?, kinds: kinds(kindset) });
                 }
                 _ => return None,
             }
@@ -3581,20 +3576,20 @@ impl Run<'_, '_> {
         for t in &h.args {
             match t {
                 Term::Call(f, args) if f == "cat" && args.iter().all(|x| matches!(x, Term::Var(_))) => {
-                    let t0 = tok(&args[0], &mut slots)?;
-                    head.push(format!("cat:{t0}:{}", tok(&args[1], &mut slots)?));
+                    let (Some(Tok::Slot(a)), Some(Tok::Slot(b))) = (tok(&args[0], &mut slots), tok(&args[1], &mut slots)) else { return None };
+                    head.push(HeadTok::Cat(a, b));
                 }
                 // `q(…, @concat(m, ".", a))`, `q(…, @add($i, 1))`: the computed term made into a slot before the head
                 // reads it.
                 Term::Call(..) => {
                     let made = expr(t, order.len(), &mut slots, &mut lines)?;
-                    head.push(tok(&made, &mut slots)?);
+                    head.push(HeadTok::Tok(tok(&made, &mut slots)?));
                 }
-                _ => head.push(tok(t, &mut slots)?),
+                _ => head.push(HeadTok::Tok(tok(t, &mut slots)?)),
             }
         }
-        lines.push(format!("head {}", head.join(" ")));
-        Some(lines.join("\n"))
+        lines.push(JoinItem::Head(head));
+        Some(JoinSpec { items: lines })
     }
 
     /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it.
@@ -3725,10 +3720,10 @@ impl Run<'_, '_> {
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
         // is the joins' specs and their checks; planning is in its `plan #…` spans).
         let spec_span = super::profile::span(|| "spec".into());
-        let mut lines = vec![format!("name {name}")];
+        let mut lines: Vec<SpecLine> = Vec::new();
         // The relations' lines go here, once the seeds SQL derives are known (below).
         let rel_at = lines.len();
-        lines.push("nowrite".to_owned());
+        lines.push(SpecLine::NoWrite);
         // A component that answers requests (decision 0065 §2a) cannot fall back to SQL whole: a rule with no native
         // step is a SQL seed, run before the component opens, or a SQL probe over its relations' `set_rel` views.
         let answering = scc.iter().any(|r| prog.answers.contains_key(r));
@@ -3739,10 +3734,10 @@ impl Run<'_, '_> {
         let produced = super::answers::produced(prog);
         for r in &rels {
             if prog.answers.contains_key(*r) && scc.iter().any(|x| produced.get(x.as_str()) == Some(&r.as_str())) {
-                lines.push(format!("request {}", ri[*r]));
+                lines.push(SpecLine::Request(ri[*r]));
             }
             if produced.contains_key(r.as_str()) {
-                lines.push(format!("produced {}", ri[*r]));
+                lines.push(SpecLine::Produced(ri[*r]));
             }
         }
         let mut est: HashMap<&str, f64> = HashMap::new();
@@ -3805,7 +3800,7 @@ impl Run<'_, '_> {
             };
             explained.push((format!("seed {}", r.head.rel), rule_no(r), x, took, 0));
             *est.entry(r.head.rel.as_str()).or_default() += rows;
-            lines.push(format!("seed {} {}", ri[&r.head.rel], hex(&spec)));
+            lines.push(SpecLine::Seed { head: ri[&r.head.rel], join: spec });
             orders.push(order);
             order_rules.push(obs_rule(&r.head, &r.body));
         }
@@ -3817,14 +3812,14 @@ impl Run<'_, '_> {
             if produced_inputs.contains(r.as_str()) {
                 let cols = (0..prog.decls[*r].len()).map(|c| self.model.col(r, c)).collect::<Vec<_>>().join(", ");
                 let sql = format!("SELECT {cols} FROM {}", self.model.relation(prog, r, false).render());
-                rel_lines.push(format!("rel {r} {} from {}", types(r), hex(&sql)));
+                rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::From(sql) });
             } else if let Some((old, gone)) = based.get(*r) {
                 // Its survivors rule is gone: it starts from the kept relation, plus what facts or SQL seeds wrote.
                 let seeded = !(prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r));
-                rel_lines.push(format!("rel {r} {} base {} {}{}", types(r), hex(old), hex(gone), if seeded { " seeded" } else { "" }));
+                rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::Base { old: old.clone(), gone: gone.clone(), seeded } });
             } else {
                 let empty = prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r);
-                rel_lines.push(format!("rel {r} {}{}", types(r), if empty { " empty" } else { "" }));
+                rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: if empty { Start::Empty } else { Start::Rows } });
             }
         }
         lines.splice(rel_at..rel_at, rel_lines);
@@ -3838,7 +3833,7 @@ impl Run<'_, '_> {
         for r in &rules {
             // The rule's whole plan, and its spec once one is wanted: one per rule, whichever atom is its delta.
             let mut whole_plan: Option<Vec<Step>> = None;
-            let mut whole_spec: Option<Option<String>> = None;
+            let mut whole_spec: Option<Option<Arc<JoinSpec>>> = None;
             for (ai, a) in recursive(&r.body, scc) {
                 let _span = planning(r, "plan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
@@ -3858,7 +3853,7 @@ impl Run<'_, '_> {
                         self.ensure_indexes(&outside)?;
                         let sql = self.model.sql_select(prog, &r.head, &order, Some(at), Some(&views))?;
                         explained.push((format!("probe {} (delta {})", r.head.rel, a.rel), rule_no(r), None, took, 0));
-                        lines.push(format!("probe {} {} {}", ri[&r.head.rel], ri[&a.rel], hex(&sql)));
+                        lines.push(SpecLine::Probe { head: ri[&r.head.rel], delta: ri[&a.rel], sql });
                         probes.push((*r, ai, order));
                         sql_probe.push(true);
                         continue;
@@ -3879,38 +3874,26 @@ impl Run<'_, '_> {
                 } else {
                     None
                 };
-                let mut line = format!("join {} {} {}", ri[&r.head.rel], ri[&a.rel], hex(&spec));
-                if let Some(w) = wspec {
-                    line += &format!(" {}", hex(&w));
-                }
-                lines.push(line);
+                lines.push(SpecLine::Join { head: ri[&r.head.rel], delta: ri[&a.rel], join: spec, whole: wspec });
                 probes.push((*r, ai, order));
                 sql_probe.push(false);
             }
         }
         for (g, d) in &gates {
-            let idx = |rs: &[String]| {
-                let s = rs.iter().filter_map(|r| ri.get(r)).map(usize::to_string).collect::<Vec<_>>().join(",");
-                if s.is_empty() { "-".to_owned() } else { s }
-            };
-            let deps = d.deps.iter().filter_map(|x| gates.iter().position(|(g2, _)| g2 == x)).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+            let quiet: Vec<usize> = d.quiet.iter().filter_map(|r| ri.get(r)).copied().collect();
+            let after: Vec<usize> = d.deps.iter().filter_map(|x| gates.iter().position(|(g2, _)| g2 == x)).collect();
             if let Some(src) = d.src.as_ref().filter(|s| !ri.contains_key(*s)) {
                 return Err(Error::Plan(format!("gate {g}: its source {src} is not in its component {scc:?}")));
             }
-            lines.push(format!(
-                "gate {} {} {} {}",
-                ri[g],
-                d.src.as_ref().map_or("-".to_owned(), |s| ri[s].to_string()),
-                idx(&d.quiet),
-                if deps.is_empty() { "-".to_owned() } else { deps }
-            ));
+            lines.push(SpecLine::Gate { done: ri[g], src: d.src.as_ref().map(|s| ri[s]), quiet, after });
         }
+        let spec = ComponentSpec { name: name.clone(), lines };
         drop(spec_span);
         // The O125 spike (`RERAIL_SPIKE_SPECS=<dir>`): each stratum named as it starts, its spec written out.
         if let Some(dir) = std::env::var_os("RERAIL_SPIKE_SPECS") {
             let cpu = { let (u, s) = corpus::thread_usage(); u + s };
             eprintln!("O125 stratum {name} ({} relations, {} rules) at {:.1} s CPU", rels.len(), rules.len(), cpu);
-            let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n"), lines.join("\n")));
+            let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n"), spec.to_text()));
         }
         let started = std::time::Instant::now();
         // Where it runs (decision 0095). The device has no relational form yet, so every stratum runs here; the
@@ -3920,10 +3903,10 @@ impl Run<'_, '_> {
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
         // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
         let lab = super::native::component::lab::wanted(&name, shape.work)
-            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &lines.join("\n"), &path));
+            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &spec.to_text(), &path));
         // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
         let mut timed: Vec<f64> = Vec::new();
-        self.fx().open(&lines.join("\n"))?;
+        self.fx().open(&spec)?;
         let sql_views = sql_probe.iter().any(|p| *p);
         if sql_views {
             for r in &rels {
@@ -3989,7 +3972,7 @@ impl Run<'_, '_> {
                 // The whole plans, planned from seed estimates (a derived relation empty, its columns without
                 // distinct counts), again from the live counts: once per rule, the same plan for each of its probes
                 // (`setfix` runs it once a wave).
-                let mut whole: Vec<(*const Rule, String)> = Vec::new();
+                let mut whole: Vec<(*const Rule, Arc<JoinSpec>)> = Vec::new();
                 for k in 0..probes.len() {
                     if sql_probe[k] {
                         continue;
@@ -4001,12 +3984,11 @@ impl Run<'_, '_> {
                             let _span = planning(r, "replan whole");
                             let ((new, _, _), _) = self.model.plan_rule_live(prog, &r.head, &r.body, None)?;
                             let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, &native_rels) else { continue };
-                            let w = hex(&w);
                             whole.push((r, w.clone()));
                             w
                         }
                     };
-                    self.fx().reprobe(&name, nseeds + k, "whole", &spec)?;
+                    self.fx().reprobe(&name, nseeds + k, &Reprobe::Whole(spec))?;
                 }
                 chunk = 2;
                 continue;
@@ -4041,7 +4023,7 @@ impl Run<'_, '_> {
                 let spec = self
                     .whole_join_spec(&r.head, &new, Some(at), &ri, scc, &native_rels)
                     .ok_or_else(|| Error::Plan(format!("a replanned probe of {} has no native step", r.head)))?;
-                self.fx().reprobe(&name, nseeds + k, "join", &hex(&spec))?;
+                self.fx().reprobe(&name, nseeds + k, &Reprobe::Join(spec))?;
                 probes[k].2 = new;
             }
             chunk *= 2;
@@ -4077,15 +4059,19 @@ impl Run<'_, '_> {
         if let Some(file) = std::env::var_os("RDL_COMPONENTS") {
             // The component's plans and each step's observed bindings in and out (`set_fixpoint_steps`), appended.
             let mut text = format!("COMPONENT {} rounds={} ms={:.1}\n", rels.iter().map(|r| r.as_str()).collect::<Vec<_>>().join("/"), chunk.trailing_zeros(), started.elapsed().as_secs_f64() * 1e3);
-            for l in &lines {
-                let parts: Vec<&str> = l.split(' ').collect();
-                if matches!(parts.first(), Some(&"seed" | &"join")) {
-                    let spec = parts.get(if parts[0] == "seed" { 2 } else { 3 }).and_then(|h| unhex(h)).unwrap_or_default();
+            for l in &spec.lines {
+                let (kind, join) = match l {
+                    SpecLine::Seed { join, .. } => ("seed", join),
+                    SpecLine::Join { join, .. } => ("join", join),
+                    _ => continue,
+                };
+                {
+                    let spec = join.to_text();
                     let spec: Vec<String> = spec.split('\n').map(|step| step.split(' ').map(|t| t.strip_prefix("t:").map_or(t.to_owned(), |rest| {
                         let f: Vec<&str> = rest.splitn(4, ':').collect();
                         format!("t:{}:[{}]", f.first().unwrap_or(&""), f.get(1).and_then(|h| unhex(h)).unwrap_or_default())
                     })).collect::<Vec<_>>().join(" ")).collect();
-                    text += &format!("  SPEC {} {}\n", parts[0], spec.join(" | "));
+                    text += &format!("  SPEC {kind} {}\n", spec.join(" | "));
                 }
             }
             let empty = Vec::new();
@@ -4267,8 +4253,7 @@ impl Run<'_, '_> {
         };
         let tables: HashMap<String, (String, String)> = rels.iter().map(|r| ((*r).clone(), (format!("sfx_f_{r}"), format!("sfx_d_{r}")))).collect();
         let types = |r: &str| prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
-        let mut lines = vec![format!("name {name}")];
-        lines.extend(rels.iter().map(|r| format!("rel {r} {}", types(r))));
+        let mut lines: Vec<SpecLine> = rels.iter().map(|r| SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::Rows }).collect();
         let mut edges: Vec<(Atom, Vec<Step>)> = Vec::new();
         let mut probes: Vec<(&Rule, Vec<Step>, usize, usize)> = Vec::new();
         for (j, r) in rules.iter().enumerate() {
@@ -4280,7 +4265,7 @@ impl Run<'_, '_> {
             if let [(ai, a)] = rec[..] {
                 let rest: Vec<Literal> = body.iter().enumerate().filter(|(i, _)| *i != ai).map(|(_, l)| l.clone()).collect();
                 // The spec line and edge plan of a linear rule, or the reason it is a probe.
-                let edge_rule = || -> Result<std::result::Result<(String, Option<(Atom, Vec<Step>)>), String>> {
+                let edge_rule = || -> Result<std::result::Result<(SpecLine, Option<(Atom, Vec<Step>)>), String>> {
                     let restvars: BTreeSet<String> = rest.iter().flat_map(|l| l.vars()).collect();
                     let mut hvars = BTreeSet::new();
                     h.args.iter().for_each(|t| t.vars(&mut hvars));
@@ -4294,8 +4279,8 @@ impl Run<'_, '_> {
                     let mut pat = Vec::new();
                     for t in &a.args {
                         pat.push(match t {
-                            Term::Wild => "_".to_owned(),
-                            Term::Var(v) => format!("v{}", slot[v]),
+                            Term::Wild => Tok::Wild,
+                            Term::Var(v) => Tok::Slot(slot[v]),
                             Term::Int(_) | Term::Str(_) => const_tok(t).expect("a constant"),
                             _ => return Ok(Err("pattern term".to_owned())),
                         });
@@ -4303,11 +4288,11 @@ impl Run<'_, '_> {
                     let mut head = Vec::new();
                     for t in &h.args {
                         head.push(match t {
-                            Term::Var(v) => format!("v{}", slot[v]),
-                            Term::Int(_) | Term::Str(_) => const_tok(t).expect("a constant"),
+                            Term::Var(v) => HeadTok::Tok(Tok::Slot(slot[v])),
+                            Term::Int(_) | Term::Str(_) => HeadTok::Tok(const_tok(t).expect("a constant")),
                             Term::Call(f, xs) if f == "cat" && xs.iter().all(|x| matches!(x, Term::Var(_))) => {
                                 let (Term::Var(x0), Term::Var(x1)) = (&xs[0], &xs[1]) else { unreachable!() };
-                                format!("cat:v{}:v{}", slot[x0], slot[x1])
+                                HeadTok::Cat(slot[x0], slot[x1])
                             }
                             _ => return Ok(Err("head term".to_owned())),
                         });
@@ -4333,22 +4318,14 @@ impl Run<'_, '_> {
                             return Ok(Err(format!("edges cost {work:.0} > one delta pass {delta:.0}")));
                         }
                         let t: String = key.iter().chain(&ecols).map(|v| var_type(v, &rest).unwrap_or('i')).collect();
-                        let src = format!("{} {}", ehead.rel, if t.is_empty() { "-".to_owned() } else { t });
+                        let src = Some((ehead.rel.clone(), t));
                         edge = Some((ehead, order));
                         src
                     } else {
-                        "- -".to_owned()
+                        None
                     };
-                    let vs = |vs: &[String]| vs.iter().map(|v| format!("v{}", slot[v])).collect::<Vec<_>>().join(" ");
-                    let line = format!(
-                        "rule {} {} {src} key {} ; ecols {} ; pat {} ; head {}",
-                        ri[&h.rel],
-                        ri[&a.rel],
-                        vs(&key),
-                        vs(&ecols),
-                        pat.join(" "),
-                        head.join(" ")
-                    );
+                    let vs = |vs: &[String]| vs.iter().map(|v| slot[v]).collect::<Vec<_>>();
+                    let line = SpecLine::Edge(EdgeSpec { head: ri[&h.rel], src: ri[&a.rel], edge: src, key: vs(&key), ecols: vs(&ecols), pat, out: head });
                     Ok(Ok((line, edge)))
                 };
                 if let Ok((line, edge)) = edge_rule()? {
@@ -4386,14 +4363,14 @@ impl Run<'_, '_> {
                 _ => unreachable!(),
             };
             if join && let Some(spec) = self.whole_join_spec(&r.head, order, Some(*at), &ri, scc, &none) {
-                lines.push(format!("join {} {} {}", ri[&r.head.rel], ri[&rel], hex(&spec)));
+                lines.push(SpecLine::Join { head: ri[&r.head.rel], delta: ri[&rel], join: spec, whole: None });
                 continue;
             }
             self.ensure_indexes(order)?;
             let sql = self.model.sql_select(prog, &r.head, order, Some(*at), Some(&tables))?;
-            lines.push(format!("probe {} {} {}", ri[&r.head.rel], ri[&rel], hex(&sql)));
+            lines.push(SpecLine::Probe { head: ri[&r.head.rel], delta: ri[&rel], sql });
         }
-        self.fx().open(&lines.join("\n"))?;
+        self.fx().open(&ComponentSpec { name: name.clone(), lines })?;
         for r in &rels {
             let (full, delta) = &tables[*r];
             for (which, vt) in [("full", full), ("delta", delta)] {
@@ -4422,14 +4399,14 @@ impl Run<'_, '_> {
                 }
                 let nat = new.iter().position(|s| s.at == ai).expect("the delta atom");
                 let spec = if join { self.whole_join_spec(&r.head, &new, Some(nat), &ri, scc, &none) } else { None };
-                let (kind, body) = match spec {
-                    Some(spec) => ("join", hex(&spec)),
+                let new_body = match spec {
+                    Some(spec) => Reprobe::Join(spec),
                     None => {
                         self.ensure_indexes(&new)?;
-                        ("sql", hex(&self.model.sql_select(prog, &r.head, &new, Some(nat), Some(&tables))?))
+                        Reprobe::Sql(self.model.sql_select(prog, &r.head, &new, Some(nat), Some(&tables))?)
                     }
                 };
-                self.fx().reprobe(&name, k, kind, &body)?;
+                self.fx().reprobe(&name, k, &new_body)?;
                 probes[k].1 = new;
                 probes[k].2 = nat;
             }

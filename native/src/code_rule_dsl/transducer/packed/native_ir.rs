@@ -729,6 +729,10 @@ pub(super) enum Pass {
 pub(super) struct Passes {
     pub passes: Vec<Pass>,
     pub slots: u16,
+    /// Each pass's instructions' places in the whole program (a `Load`'s, the value it loads):
+    /// for the profile's report of what is live where (`native_cpu_pressure`). Empty for a
+    /// backward pass.
+    pub origins: Vec<Vec<u32>>,
 }
 
 impl BlockNative {
@@ -766,7 +770,7 @@ impl BlockNative {
         }
         let top = level.iter().copied().max().unwrap_or(0);
         if top == 0 {
-            return Passes { passes: vec![Pass::Forward { body: self.clone(), stores: Vec::new() }], slots: 0 };
+            return Passes { passes: vec![Pass::Forward { body: self.clone(), stores: Vec::new() }], slots: 0, origins: vec![(0..n as u32).collect()] };
         }
         // Each value's pass: level L's `back_fill`s in pass 2L - 1, its others in pass 2L.
         let pass = |x: usize| 2 * level[x] - usize::from(back(x));
@@ -792,6 +796,7 @@ impl BlockNative {
             }
         }
         let mut passes = Vec::new();
+        let mut origins = Vec::new();
         for p in 0..=last {
             if p % 2 == 1 {
                 let fills: Vec<(u16, u16, u16)> = (0..n)
@@ -802,6 +807,7 @@ impl BlockNative {
                     })
                     .collect();
                 passes.push(Pass::Back(fills));
+                origins.push(Vec::new());
                 continue;
             }
             let mine: Vec<usize> = (0..n).filter(|&x| pass(x) == p).collect();
@@ -831,15 +837,18 @@ impl BlockNative {
             }
             let mut local: Vec<Option<u16>> = vec![None; n];
             let mut insts = Vec::with_capacity(loads.len() + mine.len());
-            let load = |x: usize, local: &mut Vec<Option<u16>>, insts: &mut Vec<BlockInst>| {
+            let mut origin: Vec<u32> = Vec::with_capacity(loads.len() + mine.len());
+            let load = |x: usize, local: &mut Vec<Option<u16>>, insts: &mut Vec<BlockInst>, origin: &mut Vec<u32>| {
                 local[x] = Some(insts.len() as u16);
                 insts.push(BlockInst::Load(slot[x].expect("read later")));
+                origin.push(x as u32);
             };
             for &x in &mine {
                 for &l in due.get(&x).map(Vec::as_slice).unwrap_or(&[]) {
-                    load(l, &mut local, &mut insts);
+                    load(l, &mut local, &mut insts, &mut origin);
                 }
                 local[x] = Some(insts.len() as u16);
+                origin.push(x as u32);
                 let m = |o: u16| local[usize::from(o)].expect("made before");
                 insts.push(match self.insts[x] {
                     BlockInst::Not(a) => BlockInst::Not(m(a)),
@@ -858,7 +867,7 @@ impl BlockNative {
             }
             // Loads only an output reads: last.
             for &l in &late {
-                load(l, &mut local, &mut insts);
+                load(l, &mut local, &mut insts, &mut origin);
             }
             let place = |x: usize| usize::from(local[x].expect("the pass's"));
             let groups: Vec<super::block::Group> = self
@@ -881,6 +890,7 @@ impl BlockNative {
             if p == last {
                 let outputs = self.outputs.iter().map(|&v| local[usize::from(v)].expect("loaded or made")).collect();
                 passes.push(Pass::Forward { body: body(outputs, true), stores: Vec::new() });
+                origins.push(origin);
             } else {
                 let stored: Vec<usize> = mine.iter().copied().filter(|&x| slot[x].is_some()).collect();
                 if stored.is_empty() {
@@ -888,9 +898,10 @@ impl BlockNative {
                 }
                 let outputs = stored.iter().map(|&x| local[x].expect("the pass's")).collect();
                 passes.push(Pass::Forward { body: body(outputs, false), stores: stored.iter().map(|&x| slot[x].expect("stored")).collect() });
+                origins.push(origin);
             }
         }
-        Passes { passes, slots }
+        Passes { passes, slots, origins }
     }
 }
 
