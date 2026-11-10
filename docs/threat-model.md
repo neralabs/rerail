@@ -403,13 +403,15 @@ The first request is the `/healthz` probe in `probeDaemon` (`src/runtime/daemon-
 the same capability across restarts.
 
 **Mitigated.** Before any probe, `lookupDaemon`, the MCP bridge's `DaemonLocator` and the session presentation check the
-recorded pid with `ownProcessAlive`. A pid owned by another OS user (`EPERM`) cannot be this user's daemon: the state is
-stale and no capability is sent.
+recorded daemon with `recordedDaemonAlive`. A pid owned by another OS user (`EPERM`) cannot be this user's daemon: the
+state is stale and no capability is sent. On Windows the state's engine pipe must also exist, since a live daemon always
+holds it; a pid this user may not signal counts only when its engine proves it holds the capability, as this user's
+elevated daemon does.
 
 **What remains:**
 
-- If one of the person's own processes reuses the pid while another user holds `127.0.0.1:4737`, the probe still
-  hands that user the capability.
+- On macOS and Linux, if one of the person's own processes reuses the pid while another user holds `127.0.0.1:4737`,
+  the probe still hands that user the capability.
 - A port squatter also serves the origin `http://127.0.0.1:4737`, whose `localStorage` holds the dashboard's token.
 
 **What would close it:** the daemon proves it holds the token before a client sends it (an HMAC challenge), and the

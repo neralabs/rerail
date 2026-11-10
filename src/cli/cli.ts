@@ -164,7 +164,7 @@ function usage(): string {
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
     "  rerail version",
-    "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--tls-cert <pem> --tls-key <pem>] [--insecure-http] [--open]",
+    "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--tls-cert <pem> --tls-key <pem>] [--insecure-http] [--workspace-root <dir>] [--open]",
     "  rerail daemon stop",
     "  rerail session [<host> [<session-id>]] [--open]",
     "  rerail manage [--print]",
@@ -222,11 +222,13 @@ function printDaemon(daemon: RunningDaemon): void {
 async function runDaemonStartCommand(args: readonly string[], home: string): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: ["--dev", "--open", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--port", "--host", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
+    { flags: ["--dev", "--open", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--port", "--host", "--public-host", "--workspace-root", ...DAEMON_TRANSPORT_OPTIONS] },
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
   const port = options.get("--port");
   const host = options.get("--host");
+  // The folder the daemon serves and looks for Git from, when the launcher runs elsewhere (autostart runs it in the home).
+  const workspaceRoot = options.get("--workspace-root");
   if (host !== undefined) assertHostBindable(host, flags.has("--allow-remote"));
   const publicHosts = parsePublicHosts(options.get("--public-host"));
   const transport = parseDaemonTransport({ flags, options }, host ?? DEFAULT_DAEMON_HOST, publicHosts);
@@ -236,6 +238,7 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
     ...(flags.has("--allow-remote") ? { allowRemote: true } : {}),
     ...(publicHosts.length === 0 ? {} : { publicHosts }),
     ...(port === undefined ? {} : { port: parsePort(port) }),
+    ...(workspaceRoot === undefined ? {} : { cwd: resolve(workspaceRoot) }),
     ...transport,
   });
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");

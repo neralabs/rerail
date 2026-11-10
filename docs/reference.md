@@ -390,6 +390,7 @@ An agent that can't be re-registered is named with the reason, the rest are refr
 rerail daemon start            # background daemon on the port it last ran on, else http://127.0.0.1:4737/ (a free port when those are held), opens nothing
 rerail daemon start --open     # same, then opens the browser view
 rerail daemon start --host 0.0.0.0 --allow-remote --public-host rerail.example --tls-cert cert.pem --tls-key key.pem   # bind off loopback over https (see below)
+rerail daemon start --workspace-root <dir>   # serve, and look for Git, as if started in <dir> rather than the current folder; a coding agent's session that starts the daemon passes its own folder this way
 rerail start                   # start Rerail in this checkout and the checkouts inside it (--repository: every checkout); in a repository that is not set up, first runs set-up's questions there
 rerail stop [<host> [<session-id>]]   # stop Rerail in this checkout and the checkouts inside it (--repository: every checkout); the shared daemon keeps running for other checkouts and coding agents, and the reply names rerail daemon stop. A coding agent's host sets the reply's command sigil, and its session (rerail stop codex: CODEX_THREAD_ID) makes the reply name the rules that steered it
 rerail state                   # prints started, stopped, or not-set-up for this checkout

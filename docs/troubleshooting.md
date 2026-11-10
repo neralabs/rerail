@@ -375,9 +375,12 @@ Agents load hooks and commands when a session starts. Open a new session after s
 
 A coding agent ran Rerail's hooks, and Rerail could not record their events. The line names the last event that
 failed, the coding agent and its version, the Rerail version and the reason, such as `no Rerail daemon answered`
-(the daemon was down; the next hook starts it) or a payload field the coding agent sent in a shape Rerail did not
-expect. The failures are kept in `hook-failures.jsonl` in the Rerail home. Update Rerail with `rerail update`; if the
-line stays, report it with `rerail support-bundle`.
+(the daemon was down; the next hook starts it), `the Rerail daemon (pid …) is running but did not answer within 12 s`
+(it was busy, for example opening a large checkout; events are recorded again once it answers),
+`the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
+another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
+shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home. Update Rerail with
+`rerail update`; if the line stays, report it with `rerail support-bundle`.
 
 If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
 that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.

@@ -1,12 +1,11 @@
-import type { ChildProcess } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
-import { isAbsolute, resolve, win32 } from "node:path";
+import { realpathSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { spawn } from "../../engine/child-process.js";
-import { gitExecutable } from "../../engine/git.js";
-import { windowsSystemProgram } from "../../engine/system-programs.js";
+import { endProcessTree, spawn } from "../../engine/child-process.js";
+import { gitBash } from "../../engine/git.js";
+import { processState } from "../../engine/process-liveness.js";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
 import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../../engine/catalog/repository-model.js";
@@ -16,11 +15,12 @@ import { REQUIRED_NODE_MAJOR } from "../../engine/package-root.js";
  * The checkout's start state from the database, read-only: the status line refreshes often and must never
  * take the write lock, so where only a writable open could read the database (no schema yet) it cannot say
  * (undefined, "not running").
- * Loaded only when no daemon answers: the reader links Drizzle and SQLite, about 170 ms per status-line run.
+ * Loaded only when no daemon answers, as one does not while it is busy: the reader links Drizzle and SQLite. It is the
+ * bundled `start-state-reader.js`, so the run resolves no Drizzle module at run time (285 MB when it did).
  */
 async function localStartState(root: string): Promise<RepositoryStartState | undefined> {
   // Static import cannot work here: it would load Drizzle and SQLite on every status-line run, daemon or not.
-  const reader = await import("../../runtime/repository-start.js");
+  const reader = await import("../../runtime/start-state-reader.js");
   return reader.readOnlyStartState(root);
 }
 
@@ -72,66 +72,14 @@ export interface PreviousStatusSpawn {
  * cmd.exe is what is left.
  */
 export function previousStatusSpawn(command: string, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): PreviousStatusSpawn {
-  const bash = platform === "win32" ? gitBash(env) : undefined;
+  const bash = platform === "win32" ? claudeGitBash(env) : undefined;
   return bash === undefined ? { file: command, args: [], shell: true } : { file: bash, args: ["-c", command], shell: false };
 }
 
 /** Git Bash's bash.exe: `CLAUDE_CODE_GIT_BASH_PATH`, which Claude Code itself honours, else the one beside Rerail's Git. */
-function gitBash(env: NodeJS.ProcessEnv): string | undefined {
+function claudeGitBash(env: NodeJS.ProcessEnv): string | undefined {
   const named = env.CLAUDE_CODE_GIT_BASH_PATH;
-  if (named !== undefined && named !== "") return named;
-  try {
-    // Git for Windows' `<Git>\bin\bash.exe` sits a folder or two above its git.exe: `cmd\`, `bin\` or `mingw64\bin\`.
-    let folder = win32.dirname(gitExecutable());
-    for (let level = 0; level < 3; level += 1) {
-      const bash = win32.join(folder, "bin", "bash.exe");
-      if (existsSync(bash)) return bash;
-      folder = win32.dirname(folder);
-    }
-  } catch {
-    // No Git: no Git Bash either.
-  }
-  return undefined;
-}
-
-/** Ends the process tree under `pid`, calling `failed` when that could not be done. */
-export type ProcessTreeKill = (pid: number, failed: () => void) => void;
-
-/** `taskkill /T /F`, which walks the tree from `pid`: the process must still be running for it to find the rest. */
-function taskkillTree(pid: number, failed: () => void): void {
-  const taskkill = spawn(windowsSystemProgram("taskkill.exe"), ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
-  taskkill.on("error", failed);
-  taskkill.on("exit", code => {
-    if (code !== 0) failed();
-  });
-}
-
-function killShell(child: Pick<ChildProcess, "kill">): void {
-  try {
-    child.kill("SIGKILL");
-  } catch { /* The command may already have exited. */ }
-}
-
-/**
- * Ends the previous status line and what it started. A POSIX command runs in its own process group, which goes whole.
- * On Windows killing a process leaves its children running, and the shell is Git Bash's launcher, which runs the real
- * bash as its child: `taskkill /T` ends the tree while the launcher still runs, and the launcher alone is killed only
- * when taskkill fails.
- */
-export function stopPreviousStatus(
-  child: Pick<ChildProcess, "pid" | "kill">,
-  platform: NodeJS.Platform = process.platform,
-  killTree: ProcessTreeKill = taskkillTree,
-): void {
-  if (platform === "win32") {
-    if (child.pid === undefined) killShell(child);
-    else killTree(child.pid, () => killShell(child));
-    return;
-  }
-  try {
-    if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-    else child.kill("SIGKILL");
-  } catch { /* The command may already have exited. */ }
+  return named !== undefined && named !== "" ? named : gitBash();
 }
 
 /** Preserve the user's status as a byte stream, including output before errors or timeouts. */
@@ -141,12 +89,10 @@ export async function runClaudeStatus(
   settingsPath?: string,
 ): Promise<void> {
   const ancestor = Number(process.env[PARENT_PROCESS_KEY]);
-  if (Number.isSafeInteger(ancestor) && ancestor > 0) {
-    try {
-      process.kill(ancestor, 0);
-      input.resume();
-      return;
-    } catch { /* A stale ancestry marker must not disable status. */ }
+  // A stale ancestry marker, whose pid is gone or another user's now, must not disable status.
+  if (Number.isSafeInteger(ancestor) && ancestor > 0 && processState(ancestor) === "running") {
+    input.resume();
+    return;
   }
   let previous: ClaudeStatusLine | undefined;
   try {
@@ -168,7 +114,9 @@ export async function runClaudeStatus(
       stdio: ["pipe", "pipe", "ignore"],
     });
     const timer = setTimeout(() => {
-      stopPreviousStatus(child);
+      // The command and what it started: on macOS and Linux its process group (`detached`); on Windows the tree from
+      // Git Bash's launcher, which runs the real bash as its child.
+      endProcessTree(child, { group: true });
       // A process the command started can hold stdout open past the kill (one that left the group, or any child on
       // Windows); the budget holds without waiting for it to let go.
       child.stdout.destroy();

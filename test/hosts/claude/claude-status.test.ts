@@ -12,7 +12,7 @@ vi.mock("../../../src/presentation/session-presentation.js", () => ({
   fallbackPresentation: (reason: string) => ({ text: reason }),
   formatTerminalStatus: (presentation: { text?: string }) => presentation.text ?? "Rerail | 2 rules | steered 1×",
 }));
-import { previousStatusSpawn, runClaudeStatus, stopPreviousStatus } from "../../../src/hosts/claude/claude-status.js";
+import { previousStatusSpawn, runClaudeStatus } from "../../../src/hosts/claude/claude-status.js";
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -134,20 +134,6 @@ describe("composed Claude status", () => {
       await rm(folder, { recursive: true, force: true });
     }
   }, 15_000);
-
-  it("on Windows ends the status command's tree from the shell while the shell runs, and kills the shell only when that fails", () => {
-    const events: string[] = [];
-    const shell = { pid: 4242, kill: () => events.push("kill shell") > 0 };
-    let failed: (() => void) | undefined;
-    stopPreviousStatus(shell, "win32", (pid, onFailure) => {
-      events.push(`taskkill /T /F /PID ${pid}`);
-      failed = onFailure;
-    });
-    // taskkill /T walks the tree from the pid it is given; once the shell is gone it finds nothing to end.
-    expect(events).toEqual(["taskkill /T /F /PID 4242"]);
-    failed!();
-    expect(events).toEqual(["taskkill /T /F /PID 4242", "kill shell"]);
-  });
 
   it("returns within its budget when the prior command leaves a process holding its output", async () => {
     // The grandchild leaves the command's process group and keeps the stdout pipe for 10 s.

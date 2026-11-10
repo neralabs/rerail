@@ -39,6 +39,7 @@ vi.mock("../../src/engine/native/native.js", async () => {
 });
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
 import {
+  type DaemonMachine,
   type DaemonState,
   autostartDaemon,
   browserOpener,
@@ -52,15 +53,17 @@ import {
   launchDetached,
   lookupDaemon,
   openDashboard,
-  ownProcessAlive,
   processAlive,
   readDaemonState,
+  recordedDaemonAlive,
   startDaemon,
   startDaemonForPackage,
   stillRunningMessage,
   stopDaemon,
+  stopFoundDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
@@ -92,6 +95,18 @@ describe("engine service IPC endpoints", () => {
     expect(second).not.toBe(first);
     expect(isUsableEngineSocketPath(first, "win32")).toBe(true);
     expect(isUsableEngineSocketPath(String.raw`C:\temp\engine.sock`, "win32")).toBe(false);
+  });
+
+  it("knows the pipe the daemon names, and the fallback it moves to, for a Rerail engine's, and nothing else", () => {
+    const pipe = defaultEngineSocketPath(String.raw`C:\Users\me\.rerail\rerail.sqlite`, "win32");
+    const fallback = fallbackPipe(pipe);
+    expect(isEnginePipe(pipeNameOf(pipe))).toBe(true);
+    expect(isEnginePipe(pipeNameOf(fallback))).toBe(true);
+    expect(isEnginePipe(pipeNameOf(fallback).toUpperCase())).toBe(true);
+    expect(isUsableEngineSocketPath(fallback, "win32")).toBe(true);
+    expect(fallbackPipe(pipe)).not.toBe(fallback);
+    expect(isEnginePipe("rerail-squatted")).toBe(false);
+    expect(isEnginePipe(`${pipeNameOf(pipe)}x`)).toBe(false);
   });
 });
 
@@ -465,7 +480,9 @@ describe("stopping the daemon", () => {
 });
 
 describe("a state file Windows left behind", () => {
-  const PIPE = String.raw`\\.\pipe\rerail-0123456789abcdef01234567`;
+  const PIPE = enginePipeName(String.raw`C:\Users\me\.rerail\rerail.sqlite`);
+  /** The engine pipe as `\\.\pipe\` lists it. */
+  const PIPE_NAME = pipeNameOf(PIPE);
   let home: string;
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "rerail-stale-"));
@@ -498,9 +515,18 @@ describe("a state file Windows left behind", () => {
     throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
   };
 
-  it("counts an EPERM from a pid as not this user's on Windows, so its URL never gets the capability", () => {
+  it("has one rule for whether the daemon a state file records may be alive, which every reader of it asks", async () => {
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability" });
     expect(processAlive(4, denied)).toBe(true);
-    expect(ownProcessAlive(4, denied)).toBe(false);
+    expect(await recordedDaemonAlive(state, windows([PIPE_NAME]))).toBe(true);
+    // A live pid without the daemon's pipe is one Windows gave to another process once the daemon was gone.
+    expect(await recordedDaemonAlive(state, windows(["other"]))).toBe(false);
+    // EPERM is another user's process, or this user's elevated daemon, which alone holds the capability.
+    expect(await recordedDaemonAlive(state, { ...windows([PIPE_NAME]), kill: denied })).toBe(false);
+    expect(await recordedDaemonAlive(state, { ...windows([PIPE_NAME]), kill: denied, holdsCapability: async () => true })).toBe(true);
+    // Elsewhere the pid decides, and an EPERM is another user's process.
+    expect(await recordedDaemonAlive(state, { ...windows([]), platform: "linux" })).toBe(true);
+    expect(await recordedDaemonAlive(state, { ...windows([]), platform: "linux", kill: denied, holdsCapability: async () => true })).toBe(false);
   });
 
   it("keeps the state of a daemon this user started elevated, found by its engine's proof, and drops one nothing proves", async () => {
@@ -511,7 +537,7 @@ describe("a state file Windows left behind", () => {
     const asked: Array<[string, string]> = [];
     // An elevated process answers a medium-integrity `kill(pid, 0)` with EPERM, as another user's does.
     const elevated = {
-      ...windows(["rerail-0123456789abcdef01234567"]),
+      ...windows([PIPE_NAME]),
       kill: denied,
       holdsCapability: async (socketPath: string, accessToken: string) => {
         asked.push([socketPath, accessToken]);
@@ -552,7 +578,7 @@ describe("a state file Windows left behind", () => {
       throw new Error("connect ECONNREFUSED 127.0.0.1:1");
     }));
     await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
-    expect(await lookupDaemon(home, windows(["rerail-0123456789abcdef01234567"]))).toMatchObject({ status: "unresponsive" });
+    expect(await lookupDaemon(home, windows([PIPE_NAME]))).toMatchObject({ status: "unresponsive" });
   });
 
   it("finds the engine pipe whatever its case, and leaves a daemon whose pipes cannot be listed to the health probe", async () => {
@@ -561,7 +587,7 @@ describe("a state file Windows left behind", () => {
       throw new Error("connect ECONNREFUSED 127.0.0.1:1");
     }));
     await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
-    expect(await lookupDaemon(home, windows(["other", "RERAIL-0123456789ABCDEF01234567"]))).toMatchObject({ status: "unresponsive" });
+    expect(await lookupDaemon(home, windows(["other", PIPE_NAME.toUpperCase()]))).toMatchObject({ status: "unresponsive" });
     const unlisted = {
       ...windows([]),
       pipes: (): readonly string[] => {
@@ -588,7 +614,7 @@ describe("a state file Windows left behind", () => {
     const signals: Array<string | number | undefined> = [];
     const forgotten: number[] = [];
     const machine = {
-      ...windows(["rerail-0123456789abcdef01234567"], [], forgotten),
+      ...windows([PIPE_NAME], [], forgotten),
       kill: (_pid: number, signal?: string | number) => {
         signals.push(signal);
         if (signal === 0 && !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
@@ -607,13 +633,54 @@ describe("a state file Windows left behind", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
+  it("stops the daemon a lookup found without looking it up, or probing it, again", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native" })));
+    let running = true;
+    const probes: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      if (String(url).endsWith("/native/shutdown")) {
+        running = false;
+        return Response.json({ stopping: true }, { status: 202 });
+      }
+      probes.push(String(url));
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    const machine = {
+      ...windows([PIPE_NAME]),
+      kill: (_pid: number, signal?: string | number) => {
+        if (signal === 0 && !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+    };
+    const found = await lookupDaemon(home, machine);
+    if (found.status === "absent") throw new Error("the recorded daemon was not found");
+    await stopFoundDaemon(home, found, machine);
+    expect(probes).toHaveLength(1);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
   it("counts a recorded cache holder only while a Rerail engine pipe exists on Windows", () => {
     expect(daemonMayHold(DEAD_PID, windows([]))).toBe(false);
     expect(daemonMayHold(DEAD_PID, windows(["other-pipe"]))).toBe(false);
-    expect(daemonMayHold(DEAD_PID, windows(["rerail-0123456789abcdef01234567"]))).toBe(true);
+    expect(daemonMayHold(DEAD_PID, windows([PIPE_NAME]))).toBe(true);
     expect(daemonMayHold(DEAD_PID, { ...windows([]), platform: "linux" })).toBe(true);
   });
 });
+
+/** A Windows machine with no engine pipe, where a pid is live while `alive` says so. */
+function windowsMachine(alive: (pid: number) => boolean = () => true): DaemonMachine {
+  return {
+    platform: "win32",
+    kill: (pid) => {
+      if (!alive(pid)) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      return true;
+    },
+    pipes: () => [],
+    holdsCapability: async () => false,
+    forgetMainInstanceHolder: () => undefined,
+  };
+}
 
 describe("launching the daemon", () => {
   let home: string;
@@ -638,7 +705,7 @@ describe("launching the daemon", () => {
       asked.push(pid);
       return codes.shift() ?? null;
     };
-    const daemon = launchDetached({ args: ["daemon.js"], cwd: undefined, env: {}, logFile: join(home, DAEMON_LOG_FILE) }, "win32");
+    const daemon = launchDetached({ args: ["daemon.js"], cwd: undefined, env: {}, logFile: join(home, DAEMON_LOG_FILE) }, windowsMachine());
     expect(daemon.exitReason()).toBeUndefined();
     expect(daemon.exitReason()).toBe("exited with code 3");
     expect(asked).toEqual([process.pid, process.pid]);
@@ -646,16 +713,17 @@ describe("launching the daemon", () => {
 
   it("goes through the native spawn on Windows, whose hidden console the daemon's Git and npm share, never Node's detached spawn", () => {
     const launched: Array<{ args: string[]; cwd: string | null; logPath: string }> = [];
+    // This process's pid, which the machine reads as gone: the exit is the machine's answer, not this OS's.
     native.spawnDetached = (_program, args, cwd, _env, logPath) => {
       launched.push({ args, cwd, logPath });
-      return DEAD_PID;
+      return process.pid;
     };
     opener.intercept = () => {
       throw new Error("Node's spawn must not start a detached process on Windows");
     };
     const log = join(home, DAEMON_LOG_FILE);
-    const daemon = launchDetached({ args: ["cli.js", "daemon", "start"], cwd: undefined, env: { A: "1", B: undefined }, logFile: log }, "win32");
-    expect(daemon.pid).toBe(DEAD_PID);
+    const daemon = launchDetached({ args: ["cli.js", "daemon", "start"], cwd: undefined, env: { A: "1", B: undefined }, logFile: log }, windowsMachine(pid => pid !== process.pid));
+    expect(daemon.pid).toBe(process.pid);
     expect(daemon.exitReason()).toBe("exited");
     expect(launched).toEqual([{ args: ["cli.js", "daemon", "start"], cwd: null, logPath: log }]);
   });
@@ -693,28 +761,31 @@ describe("autostartDaemon", () => {
     vi.unstubAllEnvs();
   });
 
-  it("launches the daemon verb, never `rerail start`, and on Windows through the native spawn, never Node's detached one", async () => {
+  it("launches the daemon verb, never `rerail start`, in the Rerail home, and on Windows through the native spawn, never Node's detached one", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
     vi.stubEnv("RERAIL_HOME", home);
     vi.stubEnv("RERAIL_AUTOSTART", "1");
-    const spawned: Array<readonly string[]> = [];
+    const spawned: Array<{ args: readonly string[]; cwd: string | null }> = [];
     // Node's `detached: true` on Windows gives the launcher no console, so every console program it starts opens a window.
     const detachedByNode: Array<readonly string[]> = [];
     opener.intercept = (_command, args) => {
       detachedByNode.push(args);
       return Object.assign(new EventEmitter(), { unref() {} }) as unknown as ChildProcess;
     };
-    native.spawnDetached = (_program, args) => {
-      spawned.push(args);
+    native.spawnDetached = (_program, args, cwd) => {
+      spawned.push({ args, cwd });
       return DEAD_PID;
     };
     try {
       // Once per process: this is the only call this file makes.
-      autostartDaemon("win32");
+      autostartDaemon(windowsMachine());
       expect(detachedByNode).toEqual([]);
       expect(spawned).toHaveLength(1);
-      expect(spawned[0]!.slice(1)).toEqual(["daemon", "start"]);
-      expect(spawned[0]![0]).toMatch(/[\\/]dist[\\/]cli[\\/]cli\.js$/u);
+      // Windows holds a process's current folder open: a launcher started in the session's folder kept that checkout
+      // from being deleted or renamed while it ran. The session's folder goes to it by name, as the daemon's workspace.
+      expect(spawned[0]!.cwd).toBe(home);
+      expect(spawned[0]!.args.slice(1)).toEqual(["daemon", "start", "--workspace-root", process.cwd()]);
+      expect(spawned[0]!.args[0]).toMatch(/[\\/]dist[\\/]cli[\\/]cli\.js$/u);
     } finally {
       await rm(home, { recursive: true, force: true });
     }

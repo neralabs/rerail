@@ -1,7 +1,7 @@
 import { hookText } from "../../engine/adapter-contract.js";
 import { handleCodexEvent, supportsCodexHook } from "./codex-hook-adapter.js";
 import { serveHook, serveHookEntry, type HookInput, type HookOutput } from "../../harness/hook-adapter.js";
-import { DaemonUnreachableError, hookRerailStarted, runHostHook, type HookOptions } from "../../harness/hook-host.js";
+import { DaemonUnreachableError, hookRerailStarted, runHostHook, withDaemonDeadline, type HookOptions } from "../../harness/hook-host.js";
 
 export { codexHookOutput, handleCodexEvent } from "./codex-hook-adapter.js";
 export { serveHook };
@@ -16,12 +16,13 @@ export const CODEX_NOT_RUNNING = "Rerail ✕ not running · start it with: rerai
 
 export async function runCodexHook(input: HookInput, options: HookOptions = {}): Promise<HookOutput> {
   if (!supportsCodexHook(input)) return {};
+  const waiting = withDaemonDeadline(options);
   const workspace = requiredText(input, "cwd");
   if (!await hookRerailStarted("codex", workspace, options.databasePath)) return {};
   const event = requiredText(input, "hook_event_name");
   const startsSession = event === "SessionStart";
   try {
-    return await runHostHook("codex", workspace, requiredText(input, "session_id"), startsSession, options, (runtime, storageRoot) =>
+    return await runHostHook("codex", workspace, requiredText(input, "session_id"), startsSession, waiting, (runtime, storageRoot) =>
       handleCodexEvent(input, runtime, storageRoot), event);
   } catch (error) {
     if (!startsSession || !(error instanceof DaemonUnreachableError)) throw error;

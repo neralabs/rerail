@@ -4,7 +4,14 @@ import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
-import { autostartDaemon, daemonEngineEndpoint, engineEndpointAt, runningDaemonEngineEndpoint, type EngineEndpoint } from "../runtime/daemon-control.js";
+import {
+  autostartDaemon,
+  daemonEngineEndpoint,
+  engineEndpointAt,
+  HOOK_DAEMON_WAIT_MS,
+  runningDaemonEngineEndpoint,
+  type HookDaemon,
+} from "../runtime/daemon-control.js";
 import { recordHookFailure } from "./hook-failures.js";
 import {
   bindSteerReceipt,
@@ -65,6 +72,20 @@ export interface HookOptions {
   kernelSocketPath?: string;
   /** Test seam: replaces the native model so hooks can run where the addon is absent. */
   embedder?: SemanticEmbedder;
+  /**
+   * Epoch ms at which the hook stops waiting for a busy daemon (`withDaemonDeadline`); without one it waits the 2 s probe
+   * and 10 s more from the endpoint lookup on.
+   */
+  daemonDeadline?: number;
+}
+
+/**
+ * `options` with the daemon deadline `HOOK_DAEMON_WAIT_MS` from now. A host's hook takes it as the event arrives, so the
+ * start check's read of the daemon (`hookRerailStarted`, up to 2 s) counts toward the one wait: a busy daemon held a
+ * hook 2 s for the start check and then 12 s more for the endpoint lookup.
+ */
+export function withDaemonDeadline(options: HookOptions): HookOptions {
+  return { daemonDeadline: Date.now() + HOOK_DAEMON_WAIT_MS, ...options };
 }
 
 /** No Rerail daemon could be reached: none answered and none could start, or its socket refused the hook. */
@@ -118,51 +139,61 @@ async function runHostHookOnce(
   event: string,
 ): Promise<HookOutput> {
   const { storageRoot, modelPath } = resolveSessionPaths(workspace, options);
-  return withSessionLock(storageRoot, host, sessionId, async () => {
-    const databasePath = options.databasePath ?? defaultRerailDatabasePath();
-    const session: AdapterSession = { host, sessionId, cwd: workspace };
-
-    if (options.embedder === undefined) {
-      let endpoint: EngineEndpoint | undefined;
+  const databasePath = options.databasePath ?? defaultRerailDatabasePath();
+  const session: AdapterSession = { host, sessionId, cwd: workspace };
+  const { embedder } = options;
+  if (embedder !== undefined) {
+    return withSessionLock(storageRoot, host, sessionId, async () => {
+      const runtime = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: workspace, embedder });
       try {
-        const named = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET;
-        endpoint = named !== undefined ? await engineEndpointAt(named)
-          : startsSession ? await daemonEngineEndpoint(true) : await runningDaemonEngineEndpoint();
-      } catch (error) {
-        throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error });
+        const output = await handle(runtime, storageRoot);
+        return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
+      } finally {
+        await runtime.dispose();
       }
-      if (endpoint === undefined) {
-        // The daemon is gone (it crashed, or was stopped): this event is lost, so say so where `rerail status` looks,
-        // and start one in the background for the next event. The start is handed to a detached process, so the
-        // tool call never waits on it (design N11); one that finds a daemon alive does nothing.
-        recordHookFailure({ host, event, reason: "no Rerail daemon answered, so this event was not recorded" });
-        autostartDaemon();
-        return {};
-      }
-      const configuration = {
-        storageRoot,
-        databasePath,
-        modelPath,
-        workspaceRoot: workspace,
-      };
-      const engine = endpoint;
-      const ingest = (event: AdapterEvent) => ingestEngineEvent(engine, event, configuration).catch((error: unknown) => {
-        throw unreachable(error);
-      });
-      const output = await handle({ ingest }, storageRoot);
-      return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
-    }
-    const runtime = new RerailRuntime({
-      storageRoot,
-      databasePath,
-      workspaceRoot: workspace,
-      embedder: options.embedder,
     });
-    try {
-      const output = await handle(runtime, storageRoot);
-      return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
-    } finally {
-      await runtime.dispose();
-    }
+  }
+  // Found before the session's lock is taken: a session's hooks that arrive together (parallel tool calls, subagents)
+  // wait out a busy daemon side by side, and the lock orders only their events and held steers. Under the lock, each
+  // hook would begin its wait only when the one before it gave up.
+  const daemon = await hookDaemon(options, startsSession);
+  if (daemon.status !== "running") {
+    // This event is lost, so say so where `rerail status` looks. A daemon that is gone (it crashed, or was stopped)
+    // is started in the background for the next event; the start is handed to a detached process, so the tool call
+    // never waits on it (design N11). A daemon that is alive is left alone: a start would find it and refuse to
+    // replace it, after costing a Rerail process and, on Windows, loading the native engine to launch it.
+    recordHookFailure({ host, event, reason: lostEventReason(daemon) });
+    if (daemon.status === "absent") autostartDaemon();
+    return {};
+  }
+  const { endpoint } = daemon;
+  const configuration = { storageRoot, databasePath, modelPath, workspaceRoot: workspace };
+  const ingest = (adapterEvent: AdapterEvent) => ingestEngineEvent(endpoint, adapterEvent, configuration).catch((error: unknown) => {
+    throw unreachable(error);
   });
+  return withSessionLock(storageRoot, host, sessionId, async () => {
+    const output = await handle({ ingest }, storageRoot);
+    return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
+  });
+}
+
+/** The engine a hook sends its event to: the socket named outright, else the daemon's, or why no daemon takes it. */
+async function hookDaemon(options: HookOptions, startsSession: boolean): Promise<HookDaemon> {
+  try {
+    const named = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET;
+    if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named) };
+    const { daemonDeadline } = options;
+    if (startsSession) return { status: "running", endpoint: await daemonEngineEndpoint(true, daemonDeadline) };
+    return await runningDaemonEngineEndpoint(daemonDeadline);
+  } catch (error) {
+    throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error });
+  }
+}
+
+/** What the hook failure log says of an event no daemon took. */
+function lostEventReason(daemon: Exclude<HookDaemon, { status: "running" }>): string {
+  const lost = "so this event was not recorded";
+  if (daemon.status === "absent") return `no Rerail daemon answered, ${lost}`;
+  if (daemon.status === "refused") return `the Rerail daemon (pid ${daemon.state.pid}) refused the access capability in daemon.json, ${lost}`;
+  return `the Rerail daemon (pid ${daemon.state.pid}) is running but did not answer within ${HOOK_DAEMON_WAIT_MS / 1_000} s, ${lost}`;
 }

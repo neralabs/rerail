@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { closeSync, existsSync, openSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { homedir } from "node:os";
@@ -9,14 +9,15 @@ import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
-import { windowsSystemProgram } from "../engine/system-programs.js";
+import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding, type NativeBinding } from "../engine/native/native.js";
 import { forgetMainInstanceHolder } from "../engine/native/main-instance.js";
 import { keepFolderToOwner } from "../engine/storage/windows-acl.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
-import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineHoldsCapability } from "./engine-proof.js";
+import { enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
+import { processState, type ProcessSignal } from "../engine/process-liveness.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
@@ -249,10 +250,10 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
  */
 export function nodeExecutable(platform: NodeJS.Platform = process.platform): string {
   if (process.versions.bun === undefined) return process.execPath;
-  if (platform !== "win32") return resolveExecutable("node") ?? "node";
-  const node = resolveExecutable("node", process.env, platform, { binaryOnly: true });
-  if (node === undefined) throw new Error("Rerail runs its CLI under Node.js, and no node.exe is on PATH");
-  return node;
+  const node = programOnPath("node", { platform });
+  if (node !== undefined) return node;
+  if (platform !== "win32") return "node";
+  throw new Error("Rerail runs its CLI under Node.js, and no node.exe is on PATH");
 }
 
 export const DAEMON_STATE_FILE = "daemon.json";
@@ -341,51 +342,8 @@ export interface StartDaemonResult {
 }
 
 /** Whether `pid` is a live process of any user: a process another user runs still holds its pid (`EPERM`). */
-export function processAlive(pid: number, kill: ProcessSignal = process.kill.bind(process)): boolean {
-  return processLiveness(pid, kill) !== "dead";
-}
-
-/**
- * Whether `pid` is a live process this OS user runs, the only kind that can be this user's daemon. A state file whose
- * pid belongs to another user is left over from a daemon that is gone, its pid since reused; probing the URL it records
- * would send the capability to whoever listens there now. On Windows `EPERM` answers alike for another user's
- * process, a SYSTEM service and this user's elevated one, so it counts as not this user's there too; `lookupDaemon`
- * tells this user's elevated daemon apart by its engine's proof.
- */
-export function ownProcessAlive(pid: number, kill: ProcessSignal = process.kill.bind(process)): boolean {
-  return processLiveness(pid, kill) === "own";
-}
-
-/** `process.kill`'s shape, which tests replace. */
-export type ProcessSignal = (pid: number, signal?: string | number) => boolean;
-
-function processLiveness(pid: number, kill: ProcessSignal = process.kill.bind(process)): "own" | "other-user" | "dead" {
-  let owner: "own" | "other-user" = "own";
-  try {
-    kill(pid, 0);
-  } catch (error) {
-    // EPERM means the process exists but this user may not signal it.
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") return "dead";
-    owner = "other-user";
-  }
-  return isZombie(pid) ? "dead" : owner;
-}
-
-/**
- * A process that has exited but was never reaped still answers signal 0. In a container without an init process
- * nothing reaps a detached daemon, so it stays a zombie for as long as the container runs: it holds no port and
- * no socket, and counts as stopped.
- */
-function isZombie(pid: number): boolean {
-  if (process.platform !== "linux") return false;
-  let stat: string;
-  try {
-    stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-  } catch {
-    return false;
-  }
-  // `pid (comm) state …`: the command name may itself hold spaces and parentheses, so the state follows the last `)`.
-  return /^\s*[ZX]/u.test(stat.slice(stat.lastIndexOf(")") + 1));
+export function processAlive(pid: number, kill?: ProcessSignal): boolean {
+  return processState(pid, kill) !== "gone";
 }
 
 function hasDaemonStateFields(value: unknown): value is Record<string, unknown> {
@@ -410,7 +368,7 @@ export function isUsableEngineSocketPath(
   platform: NodeJS.Platform = process.platform,
 ): value is string {
   if (typeof value !== "string" || value.length <= 1 || value.includes("\0")) return false;
-  if (platform === "win32") return /^\\\\\.\\pipe\\[^\\]+$/u.test(value);
+  if (platform === "win32") return isNamedPipe(value) && pipeNameOf(value).length > 0 && !pipeNameOf(value).includes("\\");
   return isAbsolute(value) && (platform !== "darwin" || Buffer.byteLength(value) <= MAX_MACOS_UNIX_SOCKET_PATH_BYTES);
 }
 
@@ -468,12 +426,10 @@ export interface DaemonMachine {
   forgetMainInstanceHolder(pid: number): void;
 }
 
-const WINDOWS_PIPES = String.raw`\\.\pipe` + "\\";
-
 const THIS_MACHINE: DaemonMachine = {
   platform: process.platform,
   kill: (pid, signal) => process.kill(pid, signal),
-  pipes: () => readdirSync(WINDOWS_PIPES),
+  pipes: listPipes,
   holdsCapability: async (socketPath, accessToken) => await engineHoldsCapability(socketPath, accessToken),
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
 };
@@ -484,16 +440,8 @@ const THIS_MACHINE: DaemonMachine = {
  * daemon always holds its pipe, so a live pid without one is not the daemon. Unknown counts as there.
  */
 function enginePipeExists(state: DaemonState, machine: DaemonMachine): boolean {
-  const name = state.kernelSocketPath.slice(WINDOWS_PIPES.length).toLowerCase();
-  try {
-    return machine.pipes().some(pipe => pipe.toLowerCase() === name);
-  } catch {
-    return true;
-  }
+  return pipeListed(state.kernelSocketPath, () => machine.pipes());
 }
-
-/** A Rerail engine pipe, `rerail-<24 hex>` (`defaultEngineSocketPath`), or the random fallback a refused one moves to. */
-const ENGINE_PIPE = /^rerail-[0-9a-f]{24}(?:-[0-9a-f]+)?$/u;
 
 /**
  * Whether `pid`, recorded by a daemon that may be gone, can still be a Rerail daemon: a live process, and on Windows only
@@ -502,26 +450,26 @@ const ENGINE_PIPE = /^rerail-[0-9a-f]{24}(?:-[0-9a-f]+)?$/u;
  */
 export function daemonMayHold(pid: number, machine: DaemonMachine = THIS_MACHINE): boolean {
   if (!processAlive(pid, machine.kill)) return false;
-  if (machine.platform !== "win32") return true;
-  try {
-    return machine.pipes().some(pipe => ENGINE_PIPE.test(pipe.toLowerCase()));
-  } catch {
-    return true;
-  }
+  return machine.platform !== "win32" || enginePipeListed(() => machine.pipes());
 }
 
 /**
- * Whether the daemon `state` records may be this user's: a live pid, on Windows one holding its engine pipe, and this
- * user's process. On Windows a pid this user may not signal (`EPERM`) can still be this user's daemon, started from an
- * elevated terminal or an elevated agent session; it counts when its engine proves it holds the capability `state`
- * records, which a process on a reused pid cannot. Nothing is sent to its URL before that.
+ * Whether the daemon `state` records may still run, as this user's: the one check every reader of a state file makes
+ * before it sends the capability the file records to the URL it records. A state file outlives a daemon killed without
+ * its cleanup, and the pid it names can since belong to another process, which would get the capability.
+ *
+ * The pid must be live and this user's to signal; another user's process cannot be this user's daemon. On Windows the
+ * state's own engine pipe must exist too, since a live daemon always holds it and Windows soon reuses a pid. There a
+ * pid this user may not signal (`EPERM`) can still be this user's daemon, started from an elevated terminal or agent
+ * session: it counts when its engine proves it holds the capability (`engineHoldsCapability`), which a process on a
+ * reused pid cannot. Nothing is sent to its URL before that.
  */
-async function recordedDaemonMayBeOwn(state: DaemonState, machine: DaemonMachine): Promise<boolean> {
-  const liveness = processLiveness(state.pid, machine.kill);
-  if (liveness === "dead") return false;
-  if (machine.platform !== "win32") return liveness === "own";
+export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMachine = THIS_MACHINE): Promise<boolean> {
+  const daemon = processState(state.pid, machine.kill);
+  if (daemon === "gone") return false;
+  if (machine.platform !== "win32") return daemon === "running";
   if (!enginePipeExists(state, machine)) return false;
-  return liveness === "own" || (state.accessToken !== undefined && await machine.holdsCapability(state.kernelSocketPath, state.accessToken));
+  return daemon === "running" || (state.accessToken !== undefined && await machine.holdsCapability(state.kernelSocketPath, state.accessToken));
 }
 
 /**
@@ -538,7 +486,7 @@ export async function lookupDaemon(
   if (state === undefined) return { status: "absent" };
   // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe: the
   // state is stale, and its URL is never probed.
-  if (!(await recordedDaemonMayBeOwn(state, machine))) {
+  if (!(await recordedDaemonAlive(state, machine))) {
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
@@ -682,7 +630,7 @@ export async function startDaemonForPackage(control: DaemonControl, options: Dae
       if (await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
       }
-      await stopDaemon(control.home);
+      await stopFoundDaemon(control.home, lookup);
       return await spawnDaemon(control, options);
     }
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
@@ -702,9 +650,10 @@ export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRo
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
  * another package, which is how a hook keeps an older daemon from receiving fields it predates; a client that
  * outlives an update passes false after its first event so it keeps using the newer daemon instead of displacing
- * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon.
+ * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon. A daemon that is alive but busy is waited for
+ * (`patientLookup`), until `deadline` (epoch ms) when the caller names one, as a hook does.
  */
-export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promise<EngineEndpoint> {
+export async function daemonEngineEndpoint(replaceOtherPackage: boolean, deadline?: number): Promise<EngineEndpoint> {
   const home = defaultRerailHome();
   const packageRoot = PACKAGE_ROOT;
   const control = { home, packageRoot };
@@ -712,7 +661,7 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
   let daemon: RunningDaemon | undefined;
   try {
     if (process.env.RERAIL_AUTOSTART === "0") {
-      const lookup = await patientLookup(home);
+      const lookup = await patientLookup(home, undefined, deadline);
       if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
       daemon = lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
     } else {
@@ -720,7 +669,7 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
     }
   } catch (error) {
     if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
-    const answered = await patientLookup(home, error.lookup);
+    const answered = await patientLookup(home, error.lookup, deadline);
     if (answered.status !== "running") throw error;
     daemon = { state: answered.state, health: answered.health };
   }
@@ -732,30 +681,42 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
 }
 
 /**
- * The engine endpoint for a hook after a session's start, or undefined when no daemon is alive to take the event. A
- * daemon that is down is not started: each tool call then costs one failed probe instead of an autostart that can
- * outlast the coding agent's hook timeout (design N11). A busy one is waited for (`patientLookup`). A healthy daemon
+ * The daemon a hook found after a session's start: its engine endpoint, or why no daemon takes the event. `absent`
+ * means none runs; `unresponsive` and `refused` name a daemon that is alive, which a start would only refuse to replace.
+ */
+export type HookDaemon = { status: "running"; endpoint: EngineEndpoint } | Exclude<DaemonLookup, { status: "running" }>;
+
+/**
+ * The engine endpoint for a hook after a session's start, or why there is none. A daemon that is down is not started:
+ * each tool call then costs one failed probe instead of an autostart that can outlast the coding agent's hook timeout
+ * (design N11). A busy one is waited for (`patientLookup`), until `deadline` when the hook names one. A healthy daemon
  * from another package (an update installed mid-session) is replaced as `daemonEngineEndpoint(true)` replaces it, so
  * steering carries on with this package's engine.
  */
-export async function runningDaemonEngineEndpoint(): Promise<EngineEndpoint | undefined> {
-  const lookup = await patientLookup(defaultRerailHome());
-  if (lookup.status !== "running") return undefined;
-  return await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT) ? engineEndpointOf(lookup.state) : await daemonEngineEndpoint(true);
+export async function runningDaemonEngineEndpoint(deadline?: number): Promise<HookDaemon> {
+  const lookup = await patientLookup(defaultRerailHome(), undefined, deadline);
+  if (lookup.status !== "running") return lookup;
+  const endpoint = await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT) ? engineEndpointOf(lookup.state) : await daemonEngineEndpoint(true, deadline);
+  return { status: "running", endpoint };
 }
 
 /** How long, in all, a hook's second health probe waits for a busy daemon to answer as itself. */
 const BUSY_DAEMON_WAIT_MS = 10_000;
+/** How long, in all, a hook waits for a busy daemon from the event's arrival: the first probe and the busy wait after it. */
+export const HOOK_DAEMON_WAIT_MS = PROBE_TIMEOUT_MS + BUSY_DAEMON_WAIT_MS;
 
 /**
  * The daemon lookup a hook acts on. A daemon whose pid is alive but which missed the first probe's 2 s, as one does
- * while its one event loop runs an audit or a long garbage collection, is probed once more with up to
- * `BUSY_DAEMON_WAIT_MS`; only an answer from the recorded pid makes it running. Nothing, the capability included, goes
- * to its engine socket before that answer: a pid Windows reused, or a socket another process holds, is not the daemon.
+ * while its one event loop runs an audit or a long garbage collection, is probed once more, with up to
+ * `BUSY_DAEMON_WAIT_MS` or until `deadline` (epoch ms) when one is given; only an answer from the recorded pid makes it
+ * running. Nothing, the capability included, goes to its engine socket before that answer: a pid Windows reused, or a
+ * socket another process holds, is not the daemon.
  */
-async function patientLookup(home: string, first?: DaemonLookup): Promise<DaemonLookup> {
+async function patientLookup(home: string, first?: DaemonLookup, deadline?: number): Promise<DaemonLookup> {
   const lookup = first ?? await lookupDaemon(home);
-  return lookup.status === "unresponsive" ? await lookupDaemon(home, THIS_MACHINE, BUSY_DAEMON_WAIT_MS) : lookup;
+  if (lookup.status !== "unresponsive") return lookup;
+  const wait = deadline === undefined ? BUSY_DAEMON_WAIT_MS : deadline - Date.now();
+  return wait > 0 ? await lookupDaemon(home, THIS_MACHINE, wait) : lookup;
 }
 
 /**
@@ -802,8 +763,8 @@ export interface DetachedLaunch {
  * Why a process the native spawn started is gone, or undefined while it runs: its exit code, from the handle the native
  * module kept. A binary built before it had no such handle, and there only a pid that no process holds says so.
  */
-function detachedExitReason(native: Pick<NativeBinding, "detachedExitCode">, pid: number): string | undefined {
-  if (native.detachedExitCode === undefined) return processAlive(pid) ? undefined : "exited";
+function detachedExitReason(native: Pick<NativeBinding, "detachedExitCode">, pid: number, kill: ProcessSignal): string | undefined {
+  if (native.detachedExitCode === undefined) return processAlive(pid, kill) ? undefined : "exited";
   const code = native.detachedExitCode(pid);
   return code === null ? undefined : `exited with code ${code}`;
 }
@@ -817,18 +778,20 @@ function detachedExitReason(native: Pick<NativeBinding, "detachedExitCode">, pid
  * as `just` leaves its own stdout inheritable, so a daemon started below it held the caller's output pipe open and a
  * captured `rerail setup | tee` never finished. The native spawn passes only NUL stdin and the log, and keeps the
  * child's handle, which says when it exits and with what code even after Windows gives its pid to another process.
+ * The Node binary and the pid checks are `machine`'s, as in every other entry point here.
  */
-export function launchDetached(launch: DetachedLaunch, platform: NodeJS.Platform = process.platform): LaunchedDaemon {
-  if (platform === "win32") {
+export function launchDetached(launch: DetachedLaunch, machine: DaemonMachine = THIS_MACHINE): LaunchedDaemon {
+  const node = nodeExecutable(machine.platform);
+  if (machine.platform === "win32") {
     const definedEnv = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
     const native = loadNativeBinding();
-    const pid = native.spawnDetached(nodeExecutable(), [...launch.args], launch.cwd ?? null, definedEnv, launch.logFile);
-    return { pid, exitReason: () => detachedExitReason(native, pid) };
+    const pid = native.spawnDetached(node, [...launch.args], launch.cwd ?? null, definedEnv, launch.logFile);
+    return { pid, exitReason: () => detachedExitReason(native, pid, machine.kill) };
   }
   const log = openSync(launch.logFile, "a", 0o600);
   let child;
   try {
-    child = spawn(nodeExecutable(), [...launch.args], { detached: true, stdio: ["ignore", log, log], cwd: launch.cwd, env: launch.env });
+    child = spawn(node, [...launch.args], { detached: true, stdio: ["ignore", log, log], cwd: launch.cwd, env: launch.env });
   } finally {
     closeSync(log);
   }
@@ -898,12 +861,15 @@ let autostartAttempted = false;
  * is visible there and through `rerail status`, never in the host. The
  * launcher starts as the daemon does ({@link launchDetached}), so on Windows
  * the SQLite probe, npm and the managed-version dispatch it runs open no window.
+ * The launcher runs in the Rerail home, as the daemon does ({@link launchDaemonProcess}): Windows holds a process's
+ * current folder open, so one started in the session's folder kept that checkout from being deleted or renamed while
+ * it ran. The session's folder goes to it as `--workspace-root`, which the daemon serves and looks for Git from.
  *
  * Every session records into the one database in the Rerail home, and the one
  * daemon serves every repository; sessions in any repository reuse it for their
  * engine service and status.
  */
-export function autostartDaemon(platform: NodeJS.Platform = process.platform): void {
+export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
   if (autostartAttempted) return;
   autostartAttempted = true;
   const setting = process.env.RERAIL_AUTOSTART;
@@ -912,11 +878,11 @@ export function autostartDaemon(platform: NodeJS.Platform = process.platform): v
   try {
     makeRerailHome(home);
     launchDetached({
-      args: [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "daemon", "start"],
-      cwd: undefined,
+      args: [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "daemon", "start", "--workspace-root", process.cwd()],
+      cwd: home,
       env: process.env,
       logFile: join(home, DAEMON_LOG_FILE),
-    }, platform);
+    }, machine);
   } catch {
     // Autostart is a convenience; the session must never notice it failing.
   }
@@ -972,9 +938,18 @@ async function requestDaemonShutdown(state: DaemonState): Promise<boolean> {
 export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
   const lookup = await lookupDaemon(home, machine);
   if (lookup.status === "absent") return "not-running";
-  const pid = lookup.state.pid;
+  await stopFoundDaemon(home, lookup, machine);
+  return "stopped";
+}
+
+/** A daemon a lookup found alive: running, unresponsive or refusing the capability. */
+export type FoundDaemon = Exclude<DaemonLookup, { status: "absent" }>;
+
+/** Stops the daemon `found`, which a {@link lookupDaemon} of `home` returned, as {@link stopDaemon} does. */
+export async function stopFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine = THIS_MACHINE): Promise<void> {
+  const pid = found.state.pid;
   const alive = (): boolean => processAlive(pid, machine.kill);
-  if (machine.platform !== "win32" || !(await requestDaemonShutdown(lookup.state))) signalDaemon(pid, "SIGTERM", machine);
+  if (machine.platform !== "win32" || !(await requestDaemonShutdown(found.state))) signalDaemon(pid, "SIGTERM", machine);
   const deadline = Date.now() + STOP_TIMEOUT_MS;
   while (alive() && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
   if (alive()) {
@@ -988,7 +963,6 @@ export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MAC
   // always does, leaves both behind, and a record naming a pid Windows reuses would keep the uninstall from the cache.
   await rm(join(home, DAEMON_STATE_FILE), { force: true });
   if (machine.platform === "win32") machine.forgetMainInstanceHolder(pid);
-  return "stopped";
 }
 
 /**

@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 import { checkoutRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { runGit } from "../git.js";
+import { processState } from "../process-liveness.js";
 import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits } from "../storage/schema.js";
 import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
 import { scrubSecrets } from "../secret-scrub.js";
@@ -106,10 +107,7 @@ function request(row: typeof auditRequests.$inferSelect): AuditRequest {
   return auditRequestSchema.parse({ ...row, paths: row.paths, auditIds: row.auditIds });
 }
 function processIsLive(processId: number): boolean {
-  if (processId === process.pid) return true;
-  try { process.kill(processId, 0); return true; } catch (error) {
-    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
-  }
+  return processId === process.pid || processState(processId) !== "gone";
 }
 
 /** Durable controls keyed by canonical workspace, with requests kept session-local. */

@@ -2,7 +2,7 @@ import { hookText } from "../../engine/adapter-contract.js";
 import { claudeWorkspace } from "./claude-event-adapter.js";
 import { handleClaudeEvent, supportsClaudeHook } from "./claude-hook-adapter.js";
 import { serveHook, serveHookEntry, type HookInput, type HookOutput } from "../../harness/hook-adapter.js";
-import { hookRerailStarted, runHostHook, type HookOptions } from "../../harness/hook-host.js";
+import { hookRerailStarted, runHostHook, withDaemonDeadline, type HookOptions } from "../../harness/hook-host.js";
 
 export { claudeHookOutput, handleClaudeEvent } from "./claude-hook-adapter.js";
 export { serveHook };
@@ -11,10 +11,11 @@ const { required: requiredText } = hookText("Claude");
 
 export async function runClaudeHook(input: HookInput, options: HookOptions = {}): Promise<HookOutput> {
   if (!supportsClaudeHook(input)) return {};
+  const waiting = withDaemonDeadline(options);
   const workspace = claudeWorkspace(input.cwd);
   if (!await hookRerailStarted("claude-code", workspace, options.databasePath)) return {};
   const event = requiredText(input, "hook_event_name");
-  return runHostHook("claude-code", workspace, requiredText(input, "session_id"), event === "SessionStart", options, (runtime, storageRoot) =>
+  return runHostHook("claude-code", workspace, requiredText(input, "session_id"), event === "SessionStart", waiting, (runtime, storageRoot) =>
     handleClaudeEvent(input, runtime, storageRoot), event);
 }
 

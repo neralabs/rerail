@@ -1,5 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -79,6 +81,46 @@ describe("a hook that cannot record its event", () => {
     expect(readHookFailures(rerailHome, 0)).toEqual([
       expect.objectContaining({ host: "claude-code", event: "PostToolUse", reason: "no Rerail daemon answered, so this event was not recorded" }),
     ]);
+  });
+
+  it.each([
+    {
+      daemon: "refuses it",
+      answer: (_request: IncomingMessage, response: ServerResponse) => { response.writeHead(401).end(); },
+      reason: "refused the access capability in daemon.json",
+    },
+    // A daemon whose one event loop a walk or a long garbage collection holds.
+    { daemon: "does not answer", answer: () => undefined, reason: "is running but did not answer within 12 s" },
+  ])("logs the event as lost and starts no daemon when the recorded daemon is alive but $daemon", async ({ answer, reason }) => {
+    const rerailHome = await home();
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    // A live daemon: this process, holding the engine socket daemon.json names, with `answer` at the URL it records.
+    const front = createHttpServer(answer);
+    const engine = createNetServer();
+    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-alive-${process.pid}-${Date.now()}` : join(rerailHome, "engine.sock");
+    await new Promise<void>(resolve => front.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>(resolve => engine.listen(socketPath, resolve));
+    try {
+      const port = (front.address() as AddressInfo).port;
+      writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
+        pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test", ui: "bundled",
+        startedAt: 1, packageRoot: rerailHome, databasePath: join(rerailHome, "rerail.sqlite"), kernelSocketPath: socketPath, accessToken: "token",
+      }));
+      const handle = vi.fn(async () => ({}));
+      // A deadline already reached: the hook gives up after the first probe's 2 s instead of waiting 10 s more.
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "PreToolUse")).toEqual({});
+      expect(handle).not.toHaveBeenCalled();
+      // A start finds the same daemon and refuses to replace it: the background start would cost a process and do nothing.
+      expect(autostart.calls).toBe(0);
+      expect(readHookFailures(rerailHome, 0)).toEqual([expect.objectContaining({
+        event: "PreToolUse", reason: `the Rerail daemon (pid ${process.pid}) ${reason}, so this event was not recorded`,
+      })]);
+    } finally {
+      front.closeAllConnections();
+      await Promise.all([front, engine].map(server => new Promise(resolve => server.close(resolve))));
+    }
   });
 
   it("logs a failure inside the hook under the event's own name, then fails as before", async () => {

@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { processState } from "../engine/process-liveness.js";
 
 /** How long to wait for another change to the packs to end: several npm installs, each fetching from the registry. */
 export const PACKS_LOCK_WAIT_MS = 5 * 60_000;
@@ -32,14 +33,9 @@ export interface PacksLockOptions {
   readonly now?: () => number;
 }
 
+/** Whether `pid` runs, as any user. */
 function processRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM: it runs, as another user.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
+  return processState(pid) !== "gone";
 }
 
 function readOwner(lock: string): LockOwner | undefined {

@@ -1,4 +1,4 @@
-import { createHash, randomBytes, X509Certificate } from "node:crypto";
+import { randomBytes, X509Certificate } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
 import { readFile, stat, rm } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
@@ -13,9 +13,11 @@ import { replaceFile } from "../engine/file-replace.js";
 import { searchGitFrom } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { daemonExit } from "./daemon-exit.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
@@ -162,10 +164,9 @@ export function defaultEngineSocketPath(
   databasePath: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const identity = createHash("sha256").update(resolve(databasePath)).digest("hex").slice(0, 24);
   return platform === "win32"
-    ? String.raw`\\.\pipe\rerail-${identity}`
-    : join(tmpdir(), `rerail-${process.getuid!()}`, `${identity}.sock`);
+    ? enginePipeName(databasePath)
+    : join(tmpdir(), `rerail-${process.getuid!()}`, `${engineIdentity(databasePath)}.sock`);
 }
 
 /** The listener the daemon serves on: `node:http`'s, or `node:https`'s when it has a certificate. */
@@ -501,7 +502,7 @@ export class RerailDaemon {
         accessToken,
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
         ...(options.kernelSocketPath === undefined
-          ? { pipeFallback: () => `${kernelSocketPath}-${randomBytes(8).toString("hex")}` }
+          ? { pipeFallback: () => fallbackPipe(kernelSocketPath) }
           : {}),
       });
       started.engineService = engineService;
@@ -897,38 +898,23 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   for (const skipped of catalog.skipped) {
     process.stdout.write(`rule pack left out: ${skipped.packageName ?? skipped.path}${skipped.version === null ? "" : `@${skipped.version}`}: ${skipped.reason}\n`);
   }
-  let stopping = false;
-  shutdown = (): void => {
-    if (stopping) return;
-    stopping = true;
-    daemon.close().then(
-      () => {
-        mainInstance?.release();
-        process.exit(0);
-      },
-      (error) => {
-        process.stderr.write(`rerail daemon: shutdown failed: ${(error as Error).message}\n`);
-        process.exit(1);
-      },
-    );
-  };
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
+  const way = daemonExit({
+    close: async () => await daemon.close(),
+    release: () => mainInstance?.release(),
+    // The same arguments and the same launch as `rerail daemon start`, once this daemon's port, socket and state are free.
+    relaunch: () => {
+      relaunchDaemon(process.argv.slice(1), join(defaultRerailHome(), DAEMON_LOG_FILE));
+    },
+    exit: code => process.exit(code),
+    log: line => process.stderr.write(line),
+  });
+  shutdown = way.stop;
+  process.once("SIGTERM", way.stop);
+  process.once("SIGINT", way.stop);
   watchHeap({
     onCeiling: ({ used, limit }) => {
       process.stderr.write(`rerail daemon: heap at ${Math.round(used / 1e6)} MB of its ${Math.round(limit / 1e6)} MB limit; restarting before it runs out\n`);
-      daemon.close().then(
-        () => {
-          mainInstance?.release();
-          // The same arguments and the same launch as `rerail daemon start`, once this daemon's port, socket and state are free.
-          relaunchDaemon(process.argv.slice(1), join(defaultRerailHome(), DAEMON_LOG_FILE));
-          process.exit(0);
-        },
-        (error) => {
-          process.stderr.write(`rerail daemon: restart failed: ${(error as Error).message}\n`);
-          process.exit(1);
-        },
-      );
+      way.restart();
     },
   });
 }

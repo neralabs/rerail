@@ -1,9 +1,9 @@
-import { accessSync, constants, existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, win32 } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { spawn } from "../engine/child-process.js";
 import { removeScratch } from "../engine/file-replace.js";
+import { pathKey, programOnPath } from "../engine/system-programs.js";
 
 export interface CommandResult {
   stdout: string;
@@ -54,68 +54,21 @@ export async function runCommand(command: string, args: readonly string[], optio
   return await promise;
 }
 
-function pathKey(env: NodeJS.ProcessEnv): string {
-  return Object.keys(env).find(name => name.toUpperCase() === "PATH") ?? "PATH";
-}
-
-/** The extensions CreateProcess starts without a shell; a `.cmd`, `.bat` or `.js` needs one. */
-const BINARY_EXTENSION = /^\.(?:exe|com)$/iu;
-
-/**
- * The absolute path PATH would resolve `command` to, or undefined when nothing on PATH is runnable by that
- * name. An absolute command is returned as is. A compiled-Bun host only knows Node as the bare name `node`;
- * the probe, the rebuild and the daemon spawn must still agree on one binary, so the name is resolved once.
- * `binaryOnly` takes on Windows only a `.exe` or `.com`, which a spawn without a shell can start: Node refuses a `.cmd`
- * or `.bat` there (EINVAL), and a version manager's `node.cmd` shim can come first on PATH.
- */
-export function resolveExecutable(
-  command: string,
-  env: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-  options: { binaryOnly?: boolean } = {},
-): string | undefined {
-  if (isAbsolute(command)) return command;
-  const windows = platform === "win32";
-  const separator = windows ? ";" : delimiter;
-  const binaryOnly = windows && options.binaryOnly === true;
-  // A relative entry would name the current folder, which a spawn there would search first anyway.
-  const directories = (env[pathKey(env)] ?? "").split(separator)
-    .filter(directory => directory.length > 0 && (!binaryOnly || win32.isAbsolute(directory)));
-  const pathExtensions = windows
-    ? (env.PATHEXT ?? env.Pathext ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(extension => extension.length > 0)
-    : [""];
-  const extensions = binaryOnly ? pathExtensions.filter(extension => BINARY_EXTENSION.test(extension)) : pathExtensions;
-  for (const directory of directories) {
-    for (const extension of extensions) {
-      const candidate = join(directory, `${command}${extension}`);
-      if (windows ? existsSync(candidate) : runnable(candidate)) return candidate;
-    }
-  }
-  return undefined;
-}
-
-function runnable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Windows has no `npm` executable a spawned Node can rely on; run the CLI script shipped next to `node`. */
 export function windowsNpmCliPath(node: string = process.execPath): string {
   const inherited = process.env.npm_execpath;
   if (inherited !== undefined && /(?:^|[\\/])npm-cli\.js$/iu.test(inherited)) return inherited;
-  return join(dirname(resolveExecutable(node) ?? process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  return join(dirname(programOnPath(node) ?? process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
 }
 
 /**
  * The environment in which `npm`, a `#!/usr/bin/env node` script, runs under `node` rather than whichever Node
  * PATH reaches first (nvm and Homebrew disagree routinely). A name PATH cannot resolve leaves the environment alone.
+ * A compiled-Bun host only knows Node as the bare name `node`; the probe, the rebuild and the daemon spawn must still
+ * agree on one binary, so the name is resolved once, to the program a spawn starts ({@link programOnPath}).
  */
 export function environmentForNode(node: string, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const executable = resolveExecutable(node, env);
+  const executable = programOnPath(node, { env });
   if (executable === undefined) return env;
   const key = pathKey(env);
   const current = env[key];
@@ -169,7 +122,7 @@ function unreachableError(error: unknown): Error | undefined {
 
 async function spawnNpm(args: readonly string[], options: NpmOptions): Promise<CommandResult> {
   const { node: requested, ...command } = options;
-  const node = requested === undefined ? undefined : resolveExecutable(requested, command.env);
+  const node = requested === undefined ? undefined : programOnPath(requested, { env: command.env ?? process.env });
   // Options first: a caller's `--` ends them.
   const npmArgs = [...FETCH_RETRY_OPTIONS, ...args];
   if (process.platform === "win32") {

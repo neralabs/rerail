@@ -7,6 +7,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { engineHoldsCapability, engineProof } from "../../src/runtime/engine-proof.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../src/runtime/engine-service.js";
 import { testEmbedder } from "../support/hook-events.js";
 import { startTestRepository } from "../support/started-repository.js";
@@ -251,10 +252,33 @@ describe("engine proof", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("refuses a holder whose answer is no proof, a multibyte one of the proof's length among them, without throwing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-engine-proof-"));
+    const socketPath = process.platform === "win32"
+      ? String.raw`\\.\pipe\rerail-proof-forged-${process.pid}-${Date.now().toString(16)}`
+      : join(root, "engine.sock");
+    // 64 characters, as a proof has, but 128 bytes in UTF-8; then a proof in upper case, and a number.
+    const answers = [JSON.stringify({ proof: "é".repeat(64) }), JSON.stringify({ proof: "AB".repeat(32) }), JSON.stringify({ proof: 7 })];
+    const squatter = createHttpServer((_incoming, response) => {
+      response.end(answers.shift() ?? "{}");
+    });
+    await new Promise<void>(resolve => squatter.listen(socketPath, resolve));
+    try {
+      expect(await engineHoldsCapability(socketPath, "capability")).toBe(false);
+      expect(await engineHoldsCapability(socketPath, "capability")).toBe(false);
+      expect(await engineHoldsCapability(socketPath, "capability")).toBe(false);
+    } finally {
+      await new Promise<void>(resolve => squatter.close(() => resolve()));
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("an engine pipe another process holds", () => {
-  const PIPE = String.raw`\\.\pipe\rerail-0123456789abcdef01234567`;
+  // Built as the daemon builds them, so a name written by hand cannot drift from what the daemon and its control read.
+  const PIPE = enginePipeName(join(tmpdir(), "rerail.sqlite"));
+  const FALLBACK = fallbackPipe(PIPE, () => Buffer.from("89abcdef", "hex"));
   const held = Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" });
 
   it("listens on the fallback pipe when the holder is not this home's engine, and says where", async () => {
@@ -264,17 +288,18 @@ describe("an engine pipe another process holds", () => {
         listened.push(path);
       },
       ownEngineAnswers: async () => false,
-      fallback: () => `${PIPE}-89abcdef`,
+      fallback: () => FALLBACK,
     });
-    expect(where).toBe(`${PIPE}-89abcdef`);
-    expect(listened).toEqual([`${PIPE}-89abcdef`]);
+    expect(where).toBe(FALLBACK);
+    expect(listened).toEqual([FALLBACK]);
+    expect(isEnginePipe(pipeNameOf(where))).toBe(true);
   });
 
   it("starts no second daemon beside this home's own engine, and keeps the error without a fallback", async () => {
     const listen = async (): Promise<void> => {
       throw new Error("must not listen");
     };
-    await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => true, fallback: () => `${PIPE}-1` }))
+    await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => true, fallback: () => FALLBACK }))
       .rejects.toThrow(/in use by a running daemon/u);
     await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => false, fallback: undefined })).rejects.toBe(held);
   });

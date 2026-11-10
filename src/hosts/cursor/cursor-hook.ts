@@ -6,7 +6,7 @@ import {
   type CursorHookOutput,
 } from "./cursor-hook-adapter.js";
 import { serveHookEntry } from "../../harness/hook-adapter.js";
-import { hookRerailStarted, runHostHook, type HookOptions } from "../../harness/hook-host.js";
+import { hookRerailStarted, runHostHook, withDaemonDeadline, type HookOptions } from "../../harness/hook-host.js";
 
 export { CURSOR_FOLLOWUP_LOOP_LIMIT, cursorHookEvent, cursorHookOutput, handleCursorEvent } from "./cursor-hook-adapter.js";
 
@@ -14,9 +14,10 @@ export async function runCursorHook(
   input: CursorHookInput,
   options: HookOptions = {},
 ): Promise<CursorHookOutput> {
+  const waiting = withDaemonDeadline(options);
   const workspace = cursorWorkspace(input);
   if (!await hookRerailStarted("cursor", workspace, options.databasePath)) return {};
-  return runHostHook("cursor", workspace, cursorSession(input).sessionId, input.hook_event_name === "sessionStart", options, (runtime, storageRoot) =>
+  return runHostHook("cursor", workspace, cursorSession(input).sessionId, input.hook_event_name === "sessionStart", waiting, (runtime, storageRoot) =>
     handleCursorEvent(input, runtime, storageRoot), String(input.hook_event_name));
 }
 

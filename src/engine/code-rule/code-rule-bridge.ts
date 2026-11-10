@@ -13,6 +13,7 @@ import type {
   AuditSettings,
   CodeRuleSourceLanguage,
   IgnoredEditMatch,
+  WalkView,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
 import { gitBranchTips, gitCommitsBetween, gitCrlfPaths, gitHead, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs } from "../git.js";
@@ -429,6 +430,8 @@ interface SourceWalk {
   readonly stack: string[];
   /** Where the walk starts: a folder reached again from another is not walked twice. */
   readonly roots: ReadonlySet<string>;
+  /** What the walk asks of each file and folder it finds: the auditor's `walkView` for this walk, or the auditor. */
+  readonly view: WalkView;
 }
 /** What a walk of `SourceDiscovery` compares its scan with, all read before it started. */
 interface WalkStart {
@@ -1381,6 +1384,7 @@ export class CodeRuleBridge {
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
       captureChanges: !walk.baseline, scan: { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map() },
       stack: walk.inSession ? [discovery.root] : [...worktrees], roots: new Set([discovery.root, ...worktrees]),
+      view: this.#auditor.walkView?.() ?? this.#auditor,
     });
   }
 
@@ -1682,7 +1686,7 @@ export class CodeRuleBridge {
     if (neverWalked(entry)) return false;
     if (!entry.isDirectory()) return entry.isFile();
     const child = join(absolute, entry.name);
-    return !walk.roots.has(child) && this.#auditor.ignoresPath?.(sessionPath(walk.discovery.root, child), true) !== true;
+    return !walk.roots.has(child) && walk.view.ignoresPath?.(sessionPath(walk.discovery.root, child), true) !== true;
   }
 
   /**
@@ -1691,7 +1695,7 @@ export class CodeRuleBridge {
    */
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
     const path = sessionPath(walk.discovery.root, absolute);
-    if (basename(path) === GITIGNORE || !this.#auditor.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
+    if (basename(path) === GITIGNORE || !walk.view.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
   }
 
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
@@ -1707,7 +1711,7 @@ export class CodeRuleBridge {
   async #observedFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<Source | undefined> {
     const stamped = { path: location.path, language: location.language, stamp: fileStamp(info), observedAt: walk.observedAt };
     const previous = walk.previousSources.get(location.path);
-    if (!this.#auditor.acceptsPath(location.path)) return { ...stamped, ...knownDigest(previous) };
+    if (!walk.view.acceptsPath(location.path)) return { ...stamped, ...knownDigest(previous) };
     const modifiedAt = Math.max(info.mtimeMs, info.ctimeMs);
     if (staleStamp(previous, stamped.stamp, modifiedAt)) return previous;
     const unread = await unreadFile(location, info);

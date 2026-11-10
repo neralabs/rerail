@@ -20,9 +20,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { execFile, spawn } from "../engine/child-process.js";
+import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
 import { removeScratch, renameWithRetry, replaceFile } from "../engine/file-replace.js";
-import { DAEMON_STATE_FILE, daemonUsesPackageRoot, readDaemonState, stopDaemon } from "../runtime/daemon-control.js";
+import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
@@ -348,8 +348,8 @@ function batchPath(path: string, rerailHome: string): string | undefined {
  */
 async function stopDaemonFrom(home: string, packageRoot: string, platform: NodeJS.Platform): Promise<void> {
   if (platform !== "win32") return;
-  const state = await readDaemonState(join(home, DAEMON_STATE_FILE));
-  if (state !== undefined && await daemonUsesPackageRoot(state, packageRoot)) await stopDaemon(home);
+  const lookup = await lookupDaemon(home);
+  if (lookup.status !== "absent" && await daemonUsesPackageRoot(lookup.state, packageRoot)) await stopFoundDaemon(home, lookup);
 }
 
 async function repairManagedInstallation(packageRoot: string): Promise<SqliteRepairResult> {
@@ -488,13 +488,14 @@ export async function validateManagedInstallation(installation: Installation): P
 const CHILD_EXIT_WAIT_MS = 5_000;
 
 /**
- * Kills `child` if it still runs and waits for it to exit, up to {@link CHILD_EXIT_WAIT_MS}: on Windows the kill
- * returns before the process is gone, and the SQLite files it holds open cannot be removed until it is.
+ * Ends `child` and what it started (`endProcessTree`) if it still runs, and waits for it to exit, up to
+ * {@link CHILD_EXIT_WAIT_MS}: on Windows the kill returns before the process is gone, the SQLite files it holds open
+ * cannot be removed until it is, and a Git it started holds the scratch repository until it is ended too.
  */
 async function stopChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const gone = once(child, "exit").then(() => undefined, () => undefined);
-  child.kill();
+  endProcessTree(child);
   await Promise.race([gone, sleep(CHILD_EXIT_WAIT_MS, undefined, { ref: false })]);
 }
 async function pathEntryExists(path: string): Promise<boolean> {

@@ -1502,6 +1502,9 @@ export interface IgnoredEditMatch {
   pattern: string;
 }
 
+/** What a walk of the session's folder asks of each file and folder it finds (`CodeRuleAuditor.walkView`). */
+export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath">;
+
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
   /** Refresh live rules before filtering paths for a tool's preimages; `acceptsPath` reflects them on return. */
@@ -1515,6 +1518,12 @@ export interface CodeRuleAuditor {
    * a shell-write walk neither descends into such a folder (`directory`) nor observes such a file. Absent: nothing is.
    */
   ignoresPath?(path: string, directory: boolean): boolean;
+  /**
+   * `acceptsPath` and `ignoresPath` for one walk, which asks them only of the files and folders it found, never of a
+   * link. It may keep what it learns of a folder for the rest of the walk, so a walk costs a lookup per folder where
+   * the auditor would make one per file. Absent: the walk asks the auditor itself.
+   */
+  walkView?(): WalkView;
   /**
    * Why an edit of the file `path` (as for `acceptsPath`) goes unchecked though the rules would read it: the pattern
    * by which Git ignores it, while the session follows `.gitignore`, with its file (absolute) and line. Undefined for a
