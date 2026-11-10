@@ -210,16 +210,37 @@ impl WeightEncoder {
         }
     }
 
+    /// The bits for `weight`. An int multiple is rounded to the nearest multiple (upstream truncated, so a weight
+    /// that is 3 multiples in exact arithmetic but 2.9999998 in float was encoded as 2); a table weight is its
+    /// place in the (sorted) table (upstream threw: never encoded).
     fn encode_weight_(&self, weight: f32) -> Result<u32, String> {
         match self.weight_format {
-            WeightFormat::WfIntMultiple => Ok((weight / self.weight_multiplier) as u32),
-            WeightFormat::WfTable => Err("WF_TABLE not encoding yet".into()),
+            WeightFormat::WfIntMultiple => {
+                let m = (weight / self.weight_multiplier).round();
+                if !(0.0..=u32::MAX as f32).contains(&m) {
+                    return Err(format!("weight {weight} is {m} multiples of {}", self.weight_multiplier));
+                }
+                Ok(m as u32)
+            }
+            WeightFormat::WfTable => {
+                let table = self.weight_format_table.data();
+                table.binary_search_by(|t| t.total_cmp(&weight)).map(|i| i as u32).map_err(|_| format!("weight {weight} is not in the weight table"))
+            }
             WeightFormat::WfFloat => Ok(weight.to_bits()),
         }
     }
 
+    /// The bits for `weight`: an error unless they fit the weight bits and decode to `weight` exactly (the check
+    /// upstream had commented out).
     pub fn encode_weight(&self, weight: f32) -> Result<u32, String> {
-        self.encode_weight_(weight)
+        let result = self.encode_weight_(weight)?;
+        if self.weight_bits < 32 && result >> self.weight_bits != 0 {
+            return Err(format!("weight {weight} encodes as {result}, wider than {} bits", self.weight_bits));
+        }
+        if self.decode_weight(result) != weight {
+            return Err(format!("weight {weight} encodes as {result}, which decodes as {}", self.decode_weight(result)));
+        }
+        Ok(result)
     }
 }
 
@@ -680,7 +701,13 @@ pub struct TreeTrainingInfo {
     pub feature_sampling: u16,
     /// Which feature vector sampling bag we belong to.
     pub feature_vector_sampling: u16,
+    /// Length of the pool of every level's partition splits (rerail's addition: the device stops before a level
+    /// whose splits would not fit).
+    pub max_num_finished_partitions: u32,
 }
+
+/// `TreeDepthInfo::status` once the device has stopped and left the rest of the tree to the host.
+pub const TREE_DEPTH_STATUS_STOPPED: u32 = 1;
 
 /// Sizing information for a depth iteration.
 #[repr(C)]
@@ -751,7 +778,12 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
     let hash = f.info.ok_or("get_node: feature without a column")?;
     let column = fs.column_info.get(&hash).ok_or("get_node: feature's column not in the feature space")?;
     let feature = fs.get_feature(hash);
-    let split_val = if f.ordinal {
+    let split_val = if f.ordinal && best_split as u32 == column.bucket_descriptions.numeric.offset && best_split > 0 {
+        // The nulls (bucket 0) on the left, every number on the right: upstream's `getSplit` throws here (there is
+        // no split point below the first numeric bucket), failing the training. As a value, -inf: every number is
+        // false and a null is missing, which goes left.
+        f32::NEG_INFINITY
+    } else if f.ordinal {
         match column.bucket_descriptions.get_split(best_split as u32)? {
             c @ (CellValue::Integer(_) | CellValue::Float(_)) => c.to_double() as f32,
             _ => best_split as f32,
@@ -760,7 +792,10 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
         best_split as f32
     };
     let split = Split::new(feature, split_val, if f.ordinal { Op::Less } else { Op::Equal })?;
-    let missing = get_leaf(tree, &W::default());
+    // A missing value is a null, which training put in bucket 0: on the left of an ordinal split (whose bucket is
+    // at least 1), and on the left of a categorical one only when that is bucket 0. Upstream gave the missing
+    // branch an empty leaf (a 0/0 prediction).
+    let missing = if f.ordinal || best_split == 0 { left } else { right };
     let node = tree.new_node();
     {
         let n = tree.node_mut(node).unwrap();
@@ -769,6 +804,7 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
         n.child_false = right;
         n.child_missing = missing;
         n.z = best_score;
+        n.split_bucket = best_split;
     }
     fill_in_base(tree, node, &(w_left + w_right));
     Ok(node)
@@ -809,7 +845,7 @@ mod tests {
         assert_eq!(offset_of!(IndexedPartitionSplit, index), 32);
         // The kernels' own structs (randomforest_kernels_common.h).
         assert_eq!(size_of::<TreeDepthInfo>(), 28);
-        assert_eq!(size_of::<TreeTrainingInfo>(), 20);
+        assert_eq!(size_of::<TreeTrainingInfo>(), 24);
         assert_eq!(size_of::<UpdateWorkEntry>(), 12);
         assert_eq!(size_of::<PartitionInfo>(), 8);
         assert_eq!(size_of::<RowPartitionInfo>(), 2);
