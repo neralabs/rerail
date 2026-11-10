@@ -538,6 +538,13 @@ for the comparison. Three runs each, at load 94–120; CPU is user + sys:
     The batches past the waves are count tables: 2 built ahead for a level, and 3 that a step built once its walks
     paid for one, mid-stratum, which do not wait for the wave yet.
 - **The slice** has one closure by pieces, which before fell back to semi-naive.
+- **By retired instructions** (the run's report; steadier than CPU at this load), after merging the base branch's
+  latest, paired runs each way, the first run of each binary left out:
+  - the slice: 232.50 and 232.74 G for the base, 232.77 and 232.48 G with waves and pieces (equal within 0.1%),
+    findings identical;
+  - the closure-waves workload: 22.63 and 22.72 G for the base, 22.02 and 21.95 G with waves and pieces (−3%),
+    21.90 and 21.96 G with `RERAIL_WAVES=off`. So waves change where the kernels' wall goes, not the work done; the
+    3% is the pieces.
 
 **Not built yet:**
 
