@@ -10,7 +10,7 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
-Build and develop the engine in this repository root. The current accepted direct-execution cohort includes Final `bc83f6ae8`.
+Build and develop the engine in this repository root. The active development cohort includes Final `93cadec37`. The accepted direct-execution cohort includes Final `bc83f6ae8`.
 Its frozen CLI is `193ba7fd4d9bf3e8…`, with native tree `260daf34bdc84c51eedadc9225871c434f68c385`.
 The manifest records the source trees, reviewed generic extensions, and exact executable hash.
 Historical integration and validation entries remain below. They certify only their stated cohorts.
@@ -2630,3 +2630,41 @@ The admission tool revalidates every corpus family before writing evidence. It a
 `impl_direct_execution` is now `full-contract-passed` for this recorded contract. The global migration remains unfinished: two accepted ports, 93 drafts, and five absent translations.
 The earlier authority acceptance remains bound to its recorded Final 04e3 cohort; it has not been refreshed on this newest engine.
 The complete checkpoint does not claim equivalence for arbitrary Python runtime inputs outside the recorded linter contract.
+
+### 2026-11-10 — First ten drafts, native CLI gaps, and workspace scope repair
+
+Merged Final `93cadec37`, including resident join kernels and batched seed joins. The root remains the only active engine.
+The unit build took 97.055 seconds. The optimized `profiling` CLI build took 95.520 seconds.
+The [focused engine receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final93-focused-engine-validation.json.gz) records 164 passing tests, two existing ignored helpers, and 205 passing tooling tests.
+One former row-sort test moved out of the engine module; this receipt does not claim accelerator-wide coverage.
+
+The first-ten source recording contains 567 original tests: 564 pass and three source tests skip.
+It records 399 complete API values and 234 positive detector calls. The scanner recorder captures no call for 255 tests.
+The diagnostic native replay runs all 567 selected cases, including the existing stronger translations of the three skips.
+It performs 526 native executions and records 57 mechanical assertion translations. Original assertion predicates remain; regex operations use native counterparts.
+The [diagnostic receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-batch1-final93-diagnostic.json.gz) is explicitly unaccepted.
+It exposes 94 original CLI calls: backend type strings 19, async attribute checks 23, source inspection 26, blanket bypass 25, and grammar surface one.
+Those calls must move to native decisions and output before acceptance. Scanner-only success does not close these contracts.
+
+The blanket-bypass frontend now transports arguments and callback results. Native rules provide configuration, full CLI streams, and exit decisions.
+Configuration checks bind all 34 forbidden methods, three allowlist paths, and the SQL connection path.
+The semantic guard no longer permits its original CLI. The generator reproduces the repaired policy exactly.
+
+Workspace testing found six missing positive results that snapshot input selection had masked.
+A static production scope rejected valid API files such as `a.py` and `nested/a.py`.
+The rule now permits API inputs and applies production root and test filtering in logic.
+The [red scope receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-blanket-workspace-scope-red.json.gz) retains the failures.
+The [green CLI checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-blanket-native-cli-final93-checkpoint.json.gz) validates 324 native executions.
+All 119 original tests and ten exact CLI cases pass through both APIs. No original CLI function executes.
+Complete streams, status, callback order, duplicate rows, Unicode, help, and invalid arguments remain checked.
+This rule remains a draft: production behavior, persistent updates, and full admission remain open.
+
+Next work for this ten-rule group:
+1. Replace the remaining 69 original CLI calls across the four other rules, with complete source/native observations.
+2. Verify configuration bindings and native regex counterparts for tests without scanner calls. Configuration batches can cover several constant assertions.
+3. Repeat all ten rules through workspace APIs. The six blanket-bypass scope failures prove snapshot success is insufficient.
+4. Validate production discovery, registry metadata, reporting, and persistent updates before admitting each rule.
+5. Include associated external suites from the independent inventory, not only each dedicated test module.
+
+The global inventory remains two historically accepted ports, 93 drafts, and five absent translations.
+No full-repository cold benchmark was run. No Linear issues were created.
