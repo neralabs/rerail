@@ -6,7 +6,13 @@ sd_document(d,p) :- doc(d,_,_), option("dispatchPath",p).
 sd_document(d,p) :- doc(d,input,_),option_item("dispatchDocuments",i,input),option_item("dispatchPaths",i,p).
 sd_document(d,p) :- doc(d,p,_), !option("dispatchPath",_),!option_item("dispatchDocuments",_,_).
 .decl sd_selected(d: number)
-sd_selected(d) :- sd_document(d,p), sd_root(root), prefix(cat(root,"/"),p), !sd_late(p),
+// FileScopeSpec's traversal boundaries, from lint_lib/fact_engine.py at the source pin.
+.decl sd_ignored_part(name: symbol)
+sd_ignored_part(".git"). sd_ignored_part(".venv"). sd_ignored_part("venv").
+sd_ignored_part("__pycache__"). sd_ignored_part("tmp").
+.decl sd_ignored(path: symbol)
+sd_ignored(p) :- sd_document(_,p),sd_ignored_part(name),contains(cat("/",name,"/"),cat("/",p,"/")).
+sd_selected(d) :- sd_document(d,p), sd_root(root), prefix(cat(root,"/"),p),suffix(".py",p),!sd_ignored(p),!sd_late(p),
     !contains("/tests/",cat("/",p,"/")), !contains("/test/",cat("/",p,"/")), !syntax_error(d,_,_).
 sd_selected(d) :- sd_document(d,p),sd_base(p),!syntax_error(d,_,_).
 #include "data-layer/dispatch-provenance.rr"

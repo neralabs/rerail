@@ -10855,3 +10855,41 @@ Dispatch remains a draft. The next work is:
 The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
 The other 89 ports remain unfinished under the complete migration gate.
 No full-repository benchmark ran. No Linear ticket was created.
+
+# Final 0b7 integration and dispatch file-scope correction, 2026-11-10
+
+Merged Final 0b7fb4dbddde9385877bf6e3e317cbc9c5defac5 in merge commit 8d2c124fa.
+The merge includes the current session maintenance and value-based seed specifications.
+All engine work remains in the root checkout. The generic extension audit passes against that upstream.
+
+The refreshed scanner corpus contains 298 cases, including 203 positive cases.
+All cases pass through both snapshot and workspace APIs. All 49 unchanged original tests also pass through both APIs.
+Their complete recorded observations match, including 38 positive scan calls, with no semantic Python fallback.
+The combined scanner checks cover 694 original and supplemental case executions.
+They use 13 actual native requests across the two interfaces.
+[Current scanner evidence](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-scanner-final0b7-progress.json.gz)
+retains complete reports, consumed program text, hashes, build provenance, and focused test logs.
+It remains explicitly unadmitted.
+
+Repository source recording exposed eight additional scanner failures.
+Synthetic API documents had bypassed the source linter's file-scope filtering.
+The native policy now excludes .git, .venv, venv, __pycache__, and tmp path components and requires the .py suffix.
+It still admits .hidden, node_modules, conform, .py, and .hidden.py where the source does.
+The [scope red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-scope-red-final0b7.json.gz) preserves all eight failures.
+The corrected policy passed the complete original and expanded scanner cohorts afterward.
+
+Focused engine tests pass: 17 string tests, seven session tests, and one specification test.
+Two pre-existing manual helpers remain ignored. All 372 migration tooling tests pass.
+The optimized build took 584.725 seconds elapsed, including a shared Cargo lock wait.
+The unit build took 77.399 seconds. These are build times, not execution benchmarks.
+No full-repository cold benchmark ran.
+
+The new repository oracle records 22 temporary-repository cases, including 14 with reporter violations.
+It retains selected files, complete extracted facts, full Finding and StructuredViolation values,
+plugin and extractor metadata, output streams, aliases, and inventory-signature behavior.
+These 22 cases have source observations only. Their native repository contract remains unimplemented.
+Next, implement that contract before supplied-fact reporting, CLI acceptance, persistent updates, controls, and admission.
+Caller-created Finding projections also remain open.
+
+The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+The 100-port migration remains active. No Linear ticket was created.

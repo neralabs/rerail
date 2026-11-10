@@ -2703,7 +2703,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/dispatch-source.rr",
-      "sha256": "6b3b4703a101304161835a8bb93e4cb807d632dc7133b498120eb79245f2ed86",
+      "sha256": "e961168cbf63c1cf38439f871061318e64da00669858892c74db8751dc9d7640",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
