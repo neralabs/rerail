@@ -15,7 +15,10 @@ pub(in crate::code_rule_dsl) struct Reads {
     pub fields: Arc<parking_lot::Mutex<BTreeMap<String, BTreeSet<String>>>>,
     pub source: Arc<AtomicBool>,
 }
-pub(in crate::code_rule_dsl) fn install(db: &Connection, tables: &BTreeSet<String>) -> Result<Reads> {
+pub(in crate::code_rule_dsl) fn install(
+    db: &Connection,
+    tables: &BTreeSet<String>,
+) -> Result<Reads> {
     let tables = tables.clone();
     let reads = Arc::new(parking_lot::Mutex::new(
         BTreeMap::<String, BTreeSet<String>>::new(),
@@ -102,6 +105,8 @@ pub(in crate::code_rule_dsl) fn install(db: &Connection, tables: &BTreeSet<Strin
                         | "typeof"
                         | "unicode"
                         | "upper"
+                        | "verify_ed25519"
+                        | "sha256"
                         | "rx_matches"
                         | "rx_extract"
                         | "rx_replace"
