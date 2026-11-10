@@ -714,6 +714,17 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let lbase = rels.iter().filter(|r| r.level.len() == r.n).flat_map(|r| r.level.iter().copied()).max().unwrap_or(0);
     for r in &mut rels { r.lbase = lbase; }
     for r in &mut rels { let n = r.n; r.set_delta(0, n); }   // the first wave reads the seeds as its delta
+    // Levels (decision 0090): `live`'s rows are shown a level at a time, never a delta, so no probe reads it as
+    // one; the other levels relations get small batches from row 0, which a whole plan (one for a delta that is
+    // its whole relation) would join by scanning `live` or `old`.
+    for ln in &levels.lines {
+        let n = rels[ln.live].n;
+        rels[ln.live].set_delta(n, n);
+        for p in probes.iter_mut().filter(|p| [ln.cand, ln.chk, ln.held, ln.gone].contains(&p.delta)) {
+            p.whole = None;
+            p.wkey = None;
+        }
+    }
     for p in &probes {
         if let Body::Join(j) = &p.body { for (r, cols) in &j.multi { rels[*r].add_multi(cols); } }
         if let Some(j) = &p.whole { for (r, cols) in &j.multi { rels[*r].add_multi(cols); } }
@@ -1214,7 +1225,10 @@ pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) 
             let mut store = comp.store.write().unwrap();
             for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
             drop(store);
+            let levels: Vec<usize> = comp.levels.lines.iter().flat_map(|l| [l.cand, l.chk, l.held, l.gone, l.live]).collect();
             let p = comp.probes.get_mut(i).ok_or_else(|| err(format!("no probe {i} of {n}")))?;
+            // A levels relation's probes take no whole plan (`open`).
+            if levels.contains(&p.delta) { return Ok(()); }
             p.whole = Some(j);
             p.wkey = Some(body.to_owned());
             return Ok(());
