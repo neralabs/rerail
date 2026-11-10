@@ -152,9 +152,14 @@ try {
   $left = @(Get-ChildItem -Force -Name $rerailHome | Where-Object { $_ -in @("current", "bin", "versions", "update-state.json", "packs") })
   if (Test-Path "$sandbox\.cache\rerail") { $left += "$sandbox\.cache\rerail" }
   if ($left.Count -gt 0) { throw "install --remove left behind: $($left -join ', ')" }
+  $onPath = @((Split-RerailPathUnder (Get-RerailUserPath) $rerailHome).Under)
+  if ($onPath.Count -gt 0) { throw "install --remove left $($onPath -join ', ') in the user Path" }
   Step "windows-install-smoke: PASS"
 } finally {
   if (Test-Path $launcher) { & $launcher daemon stop | Out-Null }
   Stop-RerailRegistry $registry
   Remove-Item -Recurse -Force $base -ErrorAction SilentlyContinue
+  # Set-up wrote the sandbox's launcher folder into the user Path in HKCU\Environment; a run that failed before
+  # install --remove would leave a person's Path naming a deleted folder.
+  Clear-RerailUserPath -Folder $base | ForEach-Object { Write-Host $_ }
 }

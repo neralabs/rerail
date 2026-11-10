@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const HOST_SCRIPT = join(packageRoot, "scripts", "host", "windows-host.ps1");
+const SMOKE_SCRIPT = join(packageRoot, "scripts", "host", "windows-install-smoke.ps1");
 const run = promisify(execFile);
 const folders: string[] = [];
 
@@ -51,4 +52,23 @@ $run = Invoke-RerailCaptured $env:RERAIL_TEST_NODE @("-e", "process.stdout.write
 `, { RERAIL_TEST_NODE: process.execPath, RERAIL_TEST_FOLDER: await scratchFolder() });
     expect(answer).toBe("stdout True, stderr True");
   }, 60_000);
+
+  it("split the user Path entries inside a sandbox folder, however each is written, from the rest, which stays in place", async () => {
+    const answer = await hostPowerShell(String.raw`
+$sandbox = $env:RERAIL_TEST_SANDBOX
+$path = '%SystemRoot%\system32;' + $sandbox + ';C:\Tools;' + $sandbox.ToUpperInvariant() + '\profile\.rerail\bin\;;%RERAIL_TEST_SANDBOX%\other;' + $sandbox + '-sibling\bin'
+$split = Split-RerailPathUnder $path $sandbox
+"$($split.Under -join '|')>$($split.Rest)"
+`, { RERAIL_TEST_SANDBOX: String.raw`C:\Temp\rerail-windows-smoke-1` });
+    expect(answer).toBe(String.raw`C:\Temp\rerail-windows-smoke-1|C:\TEMP\RERAIL-WINDOWS-SMOKE-1\profile\.rerail\bin\|%RERAIL_TEST_SANDBOX%\other>%SystemRoot%\system32;C:\Tools;;C:\Temp\rerail-windows-smoke-1-sibling\bin`);
+  }, 60_000);
+});
+
+describe("the Windows install smoke", () => {
+  it("takes its sandbox's launcher folder out of the user Path when it ends, passed or failed", async () => {
+    // Set-up writes the folder into HKCU\Environment, which no variable the sandbox sets redirects.
+    const smoke = await readFile(SMOKE_SCRIPT, "utf8");
+    const cleanup = smoke.slice(smoke.lastIndexOf("} finally {"));
+    expect(cleanup).toMatch(/Clear-RerailUserPath -Folder \$base/u);
+  });
 });

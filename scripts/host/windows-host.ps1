@@ -200,3 +200,38 @@ function Get-RerailHookLeftovers([string]$UserHome) {
     if ((Test-Path $path) -and ((Get-Content -Raw $path) -match '[\\/]\.rerail[\\/]')) { $path }
   }
 }
+
+# The user Path as HKCU\Environment stores it, %VAR% entries unexpanded. Set-up writes the launcher folder there, and no
+# variable a sandbox sets redirects it, so a check that runs set-up on a person's machine changes their Path.
+function Get-RerailUserPath {
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
+  if ($null -eq $key) { return "" }
+  try { return [string]$key.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } finally { $key.Close() }
+}
+
+# Splits a raw Path value into its entries in $Folder or under it (`Under`) and the value without them (`Rest`), where
+# every other entry, empty ones too, keeps its place and spelling. Entries compare as Windows reads them: %VAR%
+# expanded, case ignored, a trailing backslash dropped.
+function Split-RerailPathUnder([string]$Path, [string]$Folder) {
+  $root = [Environment]::ExpandEnvironmentVariables($Folder).Trim().TrimEnd('\')
+  if ($root -eq "") { throw "no folder to look for in the Path" }
+  $under = @(); $rest = @()
+  foreach ($entry in $Path -split ";") {
+    $full = [Environment]::ExpandEnvironmentVariables($entry).Trim().TrimEnd('\')
+    if ($full -ieq $root -or $full.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase)) { $under += $entry } else { $rest += $entry }
+  }
+  return @{ Under = $under; Rest = $rest -join ";" }
+}
+
+# Takes every entry in $Folder or under it out of the user Path and writes the rest back with the value's kind, so
+# entries the person added meanwhile stay and %VAR% entries stay unexpanded. Writes a line for each entry it removes.
+function Clear-RerailUserPath([string]$Folder) {
+  $split = Split-RerailPathUnder (Get-RerailUserPath) $Folder
+  if ($split.Under.Count -eq 0) { return }
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+  try { $key.SetValue("Path", $split.Rest, $key.GetValueKind("Path")) } finally { $key.Close() }
+  # Setting a throwaway user variable broadcasts WM_SETTINGCHANGE, as set-up does, so new terminals get the new Path.
+  [Environment]::SetEnvironmentVariable("RERAIL_PATH_REFRESH", "1", "User")
+  [Environment]::SetEnvironmentVariable("RERAIL_PATH_REFRESH", $null, "User")
+  foreach ($entry in $split.Under) { "removed $entry from the user Path" }
+}
