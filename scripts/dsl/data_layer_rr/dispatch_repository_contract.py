@@ -10,7 +10,7 @@ import sys
 import tempfile
 from unittest.mock import patch
 
-from migration import ROOT,PIN,compare,git,sha,write_json
+from migration import ROOT,PIN,compare,git,sha,read_json,write_json
 from dto import canonical
 from replay import write_fixture
 
@@ -68,20 +68,105 @@ def observe(module,case):
             stdout=stdout.getvalue().replace(str(root),'$ROOT'),stderr=stderr.getvalue().replace(str(root),'$ROOT'))
 
 
+def decode(module,native):
+    rows=native['diagnostics']
+    allowed={'DL_FILE','DL_META','SDR_CONFIG','SDR_SEQUENCE','SDR_SCOPE','SDR_FACT','SDR_REPORT','SDR_OUTPUT'}
+    if any(r['code'] not in allowed for r in rows):raise ValueError('Unexpected repository contract rows')
+    config={}
+    for r in rows:
+        if r['code']!='SDR_CONFIG':continue
+        p=r['parameters'];identity=(p['section'],p['key'])
+        if identity in config:raise ValueError('Duplicate configuration field')
+        config[identity]=p
+    if not config:raise ValueError('Native dispatch repository metadata is missing')
+    def scalar(kind,value):
+        if kind=='string':return value
+        if kind=='boolean':return {'true':True,'false':False}[value]
+        if kind=='none':
+            if value!='':raise ValueError('Unexpected null payload')
+            return None
+        raise ValueError('Unknown configuration scalar: '+kind)
+    def value(p):
+        if p['kind']!='tuple':return scalar(p['kind'],p['value'])
+        items=sorted((r['parameters'] for r in rows if r['code']=='SDR_SEQUENCE' and
+            (r['parameters']['section'],r['parameters']['key'])==(p['section'],p['key'])),key=lambda p:p['ordinal'])
+        if [r['ordinal'] for r in items]!=list(range(len(items))):raise ValueError('Noncontiguous configuration sequence')
+        return tuple(scalar(r['kind'],r['value']) for r in items)
+    def section(name):return {p['key']:value(p) for p in sorted(config.values(),key=lambda p:p['field_order']) if p['section']==name}
+    plugin=section('plugin');extractor=section('extractor');scope=section('scope')
+    scopes=[r['parameters'] for r in rows if r['code']=='SDR_SCOPE']
+    for part in ['directories','explicit_files']:
+        scope[part]=tuple(Path(p['path']) for p in sorted(scopes,key=lambda p:p['ordinal']) if p['part']==part)
+    scope={k:scope[k] for k in ['directories','explicit_files','include_tests','broad_repo_scope']}
+    metadata=next(r['parameters']['value'] for r in rows if r['code']=='DL_META' and r['parameters']['key']=='root')
+    root=Path(metadata)
+    files=sorted((r['parameters'] for r in rows if r['code']=='DL_FILE'),key=lambda p:p['path_order'])
+    if len({p['path'] for p in files})!=len(files):raise ValueError('Duplicate selected file')
+    facts={Path(p['path']):({extractor['extractor_id']:[]} if p['fact_present'] else {}) for p in files}
+    events=sorted((r['parameters'] for r in rows if r['code']=='SDR_FACT'),
+        key=lambda p:(p['path_order'],p['line'],p['code_value'],p['expression'],p['visit_order'],p['layer']))
+    findings=[]
+    for p in events:
+        item=dict(code=p['code_value'],path=p['path'],line=p['line'],scope=p['scope'],expression=p['expression'],message=p['message'],occurrence=p['occurrence'])
+        facts[Path(p['path'])][extractor['extractor_id']].append(item)
+        findings.append(module.Finding(item['code'],Path(item['path']),item['line'],item['scope'],item['expression'],item['message'],item['occurrence']))
+    findings.sort(key=lambda f:(f.path.as_posix(),f.line,f.code))
+    reports=sorted((r['parameters'] for r in rows if r['code']=='SDR_REPORT'),
+        key=lambda p:(p['phase'],p['path'],p['line'],p['code_value'],p['expression'],p['visit_order'],p['layer']))
+    violations=[module.StructuredViolation(plugin['name'],p['code_value'],root/p['path'],p['line'],p['message'],'hard-fail') for p in reports]
+    output=sorted((r['parameters'] for r in rows if r['code']=='SDR_OUTPUT'),key=lambda p:p['ordinal'])
+    stdout=''.join(r['text'] for r in output if r['channel']=='stdout')
+    stderr=''.join(r['text'] for r in output if r['channel']=='stderr')
+    return dict(selectedFiles=[p['path'] for p in files],facts=canonical(facts,root),findings=canonical(tuple(findings),root),
+        violations=canonical(violations,root),plugin=canonical(dict(**plugin,file_scope=scope,required_facts=(extractor,)),root),
+        stdout=stdout.replace(str(root),'$ROOT'),stderr=stderr.replace(str(root),'$ROOT'))
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command',choices=['source','native'],nargs='?',default='source')
     parser.add_argument('--source',type=Path,required=True);parser.add_argument('--out',type=Path,required=True)
+    parser.add_argument('--engine',type=Path);parser.add_argument('--baseline',type=Path)
+    parser.add_argument('--mode',choices=['snapshot','workspace'],default='workspace')
+    parser.add_argument('--part',type=int,default=0);parser.add_argument('--parts',type=int,default=1)
     args=parser.parse_args();source=args.source.absolute();compare(git(source,'rev-parse','HEAD'),PIN)
+    if not 0<=args.part<args.parts:parser.error('Invalid shard')
     path=source/'scripts/lint_serverplan_dispatch_architecture.py'
     compare(path.read_bytes(),subprocess.check_output(['git','-C',str(source),'show',PIN+':scripts/lint_serverplan_dispatch_architecture.py']))
     sys.path[:0]=[str(source),str(source/'scripts')];module=importlib.import_module('scripts.lint_serverplan_dispatch_architecture')
     paths=[Path(__file__),*[Path(__file__).with_name(n) for n in ['migration.py','dto.py','replay.py']]]
     hashes={p.relative_to(ROOT).as_posix():sha(p.read_bytes()) for p in paths}
-    rows=[dict(input=c,expected=observe(module,c)) for c in cases(module)]
+    corpus=cases(module);rows=[];fallbacks=[]
+    if args.command=='native':
+        baseline=read_json(args.baseline);compare(baseline['sourcePin'],PIN);compare(baseline['passed'],True)
+        compare(baseline['sourceSha256'],sha(path.read_bytes()));compare([r['input'] for r in baseline['cases']],corpus)
+        from replay import execute_native,execute_workspace
+        from data_layer_audit.native_guard import codes
+        execute=execute_native if args.mode=='snapshot' else execute_workspace
+        original_codes=codes({'serverplan_dispatch_architecture':module})
+        def guard(frame,event,_arg):
+            if event=='call' and frame.f_code in original_codes and not original_codes[frame.f_code][2]:
+                fallbacks.append(frame.f_code.co_qualname);raise AssertionError('Original semantics executed: '+frame.f_code.co_qualname)
+    for i,case in enumerate(corpus):
+        if i%args.parts!=args.part:continue
+        if args.command=='source':row=dict(input=case,expected=observe(module,case))
+        else:
+            row=dict(input=case,expected=baseline['cases'][i]['expected'],passed=False)
+            sys.setprofile(guard)
+            try:
+                options=dict(entryPoint='_production_contract')
+                if 'signature' in case:options['dispatchSignature']=case['signature']
+                row['native']=execute(args.engine.absolute(),ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr',case['files'],options)
+                row['actual']=decode(module,row['native']);row['passed']=row['actual']==row['expected']
+            except Exception as error:row['error']=dict(type=type(error).__name__,detail=str(error))
+            finally:sys.setprofile(None)
+        rows.append(row)
     for name,digest in hashes.items():compare(digest,sha((ROOT/name).read_bytes()))
-    report=dict(format='rerail.dispatch-repository-source/v1',oracle=True,passed=True,admitted=False,
-        sourcePin=PIN,sourceSha256=sha(path.read_bytes()),harnessFiles=hashes,cases=rows)
-    write_json(args.out,report);print(dict(cases=len(rows),positives=sum(bool(c['expected']['violations']) for c in rows)))
+    report=dict(format='rerail.dispatch-repository-contract/v1',oracle=args.command=='source',passed=all(r.get('passed',True) for r in rows) and not fallbacks,admitted=False,
+        sourcePin=PIN,sourceSha256=sha(path.read_bytes()),harnessFiles=hashes,cases=rows,mode=args.mode,part=args.part,parts=args.parts,semanticFallbacks=fallbacks)
+    if args.command=='native':report.update(engineSha256=sha(args.engine.read_bytes()),baselineSha256=sha(args.baseline.read_bytes()))
+    write_json(args.out,report);print(dict(cases=len(rows),positives=sum(bool(c['expected']['violations']) for c in rows),passed=report['passed']))
+    raise SystemExit(0 if report['passed'] else 1)
 
 
 if __name__=='__main__':main()
