@@ -129,7 +129,12 @@ pub(in crate::code_rule_dsl) fn compact_retained(
                         .filter_map(|r| r.program_relation())
                         .all(|r| !members.contains(r))
             });
-        let decision = analysis.retained_full_rules(incremental);
+        let recursive_full_rules = full.iter().filter(|&&id| {
+            !reads(&steps[id].0, steps[id].1.as_ref()).is_disjoint(&members)
+        }).count();
+        let eligibility = analysis.retained_full_rules(incremental);
+        let savings = analysis.feedback_cache_savings(recursive_full_rules, variants.len());
+        let decision = if eligibility.proven { savings.clone() } else { eligibility.clone() };
         if decision.proven {
             for &id in &full {
                 let recursive = reads(&steps[id].0, steps[id].1.as_ref())
@@ -145,7 +150,8 @@ pub(in crate::code_rule_dsl) fn compact_retained(
             }
             removed.extend(variants.iter().copied());
         }
-        reports.push(serde_json::json!({"component":members,"decision":decision,"full_rules":full.len(),
+        reports.push(serde_json::json!({"component":members,"decision":decision,"eligibility":eligibility,
+            "feedback_cache_savings":savings,"recursive_full_rules":recursive_full_rules,"full_rules":full.len(),
             "generated_delta_variants":variants.len(),"removed_delta_variants":if decision.proven {variants.len()}else{0}}));
     }
     let mut id = 0;

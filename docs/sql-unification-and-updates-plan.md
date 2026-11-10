@@ -3121,3 +3121,29 @@ Debug verification passes 176 SQL-executor tests, sixteen shared-analysis tests,
 The new analysis test exhaustively checks 4,096 small input transitions, including simultaneous insertions and deletions.
 The profiling integration test verifies an actual covering anchor and the public explanation without SQL execution.
 Complete-session replays remain required before accepting the combined performance result.
+
+#### Select consolidation by active feedback work
+
+The combined coverage and unrestricted consolidation candidate passes complete parity but still has a CPU tradeoff.
+Two fresh debug processes per strategy and corpus reverse strategy and corpus order in the second trial.
+Profiling is disabled. CPU includes initial rule execution and four file publications: edit, unchanged edit, restoration, and unchanged restoration.
+It excludes opening, AST binding, the separate lowering request, validation queries, and process teardown.
+This timing sequence excludes empty-input recovery, which the separate complete-session verifier checks.
+
+| Candidate before the scheduling guard | Paired CPU changes against `df4ec32d6` |
+| --- | --- |
+| Workload | +4.73%, +9.84% |
+| Call analysis | -16.01%, -14.42% |
+
+The workload components each replace one active frontier cache with one growing full-context cache.
+Stored cache counts decrease, but active feedback operator counts do not.
+That exchange does not justify the additional full-context maintenance cost.
+
+Shared analysis now separates semantic eligibility from the scheduling choice.
+Consolidation requires fewer active feedback caches: generated variants must outnumber recursive full rules.
+The existing frontier path remains when those counts are equal.
+Explain reports eligibility, the active-cache savings decision, and both counts beside the actual choice.
+Complete-input coverage remains independently available on either path.
+
+Debug SQL verification still passes 176 tests, shared analysis passes sixteen, and SQL profiling passes twelve.
+The complete-session and separate CPU comparisons must be repeated for this scheduling choice.

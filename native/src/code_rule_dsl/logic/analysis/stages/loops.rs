@@ -30,6 +30,15 @@ pub(in crate::code_rule_dsl) struct Analysis {
     pub decision: Decision,
 }
 impl Analysis {
+    /// Consolidation should reduce active feedback caches, rather than merely
+    /// exchange one frontier cache for a growing full-context cache.
+    pub fn feedback_cache_savings(&self, recursive_full_rules: usize, delta_variants: usize) -> Decision {
+        Decision::new(delta_variants > recursive_full_rules, if delta_variants > recursive_full_rules {
+            "Full-rule contexts combine multiple active generated feedback caches"
+        } else {
+            "Consolidation does not reduce active feedback caches; retain specialized frontier contexts"
+        })
+    }
     /// A retained positive context already differentiates each recursive input.
     /// A second cache for an emitted delta variant duplicates that work.
     pub fn retained_full_rules(&self, recursive_contexts: bool) -> Decision {
@@ -127,6 +136,8 @@ mod tests {
         assert!(positive.decision.proven);
         assert!(positive.retained_full_rules(true).proven);
         assert!(!positive.retained_full_rules(false).proven);
+        assert!(!positive.feedback_cache_savings(1, 1).proven);
+        assert!(positive.feedback_cache_savings(1, 2).proven);
         assert_eq!(positive.component_dependent_stages.len(), 3);
         stages
             .get_mut("out")
