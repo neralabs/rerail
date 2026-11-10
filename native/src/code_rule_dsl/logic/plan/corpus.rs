@@ -1364,6 +1364,13 @@ pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<Conte
 /// in memory for the process when there is none. Every path the engine reads goes through it: rule files, corpus
 /// files, what resolution rules list, read and load.
 pub(in crate::code_rule_dsl) fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -> T) -> T {
+    // The engine's tests check paths by their `stat`: the journal's wait for its cookie, made by every run, is the
+    // journal's own tests' to measure (`content_store::observe`). A test of the engine that wants it turns it on.
+    #[cfg(test)]
+    {
+        static OFF: std::sync::Once = std::sync::Once::new();
+        OFF.call_once(|| crate::content_store::observe::set_journal(false));
+    }
     let store = tape_cache_path().map(|p| crate::content_store::observe::store_beside(&p));
     crate::content_store::observe::with(store.as_deref(), f)
 }
@@ -1637,7 +1644,13 @@ fn run_observed(
                 let files = found.of(label);
                 // Phase 1 (`sources.rr`, decision 0104) loads the source files, and its documents are this run's: a
                 // phase's own run, and the constants', list theirs.
-                let sourcing = phases::declared(&prog).is_none() && !phases::in_phase() && options.get(constants::OWN).is_none() && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off");
+                // Phase 0 loads rule files, not source files: its runs, over an empty root, have none to give.
+                let sourcing = phases::declared(&prog).is_none()
+                    && !phases::in_phase()
+                    && !phase0::active()
+                    && options.get(constants::OWN).is_none()
+                    && files.iter().any(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label))
+                    && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off");
                 let files = if sourcing {
                     let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
                     // The observer's facts: each source file of the run's grammar, by its content's digest (read only
