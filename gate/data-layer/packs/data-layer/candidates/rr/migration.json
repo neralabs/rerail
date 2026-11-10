@@ -3670,7 +3670,7 @@
         "scannerPositivesPerAPI": 203,
         "originalTestsPerAPI": 49,
         "remaining": [
-          "CLI contracts",
+          "CLI contracts and filesystem inventory-read errors",
           "persistent updates",
           "scanner behavior-removal controls",
           "full original inventory and admission"
@@ -3691,12 +3691,16 @@
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-supplied-final72-progress.json.gz",
             "sha256": "bc10d8a7b8a39bd3dfc233c9f08e4aec8d52a1cf4631e91d581cbbbf34a60c67"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-supplied-final873-progress.json.gz",
+            "sha256": "46f7251648582dc9e23e2668674f1310a7dfec28bbdb8a03af0540a85cbe35a2"
           }
         ],
         "findingProjectionCasesPerAPI": 47,
-        "suppliedFactCasesPerAPI": 191,
-        "suppliedFactPositiveCasesPerAPI": 147,
-        "suppliedFactErrorCasesPerAPI": 32,
+        "suppliedFactCasesPerAPI": 222,
+        "suppliedFactPositiveCasesPerAPI": 161,
+        "suppliedFactErrorCasesPerAPI": 49,
         "suppliedFactControls": 4
       }
     },
@@ -4428,8 +4432,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "72a3a658b33d4e2a28dbf838b8075d05c56703ef",
-    "status": "Final 72a3 merged and rebuilt. Dispatch original, scanner, repository, and Finding projection contracts pass through both APIs. Full migration remains open.",
+    "upstreamCommit": "87396ebb32b9f790c295361980bf93c1539e3d4a",
+    "status": "Final 87396 rollup merged and compiled; complete dispatch regression cohort passes. Newer Final work remains to merge before admission.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4469,11 +4473,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "47fb706225b9584a9e98334344af3a2a776f8ee09b4954a61c7afeb6bddbe9cb"
+        "sha256": "be653bc32c3ada33ecec431cdf9d91aea0ec76b00ab60a484c3ae2cf4d55ed9a"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "56d9cc1e25ea7bd2f10706f38940620429328d2dda2628a205428fa75a687f24"
+        "sha256": "bf01290b90cb7cb2c4f036ac94bf103e90e5890d6ef77014bb30da4f99a47e20"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -4537,15 +4541,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "48a4e441a41aac0dde823d48615ab4f1fbd44137c761032df4d1b9778724113a"
+        "sha256": "3d6e2bc434bf4660c1560f9cf005f37e6e6f910a1a1d865f492a586a9038f5df"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "ca66d2709e9b16f9164f6f543f835f0bc95f8d2105f7e65c3541d23c7ccb1ffb"
+        "sha256": "be74ff36440ec66b1d7cbac831e1d74c26174e94b38e0176ea6715768dfba636"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "a4cf3f19700d0c9f11762620cd2f85c5daa02252436275caa27da9da8beac7d8"
+        "sha256": "b2ec11fd8bd8032b70b4a22ae9abfbb8d4d55c8bb1fabf614f6d7b97f7a5da12"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -4553,7 +4557,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
-        "sha256": "a249bf99adb043991edf24e10b3492de5aa6b0a5ca205701ad3144a3f8624dc9"
+        "sha256": "9d2cce7ae3fd3cf4610e159ad3793fae888e9032dde71998773831afcdb2c347"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
@@ -4597,7 +4601,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
-        "sha256": "5ba484e53f2bdbaa52042143a3947dd66a07f32a00653f3523c083c3ab19b2bf"
+        "sha256": "8c36fbff3984103f442aa58f1076e9be829396eac3dc0dcc7cae931c6847ea5a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/python_json.rs",
@@ -4673,10 +4677,10 @@
     ],
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "72a3a658b33d4e2a28dbf838b8075d05c56703ef",
-      "engineCommit": "8d5b40adab305c37a7ad6b8a9198acfca6a42d32",
+      "upstreamCommit": "87396ebb32b9f790c295361980bf93c1539e3d4a",
+      "engineCommit": "6f128f3f2e94c60f27d0a03c851f12a1d4812843",
       "sourceTrees": {
-        "native": "4c05d1c047c0739a7ce64afaf78493b3121f45fe",
+        "native": "135b141236a14ff87a0ee09fe8cd572eed8262b5",
         "accel": "860da0ad8c49ae31fd4bb93494d4f123e83fe957",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
@@ -4684,17 +4688,17 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "8d5b40adab305c37a7ad6b8a9198acfca6a42d32",
-      "upstreamCommit": "72a3a658b33d4e2a28dbf838b8075d05c56703ef",
+      "engineCommit": "6f128f3f2e94c60f27d0a03c851f12a1d4812843",
+      "upstreamCommit": "87396ebb32b9f790c295361980bf93c1539e3d4a",
       "sourceTrees": {
-        "native": "4c05d1c047c0739a7ce64afaf78493b3121f45fe",
+        "native": "135b141236a14ff87a0ee09fe8cd572eed8262b5",
         "accel": "860da0ad8c49ae31fd4bb93494d4f123e83fe957",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-6981afa1d1ba716d",
-      "sha256": "6981afa1d1ba716d228e276df428ab2426a1f4a8e7e8a8f5d4c69f5728f7d5cc",
+      "path": ".rerail/modern-engine-alignment/cli-924404cd848625ee",
+      "sha256": "924404cd848625ee5dcba73ed8904a37917b812e1708bb8380df4c527a989fdc",
       "command": [
         "cargo",
         "build",
@@ -4707,7 +4711,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 130.15
+      "seconds": 332.716
     }
   },
   "engineSourceSnapshots": [

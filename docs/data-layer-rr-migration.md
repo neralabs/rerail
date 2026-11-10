@@ -2974,3 +2974,34 @@ Dispatch remains a draft. CLI contracts, persistent updates, scanner controls, a
 The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
 The local Final branch advanced to rollup `87396ebb3` during this cohort. Preserve these results before merging that rollup.
 Broader scanner and repository regression testing must run on the new merged engine.
+
+### Dispatch rollup regression and integer-error repair, 2026-11-10
+
+Merged Final rollup `87396ebb3` in merge commit `179892001`.
+The only conflict concerned empty-stratum elimination. The resolution retains Final's pending-level guard and the literal-fact guard.
+The literal-fact regression passes. The typed primitive reader now uses a dedicated representation rather than unchecked JSON numbers.
+
+The expanded supplied-fact corpus contains 222 cases, including 161 finding-positive cases and 49 error cases.
+It adds root anchors, mapping-key replacement, same-row error precedence, and long invalid integers.
+The first replay exposed 12 mismatches. CPython limits invalid-integer representations to 200 Unicode characters.
+The native helper returned complete representations. The repair limits only the error representation and retains complete input strings.
+Boundary tests cover quotes, escapes, and multibyte characters.
+
+All 222 supplied-fact cases pass through both APIs after the repair. Each API uses two native corpus requests.
+Both APIs also pass 49 unchanged original tests, 298 scanner cases, 43 repository cases, and 47 Finding projections.
+The scanner and repository corpora retain 203 and 30 positive cases per API.
+Four supplied-fact controls and five shared production alias cases pass.
+The focused input suite passes 24 tests. The string suite, literal-fact regression, and 375 tooling tests pass.
+The rollup's filesystem, session, worker-pool, and load-identity tests also passed before the final error-formatting repair.
+One existing session helper remains ignored.
+
+[The rollup receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-supplied-final873-progress.json.gz)
+retains 22 reports, including the 12-failure red result, plus programs, harnesses, source recordings, and build provenance.
+The final unit build took 57.633 seconds elapsed. The optimized build took 332.716 seconds, including a Cargo lock wait.
+No full-repository cold benchmark ran.
+
+The local Final branch advanced again during this cohort. The live alignment audit correctly refuses fresh admission.
+These results certify the recorded `87396ebb3` cohort. They do not certify the next merge.
+Dispatch remains a draft. CLI contracts, filesystem inventory-read errors, persistent updates, scanner controls, and admission remain open.
+The supplied-fact fixtures control inventory text and signatures; they do not certify filesystem read failures.
+The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
