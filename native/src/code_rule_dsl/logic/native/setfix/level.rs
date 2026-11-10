@@ -155,7 +155,8 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
             continue;
         }
         let key = digest(spec);
-        if pending.iter().any(|(k, _): &(u64, Pending)| *k == key) {
+        // Sent already: twice in this batch, or by the level before (a chained join, decision 0100 §11).
+        if pending.iter().any(|(k, _): &(u64, Pending)| *k == key) || PENDING.lock().unwrap().contains_key(&key) {
             continue;
         }
         let Ok(j) = super::join_rule(conn, spec, &mut syms) else { continue };

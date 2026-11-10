@@ -67,8 +67,11 @@ pub struct Unit {
     pub cpu: f64,
     /// The price's estimate of the finished jobs, summed.
     pub estimated: f64,
-    /// The estimate of the jobs queued or running now.
+    /// The estimate of the jobs queued or running now, and of the launches planned on the lane and not yet
+    /// claimed.
     pub outstanding: f64,
+    /// Launches planned on the lane and not yet claimed (decision 0100 §11).
+    pub planned: usize,
     /// When the lane's first job started and its last ended (seconds from the epoch).
     pub first: Option<f64>,
     pub last: f64,
@@ -126,6 +129,11 @@ pub struct TagRow {
     pub max_stall: f64,
     /// Batches whose caller stalled more than 0.1 ms.
     pub stalled: u64,
+    /// Launches run on each lane, as claimed (decision 0100 §11); those run off the lane they were planned on,
+    /// and those the waiting caller ran itself.
+    pub ran: [u64; 4],
+    pub moved: u64,
+    pub helped: u64,
     /// The last overlaps (at most 32): the next batch's slack is their lower quartile, so a kind whose callers
     /// sometimes wait at once is not given the slack of its long overlaps.
     pub recent: std::collections::VecDeque<f64>,
@@ -236,16 +244,19 @@ impl std::fmt::Display for Score {
         if !self.tags.is_empty() {
             writeln!(
                 f,
-                "batch kind      batches  cpu/sme/gpu/ane launches  not fastest  host est ms  if fastest ms  later ms  slack ms  overlap ms  stall ms  stalled  max stall ms  slack now ms"
+                "batch kind      batches  planned c/s/g/a  ran c/s/g/a  moved  helped  not fastest  host est ms  if fastest ms  later ms  slack ms  overlap ms  stall ms  stalled  max stall ms  slack now ms"
             )?;
             for (tag, t) in &self.tags {
                 let l = t.launches;
                 writeln!(
                     f,
-                    "{:<14}  {:>7}  {:>24}  {:>11}  {:>11.3}  {:>13.3}  {:>8.3}  {:>8.3}  {:>10.3}  {:>8.3}  {:>7}  {:>12.3}  {:>12.3}",
+                    "{:<14}  {:>7}  {:>15}  {:>11}  {:>5}  {:>6}  {:>11}  {:>11.3}  {:>13.3}  {:>8.3}  {:>8.3}  {:>10.3}  {:>8.3}  {:>7}  {:>12.3}  {:>12.3}",
                     tag,
                     t.batches,
                     format!("{}/{}/{}/{}", l[0], l[1], l[2], l[3]),
+                    format!("{}/{}/{}/{}", t.ran[0], t.ran[1], t.ran[2], t.ran[3]),
+                    t.moved,
+                    t.helped,
                     t.not_fastest,
                     t.host * 1e3,
                     t.host_fastest * 1e3,
@@ -388,6 +399,24 @@ impl Scoreboard {
         f(&mut s)
     }
 
+    /// A launch planned on `lane` and not yet claimed (decision 0100 §11): its estimate counts as outstanding on
+    /// the lane, so a batch begun meanwhile sees it; `n` launches of `est` seconds in all, added or (negative)
+    /// released when a lane claims them.
+    pub fn plan(&self, lane: Lane, n: i64, est: f64) {
+        self.with(|s| {
+            let u = &mut s.units[lane.index()];
+            u.planned = (u.planned as i64 + n).max(0) as usize;
+            u.outstanding = (u.outstanding + est).max(0.0);
+        });
+    }
+
+    /// A job a lane claimed from a batch begun at `queued`: queued since then, started at once by the caller.
+    pub fn claimed(&self, lane: Lane, items: Vec<Item>, queued: Instant) -> Ticket {
+        let mut t = self.queue(lane, items);
+        t.queued = queued;
+        t
+    }
+
     /// A job queued on `lane`.
     pub fn queue(&self, lane: Lane, items: Vec<Item>) -> Ticket {
         let est: f64 = items.iter().map(|i| i.estimate).sum();
@@ -511,10 +540,16 @@ impl Scoreboard {
         });
     }
 
-    /// A batch of kind `tag` collected: its caller worked `overlap` seconds before it waited, then stalled `stall`.
-    pub fn collected(&self, tag: &'static str, overlap: f64, stall: f64) {
+    /// A batch of kind `tag` collected: its caller worked `overlap` seconds before it waited, then stalled `stall`;
+    /// its launches ran on `ran` per lane, `moved` of them off their planned lane and `helped` by the caller.
+    pub fn collected(&self, tag: &'static str, overlap: f64, stall: f64, ran: [u64; 4], moved: u64, helped: u64) {
         self.with(|s| {
             let t = s.tags.entry(tag).or_default();
+            for (a, b) in t.ran.iter_mut().zip(ran) {
+                *a += b;
+            }
+            t.moved += moved;
+            t.helped += helped;
             t.overlap += overlap;
             t.stall += stall;
             t.max_stall = t.max_stall.max(stall);
@@ -525,7 +560,12 @@ impl Scoreboard {
             t.recent.push_back(overlap);
         });
         if let Some(f) = trace() {
-            let line = format!("# batch\t{tag}\toverlap_us={:.1}\tstall_us={:.1}\n", overlap * 1e6, stall * 1e6);
+            let line = format!(
+                "# batch\t{tag}\toverlap_us={:.1}\tstall_us={:.1}\tran={}\tmoved={moved}\thelped={helped}\n",
+                overlap * 1e6,
+                stall * 1e6,
+                Lane::ALL.iter().filter(|l| ran[l.index()] > 0).map(|l| format!("{}:{}", l.name(), ran[l.index()])).collect::<Vec<_>>().join(",")
+            );
             let _ = f.lock().unwrap_or_else(|p| p.into_inner()).write_all(line.as_bytes());
         }
     }

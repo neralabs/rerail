@@ -331,3 +331,56 @@ fn warm_small_gpu_jobs() {
     eprintln!("{s}");
 }
 
+/// A device lane behind its plan: its worker is busy with an earlier batch, so the cores and the waiting caller
+/// claim the launches planned on it (decision 0100 §11), and the outputs are the reference's.
+#[test]
+fn launches_planned_on_a_lane_behind_its_plan_are_claimed_by_the_others() {
+    use rerail_accel::exec::{Backend, CpuBackend};
+    use rerail_accel::kernel::{JoinBy, Output};
+    /// A "device" that runs the reference after `delay`.
+    struct Slow(std::time::Duration);
+    impl Backend for Slow {
+        fn lane(&self) -> Lane {
+            Lane::Gpu
+        }
+        fn can(&self, _: &Kernel) -> bool {
+            true
+        }
+        fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
+            std::thread::sleep(self.0);
+            Ok(ks.iter().map(|k| cpu::run(k)).collect())
+        }
+    }
+    let delay = std::time::Duration::from_millis(300);
+    let mut ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Slow(delay))]);
+    // The device priced far cheaper, so the plan puts every launch there.
+    for f in [rerail_accel::kernel::Form::Probe] {
+        ex.prices.set(f, Lane::Gpu, Some(1e-15));
+    }
+    ex.prices.latency = [0.0; 4];
+    ex.prices.fixed[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
+    ex.prices.host[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
+    let mut rng = Rng(0xc1a1);
+    let mut join = |n: usize| {
+        let col = |rng: &mut Rng| -> rerail_accel::Col { (0..n).map(|_| rng.below(50) as i64).collect::<Vec<_>>().into() };
+        let (l, r) = (col(&mut rng), col(&mut rng));
+        Kernel::Join { left: vec![l].into(), right: vec![r].into(), right_id: None, by: JoinBy::Probe }
+    };
+    // The device's worker takes this one first, pinned, and is busy for `delay`.
+    let busy = ex.begin(Batch(vec![Launch::on(join(100), Lane::Gpu)])).unwrap();
+    let ks: Vec<Kernel> = (0..12).map(|i| join(200 + i)).collect();
+    let want: Vec<Output> = ks.iter().map(cpu::run).collect();
+    let t0 = std::time::Instant::now();
+    let running = ex.begin_as("claims test", Batch(ks.into_iter().map(Launch::new).collect())).unwrap();
+    let (done, _) = running.wait().unwrap();
+    let took = t0.elapsed();
+    for (i, (d, w)) in done.iter().zip(&want).enumerate() {
+        assert_eq!(&d.out, w, "launch {i} on {}", d.lane.name());
+    }
+    let tag = ex.score().tags["claims test"].clone();
+    assert_eq!(tag.launches[Lane::Gpu.index()], 12, "the plan put every launch on the device: {tag:?}");
+    assert!(tag.moved > 0 && done.iter().any(|d| d.lane == Lane::Cpu), "the cores took the late device's launches: {tag:?}");
+    assert!(took < delay, "the batch did not wait for the busy device: {took:?}");
+    busy.wait().unwrap();
+    eprintln!("{}", ex.score());
+}
