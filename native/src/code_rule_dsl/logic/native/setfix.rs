@@ -222,19 +222,25 @@ impl Index {
 /// indexes, one per key-column set a join probe reads the relation with, so a probe bound on several columns reads
 /// exactly its matches rather than the shortest single-column list.
 /// `dead`: rows deleted but kept in place (`based`), which every reader skips; `ndead` of them.
+/// `level`: each row's level (decision 0090, levels for recursive strata): `lbase` plus the wave that pushed it, or
+/// the kept row's level for a row started from a kept relation. A row's level is above the levels of the rows it was
+/// first derived from, as they were pushed in earlier waves; `lbase` is above every kept row's level in the
+/// component, so a maintained run's new rows are above the rows they read.
 struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i64>, set: HashTable<u32>, stored: usize, lo: usize, hi: usize,
-             wave: u32, idx: Vec<Index>, dead: Vec<u64>, ndead: usize, summaries: scalars::Pool }
+             wave: u32, idx: Vec<Index>, dead: Vec<u64>, ndead: usize, summaries: scalars::Pool, level: Vec<u32>, lbase: u32 }
 impl Rel {
     fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         let idx = (0..k).map(|c| Index { cols: vec![c], table: HashTable::new(), next: Vec::new() }).collect();
-        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead: Vec::new(), ndead: 0, summaries: Default::default() }
+        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead: Vec::new(), ndead: 0, summaries: Default::default(), level: Vec::new(), lbase: 0 }
     }
     /// A relation that starts as `old` (a kept one: its rows, dedup set and indexes, copied as memory, not hashed
     /// again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are the first wave's
     /// delta, so each rule's whole plan reads them once. `None` when `old` has no set to start from, or when too
-    /// many of its rows would be dead (then it is made from its rows, compacted).
-    fn based(table: &str, types: &[u8], old: &InRel, gone: &InRel) -> Option<Rel> {
+    /// many of its rows would be dead (then it is made from its rows, compacted). No `gone`: all of `old`'s rows.
+    fn based(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Option<Rel> {
+        let none = InRel::empty(old.k);
+        let gone = gone.unwrap_or(&none);
         if old.view.is_some() || old.k != types.len() || gone.k != old.k || (old.n > 0 && old.set.is_empty()) {
             return None;
         }
@@ -272,7 +278,8 @@ impl Rel {
                 p.dlen = p.len;
             }
         }
-        Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), set: set.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead, ndead, summaries: Default::default() })
+        let level = if old.has_levels() { old.level.clone() } else { Vec::new() };
+        Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), set: set.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead, ndead, summaries: Default::default(), level, lbase: 0 })
     }
     #[inline]
     fn dead(&self, id: u32) -> bool {
@@ -298,6 +305,10 @@ impl Rel {
         if self.set.find(h, |&id| !is_dead(&self.dead, id) && &self.data[id as usize * k..][..k] == row).is_some() { return false; }
         let id = self.n as u32;
         self.data.extend_from_slice(row);
+        // A relation started from a kept one without levels has none (`has_levels` then says so).
+        if self.level.len() == self.n {
+            self.level.push(self.lbase + self.wave + 1);
+        }
         self.n += 1;
         let data = &self.data;
         self.set.insert_unique(h, id, |&i| hash_vals(data[i as usize * k..][..k].iter().copied()));
@@ -487,20 +498,29 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                 let what: &'static str = if based.is_some() { "open: survivors" } else if from.is_some() { "open: rows from SQL" } else if !empty { "open: rows from its table" } else { "open: empty" };
                 let _rows = crate::code_rule_dsl::logic::profile::span(move || what.into());
                 if let Some((old, gone)) = based {
-                    let (o, g) = { let d = DERIVED.lock().unwrap(); (d.get(&(scope(conn), old.clone())).cloned(), d.get(&(scope(conn), gone.clone())).cloned()) };
-                    let (o, g) = (o.ok_or_else(|| err(format!("rel: no native relation {old}")))?, g.ok_or_else(|| err(format!("rel: no native relation {gone}")))?);
-                    match Rel::based(toks[1], toks[2].as_bytes(), &o, &g) {
+                    // `-`: no rows gone (a copy of the kept relation, its levels with it).
+                    let (o, g) = { let d = DERIVED.lock().unwrap(); (d.get(&(scope(conn), old.clone())).cloned(), if gone == "-" { None } else { d.get(&(scope(conn), gone.clone())).cloned() }) };
+                    let o = o.ok_or_else(|| err(format!("rel: no native relation {old}")))?;
+                    let g = if gone == "-" { None } else { Some(g.ok_or_else(|| err(format!("rel: no native relation {gone}")))?) };
+                    match Rel::based(toks[1], toks[2].as_bytes(), &o, g.as_deref()) {
                         Some(b) => rel = b,
                         None => {
                             let k = rel.k;
                             let mut gone_rows: rustc_hash::FxHashSet<Vec<i64>> = Default::default();
-                            for id in 0..g.len() { if !is_dead(&g.dead, id as u32) { let r = g.at(id); gone_rows.insert((0..k).map(|c| r.at(c)).collect()); } }
+                            if let Some(g) = &g {
+                                for id in 0..g.len() { if !is_dead(&g.dead, id as u32) { let r = g.at(id); gone_rows.insert((0..k).map(|c| r.at(c)).collect()); } }
+                            }
+                            // Compacted, each row keeps its kept level.
+                            let levels = o.has_levels();
+                            if !levels { rel.level = vec![0; 1]; }
                             let mut row = vec![0i64; k];
                             for id in 0..o.len() {
                                 if is_dead(&o.dead, id as u32) { continue; }
                                 let r = o.at(id);
                                 for (c, v) in row.iter_mut().enumerate() { *v = r.at(c); }
-                                if !gone_rows.contains(&row) { rel.push(&row); }
+                                if !gone_rows.contains(&row) && rel.push(&row) && levels {
+                                    *rel.level.last_mut().expect("a level pushed") = o.level[id];
+                                }
                             }
                         }
                     }
@@ -570,6 +590,9 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
         }
     }
     let _multi = crate::code_rule_dsl::logic::profile::span(|| "open: indexes".into());
+    // Rows this run pushes go above every kept row's level in the component (`Rel::level`).
+    let lbase = rels.iter().filter(|r| r.level.len() == r.n).flat_map(|r| r.level.iter().copied()).max().unwrap_or(0);
+    for r in &mut rels { r.lbase = lbase; }
     for r in &mut rels { let n = r.n; r.set_delta(0, n); }   // the first wave reads the seeds as its delta
     for p in &probes {
         if let Body::Join(j) = &p.body { for (r, cols) in &j.multi { rels[*r].add_multi(cols); } }
@@ -1249,7 +1272,9 @@ pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, base:
                    measured: std::sync::OnceLock<Vec<[i64; 4]>>,
                    /// Rows per value of the columns the rules test by constants (`Source::value_counts`), counted when
                    /// first asked, a column at a time, for the same reason.
-                   counted: Mutex<HashMap<usize, HashMap<i64, i64>>> }
+                   counted: Mutex<HashMap<usize, HashMap<i64, i64>>>,
+                   /// Each row's level, when the native engine derived it (`Rel::level`); empty otherwise.
+                   level: Vec<u32> }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
 /// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
 pub struct View { src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
@@ -1450,7 +1475,7 @@ impl InRel {
         let k = types.len();
         let n = rows.len();
         let flat: Vec<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
-        Arc::new(InRel { k, n, rows: flat, view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default() })
+        Arc::new(InRel { k, n, rows: flat, view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), level: Vec::new() })
     }
     /// Its rows, as a source of columns `names`.
     pub fn source(self: &Arc<Self>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
@@ -1584,7 +1609,15 @@ impl InRel {
     /// A component's relation at its fixpoint, its rows and indexes moved.
     fn moved(rel: Rel) -> InRel {
         InRel { k: rel.k, n: rel.n, rows: rel.data, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx,
-                set: rel.set, dead: rel.dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default() }
+                set: rel.set, dead: rel.dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), level: rel.level }
+    }
+    /// No rows, `k` columns.
+    fn empty(k: usize) -> InRel {
+        InRel { k, n: 0, rows: Vec::new(), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), level: Vec::new() }
+    }
+    /// Whether every row has its level (a relation the native engine derived; decision 0090's levels).
+    pub fn has_levels(&self) -> bool {
+        self.view.is_none() && self.level.len() == self.n
     }
     /// A whole view's rows are its source's, counted when first asked: a source that makes its rows on lookup
     /// (`syntax::within`) makes them all only for a scan.
@@ -1774,7 +1807,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
         if let Some(view) = view(conn, &table, &cols) {
             let n = view.ids.as_ref().map_or(0, Vec::len);
-            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default() });
+            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), level: Vec::new() });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
             if std::env::var_os("RDL_PROFILE").is_some() {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
@@ -1790,7 +1823,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default() });
+    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), level: Vec::new() });
     {
         let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
         l.0 += thread_cpu() - c0;
@@ -2629,7 +2662,7 @@ mod posted_tests {
             gone.push(&[node(d, i), i % 3, if i % 2 == 0 { node(4 - d, i % 5) } else { i % 4 }]);
         }
         let gone = InRel::moved(gone);
-        for rel in [old.clone_rows(), InRel::moved(Rel::based("t", b"iii", &old, &gone).expect("few rows dead"))] {
+        for rel in [old.clone_rows(), InRel::moved(Rel::based("t", b"iii", &old, Some(&gone)).expect("few rows dead"))] {
             let rel = Arc::new(rel);
             let source = Derived::new(Arc::clone(&rel), None);
             let measured: Vec<[i64; 4]> = crate::code_rule_dsl::facts::vtab::syntax::measured(source.as_ref()).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect();
@@ -2672,7 +2705,7 @@ mod posted_tests {
     impl InRel {
         fn clone_rows(&self) -> InRel {
             InRel { k: self.k, n: self.n, rows: self.rows.clone(), view: None, base: false, types: self.types.clone(), stored: self.stored, idx: Mutex::new(HashMap::default()), chains: self.chains.clone(),
-                    set: self.set.clone(), dead: self.dead.clone(), ndead: self.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default() }
+                    set: self.set.clone(), dead: self.dead.clone(), ndead: self.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), level: self.level.clone() }
         }
     }
 }
