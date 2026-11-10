@@ -56,6 +56,7 @@ mod cross_memo;
 mod matchers;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
+pub(in crate::code_rule_dsl) use matchers::columns as ast_columns;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -558,7 +559,7 @@ struct Prepared {
     lowered: lower::Lowered,
     sets: Vec<(String, Vec<i64>)>,
     /// The `ast` atoms' matchers, by relation (`matchers::lower`, decision 0106).
-    matchers: Vec<(String, String)>,
+    matchers: Vec<(String, String, Vec<String>)>,
     demanded: Vec<String>,
     pushed: Vec<String>,
     /// The exports handed on as parts (decision 0099, `file_local::factorize_exports`), a line each.
@@ -1868,12 +1869,26 @@ fn run_observed(
             // The `ast` atoms become relations the transducer's matchers fill per chunk (decision 0106).
             // A Python program's tree-shaped parts become matchers first (decision 0106 §4), unless `RERAIL_AST_PARTS=off`.
             if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
-                let rewritten = matchers::absorb(&mut prog);
+                // Parts whose field nodes the rule reads again join through the matcher's captures (decision 0107),
+                // unless `RERAIL_AST_PART_CAPTURES=off`.
+                let capture = !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off");
+                let rewritten = matchers::absorb(&mut prog, capture);
                 if rewritten > 0 {
                     crate::code_rule_dsl::logic::profile::decision("tree patterns as matchers (decision 0106)", || format!("{rewritten} rules' kind and field parts run as the transducer's matchers"));
                 }
             }
             let matchers = matchers::lower(&mut prog);
+            // `RERAIL_DUMP_MATCHERS=<file>`: the rules reading a matcher's relation, and each matcher (a debugging aid).
+            if let Ok(path) = std::env::var("RERAIL_DUMP_MATCHERS") {
+                let mut text = String::new();
+                for rule in prog.rules.iter().filter(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.starts_with(matchers::PREFIX)))) {
+                    text.push_str(&format!("{rule}\n"));
+                }
+                for (rel, matcher, captures) in &matchers {
+                    text.push_str(&format!("{rel}\t{captures:?}\t{matcher}\n"));
+                }
+                let _ = std::fs::write(path, text);
+            }
             // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
             let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
             let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());

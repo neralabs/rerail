@@ -1771,6 +1771,9 @@ pub(crate) struct Matcher {
     pub(crate) rel: String,
     pub(in crate::code_rule_dsl) lowered: Arc<crate::code_rule_dsl::transducer::packed::LoweredMatcher>,
     pub(in crate::code_rule_dsl) gates: Vec<crate::code_rule_dsl::matcher::DocumentGate>,
+    /// The metavariables the atom captures, in its relation's column order after `n` (decision 0107).
+    pub(crate) captures: Vec<String>,
+    pub(in crate::code_rule_dsl) captor: Arc<crate::code_rule_dsl::waves::policies::Captor>,
 }
 
 /// A program's matchers (decision 0106) and the wave they run as: every matcher's labels and roots in one run per
@@ -1904,22 +1907,92 @@ fn matched(
     profile::work(profile::Unit::Node, nodes);
     let mut out = Vec::new();
     for (m, found) in matchers.list.iter().zip(found) {
-        let mut r = Relation::new(&["n"]);
+        let columns = crate::code_rule_dsl::logic::plan::corpus::ast_columns(&m.rel);
+        let mut r = Relation::new(columns);
         let mut rows = 0u64;
-        for (&i, found) in held.iter().zip(found) {
-            let p = at[i].expect("held");
-            for core in found {
-                let local = p.local.get(core as usize).copied().unwrap_or(NONE);
-                if local != NONE {
-                    r.push(&[p.global(local)]);
-                    rows += 1;
+        if m.captures.is_empty() {
+            for (&i, found) in held.iter().zip(found) {
+                let p = at[i].expect("held");
+                for core in found {
+                    let local = p.local.get(core as usize).copied().unwrap_or(NONE);
+                    if local != NONE {
+                        r.push(&[p.global(local)]);
+                        rows += 1;
+                    }
                 }
+            }
+        } else {
+            let _captures = profile::span(|| "ast captures (W's matcher at each root)".into());
+            let (found_rows, limited) = captured_rows(m, &held, &found, &at, tapes);
+            if limited > 0 {
+                profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {limited} roots", m.rel));
+            }
+            for row in found_rows {
+                r.push(&row);
+                rows += 1;
             }
         }
         crate::code_rule_dsl::prof::count("ast.matched", rows as usize);
         out.push((m.rel.clone(), Arc::new(r) as Arc<dyn Source>));
     }
     Ok(out)
+}
+
+/// A captured matcher's rows (decision 0107): at each root the transducer matched, W's matcher of the atom's rule
+/// matched again on the host, and each capture's nodes read from its bindings (a multi-capture's every node, so its
+/// rows are the product of the captures' nodes). A node the projection leaves out has no row. Tapes in parallel; also
+/// how many roots hit their file's visit budget (no rows).
+fn captured_rows(
+    m: &Matcher,
+    held: &[usize],
+    found: &[BTreeSet<u32>],
+    at: &[Option<&Projected>],
+    tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+) -> (Vec<Vec<i64>>, usize) {
+    use rayon::prelude::*;
+    let per: Vec<(Vec<Vec<i64>>, usize)> = held
+        .par_iter()
+        .zip(found.par_iter())
+        .map(|(&i, roots)| {
+            let mut rows = Vec::new();
+            let mut limited = 0;
+            if roots.is_empty() {
+                return (rows, limited);
+            }
+            let p = at[i].expect("held");
+            let tape = &tapes[i].1;
+            let root = ast_grep_core::AstGrep::doc(tape.clone());
+            let work = m.captor.limits.visits_for(tape.transducer_len());
+            let global = |core: u32| -> Option<i64> {
+                let local = p.local.get(core as usize).copied().unwrap_or(NONE);
+                (local != NONE).then(|| p.global(local))
+            };
+            for &n in roots {
+                let Some(n_global) = global(n) else { continue };
+                let names = match crate::code_rule_dsl::waves::findings::captured(&m.captor.grammar, &root, n, &m.captures, work) {
+                    Ok(Some(names)) => names,
+                    Ok(None) => continue,
+                    Err(_) => {
+                        limited += 1;
+                        continue;
+                    }
+                };
+                let mut product: Vec<Vec<i64>> = vec![vec![n_global]];
+                for nodes in names {
+                    let nodes: Vec<i64> = nodes.into_iter().filter_map(global).collect();
+                    product = product.into_iter().flat_map(|row| nodes.iter().map(move |&x| {
+                        let mut row = row.clone();
+                        row.push(x);
+                        row
+                    })).collect();
+                }
+                rows.extend(product);
+            }
+            (rows, limited)
+        })
+        .collect();
+    let limited = per.iter().map(|(_, l)| l).sum();
+    (per.into_iter().flat_map(|(rows, _)| rows).collect(), limited)
 }
 
 /// [`with_nearest`], with each of `matchers`' relations over the documents' tapes (decision 0106).
