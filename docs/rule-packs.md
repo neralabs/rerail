@@ -33,7 +33,7 @@ then offers it from that copy.
 | Cyclomatic complexity | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
 | JavaScript | language | 121 (36) | JavaScript or TypeScript source. ESLint core rules apply to both; eslint-plugin-unicorn rules to JavaScript files only. |
 | TypeScript | language | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
-| Python | language | 537 (318) | Python source outside tests, scripts and docs |
+| Python | language | 537 (317) | Python source outside tests, scripts and docs |
 | PHP | language | 15 (5) | PHP source: `*.php` files, not Blade views |
 | Blade | language | 10 (8) | Blade templates: `*.blade.php` files |
 | Rust | language | 33 (17) | `*.rs` files |

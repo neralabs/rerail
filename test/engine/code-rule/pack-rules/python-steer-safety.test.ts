@@ -64,6 +64,13 @@ describe("ASYNC222 retains wait arguments and returned status", () => {
   });
 });
 
+it("B010 asks for an assignment only where the type declares the attribute, and keeps setattr otherwise", () => {
+  const messages = findings("ruff-b010-set-attr-with-constant", "def patched():\n    pass\nsetattr(patched, \"_marker\", True)\n");
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatch(/^If the object's type declares this attribute, use `obj\.name = value`/);
+  expect(messages[0]).toMatch(/if not .*keep `setattr`/);
+});
+
 it("SIM112 preserves intentional externally defined lowercase environment keys", () => {
   const messages = findings("ruff-sim112-uncapitalized-environment-variables", "import os\ntoken = os.environ.get('service_token')\n");
   expect(messages).toHaveLength(1);
