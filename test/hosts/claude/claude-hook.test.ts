@@ -43,7 +43,10 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
   const servers: Server[] = [];
   afterEach(async () => {
     vi.unstubAllEnvs();
-    await Promise.all(servers.splice(0).map(server => new Promise(resolve => server.close(resolve))));
+    await Promise.all(servers.splice(0).map(server => {
+      server.closeAllConnections();
+      return new Promise(resolve => server.close(resolve));
+    }));
     await closeNativeTestDaemons();
   });
 
@@ -118,6 +121,36 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     await expect(runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath)).rejects.toThrow();
     expect(await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath)).toEqual({});
     expect(received).toEqual([]);
+  });
+
+  /** A listener at a new loopback URL that takes every request and answers none: a daemon whose event loop is held. */
+  async function silentFront(): Promise<string> {
+    const server = createHttpServer(() => undefined);
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  }
+
+  it("waits out a silent daemon once for a session's concurrent hooks, not once per hook in turn", { timeout: 90_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const common = { session_id: "parallel-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    // Parallel tool calls and subagents send one session's PreToolUse hooks at once, while a walk holds the daemon.
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const started = performance.now();
+    const toolCall = async (id: string): Promise<number> => {
+      await runClaudeHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: id, tool_input: { file_path: "a.ts" } }, daemonPath);
+      return performance.now() - started;
+    };
+    const finished = await Promise.all([toolCall("t1"), toolCall("t2"), toolCall("t3")]);
+    // One hook gives up on a silent daemon after about 14 s. Each waited under the session's lock, so the third
+    // finished after about 38 s.
+    expect(Math.max(...finished)).toBeLessThan(20_000);
   });
 });
 
