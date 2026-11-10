@@ -15,9 +15,9 @@ import type {
   IgnoredEditMatch,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
+import { fileStamp } from "../file-stamp.js";
 import {
-  fileStamp, gitBranchTips, gitCommitsBetween, gitHead, gitModifiedOrUntrackedPaths, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
-  readGitBlobs,
+  gitBranchTips, gitCommitsBetween, gitHead, gitModifiedOrUntrackedPaths, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
 } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";

@@ -1,8 +1,9 @@
 import { execFile, spawn, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync, statSync, type Stats } from "node:fs";
+import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
+import { fileStamp } from "./file-stamp.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -401,11 +402,6 @@ async function unmergedEntries(cwd: string): Promise<ReadonlyMap<string, string>
 async function gitIndexPath(cwd: string): Promise<string | undefined> {
   const path = await gitOutput(cwd, ["rev-parse", "--git-path", "index"]);
   return path === undefined ? undefined : resolve(cwd, path);
-}
-
-/** A file's device, inode, size and times, as one string: a write to the file, or a new file in its place, changes it. */
-export function fileStamp(info: Stats): string {
-  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
 }
 
 /**
