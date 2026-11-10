@@ -3375,6 +3375,9 @@ the wrapper's, in bytes, not the engine's.)
     one answer, 148 s and 35 s. Relations made from facts alone are left to the split (`constants::foldable` skips
     `constant_relations`), which derives them per chunk; cheap for small facts, not for a phase's exports.
   - The rest: per-file rules 477 s in all, projection 149 s, tape and facts 137 s, cross part 120 s.
+- `v_enum` and `rr_agg63`, constants of struct's exports, are derived once before the chunks and bound beside the
+  exports (`run_constants` in `corpus.rs`), no longer in every chunk: on 237 files each runs once in a few ms, and
+  `lens` is as it was (361 rows). Not yet measured over the workspace.
 - A main program over phase exports alone (`defs(q, k) :- struct__def(q, k)`) no longer builds documents
   (`58a5243a1`): 480 builds to 243 on 237 files for `struct`, 726 to 489 for `values`.
 - Spike (2026-11-09, `RERAIL_SPIKE_PROJECTION`, `syntax/stored_spike.rs`): each document's projected relations
@@ -3441,3 +3444,27 @@ CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 element. Not yet traced (parser or tape); the `values` fixture uses `[0, *range(4)]`.
 
 **Closure:** `[*x]` and `(*x,)` keep their `list_splat` node, with a test.
+
+## O-caches-as-facts. The caches not yet moved to decision 0102's pattern
+
+**Status:** open (2026-11-10). Decision 0102 sets one pattern for every cache: an entry's reads are facts
+(`cache_read`), what is there now is facts (`observed`), and `lib/cache.rr` derives `cache_fresh`, run by the
+engine. The constants' rows (0094 §6) are moved: their key no longer hashes the programs, options, root and build,
+which are reads of the entry, and `World::still` is no longer called for them.
+
+The rest are listed in `corpus::cached::tests::architecture`, by table (`NOT_YET_MOVED`) and by the freshness test
+each still makes itself (`BESPOKE_CALLS`). The lists may only shrink. In 0102's order:
+
+- **The phase store's run record and the whole-run cutoff** (`phase_record`, `run_record`; `unchanged_phase`,
+  `inputs::still`, `World::still` in `corpus::changes_of`, `reuse::unchanged`): the same consulted reads as the
+  constants.
+- **The per-file memo** (`facts_results`, its plan digest).
+- **Tapes and their indexes, and the projected relations** (`tape_objects`, `file_documents`, the prefilter's and
+  vocabulary's tables), after RER-131's named-only tapes merge.
+- **Prepared programs, stored automata, kept strata, statistics, cross parts, checks** (`kept_strata*`, `cross_*`,
+  `stat_blob`, `fact_stats`, `*_check_results`, `combined::File::unchanged`).
+- **The derivation graph** (`name_bindings`, `derivations`, `derivation_inputs`, `derivation_valid`): folded into
+  `cache_reads` and `observed`.
+- **Collection** (0053's manifests) as reachability over `cache_entries`.
+
+**Closure:** both lists empty.

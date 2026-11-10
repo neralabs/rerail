@@ -2056,7 +2056,68 @@ fn run_observed(
         .filter(|o| split.cross.outputs.contains(o) && !loading.as_ref().is_some_and(|(load, _)| load.rules.iter().any(|r| &r.head.rel == *o)))
         .find(|o| !split.cross.rules.iter().filter(|r| &r.head.rel == *o).all(|r| matches!(r.body.as_slice(), [front::Literal::Atom(a)] if !a.neg && split.exports.contains(&a.rel))))
         .cloned();
-    let (local, mut cross) = (part(split.local), part(split.cross));
+    let (mut local, mut cross) = (part(split.local), part(split.cross));
+    // The run's constants made of earlier phases' exports (`v_enum(q, n) :- struct__base(q, _, b), …, n = count :
+    // { struct__member(q, x, "") }`): one answer for the run, so derived once, before the chunks, by the same engine
+    // over the bound exports, and bound beside them (`run_constants`). The split derives a constant in both parts
+    // (`file_local::constant_relations`), which for one of the program's facts costs little; for one of a phase's
+    // exports, every chunk read them all again: over the workspace, 116.6 M rows of `struct__member` for 36 k
+    // answers, 183 s of a 966 s run. The memo's key is made before (`memo_program`): it holds the rules as written.
+    let run_constants: Option<(lower::Lowered, Vec<String>)> = {
+        let constant = crate::code_rule_dsl::typing::file_local::constant_relations(&lowered.program);
+        let of_phase = |r: &str| phased.contains_key(r) || phase_versions.contains_key(r);
+        // Those whose rules read an export, or another such: to a fixpoint. An output stays where the split put it.
+        let mut once: BTreeSet<String> = BTreeSet::new();
+        loop {
+            let more: BTreeSet<String> = local
+                .program
+                .rules
+                .iter()
+                .filter(|r| constant.contains(&r.head.rel) && !once.contains(&r.head.rel) && !prog.outputs.contains(&r.head.rel))
+                .filter(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| of_phase(&a.rel) || once.contains(&a.rel)))
+                .map(|r| r.head.rel.clone())
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            once.extend(more);
+        }
+        // Their rules, and those of the constants they read.
+        let mut cone = once.clone();
+        loop {
+            let more: BTreeSet<String> = local
+                .program
+                .rules
+                .iter()
+                .filter(|r| cone.contains(&r.head.rel))
+                .flat_map(|r| r.body.iter().filter_map(front::Literal::atom).map(|a| a.rel.clone()))
+                .filter(|rel| constant.contains(rel) && !cone.contains(rel))
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            cone.extend(more);
+        }
+        (!once.is_empty()).then(|| {
+            let mut p = local.program.clone();
+            p.rules.retain(|r| cone.contains(&r.head.rel));
+            p.gates.retain(|(rel, _)| cone.contains(rel));
+            p.lattice.retain(|rel, _| cone.contains(rel));
+            p.outputs = once.iter().cloned().collect();
+            for part in [&mut local.program, &mut cross.program] {
+                part.rules.retain(|r| !once.contains(&r.head.rel));
+                for rel in &once {
+                    if !part.inputs.contains(rel) {
+                        part.inputs.push(rel.clone());
+                    }
+                }
+            }
+            crate::code_rule_dsl::logic::profile::decision("constants of the phases' exports", || {
+                format!("{} relations derived once, before the chunks, and bound beside the exports: {}", once.len(), once.iter().cloned().collect::<Vec<_>>().join(", "))
+            });
+            (part(p), once.into_iter().collect())
+        })
+    };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "guests and the tree's projection".into()));
     let slice = embed_slice(&lowered.program).map(part);
     let slice_reads: BTreeSet<String> = slice.iter().flat_map(|s| &s.program.rules).flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect();
@@ -2298,6 +2359,31 @@ fn run_observed(
         modules.bind(&db, rel, Arc::clone(source))?;
         cross_inputs.push((rel.clone(), Arc::clone(source)));
     }
+    // The run's constants of the phases' exports (`run_constants`): derived over the bound exports, copied out of the
+    // engine, measured and bound as they are.
+    let mut repository = repository;
+    if let Some((consts, rels)) = &run_constants {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "derive the constants of the phases' exports".into());
+        let mut stats = t_stats.clone();
+        for (rel, _, measured) in &repository {
+            stats.measured(rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
+        }
+        super::run_atoms_native_over(consts, &db, "main", stats, rels.iter().cloned().collect(), modes)?;
+        for rel in rels {
+            let width = lowered.program.decls[rel].len();
+            let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
+            let held = crate::code_rule_dsl::logic::native::component::derived(&db, rel);
+            let values: Vec<Option<Vec<i64>>> =
+                (0..width).map(|c| Some(held.as_ref().map(|s| (0..s.len()).map(|r| s.value(r, c)).collect()).unwrap_or_default())).collect();
+            let source = crate::code_rule_dsl::logic::native::component::columns_source(names, values);
+            let measured = syntax::statistics(source.as_ref());
+            modules.bind(&db, rel, Arc::clone(&source))?;
+            cross_inputs.push((rel.clone(), Arc::clone(&source)));
+            repository.push((rel.clone(), source, measured));
+        }
+        crate::code_rule_dsl::logic::native::component::release(&db, rels);
+    }
+    let repository = repository;
     let repository_stats = |stats: &mut super::Stats| {
         for (rel, _, measured) in &repository {
             stats.measured(rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
