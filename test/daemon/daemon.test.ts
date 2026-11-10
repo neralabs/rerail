@@ -27,6 +27,7 @@ import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js
 import { openRerailDatabase, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 import { linkFolder } from "../support/links.js";
+import { removeFolder } from "../support/remove-folder.js";
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
 
@@ -96,7 +97,7 @@ describe("Rerail daemon", () => {
     await Promise.all(daemons.splice(0).map(daemon => daemon.close()));
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   /** `fetch` refuses a caller-supplied `Host`; only a raw request can imitate a rebinding page or a port mapping. */

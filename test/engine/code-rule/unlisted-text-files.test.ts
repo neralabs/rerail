@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,9 +9,10 @@ import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-
 import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
+import { removeFolder } from "../../support/remove-folder.js";
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(removeFolder)); });
 
 /** A regex rule on every file: it reads text, so the files no language lists are read for it. */
 const REGEX_ANYWHERE = codeRuleSchema.parse({

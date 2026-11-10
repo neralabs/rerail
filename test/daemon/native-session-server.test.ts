@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import { z } from "zod";
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import { RerailRuntime, SqliteSessionReader } from "../../src/runtime/index.js";
 import { CodeRuleBridge, SqliteAuditStore } from "../../src/engine/index.js";
+import { removeFolder } from "../support/remove-folder.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
 describe("NativeSessionServer request boundary", () => {
@@ -15,7 +16,7 @@ describe("NativeSessionServer request boundary", () => {
   afterEach(async () => {
     await server?.close();
     vi.useRealTimers();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
+    if (root !== undefined) await removeFolder(root);
     vi.unstubAllEnvs();
   });
 

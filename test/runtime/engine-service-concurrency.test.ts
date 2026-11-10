@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService } from "../../src/runtime/engine-service.js";
 import { testEmbedder } from "../support/hook-events.js";
+import { removeFolder } from "../support/remove-folder.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 
@@ -79,7 +80,7 @@ describe("engine service session concurrency", () => {
       gate.resolve();
       await Promise.allSettled(requests);
       await service.close();
-      await rm(root, { recursive: true, force: true });
+      await removeFolder(root);
     }
   });
 });

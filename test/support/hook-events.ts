@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -7,6 +7,7 @@ import { afterEach } from "vitest";
 import type { AdapterDelivery, AdapterEvent, RerailEventLoop, SemanticEmbedder } from "../../src/engine/index.js";
 import { serveHook, type HookInput, type HookOptions, type HookOutput } from "../../src/harness/index.js";
 import { startTestRepository } from "./started-repository.js";
+import { removeFolder } from "./remove-folder.js";
 
 /** Replaces the native model so hooks and runtimes run where the addon is absent. */
 export const testEmbedder: SemanticEmbedder = {
@@ -25,7 +26,7 @@ export function temporaryDirectories(prefix: string): (options?: { started?: boo
   afterEach(async () => {
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
-    await Promise.all(paths.splice(0).map(path => rm(path, { recursive: true, force: true })));
+    await Promise.all(paths.splice(0).map(removeFolder));
   });
   return async ({ started = true } = {}) => {
     const path = await mkdtemp(join(tmpdir(), prefix));

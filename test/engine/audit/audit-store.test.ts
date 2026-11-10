@@ -198,7 +198,9 @@ describe("SQLite audit persistence", () => {
     store.finish(listed, { status: "failed", failures: [...failures, ...failures, ...failures] });
     recordRepositoryAudit(path, "/many", many);
     recordRepositoryAudit(path, "/listed", listed);
-    for (const reader of [store, new SqliteAuditReader(path)]) {
+    // Each reader is closed before the folder is removed: Windows will not delete a database file a connection holds.
+    const separate = new SqliteAuditReader(path);
+    for (const reader of [store, separate]) {
       expect(reader.get(many)).toMatchObject({ failureCount: 31, unlistedFailureCount: 30 });
       expect(reader.get(listed)).toMatchObject({ failureCount: 3, unlistedFailureCount: 0 });
       expect(reader.list().audits.map(({ auditId, failureCount }) => [auditId, failureCount]).sort())
@@ -208,6 +210,7 @@ describe("SQLite audit persistence", () => {
       expect(reader.listRepositoryAudits().repositories.map(({ workspaceRoot, audit }) =>
         [workspaceRoot, audit?.failureCount, audit?.unlistedFailureCount])).toEqual([["/listed", 3, 0], ["/many", 31, 30]]);
     }
+    separate.close();
     store.close();
   });
 });

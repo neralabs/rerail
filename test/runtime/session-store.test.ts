@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { chmod, mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
@@ -33,6 +33,7 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native
 import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { approve, currentSubject } from "../../src/engine/index.js";
+import { removeFolder } from "../support/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];
@@ -44,7 +45,7 @@ afterEach(async () => {
   if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
   else process.env.RERAIL_HOME = originalRerailHome;
   await Promise.all(temporaryConnections.splice(0).reverse().map(async connection => connection.close()));
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(removeFolder));
 });
 
 async function temporaryDirectory(): Promise<string> {

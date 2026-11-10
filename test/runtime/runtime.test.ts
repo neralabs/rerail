@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,11 +17,12 @@ import {
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
+import { removeFolder } from "../support/remove-folder.js";
 
 const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(removeFolder));
 });
 
 describe("Rerail session startup", () => {

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { NpmOptions, NpmRunner } from "../../src/runtime/npm.js";
 import { ensureSqlite, sqliteInstallPrefix } from "../../src/runtime/sqlite-repair.js";
 import { linkFolder } from "../support/links.js";
+import { removeFolder } from "../support/remove-folder.js";
 
 const WORKING_BINDING = "module.exports = function Database() { this.close = () => {}; };";
 const ABI_MISMATCH =
@@ -50,7 +51,7 @@ describe("SQLite binding repair", () => {
   });
 
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   it("resolves the npm prefix that hoists the binding, for a checkout and for a managed install", async () => {
