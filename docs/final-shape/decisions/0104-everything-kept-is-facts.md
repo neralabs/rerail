@@ -127,10 +127,40 @@ warm and after an edit), CPU (user + sys, with the load) and the pins of `facts_
 | # | What | Done when |
 |---|---|---|
 | 1 | The tapes as the two rules above, for a run's files and its guests; contents by digest; the tape and source writes are the writer's | no tape or source statement among the hazards; the 4.2 s wait is gone |
-| 2 | The memo's entries read before the first wave; a lookup writes nothing | no memo statement among the hazards |
+| 2 | The memo's entries read before the first wave; a lookup writes nothing | **built**: no memo statement among the hazards of a cold run or of a run after an edit (below) |
 | 3 | The constants, the statistics and the choices read before the first wave, written by the writer | no store statement among the hazards |
 | 4 | A program's stated facts and `rdl_int` bound in the engine, not loaded through SQL tables; inputs read from where they are held | **built**: on the slice, one statement is left on the run's connection (below) |
 | 5 | A test runs a small corpus with the profile on and fails on any hazard | the test passes with none |
+
+**Step 2, as built.** Before the first wave, the run looks up every file of the corpus:
+
+- it stats each file. A file whose stat the store recorded is that source, and is not read;
+- it reads and hashes the others, in parallel, and finds their sources in one read;
+- it finds the entries of all of them in one or two reads, as stored frames. Each is
+  decompressed and decoded in its file's wave, so memory holds compressed entries, not
+  decoded ones;
+- for the statistics keeper, it also finds the entries of the files changed or gone since
+  their counts were kept.
+
+A lookup writes nothing:
+
+- a source found is pinned by the store's writer, behind the run;
+- a new source is not stored by the lookup. It is stored with its tape, in the tape's
+  transaction, which already held it;
+- a file read again in its wave is checked against its stat. If it changed since it was
+  looked up, its content is new, and it is stored with its tape.
+
+A load's files are known only in the waves, so they are still looked up there. On the
+slice, nothing is loaded. A session's memo is in memory, and reads no SQL.
+
+On the slice, the lookups' 488 transactions on the parse worker are gone. After one file
+is edited, 485 of the 486 files are memo hits, and the run's hazards are 212 statement runs
+and 37 ms, against 248 and 225 ms before. The findings equal a cold run's of the edited
+files. Run side by side on the same machine, the run before and after this step take the
+same CPU and wall.
+
+What is left inside the waves is the tape store (step 1), and the choices and statistics
+read from the store (step 3).
 
 **Step 4, as built.** Within a native run, the run's connection makes nothing in SQL that SQL
 does not read:

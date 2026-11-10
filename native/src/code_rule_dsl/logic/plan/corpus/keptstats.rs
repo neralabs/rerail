@@ -93,6 +93,11 @@ impl Keeper {
         self.exports.is_some() && !self.building && self.failed.is_none()
     }
 
+    /// Every file counted, with the content and key it was counted under.
+    pub(super) fn counted_files(&self) -> Vec<(String, memo::Content, i64)> {
+        self.docs.iter().map(|(p, (c, k))| (p.clone(), *c, *k)).collect()
+    }
+
     /// The files counted that this run has not seen yet, with the content and key they were counted under.
     pub(super) fn unseen(&self) -> Vec<(String, memo::Content, i64)> {
         self.docs.iter().filter(|(p, _)| !self.seen.contains(*p)).map(|(p, (c, k))| (p.clone(), *c, *k)).collect()

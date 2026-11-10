@@ -199,6 +199,37 @@ pub(super) fn lookup_all(store: &ContentStore, program: &[u8; 32], docs: &[(Sour
         .collect()
 }
 
+/// A memo entry found before it is decoded: held in memory (a queued write's, or a session's), or its stored frame.
+/// A run finds its documents' entries before its first wave and decodes each in its wave (decision 0104).
+pub(super) enum Found {
+    Held(std::sync::Arc<Entry>),
+    Frame(FactsFrame),
+}
+
+impl Found {
+    /// The entry, when it is the document's (`key`).
+    pub(super) fn entry(&self, key: i64) -> StoreResult<Option<Entry>> {
+        Ok(match self {
+            Found::Held(e) => Some((**e).clone()),
+            Found::Frame(f) => Some(decode(&f.bytes()?)?),
+        }
+        .filter(|e| e.key == key))
+    }
+}
+
+/// `lookup_all`, each entry found and not decoded: one statement whatever the documents' number.
+pub(super) fn found_all(store: &ContentStore, program: &[u8; 32], docs: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Found>>> {
+    off();
+    let set = plan(program);
+    let held: Vec<Option<std::sync::Arc<Entry>>> = docs.iter().map(|(s, p)| store.pending::<Entry>(&queued(*s, p, program))).collect();
+    let keys: Vec<(SourceId, &str)> = docs.iter().zip(&held).filter(|(_, h)| h.is_none()).map(|((s, p), _)| (*s, *p)).collect();
+    let mut frames = store.facts_frames_for(SCHEMA, set.plans[0], &keys)?.into_iter();
+    Ok(held.into_iter().map(|h| match h {
+        Some(e) => Some(Found::Held(e)),
+        None => frames.next().flatten().map(Found::Frame),
+    }).collect())
+}
+
 /// What a memo entry's write is queued under (`write_back`): the row's source, path and program.
 fn queued(source: SourceId, path: &str, program: &[u8; 32]) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"facts_memo/corpus", &source.raw().to_le_bytes(), path.as_bytes(), program])
@@ -210,6 +241,19 @@ pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<S
     let hashes: Vec<HashKey> = texts.iter().map(|t| HashKey::sha256(t.as_bytes())).collect();
     let found = store.held_sources_by_hash(&hashes)?;
     texts.iter().zip(hashes).zip(found).map(|((text, hash), id)| match id { Some(id) => Ok(id), None => store.put_source_hashed(text.as_bytes(), hash, &[]) }).collect()
+}
+
+/// The stored sources of many contents, by their SHA-256 digests, in their order: one read and nothing written (a
+/// lookup writes nothing, decision 0104). The sources found are pinned under the store's holder by its writer.
+pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<SourceId>>> {
+    off();
+    let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
+    let found = store.sources_by_hashes(&hashes)?;
+    let pins: Vec<SourceId> = found.iter().flatten().copied().collect();
+    if !pins.is_empty() {
+        store.write_back("the pins of the sources the run read", pins.len() * 8, Vec::new(), Box::new(move |store| store.pin_held_sources(&pins)));
+    }
+    Ok(found)
 }
 
 /// Memoises many documents' entries at once, each `(source, path, key, entry)` under `program`: one transaction of
@@ -311,6 +355,15 @@ impl Memo<'_> {
         }
     }
 
+    /// The contents of many texts as the memo knows them, by their SHA-256 digests, in their order: `None` for a
+    /// text the store does not hold yet (its source is stored with its tape). Nothing is written (`found_sources`).
+    pub(super) fn found(self, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<Content>>> {
+        match self {
+            Memo::Stored(store) => Ok(found_sources(store, digests)?.into_iter().map(|id| id.map(Content::Stored)).collect()),
+            Memo::Held(_) => Ok(digests.iter().map(|d| Some(Content::Held(*d))).collect()),
+        }
+    }
+
     /// `lookup` of many documents, each `(content, path, key)`, in their order: stored ones in one statement.
     pub(super) fn lookup_all(self, program: &[u8; 32], docs: &[(Content, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
         match self {
@@ -323,6 +376,31 @@ impl Memo<'_> {
                 Ok(out)
             }
             Memo::Held(_) => docs.iter().map(|(c, p, k)| self.lookup(*c, p, *k, program)).collect(),
+        }
+    }
+
+    /// The entries of many documents, each `(content, path)`, found and not decoded (`Found`): stored ones in one
+    /// statement, held ones from memory.
+    pub(super) fn found_all(self, program: &[u8; 32], docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
+        match self {
+            Memo::Stored(store) => {
+                let mut out: Vec<Option<Found>> = (0..docs.len()).map(|_| None).collect();
+                let (at, stored): (Vec<usize>, Vec<(SourceId, &str)>) = docs.iter().enumerate().filter_map(|(i, (c, p))| c.stored().map(|id| (i, (id, *p)))).unzip();
+                for (i, e) in at.into_iter().zip(found_all(store, program, &stored)?) {
+                    out[i] = e;
+                }
+                Ok(out)
+            }
+            Memo::Held(held) => {
+                let held = held.lock().expect("the session memo");
+                Ok(docs
+                    .iter()
+                    .map(|(c, p)| match c {
+                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), *program)).map(|e| Found::Held(std::sync::Arc::new(e.clone()))),
+                        Content::Stored(_) => None,
+                    })
+                    .collect())
+            }
         }
     }
 
