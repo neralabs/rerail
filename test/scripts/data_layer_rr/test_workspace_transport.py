@@ -68,3 +68,19 @@ class WorkspaceTransportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'inputFiles'):
                 replay.execute_workspace(Path('/engine'),Path('/policy.rr'),[],dict(inputFiles=['ignored.py']))
             native.assert_not_called()
+
+class ExistingRepositoryTransportTests(unittest.TestCase):
+    def test_native_repository_keeps_binary_files_links_and_empty_primary_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);(root/'broken.py').write_bytes(b'\xff');(root/'alias.py').symlink_to('broken.py')
+            for mode in ('snapshot','workspace'):
+                seen={}
+                def native(command,**kwargs):
+                    seen['root']=Path(command[3]);seen['options']=json.loads(Path(command[-1]).read_text())
+                    self.assertEqual((seen['root']/'broken.py').read_bytes(),b'\xff')
+                    self.assertTrue((seen['root']/'alias.py').is_symlink())
+                    return subprocess.CompletedProcess(command,0,json.dumps(dict(diagnostics=[],programInputs=[])),'')
+                with patch.object(migration,'verify_source_cohort'),patch.object(migration,'verify_engine_artifact'),patch.object(replay.subprocess,'run',side_effect=native):
+                    replay.execute_repository(Path('/engine'),Path('/rule.rr'),root,dict(entryPoint='find_violations'),mode)
+                self.assertEqual(seen['root'],root)
+                self.assertEqual(seen['options'].get('inputFiles'),[] if mode=='snapshot' else None)
