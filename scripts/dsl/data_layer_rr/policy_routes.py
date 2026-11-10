@@ -2,7 +2,9 @@
 
 
 def policy_filename(check, entry):
-    if check=='dynamic_module_loading' and entry=='_dynamic_cli_paths':
+    if check=='dynamic_module_loading' and entry=='_report_facts':
+        return 'dynamic-module-loading-facts.rr'
+    if check=='dynamic_module_loading' and entry in {'_dynamic_cli_paths','_dynamic_plugin_metadata'}:
         return 'dynamic-module-loading-paths.rr'
     if check=='dynamic_module_loading' and entry in {'_dynamic_repository','_dynamic_disk_file'}:
         return 'dynamic-module-loading-repository.rr'

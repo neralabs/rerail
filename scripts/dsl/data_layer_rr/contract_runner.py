@@ -59,6 +59,12 @@ def main(check,format,build_cases,exercise,install,dependencies,*,guard_modules=
             if event=='call' and frame.f_code in original_codes and not original_codes[frame.f_code][2]:
                 fallbacks.append(frame.f_code.co_qualname);raise AssertionError('Original semantics executed: '+frame.f_code.co_qualname)
     paths=[Path(__file__),*[(Path(__file__).parent/n).resolve() for n in ['migration.py','replay.py','dto.py','policy_routes.py',*dependencies]]]
+    # Bind every imported local helper, including adapters reached by installation.
+    for owner in tuple(sys.modules.values()):
+        filename=getattr(owner,'__file__',None)
+        if filename:
+            file=Path(filename).resolve()
+            if file.suffix=='.py' and file.is_relative_to(Path(__file__).resolve().parent.parent):paths.append(file)
     hashes={p.relative_to(ROOT).as_posix():sha(p.read_bytes()) for p in paths if p.exists()}
     report=dict(format=format,sourcePin=PIN,sourceSha256=sha(path.read_bytes()),mode=a.command,executionMode=a.mode,
         passed=False,fullMigrationAcceptance=False,additionalSourceFiles=extra_files,harnessFiles=hashes,totalCases=len(corpus),part=a.part,parts=a.parts,cases=[])

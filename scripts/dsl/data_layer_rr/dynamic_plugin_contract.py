@@ -77,4 +77,4 @@ def exercise(module,case,temporary):
 if __name__=='__main__':
     from contract_runner import main
     from dynamic_port import install
-    main(CHECK,'rerail.dynamic-plugin-contract/v1',cases,exercise,install,['dynamic_plugin_contract.py','dynamic_port.py','dynamic_cli_port.py'],guard_modules=['scripts.lint_lib.discovery','scripts.lint_lib.signing'])
+    main(CHECK,'rerail.dynamic-plugin-contract/v1',cases,exercise,install,['dynamic_plugin_contract.py','dynamic_port.py','dynamic_cli_port.py','dynamic_plugin_port.py','fact_transport.py','python_value_transport.py'],guard_modules=['scripts.lint_lib.discovery','scripts.lint_lib.signing'])

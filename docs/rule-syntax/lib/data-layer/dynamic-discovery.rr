@@ -28,8 +28,7 @@ dml_disk_doc(p,d) :- dml_disk_path(p),loaded(c,cat("dml:",p),"python"),loaded_do
 DynamicDiscovered(@place("",0),i,p) :- option("entryPoint","_dynamic_repository"),sgd_discovery_path(p,i).
 .violation DynamicFound(at: span,file_ordinal: number,path: symbol,ordinal: number,snippet: symbol,label: symbol) code "DML_FOUND" "{label}"
 DynamicFound(@place(p,l),i,p,j,clean,label) :- dml_disk_entry(),dml_occurrence(p,i),!dml_disk_allowed(p),
-    dml_disk_doc(p,d),dml_candidate(d,l,j,label),dml_line(d,l,_,clean,_),!prefix("#",clean),dml_state(d,l,""),dml_quotes(d,l,0,0),
-    !dml_type_checking(d,l),(j<3 ; j>=3,!dml_primary(d,l)).
+    dml_disk_doc(p,d),dml_hit(d,l,j,clean,label).
 
 .violation DynamicReadError(at: span,path: symbol,io_kind: symbol,errno: number,detail: symbol,bytes_hex: symbol,start: number,end: number,reason: symbol) code "DML_IO_ERROR" "source read skipped"
 DynamicReadError(@place("",0),p,k,n,detail,b,s,e,r) :- dml_disk_entry(),dml_read_path(p),file_error(p,k,n,detail,b,s,e,r).

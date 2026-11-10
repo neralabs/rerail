@@ -1519,7 +1519,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr",
-      "sha256": "ddd060cee7ce69517aa17edaf14c70b0d3fc49156fbe73cbb63ab78983fabb6d",
+      "sha256": "ed0f5966ef05515f8b1b3d1a7952c287235e4fbea25d6e9bb54b15f8c8c8edc2",
       "origin": "authored",
       "upstreamPath": "scripts/lint_dynamic_module_loading.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2763,7 +2763,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading-repository.rr",
-      "sha256": "7e7ca55ea45a08d804c4e32e6ffe2bf1b93d1450beaae3f319ad7c58ad0d5118",
+      "sha256": "1203f4e0176a8b8212e540c053a2609571ce1557a44ecce47e30ad09ed98e5a7",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_dynamic_module_loading.py"
@@ -2778,11 +2778,11 @@
       "destination": "docs/rule-syntax/lib/data-layer/dynamic-discovery.rr",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-      "sha256": "c2b45b368b704ce89d16b00d74bdfdc8740fe14e39b71b42cd8f10a6644ee3c5"
+      "sha256": "91951a5aae767b88a7a17345cc7695fb19087cdee629f0753dd8f24ea19ac22a"
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading-paths.rr",
-      "sha256": "4b66c2f91186669ce8ffd60da6ffd77327c388402f8a9f228e9cfa537060770d",
+      "sha256": "974fa00bf64a81e39a274c2cfcd5573fe1dec7b13d837d07d3e1653549f590e1",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_dynamic_module_loading.py"
@@ -2791,7 +2791,7 @@
       "destination": "docs/rule-syntax/lib/data-layer/dynamic-cli.rr",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-      "sha256": "1748fd3636b54ebaa36de6d0cc45df0b36ca84d877e3238e2386bd56b9c38301"
+      "sha256": "6fa7c9695944b8d439f49d0b5019f7b70192df5fc49942b648841e5fe18f6774"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/dynamic-paths.rr",
@@ -2804,6 +2804,25 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading-facts.rr",
+      "sha256": "e104fed4e5b607f0a094bee05367825cdf9112d092378f745a85416a30a9e6ed",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_dynamic_module_loading.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/dynamic-plugin-metadata.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "sha256": "793a14c49af63a47bf139453ffd8a113f30efc96cc7f6f576b9a83821803ca0b"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/dynamic-supplied.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "sha256": "a15f8947ec2b0071efeb1dfeb93ef296473643f0255db3078cf1d259bb5be6e7"
     }
   ],
   "rules": [
@@ -3341,7 +3360,7 @@
       "legacySha256": "60a9cff5845cb22edfd90b365ba5ac41e948b605115c0233af66a81ab68d6478",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr",
-      "ruleSha256": "ddd060cee7ce69517aa17edaf14c70b0d3fc49156fbe73cbb63ab78983fabb6d"
+      "ruleSha256": "ed0f5966ef05515f8b1b3d1a7952c287235e4fbea25d6e9bb54b15f8c8c8edc2"
     },
     {
       "check": "forwardref",

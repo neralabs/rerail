@@ -11282,3 +11282,33 @@ The remaining original cases comprise the dedicated CLI group and four shared te
 Plugin metadata, fact extraction, supplied-fact reporting, CLI/signing contracts, persistent updates, and removal controls still need acceptance.
 Dynamic loading remains a draft. The global inventory remains 12 accepted ports, 84 drafts, and four absent translations.
 No full-repository cold benchmark ran. No Linear ticket was created.
+
+### Dynamic-loading CLI, signing, extraction and plugin contracts, 2026-11-10
+
+The [CLI checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-dynamic-cli-finalef317-progress.json.gz) retains the first complete dedicated-module replay.
+All 115 unchanged tests pass through both APIs, including all 25 previously pending CLI tests.
+Its 49 additional CLI cases match complete streams, callback order, duplicate findings, Unicode previews, parser errors, and signature failures.
+Native relations select CLI actions, canonical signature messages, display text, statuses, and public directory expansion.
+The standard parser and passive filesystem operations remain in the compatibility adapter. No original CLI or signing/discovery helper executes in native replay.
+The source recorder now normalizes both aliases of its macOS temporary directory. The previous single-alias normalization retained unstable physical paths.
+
+The [refreshed interface checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-dynamic-interfaces-finalef317-progress.json.gz) validates 96 reports and 1,572 native executions on the registered Final ef317 CLI.
+Each API passes 116 scanner cases, 30 repository cases, 49 CLI cases, 46 plugin/fact cases, 35 actual-signing cases, and 115 original tests.
+Plugin coverage includes full metadata, extractor registries, extracted dictionaries, projection helpers, and supplied facts.
+Supplied facts retain Boolean and unbounded integer lines, non-finite values, Python string conversions, foreign namespaces, path normalization, stable order, and duplicates.
+An invalid signature returns before accessing a malformed view. Native projection and coercion reuse the existing typed input and generic reporter facilities.
+The scanner, repository reader, and extractor now consume the same hit relation.
+
+Signing uses public synthetic seeds in isolated fixture environments. Both APIs reproduce all updated bytes and both output streams.
+Cases retain malformed keys, whitespace, sentinel and typed assignments, repeated updates, Unicode entries, duplicate entries, and file failures.
+The recorded canonical message preserves the supplied helper list's order and duplicates. CLI sorting happens separately in native relations.
+Every imported local helper is now included in contract-runner provenance.
+
+The production oracle has 17 cases. It proves that FactEngine selection differs from public finder selection.
+FactEngine includes conform, node_modules, and .pytest_cache directories, while the public finder excludes them.
+The [production red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dynamic-production-red.json.gz) identifies the remaining absent native production-contract entry.
+Production findings, persistent updates, removal controls, and 200 tests in shared modules remain open. Dynamic loading remains a draft.
+
+The live alignment gate found newer Final commit `ca24b294a` after this immutable cohort completed.
+This does not change the recorded ef317 evidence. The next step is to merge the newer engine and register a fresh artifact.
+No full-repository cold benchmark ran. No Linear ticket was created.

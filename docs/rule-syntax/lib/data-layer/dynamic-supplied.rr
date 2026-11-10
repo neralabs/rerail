@@ -1,0 +1,25 @@
+// Reuse generic reporter ordering, integer preservation and pathlib projection.
+#include "data-layer/supplied-facts.rr"
+.decl pp_config(key: symbol,value: symbol)
+pp_config("findingSeverity","hard-fail").
+sf_config("code","DML001"). sf_config("order","message").
+sf_default("description","dynamic module loading is forbidden").
+.decl dmp_container(b: number,kind: symbol)
+.decl dmp_shape(b: number,r: number,kind: symbol)
+.decl dmp_member(b: number,r: number,f: number,key: symbol)
+.decl dmp_value(b: number,r: number,f: number,value: symbol)
+.decl dmp_tag(b: number,r: number,f: number,tag: symbol)
+.decl dmp_scalar(b: number,r: number,f: number,value: symbol)
+.decl dmp_json(b: number,r: number,f: number,value: symbol)
+sf_container(b,k) :- dmp_container(b,k).
+sf_shape(b,r,k) :- dmp_shape(b,r,k).
+sf_member(b,r,f,k) :- dmp_member(b,r,f,k).
+sf_value(b,r,f,v) :- dmp_value(b,r,f,v).
+sf_type(b,r,k,"number") :- dmp_member(b,r,f,k),dmp_tag(b,r,f,"int").
+sf_type(b,r,k,"boolean") :- dmp_member(b,r,f,k),dmp_tag(b,r,f,"bool").
+sf_json(b,r,k,v) :- dmp_member(b,r,f,k),dmp_tag(b,r,f,"int"),dmp_scalar(b,r,f,v).
+sf_json(b,r,k,v) :- dmp_member(b,r,f,k),dmp_tag(b,r,f,"bool"),dmp_json(b,r,f,v).
+sf_message(b,r,m) :- sf_active(b,r),sf_field(b,r,"description",m).
+// Supplied paths are complete values; fallback uses the original bundle path.
+sf_path_input(b,r,p) :- sf_active(b,r),sf_property(b,r,"file_path",p).
+sf_path_input(b,r,p) :- sf_active(b,r),sf_bundle(b,p),!sf_property(b,r,"file_path",_).

@@ -1,0 +1,12 @@
+// Production plugin roots deliberately omit the legacy api/ fallback.
+.decl dmp_metadata(json: symbol)
+sgd_enabled() :- env("dml.plugin","true").
+.decl dmp_production(ordinal: number,path: symbol)
+dmp_production(0,"impl") :- sgd_top("impl").
+dmp_production(1,"data_layer") :- sgd_top("data_layer").
+dmp_production(2,"_internal") :- sgd_top("_internal").
+dmp_production(i+3,p) :- sgd_layer(p),i=count : { sgd_layer(q),@str_cmp(q,p)<0 }.
+.violation DynamicPluginMetadata(at: span,json: symbol) code "DML_PLUGIN_META" "plugin metadata"
+DynamicPluginMetadata(@place("",0),j) :- option("entryPoint","_dynamic_plugin_metadata"),dmp_metadata(j).
+.violation DynamicPluginDirectory(at: span,ordinal: number,path: symbol) code "DML_PLUGIN_DIR" "plugin directory"
+DynamicPluginDirectory(@place("",0),i,p) :- option("entryPoint","_dynamic_plugin_metadata"),dmp_production(i,p).

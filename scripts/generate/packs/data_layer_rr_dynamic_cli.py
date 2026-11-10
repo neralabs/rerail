@@ -44,4 +44,5 @@ def suffix(source):
 def paths_program(source,target,header):
     text=header('dynamic_module_loading',target).replace('#include "python/ast.rr"','#include "core.rr"')
     text='\n'.join('.scope dirs "__dynamic_no_primary__"' if line.startswith('.scope include ') else line for line in text.splitlines() if not line.startswith('.scope exclude '))+'\n'
-    return text+'#include "data-layer/dynamic-paths.rr"\n'
+    from data_layer_rr_dynamic_plugin import paths_suffix
+    return text+'#include "data-layer/dynamic-paths.rr"\n'+paths_suffix(source)

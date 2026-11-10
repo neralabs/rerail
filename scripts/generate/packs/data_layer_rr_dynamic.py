@@ -70,11 +70,16 @@ dml_type_checking(d, l) :- dml_demand(d, l), dml_line(d, l, _, _, indent),
 .violation DynamicTypeCheckingProbe(at: span) code "DML_TYPE_CHECKING" "inside TYPE_CHECKING"
 DynamicTypeCheckingProbe(@place("input.py", l)) :- option("entryPoint", "_is_in_type_checking_block"),
     dml_type_checking(_, l).
+.decl dml_hit(d: number,l: number,ordinal: number,clean: symbol,label: symbol)
+dml_hit(d,l,ordinal,clean,label) :- dml_candidate(d,l,ordinal,label),dml_line(d,l,_,clean,_),!prefix("#",clean),dml_state(d,l,""),dml_quotes(d,l,0,0),!dml_type_checking(d,l),(ordinal<3 ; ordinal>=3,!dml_primary(d,l)).
+.decl dml_scanning()
+dml_scanning() :- option("entryPoint","_scan_file_content").
+dml_scanning() :- !option("entryPoint",_).
 .violation DynamicLoading(at: span, ordinal: number, snippet: symbol, label: symbol) code "DML001" tag {ordinal} "{label}"
-DynamicLoading(@place(p, l), ordinal, clean, label) :- doc(d, p, _), dml_owner(d,owner), !dml_allowed(owner),
-    !option("entryPoint", "_dynamic_repository"), !option("entryPoint", "_dynamic_disk_file"), !option("entryPoint", "_is_in_type_checking_block"), dml_candidate(d, l, ordinal, label),
-    dml_line(d, l, _, clean, _), !prefix("#", clean), dml_state(d, l, ""), dml_quotes(d, l, 0, 0),
-    !dml_type_checking(d, l), (ordinal < 3 ; ordinal >= 3, !dml_primary(d, l)).
+DynamicLoading(@place(p,l),ordinal,clean,label) :- dml_scanning(),doc(d,p,_),dml_owner(d,owner),!dml_allowed(owner),dml_hit(d,l,ordinal,clean,label).
+.violation DynamicFact(at: span,ordinal: number,file_path: symbol,line_json: symbol,content_json: symbol,description_json: symbol) code "DML_FACT" "extracted fact"
+DynamicFact(@place("",0),i,p,l,c,t) :- option("entryPoint","_dynamic_fact_projection"),option_item("factPaths",i,p),option_item("factLines",i,l),option_item("factContents",i,c),option_item("factDescriptions",i,t).
+DynamicFact(@place("",0),(l-1)*5+i,p,to_string(l),@json_str(c),@json_str(t)) :- option("entryPoint","_dynamic_extract"),option("factPath",p),dml_owner(d,owner),!dml_allowed(owner),dml_hit(d,l,i,c,t).
 .decl dml_signature(s: symbol)
 dml_signature(s) :- option("signature", s).
 '''

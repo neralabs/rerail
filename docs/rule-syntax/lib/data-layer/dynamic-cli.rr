@@ -82,3 +82,7 @@ DynamicCliRoot(@place("",0),@dir(@dir(@dir(p)))) :- option("entryPoint","_dynami
 DynamicCliScanArgument(@place("",0),i,p) :- option("entryPoint","_dynamic_cli_root"),option("cliHasDirs","1"),option_item("cliDirs",i,p).
 DynamicCliScanArgument(@place("",0),i,p) :- option("entryPoint","_dynamic_cli_root"),option("cliHasDirs","0"),option("cliHasDefaults","1"),option_item("cliDefaultDirs",i,p).
 DynamicCliScanArgument(@place("",0),0,"public") :- option("entryPoint","_dynamic_cli_root"),option("cliHasDirs","0"),option("cliHasDefaults","0").
+
+DynamicCliAction(@place("",0),"facts") :- option("entryPoint","_dynamic_plugin_verified"),option("cliResult","1").
+.violation DynamicPluginError(at: span,code_value: symbol,path: symbol,line: number,message: symbol,severity: symbol) code "DML_PLUGIN_ERROR" "plugin signature failure"
+DynamicPluginError(@place("",0),"DML000","scripts/lint_dynamic_module_loading.py",1,"dynamic module loading allowlist signature verification failed","hard-fail") :- option("entryPoint","_dynamic_plugin_verified"),option("cliResult","0").

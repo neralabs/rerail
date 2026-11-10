@@ -72,4 +72,6 @@ def install(backend,module,detectors=False):
         backend.configuration_bindings[CHECK]=dict(nativeCall=config_call,names=['__doc__','LINTER_NAME','ALLOWLIST_SIGNATURE','ALLOWLISTED_FILES','_FAST_SUBSTRINGS','_PATTERNS','_IMPORT_MODULE_PATTERNS','DYNAMIC_MODULE_LOADING_EXTRACTOR'])
     from dynamic_cli_port import install as install_cli
     install_cli(backend,module)
+    from dynamic_plugin_port import install as install_plugin
+    install_plugin(backend,module)
     module._rerail_dynamic_configuration=lambda:configuration(backend)
