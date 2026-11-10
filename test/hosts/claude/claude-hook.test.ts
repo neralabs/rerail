@@ -18,6 +18,17 @@ import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
 
+/**
+ * `hookOptions` without the test's embedder, so a hook takes the daemon path a coding agent's hook takes, and, unless
+ * `keepDatabase`, without the test's database, so the hook reads the one the daemon serves.
+ */
+function daemonHookOptions(root: string, { keepDatabase }: { keepDatabase: boolean }): HookOptions {
+  const options = hookOptions(root);
+  delete options.embedder;
+  if (!keepDatabase) delete options.databasePath;
+  return options;
+}
+
 function delivery(requested: AdapterDelivery["requested"], content: string, ruleIds: readonly string[] = [], rules = steeredRules(ruleIds)): AdapterDelivery {
   return { sessionId: "claude-session", requested, mechanism: "additional-context", content, ruleIds, rules };
 }
@@ -28,7 +39,7 @@ describe("Claude Code hook without a daemon", () => {
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     try {
       // The test runtime's embedder is left out, so the hook takes the daemon path a coding agent's hook takes.
-      const { embedder: _, ...daemonPath } = hookOptions(root);
+      const daemonPath = daemonHookOptions(root, { keepDatabase: true });
       const output = await runClaudeHook({
         session_id: "s", cwd: root, hook_event_name: "PostToolUse", tool_name: "Write", tool_use_id: "t", tool_input: {}, tool_response: "ok",
       }, daemonPath);
@@ -94,7 +105,7 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     // The daemon answers 3 s late, past the first probe's 2 s, as one does while an audit holds its event loop.
     const front = await slowFront(daemon.url, 3_000);
     await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
-    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
     const common = { session_id: "busy-session", cwd: root };
     await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
     await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
@@ -117,7 +128,7 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     const squatted = process.platform === "win32" ? `\\\\.\\pipe\\rerail-squatted-${process.pid}-${Date.now()}` : join(root, "squatted.sock");
     await new Promise<void>(resolve => squatter.listen(squatted, resolve));
     await rewriteState(state => ({ ...state, url: "http://127.0.0.1:1/", port: 1, kernelSocketPath: squatted }));
-    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
     const common = { session_id: "squatted-session", cwd: root };
     await expect(runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath)).rejects.toThrow();
     expect(await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath)).toEqual({});
@@ -137,7 +148,7 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     startTestRepository(root);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     await startNativeTestDaemon(root);
-    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
     const common = { session_id: "parallel-session", cwd: root };
     await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
     // Parallel tool calls and subagents send one session's PreToolUse hooks at once, while a walk holds the daemon.
@@ -159,7 +170,7 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     startTestRepository(root);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     await startNativeTestDaemon(root);
-    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
     const common = { session_id: "silent-session", cwd: root };
     await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
     const front = await silentFront();
@@ -179,7 +190,7 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     await startNativeTestDaemon(root);
     const front = await silentFront();
     await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
-    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
     const started = performance.now();
     await expect(runClaudeHook({ session_id: "silent-start", cwd: root, hook_event_name: "SessionStart", source: "startup" }, daemonPath))
       .rejects.toThrow(/is alive but not answering/u);
