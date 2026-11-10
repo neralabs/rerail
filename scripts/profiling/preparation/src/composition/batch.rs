@@ -158,7 +158,7 @@ unsafe impl VTabCursor for Cursor {
         self.columns[0].is_empty()
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
-        ctx.set_result(&self.columns[col as usize][self.row])
+        ctx.set_result(self.columns[col as usize][self.row])
     }
     fn rowid(&self) -> Result<i64> {
         Ok(self.ordinal)
