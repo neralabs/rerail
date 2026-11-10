@@ -215,14 +215,10 @@ Faults the 2026-11-09 merge brought, all fixed here:
 
 ### P3 still to come
 
-- Library decorators that wrap (`@contextmanager`'s `Callable[P, Iterator[T]] -> Callable[P, _GeneratorContextManager[T]]`):
-  calls_cx reads the stub's nodes (`wrap`); P3 has no P2 fact for them, so `with batch_context(txn) as batch` is open
-  (3 calls calls_cx answers).
-- `dict.setdefault(k, []).append`: setdefault's two overloads both fit two arguments, so the call is open.
-- A workspace class with a library generic base (`class A(AbstractContextManager[None])`): its call is open in P3.
-- `cls.__new__(cls)` after `cls = variant_map.get(v)` and `if cls is None: raise`.
-- Overloads by keyword or by argument type: fitted by positional arity only.
-- An awaited call's value: an `async def`'s call is open today, not its return.
+- Overloads by keyword or by argument type: fitted by positional arity, and ruled out only where a parameter
+  declared `None` is given a literal.
+- An awaited library call's value (`await lib.f()`): open. A workspace `async def`'s is what it returns.
+- Implicit async calls (`async for`, `async with`: `__aiter__`, `__aenter__`): not read.
 - The cross-file memo's plan misses every component when any phase export it reads changes; finer, a component would
   be keyed by the export rows its documents read.
 - Nested runs (a phase's) have spans, but the sampler charges a rise to the innermost span open on each thread;
@@ -231,8 +227,10 @@ Faults the 2026-11-09 merge brought, all fixed here:
 ### P2 still to come
 
 - `__all__`, which narrows `import *`.
-- Generic signatures held as schemes. Type parameters, their maps through bases, and returns naming them are
-  facts (`tparam`, `tmap`, `rvar`, `rgen`); parameters naming them (for a constructor's inference) are not yet.
+- Generic signatures held as schemes. Type parameters, their maps through bases, returns naming them, parameters
+  naming them and wrapping decorators are facts (`tparam`, `tmap`, `rvar`, `rgen`, `pgen`, `rcarg`, `wgen`). A
+  base whose argument nests a generic (`_GeneratorContextManagerBase[Generator[_T_co, ...]]`) gives no parameters,
+  so a class's parameters come from its first base that does.
 
 ### P3 without libraries
 
@@ -283,7 +281,7 @@ Still to come:
 | 2 | engine, done | phase runs flat; an upstream phase checked once; loads refused in a later phase; kept when unchanged | phase tests |
 | 3 | done here | `types.rr` (P2): binds, bases/anc, attr, sig/rtype/vtype, owner | 10.3 s cold, 0.11 s unchanged |
 | 4 | spike, done | P1 → P2 → a reader over the 84 files | 99.3% of imports present, 91.2% of annotations |
-| 5 | done here | P3 `calls_p3.rr`: no loads, library values as symbols from `types.` | 6,380 agree (calls_cx 6,299); 43.3 s cold, 15.2 s warm; with generics, overloads and the memo 6,390, 41.8 s and 16.3 s |
+| 5 | done here | P3 `calls_p3.rr`: no loads, library values as symbols from `types.` | 6,380 agree (calls_cx 6,299); 43.3 s cold, 15.2 s warm; with generics, overloads and the memo 6,390, 41.8 s and 16.3 s; 6,410 on 2026-11-10 |
 | 6 | engine | searches (`inst`, `mro_find`) as the on-demand path (t26) | `wbind`/`gpar` work gone |
 | 7 | after 0094 §4 | P2 from struct's delta | an edit's cost in P2 |
 
@@ -343,6 +341,26 @@ from its argument's generic through `tmap`: `frozenset(dir(cls))` is a `frozense
 found warm and verified equal. Of the 12 calls calls_cx answered and P3 did not, 6 now agree, and 8 that calls_cx
 leaves open agree too. The other 6 are under "P3 still to come". `garg` is stored now: inlined, its readers joined
 on a regex's group, and the new `nclass` read every `grest` row per class (5.4 s).
+
+**What P3 lost to calls_cx, closed (2026-11-10, bcb696b41, 6fa02c640),** after merging serverplan-quality again
+(0101's draft and counting as a session's maintenance):
+- `@contextmanager`: P2 exports `wgen(g, ka, i, kb, j)`, a decorator `Callable[P, A] -> Callable[P, B]` whose A's
+  argument i and B's argument j are one type variable. P3 binds B's argument from the wrapped function's declared
+  return through `tmap`, so `with batch_context(txn) as batch` gives a `BatchContext`. That needed
+  `AbstractContextManager[_T_co, bool | None]` read as one alternative (the split at `|` cut it in two), so
+  `_GeneratorContextManager` has a parameter at all.
+- `d.setdefault(k, []).append(v)`: an overload declaring a parameter `None` does not fit a call that passes a
+  literal there, and a function's annotated local (`grouped: dict[object, list[object]] = {}`) is a declared
+  generic, as a module's was.
+- `class _ExplicitExecutionAuthority(AbstractContextManager[None])`: a subscripted library base is no open base
+  (it was open as a value, `Cm.__getitem__(None)`, which the workspace's own generic bases were excused from).
+- `cls.__new__(cls)` agrees too, through the annotated local.
+- An awaited call of a workspace `async def` holds what it returns. No call on the 84 files changes by it.
+
+P3: 6,410 agree (6,404), 613 unknown (619), no answer worse; every call calls_cx answers and P3 did not now agrees.
+Instructions retired cold: 822 G for the old rules on the merged binary, 838 G and 794 G for two runs with the new
+ones. Runs differ by about 5%, so the rules' cost is within that; the new strata take 0.4 s CPU in all (`wgen`,
+`lwbind`, `cnamed`).
 
 The merge also needed two mends: `corpus.rs`'s window-at-a-time memo lookups (serverplan-quality) and the document
 builders on `RERAIL_THREADS`' helpers (More-ergonomic) now share one resolver, and serverplan-quality's tip did
