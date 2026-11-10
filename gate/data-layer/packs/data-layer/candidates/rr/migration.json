@@ -3900,7 +3900,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
-    "status": "Final ec3cfe1b7 merged without conflicts. Existing 43 generic extension files unchanged. Root artifact rebuild and focused validation pending; Surface full-contract evidence remains on Final 041.",
+    "status": "Final ec3cfe1b7 root CLI registered. 131 focused engine tests, 39 accelerator library checks, six lane integration checks and 245 tooling tests pass. Original Surface tests pass through both APIs. Full Surface admission remains bound to Final 041.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4139,17 +4139,17 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "8ef73b3b2e632b58a084dce0cd2b69d2e16b1a35",
-      "upstreamCommit": "04173bf00bc872fdfe1c9b602e0867f2f0f9d86b",
+      "engineCommit": "c5c8b30306e2ca3da48375d75f43e4692a81dc48",
+      "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
       "sourceTrees": {
-        "native": "69a8a79edf809fcfc36d0d60498bff4c9f60015d",
-        "accel": "875e8daa91a43d3e3b1f8bc6f710b7bf6379d663",
+        "native": "353630ff0ebc2ce965cc081f7cc205714be55b73",
+        "accel": "c1cee95408206eb36c760b1db94154751cf5b5b7",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-f67f15aeb0d8acc1",
-      "sha256": "f67f15aeb0d8acc147eb4c26d8f7fdbf162340eda334bf829ffd5041b5ce7782",
+      "path": ".rerail/modern-engine-alignment/cli-82179e5e6ef15dec",
+      "sha256": "82179e5e6ef15dec415e7929d508e826a6dfebef2b1a8843547b668081ec7476",
       "command": [
         "cargo",
         "build",
@@ -4162,7 +4162,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 148.988
+      "seconds": 94.415
     }
   },
   "engineSourceSnapshots": [

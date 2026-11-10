@@ -10354,3 +10354,23 @@ The inventory is three accepted ports, 92 drafts, and five absent translations.
 This is one rule's recorded-contract admission. The full 100-rule migration remains unfinished.
 Final `ec3cfe1b7` advanced during acceptance and will be merged after this cohort is committed.
 
+# Final ec3 integration checkpoint, 2026-11-10
+
+Merged Final `ec3cfe1b7` after committing Surface admission. No conflicts occurred.
+The merge retains its host-CPU placement policy, staged join columns, and two-dispatch GPU join shape.
+All 43 reviewed local extension files remain unchanged.
+
+The optimized root CLI build took 94.415 seconds. The root unit build took 112.711 seconds.
+Frozen artifacts: `cli-82179e5e6ef15dec` and `unit-a1ba2df21dc57f01`.
+All 131 focused engine tests, 39 accelerator library checks, six lane integration checks, and 245 tooling tests pass.
+The accelerator checks include staged-column gates, retained join inputs, concurrent lane execution, and host-CPU placement.
+Two engine report/writer helpers and ten accelerator measurement cases remain ignored.
+Both original Surface APIs pass all nine cases. A complete multi-model coercion case also passes on this engine.
+The focused receipt is `rr-finalec3-focused-engine-validation.json.gz`.
+It retains accelerator stdout/stderr and exact program/harness snapshots. Engine unit outcomes are recorded without complete stdout.
+
+Surface's 634-execution admission remains bound to Final 041. It is not relabeled as a full ec3 revalidation.
+The global inventory remains three accepted ports, 92 drafts, and five absent translations.
+The target-architecture survey also found executable application probes. They cannot be replaced with fixed findings or AST approximations.
+Continue with actual rule and helper translations, preserving each port's complete source observations and positive tests.
+

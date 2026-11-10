@@ -10,9 +10,9 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
-Build and develop the engine in this repository root. Final `04173bf00` is merged and its optimized root CLI is registered.
-Its focused checks pass: 131 engine tests, 229 tooling tests, nine original Surface workspace cases, and ten supplied-fact cases.
-The latest complete supplied-fact reporter receipts remain bound to Final `957f13520`.
+Build and develop the engine in this repository root. Final `ec3cfe1b7` is merged and its optimized root CLI is registered.
+Its focused checks pass: 131 engine tests, 45 accelerator checks, 245 tooling tests, and all nine original Surface cases through both APIs.
+Surface's complete admission receipts remain bound to Final `04173bf00`; older nine-reporter receipts retain their stated cohorts.
 The latest complete first-ten validation remains bound to Final `93cadec37`.
 The merged `d024fa208` cohort has a registered optimized CLI and focused engine, production-root, and CLI checks.
 The accepted direct-execution cohort includes Final `bc83f6ae8`.
