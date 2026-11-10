@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, win32 } from "node:path";
 import { promisify } from "node:util";
 import ignore from "ignore";
 import { sql } from "drizzle-orm";
@@ -1456,7 +1456,7 @@ describe("Cursor hooks.json", () => {
     vi.stubEnv("RERAIL_HOME", rerailHome);
     const path = join(home, ".cursor", "cli-config.json");
     const original = await seed(path, { version: 1, permissions: { allow: ["Shell(ls)"], deny: ["Read(.env*)"] } });
-    const options = { root, home, nodePath, harnesses: ["cursor"] as const };
+    const options = { root, home, nodePath, platform: "linux" as const, harnesses: ["cursor"] as const };
 
     await registerHarnesses(options);
     const cache = join(home, ".cache", "rerail");
@@ -1470,6 +1470,25 @@ describe("Cursor hooks.json", () => {
 
     await unregisterHarnesses(options);
     expect(await readFile(path, "utf8")).toBe(original);
+  });
+
+  it("writes the Cursor CLI's denies on Windows in the form its file tools match: the native path, backslashes and all", async () => {
+    const { home, root, nodePath } = await fixture();
+    const rerailHome = join(dirname(home), "rerail-home");
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    const path = join(home, ".cursor", "cli-config.json");
+    await seed(path, { version: 1, permissions: { allow: [], deny: [] } });
+
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["cursor"] });
+    // The CLI matches a rule literally but for `*`, against the path as Windows writes it (C:\Users\me\.rerail\...).
+    const native = (value: string) => value.replaceAll("/", "\\");
+    const cache = native(win32.join(home, "AppData", "Local", "rerail"));
+    const deny = (await readIsolation(path)).permissions?.deny ?? [];
+    expect(deny).toEqual(expect.arrayContaining([
+      `Write(${native(rerailHome)}\\**)`, `Write(${cache}\\**)`, `Read(${cache}\\**)`,
+      `Read(${native(rerailHome)}\\access-token*)`, `Read(${native(rerailHome)}\\device-secrets\\**)`,
+    ]));
+    expect(deny.filter(rule => rule.includes("/"))).toEqual([]);
   });
 
   it("does not create cli-config.json for a Cursor without the CLI", async () => {

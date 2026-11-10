@@ -954,8 +954,8 @@ async function planClaudeSettings(
  * The Cursor CLI's file tools follow `permissions.deny` in `~/.cursor/cli-config.json`: no write to the Rerail home or
  * the content cache, no read of the cache or of the home's data (`RERAIL_HOME_DATA_ENTRIES`). Only a file the CLI has
  * written is changed, so a Cursor without the CLI gets none. Nothing else in Cursor reads such a list: `sandbox.json`
- * only adds paths, and the editor's agent has no path deny. Native Windows is left out, as the reference shows only
- * POSIX paths.
+ * only adds paths, and the editor's agent has no path deny. The CLI matches a rule literally but for `*`, against the
+ * path as the platform writes it, so on Windows each rule is written with backslashes (`C:\Users\me\.rerail\**`).
  */
 async function planCursorCli(context: Context): Promise<Plan[]> {
   const path = join(context.home, ".cursor", "cli-config.json");
@@ -968,8 +968,8 @@ async function planCursorCli(context: Context): Promise<Plan[]> {
     ...(isolateHome ? [rerailHome, cache] : [cache]).map(directory => `Write(${directory}/**)`),
     ...isolateHome ? RERAIL_HOME_DATA_ENTRIES.map(entry => `Read(${rerailHome}/${entry})`) : [],
     `Read(${cache}/**)`,
-  ];
-  const wanted = context.mode === "register" && existing.exists && context.platform !== "win32" ? { "permissions.deny": deny } : {};
+  ].map(rule => (context.platform === "win32" ? rule.replaceAll("/", "\\") : rule));
+  const wanted = context.mode === "register" && existing.exists ? { "permissions.deny": deny } : {};
   const next = structuredClone(existing.value);
   const added = replaceAddedEntries(context, next, previous, wanted, path);
   const settingsChanged = stableJsonText(existing.value) !== stableJsonText(next);
