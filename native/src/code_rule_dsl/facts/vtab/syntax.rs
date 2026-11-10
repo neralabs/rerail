@@ -1212,15 +1212,37 @@ impl Batch {
         }
     }
     /// The document and its row index of `row`.
+    /// Rows are read in runs of one document, so the last document found (per thread, per offsets array) is tried
+    /// before the search: its range is checked against the offsets, so a stale hint costs a comparison, never a
+    /// wrong document. The search per row was 13 s of the pack's cold run.
     fn locate(&self, view: View, row: usize) -> (&Projected, usize) {
         let offsets = self.offsets(view);
-        let doc = offsets.partition_point(|&o| o <= row) - 1;
+        let key = offsets.as_ptr() as usize;
+        let doc = LOCATED.with(|h| {
+            let (k, d) = h.get();
+            if k == key && d + 1 < offsets.len() && offsets[d] <= row && row < offsets[d + 1] {
+                return d;
+            }
+            let d = offsets.partition_point(|&o| o <= row) - 1;
+            h.set((key, d));
+            d
+        });
         (&self.docs[doc], row - offsets[doc])
     }
-    /// The document of key `d`, by index.
+    /// The document of key `d`, by index (the last one found tried first, as `locate`).
     fn doc(&self, d: i64) -> Option<usize> {
         let d = u32::try_from(d).ok()?;
-        self.docs.binary_search_by_key(&d, |p| p.key).ok()
+        let key = self.docs.as_ptr() as usize;
+        let hit = DOC.with(|h| {
+            let (k, i) = h.get();
+            (k == key && self.docs.get(i).is_some_and(|p| p.key == d)).then_some(i)
+        });
+        if hit.is_some() {
+            return hit;
+        }
+        let i = self.docs.binary_search_by_key(&d, |p| p.key).ok()?;
+        DOC.with(|h| h.set((key, i)));
+        Some(i)
     }
     /// The document index and node of id `n`.
     fn node(&self, n: i64) -> Option<(usize, u32)> {
@@ -1768,3 +1790,10 @@ pub(crate) fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Si
 
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod tests;
+
+thread_local! {
+    /// `Batch::locate`'s hint: the offsets array (its address) and the document last found in it.
+    static LOCATED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// `Batch::doc`'s hint: the documents (their address) and the index last found.
+    static DOC: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
