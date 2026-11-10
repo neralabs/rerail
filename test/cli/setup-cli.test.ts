@@ -33,11 +33,14 @@ import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
 import { INSTALLED_PACKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
-import { mainContentStoreDirectory } from "../../src/engine/native/rerail-build.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
 import { stubUserHome } from "../support/user-home.js";
 
 const temporaryDirectories: string[] = [];
+
+/** The content cache in the user home `home`: `AppData\Local\rerail` on Windows, out of a roaming profile; `.cache/rerail` elsewhere. */
+const contentCache = (home: string): string =>
+  process.platform === "win32" ? join(home, "AppData", "Local", "rerail") : join(home, ".cache", "rerail");
 
 afterEach(async () => {
   daemonStop.beforeStopped = undefined;
@@ -272,7 +275,7 @@ describe("rerail install --root", () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     const { updater } = context;
-    const cache = mainContentStoreDirectory(hostConfigHome);
+    const cache = contentCache(hostConfigHome);
     const installed = [join(updater.versionsRoot, "1.0.0", "node_modules", "@neralabs", "rerail"), join(context.home, "packs", "node_modules"), cache];
     for (const path of installed) await mkdir(path, { recursive: true });
     await writeFile(join(context.home, "consent.json"), "{}");
@@ -315,7 +318,7 @@ describe("rerail install --root", () => {
     await writeFile(join(context.home, "packs", "list.txt"), "mine");
     await writeFile(join(context.home, ".bashrc"), "");
     // Another Rerail home's daemon (alive: this test's parent process) holds the cache.
-    const cache = mainContentStoreDirectory(hostConfigHome);
+    const cache = contentCache(hostConfigHome);
     await mkdir(cache, { recursive: true });
     await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: process.ppid }));
     const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
