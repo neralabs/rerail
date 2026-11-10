@@ -211,10 +211,12 @@ class Suite:
         actual_source_result = canonical(result, root)
         observation.update(expectedSourceResult=original['sourceResult'], actualSourceResult=actual_source_result)
         compare(original['sourceResult'], actual_source_result)
-        if original.get('retained_reason'):
+        empty_backend_read=(check=='backend_type_strings' and entry=='check_file' and not files
+                            and original['sourceResult']==[] and actual_source_result==[] and original['findings']==[])
+        if original.get('retained_reason') and not empty_backend_read:
             observation['status'] = 'source-result-passed; legacy normalized DTO unavailable'
             return
-        if check == 'backend_type_strings' and any(row['code'] == 'BTS_SKIPPED' for row in
+        if check == 'backend_type_strings' and not empty_backend_read and any(row['code'] == 'BTS_SKIPPED' for row in
                 (self.calls[-1]['diagnostics'] if native_diagnostics is None else native_diagnostics)):
             scope = dict(include=[], exclude=[])
         compare_inputs(original, files, scope)

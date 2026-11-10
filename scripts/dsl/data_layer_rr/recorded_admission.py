@@ -35,6 +35,13 @@ SPECS = {
                'dotfile-suffix':(0,1),'test-scope':(0,1),'duplicate-files':(1,2),'walk-suffix':(1,2)},
         cliControl='check-flag',extraControls=['fact-line-type'],
         scope='Recorded native import and literal detection, scope, batched scans, discovery, fact conversion, CLI, reporter, production and persistent updates.'),
+    'rerail.backend-types-admission/v1': dict(check='backend_type_strings',public=144,original=148,
+        originalObservations=122,positive=41,production=59,parts=6,originalParts=4,productionParts=3,
+        prefix='',label='backend-types-finalec3',
+        pairs={**{'regex-'+str(i):(1,0) for i in range(8)},'skip-path':(0,1),'comment':(0,1),
+               'direct-dotfile':(0,1),'batch-read':(1,2)},
+        cliControl='backend-check-flag',extraControls=['backend-fact-type'],
+        scope='Recorded raw-text scanner, regex metadata, skip paths, batched discovery and CLI scans, fact DTOs, reporter, production and persistent updates.'),
 }
 
 
@@ -129,6 +136,9 @@ def validate(value):
         for phases in suite['cases'].values():
             require({p['phase']:p['outcome'] for p in phases}==dict(setup='passed',call='passed',teardown='passed'), 'Original assertion failed or skipped')
         validate_original_observations(owned,suite['detectorObservations'])
+        observed_tests={r['test'] for r in suite['detectorObservations']}
+        executed_tests={r['test'] for r in suite['calls'] if r['check']==check}
+        require(observed_tests <= executed_tests, 'Original native execution omitted')
         for call in suite['calls']:
             require(call['status']=='passed', 'Original native call failed'); execution(call)
 
@@ -192,7 +202,9 @@ def validate(value):
         a,b = row['original']['diagnostics'],row['disabled']['diagnostics']
         require(not equal(a,b), 'Disabled behavior went undetected')
         if row['name'] in spec['pairs']:
-            require((len(a),len(b))==spec['pairs'][row['name']], 'Behavior control failed for another reason')
+            selected=lambda rows: [r for r in rows if (row['name']!='batch-read' or r['code']=='BTS_READ')
+                                  and (row['name']!='skip-path' or r['code']!='BTS_SKIPPED')]
+            require((len(selected(a)),len(selected(b)))==spec['pairs'][row['name']], 'Behavior control failed for another reason')
         elif row['name']=='cli-rendering':
             require(any(r['code']=='TEXT_CLI_OUTPUT' for r in a) and not any(r['code']=='TEXT_CLI_OUTPUT' for r in b), 'CLI control failed for another reason')
         elif row['name']=='collector-order':
@@ -211,6 +223,13 @@ def validate(value):
         elif row['name']=='fact-line-type':
             def projected(rows):return json.loads(next(r['parameters']['value_json'] for r in rows if r['code']=='NI_VALUE'))
             require(projected(a) is None and projected(b)['line']==2.5, 'Fact line-type control failed for another reason')
+        elif row['name']=='backend-check-flag':
+            def statuses(rows):return [r['parameters']['value'] for r in rows if r['code']=='TEXT_CLI_EXIT']
+            require(statuses(a)==[0] and statuses(b)==[1], 'Backend CLI check flag control differs')
+        elif row['name']=='backend-fact-type':
+            def facts(rows):return json.loads(next(r['parameters']['value_json'] for r in rows if r['code']=='BTS_FACT'))
+            require(facts(a)['line'] is True and type(facts(b)['line']) is int and facts(b)['line']==1,
+                    'Backend fact type control differs')
         else:
             def stdout(rows): return ''.join(r['parameters']['stdout'] for r in sorted(
                 (r for r in rows if r['code']=='RCS_OUTPUT'),key=lambda r:(r['parameters']['phase'],r['parameters']['ordinal'])))
@@ -228,14 +247,21 @@ def pack(work,format):
     spec=SPECS[format]; prefix=spec['prefix']
     def source(path):
         text = path.read_text(); return dict(text=text,sha256=sha(text.encode()))
+    from assertion_shards import merge,merge_production
+    def original(mode):
+        if spec.get('originalParts'):
+            return merge([read_json(work/f'{prefix}original-{mode}-{i}.json') for i in range(spec['originalParts'])])
+        return read_json(work/f'{prefix}original-{mode}.json')
+    production=(merge_production([read_json(work/f'{prefix}production-{i}.json') for i in range(spec['productionParts'])])
+                if spec.get('productionParts') else read_json(work/f'{prefix}production.json'))
     value = dict(format=format, fullMigrationAcceptance=False,
         engineSource=read_json(ROOT/MANIFEST)['engineSource'], sources=dict(
             public=source(work/'source-final.json'), original=source(ROOT/'.rerail/rr-batch1-final93/source.json'),
             production=source(ROOT/'.rerail/rr-first-ten-production/source-locked.json'),
             supplied=source(ROOT/'.rerail/rr-supplied-facts-final957/expanded-source.json')),
         publicReports=[read_json(work/f'final-{mode}-{part}.json') for mode in sorted(MODES) for part in range(spec['parts'])],
-        originalSuites={mode:read_json(work/f'{prefix}original-{mode}.json') for mode in MODES},
-        production=read_json(work/f'{prefix}production.json'), updates=read_json(work/f'{prefix}updates.json'),
+        originalSuites={mode:original(mode) for mode in MODES},
+        production=production, updates=read_json(work/f'{prefix}updates.json'),
         supplied=read_json(work/f'{prefix}supplied-facts.json'), reporterControl=read_json(work/f'{prefix}reporter-control.json'),
         controls=read_json(work/f'{prefix}controls.json'), programs={}, harness={},
         remaining=['The other draft and absent translations still require acceptance.',
@@ -264,6 +290,9 @@ def pack(work,format):
         walk(row)
     text = Path(__file__).read_text()
     value['harness'][Path(__file__).relative_to(ROOT).as_posix()] = dict(text=text,sha256=sha(text.encode()))
+    if spec.get('originalParts') or spec.get('productionParts'):
+        path=Path(__file__).with_name('assertion_shards.py');text=path.read_text()
+        value['harness'][path.relative_to(ROOT).as_posix()]=dict(text=text,sha256=sha(text.encode()))
     value['summary'] = validate(value)
     return value
 

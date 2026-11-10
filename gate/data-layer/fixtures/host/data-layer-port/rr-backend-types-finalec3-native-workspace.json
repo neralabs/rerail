@@ -1,0 +1,2242 @@
+{
+  "format": "rerail.recorded-original-admission/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "mode": "workspace",
+  "exitCode": 0,
+  "engineSha256": "82179e5e6ef15dec415e7929d508e826a6dfebef2b1a8843547b668081ec7476",
+  "policySha256": {
+    "backend_type_strings": "ae1a2295d5d1e6a7b693d558fb3d5cf4120edd42ecba540cd66d104f02225042"
+  },
+  "cases": {
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_is_frozenset": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[mariadb]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[neo4j]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[conform/l2000/x.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[test_foo.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[doc.md]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_keeps_production_files[impl/common/grammar.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_backend_equality": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_class_name_lower": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_multiple_violations_same_line": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_unrelated_comparison_not_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_directory_recurses": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_module_exports_required_symbols": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_entries_are_strings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_nested_conform": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_clean_source": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_violation_file_field_set": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_is_callable": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_summary_lists_codes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_has_at_least_eight_entries": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_inequality_by_line": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_does_not_match_empty_extension": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_column_points_at_pattern_start": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_skips_hidden_directory_contents": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_check_mode_no_violations_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_defaults_to_api_and_impl": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_comparison_patterns_count": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_fields_accessible": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_yaml_substring": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_regular_prod_not_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_ignores_comment_lines": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_multiple_matches_per_line": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_assigns_bt005_for_class_name_lower": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_no_trailing_newline": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_explicit_py_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_returns_int": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_violation_summary_by_code": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[sqlite]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[mysql]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_comparison_patterns_are_compiled_regex": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[api/l1000/tests/test_x.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[conftest.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[README.md]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_dialect_name_equality": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_backend_membership": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_records_line_and_column": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_multiple_violations_different_lines": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_skipped_file_returns_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_deduplicates": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_members_are_lowercase": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_dataclass_shape": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_respects_absolute_test_path": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_indented_comment_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_empty_list": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_no_violations_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_exact_size_ten": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_includes_extension_markers": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_inequality_by_code": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_case_sensitive": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_multiple_codes_on_same_line": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_dedups_with_directory_and_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_output_groups_by_file_sorted": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_module_has_docstring": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_comparison_patterns_are_compiled": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_repr_contains_code": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_rst_substring": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_missing_file_returns_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_leading_whitespace_comment": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_assigns_bt002_for_equality": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_snippet_length_capped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_returns_list": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_ignores_non_py_files": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_explicit_path_with_violation_exit_code": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_no_violations_exit_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[postgres]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[doltdb]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_includes_conform_and_tests": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[impl/sqlite/tests/test_x.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[l1400_types/__init__.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_keeps_production_files[api/l1000/foo.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_dialect_name_membership": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_substring_in_class_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_snippet_is_stripped_and_truncated": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_url_scheme_not_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_read_error_returns_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_ignores_non_python_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_comparison_patterns_is_list": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_equality_by_value": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_foo_test_suffix": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_BT004_in_type_dunder_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_mixed_inputs": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_with_violations_default_returns_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_contains_all_alias_members": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_includes_enum_definition_path": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_matches_security_hyphen": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_flags_dialect_name_single_quotes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_crlf_line_endings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_help_exits_zero": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_output_shows_snippet_lines": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_all_lowercase": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_unique": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_mutable": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_security_prefix": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_returns_list": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_line_numbers_1_indexed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_assigns_bt001_for_in_tuple": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_snippet_stripped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_sorted": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_explicit_non_py_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_violation_output_includes_line_column": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_groups_violations_by_file_sorted": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[postgresql]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[mongodb]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_dataclass_fields": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[foo_test.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[config.yaml]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_keeps_production_files[impl/sqlite/connection.py]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_backend_type_equality": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_substring_in_type_call": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_comment_lines_are_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_plain_string_assignment_not_flagged": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_single_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_is_sorted": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_is_tuple_or_sequence": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_empty_path": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_empty_file_returns_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_violation_has_meaningful_message": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_missing_path_ignored": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_check_mode_with_violations_returns_one": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_comparison_patterns_at_least_eight_rules": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_inequality_by_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_matches_yml_extension": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_flags_class_name_lower_in_assign": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_leading_whitespace_comment_skipped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_unknown_flag_raises_system_exit": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_check_mode_prints_failed_count": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_no_empty_entries": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_all_nonempty_strings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_returns_bool": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_api_types_only": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_skip_propagates_to_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_column_values_1_indexed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_assigns_bt003_for_backend_type": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_empty_file": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_deduplicates_across_same_dir": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_handles_nested_dirs": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_violation_includes_snippet": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_help_exits_zero_minimal": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "collected": [
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_is_frozenset",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[sqlite]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[postgres]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[postgresql]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[mariadb]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[mysql]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[doltdb]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[mongodb]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_includes_major_backends[neo4j]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_comparison_patterns_are_compiled_regex",
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_includes_conform_and_tests",
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_dataclass_fields",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[conform/l2000/x.py]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[api/l1000/tests/test_x.py]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[impl/sqlite/tests/test_x.py]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[foo_test.py]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[test_foo.py]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[conftest.py]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[l1400_types/__init__.py]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[config.yaml]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[doc.md]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_skips_known_patterns[README.md]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_keeps_production_files[api/l1000/foo.py]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_keeps_production_files[impl/sqlite/connection.py]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_keeps_production_files[impl/common/grammar.py]",
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_dialect_name_equality",
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_dialect_name_membership",
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_backend_type_equality",
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_backend_equality",
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_backend_membership",
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_substring_in_class_name",
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_substring_in_type_call",
+    "scripts/tests/test_lint_backend_type_strings.py::test_flags_class_name_lower",
+    "scripts/tests/test_lint_backend_type_strings.py::test_records_line_and_column",
+    "scripts/tests/test_lint_backend_type_strings.py::test_snippet_is_stripped_and_truncated",
+    "scripts/tests/test_lint_backend_type_strings.py::test_comment_lines_are_skipped",
+    "scripts/tests/test_lint_backend_type_strings.py::test_multiple_violations_same_line",
+    "scripts/tests/test_lint_backend_type_strings.py::test_multiple_violations_different_lines",
+    "scripts/tests/test_lint_backend_type_strings.py::test_url_scheme_not_flagged",
+    "scripts/tests/test_lint_backend_type_strings.py::test_plain_string_assignment_not_flagged",
+    "scripts/tests/test_lint_backend_type_strings.py::test_unrelated_comparison_not_flagged",
+    "scripts/tests/test_lint_backend_type_strings.py::test_skipped_file_returns_empty",
+    "scripts/tests/test_lint_backend_type_strings.py::test_read_error_returns_empty",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_single_file",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_directory_recurses",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_deduplicates",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_ignores_non_python_file",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_is_sorted",
+    "scripts/tests/test_lint_backend_type_strings.py::test_module_exports_required_symbols",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_members_are_lowercase",
+    "scripts/tests/test_lint_backend_type_strings.py::test_comparison_patterns_is_list",
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_is_tuple_or_sequence",
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_entries_are_strings",
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_dataclass_shape",
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_equality_by_value",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_empty_path",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_nested_conform",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_respects_absolute_test_path",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_foo_test_suffix",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_empty_file_returns_empty",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_clean_source",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_indented_comment_skipped",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_BT004_in_type_dunder_name",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_violation_has_meaningful_message",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_violation_file_field_set",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_empty_list",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_mixed_inputs",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_missing_path_ignored",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_is_callable",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_no_violations_returns_zero",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_with_violations_default_returns_zero",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_check_mode_with_violations_returns_one",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_summary_lists_codes",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_exact_size_ten",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_contains_all_alias_members",
+    "scripts/tests/test_lint_backend_type_strings.py::test_comparison_patterns_at_least_eight_rules",
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_has_at_least_eight_entries",
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_includes_extension_markers",
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_includes_enum_definition_path",
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_inequality_by_file",
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_inequality_by_line",
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_inequality_by_code",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_matches_security_hyphen",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_matches_yml_extension",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_does_not_match_empty_extension",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_case_sensitive",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_flags_dialect_name_single_quotes",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_flags_class_name_lower_in_assign",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_column_points_at_pattern_start",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_multiple_codes_on_same_line",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_crlf_line_endings",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_leading_whitespace_comment_skipped",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_skips_hidden_directory_contents",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_dedups_with_directory_and_file",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_help_exits_zero",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_unknown_flag_raises_system_exit",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_check_mode_no_violations_returns_zero",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_output_groups_by_file_sorted",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_output_shows_snippet_lines",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_check_mode_prints_failed_count",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_defaults_to_api_and_impl",
+    "scripts/tests/test_lint_backend_type_strings.py::test_module_has_docstring",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_all_lowercase",
+    "scripts/tests/test_lint_backend_type_strings.py::test_backend_strings_no_empty_entries",
+    "scripts/tests/test_lint_backend_type_strings.py::test_comparison_patterns_count",
+    "scripts/tests/test_lint_backend_type_strings.py::test_comparison_patterns_are_compiled",
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_unique",
+    "scripts/tests/test_lint_backend_type_strings.py::test_skip_patterns_all_nonempty_strings",
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_fields_accessible",
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_repr_contains_code",
+    "scripts/tests/test_lint_backend_type_strings.py::test_violation_mutable",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_returns_bool",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_yaml_substring",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_rst_substring",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_security_prefix",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_api_types_only",
+    "scripts/tests/test_lint_backend_type_strings.py::test_should_skip_file_regular_prod_not_skipped",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_missing_file_returns_empty",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_returns_list",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_skip_propagates_to_empty",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_ignores_comment_lines",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_leading_whitespace_comment",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_line_numbers_1_indexed",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_column_values_1_indexed",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_multiple_matches_per_line",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_assigns_bt002_for_equality",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_assigns_bt001_for_in_tuple",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_assigns_bt003_for_backend_type",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_assigns_bt005_for_class_name_lower",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_snippet_length_capped",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_snippet_stripped",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_empty_file",
+    "scripts/tests/test_lint_backend_type_strings.py::test_check_file_no_trailing_newline",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_returns_list",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_sorted",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_deduplicates_across_same_dir",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_explicit_py_file",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_ignores_non_py_files",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_explicit_non_py_file",
+    "scripts/tests/test_lint_backend_type_strings.py::test_find_python_files_handles_nested_dirs",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_returns_int",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_explicit_path_with_violation_exit_code",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_violation_output_includes_line_column",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_violation_includes_snippet",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_violation_summary_by_code",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_no_violations_exit_zero",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_groups_violations_by_file_sorted",
+    "scripts/tests/test_lint_backend_type_strings.py::test_main_help_exits_zero_minimal"
+  ],
+  "semanticFallbacks": [],
+  "missingResults": [],
+  "retainedCaseIds": [],
+  "checkpoint": {
+    "path": "gate/data-layer/fixtures/host/data-layer-port/rr-backend-types-complete-finalec3.json.gz",
+    "sha256": "9dbecc5cf8ee0fbb2b810a9e811be395832dbdd17eb5d0a7f19f10cf3bc66b1a"
+  }
+}
