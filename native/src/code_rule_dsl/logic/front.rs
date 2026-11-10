@@ -364,6 +364,9 @@ pub(in crate::code_rule_dsl) struct Program {
     /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
     /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
     pub(in crate::code_rule_dsl) qualifiers: BTreeMap<String, BTreeSet<String>>,
+    /// The columns declared `tape` (decision 0103 §3), by relation: stored as `sym`, checked before lowering
+    /// (`rr::tape_type`) and printed back as `tape`.
+    pub(in crate::code_rule_dsl) tapes: BTreeMap<String, BTreeSet<usize>>,
 }
 
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.

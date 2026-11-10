@@ -1,8 +1,8 @@
 # 0103: A cache is two rules
 
-Status: accepted (2026-11-10). This is the only form a cache may take. Cached facts are just facts (§2). The
-engine's part is built in a session; without a session and in the file-local part it is not built yet (§3). The caches made before this
-decision are listed in §8, each with its two rules; a test holds that list, and the list may only shrink.
+Status: accepted (2026-11-10). This is the only form a cache may take. A cache's facts are just facts: nothing in
+the engine treats them differently (§2). The caches made before this decision are listed in §8, each with its two
+rules and the column types it needs; a test holds that list, and the list may only shrink.
 
 ## Intro
 
@@ -10,122 +10,116 @@ decision are listed in §8, each with its two rules; a test holds that list, and
 such result was kept by a mechanism of its own: about fifty tables in the stores, each with its own key, its own
 test of whether it is still right, and its own code that writes it. Each had to be checked on its own, and each
 went wrong on its own. For example, a phase that read nothing was taken for a phase with no record, so its result
-was dropped and made again on every run (fixed in 16c7fde1d). A second form (an earlier 0102) recorded every read
-with its digest in tables of its own; it was one more mechanism beside the facts, and it was undone (37f8b67d8).
+was dropped and made again on every run (fixed in 16c7fde1d). Three later attempts each added one more mechanism
+beside the facts: a table of reads and digests, a special binding of kept rows, and a table of a cache's rows read
+by key through a hook. All three were removed.
 
-**What changes.** A cache is written in the program's `.rr` file, as two rules:
+**What changes.** A cache is written in the program's `.rr` file as two ordinary rules:
 
-- **the key rule** derives the key from the input facts;
+- **the key rule** derives the key from the input facts, and puts a **version tag** in its head;
 - **the output rule** derives the cached result from the key.
 
-Both are ordinary relations. The engine keeps them as it keeps every relation, and runs the output rule only for
-keys that are new. Nothing else may be a cache: no table of a cache's own, no digest compared in Rust, no map in
-memory that outlives a run.
+The engine evaluates, stores, holds in memory, writes back and maintains both exactly as it does every other
+relation. To throw a cache away, the author bumps its version tag: every key row changes, so every output row is
+derived again. `.cache C by K` declares which relation is the cache and which its key; only the lint and
+retention read it.
 
 ## 1. The form
 
 ```text
-// The parsed form of each annotation text, kept while its text is kept.
+// The parsed form of each annotation text.
 .cache ann_tree by ann_key
 
-// The key rule: from the input facts, every value the result depends on (here, the text alone).
-ann_key(s) :- struct__vann(_, _, s).
+// The key rule: every value the result depends on (here, the text), and the version tag "v1".
+.decl ann_key(s: symbol, v: symbol)
+ann_key(s, "v1") :- struct__vann(_, _, s).
 
 // The output rule: from the key, by the expensive step (here, the annotation parser).
-ann_tree(s, t) :- ann_key(s), parse_of(s, "annotation", t).
+// The version stays visible in the output, so a row says which version made it.
+.decl ann_tree(s: symbol, v: symbol, t: tape)
+ann_tree(s, v, t) :- ann_key(s, v), parse_of(s, "annotation", t).
 ```
 
-`.cache C by K` names the cache `C` and its key `K`. The program is refused unless:
+The lint (`front::caches`) refuses the program unless:
 
-1. every rule whose head is `C` reads `K` once, as a positive atom;
-2. each argument of that `K` atom is a variable, and the head of the rule has it; its place in the head is
-   the same in every rule of `C`. Those places are `C`'s *key columns*;
-3. `C`'s stratum holds `C` alone, and no rule of `K`'s stratum reads `C`.
+1. `C` and `K` are declared, and differ;
+2. every rule whose head is `K` has a constant in its head: the version tag;
+3. every rule whose head is `C` reads `K` as a positive atom.
 
-The key rule can be any rules: joins, negations, aggregates. The output rule's other literals can be anything the
-engine runs, such as a native relation made on demand (`parse_of`), a functor, or a join over the documents' facts.
+Nothing else is asked of the form. The key rule can be any rules; the output rule can read anything the engine
+runs, such as a native relation made on demand (`parse_of`), a functor or a join over the documents' facts.
 
 ## 2. What the engine does
 
-**Cached facts are just facts.** `K` and `C` are relations. They are stored, held in memory and written back the
-same way as every other fact: the kept strata in the cross-file part, the per-file memo's rows in the file-local
-part, the resident rows in a session, all written by the store's one writer (0102). There is no table, store,
-hook, lookup or read of a cache's own. The cache is only a rewrite of `C`'s rules into ordinary rules:
+Nothing of its own. `K` and `C` are relations:
 
-- **The key is made again.** Each run derives `K` from its inputs. Against `K`'s previous rows (kept as `K` is
-  kept), the keys new in this run are `K__plus` and the keys gone are `K__minus`.
-- **The output follows its key.**
-  - The rows of `C` whose key columns hold a gone key go. The output rule does not run for them.
-  - The output rule runs for the new keys only.
-  - For a key in both runs, `C` keeps its rows as they were. The output rule does not run for it, and nothing it
-    reads besides `K` is looked at.
-- **Readers.** `C`'s change goes on to the strata that read `C`, as any relation's does. A run in which `K` did
-  not change has no change of `C`.
+- they are evaluated in their strata like any relation;
+- they are kept where every relation is kept: the kept strata of the cross-file part, the per-file memo of the
+  file-local part, a session's resident rows, all written by the store's one writer (0102);
+- in a session they are maintained by delta like any relation (0077, 0090): a row of `C` goes when what derived
+  it goes, and is derived when its derivation is new.
 
-Written as the rules a session's maintenance already uses (0077 §3), with `C__old` being `C`'s previous rows as
-they are kept:
+No evaluation, retention cut, support counting or maintenance rewrite asks whether a relation is a cache.
+`corpus::cache_architecture` holds that: only `front::caches` and the front that calls it may know.
 
-```text
-C__del(c…) :- K__minus(k…), C__old(c…).       // a gone key's rows
-C__ins(c…) :- K__plus(k…), <the output rule's other literals>.
-C(c…)      :- C__old(c…), !C__del(c…).
-C(c…)      :- C__ins(c…).
-```
+**The version tag.** The key rule's version is a column of `K`, and the output rule carries it into `C`. Bumping
+it (`"v1"` to `"v2"`) changes every row of `K`; every row of `C` is then derived again, as it would be for any
+changed input. This is how a cache whose step changed outside the facts (a new parser, a new compiler) is thrown
+away: by an edit of the rule, not by a mechanism.
 
-(`k…` are `C`'s key columns among `c…`.) A row of `C` has one key, so a deleted row is never derived again: there
-is no rederive step.
+## 3. Column types
 
-## 3. Where it is built
+A cache's key and output need column types that say what they hold, so that the engine can check a rule and know
+which columns may be kept and exported.
 
-- **In a session:** built. `maintain::rewrite` writes the rules above. A cache whose key has no delta stays an
-  input of the maintained program, kept as it is: nothing runs and nothing is copied.
-- **Without a session, and in the file-local part:** not built yet. The cache runs as its plain rules: its
-  answers are right, but the output rule runs for every key. What is needed is the same rules, with `C__old` read
-  from where `C` is already kept: the kept strata (a new process maintaining from the kept rows, note t32 stage 4),
-  and the file's previous rows in the per-file memo. No new storage.
-- **What was removed.** A first attempt kept a cache's rows in a table of their own (`cache_rows`), read by key
-  through a hook in `plan::run`. That is a cache mechanism beside the facts, which this decision does not allow. It
-  is removed, and `corpus::cache_architecture` refuses it.
+| Type | Holds | Stored as | Exportable | Status |
+|---|---|---|---|---|
+| `symbol`, `number`, `float` | text, integers, decimals | atom or text, integer, the float's key | yes | exist |
+| `node` | a node of a document's tree | integer | no: renumbered on an edit | exists |
+| `tape` | a parsed text's tape, by its content | as a symbol (its content key) | yes | **added** |
+| `digest` | a 32-byte content hash | to be decided | yes | when its cache moves |
+| `blob` | an opaque payload: a compiled plan, a matcher, a device model | to be decided | yes | when its cache moves |
 
-## 4. The key holds every value the result depends on
+A `tape` column holds what `@parse`, `parse_of`, `sub_tape` and `tape_of` give (`core.rr` declares them so). The
+front refuses a variable that stands in a tape column and in a symbol, number or node column
+(`rr::tape_type`). A tape's node rows are its document's facts, kept as every document's are.
 
-The engine trusts the key. If the output rule reads a fact the key does not name, a change of that fact is not
-seen: the key's row is the same, so the kept rows stand. The test
-`a_cache_runs_its_output_rule_only_for_new_keys` shows it: a fact the key leaves out changes, and the result does
-not.
+A node within a tape needs no type of its own: its place in the tape is fixed by the tape's content, so it can be
+kept as `(tape, number)`.
 
-That is the difference between a cache and a derived relation. A derived relation is kept up to date from the
-changes of everything it reads (maintenance, 0077 and 0090). A cache is kept up to date from its key alone. That
-is what makes it cheap: one parse per new text, however many facts the parse reads. It is also why the author
-must put into the key every value the result depends on: the text and the grammar, a document's path and its
-content digest, the program's digest when the result depends on the program.
+## 4. The key and the facts
+
+Because a cache's facts are just facts, a change of anything the output rule reads is seen, as for any derived
+relation. The key does not hide facts from the engine. Its job is to say, in the program, what the result is a
+function of, and to carry the version tag. What the cache saves is the facts' own saving: a key row that stays
+keeps the rows derived from it, and the expensive step runs only for a derivation that is new.
 
 ## 5. What is not a cache
 
 - **Rules over facts.** Their results are relations, kept and brought up to date from the changes of what they
-  read. A phase's exports (0083) are such relations: they are kept, and the next phase reads their change.
-  They need no key.
-- **What a session holds in memory.** It is the resident copy of relations and caches that the store also holds.
-  A value held in memory and not in the store is not allowed past the run that made it.
+  read. A phase's exports (0083) are such relations. They need no `.cache`.
+- **What a session holds in memory.** It is the resident copy of relations that the store also holds. A value held
+  in memory and not in the store is not allowed past the run that made it.
 - **Values within one run.** A map that a run builds and drops when it ends is a data structure, not a cache.
 
 ## 6. What is built
 
-- **The form is read and checked.** `.cache C by K` is read like `.phase` (`front::Program::settings`), and
-  `front::caches` checks the form of §1. A broken form refuses the program, and the message names the rule.
-- **In a session.** `maintain::rewrite` maintains a cache by its key (the rules of §2), even when the output rule
-  reads a relation made natively, a `nearest` literal or an aggregate: such a stratum would otherwise be derived
-  again.
-- **Tests.** `corpus::cache_tests`: in a session, the output rule runs only for new keys, a gone key's rows go, a
-  fact the key leaves out is not seen. The same tests without a session and in the file-local part are ignored
-  until §3's missing part is built. `front::caches::tests`: a broken form is refused.
-- **The guard.** `corpus::cache_architecture` fails on a cache's own table, store or lookup API, and on any file
-  outside the rule rewrites that knows a relation is a cache.
+- **The lint.** `.cache C by K` is read like `.phase` (`front::Program::settings`), and `front::caches` checks §1.
+  A refused program's message names the rule.
+- **The `tape` type.** `core.rr` declares the tape columns; `rr::tape_type` checks them before lowering; the engine
+  stores a tape as it always stored one.
+- **Tests.** `corpus::cache_tests`, without a session and in a session: the cache's rows are what a run with nothing
+  kept derives, after an edit, a new key and a gone key; a version bump derives every row again, with the new
+  version. `front::caches::tests`: a key rule without a version tag, and an output rule that does not read its
+  key, are refused. `rr::tape_type::tests`: a tape in a symbol or number column is refused.
+- **The guard.** `corpus::cache_architecture` fails on a cache's own table, store, hook or lookup, and on any file
+  but the lint that knows a relation is a cache.
 
 ## 7. What is not allowed
 
 - A table in a store that holds a cache's rows or keys, other than the relations' own storage;
 - a test of freshness in Rust: digests compared, a record of what was read, a "still valid" call;
+- a rewrite, cut or count that treats a cache's rules apart from other rules;
 - a map in memory that is kept from one run to the next and is not the resident copy of a stored relation.
 
 `corpus::cache_architecture` holds the tables and calls made before this decision. A table or call not on its
@@ -133,8 +127,9 @@ list fails the test. An entry is removed when its cache moves, and an entry may 
 
 ## 8. The caches made before this decision
 
-Each is listed with its two rules. Where the expensive step is a whole program (the file-local part, a phase),
-it is written `@run(program, …)`: the step is that program's own rules, run for the key.
+Each is listed with its two rules (the version tag left out) and the column types it needs. Where the expensive
+step is a whole program (the file-local part, a phase), it is written `@run(program, …)`: the step is that
+program's own rules, run for the key.
 
 | Cache (store tables) | Key rule | Output rule | Owner |
 |---|---|---|---|
@@ -148,6 +143,23 @@ it is written `@run(program, …)`: the step is that program's own rules, run fo
 | Checks and completed trees (`local_check_results`, `completed_*`, `tree_result_segments`) | `check_key(d, h, c) :- local_key(d, h, _), check(c)` | the check's verdicts for `d` | engine |
 | The derivation graph (`name_bindings`, `derivations`, `derivation_inputs`) | not a cache: what it records is the keys above | — | engine |
 | The whole-run cutoff (`run_record`) | not a cache: a run with no change of any input has no delta (§2) | — | engine |
+
+
+The types each needs, from its tables' columns:
+
+| Cache | Key columns | Output columns |
+|---|---|---|
+| Tapes and their documents | the source's `digest`, grammar `symbol`, grammar version | `tape`, the node rows |
+| Search indexes | `tape`, index version | terms, kinds, counts: `number` |
+| Text matchers | language, pattern: `symbol` | the compiled matcher: `blob` |
+| Compiled plans, device models | the plan's `digest`, compiler version | the program or archive: `blob` |
+| Statistics, plan feedback | relation and column, or plan `digest` and backend | counts `number`, selectivity `float` |
+| Checks, completed trees | the source's or tree's `digest`, the catalogue's `digest` | findings: ordinary columns |
+| What each file is now | path `symbol` | device, inode, size, mtime `number`, content `digest` |
+| Run constants | the observations they read | ordinary columns |
+
+The per-file memo, the cross part's memo, a phase's per-document rows, the run record and the derivation graph
+need no type: once caches are plain rules, they are the kept relations themselves.
 
 The order: this branch's own first (a phase's per-document rows, its run record), then the rest by their owners.
 Each move deletes the table and its freshness test, writes the two rules into the program that uses the result,
@@ -167,12 +179,12 @@ and removes the entry from `corpus::cache_architecture`.
   differently.
   - **Agrees.** Same as above.
 - **Design index, S134:** an incremental load must return its dead rows, or it fills the disk.
-  - **Agrees.** A gone key's rows are removed (§2), from what was kept, with no run of the output rule.
+  - **Agrees.** A gone key's rows go as any relation's dead rows go, by maintenance (§2).
 - **Design index, §18, finding F3:** the earlier linter's fact store had "all-or-nothing cache invalidation".
-  - **Departs.** The key is per row, so one changed key invalidates one key's rows.
+  - **Departs.** A cache's rows are maintained per row like any relation's; a version bump re-derives one cache, not
+    the store.
 - **Decisions.**
-  - 0077 §3 and 0090: maintenance by delta. A cache is maintained by the same rules, with its key as the only
-    position that can change (§2).
+  - 0077 §3 and 0090: maintenance by delta. A cache is maintained by the same rules as every relation (§2).
   - 0083 and 0092: a fact's key is its definition's content, and only the leaves (definition digests) are stored.
     The key rules of §8 are those leaves, written as rules.
   - 0102 (write-back): the one writer carries a cache's rows as it carries any relation's. No cache writes rows

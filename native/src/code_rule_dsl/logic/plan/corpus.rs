@@ -1021,6 +1021,9 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         for (rel, words) in prog.qualifiers {
             all.qualifiers.entry(rename(&rel)).or_default().extend(words);
         }
+        for (rel, cols) in prog.tapes {
+            all.tapes.entry(rename(&rel)).or_default().extend(cols);
+        }
         for (rel, mut native) in prog.natives {
             native.rename_reads(rename);
             all.natives.insert(rename(&rel), native);
@@ -4204,7 +4207,7 @@ fn run_observed(
                             given.insert(rel.clone(), (atoms_source(&store, decl.len(), plus.iter())?, atoms_source(&store, decl.len(), minus.iter())?));
                         }
                     }
-                    let mut cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
                     let s = span("bind unchanged inputs");
                     let same = cell.as_ref().map(|kept| kept.same_inputs(ckey, &digests)).unwrap_or_default();
@@ -4299,8 +4302,6 @@ fn run_observed(
                         Some(delta)
                     };
                     let mut maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;
-                    // A cache whose key came out as it was is clean, kept as it was (decision 0103).
-                    cut.clean.extend(maintained.kept_as_is.iter().cloned());
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_entries} inputs' deltas read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
                         None => format!("no kept documents: {} inputs' deltas found by hashing their documents", hashed.len()),

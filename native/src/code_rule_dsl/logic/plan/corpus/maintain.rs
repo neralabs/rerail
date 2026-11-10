@@ -72,8 +72,6 @@ pub(in crate::code_rule_dsl) struct Maintained {
     pub(in crate::code_rule_dsl) recursive: usize,
     /// Each stratum derived again, by one of its relations, and why.
     pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
-    /// Caches whose key has the rows it had (decision 0103): kept as they were, clean, by the caller's cut.
-    pub(in crate::code_rule_dsl) kept_as_is: Vec<String>,
 }
 
 fn named(rel: &str, suffix: &str) -> String {
@@ -187,7 +185,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let why = if kept.is_none() { "nothing kept" } else { "the program has gates" };
     let Some(kept) = kept.filter(|_| cross.program.gates.is_empty()) else {
         let again = dirty.iter().map(|scc| (scc.iter().next().cloned().unwrap_or_default(), why)).collect();
-        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again, kept_as_is: Vec::new() });
+        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again });
     };
     let old = |rel: &str| kept.has_old(rel);
     let mut changed: BTreeSet<String> = cut.changed.iter().cloned().collect();
@@ -203,54 +201,10 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut exact_rels: BTreeSet<String> = BTreeSet::new();
     // Relations of strata maintained by levels: their rows gone are `h__gone`, not `h__del`.
     let mut gone_of: BTreeSet<String> = BTreeSet::new();
-    // A cache (decision 0103) is maintained by its key alone: the rows of a gone key go, the output rule runs for the
-    // new keys, and nothing else it reads is looked at.
-    let caches = front::caches::caches_here(&cross.program).unwrap_or_default();
-    let mut kept_as_is: Vec<String> = Vec::new();
     for scc in dirty {
         let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
         let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
         let mine: Vec<&Rule> = named_rules.iter().collect();
-        if let Some(cache) = caches.iter().find(|c| scc.len() == 1 && scc.contains(&c.out))
-            && old(&cache.out)
-            && (!changed.contains(&cache.key) || maint.contains(&cache.key) || old(&cache.key))
-        {
-            let (c, k) = (&cache.out, &cache.key);
-            let v = row(part.program.decls[c].len());
-            let head = |rel: String, args: Vec<Term>| Atom { rel, args, neg: false, gated: false };
-            maintained += 1;
-            if !changed.contains(k) {
-                // Its key has the rows it had: so has the cache. It is kept as it was, read in place, not copied, and
-                // its readers see no change of it.
-                if !part.program.inputs.contains(c) {
-                    part.program.inputs.push(c.clone());
-                }
-                kept_as_is.push(c.clone());
-                continue;
-            }
-            olds.insert(c.clone());
-            deltas.insert(k.clone());
-            if !maint.contains(k) {
-                olds.insert(k.clone());
-            }
-            let key_of_c: Vec<Term> = cache.cols.iter().map(|&p| v[p].clone()).collect();
-            rules.push(Rule { head: head(named(c, "del"), v.clone()), body: vec![atom(named(k, "minus"), key_of_c, false), atom(named(c, "old"), v.clone(), false)] });
-            for rule in &mine {
-                let body = rule.body.iter().map(|l| match l {
-                    Literal::Atom(a) if &a.rel == k => atom(named(k, "plus"), a.args.clone(), false),
-                    other => other.clone(),
-                }).collect();
-                rules.push(Rule { head: Atom { rel: named(c, "ins"), ..rule.head.clone() }, body });
-            }
-            rules.push(Rule { head: head(c.clone(), v.clone()), body: vec![atom(named(c, "old"), v.clone(), false), atom(named(c, "del"), v.clone(), true)] });
-            rules.push(Rule { head: head(c.clone(), v.clone()), body: vec![atom(named(c, "ins"), v, false)] });
-            fresh.push((c.clone(), named(c, "del")));
-            fresh.push((c.clone(), named(c, "ins")));
-            maint.insert(c.clone());
-            exact_rels.insert(c.clone());
-            changed.insert(c.clone());
-            continue;
-        }
         // `RERAIL_CROSS_MAINTAIN_ONLY`: maintain only the strata holding one of these relations (comma-separated; empty:
         // none), to find a stratum whose maintenance departs from deriving it again.
         let only = std::env::var("RERAIL_CROSS_MAINTAIN_ONLY").ok().map(|v| v.split(',').filter(|x| !x.is_empty()).map(str::to_owned).collect::<BTreeSet<String>>());
@@ -512,7 +466,5 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
     }
     part.program.rules = rules;
-    // The run writes a cache's new keys to the store (decision 0103), as a run without a session does.
-    front::caches::mark(&mut part.program, &caches);
-    Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again, kept_as_is })
+    Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again })
 }

@@ -16,6 +16,7 @@ mod lower;
 mod print;
 mod syntax;
 pub(in crate::code_rule_dsl) mod tape;
+mod tape_type;
 mod translate;
 
 #[cfg(test)]
