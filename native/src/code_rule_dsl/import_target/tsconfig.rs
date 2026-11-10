@@ -105,7 +105,9 @@ fn read(view: &View, file: &str, depth: usize) -> Option<Entries> {
 
 /// get-tsconfig's `resolveExtendsPath`: a relative or absolute path (`.json` appended where it
 /// names no file), or a package's configuration in a `node_modules` folder at or above
-/// `directory` (its `tsconfig` field, or the subpath it names, else its `tsconfig.json`).
+/// `directory` (its `tsconfig` field, or the subpath it names, else its `tsconfig.json`). An
+/// absolute path is one `path.isAbsolute` reads as one where Rerail runs: on Windows a drive or
+/// UNC path too (`path::platform_absolute`).
 fn extends_path(view: &View, extends: &str, directory: &str) -> Option<String> {
     let mut target = if extends == ".." {
         "../tsconfig.json".to_owned()
@@ -114,6 +116,8 @@ fn extends_path(view: &View, extends: &str, directory: &str) -> Option<String> {
     };
     if target.starts_with('.') {
         target = path::resolve(directory, &target);
+    } else if let Some(absolute) = path::platform_absolute(&target) {
+        target = absolute;
     }
     if target.starts_with('/') {
         if view.is_file(&target) {

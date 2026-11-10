@@ -7,7 +7,7 @@ use super::json::Json as Parsed;
 use super::path;
 use parking_lot::Mutex;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Component, Path, PathBuf, Prefix};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 /// A file a resolution reads the text of is read only up to this size; a larger one is absent.
@@ -21,32 +21,22 @@ const VIRTUAL_BASE: &str = "/workspace";
 /// A view's caches are dropped whole beyond this many entries.
 const MAX_CACHED: usize = 200_000;
 
-/// The absolute path a root on disk is read at (`View::base`): its names joined by `/` below a
-/// `/`, where a Windows root's drive, or server and share, is the first name (`C:\repo` and its
-/// verbatim form `\\?\C:\repo` are `/C:/repo`, `\\server\share\repo` is `/server/share/repo`).
-/// `None` where `root` is no root: a path the platform does not read as absolute, the rule
-/// `set_root` holds a root to, or `/` itself, which leaves no folder name to read files below.
+/// The absolute path a root on disk is read at (`View::base`): a `/` root's own path, and a
+/// Windows root's in the same form (`path::windows`: `C:\repo` and its verbatim form
+/// `\\?\C:\repo` are `/C:/repo`, `\\server\share\repo` is `/server/share/repo`), the form a
+/// specifier naming a file below it takes too. `None` where `root` is no root: a path the
+/// platform does not read as absolute, the rule `set_root` holds a root to, or `/` itself, which
+/// leaves no folder name to read files below.
 fn base_of(root: &Path) -> Option<String> {
     if !root.is_absolute() {
         return None;
     }
-    let mut names = Vec::new();
-    for component in root.components() {
-        match component {
-            Component::Prefix(prefix) => names.push(match prefix.kind() {
-                Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => {
-                    format!("{}:", char::from(drive))
-                }
-                Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
-                    format!("{}/{}", server.to_str()?, share.to_str()?)
-                }
-                Prefix::Verbatim(name) | Prefix::DeviceNS(name) => name.to_str()?.to_owned(),
-            }),
-            Component::RootDir => {}
-            component => names.push(component.as_os_str().to_str()?.to_owned()),
-        }
-    }
-    let base = path::normalize(&format!("/{}", names.join("/")));
+    let root = root.to_str()?;
+    let base = if root.starts_with('/') {
+        path::resolve("/", root)
+    } else {
+        path::windows(root)?
+    };
     (base != "/").then_some(base)
 }
 

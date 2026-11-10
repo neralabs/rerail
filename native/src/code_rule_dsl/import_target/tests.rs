@@ -321,6 +321,7 @@ fn a_windows_root_is_read_at_a_slash_separated_path() {
     for (root, base) in [
         (r"C:\Users\me\repo\", "/C:/Users/me/repo"),
         ("C:/Users/me/repo", "/C:/Users/me/repo"),
+        (r"c:\Users\me\repo", "/C:/Users/me/repo"),
         (r"\\?\C:\Users\me\repo", "/C:/Users/me/repo"),
         (r"\\server\share\repo", "/server/share/repo"),
         (r"\\?\UNC\server\share\repo", "/server/share/repo"),
@@ -370,6 +371,37 @@ fn a_windows_root_resolves_the_files_on_disk_below_it() {
     }
 }
 
+/// On Windows a specifier written as a Windows absolute path names the file there, as
+/// enhanced-resolve reads one: a drive path with either separator or letter case, and a device
+/// path.
+#[cfg(windows)]
+#[test]
+fn windows_absolute_specifiers_name_the_files_on_disk() {
+    let directory = TempDir::new("windows-specifiers");
+    directory.write("b.mjs", "");
+    let drive = directory.0.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+    let view = on_disk(Path::new(drive));
+    let lower = format!("{}{}", drive[..1].to_ascii_lowercase(), &drive[1..]);
+    for specifier in [
+        format!(r"{drive}\b.mjs"),
+        format!("{}/b.mjs", drive.replace('\\', "/")),
+        format!(r"{lower}\b.mjs"),
+        format!(r"\\?\{drive}\b.mjs"),
+    ] {
+        let found = target(&view, "a.mjs", &specifier, Style::Import);
+        assert_eq!(
+            (found.file_path.as_deref(), found.error.as_deref()),
+            (Some(view.absolute("b.mjs").as_str()), None),
+            "{specifier}"
+        );
+    }
+    let missing = format!(r"{drive}\missing.mjs");
+    assert_eq!(
+        outcome(&view, "a.mjs", &missing, Style::Import),
+        (false, true)
+    );
+}
+
 /// On Windows a relative target never reads a file outside the root, through a `\..` or a drive
 /// in a name, which Windows reads as a separator and a path of its own.
 #[cfg(windows)]
@@ -387,6 +419,40 @@ fn a_relative_target_never_leaves_a_windows_root() {
     ]
     .map(|specifier| outcome(&view, "a.mjs", &specifier, Style::Import));
     assert_eq!(outcomes, [(true, true), (true, true)]);
+}
+
+/// On Windows a tsconfig `extends` and a `paths` target written as a Windows absolute path name
+/// the file there, as get-tsconfig's `path.isAbsolute` and eslint-plugin-n's `path.resolve` read
+/// one.
+#[cfg(windows)]
+#[test]
+fn windows_absolute_tsconfig_paths_name_the_files_on_disk() {
+    let directory = TempDir::new("windows-tsconfig");
+    let drive = directory.0.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+    let json = |path: String| path.replace('\\', r"\\");
+    let tsconfig = format!(
+        r#"{{ "extends": "{}", "compilerOptions": {{ "paths": {{ "@c": ["{}"] }} }} }}"#,
+        json(format!(r"{drive}\base")),
+        json(format!(r"{drive}\lib\c.ts")),
+    );
+    for (path, text) in [
+        ("lib/c.ts", ""),
+        (
+            "base.json",
+            r#"{ "compilerOptions": { "allowImportingTsExtensions": true } }"#,
+        ),
+        ("tsconfig.json", tsconfig.as_str()),
+    ] {
+        directory.write(path, text);
+    }
+    let view = on_disk(Path::new(drive));
+    // The `paths` target resolves; the `extends` base is read, so its allowImportingTsExtensions
+    // leaves `.js` naming no `.ts` file.
+    assert_eq!(outcome(&view, "x.ts", "@c", Style::Import), (true, false));
+    assert_eq!(
+        outcome(&view, "x.ts", "./lib/c.js", Style::Import),
+        (true, true)
+    );
 }
 
 #[test]
