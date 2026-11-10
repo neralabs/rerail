@@ -10211,3 +10211,10 @@ All 215 tooling tests pass. Each of the ten production-root comparisons and all 
 A broader production shard reached the 115-second cap; bounded single-case root shards completed successfully.
 Full first-ten original, production, and persistent acceptance remains attributed to `93cadec37` until its complete cohort is refreshed.
 The earlier test results do not certify those unrefreshed contracts on the new engine.
+# First-ten supplied-fact reporter baseline, 2026-11-09
+
+Recorded 124 reporter cases from the pinned Python plugins, including 62 finding-positive cases and one expected model-validation error.
+These cases pass arbitrary caller-supplied fact values directly to reporters. They cover defaults, types, path spelling, duplicates, and ordering.
+The source receipt is `rr-first-ten-supplied-facts-source.json.gz`. It certifies source observations only; native parity remains open.
+The fetched Final rerail shape tip is `d024fa208`, already merged into this worktree. No additional engine merge is needed at this checkpoint.
+
