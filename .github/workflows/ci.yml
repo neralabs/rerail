@@ -47,8 +47,8 @@ concurrency:
 # job on every later push; a push to main, and any other event, runs everything. A job may be skipped only when nothing
 # it reads changed: each filter is derived from its jobs' imports and runtime reads, and
 # scripts/check/check-ci-paths.mjs keeps the imports inside it (the changes job). The licence, lint, audit, test data,
-# build and unit jobs, and the tools job's script tests and reference examples, run on every pull request: the unit
-# tests read nearly the whole tree, docs included.
+# build and unit jobs (on Linux and on Windows), and the tools job's script tests and reference examples, run on every
+# pull request: the unit tests read nearly the whole tree, docs included.
 #
 # The Release pull request (changeset-release/main, from release-pr.yml) changes only versions (the packs', and
 # core's in package.json), changelogs and package-lock.json, and is rewritten on every push to main. It runs the
@@ -294,10 +294,10 @@ jobs:
               - 'scripts/host/**'
 
   # Fills the Actions cache with every key the jobs below restore (.github/actions/pack-test-data, `fetch: "true"`): every
-  # tool-pack's archives for the unit and conformance jobs, and the three tool-packs the Rust tests read, each its own
-  # key. It holds the OIDC token, which only a miss uses, runs nothing but the pull (scripts/s3/pack-fixtures.mjs, this
-  # commit's code), and never extracts a cache entry; the jobs that read the data restore it holding no token. The
-  # Release pull request reads none.
+  # tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the three tool-packs the
+  # Rust tests read, each its own key. It holds the OIDC token, which only a miss uses, runs nothing but the pull
+  # (scripts/s3/pack-fixtures.mjs, this commit's code), and never extracts a cache entry; the jobs that read the data
+  # restore it holding no token. The Release pull request reads none.
   test-data:
     name: Pack test data
     if: >-
@@ -611,6 +611,105 @@ jobs:
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
         run: npm test -- --shard=${{ matrix.shard }}/2
+
+  # The unit suite on Windows, the one job that runs it there: paths, shells, process starts and file locks behave
+  # differently on Windows, and every other test job runs on Linux or macOS. Gated as the unit job is, and reads the
+  # same test data: the pack-test-data action saves and restores its cache entry cross-OS, so this job restores the
+  # entry the test-data job saved on Linux, verified against the locks as on Linux. The build job's engine is Linux's,
+  # so the job builds its own: restored from the cache keyed by the build job's inputs on this OS, and on a miss built
+  # (about 9 minutes) and saved straight away, so a failing test run still keeps it. It takes no cargo cache:
+  # release-cache.yml's for this target is keyed by files checked out with CRLF line ends, which this checkout's are
+  # not. The package is built here too, which takes seconds.
+  unit-windows:
+    name: Unit tests (Windows)
+    needs: test-data
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+      }}
+    runs-on: windows-2025
+    # About 14 minutes when the cache holds the engine and 23 when the job builds it; the tests take 11 of them.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Windows refuses paths over 260 characters unless Git is told to use long paths (as in package.yml). Git for
+      # Windows checks text out with CRLF line ends by default (.gitattributes); the suite reads the tracked rules,
+      # locks and fixtures as committed, with LF line ends, as on Linux and macOS.
+      - name: Set Git to check out as on Linux
+        run: |
+          git config --system core.longpaths true
+          git config --system core.autocrlf false
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "false"
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - id: napi
+        name: Read the napi CLI version
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@napi-rs/cli']")" >> "$GITHUB_OUTPUT"
+
+      # The build job's key, which names the runner's OS.
+      - id: native-cache
+        name: Restore the release native engine
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            native/*.node
+            native/index.js
+            native/index.d.ts
+          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'languages/**', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
+
+      - name: Install pinned Rust toolchain
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Build the native engine
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: npm run build:native
+
+      - name: Save the native engine
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            native/*.node
+            native/index.js
+            native/index.d.ts
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Build the package
+        run: npm run build:js
+
+      # As in the unit job, with a temporary folder spelt in full. The runner's TEMP is an 8.3 short path
+      # (C:\Users\RUNNER~1\...); Rerail records a checkout by its full path, and the tests build the paths they expect
+      # from the temporary folder as given, so about 40 of them fail on the spelling alone. runner.temp is a full path.
+      - name: Unit tests
+        env:
+          RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: npm test
 
   # The dashboard in Chromium over seeded scenario databases (e2e/README.md). Each worker runs the daemon from source
   # (`--dev` serves ui/ as committed), which needs the build's native engine. Runs when the e2e filter matches.
@@ -1153,6 +1252,7 @@ jobs:
       - rust
       - build
       - unit
+      - unit-windows
       - ui-e2e
       - integration
       - installed-packs
