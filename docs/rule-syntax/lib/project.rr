@@ -2,3 +2,9 @@
 // One row per run, even for an empty corpus. This input does not scan or resolve the filesystem.
 .decl workspace_root(path: symbol)
 .input workspace_root
+
+// A load's canonical path and requested module/grammar, linked to the document
+// key that serves it. Existing snapshot documents retain their original names.
+// Fresh loads and every alias/module answer use the same physical document key.
+// This reuses the load producer's canonicalisation pass; no per-node IO occurs.
+.decl loaded_doc(path: symbol,module: symbol,grammar: symbol,d: number)

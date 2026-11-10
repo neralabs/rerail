@@ -1340,7 +1340,7 @@
     {
       "destination": "docs/rule-syntax/lib/project.rr",
       "origin": "authored",
-      "sha256": "21da3d336a87ad7a7a22706f04a9e9d28f5d5b382163d13c6a1d4e59d286f629"
+      "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
@@ -2607,7 +2607,7 @@
     {
       "destination": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
       "origin": "authored",
-      "sha256": "8ff95f7ba0580b611497016daf3481bad5e526562e267964c000a0f5138ae4dc"
+      "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
@@ -3653,7 +3653,27 @@
       "legacySha256": "690192884c5fdb2d8f3ac738d3fa7b4cddeca15072cd7cb04c161a20ae654300",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr",
-      "ruleSha256": "d756fffb5cd8b2e73bb12aa24d46db0e8364d08602d04a230cfa39e0b5293927"
+      "ruleSha256": "d756fffb5cd8b2e73bb12aa24d46db0e8364d08602d04a230cfa39e0b5293927",
+      "migrationProgress": {
+        "status": "draft",
+        "checkpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-alignment-final883-progress.json.gz",
+          "sha256": "fa891e1e7b24313ce79b09168dd5b22ffe9cf4b3422f94d8c92cd56760ff4d9c"
+        },
+        "repositoryCasesPerAPI": 43,
+        "repositoryPositivesPerAPI": 30,
+        "scannerCasesPerAPI": 298,
+        "scannerPositivesPerAPI": 203,
+        "originalTestsPerAPI": 49,
+        "remaining": [
+          "caller-created Finding projections",
+          "supplied-fact reporting",
+          "CLI contracts",
+          "persistent updates",
+          "behavior-removal controls",
+          "full original inventory and admission"
+        ]
+      }
     },
     {
       "check": "serverplan_quality",
@@ -4383,8 +4403,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "0b7fb4dbddde9385877bf6e3e317cbc9c5defac5",
-    "status": "Checked byte-range source extraction committed; new CLI build and dispatch acceptance are pending.",
+    "upstreamCommit": "883458148f17615605f62c774b0f4e7140bb7fa8",
+    "status": "Final 883 merged; immutable root CLI validates dispatch scanner and repository contracts through both APIs. Full migration remains open.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4492,15 +4512,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "dbd5bfab12a4473479da722d6de6663b9cefa06bbf3c8b01fc9c17ce51e6718f"
+        "sha256": "48a4e441a41aac0dde823d48615ab4f1fbd44137c761032df4d1b9778724113a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "8108c88f9ffb5009acecc36ef2d663e355f83f2a819c18b79cb47f09f5c2554e"
+        "sha256": "ca66d2709e9b16f9164f6f543f835f0bc95f8d2105f7e65c3541d23c7ccb1ffb"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "b1c632a6e7e098a8443a61efffb63f4ced8ce691a6c6b5a05c8cb2fbdadb614e"
+        "sha256": "268eba5d534206136f1106647a77797cbd42181d24fcfda65c36a434a9d98b24"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -4512,7 +4532,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
-        "sha256": "15c26a2b31ff7d66e2c0b1b0c0ef40559f173601b64b4b198e1a4d04700ea7ec"
+        "sha256": "c341bcaeb878d6c4a8b99a6a05c06b826bd9fa0a29bb444bfd5a33607e228fc3"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/demand.rs",
@@ -4528,7 +4548,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "6c5911c5f753cb550307fd18e4812cf87e2421eae5ac78ba6437ee8d07314bcf"
+        "sha256": "b2665a1f78c7ff89ba5b1128a6b1174c7102e3531ae7b6f9900e88113cfcc43f"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
@@ -4536,7 +4556,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "30ca9999b6ada3ccb79b75348cd4cca7f4a0ad2c140a571e69c9f884bd4b5ee4"
+        "sha256": "9c26ee7193c0a67cc888bd4a34e06fb290b0a40a3619973f589d19faa071d651"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -4596,8 +4616,8 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "8d2c124fa822399d4da1d79c3de6dd01c9b5844e",
-    "previousUpstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
+    "upstreamMerge": "cf3731c7eecc06e9a0e2da0a559a5de5306bb651",
+    "previousUpstreamCommit": "0b7fb4dbddde9385877bf6e3e317cbc9c5defac5",
     "artifactHistory": [
       {
         "engineCommit": "1954d7c425c81efe98232d0ef6ff1a5c270e2c1a",
@@ -4628,28 +4648,28 @@
     ],
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "0b7fb4dbddde9385877bf6e3e317cbc9c5defac5",
-      "engineCommit": "97ba4580f5df566805d172cbf205005f4571a540",
+      "upstreamCommit": "883458148f17615605f62c774b0f4e7140bb7fa8",
+      "engineCommit": "78209723ace4c957997398dbeeec111a2923bb9f",
       "sourceTrees": {
-        "native": "caaa2d32f6bb0a7c9d29785dd86dcf044a114d35",
-        "accel": "c1cee95408206eb36c760b1db94154751cf5b5b7",
+        "native": "515a4d638a9b38e285d374839298d9dab250877b",
+        "accel": "ffcbdd15465ec562972956b66b327c630f94ecb4",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       }
     },
     "cliArtifact": {
-      "engineCommit": "97ba4580f5df566805d172cbf205005f4571a540",
-      "upstreamCommit": "0b7fb4dbddde9385877bf6e3e317cbc9c5defac5",
+      "engineCommit": "78209723ace4c957997398dbeeec111a2923bb9f",
+      "upstreamCommit": "883458148f17615605f62c774b0f4e7140bb7fa8",
       "sourceTrees": {
-        "native": "caaa2d32f6bb0a7c9d29785dd86dcf044a114d35",
-        "accel": "c1cee95408206eb36c760b1db94154751cf5b5b7",
+        "native": "515a4d638a9b38e285d374839298d9dab250877b",
+        "accel": "ffcbdd15465ec562972956b66b327c630f94ecb4",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-c6b17a2359f0acbd",
-      "sha256": "c6b17a2359f0acbd74921e19d6e7c14057c7547794b8bf13e06f9fcd43950abd",
+      "path": ".rerail/modern-engine-alignment/cli-6ff32bfe769b6bbe",
+      "sha256": "6ff32bfe769b6bbe8f1509e6436f277b2480ab2ff3d8ef0404c2332961fe2879",
       "command": [
         "cargo",
         "build",
@@ -4662,7 +4682,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 584.725
+      "seconds": 154.359
     }
   },
   "engineSourceSnapshots": [

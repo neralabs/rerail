@@ -30,6 +30,7 @@ load(p,cat("plugin-production:",p),"python") :- pp_file(p).
 pp_target(p,c) :- pp_file(p), loaded(c,cat("plugin-production:",p),"python").
 .decl pp_candidate(canonical: symbol, d: number)
 pp_candidate(c,d) :- pp_target(_,c), doc(d,c,_), doc_role(d,"primary").
+pp_candidate(c,d) :- pp_target(p,c),loaded_doc(c,cat("plugin-production:",p),"python",d),doc_role(d,"primary").
 pp_candidate(c,d) :- pp_target(p,c), doc(d,p,_), doc_role(d,"primary").
 pp_candidate(c,d) :- pp_target(p,c), workspace_root(root), doc(d,r,_), doc_role(d,"primary"), p = cat(root,"/",r).
 .decl pp_physical(canonical: symbol, d: number)

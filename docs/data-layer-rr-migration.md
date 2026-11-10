@@ -2875,3 +2875,31 @@ Two transport tests verify that it retains out-of-scope files, aliases, ordering
 
 Final has advanced to 883458148. This checkpoint precedes that merge and its native validation.
 The 100-port goal remains active. No new rule was admitted, and no Linear issue was created.
+
+### Dispatch load-identity acceptance checkpoint, 2026-11-10
+
+Merged Final `883458148` in merge commit `cf3731c7e` before continuing the root engine work.
+The loader now exposes `loaded_doc(path,module,grammar,d)` through its existing batched answer producer.
+It links canonical load answers to existing snapshot document keys and fresh document keys.
+It reuses canonicalisation already required by duplicate-load suppression. It adds no per-node filesystem callbacks.
+
+The TDD ladder exposed two errors. Declaring the answer as an input incorrectly selected base-relation storage.
+After correcting that declaration, literal load facts still returned no answers.
+The lowerer now retains literal loads as executable request rules. Both native integration tests pass.
+The tests require alias reuse without reparsing and two module answers for one fresh document.
+Seven filesystem-producer tests, 17 string tests, and seven session tests pass. One existing session helper remains ignored.
+
+All 43 repository cases pass through each API, including 30 positive cases per API.
+All 298 scanner cases pass through each API, including 203 positive cases per API.
+All 49 unchanged original tests pass through each API, with exact recorded scan observations and no semantic Python fallback.
+Five shared production alias checks also pass. No full-repository cold benchmark ran.
+The optimized build took 154.359 seconds elapsed; the unit build took 49.807 seconds. These are compilation measurements.
+
+The tooling suite passes 375 tests. Two historical admission tests initially failed after the shared library changed.
+Their unit fixture now uses the receipt's archived program bytes. A new test requires rejection of changed load-contract bytes.
+This fixture correction does not certify previously accepted ports against the new shared library or engine.
+
+[The progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-alignment-final883-progress.json.gz)
+retains complete observations, consumed programs, immutable build provenance, and the red and green logs.
+Dispatch remains a draft. Caller-created Finding projections, supplied-fact reporting, CLI contracts, persistent updates,
+behavior-removal controls, and final admission remain open. The inventory remains 11 accepted ports, 85 drafts, and four absent translations.

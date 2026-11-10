@@ -18,6 +18,18 @@ class SurfaceAdmissionTests(unittest.TestCase):
         cls.reporter=load(folder/'rr-surface-full-contract-final041.json.gz')
         cls.projection=load(folder/'rr-model-projection-final041.json.gz')
 
+    def setUp(self):
+        # Exercise this historical admission receipt against its recorded
+        # program bytes. A live shared-library edit must not silently rewrite
+        # the receipt, nor turn fixture validation into current acceptance.
+        programs={**self.reporter['programs'],**self.projection['programs']}
+        archived={ROOT/name:item['text'].encode() for name,item in programs.items()}
+        original=Path.read_bytes
+        def recorded(path):
+            return archived[path] if path in archived else original(path)
+        fixture=patch.object(Path,'read_bytes',recorded)
+        fixture.start();self.addCleanup(fixture.stop)
+
     def test_all_families_validate_and_overlapping_executions_count_once(self):
         self.assertEqual(634,audit(self.reporter,self.projection)['nativeExecutions'])
 
@@ -46,6 +58,14 @@ class SurfaceAdmissionTests(unittest.TestCase):
             raw=original(path)
             return raw+b'\n// changed\n' if path.name=='text-cli.rr' else raw
         with patch.object(Path,'read_bytes',changed),self.assertRaises(AssertionError):audit(self.reporter,self.projection)
+
+    def test_changed_shared_load_contract_requires_fresh_acceptance(self):
+        original=Path.read_bytes
+        def changed(path):
+            raw=original(path)
+            return raw+b'\n// changed load answers\n' if path.name=='project.rr' else raw
+        with patch.object(Path,'read_bytes',changed),self.assertRaises(AssertionError):
+            audit(self.reporter,self.projection)
 
     def test_fixed_original_inventory_gate_admits_surface(self):
         entry=next(r for r in read_json(ROOT/MANIFEST)['rules'] if r['check']=='serverplan_grammar_surface')
