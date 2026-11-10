@@ -11260,3 +11260,25 @@ Acceptance commands will use separate caches, as the original-assertion harness 
 All 115 tests in the unchanged dedicated Python module pass in the source recording.
 Native replay of its 90 non-CLI tests is underway. The 25 CLI tests and the broader fixed shared inventory remain open.
 Dynamic loading remains a draft. These results do not admit another rule or change the 100-port completion count.
+
+### Dynamic-loading scanner and discovery refresh passes, 2026-11-10
+
+The [validated progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dynamic-native-finalef317-progress.json.gz) retains 48 reports and 456 native executions.
+Every report consumes the same final program bytes and registered `962595dd2fea7697…` CLI.
+Through each API, 116 scanner cases, 30 repository cases, and 90 unchanged original tests pass.
+The scanner corpus contains 48 positive cases. The repository corpus contains 26 positive cases.
+The covered original tests retain 23 recorded positive calls. Complete values, order, duplicates, and original assertion predicates match.
+Both APIs report no original semantic fallback or original CLI execution in this cohort.
+
+The named `dml_read_path` producer filters allowlisted paths before any read request. The previously hanging FIFO witness now passes through both APIs.
+Invalid UTF-8, missing files, directory reads, links, repeated roots, Unicode layer names, and unusual filename delimiters also pass.
+Each command uses its own cache. The refreshed cohort has no writer contention failures.
+The assembler checks complete case multisets, source observations, native artifact identity, consumed program bytes, and loaded harness bytes.
+The receipt retains these snapshots, its assembler, build receipts, unit results, and all remaining original test identities.
+The final tooling run passes 395 tests and 165 subtests in 13.74 seconds.
+
+This is partial migration evidence. The fixed inventory owns 315 original tests; 90 have native coverage here, leaving 225.
+The remaining original cases comprise the dedicated CLI group and four shared test modules.
+Plugin metadata, fact extraction, supplied-fact reporting, CLI/signing contracts, persistent updates, and removal controls still need acceptance.
+Dynamic loading remains a draft. The global inventory remains 12 accepted ports, 84 drafts, and four absent translations.
+No full-repository cold benchmark ran. No Linear ticket was created.
