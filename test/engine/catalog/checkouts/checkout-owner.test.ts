@@ -4,11 +4,11 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
-import { physicalPath } from "../../../src/engine/catalog/checkout-control.js";
-import { CheckoutCatalogs } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
-import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
-import { removeFolder } from "../../support/platform/remove-folder.js";
+import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
+import { physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
+import { CheckoutCatalogs } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {

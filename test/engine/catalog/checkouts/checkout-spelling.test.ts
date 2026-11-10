@@ -3,9 +3,9 @@ import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkoutRealpath, physicalPath } from "../../../src/engine/catalog/checkout-control.js";
-import { shortSpelling } from "../support/short-path.js";
-import { removeFolder } from "../../support/platform/remove-folder.js";
+import { checkoutRealpath, physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
+import { shortSpelling } from "../../support/short-path.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(async () => {

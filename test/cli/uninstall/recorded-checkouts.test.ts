@@ -14,8 +14,8 @@ vi.mock("better-sqlite3", () => ({
   }),
 }));
 
-import { recordedCheckouts } from "../../src/cli/setup-cli.js";
-import { removeFolder } from "../support/platform/remove-folder.js";
+import { recordedCheckouts } from "../../../src/cli/setup-cli.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 describe("the checkouts `install --remove --delete-data` reads before deleting the database", () => {
   const roots: string[] = [];
