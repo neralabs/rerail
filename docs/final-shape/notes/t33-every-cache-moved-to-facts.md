@@ -1,6 +1,6 @@
 # t33: Every cache moved to facts, one by one (decision 0103's moves)
 
-Status: plan (2026-11-10). Nothing in it is built yet. It takes decision 0103's eight steps and says, for each
+Status: plan (2026-11-10). Built so far: K1 for the cross-file strata (step 4, below). It takes decision 0103's eight steps and says, for each
 table and map that 0103's checks (`logic::facts_only`) list as "not yet facts", what replaces it.
 
 ## Intro
@@ -37,10 +37,16 @@ checks, and what needs a decision.
 With K4, the whole-run cutoff is not a mechanism of its own: when every leaf delta is empty, no stratum runs,
 and every output is as stored.
 
-**A relation's identity includes its definition.** The rows of `v_enum` are stored under the digest of the
-rules it is derived from (its cone in the program). A rule edit makes it another relation, empty, so it is
-derived again and its readers see the delta. This is how "the program's facts are the key" (0103 step 2) is
-realised without maintaining the derived relations against changes to the rules themselves.
+**A relation's identity.** A relation of a program is stored under the digest of the rules it is derived from,
+the identities of what they read, and the engine (`plan::identities`). A rule edit makes it another relation,
+empty, so it is derived again and its readers see the delta; a relation two programs derive alike is one frame.
+A derived frame records the digest each relation its stratum read had then, and is current while each still has
+it (03 §1's versions, at the grain of a relation).
+
+**A cache depends on rules only when it says so** (user, 2026-11-10). A cache's result is keyed by its key
+relation's rows and the native step's own version, not by the rules around it: for the settled parts of the
+engine (parsing, projection, automata) a rule digest would be pure overhead. An attribute of the `.cache`
+directive makes a cache depend on a rule where that is wanted. It comes with K3.
 
 ## The moves
 
@@ -85,7 +91,7 @@ removed with nothing in its place but K1–K4.
 
 | Today | Key and check today | Becomes |
 |---|---|---|
-| `kept_strata`, `kept_strata_programs` | the cross program's digest; each input's digest compared in Rust | K1 itself, generalised: keyed by relation identity, not by program; input digests go (they are base-relation deltas) |
+| `kept_strata`, `kept_strata_programs` | the cross program's digest; each input's digest compared in Rust | **built**: `content_store::frames`, the cross part's relations by identity in the root's cross space, each with its reads' digests; the per-program key and the input-digest rows are gone. On a two-program test, the second program's first run evaluates 1 of 2 strata (the shared one is clean), and a rule edit 1 of 3 |
 | `recursive_spike.rs` `CARRY` | the spike's carried state | goes with the spike, or into K1 |
 
 ### Step 5: the phase store (the typing branch)
@@ -140,10 +146,8 @@ removed with nothing in its place but K1–K4.
 
 ## Needs a decision
 
-1. **K1's layout.** Frames per (relation, partition), as chosen for SQL access (option C, bd12fc52d), or one
-   table per relation with keyed indexes, as O131 asks for. I'd use frames: the encoding exists, the
-   projection spike measured 12 MB against the tapes' 52 MB, and `rel_*` gives SQL its rows.
-2. **Who builds K1 and K4.** 0103 places them in steps 3 and 4 on `More-ergonomic-rule-syntax`. Step 1 cannot
-   finish without them.
-3. **Relation identity by definition.** Keying a relation's stored rows by its rules' digest, as above, rather
-   than maintaining derived relations against deltas to the rules.
+Decided (user, 2026-11-10):
+
+1. **K1's layout is frames** per (space, relation, partition), as chosen for SQL access (bd12fc52d).
+2. **This branch builds what the other session is not doing:** K1 to K4, and steps 1 and 4.
+3. **Rule dependence is an attribute of a cache**, off by default (above).

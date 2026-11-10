@@ -44,6 +44,8 @@ const FACT_STORE: &[&str] = &[
     "node",
     "tape",
     "node_type",
+    "frames",
+    "frame_spaces",
     "{p}_out in code_rule_dsl/logic/native.rs",
     "{p}_out in code_rule_dsl/logic/native/extension.rs",
     "{} in code_rule_dsl/logic/plan.rs",
@@ -111,8 +113,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("slice_match", "3"),
     ("slice_span", "3"),
     ("slice_fresh", "3"),
-    ("kept_strata", "4"),
-    ("kept_strata_programs", "4"),
     ("phase_record", "5"),
     ("phase_granules", "5"),
     ("phase_cones", "5"),
@@ -153,7 +153,7 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised.
-const NOT_YET_TABLES_PIN: usize = 68;
+const NOT_YET_TABLES_PIN: usize = 66;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.

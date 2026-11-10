@@ -4699,7 +4699,7 @@ fn run_observed(
                 None => {
                     let exported: BTreeSet<&String> = split.exports.iter().collect();
                     // Without a session, the strata are kept in the tape cache from run to run (decision 0077 §4).
-                    let mut kept_strata = (durable.is_some() && one_fixpoint).then(|| kept_strata::Kept::new(store, retain::key(&prepared_key, &cross.program), &cross_inputs));
+                    let mut kept_strata = (durable.is_some() && one_fixpoint).then(|| kept_strata::Kept::new(store, kept_strata::space(root), &cross_inputs));
                     let loaded = kept_strata.as_ref().map(|k| std::rc::Rc::clone(&k.loaded));
                     let mut load = |rels: &[String]| -> Result<()> {
                         for rel in rels.iter().filter(|r| exported.contains(r)) {
@@ -6138,6 +6138,50 @@ unused(f) :- def(f, _), !used(f).
         let (_, fresh) = run("fresh.sqlite");
         assert_eq!(rows, fresh);
         assert_ne!(rows, derived);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Decision 0103 (t33 K1): a relation is kept as a frame under its identity, not its program's. A second program
+    /// with the same rules for `def`, `imp` and `uses` finds them clean on its first run, and the first program's
+    /// relations are still clean after it. A rule edit makes new only the relations it reaches.
+    #[test]
+    fn a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_readers() {
+        let marker = format!("# {:?}\n", std::time::SystemTime::now());
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("frames-shared");
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+        write("a.py", "def f():\n    pass\n");
+        write("b.py", "from a import f\ndef g():\n    pass\n");
+        let shared = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.output uses
+"#;
+        let unused = ".decl used(f: node)\nused(f) :- uses(_, f).\n.decl unused(f: node)\nunused(f) :- def(f, _), !used(f).\n.output unused\n";
+        let named = ".decl named(q: symbol)\nnamed(q) :- uses(_, f), def(f, q).\n.output named\n";
+        let out = dir.join("out");
+        let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("kept.sqlite")));
+        let run = |extra: &str| {
+            let rule = dir.join("p.rr");
+            std::fs::write(&rule, format!("{shared}{extra}")).unwrap();
+            let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+            let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+            report.cross_kept.expect("a run with a tape cache keeps its cross-file strata")
+        };
+        let (ran, all) = run(unused);
+        assert_eq!(ran, all, "the first run evaluates every stratum");
+        let (ran_b, all_b) = run(named);
+        assert!(ran_b < all_b, "the shared relations are clean for another program ({ran_b} of {all_b})");
+        let (ran_a, _) = run(unused);
+        assert!(ran_a < all, "the first program's relations are still kept ({ran_a} of {all})");
+        // An edit to `unused`'s rule: `uses` and what it reads stay clean.
+        let (edited, all_e) = run(&unused.replace("!used(f)", "!used(f), f != 0"));
+        assert!(edited < all_e, "a rule edit reruns only what it reaches ({edited} of {all_e})");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
