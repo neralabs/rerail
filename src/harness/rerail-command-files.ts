@@ -15,7 +15,7 @@ import { SETUP_FLAGS } from "./setup-screens.js";
 export type CommandFileAgent = "claude-code" | "cursor" | "codex";
 
 export interface CommandFileContext {
-  /** The shell-quoted launcher, `<node> <root>/dist/cli/cli.js`, as the hooks run it. */
+  /** The launcher, `<node> <root>/dist/cli/cli.js`, quoted for a POSIX shell: on Windows, Git Bash's single quotes. */
   cli: string;
   /** The installed package root the launcher belongs to. */
   packageRoot: string;

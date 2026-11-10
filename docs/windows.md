@@ -287,7 +287,7 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 | Agent | Hook command | Commands it runs |
 | --- | --- | --- |
-| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` | Git Bash: `"<node>" "<cli.js>"`, and the status line with POSIX quoting |
+| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
 | Codex | PowerShell: `$LASTEXITCODE = 1; if (Test-Path -LiteralPath '<node>') { & '<node>' '<hook>' } else { node '<hook>' }; exit $LASTEXITCODE` | PowerShell: `& '<node>' '<cli.js>'` |
 | Cursor | PowerShell, the event piped in: `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath '<node>') { $input \| & '<node>' '<hook>' } else { $input \| node '<hook>' } }` | PowerShell: `& '<node>' '<cli.js>'` |
 
@@ -307,6 +307,8 @@ OMP and Pi load Rerail as an extension and run no hook command; a steer writes t
 - **PowerShell literals.** A single-quoted string keeps spaces, `$`, backticks and `%` as they are. PowerShell ends it
   at `'` and also at `‘`, `’`, `‚` and `‛` (U+2018, U+2019, U+201A, U+201B), so `powershellLiteral`
   (`src/engine/command-line.ts`) writes each of the five twice.
+- **Git Bash's single quotes.** Claude Code's command files put each path in single quotes, which Git Bash reads as
+  written. Inside double quotes it would expand a `$` or backtick in the path and read a UNC path's `\\` as one `\`.
 - **`%`.** Paths keep each `%` single. Only a batch file turns `%%` back into `%`, and no shell these commands reach
   is one.
 - **Plugin manifests.** The Claude Code plugin quotes `${CLAUDE_PLUGIN_ROOT}`, which Git Bash would split at a space in

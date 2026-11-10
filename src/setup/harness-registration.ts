@@ -198,8 +198,9 @@ function assertInside(path: string, container: string, label: string): void {
 /**
  * How a word of a generated hook command is quoted, part of the stored format registration recognises by its exact
  * text. `posix` leaves a plain word bare and puts any other in double quotes, with `"`, `\`, `$` and backticks escaped.
- * `cmd` always uses double quotes, which cmd.exe and Git Bash both read for a Windows path; `%` stays single, since
- * only a batch file turns `%%` back into `%`, and none of the shells these words reach is one.
+ * `cmd` always uses double quotes, which cmd.exe reads for a Windows path; `%` stays single, since only a batch file
+ * turns `%%` back into `%`, and none of the shells these words reach is one. No line for Git Bash takes `cmd` quoting:
+ * Git Bash expands a `$` or backtick inside double quotes.
  */
 type HookQuoting = "posix" | "cmd";
 
@@ -543,14 +544,17 @@ const RETIRED_CODEX_SKILLS: readonly string[] = RENAMED_COMMANDS;
 /**
  * The launcher for command files. On Windows an agent whose profile names PowerShell (`windowsCommandShell`) gets the
  * call operator form (`powershellCli`), since PowerShell takes a line that starts with a quoted path for a string; one
- * that runs Git Bash gets the plain form, since `&` there would put the command in the background.
+ * that runs Git Bash gets the plain form, since `&` there would put the command in the background. That form is POSIX
+ * words there (`commandLine`): the `cmd` quoting of a hook command would let Git Bash expand a `$` or backtick in a path
+ * and fold a UNC path's `\\` into one `\`.
  */
 function commandContext(context: Context): CommandFileContext {
+  const words = [context.nodePath, hookScript(context, ENTRY_POINTS.cli)];
   return {
-    cli: directCommand(context, ENTRY_POINTS.cli),
+    cli: context.platform === "win32" ? commandLine("posix", words) : directCommand(context, ENTRY_POINTS.cli),
     packageRoot: context.root,
     setupLauncher: setupLauncher(context),
-    ...(context.platform === "win32" ? { powershellCli: commandLine("powershell", [context.nodePath, hookScript(context, ENTRY_POINTS.cli)]) } : {}),
+    ...(context.platform === "win32" ? { powershellCli: commandLine("powershell", words) } : {}),
   };
 }
 
@@ -1604,15 +1608,31 @@ function promptCommandPath(context: Context, harness: PromptCommandHarness, name
 }
 
 /**
+ * The paths ending in `executable` that `text` names in POSIX single quotes (`shellWord("posix", …)`), unquoted: the
+ * form Claude Code's command files take on Windows. A match ends at `executable` and its closing quote, so an apostrophe
+ * in the instructions' prose never pairs with the quote around a path.
+ */
+function posixQuotedScripts(text: string, executable: string, platform: NodeJS.Platform): string[] {
+  const paths = pathsOf(platform);
+  const tail = `${paths.sep}${paths.normalize(executable)}`.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return [...text.matchAll(new RegExp(String.raw`'((?:[^']|'\\'')*${tail})'`, "gu"))]
+    .map(match => match[1]!.replaceAll(String.raw`'\''`, "'"));
+}
+
+/**
  * Whether a command file or skill runs this installation's CLI or, on registration, that of another install of this
  * package or of one that is gone, recognized as hooks are (`isReplaceableScript`): an earlier version wrote its files
- * under its own install root. A generated file names exactly one `<root>/dist/cli/cli.js` (`ENTRY_POINTS.cli`).
+ * under its own install root. A generated file names exactly one `<root>/dist/cli/cli.js` (`ENTRY_POINTS.cli`), as a
+ * hook word (`hookWord`) or, in Claude Code's files on Windows, in POSIX single quotes.
  */
 async function runsPackageCli(context: Context, text: string): Promise<boolean> {
-  if (text.includes(hookScript(context, ENTRY_POINTS.cli))) return true;
+  const own = hookScript(context, ENTRY_POINTS.cli);
+  if (text.includes(own) || text.includes(shellWord("posix", own))) return true;
   if (context.mode === "unregister") return false;
   const windows = context.platform === "win32";
-  const scripts = new Set(shellWords(text, windows).map(word => unquoteShellWord(word, windows))
+  const words = shellWords(text, windows).map(word => unquoteShellWord(word, windows));
+  const quoted = windows ? posixQuotedScripts(text, ENTRY_POINTS.cli, context.platform) : [];
+  const scripts = new Set([...words, ...quoted]
     .filter(word => pathsOf(context.platform).isAbsolute(word) && registeredRoot(word, ENTRY_POINTS.cli, context.platform) !== undefined));
   const [script] = scripts;
   return scripts.size === 1 && await isReplaceableScript(context, script!, ENTRY_POINTS.cli);

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1046,11 +1046,40 @@ describe("Claude Code commands", () => {
     const claudeStart = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
     expect(codexManage).toContain(`${powershell} manage`);
     expect(cursorStart).toContain(`${powershell} start --relay --powershell`);
-    expect(claudeStart).toContain(`"${nodePath}" "${cli}" start --relay\n`);
+    expect(claudeStart).toContain(`'${nodePath}' '${cli}' start --relay\n`);
     expect(claudeStart).not.toContain("--powershell");
     const codexShowMe = await readFile(join(home, ".codex", "skills", "rerail-show-me", "SKILL.md"), "utf8");
     expect(codexShowMe).not.toContain("<<'EOF'");
     expect(codexShowMe).toContain("Set-Content -NoNewline -LiteralPath '<file>' -Value @'");
+  });
+
+  it("writes Claude Code's Windows commands with words Git Bash reads as they are: a `$`, a backtick, a UNC path", async () => {
+    const { home, root } = await fixture();
+    const nodePath = "\\\\server\\share\\$work\\`x`\\node.exe";
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] });
+    const cli = win32.join(root, "dist", "cli", "cli.js");
+    const start = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
+    const line = `${commandLine("posix", [nodePath, cli])} start --relay`;
+    expect(start).toContain(`\n${line}\n`);
+    expect(start).toContain(`Bash(${line})`);
+    // Git Bash is a POSIX shell: sh hands the program the same words. The line goes on stdin, since Git for Windows'
+    // runtime reads `\\` in a double-quoted argument as one `\` before sh sees it.
+    const read = spawnSync("sh", ["-s"], { input: `printf '%s\\n' ${line}\n`, encoding: "utf8" });
+    if (read.error === undefined) expect(read.stdout).toBe(`${[nodePath, cli, "start", "--relay"].join("\n")}\n`);
+  });
+
+  it("knows Claude Code's Windows commands as Rerail's, another install's and one whose path holds a `'`", async () => {
+    const install = await fixture();
+    const { home, root } = install;
+    const quoted = await packageInstall(install, "o'neil");
+    const windows = { home, nodePath: String.raw`C:\Program Files\nodejs\node.exe`, platform: "win32" as const, harnesses: ["claude-code"] as const };
+    const path = join(home, ".claude", "commands", "rerail.md");
+    await registerHarnesses({ ...windows, root });
+    await registerHarnesses({ ...windows, root: quoted });
+    expect(await readFile(path, "utf8")).toContain(shellWord("posix", win32.join(quoted, "dist", "cli", "cli.js")));
+    expect(await backups(path)).toEqual([]);
+    await unregisterHarnesses({ ...windows, root: quoted });
+    expect(await readdir(dirname(path)).catch(() => [])).toEqual([]);
   });
 
   it("writes Claude Code's Windows status line for Git Bash, with its node fallback and `%` as it is", async () => {
