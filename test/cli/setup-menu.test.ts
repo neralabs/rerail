@@ -100,8 +100,8 @@ describe("the terminal's input", () => {
     expect(displayWidth("e\u0301")).toBe(1);
   });
 
-  it("ends a line typed ahead at CR, as raw mode sends Enter, at LF, and at CRLF split across reads", async () => {
-    const input = new TerminalInput(fakeStdin(["1\r~/proj\r"]), () => {});
+  it("ends a line at CR, as raw mode sends Enter, at LF, and at CRLF split across reads", async () => {
+    const input = new TerminalInput(fakeStdin(["1\r", "~/proj\r"]), () => {});
     expect(await input.choose(menu)).toBe(0);
     expect(await input.line("Which folder? ")).toBe("~/proj");
     expect(await input.line("Which folder? ")).toBeUndefined();
@@ -118,18 +118,19 @@ describe("the terminal's input", () => {
     expect(await input.choose(menu)).toBe(1);
   });
 
-  it("takes a digit then Enter, and keeps what follows for the next prompt", async () => {
+  it("takes a digit then Enter, then reads the next prompt's line", async () => {
     const input = new TerminalInput(fakeStdin(["3\r", "my-app\n"]), () => {});
     expect(await input.choose(menu)).toBe(2);
     expect(await input.line("Which folder? ")).toBe("my-app");
   });
 
-  it("reads lines typed ahead of a menu as keys, and the lines after it as lines", async () => {
-    const input = new TerminalInput(fakeStdin(["2\n~/code/app\n1\n"]), () => {});
+  it("answers a question only with what is typed once it is on screen, not with what was left of an earlier read", async () => {
+    // A second Enter in the read that answered the first question does not answer the next one.
+    const input = new TerminalInput(fakeStdin(["2\r\r", "\u001b[B", "\r", "3\rmy-app\n", "~/code/app\n"]), () => {});
     expect(await input.choose(menu)).toBe(1);
+    expect(await input.choose(menu)).toBe(1);
+    expect(await input.choose(menu)).toBe(2);
     expect(await input.line("Which folder? ")).toBe("~/code/app");
-    expect(await input.choose(menu)).toBe(0);
-    expect(await input.line("Which folder? ")).toBeUndefined();
   });
 
   it("cancels at Ctrl-D or end of input, and puts the terminal back", async () => {

@@ -1,0 +1,1 @@
+In the terminal, a set-up question waits for an answer given once it is on screen. Enter pressed while set-up was busy, such as during the download or the scan, no longer answers the next question with its first answer, which allowed session access, scanned the repository or started Rerail without asking.
