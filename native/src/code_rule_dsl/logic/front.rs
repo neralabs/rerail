@@ -363,6 +363,25 @@ pub(in crate::code_rule_dsl) struct Program {
     /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
     /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
     pub(in crate::code_rule_dsl) qualifiers: BTreeMap<String, BTreeSet<String>>,
+    /// A session's maintained strata, each with the rules that derive it again instead (decision 0090 §4,
+    /// `maintain::rewrite`): the run chooses per stratum, once its input deltas are known (`plan::run`).
+    pub(in crate::code_rule_dsl) again: Vec<Again>,
+}
+
+/// A maintained stratum's other form (decision 0090 §4). Both make its relations and their deltas (`r__minus`,
+/// `r__plus`), which are all that other strata read of it, so each stratum chooses alone.
+#[derive(Clone, Debug, Default)]
+pub(in crate::code_rule_dsl) struct Again {
+    /// The stratum's own relations (one fixpoint when derived again).
+    pub(in crate::code_rule_dsl) scc: BTreeSet<String>,
+    /// Every relation the maintained form makes for it: its relations, their pieces (`__del`, `__ins`, …) and deltas.
+    pub(in crate::code_rule_dsl) owned: BTreeSet<String>,
+    /// Its rules over the current inputs, then its deltas against its old rows.
+    pub(in crate::code_rule_dsl) rules: Vec<Rule>,
+    pub(in crate::code_rule_dsl) deltas: Vec<Rule>,
+    /// The input deltas its maintained form reads, and its relations' old rows: the sizes that choose.
+    pub(in crate::code_rule_dsl) reads: Vec<String>,
+    pub(in crate::code_rule_dsl) olds: Vec<String>,
 }
 
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.

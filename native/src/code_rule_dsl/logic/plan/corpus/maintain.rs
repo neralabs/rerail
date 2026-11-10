@@ -199,6 +199,9 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut gone_of: BTreeSet<String> = BTreeSet::new();
     // Of those, the ones maintained exactly (counting): their deletes are final, nothing is derived again.
     let mut exact_rels: BTreeSet<String> = BTreeSet::new();
+    // Each maintained stratum, the span of `rules` its maintained form wrote, and its rules as given: its form
+    // derived again (`front::Again`).
+    let mut groups: Vec<(BTreeSet<String>, usize, usize, Vec<Rule>)> = Vec::new();
     for scc in dirty {
         let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
         let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
@@ -219,6 +222,8 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             continue;
         }
         maintained += 1;
+        let start = rules.len();
+        let as_given: Vec<Rule> = given.iter().map(|r| (*r).clone()).collect();
         let exact = scc.iter().all(|r| super::supports::is_support(r));
         // Under counting, a head whose every rule projects one of its supports (`h(x) :- h__sup0(x, _)`) is exact
         // too: a row is gone when it lost a support and none is left in the new rows, a count reaching zero. Its
@@ -410,6 +415,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
         maint.extend(scc.iter().cloned());
         changed.extend(scc.iter().cloned());
+        groups.push((scc.clone(), start, rules.len(), as_given));
     }
     let mut sources = Vec::new();
     for rel in &deltas {
@@ -437,6 +443,31 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
         fresh.push((rel.clone(), named(rel, "minus")));
         fresh.push((rel.clone(), named(rel, "plus")));
+    }
+    // Each maintained stratum's form derived again (decision 0090 §4): its rules as given, and its deltas against
+    // its old rows; what its maintained form makes (its pieces' heads, and its relations' deltas) is replaced.
+    let delta_heads: BTreeSet<String> = deltas.iter().filter(|r| maint.contains(*r)).flat_map(|r| [named(r, "minus"), named(r, "plus")]).collect();
+    for (scc, start, end, given) in groups {
+        let mine: Vec<&Rule> = rules[start..end].iter().chain(rules.iter().filter(|r| delta_heads.contains(&r.head.rel) && scc.iter().any(|s| r.head.rel == named(s, "minus") || r.head.rel == named(s, "plus")))).collect();
+        let owned: BTreeSet<String> = mine.iter().map(|r| r.head.rel.clone()).chain(scc.iter().cloned()).collect();
+        let reads: BTreeSet<String> = mine
+            .iter()
+            .flat_map(|r| r.body.iter().filter_map(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(&a.rel),
+                _ => None,
+            }))
+            .filter(|r| !owned.contains(*r) && (r.ends_with("__minus") || r.ends_with("__plus")))
+            .cloned()
+            .collect();
+        let mut again_deltas = Vec::new();
+        for rel in scc.iter().filter(|r| deltas.contains(*r)) {
+            let v = row(part.program.decls[rel].len());
+            let a = |rel: String, neg: bool| atom(rel, v.clone(), neg);
+            again_deltas.push(Rule { head: Atom { rel: named(rel, "minus"), args: v.clone(), neg: false, gated: false }, body: vec![a(named(rel, "old"), false), a(rel.clone(), true)] });
+            again_deltas.push(Rule { head: Atom { rel: named(rel, "plus"), args: v.clone(), neg: false, gated: false }, body: vec![a(rel.clone(), false), a(named(rel, "old"), true)] });
+        }
+        let olds = scc.iter().map(|r| named(r, "old")).collect();
+        part.program.again.push(front::Again { scc, owned, rules: given, deltas: again_deltas, reads: reads.into_iter().collect(), olds });
     }
     for rel in &olds {
         // Named as the planner reads its statistics (`sql_col`).
