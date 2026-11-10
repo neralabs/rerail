@@ -7,7 +7,7 @@ import { PassThrough, Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE } from "../../src/runtime/index.js";
 import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
-import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { linkFolder } from "../support/platform/links.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
@@ -34,7 +34,10 @@ interface RecordedDaemon {
   pid: number;
   port: number;
   startedAt?: number;
-  /** The engine socket the state records: a Unix socket path unless a test names a Windows pipe. */
+  /**
+   * The engine endpoint the state records, which the test then holds itself. Without one the state records a test
+   * endpoint that stays held until the test ends, as a live daemon holds its engine pipe.
+   */
   kernelSocketPath?: string;
 }
 
@@ -49,8 +52,11 @@ const NOT_RUNNING = "Rerail daemon is not running; start it with rerail daemon s
 const REFUSED = "Rerail daemon refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start";
 
 const directories: string[] = [];
+/** Closes each engine endpoint a recorded daemon holds. */
+const heldEndpoints: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
+  await Promise.all(heldEndpoints.splice(0).map(async release => await release()));
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -64,7 +70,13 @@ function collect(stream: PassThrough): () => string[] {
   return () => Buffer.concat(chunks).toString("utf8").split("\n").filter(Boolean);
 }
 
+/**
+ * Writes `daemon` as the home's daemon state. On Windows a recorded daemon counts as alive only while its engine pipe
+ * exists (`recordedDaemonAlive`), so the test endpoint it records is held until the test ends.
+ */
 async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void> {
+  const kernelSocketPath = daemon.kernelSocketPath ?? testEngineEndpoint(home);
+  if (daemon.kernelSocketPath === undefined) heldEndpoints.push(await holdEngineEndpoint(kernelSocketPath));
   await mkdir(home, { recursive: true });
   await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify({
     pid: daemon.pid,
@@ -73,7 +85,7 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
     url: `http://127.0.0.1:${daemon.port}/`,
     version: "0.0.0",
     databasePath: join(home, "rerail.sqlite"),
-    kernelSocketPath: daemon.kernelSocketPath ?? testEngineEndpoint(home),
+    kernelSocketPath,
     ui: "bundled",
     startedAt: daemon.startedAt ?? 0,
     packageRoot: "/tmp/rerail-bridge-test-package",

@@ -18,7 +18,7 @@ import { type AdapterDelivery, type RepositoryStartState, sessionStartNote } fro
 import type { presentationResponseSchema, sessionResponseSchema } from "../../src/api/index.js";
 import { hookRerailStarted } from "../../src/harness/index.js";
 import type { z } from "zod";
-import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 let home: string;
@@ -29,6 +29,8 @@ let response: z.infer<typeof presentationResponseSchema>;
 let sessionContext: z.infer<typeof sessionResponseSchema>;
 const sessionId = "session /?&one";
 let requested: string[];
+/** Closes the engine endpoint the recorded daemon holds. */
+let releaseEndpoint: () => Promise<void>;
 
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "rerail-presentation-"));
@@ -37,8 +39,11 @@ beforeEach(async () => {
   await mkdir(join(cwd, ".rerail"), { recursive: true });
   await writeFile(database, "");
   await writeFile(join(cwd, ".rerail", "repository-id"), "repository-under-test\n");
+  // On Windows a recorded daemon counts as alive only while its engine pipe exists (`recordedDaemonAlive`).
+  const kernelSocketPath = testEngineEndpoint(home);
+  releaseEndpoint = await holdEngineEndpoint(kernelSocketPath);
   state = { pid: process.pid, host: "127.0.0.1", port: 4737, url: "http://127.0.0.1:4737/", version: "test",
-    databasePath: database, kernelSocketPath: testEngineEndpoint(home), ui: "bundled", startedAt: 1, packageRoot: home };
+    databasePath: database, kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home };
   await writeFile(join(home, "daemon.json"), JSON.stringify(state));
   requested = [];
   sessionContext = { session: { sessionId, host: "claude-code", cwd, repositoryId: "repository-under-test", startedAt: 1, endedAt: null, eventCount: 0 },
@@ -59,6 +64,7 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  await releaseEndpoint();
   await rm(home, { recursive: true, force: true });
 });
 
