@@ -21,7 +21,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
-import { FOLDER_REMOVAL_RETRIES, removeScratch, renameWithRetry, replaceFile } from "../engine/file-replace.js";
+import { FOLDER_REMOVAL_RETRIES, heldOnWindows, nameTaken, removeScratch, renameWithRetry, replaceFile } from "../engine/file-replace.js";
 import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
@@ -688,8 +688,12 @@ export class ManagedUpdater {
     try {
       await mkdir(lockPath, { mode: 0o700 });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const lease = await this.readLockLease(lockPath);
+      // Another update holds the lock, or on Windows is still deleting its folder or lease as it lets go.
+      if (!nameTaken(error, this.platform)) throw error;
+      const lease = await this.readLockLease(lockPath).catch((readError: unknown) => {
+        if (heldOnWindows(readError, this.platform)) return undefined;
+        throw readError;
+      });
       if (lease === undefined || Date.parse(lease.expiresAt) > this.now().getTime()) {
         throw new Error("Another Rerail update is already running");
       }

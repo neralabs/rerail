@@ -9,7 +9,7 @@ import {
   type webcrypto,
 } from "node:crypto";
 import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
-import { replaceFile } from "../engine/file-replace.js";
+import { nameTaken, replaceFile } from "../engine/file-replace.js";
 import { join } from "node:path";
 import { z } from "zod";
 import type { DeviceSecretStore } from "./device-keystore.js";
@@ -221,7 +221,8 @@ export class CustomerProfileStore {
   private readonly locksRoot: string;
   private readonly activeProfilePath: string;
 
-  constructor(private readonly home: string) {
+  /** `platform`: whose errors for a lock folder being deleted count as the lock being held; this process's by default. */
+  constructor(private readonly home: string, private readonly platform: NodeJS.Platform = process.platform) {
     this.profilesRoot = join(home, PROFILES_DIR);
     this.locksRoot = join(this.profilesRoot, ".locks");
     this.activeProfilePath = join(home, ACTIVE_PROFILE_FILE);
@@ -242,7 +243,8 @@ export class CustomerProfileStore {
         await mkdir(lockPath, { mode: 0o700 });
         break;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        // Another activation holds the lock, or on Windows is still deleting its folder as it lets go.
+        if (!nameTaken(error, this.platform)) throw error;
         if (Date.now() >= deadline) throw new Error(`Timed out waiting for Rerail profile lock: ${profileName}`);
         const { promise, resolve } = Promise.withResolvers<void>();
         setTimeout(resolve, 10);

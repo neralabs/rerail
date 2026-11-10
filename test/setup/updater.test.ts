@@ -18,10 +18,25 @@ import type { NpmRunner } from "../../src/runtime/index.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
+vi.mock("node:fs/promises", { spy: true });
+const { mkdir: realMkdir, readFile: realReadFile } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+  vi.mocked(mkdir).mockReset();
+  vi.mocked(readFile).mockReset();
   await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
 });
+
+/** The next update lock folder create fails with `code`, as Windows fails it while another update deletes that folder. */
+function failNextLockCreate(code: string): void {
+  let failed = false;
+  vi.mocked(mkdir).mockImplementation(async (...args: Parameters<typeof mkdir>) => {
+    if (failed || !String(args[0]).endsWith("update.lock")) return await realMkdir(...args);
+    failed = true;
+    throw Object.assign(new Error(`${code}: operation not permitted, mkdir '${String(args[0])}'`), { code, syscall: "mkdir" });
+  });
+}
 
 class FakeRegistry implements PackageRegistry {
   readonly resolvedChannels: string[] = [];
@@ -412,6 +427,38 @@ describe("ManagedUpdater", () => {
 
     await updater.update();
     await expect(readFile(join(home, "update.lock", "lease.json"), "utf8")).resolves.toContain("different-updater");
+  });
+
+  it.each(["EPERM", "EACCES", "EBUSY"])("on Windows, takes %s for another update that is letting go of the lock, not a failure of its own", async code => {
+    const { home, packageRoot } = await fixture();
+    const registry = new FakeRegistry("1.1.0");
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, platform: "win32" });
+    failNextLockCreate(code);
+
+    await expect(updater.update()).rejects.toThrow("Another Rerail update is already running");
+    expect(registry.installedVersions).toEqual([]);
+  });
+
+  it("on Windows, takes a lease file another update is deleting for that update letting go of the lock", async () => {
+    const { home, packageRoot } = await fixture();
+    await mkdir(join(home, "update.lock"), { recursive: true });
+    const registry = new FakeRegistry("1.1.0");
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, platform: "win32" });
+    vi.mocked(readFile).mockImplementation(async (...args: Parameters<typeof readFile>) => {
+      if (!String(args[0]).endsWith("lease.json")) return await realReadFile(...args);
+      throw Object.assign(new Error(`EPERM: operation not permitted, open '${String(args[0])}'`), { code: "EPERM", syscall: "open" });
+    });
+
+    await expect(updater.update()).rejects.toThrow("Another Rerail update is already running");
+    expect(registry.installedVersions).toEqual([]);
+  });
+
+  it("fails at once on EPERM elsewhere, where it means the home refuses this process", async () => {
+    const { home, packageRoot } = await fixture();
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.1.0"), platform: "linux" });
+    failNextLockCreate("EPERM");
+
+    await expect(updater.update()).rejects.toMatchObject({ code: "EPERM" });
   });
 });
 

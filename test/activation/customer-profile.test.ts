@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createPublicKey,
   generateKeyPairSync,
@@ -29,11 +29,25 @@ import type { DeviceSecretStore } from "../../src/activation/device-keystore.js"
 import { stableJsonText } from "../../src/engine/index.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
+vi.mock("node:fs/promises", { spy: true });
+const { mkdir: realMkdir } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+
 const NOW = new Date("2026-09-01T12:00:00.000Z");
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+  vi.mocked(mkdir).mockReset();
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
+
+/** The next profile lock folder create fails with `code`, as Windows fails it while another activation deletes that folder. */
+function failNextLockCreate(code: string): void {
+  let failed = false;
+  vi.mocked(mkdir).mockImplementation(async (...args: Parameters<typeof mkdir>) => {
+    if (failed || !String(args[0]).endsWith(".lock")) return await realMkdir(...args);
+    failed = true;
+    throw Object.assign(new Error(`${code}: operation not permitted, mkdir '${String(args[0])}'`), { code, syscall: "mkdir" });
+  });
+}
 
 class MemorySecretStore implements DeviceSecretStore {
   readonly values = new Map<string, string>();
@@ -65,10 +79,10 @@ interface ProfileFixture {
   trustRoots: ActivationTrustRoots;
 }
 
-async function fixture(): Promise<ProfileFixture> {
+async function fixture(platform?: NodeJS.Platform): Promise<ProfileFixture> {
   const home = await mkdtemp(join(tmpdir(), "rerail-profile-"));
   temporaryDirectories.push(home);
-  const profileStore = new CustomerProfileStore(home);
+  const profileStore = new CustomerProfileStore(home, platform);
   const secrets = new MemorySecretStore();
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const trustRoots: ActivationTrustRoots = {
@@ -262,6 +276,24 @@ describe("signed customer profiles", () => {
     await mkdir(join(setup.home, ACTIVE_PROFILE_FILE, "kept"), { recursive: true });
     await expect(setup.profileStore.select("acme")).rejects.toThrow();
     expect(await readdir(setup.home)).toEqual([ACTIVE_PROFILE_FILE]);
+  });
+
+  it.each(["EPERM", "EACCES", "EBUSY"])("waits through %s on Windows, where another activation is deleting the profile lock folder", async code => {
+    const setup = await fixture("win32");
+    const identity = await setup.activation.deviceIdentity("acme");
+    failNextLockCreate(code);
+
+    const activated = await setup.activation.activateFile("acme", signProfile(profile(identity.thumbprint), setup.signingKey), setup.trustRoots, NOW);
+    expect(activated.profile.customerId).toBe("acme");
+  });
+
+  it("fails at once on EPERM elsewhere, where it means the home refuses this process", async () => {
+    const setup = await fixture("linux");
+    const identity = await setup.activation.deviceIdentity("acme");
+    failNextLockCreate("EPERM");
+
+    await expect(setup.activation.activateFile("acme", signProfile(profile(identity.thumbprint), setup.signingKey), setup.trustRoots, NOW))
+      .rejects.toMatchObject({ code: "EPERM" });
   });
 
   it("rejects trailing profile command arguments", async () => {
