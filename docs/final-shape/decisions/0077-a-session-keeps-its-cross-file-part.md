@@ -181,7 +181,11 @@ second edits:
 | rows written to the store | 0 | 2.37 M | 2.37 M |
 | `keep the strata's rows` | | 0.27 s | |
 
-The findings are identical to the base binary's on cold, edit 1 and edit 2. The cold run's cross phase went from
+The findings are identical to the base binary's on cold, edit 1 and edit 2. A cold run of the base binary on the
+edited corpus (fresh cache) gives the same set of findings except for 12 B007 rows in the edited file: "loop control
+variable not used" on `x_edit1 = 1` and `x_edit2 = 1`, which are not loops, reported at lines 45 and 49 of a 13-line
+file. The base binary's own warm run does not report them either. So they come from the base's cold path on an edited
+file, not from the kept strata; they are open. The cold run's cross phase went from
 25.0 s to 28.3 s. That is the first write of every relation's rows, 2.6 M rows. It is within the noise at this
 load.
 
