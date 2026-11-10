@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -9,6 +9,7 @@ import { ingestEngineEvent, startEngineService, type EngineService } from "../..
 import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository, type TestRepositoryRules } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 const services: EngineService[] = [];
@@ -16,7 +17,7 @@ afterEach(async () => {
   await Promise.all(services.splice(0).map(service => service.close()));
   // A session's source walk can still hold a checkout folder open for a moment after its runtime closed, which fails an
   // immediate remove on Windows (EBUSY).
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 10 })));
+  await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 /**

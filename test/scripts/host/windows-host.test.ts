@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const HOST_SCRIPT = join(packageRoot, "scripts", "host", "windows-host.ps1");
@@ -13,7 +14,7 @@ const run = promisify(execFile);
 const folders: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(folders.splice(0).map(folder => rm(folder, { recursive: true, force: true })));
+  await Promise.all(folders.splice(0).map(folder => removeFolder(folder)));
 });
 
 async function scratchFolder(): Promise<string> {

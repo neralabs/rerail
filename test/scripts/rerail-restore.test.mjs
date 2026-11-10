@@ -19,6 +19,7 @@ import {
   stageDatabase,
   stopDaemon,
 } from "../../scripts/dev/rerail-restore.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const { DatabaseSync } = await loadSqlite();
 
@@ -27,7 +28,7 @@ async function withHome(run) {
   try {
     return await run(home);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    removeFolderSync(home);
   }
 }
 
@@ -73,7 +74,7 @@ function walOnlyDatabase(directory, name, rows) {
     rmSync(`${path}${suffix}`, { force: true });
     if (existsSync(join(copy, `${name}${suffix}`))) writeFileSync(`${path}${suffix}`, readFileSync(join(copy, `${name}${suffix}`)));
   }
-  rmSync(copy, { recursive: true, force: true });
+  removeFolderSync(copy);
   assert.ok(existsSync(`${path}-wal`) && statSync(`${path}-wal`).size > 0, "fixture keeps its rows in the WAL");
 }
 
@@ -130,7 +131,7 @@ test("restore folds the backup's WAL in and moves the destination's database and
       assert.ok(!existsSync(join(stagingDir, "rerail.sqlite-wal")));
       installIntoHome({ backupDir: backup, staged, home: rerailHome, stamp, includeHomeWorkspace: true });
     } finally {
-      rmSync(stagingDir, { recursive: true, force: true });
+      removeFolderSync(stagingDir);
     }
 
     assert.ok(!existsSync(join(rerailHome, "rerail.sqlite-wal")), "no stale WAL beside the restored file");

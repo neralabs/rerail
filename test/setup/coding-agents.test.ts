@@ -7,6 +7,7 @@ import {
 } from "../../src/setup/coding-agents.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { CODEX_HOOK_EVENTS, registerHarnesses, type Harness } from "../../src/setup/harness-registration.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** `text` as it stands inside a JSON string: a Windows path's backslashes are written twice there. */
 const inJson = (text: string): string => JSON.stringify(text).slice(1, -1);
@@ -14,7 +15,7 @@ const inJson = (text: string): string => JSON.stringify(text).slice(1, -1);
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 /** Pi's settings, after writing `{ packages }` when given, as Pi's gallery or set-up wrote them. */

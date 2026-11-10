@@ -7,7 +7,7 @@ import {
   type webcrypto,
   type KeyObject,
 } from "node:crypto";
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -27,11 +27,12 @@ import {
 } from "../../src/activation/customer-profile.js";
 import type { DeviceSecretStore } from "../../src/activation/device-keystore.js";
 import { stableJsonText } from "../../src/engine/index.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const NOW = new Date("2026-09-01T12:00:00.000Z");
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 class MemorySecretStore implements DeviceSecretStore {

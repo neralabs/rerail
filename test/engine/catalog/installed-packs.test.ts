@@ -27,6 +27,7 @@ import {
   temporaryDatabase,
   temporaryDirectory,
 } from "../../support/rule-configuration-builders.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 // The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
 // planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts). Every other rule compiles in the
@@ -384,7 +385,7 @@ describe("the installed-pack catalog", () => {
       expect(catalog.packs.size).toBe(0);
       expect(catalog.skipped.map(skipped => skipped.packageName)).toEqual(["@neralabs/rerail-pack-valid"]);
     } finally {
-      rmSync(current, { recursive: true, force: true });
+      removeFolderSync(current);
     }
   });
 

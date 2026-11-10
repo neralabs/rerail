@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { createServer, type AddressInfo } from "node:net";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +40,7 @@ import {
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
@@ -101,7 +102,7 @@ describe("Rerail daemon control", () => {
   afterEach(async () => {
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
-    await rm(home, { recursive: true, force: true });
+    await removeFolder(home);
   });
 
   it("treats a missing or malformed state file as no daemon", async () => {
@@ -274,7 +275,7 @@ describe("Rerail daemon control", () => {
       await new Promise(resolve => setTimeout(resolve, 100));
     }, timing);
     expect(await readLease()).toEqual(other);
-    await rm(join(home, "start.lock"), { recursive: true, force: true });
+    await removeFolder(join(home, "start.lock"));
   });
 
   it("finds a live daemon through its state file", async () => {
@@ -400,7 +401,7 @@ describe("openDashboard", () => {
   }
 
   afterEach(async () => {
-    await rm(scratch, { recursive: true, force: true });
+    await removeFolder(scratch);
   });
 
   it("opens the Windows browser through System32's rundll32 from the home folder, never a rundll32 the repository holds", () => {
@@ -481,7 +482,7 @@ describe("a state file Windows left behind", () => {
   });
   afterEach(async () => {
     vi.unstubAllGlobals();
-    await rm(home, { recursive: true, force: true });
+    await removeFolder(home);
   });
 
   /**
@@ -667,7 +668,7 @@ describe("the engine endpoint of a busy daemon", () => {
 
   afterEach(async () => {
     vi.unstubAllGlobals();
-    await rm(home, { recursive: true, force: true });
+    await removeFolder(home);
   });
 
   // RERAIL_AUTOSTART=1 starts a daemon, and the start finds this one alive; 0 starts none and looks it up.
@@ -695,7 +696,7 @@ describe("launching the daemon", () => {
   });
 
   afterEach(async () => {
-    await rm(home, { recursive: true, force: true });
+    await removeFolder(home);
   });
 
   it("on Windows reads a launched process's exit code from the handle the native spawn kept, whoever has its pid now", () => {
@@ -783,7 +784,7 @@ describe("autostartDaemon", () => {
       expect(spawned[0]!.args.slice(1)).toEqual(["daemon", "start", "--workspace-root", process.cwd()]);
       expect(spawned[0]!.args[0]).toMatch(/[\\/]dist[\\/]cli[\\/]cli\.js$/u);
     } finally {
-      await rm(home, { recursive: true, force: true });
+      await removeFolder(home);
     }
   });
 });

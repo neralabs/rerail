@@ -2,15 +2,16 @@
 // make the same bytes, which system tar reads), the tars readArchive refuses, and the locks parseLock refuses.
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, parseLock, readArchive, sha256 } from "../../scripts/s3/test-data-archive.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const scratch = [];
 afterEach(() => {
-  for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of scratch.splice(0)) removeFolderSync(directory);
 });
 
 const entry = (path, text) => ({ path, bytes: Buffer.from(text, "utf8") });

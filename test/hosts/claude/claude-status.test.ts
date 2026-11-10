@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -13,6 +13,7 @@ vi.mock("../../../src/presentation/session-presentation.js", () => ({
   formatTerminalStatus: (presentation: { text?: string }) => presentation.text ?? "Rerail | 2 rules | steered 1×",
 }));
 import { previousStatusSpawn, runClaudeStatus } from "../../../src/hosts/claude/claude-status.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -65,12 +66,12 @@ describe("composed Claude status", () => {
           store.readClaudeStatusCommand(home, settingsPath, cwd));
         expect((await render(undefined, projectSettingsPath)).toString()).toBe(`${label}\nRerail | 2 rules | steered 1×\n`);
       }
-      await rm(join(home, "worktree", ".claude"), { recursive: true });
+      await removeFolder(join(home, "worktree", ".claude"));
       await mkdir(dirname(globalSettingsPath), { recursive: true });
       await writeFile(globalSettingsPath, JSON.stringify({ statusLine: { type: "command", command: "rerail-status" } }));
       expect((await render(undefined, projectSettingsPath)).toString()).toBe("global status\nRerail | 2 rules | steered 1×\n");
     } finally {
-      await rm(home, { recursive: true, force: true });
+      await removeFolder(home);
     }
   });
 
@@ -131,7 +132,7 @@ describe("composed Claude status", () => {
       if (survived) process.kill(pid);
       expect(survived).toBe(false);
     } finally {
-      await rm(folder, { recursive: true, force: true });
+      await removeFolder(folder);
     }
   }, 15_000);
 

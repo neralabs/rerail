@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -14,6 +14,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 
 import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure } from "../../src/harness/hook-failures.js";
 import { DaemonUnreachableError, runHostHook } from "../../src/harness/hook-host.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const homes: string[] = [];
 async function home(): Promise<string> {
@@ -25,7 +26,7 @@ async function home(): Promise<string> {
 afterEach(async () => {
   vi.unstubAllEnvs();
   autostart.calls = 0;
-  await Promise.all(homes.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(homes.splice(0).map(path => removeFolder(path)));
 });
 
 const failure = (at: number, event = "MessageDisplay"): HookFailure => ({

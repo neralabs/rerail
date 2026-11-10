@@ -1,15 +1,16 @@
 import { realpathSync, type PathLike } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkoutRealpath, physicalPath } from "../../../src/engine/catalog/checkout-control.js";
 import { shortSpelling } from "../support/short-path.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 describe("a checkout path's spelling", () => {

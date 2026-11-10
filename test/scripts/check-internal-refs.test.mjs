@@ -2,11 +2,12 @@
 // path or text.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { internalRefProblems, privateNameProblems } from "../../scripts/check/check-internal-refs.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 /** A ticket ID, assembled so this file does not hold one itself. */
 const ticket = (prefix, number) => `${prefix}-${number}`;
@@ -15,7 +16,7 @@ const nera = (rest) => `${"nera"}-${rest}`;
 
 let root;
 afterEach(() => {
-  if (root !== undefined) rmSync(root, { recursive: true, force: true });
+  if (root !== undefined) removeFolderSync(root);
   root = undefined;
 });
 

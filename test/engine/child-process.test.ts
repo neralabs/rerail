@@ -1,6 +1,6 @@
 import * as childProcess from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -12,6 +12,7 @@ vi.mock("node:child_process", { spy: true });
 import { assertProgramPath, endProcessTree, execFile, execFileSync, spawn, spawnShown, spawnSync, withHiddenWindow } from "../../src/engine/child-process.js";
 import { processState } from "../../src/engine/process-liveness.js";
 import { gitExecutable, gitHead, readGitBlobIds, readGitBlobs, runGit } from "../../src/engine/git.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** Whether a recorded child_process call passed `windowsHide: true` in its options. */
 const hidesWindow = (call: readonly unknown[]): boolean =>
@@ -20,7 +21,7 @@ const hidesWindow = (call: readonly unknown[]): boolean =>
 const roots: string[] = [];
 afterEach(async () => {
   vi.clearAllMocks();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 describe("withHiddenWindow", () => {

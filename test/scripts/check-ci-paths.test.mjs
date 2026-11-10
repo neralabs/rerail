@@ -1,14 +1,15 @@
 // scripts/check/check-ci-paths.mjs: ci.yml's path filters cover what the jobs they gate import and read.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ciPathProblems, COMMON, e2eInstalledPackReads, expectedOutput } from "../../scripts/check/check-ci-paths.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 let root;
 afterEach(() => {
-  if (root !== undefined) rmSync(root, { recursive: true, force: true });
+  if (root !== undefined) removeFolderSync(root);
   root = undefined;
 });
 
@@ -113,7 +114,7 @@ describe("check-ci-paths", () => {
   it("reads the packs the dashboard browser tests install, and fails when it cannot find them", () => {
     const packs = 'const INSTALLED_PACKS = ["complexity", "python"] as const;\n';
     expect(e2eInstalledPackReads(repository({ "e2e/support/scenarios.ts": packs }))).toEqual(["packs/complexity/package.json", "packs/python/package.json"]);
-    rmSync(root, { recursive: true, force: true });
+    removeFolderSync(root);
     expect(() => e2eInstalledPackReads(repository({ "e2e/support/scenarios.ts": "export {};\n" }))).toThrow(/INSTALLED_PACKS not found/u);
   });
 });

@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const LAUNCHER = resolve(import.meta.dirname, "../../src/harness/hook-launcher.ts");
 
@@ -18,7 +19,7 @@ const CRASHING_HOOK = 'throw new Error("Cannot find module rerail-binding");';
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 type Recorded = "runs" | "missing" | "cannot-run";

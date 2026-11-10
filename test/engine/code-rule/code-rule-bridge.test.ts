@@ -1,5 +1,4 @@
-import { execFileSync, type ChildProcess } from "node:child_process";
-import type * as ChildProcesses from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFile, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
@@ -16,7 +15,7 @@ import {
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
-import { removeFolder } from "../../support/platform/remove-folder.js";
+import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
 const discovery = vi.hoisted(() => ({
   reads: new Map<string, Array<() => Promise<void>>>(),
@@ -37,24 +36,6 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
   };
 });
-/** Every process the bridge started without waiting for it, as Rerail starts them all through node:child_process. */
-const started = vi.hoisted(() => ({ children: [] as ChildProcess[] }));
-vi.mock("node:child_process", async importOriginal => {
-  const actual = await importOriginal<typeof ChildProcesses>();
-  const recorded = (name: "execFile" | "spawn") => (...args: unknown[]): unknown => {
-    // Reflect.apply returns any; both starters return the process they started.
-    const child = Reflect.apply(actual[name], undefined, args) as ChildProcess;
-    started.children.push(child);
-    return child;
-  };
-  return { ...actual, execFile: recorded("execFile"), spawn: recorded("spawn") };
-});
-/** The processes started with `folder` among their arguments that have not exited. */
-function runningIn(folder: string): string[] {
-  return started.children
-    .filter(child => child.exitCode === null && child.signalCode === null && child.spawnargs.includes(folder))
-    .map(child => child.spawnargs.join(" "));
-}
 
 interface DiscoveryGate {
   entered: Promise<void>;
@@ -762,7 +743,7 @@ describe("CodeRuleBridge", () => {
 
     expect(runningIn(root)).toEqual([]);
     // One try: on Windows a process still running in the folder keeps it from being removed.
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root, { retry: false });
   });
 
   it("sends a deletion with its preimage instead of an unreadable workspace scan", async () => {
@@ -791,7 +772,7 @@ describe("CodeRuleBridge", () => {
 
     await bridge.openWorkspace("session-1");
     await bridge.begin("replace", "write", { path: "src/a.py" });
-    await rm(join(root, "src", "a.py"), { recursive: true });
+    await removeFolder(join(root, "src", "a.py"));
     await writeFile(join(root, "src", "a.py"), "after\n");
     await bridge.finish("replace");
     expect(auditGeneratedEdits).toHaveBeenCalledWith("session-1", expect.objectContaining({ edits: [expect.objectContaining({ path: "src/a.py", previousReadError: expect.any(String), generatedText: "after\n" })] }));

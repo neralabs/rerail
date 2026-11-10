@@ -3,12 +3,13 @@
 // reaches that comparison. `version:packs` is a stub that bumps every pack, as `changeset version` does for the packs a
 // changeset names.
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { linkFolder } from "../support/platform/links.ts";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const REPOSITORY = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BUMP = `import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,7 +21,7 @@ for (const id of readdirSync("packs")) {
 
 const directories = [];
 afterEach(() => {
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of directories.splice(0)) removeFolderSync(directory);
 });
 
 const packName = (id) => `@neralabs/rerail-pack-${id}`;

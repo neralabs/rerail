@@ -1,9 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stubUserHome, watchRealAgentSettings } from "./user-home.js";
+import { removeFolderSync } from "./platform/remove-folder.js";
 
 const under = (path: string, root: string): boolean => realpathSync(path).startsWith(realpathSync(root));
 
@@ -40,7 +41,7 @@ describe("the Git configuration a test repository sees", () => {
       // Git for Windows' installer sets core.autocrlf=true in the machine's file; a test repository never reads it.
       expect(spawnSync("git", ["config", "--get", "core.autocrlf"], { cwd: root }).status).toBe(1);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeFolderSync(root);
     }
   });
 });
@@ -64,7 +65,7 @@ describe("the guard on the person's real agent settings", () => {
       writeFileSync(claude, JSON.stringify({ hooks: { Stop: [{ command: "node", args: [join(scratch, "rerail-registration-x", "home", ".rerail", "current", "dist", "harness", "hook-launcher.js")] }] } }));
       expect(leaked()).toEqual([claude]);
     } finally {
-      rmSync(realHome, { recursive: true, force: true });
+      removeFolderSync(realHome);
     }
   });
 });

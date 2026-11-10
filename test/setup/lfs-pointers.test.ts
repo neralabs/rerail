@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { isLfsPointer, lfsPointerFiles, LFS_REMEDY, requireLfsContent } from "../../src/setup/lfs-pointers.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const POINTER = "version https://git-lfs.github.com/spec/v1\noid sha256:a4264cfe4354253b9332731aa3db0c066f302c8507ebd791ba1b10f64efc8eb5\nsize 7559256\n";
 const ATTRIBUTES = [
@@ -26,7 +27,7 @@ function packageRoot(files: Record<string, string | Buffer>): string {
 }
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 describe("Git LFS pointers in a package root", () => {

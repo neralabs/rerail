@@ -1,8 +1,9 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SqlitePresentationPreferenceStore } from "../../src/runtime/presentation-preference-store.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -15,7 +16,7 @@ const otherDriveCase = (path: string): string => path.replace(/^[A-Za-z]:/u, dri
 describe("SqlitePresentationPreferenceStore", () => {
   it.runIf(process.platform === "win32")("finds a repository's preference under any spelling of its Windows path", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-presentation-")));
-    cleanups.push(() => rm(root, { recursive: true, force: true }));
+    cleanups.push(() => removeFolder(root));
     const store = new SqlitePresentationPreferenceStore(join(root, "rerail.sqlite"));
     cleanups.push(async () => store.close());
     store.upsert({ repository: root, host: "claude-code", presence: "silent" });

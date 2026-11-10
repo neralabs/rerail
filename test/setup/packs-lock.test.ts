@@ -1,13 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { installedPacksPrefix } from "../../src/engine/index.js";
 import { withPacksLock } from "../../src/setup/packs-lock.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const homes: string[] = [];
 afterEach(() => {
-  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  for (const home of homes.splice(0)) removeFolderSync(home);
 });
 
 function temporaryHome(): string {

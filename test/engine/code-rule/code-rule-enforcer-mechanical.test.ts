@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { setImmediate as queueHostTurn } from "node:timers";
 import { tmpdir } from "node:os";
@@ -32,6 +32,7 @@ import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
 import * as native from "../../../src/engine/native/native.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 
 vi.mock("node:fs/promises", { spy: true });
@@ -41,7 +42,7 @@ vi.mock("node:fs", { spy: true });
 
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 function needleCodeRule(revision: number, pattern = "NEEDLE", code = "NEEDLE") {
   return codeRuleSchema.parse({

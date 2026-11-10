@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,11 +9,12 @@ import { setRepositoryStarted } from "../../src/runtime/index.js";
 import { installedPackagesOf, type PackStore } from "../../src/setup/index.js";
 import { installPackDirectory, linkingPackStore, thirdPartyPack } from "../support/installed-packs.js";
 import { fixturesPath } from "../support/oracles.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const homes: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  for (const home of homes.splice(0)) removeFolderSync(home);
 });
 
 /** A fresh Rerail home, removed after the test. */
@@ -58,7 +59,7 @@ describe("rerail packs add", () => {
     try {
       expect(packAddSpec(folder)).toBe(folder);
     } finally {
-      rmSync(folder, { recursive: true, force: true });
+      removeFolderSync(folder);
     }
   });
 

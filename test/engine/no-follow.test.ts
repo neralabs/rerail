@@ -1,13 +1,14 @@
 import { closeSync, constants, readFileSync, symlinkSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNoFollow, openNoFollowSync } from "../../src/engine/no-follow.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 /** Whether this machine lets the test make a file symlink: Windows needs Developer Mode or admin rights. */

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,12 +17,13 @@ import {
 import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { shortSpelling } from "../support/short-path.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 const openDatabases: RerailDatabase[] = [];
 afterEach(async () => {
   for (const database of openDatabases.splice(0)) database.$client.close();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporary(prefix: string): Promise<string> {
@@ -49,7 +50,7 @@ function caseInsensitiveFilesystem(): boolean {
   try {
     return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
   } finally {
-    rmSync(probe, { recursive: true, force: true });
+    removeFolderSync(probe);
   }
 }
 
@@ -105,7 +106,7 @@ describe("the repository registry", () => {
     const path = gitRepository(join(root, "checkout"));
     const before = recordCheckout(database, path);
     checkoutSetting(database, path);
-    rmSync(path, { recursive: true, force: true });
+    removeFolderSync(path);
     gitRepository(path, "https://github.com/acme/web.git");
     const after = recordCheckout(database, path);
     expect(after.cloneId).not.toBe(before.cloneId);

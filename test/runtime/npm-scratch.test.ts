@@ -3,13 +3,14 @@
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { outsideAnyProject } from "../../src/runtime/npm.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 vi.mock("node:fs/promises", { spy: true });
 
 const left: string[] = [];
 afterEach(async () => {
   vi.mocked(rm).mockReset();
-  await Promise.all(left.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(left.splice(0).map(path => removeFolder(path)));
 });
 
 describe("npm outside any project", () => {

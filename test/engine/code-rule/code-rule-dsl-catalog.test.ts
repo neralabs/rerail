@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setFlagsFromString } from "node:v8";
@@ -31,11 +31,12 @@ import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
-  for (const path of temporaryDirectories.splice(0)) rmSync(path, { force: true, recursive: true });
+  for (const path of temporaryDirectories.splice(0)) removeFolderSync(path);
 });
 
 function temporaryRoot(): string {

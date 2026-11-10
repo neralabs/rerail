@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,6 +17,7 @@ import {
   type MainRerailBuild,
 } from "../../../src/engine/native/main-instance.js";
 import { mainContentStoreDirectory } from "../../../src/engine/native/rerail-build.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const packageRoot = resolve(import.meta.dirname, "..", "..", "..");
 const mainInstanceModule = pathToFileURL(join(packageRoot, "src", "engine", "native", "main-instance.ts")).href;
@@ -41,7 +42,7 @@ afterEach(async () => {
     }
   }
   vi.unstubAllEnvs();
-  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
+  for (const directory of directories.splice(0)) await removeFolder(directory);
 });
 
 async function temporaryDirectory(): Promise<string> {
@@ -164,7 +165,7 @@ describe("forgetMainInstanceHolder", () => {
       forgetMainInstanceHolder(123, directory);
       expect(existsSync(record)).toBe(false);
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      await removeFolder(directory);
     }
   });
 });

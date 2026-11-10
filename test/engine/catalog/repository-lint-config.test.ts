@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,13 +14,14 @@ import {
   ruffSelects,
 } from "../../../src/engine/catalog/lint-config/repository-lint-config.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const TYPE_DEFINITIONS = "typescript-eslint-consistent-type-definitions";
 const TSLINT_COMMENT = "typescript-eslint-ban-tslint-comment";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function repository(files: Readonly<Record<string, string>>): Promise<string> {
@@ -73,7 +74,7 @@ let hooksDirectory: string;
 beforeAll(async () => {
   hooksDirectory = await hooksPack();
   ruleCatalog = readRuleCatalog([...["typescript", "javascript", "python"].map(packDirectory), hooksDirectory]);
-  return () => rm(join(hooksDirectory, ".."), { recursive: true, force: true });
+  return () => removeFolder(join(hooksDirectory, ".."));
 });
 
 describe("parseJsonc", () => {

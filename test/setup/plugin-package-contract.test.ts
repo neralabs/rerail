@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const HOSTS = ["claude", "codex", "cursor"] as const;
 const STAMPER = resolve("scripts/build/stamp-plugin-versions.mjs");
@@ -209,7 +210,7 @@ describe("supported host plugin manifests", () => {
         expect(await readFile(join(root, `.${host}-plugin`, "plugin.json"), "utf8")).toBe(sources.get(host));
       }
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await removeFolder(root);
     }
   });
 

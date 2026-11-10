@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -22,6 +22,7 @@ import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-dr
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { installPack } from "../support/installed-packs.js";
 import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
 installPack("complexity");
@@ -29,7 +30,7 @@ installPack("complexity");
 const directories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
 async function repository(files: Record<string, string> = {}): Promise<string> {

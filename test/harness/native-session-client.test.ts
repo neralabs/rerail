@@ -11,7 +11,7 @@ vi.mock("../../src/engine/native/rerail-build.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/engine/native/rerail-build.js"),
   isMainRerailBuild: nativeBoundary.isMainRerailBuild,
 }));
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import superjson from "superjson";
@@ -24,6 +24,7 @@ import { EVENTS_DROPPED_ENTRY_TYPE, MUTATION_ENTRY_TYPE, SqliteSessionReader } f
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const delivery = (content: string, ruleIds: readonly string[] = []): AdapterDelivery => ({
   sessionId: "session", requested: "steer", mechanism: "native-queue", content, ruleIds, rules: ruleIds.map(id => ({ id, state: "steered" })),
@@ -50,7 +51,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.useRealTimers();
-  for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true });
+  for (const path of directories.splice(0)) await removeFolder(path);
 });
 
 describe("daemon native client delivery lifecycle", () => {

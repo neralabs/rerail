@@ -1,12 +1,13 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { programOnPath } from "../../src/engine/system-programs.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(async directory => await rm(directory, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(async directory => await removeFolder(directory)));
 });
 
 async function binDirectory(...files: string[]): Promise<string> {

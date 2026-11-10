@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -11,6 +11,7 @@ import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../..
 import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 describe.runIf(process.platform !== "win32")("engine service socket directory", () => {
   const roots: string[] = [];
@@ -22,7 +23,7 @@ describe.runIf(process.platform !== "win32")("engine service socket directory", 
   }
 
   afterEach(async () => {
-    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+    await Promise.all(roots.splice(0).map(root => removeFolder(root)));
   });
 
   it("listens inside a directory it makes for this user alone", async () => {
@@ -187,7 +188,7 @@ describe("starting the engine on a pipe name another process holds", () => {
 
   afterEach(async () => {
     process.chdir(previousFolder);
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   const pipeName = (): string => String.raw`\\.\pipe\rerail-test-${process.pid}-${Date.now().toString(16)}-${pipeCount++}`;
@@ -249,7 +250,7 @@ describe("engine proof", () => {
       expect(engineProof("capability", challenge)).not.toBe(engineProof("another", challenge));
     } finally {
       await service.close();
-      await rm(root, { recursive: true, force: true });
+      await removeFolder(root);
     }
   });
 
@@ -270,7 +271,7 @@ describe("engine proof", () => {
       expect(await engineHoldsCapability(socketPath, "capability")).toBe(false);
     } finally {
       await new Promise<void>(resolve => squatter.close(() => resolve()));
-      await rm(root, { recursive: true, force: true });
+      await removeFolder(root);
     }
   });
 });

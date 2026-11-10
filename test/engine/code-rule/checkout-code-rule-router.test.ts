@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { existsSync, mkdtempSync } from "node:fs";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +23,7 @@ import { checkouts, repositoryAudits } from "../../../src/engine/storage/schema.
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -49,7 +50,7 @@ function git(cwd: string, ...args: string[]): void {
 
 async function temporaryRoot(): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-router-")));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  cleanups.push(() => removeFolder(root));
   return root;
 }
 
@@ -460,7 +461,7 @@ function caseInsensitiveFilesystem(): boolean {
   try {
     return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
   } finally {
-    rmSync(probe, { recursive: true, force: true });
+    removeFolderSync(probe);
   }
 }
 
@@ -632,7 +633,7 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     git(session, "worktree", "add", "--quiet", "-b", "stopped", stopped);
     const removed = join(root, "elsewhere", "removed");
     git(session, "worktree", "add", "--quiet", "-b", "removed", removed);
-    await rm(removed, { recursive: true });
+    await removeFolder(removed);
     await mkdir(join(session, "forged"));
     await writeFile(join(session, "forged", ".git"), `gitdir: ${join(session, ".git")}\n`);
     const database = openRerailDatabase(databasePath);

@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
@@ -6,6 +6,7 @@ import { setFlagsFromString } from "node:v8";
 import { afterEach, describe, expect, it } from "vitest";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { testEmbedder } from "../support/hook-events.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 setFlagsFromString("--expose-gc");
 const gc = runInNewContext("gc") as () => void;
@@ -21,7 +22,7 @@ async function heapInUse(): Promise<number> {
 
 const directories: string[] = [];
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(path => removeFolder(path)));
 });
 
 describe("a hook host session's samples", () => {

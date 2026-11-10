@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { chmod, mkdtemp, mkdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -34,7 +34,7 @@ import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { approve, currentSubject } from "../../src/engine/index.js";
 import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
-import { removeFolder } from "../support/platform/remove-folder.js";
+import { removeFolder, removeFolderSync } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];
@@ -637,7 +637,7 @@ describe("SQLite session persistence", () => {
     store.recordRuleCoverage(session, { repositoryId: repositoryKey, ownerCheckoutPaths: [checkoutPath], activeRuleCount: 1, ruleSignature: ruleConfigurationSignature(database, catalog, repositoryKey, [checkoutPath]) });
     expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: 1, steeringCount: 0, overlays: ["worktree"], awaitingApproval: 0 });
     // The folder gone, the count it was taken with is stale, and nothing is named until coverage is taken again.
-    rmSync(join(checkoutPath, ".rerail"), { recursive: true, force: true });
+    removeFolderSync(join(checkoutPath, ".rerail"));
     expect(reader.hud(session.sessionId)).toEqual({ activeRuleCount: null, steeringCount: 0, overlays: [], awaitingApproval: null });
   });
 

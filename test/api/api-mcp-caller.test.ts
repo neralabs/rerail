@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
@@ -25,6 +25,7 @@ import {
 import { MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { installPack } from "../support/installed-packs.js";
 import { shortSpelling } from "../engine/support/short-path.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
 installPack("complexity");
@@ -76,7 +77,7 @@ describe("MCP callers and the agent guard", () => {
 
   afterEach(async () => {
     stores.close();
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   async function call(name: string, args: Record<string, unknown>, cwd?: string | null): Promise<ToolAnswer> {

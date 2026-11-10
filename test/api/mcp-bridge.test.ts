@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
 import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { linkFolder } from "../support/platform/links.js";
 import { otherUserPid } from "../support/other-user-pid.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** The Rerail home and which daemon pid answers on each local port; a step may change either to stage a restart. */
 interface Machine {
@@ -57,7 +58,7 @@ const heldEndpoints: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
   await Promise.all(heldEndpoints.splice(0).map(async release => await release()));
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(path => removeFolder(path)));
 });
 
 function jsonResponse(status: number, body: unknown, contentType = "application/json"): Response {
@@ -292,7 +293,7 @@ describe("Rerail MCP bridge", () => {
       expect(decodeURIComponent(headers[0]!)).toBe(checkout);
       expect(bodies).toEqual([request, request]);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await removeFolder(root);
     }
   });
 

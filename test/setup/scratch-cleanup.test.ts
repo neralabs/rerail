@@ -5,13 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { validateManagedInstallation, type Installation } from "../../src/setup/updater.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 vi.mock("node:fs/promises", { spy: true });
 
 const roots: string[] = [];
 afterEach(async () => {
   vi.mocked(rm).mockReset();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 /** The next removal fails as Windows fails one while a process holds a file in the folder; the folder goes later. */

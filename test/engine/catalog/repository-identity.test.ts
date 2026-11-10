@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +10,7 @@ import {
   resolveCloneId,
 } from "../../../src/engine/catalog/repository-identity.js";
 import { linkFolder, symlinkOrSkip } from "../../support/platform/links.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 /** When set, the next `mkdirSync` of a `.rerail` folder loses a race: another process creates it first. */
 const race = vi.hoisted(() => ({ armed: false }));
@@ -58,7 +59,7 @@ describe("normalizeRemoteAddress", () => {
 describe("readRemoteAddress", () => {
   const roots: string[] = [];
   afterEach(() => {
-    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    for (const root of roots.splice(0)) removeFolderSync(root);
   });
 
   const repository = (...remotes: [string, string][]): string => {
@@ -88,7 +89,7 @@ describe("readRemoteAddress", () => {
 describe("clone identity files", () => {
   const roots: string[] = [];
   afterEach(() => {
-    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    for (const root of roots.splice(0)) removeFolderSync(root);
   });
   const folder = (): string => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-identity-")));

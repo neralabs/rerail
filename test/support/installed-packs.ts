@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { defaultRerailHome, installedPacksPrefix, rulePackPackageOf } from "../../src/engine/index.js";
 import type { PackStore } from "../../src/setup/index.js";
 import { fixturesPath, repositoryPath } from "./oracles.js";
+import { removeFolderSync } from "./platform/remove-folder.js";
 
 /** The package `name` names, as `rerail packs add` reads it: a pack id is Rerail's own package, a package name itself. */
 function packageNamed(name: string): string {
@@ -36,7 +37,7 @@ export function installPackDirectory(directory: string, name: string, home: stri
   const packageName = packageNamed(name);
   const installed = join(installedPacksPrefix(home), "node_modules", packageName);
   mkdirSync(dirname(installed), { recursive: true });
-  rmSync(installed, { recursive: true, force: true });
+  removeFolderSync(installed);
   symlinkSync(directory, installed, process.platform === "win32" ? "junction" : "dir");
   record(home, packageName, spec);
   return installed;
@@ -54,13 +55,13 @@ export function installPack(id: string, home: string = defaultRerailHome()): str
 /** Removes an installed pack, a pack id naming Rerail's own package, as `rerail packs remove <package>` does. */
 export function uninstallPack(name: string, home: string = defaultRerailHome()): void {
   const packageName = packageNamed(name);
-  rmSync(join(installedPacksPrefix(home), "node_modules", packageName), { recursive: true, force: true });
+  removeFolderSync(join(installedPacksPrefix(home), "node_modules", packageName));
   if (existsSync(join(installedPacksPrefix(home), "package.json"))) record(home, packageName, undefined);
 }
 
 /** Removes every pack installed in `home`: a test that installs packs leaves the next one a home without them. */
 export function removeInstalledPacks(home: string = defaultRerailHome()): void {
-  rmSync(installedPacksPrefix(home), { recursive: true, force: true });
+  removeFolderSync(installedPacksPrefix(home));
 }
 
 /** The directory a `<package>@file:<directory>` spec names, or undefined for a spec of a version. */

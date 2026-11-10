@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +21,7 @@ import {
 } from "../../scripts/dev/rerail-nuke.mjs";
 import { launcherPath, loadSqlite, timestamp } from "../../scripts/dev/rerail-restore.mjs";
 import { linkFolder } from "../support/platform/links.ts";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const NUKE_SCRIPT = fileURLToPath(new URL("../../scripts/dev/rerail-nuke.mjs", import.meta.url));
 const { DatabaseSync } = await loadSqlite();
@@ -30,7 +31,7 @@ async function withHome(run) {
   try {
     return await run(home);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    removeFolderSync(home);
   }
 }
 

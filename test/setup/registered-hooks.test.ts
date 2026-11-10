@@ -1,13 +1,14 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { missingClaudeHookScripts, runRegisteredClaudeHook } from "../../src/setup/registered-hooks.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const homes: string[] = [];
 afterEach(async () => {
-  await Promise.all(homes.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(homes.splice(0).map(path => removeFolder(path)));
 });
 
 describe("Claude Code hook scripts that are gone", () => {

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { createRequire } from "node:module";
 import type * as Sqlite from "node:sqlite";
 import { tmpdir } from "node:os";
@@ -15,11 +15,12 @@ vi.mock("better-sqlite3", () => ({
 }));
 
 import { recordedCheckouts } from "../../src/cli/setup-cli.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 describe("the checkouts `install --remove --delete-data` reads before deleting the database", () => {
   const roots: string[] = [];
   afterEach(async () => {
-    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+    await Promise.all(roots.splice(0).map(root => removeFolder(root)));
   });
 
   it("are read without loading better-sqlite3, whose DLL Windows will not let the uninstall delete once loaded", async () => {

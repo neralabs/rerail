@@ -1,11 +1,12 @@
 import * as fs from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("node:fs", { spy: true });
 import { PI_FIX_CHILD_TOOLS, PiFixReader, STDERR_TAIL_CHARS, piFixInvocation, runPiFix, type PiFixRun } from "../../../src/hosts/pi/pi-fix-tool.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** `stdout` read as a child streams it: in small chunks that split lines. */
 function readStreamed(stdout: string, exitCode: number, model?: string): PiFixRun {
@@ -74,8 +75,8 @@ describe("rerail_fix", () => {
       expect(piFixInvocation("Fix it.", {}, "/usr/local/bin/node", "/nonexistent/pi.js", windows(`${shims};${binaries}`)).command).toBe(join(binaries, "pi.exe"));
       expect(() => piFixInvocation("Fix it.", {}, "/usr/local/bin/node", "/nonexistent/pi.js", windows(`.;${shims}`))).toThrow(/pi\.exe/u);
     } finally {
-      await rm(shims, { recursive: true, force: true });
-      await rm(binaries, { recursive: true, force: true });
+      await removeFolder(shims);
+      await removeFolder(binaries);
     }
   });
 

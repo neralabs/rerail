@@ -28,13 +28,14 @@ import { ManagedUpdater } from "../../src/setup/updater.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { stubUserHome } from "../support/user-home.js";
 import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
 });
 
 interface Fixture {
@@ -1195,7 +1196,7 @@ describe("Codex hooks.json", () => {
     const { home, root, nodePath } = await fixture();
     const trust = expect.stringContaining("run /hooks to trust the rerail hook");
     expect((await registerHarnesses({ root, home, nodePath, harnesses: ["codex"] })).notes).toContainEqual(trust);
-    await rm(join(home, ".codex", "skills", "rerail-show-me"), { recursive: true });
+    await removeFolder(join(home, ".codex", "skills", "rerail-show-me"));
     const again = await registerHarnesses({ root, home, nodePath, harnesses: ["codex"] });
     expect(change(again.changes, "codex", join("rerail-show-me", "SKILL.md")).action).toBe("created");
     expect(again.notes).not.toContainEqual(trust);
@@ -1771,7 +1772,7 @@ describe("OMP plugin install of Rerail", () => {
     expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
 
     const copy = join(home, ".omp", "plugins", "node_modules", "@neralabs", "rerail");
-    await rm(copy, { recursive: true });
+    await removeFolder(copy);
     linkFolder(root, copy);
     await rm(join(home, ".omp", "plugins", "omp-plugins.lock.json"));
     expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -18,6 +18,7 @@ import { directoryPackStore, repositoryPackVersions } from "../support/directory
 import { removeInstalledPacks } from "../support/installed-packs.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
 /** The pack set-up offers the TypeScript fixture, at the version its "Yes" answer carries (`--packs`). */
@@ -27,7 +28,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   removeInstalledPacks();
   vi.unstubAllEnvs();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 interface Fixture {

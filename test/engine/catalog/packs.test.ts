@@ -17,6 +17,7 @@ import { z } from "zod";
 import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 // The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
 // planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
@@ -87,7 +88,7 @@ describe("rule ids across packs", () => {
 describe("validatePack", () => {
   const temporary: string[] = [];
   afterEach(() => {
-    for (const directory of temporary.splice(0)) rmSync(directory, { recursive: true, force: true });
+    for (const directory of temporary.splice(0)) removeFolderSync(directory);
   });
 
   /** A copy of fixture pack `name`, in a directory of that name, with `change` applied to it. */

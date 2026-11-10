@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildSteer, type CodeRuleViolation, renderSteer, SECRET_FILE_FINDING_MESSAGE, STEER_FIX_CHARS } from "../../../src/engine/code-rule/code-rule.js";
 import { checkoutPathBoundary } from "../../../src/engine/path-boundary.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const span = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({
   startByte: 0, endByte: 0, startLine, startColumn, endLine, endColumn,
@@ -160,7 +161,7 @@ describe("buildSteer", () => {
         "Fix these, or tell the user in one line why you won't and run `rerail feedback p '<that line>'`.",
       ].join("\n"));
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeFolderSync(root);
     }
   });
 });

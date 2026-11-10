@@ -57,13 +57,14 @@ import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, loc
 import { provenanceFiles, restaged } from "./support/provenance.mjs";
 import { cacheLicence } from "../support/samples.ts";
 import { linkFolder, symlinkOrSkip } from "../support/platform/links.ts";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 /** A tool's UPSTREAM.md listing `files` (pack-relative) as Rerail's. */
 const record = (files) => `# cases Rerail wrote\n\n| File | Origin |\n|---|---|\n${files.map((file) => `| \`${file}\` | written by Rerail |\n`).join("")}`;
 
 const scratch = [];
 afterEach(() => {
-  for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of scratch.splice(0)) removeFolderSync(directory);
 });
 
 /** Every file under `root`, relative to it, sorted. */
@@ -192,7 +193,7 @@ function published() {
 /** Removes the pack test data from disk, and the archive cache unless `keepCache`: a fresh checkout. */
 function fresh(root, keepCache = false) {
   for (const path of Object.keys(tree(root, true))) rmSync(join(root, path));
-  if (!keepCache) rmSync(join(root, ARCHIVE_CACHE), { recursive: true, force: true });
+  if (!keepCache) removeFolderSync(join(root, ARCHIVE_CACHE));
 }
 
 describe("isPackFixture", () => {
@@ -362,7 +363,7 @@ describe("pull", () => {
     fresh(root);
     const outside = join(dirname(root), "outside");
     mkdirSync(outside);
-    rmSync(join(root, "packs/p/upstream/t/fixtures"), { recursive: true });
+    removeFolderSync(join(root, "packs/p/upstream/t/fixtures"));
     linkFolder(outside, join(root, "packs/p/upstream/t/fixtures"));
     expect(failure(() => pull({ root, aws, log: () => {} }))).toContain("packs/p/upstream/t/fixtures is a symlink");
     expect(files(outside)).toEqual([]);
@@ -705,7 +706,7 @@ describe("upload without a local archive", () => {
 
   it("verifies an archive S3 holds when the archive cache lacks it, and fails naming the key when neither holds it", () => {
     const { root, aws, object, called } = published();
-    rmSync(join(root, ARCHIVE_CACHE), { recursive: true });
+    removeFolderSync(join(root, ARCHIVE_CACHE));
     expect(upload({ root, aws, tags: TAGS, log: quiet }).uploaded).toEqual([]);
     expect(called("cp")).toHaveLength(3);
     const key = archiveKey(U, readLock(root, U).sha256);

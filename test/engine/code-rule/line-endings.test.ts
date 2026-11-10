@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { blobIds, heldAs, textAs } from "../../../src/engine/code-rule/line-endings.js";
 import { gitCrlfPaths, type CrlfRule } from "../../../src/engine/git.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** A file's digest as a walk records it: the SHA-256 of its bytes. */
 function digestOf(bytes: string | Buffer): string {
@@ -165,7 +166,7 @@ describe("each form against the bytes Git's own checkout writes", () => {
     }
   });
   afterAll(async () => {
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   it.each<{ attributes: string; autocrlf: string; eol: string; rule: CrlfRule | undefined }>([

@@ -20,6 +20,7 @@ import { hookRerailStarted } from "../../src/harness/index.js";
 import type { z } from "zod";
 import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 let home: string;
 let cwd: string;
@@ -65,7 +66,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   await releaseEndpoint();
-  await rm(home, { recursive: true, force: true });
+  await removeFolder(home);
 });
 
 const read = (onDemand = false) => readPresentation({ sessionId: "session /?&one", host: "claude-code", cwd, onDemand });

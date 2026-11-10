@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,7 @@ import {
   mainContentStoreDirectory,
   resolveRerailBuild,
 } from "../../../src/engine/native/rerail-build.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 /** This binary's store file (`STORE_FILE_NAME`, raised with the store schema floor). */
 const STORE_FILE = "content-v1.sqlite";
@@ -31,7 +32,7 @@ beforeEach(() => {
 afterEach(() => {
   if (storeOverride === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
   else process.env.RERAIL_CONTENT_STORE_PATH = storeOverride;
-  rmSync(root, { recursive: true, force: true });
+  removeFolderSync(root);
 });
 
 function managedHome(version: string): { home: string; packageRoot: string } {

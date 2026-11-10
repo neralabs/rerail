@@ -20,6 +20,7 @@ import {
   validateDevInstance,
 } from "../../scripts/dev/rerail-dev.mjs";
 import { linkFolder } from "../support/platform/links.ts";
+import { removeFolder } from "../support/platform/remove-folder.ts";
 
 const cleanups = [];
 afterEach(async () => {
@@ -28,7 +29,7 @@ afterEach(async () => {
 
 async function sandbox() {
   const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-dev-")));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  cleanups.push(() => removeFolder(root));
   const env = { RERAIL_HOME: join(root, "rerail-home"), XDG_STATE_HOME: join(root, "state") };
   const checkout = async (name) => {
     const path = join(root, name);

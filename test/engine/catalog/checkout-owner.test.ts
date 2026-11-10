@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { physicalPath } from "../../../src/engine/catalog/checkout-control.js";
 import { CheckoutCatalogs } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -31,7 +32,7 @@ async function repository(path: string): Promise<string> {
 describe("CheckoutOwners", () => {
   it("finds a nested checkout recorded after the folder was first resolved", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
-    cleanups.push(() => rm(root, { recursive: true, force: true }));
+    cleanups.push(() => removeFolder(root));
     const outer = await repository(join(root, "outer"));
     await mkdir(join(outer, "src"), { recursive: true });
     await writeFile(join(outer, "src", "a.py"), "x = 1\n");
@@ -51,7 +52,7 @@ describe("CheckoutOwners", () => {
 
   it("tells whether the recorded checkouts changed without preparing a statement on every lookup", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
-    cleanups.push(() => rm(root, { recursive: true, force: true }));
+    cleanups.push(() => removeFolder(root));
     const outer = await repository(join(root, "outer"));
     const catalogs = new CheckoutCatalogs(join(root, "rerail.sqlite"));
     cleanups.push(async () => catalogs.close());
@@ -68,7 +69,7 @@ describe("CheckoutOwners", () => {
 
   it.runIf(process.platform === "win32")("owns a file spelled with a lower-case drive letter, as VS Code spells a session's folder", async () => {
     const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
-    cleanups.push(() => rm(root, { recursive: true, force: true }));
+    cleanups.push(() => removeFolder(root));
     const outer = realpathSync.native(await repository(join(root, "outer")));
     await mkdir(join(outer, "src"), { recursive: true });
     await writeFile(join(outer, "src", "a.py"), "x = 1\n");

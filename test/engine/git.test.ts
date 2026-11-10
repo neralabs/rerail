@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,9 +10,10 @@ import {
   runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, encoding: "utf8" });
@@ -403,7 +404,7 @@ describe("gitCandidates", () => {
     const before = process.cwd();
     process.chdir(gone);
     try {
-      await rm(gone, { recursive: true });
+      await removeFolder(gone);
       expect(() => process.cwd()).toThrow();
       vi.stubEnv("PATH", "/opt/local/bin");
       expect(gitCandidates()).toContain("/opt/local/bin/git");

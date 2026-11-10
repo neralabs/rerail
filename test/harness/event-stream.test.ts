@@ -11,7 +11,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/runtime/daemon-control.js"),
   daemonEngineEndpoint: routing.daemonEngineEndpoint,
 }));
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +22,7 @@ import { encodeRerailEventResult, RERAIL_EVENT_PROTOCOL_PREFACE } from "../../sr
 import { runRerailEventStream, serveRerailEventStream } from "../../src/harness/event-stream.js";
 import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -87,7 +88,7 @@ describe("Rerail event stream", () => {
 
   it("links a steer's rules to the session checkout's dashboard, recorded in the Rerail home's daemon.json", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-event-stream-home-"));
-    cleanups.push(() => rm(home, { recursive: true, force: true }));
+    cleanups.push(() => removeFolder(home));
     const checkout = join(home, "checkout");
     await mkdir(checkout);
     await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 4791, url: "http://127.0.0.1:4791/",
@@ -141,7 +142,7 @@ async function fakeEngineService(socketPath: string): Promise<EngineRequestBody[
 describe("rerail events in a main build", () => {
   it("sends every event to the daemon engine service instead of evaluating in-process", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-main-"));
-    cleanups.push(async () => await rm(root, { recursive: true, force: true }));
+    cleanups.push(async () => await removeFolder(root));
     const socketPath = testEngineEndpoint(root);
     const received = await fakeEngineService(socketPath);
     routing.isMainRerailBuild.mockReturnValue(true);
@@ -191,7 +192,7 @@ describe("rerail events in a main build", () => {
 
   it("never asks for the daemon, which would autostart it, while Rerail is off in the checkout", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-off-"));
-    cleanups.push(async () => await rm(root, { recursive: true, force: true }));
+    cleanups.push(async () => await removeFolder(root));
     routing.isMainRerailBuild.mockReturnValue(true);
     const output = new PassThrough();
     let written = "";

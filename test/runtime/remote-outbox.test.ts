@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -9,6 +9,7 @@ import { addRemote, machineId, readRemoteConfig, setRepositoryExcluded } from ".
 import { backoffMs, MAX_BACKOFF_MS, RemoteOutbox } from "../../src/runtime/remote-outbox.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { startFakeSink, storedRecords, type FakeSink } from "../support/fake-sink.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const REPOSITORY = "remote:example.com/team/app";
 let home: string;
@@ -24,7 +25,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await sink.close();
-  rmSync(home, { recursive: true, force: true });
+  removeFolderSync(home);
 });
 
 /** One finished session of four events (`seedRerailDatabase`) in {@link REPOSITORY}, and a finished audit with a violation. */

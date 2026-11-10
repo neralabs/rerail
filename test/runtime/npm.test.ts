@@ -1,6 +1,6 @@
 import * as childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -9,10 +9,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("node:child_process", { spy: true });
 
 import { cleanCommandError, environmentForNode, runNpm } from "../../src/runtime/npm.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(async directory => await rm(directory, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(async directory => await removeFolder(directory)));
 });
 
 /** The file name of a program called `name` on this platform: Windows runs only a file with an extension in PATHEXT. */

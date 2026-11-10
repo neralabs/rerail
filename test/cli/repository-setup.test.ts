@@ -1,6 +1,5 @@
 /** Set-up and the repository's own lint config, a database from before set-up, `rerail setup` itself, and rule packs from npm. */
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -29,6 +28,7 @@ import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
 import { removeFixtures, TS_PACKS, type Fixture, fixture, agentIo, terminalIo, request, selected, expectUntouched, SETUP_TIMEOUT_MS, TYPESCRIPT } from "../support/repository-setup.js";
 import { shellWord } from "../../src/engine/index.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 afterEach(async () => {
   readsRepository.mockClear();
@@ -440,7 +440,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
       expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.2\.0/u);
       expect(asked.text()).toContain("Scanned acme-api. None of Rerail’s rule packs fit it.");
     } finally {
-      await rm(current, { recursive: true, force: true });
+      await removeFolder(current);
     }
   });
 

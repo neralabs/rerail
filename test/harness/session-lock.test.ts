@@ -1,15 +1,16 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withSessionLock } from "../../src/harness/hook-adapter.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 vi.mock("node:fs/promises", { spy: true });
 
 const roots: string[] = [];
 afterEach(async () => {
   vi.mocked(writeFile).mockReset();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 async function lockRoot(): Promise<string> {

@@ -4,7 +4,7 @@
 // dist-tags.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ import { CHANGE_TYPES, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, chan
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 import { linkFolder } from "../support/platform/links.ts";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -196,7 +197,7 @@ describe("releaseChangelog and changelogSection", () => {
         [".changelog/cli-c.md", null, "- No type."],
       ]);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeFolderSync(root);
     }
   });
 
@@ -303,7 +304,7 @@ describe("release notes: the lead, the entries, and what a note may say", () => 
         linkFolder(join(ROOT, "node_modules"), join(root, "node_modules"));
         const git = (...args) => execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd: root, stdio: "ignore" });
         const write = (files) => {
-          rmSync(join(root, ".changelog"), { recursive: true, force: true });
+          removeFolderSync(join(root, ".changelog"));
           mkdirSync(join(root, ".changelog"));
           writeFileSync(join(root, ".changelog", "README.md"), "# Changelog entries\n");
           for (const [file, text] of Object.entries(files)) writeFileSync(join(root, ".changelog", file), text);
@@ -317,7 +318,7 @@ describe("release notes: the lead, the entries, and what a note may say", () => 
         write(after);
         return spawnSync(process.execPath, [join("scripts", "release", "core-changelog-check.mjs"), "base"], { cwd: root, encoding: "utf8" });
       } finally {
-        rmSync(root, { recursive: true, force: true });
+        removeFolderSync(root);
       }
     }
 

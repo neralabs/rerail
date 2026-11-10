@@ -1,18 +1,19 @@
 // Cursor's transcript state is replaced through a temporary file: a rename that fails leaves none behind.
 // node:fs/promises is spied on so the test can make the rename fail.
-import { mkdtemp, readdir, rename, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterSession, RerailEventLoop } from "../../../src/engine/index.js";
 import { ingestCursorTranscript } from "../../../src/hosts/cursor/cursor-transcript.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 vi.mock("node:fs/promises", { spy: true });
 
 const roots: string[] = [];
 afterEach(async () => {
   vi.mocked(rename).mockReset();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 describe("Cursor's transcript state", () => {
