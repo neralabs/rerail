@@ -96,6 +96,12 @@ impl Pooled {
         self.buffer.as_ref().expect("a leased buffer")
     }
 
+    /// Releases the buffer to Metal instead of the pool: a command buffer still encoding or running holds it until
+    /// it completes, and no later lease can be handed it meanwhile.
+    pub fn release(mut self) {
+        self.keep = false;
+    }
+
     /// The buffer's host address.
     pub fn host(&self) -> *mut u8 {
         self.buffer().contents().cast()

@@ -3476,6 +3476,29 @@ impl Run<'_, '_> {
     }
 
     /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it.
+    /// The join specs of a stratum's seed rules whose every atom reads a relation already run natively (decision
+    /// 0100 §5): what a level's batch can pair before the stratum runs. Planned as the stratum will plan them
+    /// (`plan_rule_reused` keeps the plan); a spec the stratum ends up planning otherwise is not found, and that seed
+    /// runs by the host's walk.
+    fn seed_specs(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Vec<String> {
+        let prog = self.prog;
+        if scc.iter().any(|r| prog.lattice.contains_key(r) || prog.natives.contains_key(r) || prog.gates.iter().any(|(g, _)| g == r)) {
+            return Vec::new();
+        }
+        let ri: BTreeMap<String, usize> = scc.iter().enumerate().map(|(i, r)| (r.clone(), i)).collect();
+        let mut out = Vec::new();
+        for r in rules.iter().filter(|r| recursive(&r.body, scc).is_empty()) {
+            if !r.body.iter().filter_map(Literal::atom).all(|a| self.native_rels.contains(&a.rel)) {
+                continue;
+            }
+            let Ok(((order, _, _), _)) = self.model.plan_rule_reused(prog, &r.head, &r.body, None) else { continue };
+            if let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &self.native_rels) {
+                out.push(spec);
+            }
+        }
+        out
+    }
+
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
         let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
         self.model.stats.solve(if reads { scc.clone() } else { BTreeSet::new() });
@@ -4748,6 +4771,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         })
         .collect();
     let mut waved = vec![false; sccs.len()];
+    let by_stratum = rules_by_stratum(prog, &sccs);
     for (at, scc) in sccs.iter().enumerate() {
         let candidates: Vec<String> = if at == 0 {
             run.native_rels.iter().cloned().collect()
@@ -4856,11 +4880,30 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                     super::profile::decision("device waves (decision 0095 §5)", || format!("a level of {} strata: {launches} count tables over {rels} relations in one batch", level.len()));
                 }
             }
+            // The level's first joins (decision 0100 §5, §6): every seed join of its strata that reads only
+            // relations already held, sent to the executor as one batch while the level's strata run.
+            let native_ones: Vec<usize> = level.iter().copied().filter(|&j| !sccs[j].iter().all(|r| run.views.contains(r))).collect();
+            let specs: Vec<String> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
+            if !specs.is_empty() {
+                let _wave = super::profile::span(|| "level wave (joins)".into());
+                let sent = super::native::component::prefetch_joins(db, &specs)?;
+                if sent > 0 {
+                    super::profile::decision("level joins (decision 0100 §5)", || format!("a level of {} strata: {sent} of {} seed joins sent as one batch", level.len(), specs.len()));
+                }
+            }
         }
         if native.contains("program") && !scc.iter().all(|r| run.views.contains(r)) {
             let native_span = super::profile::span(|| "native".into());
+            let t0 = level_trace().map(|_| thread_cpu());
             let ran = run.native_stratum(scc, &rules)?;
             drop(native_span);
+            // `RERAIL_LEVEL_TRACE=<file>`: each native stratum's level and thread CPU (decision 0100 step 6).
+            if let (Some(path), Some(t0)) = (level_trace(), t0) {
+                use std::io::Write as _;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    let _ = writeln!(f, "stratum\t{}\t{at}\t{:.6}\t{ran}\t{}", level_of[at], thread_cpu() - t0, rules.len());
+                }
+            }
             if ran {
                 outcome.native.insert(key);
                 continue;
@@ -4958,6 +5001,15 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
+    // The chunk's end: pairs no seed took, and what the lanes kept for the chunk's joins.
+    super::native::component::level_clear();
+    if let Some(path) = level_trace() {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let (sent, used) = super::native::component::level_counts();
+            let _ = writeln!(f, "chunk\t{sent}\t{used}");
+        }
+    }
     let _outputs = super::profile::span(|| "outputs".into());
     let kept = run.model.inputs.kept.clone();
     outcome.kept = kept.iter().filter(|r| run.native_rels.contains(*r)).cloned().collect();
@@ -4996,6 +5048,20 @@ fn first_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String
 /// Per relation, the last stratum (an index into `sccs`) whose rules read it. A view is read where its readers run,
 /// so what a view reads lives as long as the view's last reader.
 /// Each stratum's rules (an index into `sccs`), found once: a scan of every rule per stratum was quadratic.
+/// `RERAIL_LEVEL_TRACE`, read once.
+fn level_trace() -> Option<&'static str> {
+    static PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| std::env::var("RERAIL_LEVEL_TRACE").ok()).as_deref()
+}
+
+/// This thread's CPU seconds.
+fn thread_cpu() -> f64 {
+    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: a valid timespec out.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+}
+
 fn rules_by_stratum<'a>(prog: &'a Program, sccs: &[BTreeSet<String>]) -> Vec<Vec<&'a Rule>> {
     let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
     let mut by: Vec<Vec<&Rule>> = vec![Vec::new(); sccs.len()];

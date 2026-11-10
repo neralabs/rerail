@@ -83,6 +83,29 @@ pub enum Kernel {
     /// `dst`). Node `j` is in row `i` of the [`Output::Bits`] when a path of one or more edges leads from `i` to `j`
     /// (so `i` is in its own row only on a cycle).
     Closure { n: u32, off: Arc<[u32]>, dst: Arc<[u32]> },
+
+    /// **Join.** The equi-join of two relations on their key columns, key `i` each side's column `i` (decision 0100
+    /// §1): [`Output::Pairs`] of (left row, right row), in left row order and, within a left row, in right row
+    /// order. Every side's columns have the same length.
+    ///
+    /// `by` is how a device finds the pairs; the pairs are the same either way. `right_id`, when set, names the
+    /// right's key columns in the executor's space: a lane keeps what it built from them (the GPU its sort, or its
+    /// grouping by document; the cores their sort) until the caller forgets the id ([`crate::exec::Executor::forget`]).
+    /// One id always names the same columns: a lane refuses a kept entry whose row count differs.
+    Join { left: Keys, right: Keys, right_id: Option<u64>, by: JoinBy },
+}
+
+/// A relation's key columns, one per key, of equal length.
+pub type Keys = Arc<[Arc<[i64]>]>;
+
+/// How a join's pairs are found on a device (decision 0095 §4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum JoinBy {
+    /// The right sorted by key 0 and kept; each left row searches its key's run.
+    Probe,
+    /// Both sides grouped by key 0's chunk (`v >> 16`, a document's nodes), each chunk's rows compared by brute
+    /// force: for keys a sort cannot find quickly, at most three.
+    Tile,
 }
 
 impl Kernel {
@@ -94,6 +117,8 @@ impl Kernel {
             Kernel::CountTable { emit: true, .. } => Form::CountPairs,
             Kernel::Histogram { .. } => Form::Histogram,
             Kernel::Closure { .. } => Form::Closure,
+            Kernel::Join { by: JoinBy::Probe, .. } => Form::Probe,
+            Kernel::Join { by: JoinBy::Tile, .. } => Form::Tile,
         }
     }
 
@@ -103,7 +128,8 @@ impl Kernel {
     /// - count table: rows read plus pairs tested, `left + right + Σ_p |left_p| × |right_p|` when emitting, else
     ///   `left + right`;
     /// - histogram: codes read;
-    /// - closure: edges times the words of a bit row, `|dst| × ⌈n / 64⌉`.
+    /// - closure: edges times the words of a bit row, `|dst| × ⌈n / 64⌉`;
+    /// - join: rows of both sides (the pairs are not known ahead).
     pub fn units(&self) -> f64 {
         match self {
             Kernel::BitProduct { a, b, .. } => a.rows as f64 * b.rows as f64 * a.words as f64 * 64.0,
@@ -119,7 +145,23 @@ impl Kernel {
             }
             Kernel::Histogram { codes, .. } => codes.len() as f64,
             Kernel::Closure { n, dst, .. } => dst.len() as f64 * (*n as f64 / 64.0).ceil().max(1.0),
+            Kernel::Join { left, right, .. } => (left.first().map_or(0, |c| c.len()) + right.first().map_or(0, |c| c.len())) as f64,
         }
+    }
+
+    /// A join's shape is sound: as many keys on each side, at least one, each side's columns of one length.
+    pub fn join_shape(left: &Keys, right: &Keys) -> Result<(usize, usize), String> {
+        let (Some(l0), Some(r0)) = (left.first(), right.first()) else { return Err("join: no keys".into()) };
+        if left.len() != right.len() {
+            return Err(format!("join: {} left keys against {} right", left.len(), right.len()));
+        }
+        if left.iter().any(|c| c.len() != l0.len()) || right.iter().any(|c| c.len() != r0.len()) {
+            return Err("join: a side's key columns differ in length".into());
+        }
+        if l0.len() > u32::MAX as usize || r0.len() > u32::MAX as usize {
+            return Err("join: more rows than a u32 counts".into());
+        }
+        Ok((l0.len(), r0.len()))
     }
 }
 
@@ -133,10 +175,14 @@ pub enum Form {
     CountPairs,
     Histogram,
     Closure,
+    /// A join by sort and probe.
+    Probe,
+    /// A join by document tiles.
+    Tile,
 }
 
 impl Form {
-    pub const ALL: [Form; 5] = [Form::BitProduct, Form::CountTable, Form::CountPairs, Form::Histogram, Form::Closure];
+    pub const ALL: [Form; 7] = [Form::BitProduct, Form::CountTable, Form::CountPairs, Form::Histogram, Form::Closure, Form::Probe, Form::Tile];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -145,6 +191,8 @@ impl Form {
             Form::CountPairs => "count table (pairs)",
             Form::Histogram => "histogram",
             Form::Closure => "closure",
+            Form::Probe => "join (sort and probe)",
+            Form::Tile => "join (tiles)",
         }
     }
 }

@@ -140,7 +140,7 @@ fn the_executor_batches_and_places_on_the_cpu() {
         Kernel::Histogram { off: off.clone(), codes: codes.clone(), width: 7 },
         Kernel::BitProduct { a: a.clone(), b: b.clone(), min: None },
     ];
-    let ex = Executor::with(vec![Arc::new(crate::exec::CpuBackend)]);
+    let ex = Executor::with(vec![Arc::new(crate::exec::CpuBackend::default())]);
     let (done, report) = ex.run(Batch(ks.iter().cloned().map(Launch::new).collect())).unwrap();
     assert_eq!(report.launches[Lane::Cpu.index()], 2);
     for (d, k) in done.iter().zip(&ks) {

@@ -76,6 +76,11 @@ fn tiny(f: Form) -> Kernel {
             let (off, dst) = graph(&mut rng, 8, 1);
             Kernel::Closure { n: 8, off, dst }
         }
+        Form::Probe | Form::Tile => {
+            let keys: crate::kernel::Keys = vec![std::sync::Arc::<[i64]>::from(vec![1i64, 2])].into();
+            let by = if f == Form::Tile { crate::kernel::JoinBy::Tile } else { crate::kernel::JoinBy::Probe };
+            Kernel::Join { left: keys.clone(), right: keys, right_id: None, by }
+        }
     }
 }
 
@@ -114,7 +119,7 @@ fn cpu() {
         row(name, "cpu (core-s, user+sys)", &k, secs, "CPU");
     }
     // A launch's fixed cost: one tiny launch of each form through the lane's submission (the rayon pool), wall.
-    let ex = crate::exec::CpuBackend;
+    let ex = crate::exec::CpuBackend::default();
     use crate::exec::Backend;
     let tinies: Vec<Kernel> = Form::ALL.iter().map(|&f| tiny(f)).collect();
     let refs: Vec<&Kernel> = tinies.iter().collect();
