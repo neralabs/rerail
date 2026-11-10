@@ -1259,7 +1259,7 @@ mod tests {
         .unwrap();
         let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
         let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
-        let mut model = Model { analysis: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+        let mut model = Model { analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
         model.stats.nodes = 450_000.0;
         // Measured rows (an earlier chunk's), then distinct values by column.
         for (rel, rows, ndv) in [

@@ -511,6 +511,8 @@ pub(in crate::code_rule_dsl) struct Model {
     /// The program's logical key and scalar analysis, made once per plan and shared (not made again per stratum),
     /// when first asked (`analysis`): only the SQL executor reads it, so the native set engine's runs never make it.
     analysis: std::sync::OnceLock<std::sync::Arc<super::analysis::ProgramAnalysis>>,
+    /// The inputs of the program last asked about, hashed (`is_input`), with the list's address and length.
+    input_set: std::sync::Mutex<(usize, usize, rustc_hash::FxHashSet<String>)>,
     pub(in crate::code_rule_dsl) stats: Stats,
     pub(in crate::code_rule_dsl) ndv: HashMap<(String, usize), f64>,
     /// rel → (node column, document column) for projections of `node(d, n)`: documents are id intervals.
@@ -524,6 +526,22 @@ pub(in crate::code_rule_dsl) struct Model {
 }
 
 impl Model {
+    /// Whether `rel` is one of `prog`'s inputs. A maintained program has thousands (each kept relation's `__old`,
+    /// each changed input's `__plus` and `__minus`), and the planner asks for every atom it prices: a scan of the
+    /// list was 40% of `plan_search` in a session step. A long list is hashed once per model; the programs a model
+    /// plans are alive while it is, so an address and length name one list.
+    fn is_input(&self, prog: &Program, rel: &str) -> bool {
+        if prog.inputs.len() < 32 {
+            return prog.inputs.iter().any(|i| i == rel);
+        }
+        let mut c = self.input_set.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let at = (prog.inputs.as_ptr() as usize, prog.inputs.len());
+        if (c.0, c.1) != at {
+            *c = (at.0, at.1, prog.inputs.iter().cloned().collect());
+        }
+        c.2.contains(rel)
+    }
+
     /// Column `col` of `rel` in SQL: an input's name, or `c{col}` for a relation the program derives.
     fn col(&self, rel: &str, col: usize) -> String {
         if self.derived.contains(rel) {
@@ -539,6 +557,14 @@ impl Model {
 /// An input's column names (`sql::select::input_columns`); any other relation's columns are `c0`, `c1`, ….
 pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
+}
+
+/// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
+/// prints them at the end of each corpus run (`KeepPlans`).
+static PLAN_CACHE: [std::sync::atomic::AtomicU64; 7] = [const { std::sync::atomic::AtomicU64::new(0) }; 7];
+const PLAN_CACHE_NAMES: [&str; 7] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs"];
+fn plan_cache(outcome: usize) {
+    PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Quiet strata passed on unchanged in this process (decision 0101 §1), for tests.
@@ -725,6 +751,10 @@ impl KeepPlans {
 
 impl Drop for KeepPlans {
     fn drop(&mut self) {
+        if std::env::var_os("RERAIL_PLAN_CACHE_COUNTS").is_some() {
+            let counts: Vec<String> = PLAN_CACHE.iter().zip(PLAN_CACHE_NAMES).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
+            eprintln!("plan cache: {}", counts.join(", "));
+        }
         let plans = PLANS.with(|p| p.borrow_mut().take());
         keeps::observing(false);
         if let (Some(g), Some(plans)) = (self.0, plans) {
@@ -841,6 +871,7 @@ impl Model {
         let key = self.plan_key("", head, body, first);
         let nodes = self.stats.nodes.max(1.0);
         let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.get(&key).cloned())) else {
+            plan_cache(0);
             return self.plan_inner(prog, head, body, first, None, true);
         };
         let sizes = self.read_sizes(body);
@@ -855,6 +886,7 @@ impl Model {
             && near(&priced.sizes, &sizes)
         {
             super::profile::decision("plan cache (decision 0038)", || format!("a kept plan reused at its kept price: no size it reads moved over {PRICE_DRIFT}x"));
+            plan_cache(2);
             return Ok(priced.got.clone());
         }
         if let Some((order, per_node, searched, gap, _)) = kept {
@@ -872,16 +904,27 @@ impl Model {
             // kept order alone never shows it.
             let cheaper_start = |work: f64| work / SEED.with(|c| c.get()).max(1.0) > REPLAN * gap.max(1.0) && work > REPLAN_ROWS;
             match priced {
-                Ok(got) if cheaper_start(got.0.1) => super::profile::decision("plan cache (decision 0038)", || "replanned: a start much cheaper than when the kept order was searched".into()),
+                Ok(got) if cheaper_start(got.0.1) => {
+                    plan_cache(4);
+                    super::profile::decision("plan cache (decision 0038)", || "replanned: a start much cheaper than when the kept order was searched".into())
+                }
                 Ok(got) if got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS => {
                     super::profile::decision("plan cache (decision 0038)", || "a kept plan reused, re-priced with this chunk's statistics".into());
+                    plan_cache(3);
                     remember(&key, &got);
                     return Ok(got);
                 }
-                Ok(_) => super::profile::decision("plan cache (decision 0038)", || format!("replanned: the kept order's work per node grew over {REPLAN}x, by over {REPLAN_ROWS} rows")),
-                Err(_) => super::profile::decision("plan cache (decision 0038)", || "replanned: the kept order no longer runs".into()),
+                Ok(_) => {
+                    plan_cache(5);
+                    super::profile::decision("plan cache (decision 0038)", || format!("replanned: the kept order's work per node grew over {REPLAN}x, by over {REPLAN_ROWS} rows"))
+                }
+                Err(_) => {
+                    plan_cache(6);
+                    super::profile::decision("plan cache (decision 0038)", || "replanned: the kept order no longer runs".into())
+                }
             }
         } else {
+            plan_cache(1);
             super::profile::decision("plan cache (decision 0038)", || "planned (first sight of the rule)".into());
         }
         let got = {
@@ -1093,7 +1136,7 @@ impl Model {
             let postings = |c: usize| -> f64 {
                 let k = constant(&a.args[c]);
                 if let Some(k) = &k
-                    && prog.inputs.contains(&a.rel)
+                    && self.is_input(prog, &a.rel)
                     && let Some(f) = stats.const_freq(&a.rel, &self.col(&a.rel, c), k)
                 {
                     return f as f64;
@@ -1156,7 +1199,7 @@ impl Model {
                     let domain = body
                         .iter()
                         .filter_map(|l| match l {
-                            Literal::Atom(b) if !b.neg && b.rel != a.rel && prog.inputs.contains(&b.rel) => {
+                            Literal::Atom(b) if !b.neg && b.rel != a.rel && self.is_input(prog, &b.rel) => {
                                 b.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).map(|c| self.ndv_or_1(&b.rel, c))
                             }
                             _ => None,
@@ -1197,7 +1240,7 @@ impl Model {
         // (column, rows) if `a` can be read as a range inside one document: a body literal `docof($v, $d)` has $d
         // bound and $v unbound, $v is `a`'s column, and an input index on `a` is the bound column then that column.
         let doc_range = |a: &Atom, bound: &BTreeSet<String>| -> Option<(usize, f64)> {
-            if stats.docs.is_none() || !prog.inputs.contains(&a.rel) {
+            if stats.docs.is_none() || !self.is_input(prog, &a.rel) {
                 return None;
             }
             for d in body {
@@ -1638,7 +1681,7 @@ impl Model {
                 let source = |rel: &str| -> String {
                     if rel.starts_with(super::strings::RELATION) {
                         "text test".into()
-                    } else if prog.inputs.contains(&rel.to_owned()) {
+                    } else if self.is_input(prog, rel) {
                         "input".into()
                     } else if self.view_src.contains_key(rel) {
                         "view of an input".into()
@@ -1835,7 +1878,7 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
         for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel)) {
             stats.indexes.insert(rel.clone(), vtab_indexes(rel));
         }
-        return Ok(Model { analysis, stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived });
+        return Ok(Model { analysis, input_set: Default::default(), stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived });
     }
     for rel in &prog.inputs {
         let mut st = db.prepare(&format!("PRAGMA f.table_info({rel})"))?;
@@ -1856,7 +1899,7 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
         }
         stats.indexes.insert(rel.clone(), indexes);
     }
-    Ok(Model { analysis, stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived })
+    Ok(Model { analysis, input_set: Default::default(), stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived })
 }
 
 /// T's facts file's indexes, which the base-relation vtabs' lookups mirror.
