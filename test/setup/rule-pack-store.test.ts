@@ -459,6 +459,21 @@ describe("discoverPacks", () => {
       expect(unscanned.nothingFits).toBeUndefined();
     });
 
+    it("explains nothing when the only pack that fits has no rules yet: that reason is the whole answer", async () => {
+      // Rerail's Rust pack, and its SQL pack as it would be published before any of its rules is ready.
+      const packsRoot = temporaryHome();
+      for (const id of ["rust", "sql"]) cpSync(repositoryPath("packs", id), join(packsRoot, id), { recursive: true, filter: source => !source.includes("upstream") });
+      const packJson = join(packsRoot, "sql", "pack.json");
+      writeFileSync(packJson, JSON.stringify({ ...JSON.parse(readFileSync(packJson, "utf8")) as Record<string, unknown>, rules: [] }));
+      const root = project({ "db/schema.sql": "select 1;\n" });
+
+      const discovery = await discoverPacks(root, directoryPackStore(packsRoot, ["rust", "sql"], temporaryHome()));
+
+      expect(discovery.withoutRules.map(found => [found.pack.id, found.match !== undefined])).toEqual([["sql", true]]);
+      expect(discovery.recommended).toEqual([]);
+      expect(discovery.nothingFits).toBeUndefined();
+    });
+
     it("explains nothing when no pack could be fetched", async () => {
       const root = project({ "tests/test_a.py": "a = 1\n" });
       const offline: PackStore = {

@@ -287,9 +287,13 @@ export function packsLeftOutByCore(home: string, current: string, previous: stri
   return leftOut(current).filter(skipped => !before.has(skipped.path)).map(skippedProblem);
 }
 
-/** Why none of the `available` packs fits the scanned repository, when there are some and none does. */
-function nothingFits(scan: RepositoryScan | undefined, available: readonly DiscoveredPack[]): Pick<PackDiscovery, "nothingFits"> {
-  if (scan === undefined || available.length === 0 || available.some(found => found.match !== undefined)) return {};
+/**
+ * Why no pack fits the scanned repository, explained over the packs with rules: only when none of the `discovered`
+ * fits, since one that fits but has no rules yet is named with that reason, which is the whole answer.
+ */
+function nothingFits(scan: RepositoryScan | undefined, discovered: readonly DiscoveredPack[]): Pick<PackDiscovery, "nothingFits"> {
+  const available = discovered.filter(found => found.ruleCount > 0);
+  if (scan === undefined || available.length === 0 || discovered.some(found => found.match !== undefined)) return {};
   return { nothingFits: explainNoFit(scan, available.map(found => found.pack)) };
 }
 
@@ -344,7 +348,7 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
       problems: [...fetch.problems.map(problem => `${problem.packageName}: ${problem.reason}`), ...catalog.skipped.map(skippedProblem)],
       ...(fetch.fetched.length === 0 && fetch.problems.length > 0 ? { downloadFailures: [...new Set(fetch.problems.map(problem => problem.reason))] } : {}),
       catalog,
-      ...nothingFits(scan, available),
+      ...nothingFits(scan, discovered),
     };
   } finally {
     await fetch.release();

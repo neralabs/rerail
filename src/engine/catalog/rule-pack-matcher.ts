@@ -33,7 +33,7 @@ export interface RepositoryScan {
   readonly files: readonly string[];
   /** Per ecosystem, package name (normalised) to every manifest that depends on it, shallowest first, then by path. */
   readonly dependencies: ReadonlyMap<DependencyEcosystem, ReadonlyMap<string, readonly string[]>>;
-  /** The folders the repository has that the scan does not enter, those holding most files first. */
+  /** The folders the repository has that the scan does not enter: under Git those holding most files first, else by name. */
   readonly notScanned: readonly NotScannedFolder[];
   /** Whether `files` is Git's listing, which leaves out what Git ignores, rather than a walk of the folder. */
   readonly git: boolean;

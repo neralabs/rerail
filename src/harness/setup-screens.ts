@@ -561,6 +561,8 @@ const MAX_EXCLUDED_GLOBS = 3;
 const MAX_LOOKS_FOR_FILES = 3;
 const MAX_LOOKS_FOR_DEPENDENCIES = 2;
 const PACK_NAME_GAP = 2;
+/** The pack name column is no wider than this, so one long name does not squeeze every pack's text. */
+const MAX_PACK_NAME_WIDTH = 24;
 
 /** `words` joined by spaces into rows of at most `width` characters; a longer word has a row of its own. */
 function wrapWords(words: readonly string[], width: number): string[] {
@@ -616,12 +618,14 @@ function looksForItems(pack: NoFitExplanation["packs"][number]): string[] {
   ];
 }
 
-/** Each pack, then what it looks for, wrapped in a column after the longest name. */
+/** Each pack, then what it looks for, wrapped in a column after the names; a name too long for it has its own row. */
 function looksForRows(explanation: NoFitExplanation): string[] {
-  const nameWidth = Math.max(0, ...explanation.packs.map(pack => clean(pack.name).length)) + PACK_NAME_GAP;
+  const nameWidth = Math.min(MAX_PACK_NAME_WIDTH, Math.max(0, ...explanation.packs.map(pack => clean(pack.name).length))) + PACK_NAME_GAP;
   return explanation.packs.flatMap(pack => {
+    const name = clean(pack.name);
     const rows = wrapWords(marked(looksForItems(pack), ","), NO_FIT_TEXT_WIDTH - nameWidth);
-    return rows.map((row, index) => `${(index === 0 ? clean(pack.name) : "").padEnd(nameWidth)}${row}`);
+    if (name.length + PACK_NAME_GAP > nameWidth) return [name, ...rows.map(row => `${" ".repeat(nameWidth)}${row}`)];
+    return rows.map((row, index) => `${(index === 0 ? name : "").padEnd(nameWidth)}${row}`);
   });
 }
 

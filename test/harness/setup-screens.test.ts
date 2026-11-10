@@ -420,6 +420,16 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(noFit({ nearMisses: [] })).not.toContain("Closest");
   });
 
+  it("caps the pack name column, giving a name too long for it a row of its own", () => {
+    const packs = [{ name: "An Exceedingly Long Third Party Pack", files: ["*.x"], dependencies: [] }, NO_FIT.packs[0]!];
+    // The column is 24 characters and the gap after it: 26.
+    expect(noFit({ packs })).toContain([
+      "  Packs look for  An Exceedingly Long Third Party Pack",
+      `${" ".repeat(18 + 26)}*.x`,
+      `${" ".repeat(18)}${"Python".padEnd(26)}*.py, *.pyi`,
+    ].join("\n"));
+  });
+
   it("explains nothing when a pack fits", () => {
     const text = renderRecommendedPacks({ ...PACKS, nothingFits: NO_FIT }, "agent");
     expect(text).not.toContain("Found ");
