@@ -1398,10 +1398,8 @@ fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
     }
     if let Err(refused) = commit_checked(command) {
         // The budget refused a dispatch: the command buffer still holds a place in the shared
-        // queue until it completes, and a queue holds 64. Commit what was encoded (the results
-        // are not read) so the place is freed.
-        command.commit();
-        command.wait_until_completed();
+        // queue until it completes (a queue holds 64), so it is released.
+        super::metal_backend::launch::release_refused(command);
         return Err(refused);
     }
     wait_checked(command).inspect_err(|_| eprintln!("block program: command buffer {:?}: {}", command.status(), command_error(command)))?;
