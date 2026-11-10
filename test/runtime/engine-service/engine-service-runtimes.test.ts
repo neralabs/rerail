@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CheckoutCatalogs, codeRuleSchema, type AdapterEvent } from "../../src/engine/index.js";
-import { ingestEngineEvent, startEngineService, type EngineService } from "../../src/runtime/engine-service.js";
-import { testEmbedder } from "../support/hook-events.js";
-import { setUpTestRepository, type TestRepositoryRules } from "../support/repository-rules.js";
-import { startTestRepository } from "../support/started-repository.js";
+import { CheckoutCatalogs, codeRuleSchema, type AdapterEvent } from "../../../src/engine/index.js";
+import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { testEmbedder } from "../../support/hook-events.js";
+import { setUpTestRepository, type TestRepositoryRules } from "../../support/repository-rules.js";
+import { startTestRepository } from "../../support/started-repository.js";
 
 const roots: string[] = [];
 const services: EngineService[] = [];

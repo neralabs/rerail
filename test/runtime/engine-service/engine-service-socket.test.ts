@@ -6,11 +6,11 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { engineHoldsCapability, engineProof } from "../../src/runtime/engine-proof.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
-import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../src/runtime/engine-service.js";
-import { testEmbedder } from "../support/hook-events.js";
-import { startTestRepository } from "../support/started-repository.js";
+import { engineHoldsCapability, engineProof } from "../../../src/runtime/engine-proof.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../../src/runtime/engine-pipe.js";
+import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
+import { testEmbedder } from "../../support/hook-events.js";
+import { startTestRepository } from "../../support/started-repository.js";
 
 describe.runIf(process.platform !== "win32")("engine service socket directory", () => {
   const roots: string[] = [];
