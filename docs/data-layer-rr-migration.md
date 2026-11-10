@@ -3037,3 +3037,14 @@ Final advanced to `d28b2a342` during acceptance. The live alignment gate still r
 The recorded results certify the frozen `776a1e263` cohort.
 Dispatch remains a draft. CLI behavior, filesystem inventory-read errors, persistent updates, scanner controls, and admission remain open.
 The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+
+### Dispatch CLI implementation checkpoint before Final merge, 2026-11-10
+
+The CLI now uses native rules for inventory parsing, decisions, finding text, summaries, verification, and signing updates.
+The Python adapter provides argument parsing, callbacks, and file I/O. Rules do not execute Python semantics.
+The source recording contains 48 cases, including positive scans, callback order, signing aliases, and inventory errors.
+One clean snapshot case passes. Four larger snapshot shards exceeded the 115-second command limit.
+Those timeouts produced no new complete reports. The earlier reports do not certify this implementation.
+CLI acceptance remains open, including direct signer coverage and production inventory I/O errors.
+Dispatch remains a draft. The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+This commit preserves the incomplete implementation before the next Final merge.

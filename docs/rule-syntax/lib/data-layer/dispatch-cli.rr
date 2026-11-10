@@ -1,0 +1,74 @@
+// CLI parsing uses the standard host parser; decisions and output are relations.
+.decl dcli_config(key: symbol,value: symbol)
+.decl dcli_argument(ordinal: number,action: symbol,dest: symbol,has_help: number,help: symbol)
+.decl dcli_flag(argument: number,ordinal: number,value: symbol)
+.violation DispatchCliConfiguration(at: span,key: symbol,value: symbol) code "DCLI_CONFIG" "dispatch CLI configuration"
+DispatchCliConfiguration(@place("",0),k,v) :- option("entryPoint","_dispatch_cli_configuration"),dcli_config(k,v).
+.violation DispatchCliArgument(at: span,ordinal: number,action: symbol,dest: symbol,has_help: number,help: symbol) code "DCLI_ARG" "dispatch CLI argument"
+DispatchCliArgument(@place("",0),i,a,d,h,t) :- option("entryPoint","_dispatch_cli_configuration"),dcli_argument(i,a,d,h,t).
+.violation DispatchCliFlag(at: span,argument: number,ordinal: number,value: symbol) code "DCLI_FLAG" "dispatch CLI flag"
+DispatchCliFlag(@place("",0),a,i,v) :- option("entryPoint","_dispatch_cli_configuration"),dcli_flag(a,i,v).
+.decl dcli_inventory_entry(ordinal: number,value: symbol)
+dcli_inventory_entry(i,e) :- option("entryPoint","_dispatch_inventory"),option("dispatchInventoryText",raw),
+    match_all("(?<part>[^\\n\\r\\v\\f\\x{1c}-\\x{1e}\\x{85}\\x{2028}\\x{2029}]+)",raw,i,_,_),sd_whitespace(w),
+    e=@replace_all(part,cat("^",w,"|",w,"$"),""),e!="",!prefix("#",e).
+.violation DispatchCliInventory(at: span,ordinal: number,value: symbol) code "DCLI_INVENTORY" "dispatch CLI inventory"
+DispatchCliInventory(@place("",0),i,v) :- dcli_inventory_entry(i,v).
+.decl dcli_inventory_count(value: number)
+dcli_inventory_count(n) :- option("entryPoint","_dispatch_cli_begin"),n=count : { option_item("dispatchInventory",i,_) }.
+.violation DispatchCliAction(at: span,value: symbol) code "DCLI_ACTION" "dispatch CLI action"
+DispatchCliAction(@place("",0),"exit") :- dcli_inventory_count(n),n>0.
+DispatchCliAction(@place("",0),"sign") :- dcli_inventory_count(0),option("cliSign","1").
+DispatchCliAction(@place("",0),"scan") :- dcli_inventory_count(0),option("cliSign","0").
+.violation DispatchCliExit(at: span,status: number) code "DCLI_EXIT" "dispatch CLI exit"
+DispatchCliExit(@place("",0),1) :- dcli_inventory_count(n),n>0.
+DispatchCliExit(@place("",0),0) :- option("entryPoint","_dispatch_cli_signed"),option("cliSignResult","1").
+DispatchCliExit(@place("",0),1) :- option("entryPoint","_dispatch_cli_signed"),option("cliSignResult","0").
+.violation DispatchCliOutput(at: span,phase: number,ordinal: number,channel: symbol,text: symbol) code "DCLI_OUTPUT" "dispatch CLI output"
+DispatchCliOutput(@place("",0),0,0,"stdout",cat("FAIL: ",p," must remain empty; found ",to_string(n)," entries.\n")) :-
+    dcli_inventory_count(n),n>0,dcli_config("inventory_relative",p).
+.decl dcli_code_count(code: symbol,value: number)
+dcli_code_count(c,n) :- option("entryPoint","_dispatch_cli_report"),option_item("dispatchFindingCode",_,c),n=count : { option_item("dispatchFindingCode",i,c) }.
+.decl dcli_finding_count(value: number)
+dcli_finding_count(n) :- option("entryPoint","_dispatch_cli_report"),n=count : { option_item("dispatchFindingCode",i,_) }.
+.decl dcli_summary(text: symbol)
+dcli_summary(text) :- option("entryPoint","_dispatch_cli_report"),text=join part by c sep ", " : { dcli_code_count(c,n),part=cat(c,"=",to_string(n)) }.
+DispatchCliOutput(@place("",0),0,i,"stdout",cat(text,"\n")) :- option("entryPoint","_dispatch_cli_report"),sdf_rendered(i,text).
+DispatchCliOutput(@place("",0),1,0,"stdout",cat("ServerPlan dispatch inventory: ",summary,"; unapproved=",to_string(n),"\n")) :- dcli_summary(summary),dcli_finding_count(n).
+DispatchCliAction(@place("",0),"verify") :- option("entryPoint","_dispatch_cli_report"),option("cliCheck","1").
+DispatchCliAction(@place("",0),"exit") :- option("entryPoint","_dispatch_cli_report"),option("cliCheck","0").
+DispatchCliExit(@place("",0),0) :- dcli_finding_count(0),option("cliCheck","0").
+DispatchCliExit(@place("",0),1) :- dcli_finding_count(n),n>0,option("cliCheck","0").
+.violation DispatchCliCount(at: span,value: number) code "DCLI_COUNT" "dispatch CLI finding count"
+DispatchCliCount(@place("",0),n) :- dcli_finding_count(n).
+DispatchCliExit(@place("",0),1) :- option("entryPoint","_dispatch_cli_verified"),option("cliVerifyResult","0").
+DispatchCliExit(@place("",0),1) :- option("entryPoint","_dispatch_cli_verified"),option("cliVerifyResult","1"),option("cliFindingCount",n),to_number(n)>0.
+DispatchCliExit(@place("",0),0) :- option("entryPoint","_dispatch_cli_verified"),option("cliVerifyResult","1"),option("cliFindingCount","0").
+// Repository scanning exports facts, without invoking the plugin reporter.
+pp_run() :- option("entryPoint","_dispatch_scan_repository").
+.violation DispatchCliScan(at: span,path: symbol,line: number,source_code: symbol,scope: symbol,expression: symbol,message: symbol,occurrence: number,visit_order: number,layer: number) code "DCLI_SCAN_FACT" "dispatch scan fact"
+DispatchCliScan(@place(p,l),p,l,c,s,e,m,o,i,k) :- option("entryPoint","_dispatch_scan_repository"),sd_event(d,p,n,k,c,s,e,_,l,i),sd_occurrence(d,p,n,k,c,o),sd_message(c,m).
+// Verification is separate: a plain CLI scan does not verify its signature.
+allow_sig("dispatch-cli-verify",l,s) :- option("entryPoint","_dispatch_cli_verify"),option("cliVerifyLinter",l),option("cliVerifySignature",s).
+allow_entry("dispatch-cli-verify",e) :- option("entryPoint","_dispatch_cli_verify"),option_item("cliVerifyEntries",_,e).
+.violation DispatchCliVerify(at: span,ok: number) code "DCLI_VERIFY" "dispatch verification result"
+DispatchCliVerify(@place("",0),1) :- allow_status("dispatch-cli-verify","valid").
+DispatchCliVerify(@place("",0),0) :- allow_status("dispatch-cli-verify",s),s!="valid".
+DispatchCliOutput(@place("",0),0,0,"stderr",cat("FAIL: WARNING: Allowlist for ",l," is ",label,". Sign with --sign-allowlist.\n")) :-
+    allow_status("dispatch-cli-verify","unsigned"),option("cliVerifyLinter",l),option("cliVerifySignature",s),(s="NEEDS_SIGNING",label="needs signing";s!="NEEDS_SIGNING",label="unsigned").
+DispatchCliOutput(@place("",0),0,0,"stderr",cat("FAIL: Allowlist signature verification failed for ",l,": ",@ed25519_error(key,msg,s),"\n")) :-
+    allow_status("dispatch-cli-verify","invalid"),option("cliVerifyLinter",l),option("cliVerifySignature",s),allow_message("dispatch-cli-verify",msg),nera_key(key).
+// Explicit signing runs the existing native utility; private keys never enter rules.
+allow_sig("dispatch-cli-sign",l,"UNSIGNED") :- option("entryPoint","_dispatch_cli_sign_request"),option("cliSignLinter",l).
+allow_entry("dispatch-cli-sign",e) :- option("entryPoint","_dispatch_cli_sign_request"),option_item("cliSignEntries",_,e).
+.violation DispatchCliSignRequest(at: span,request_id: symbol,key_env: symbol,message: symbol) code "DCLI_SIGN_REQUEST" "dispatch signing request"
+DispatchCliSignRequest(@place("",0),"dispatch.signing","NERA_SIGNING_KEY",m) :- option("entryPoint","_dispatch_cli_sign_request"),allow_message("dispatch-cli-sign",m).
+.violation DispatchCliSignResult(at: span,ok: number,write_file: number,updated_source: symbol,stdout: symbol,stderr: symbol) code "DCLI_SIGN_RESULT" "dispatch signing result"
+DispatchCliSignResult(@place("",0),0,0,"","","ERROR: NERA_SIGNING_KEY environment variable not set.\nOnly the user may have access to NERA_SIGNING_KEY. Ask the user to run the documented `uv run ... --sign-allowlist` command in an environment where the key is already present.\nAI agents must never have access to this proof-of-human key and must never try to obtain it.\n") :- option("entryPoint","_dispatch_cli_sign_error"),option("signStatus","missing-key").
+DispatchCliSignResult(@place("",0),0,0,"","","ERROR: NERA_SIGNING_KEY must be 32 bytes\n") :- option("entryPoint","_dispatch_cli_sign_error"),option("signStatus","key-length").
+DispatchCliSignResult(@place("",0),0,0,"","",cat("ERROR: Failed to decode NERA_SIGNING_KEY: ",detail,"\n")) :- option("entryPoint","_dispatch_cli_sign_error"),option("signStatus","invalid-hex"),option("signDetail",detail).
+.decl dcli_sign_pattern(value: symbol)
+.decl dcli_sign_matched()
+dcli_sign_matched() :- option("entryPoint","_dispatch_cli_sign_update"),option("scriptSource",s),dcli_sign_pattern(p),@count_matches(p,s)>0.
+DispatchCliSignResult(@place("",0),1,1,@replace_all(src,p,cat("${1}\"",signature,"\"${2}")),cat("Updated ",v," in ",path,"\n"),"") :- option("entryPoint","_dispatch_cli_sign_update"),option("scriptSource",src),option("scriptPath",path),option("newSignature",signature),option("cliSignVariable",v),dcli_sign_pattern(p),dcli_sign_matched().
+DispatchCliSignResult(@place("",0),0,0,"","",cat("ERROR: Could not find ",v," in ",path,"\n")) :- option("entryPoint","_dispatch_cli_sign_update"),option("scriptPath",path),option("cliSignVariable",v),!dcli_sign_matched().

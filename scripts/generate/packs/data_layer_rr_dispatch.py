@@ -1,5 +1,7 @@
 """Compile dispatch constants and finite casefold vocabulary from pinned Python, offline."""
 import json
+import ast
+import inspect
 import re
 from dataclasses import asdict
 from functools import lru_cache
@@ -45,7 +47,7 @@ def generate(source,target,header):
     text+=''.join(f'sd_message({json.dumps(k)},{json.dumps(v)}).\n' for k,v in messages.items())
     text+='.decl sd_base(value: symbol)\nsd_base('+json.dumps(original._BASE_SERVER_PLAN_FILE)+').\n'
     text+='.decl sd_whitespace(value: symbol)\nsd_whitespace('+json.dumps(classes()[1]+'+')+').\n'
-    text+='#include "data-layer/dispatch-source.rr"\n#include "data-layer/dispatch-repository.rr"\n#include "data-layer/dispatch-finding.rr"\n#include "data-layer/dispatch-supplied.rr"\n'
+    text+='#include "data-layer/dispatch-source.rr"\n#include "data-layer/dispatch-repository.rr"\n#include "data-layer/dispatch-finding.rr"\n#include "data-layer/dispatch-supplied.rr"\n#include "data-layer/dispatch-cli.rr"\n'
     # Literal JSON member paths use the selected source extractor directly.
     family=original.DISPATCH_EXTRACTOR.extractor_id.replace('~','~0').replace('/','~1')
     fact_path='/cases/*/bundles/*/facts/'+family
@@ -55,6 +57,19 @@ def generate(source,target,header):
             'python-value-int' if key in {'line','occurrence'} else 'python-value-str')
           for key in ['code','scope','expression','message','line','occurrence']]]:
         text+=f'.input {relation}(IO=json,filename="dispatch-facts.json",path={json.dumps(path)},projection={json.dumps(projection)})\n'
+    cli_config=dict(description=original.__doc__,linter=original.LINTER_NAME,signature_variable='INVENTORY_SIGNATURE',
+        inventory_relative=original.INVENTORY_PATH.relative_to(original.ROOT).as_posix())
+    text+=''.join(f'dcli_config({json.dumps(k)},{json.dumps(v)}).\n' for k,v in cli_config.items())
+    argument_calls=[n for n in ast.walk(ast.parse(inspect.getsource(original.cli_main))) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='add_argument']
+    for i,call in enumerate(sorted(argument_calls,key=lambda n:n.lineno)):
+        args=[ast.literal_eval(v) for v in call.args];kw={v.arg:ast.literal_eval(v.value) for v in call.keywords}
+        if kw.get('action')!='store_true' or set(kw)-{'action','help','dest'}:raise ValueError('Unrepresented dispatch CLI argument')
+        text+=f'dcli_argument({i},{json.dumps(kw["action"])},{json.dumps(kw.get("dest",""))},{int("help" in kw)},{json.dumps(kw.get("help",""))}).\n'
+        for j,flag in enumerate(args):text+=f'dcli_flag({i},{j},{json.dumps(flag)}).\n'
+    if len(argument_calls)!=2:raise ValueError('Unexpected dispatch CLI argument count')
+    space=classes()[1]+'*'
+    pattern='(?m)^(INVENTORY_SIGNATURE(?:'+space+':'+space+'str)?'+space+'='+space+')(?:"[^"]*"|NEEDS_SIGNING|UNSIGNED)(.*)'
+    text+='dcli_sign_pattern('+json.dumps(pattern)+').\n'
     plugin=original.dispatch_architecture_plugin(source)
     text=re.sub(r'^\.description .*$', '.description '+json.dumps(plugin.description),text,flags=re.M)
     config=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description,

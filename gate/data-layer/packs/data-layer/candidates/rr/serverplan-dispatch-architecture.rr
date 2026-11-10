@@ -80,6 +80,7 @@ sd_whitespace("[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x
 #include "data-layer/dispatch-repository.rr"
 #include "data-layer/dispatch-finding.rr"
 #include "data-layer/dispatch-supplied.rr"
+#include "data-layer/dispatch-cli.rr"
 .input dss_container(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/kind",projection="python-str")
 .input dss_shape(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/kind",projection="python-str")
 .input dss_column_code(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/fields/code",projection="python-value-str")
@@ -88,6 +89,16 @@ sd_whitespace("[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x
 .input dss_column_message(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/fields/message",projection="python-value-str")
 .input dss_column_line(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/fields/line",projection="python-value-int")
 .input dss_column_occurrence(IO=json,filename="dispatch-facts.json",path="/cases/*/bundles/*/facts/serverplan_dispatch_architecture.findings/rows/*/fields/occurrence",projection="python-value-int")
+dcli_config("description","Reject backend reach-through and untyped dispatch in generic ServerPlan code.\n\nServerPlan already owns backend specialization through automatic executor hooks:\n``_lower_xxx`` replaces an intent before its default lowering runs, while\n``_compile_xxx`` may replace compilation when a backend deliberately preserves\nthat lowered step. Generic/default lowering therefore never needs to ask which\nbackend is active or whether a SQL dialect exists. The in-tree default may emit\nSQL products unconditionally; an out-of-tree backend replaces those products\nthrough the existing hooks.\n\nA dialect is valid only as a required value at the established SQL syntax\nrendering boundary. Testing whether it is present in generic planning merely\nrenames backend-family dispatch and prevents backend overrides from owning the\nconstruct.\n\n``BaseServerPlan`` is generic orchestration. It may enter a public executor-owned\nexecution scope, but it must not inspect executor connection state or invoke a\nnative driver pipeline directly.\n").
+dcli_config("linter","serverplan_dispatch_architecture").
+dcli_config("signature_variable","INVENTORY_SIGNATURE").
+dcli_config("inventory_relative","scripts/allowlists/lint_serverplan_dispatch_architecture.txt").
+dcli_argument(0,"store_true","",1,"Verify the empty signature and reject all findings").
+dcli_flag(0,0,"--check").
+dcli_argument(1,"store_true","sign_inventory",0,"").
+dcli_flag(1,0,"--sign-inventory").
+dcli_flag(1,1,"--sign-allowlist").
+dcli_sign_pattern("(?m)^(INVENTORY_SIGNATURE(?:[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*:[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*str)?[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*=[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*)(?:\"[^\"]*\"|NEEDS_SIGNING|UNSIGNED)(.*)").
 pp_config("name","serverplan_dispatch_architecture").
 pp_config("enforcement","hard-fail").
 pp_config("description","Backend and concrete-step dispatch zero gate").
