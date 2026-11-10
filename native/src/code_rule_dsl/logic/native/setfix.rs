@@ -517,7 +517,13 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
                 match start {
                     Start::Base { old, gone, seeded } => {
                         let (o, g) = { let d = DERIVED.lock().unwrap(); (d.get(&(scope(conn), old.clone())).cloned(), d.get(&(scope(conn), gone.clone())).cloned()) };
-                        let (o, g) = (o.ok_or_else(|| err(format!("rel: no native relation {old}")))?, g.ok_or_else(|| err(format!("rel: no native relation {gone}")))?);
+                        let o = o.ok_or_else(|| err(format!("rel: no native relation {old}")))?;
+                        // The rows gone, from the stratum that made them: a native relation, or a table where a SQL
+                        // stratum wrote them (an overdelete reading an input's delta); they are the delta's size.
+                        let g = match g {
+                            Some(g) => g,
+                            None => InRel::flat(&read_rows(conn, gone, types.as_bytes(), &mut syms)?, types.as_bytes().to_vec()),
+                        };
                         match Rel::based(table, types.as_bytes(), &o, &g) {
                             Some(b) => rel = b,
                             None => rel = Rel::compacted(table, types.as_bytes(), &o, &g),
@@ -1698,6 +1704,39 @@ impl InRel {
             }
         }
         Some((added, removed))
+    }
+    /// Column `c`'s postings, from the index the engine kept on it (`Rel::new`): each value with the first-column
+    /// values of its live rows (a row's document, as `syntax::measured` reads it), so nothing is hashed again. A
+    /// posting of one live row is handed on as it is; a longer one is walked. `false`, and nothing visited, for a
+    /// relation without that index (a view, or rows loaded flat).
+    pub fn each_posting(&self, c: usize, visit: &mut dyn FnMut(i64, &[i64])) -> bool {
+        if self.view.is_some() || c >= self.k {
+            return false;
+        }
+        let Some(ix) = self.chains.iter().find(|ix| ix.cols == [c]).filter(|ix| ix.next.len() >= self.n) else { return false };
+        let (k, data) = (self.k, &self.rows);
+        let mut firsts: Vec<i64> = Vec::new();
+        for p in ix.table.iter() {
+            let v = data[p.head as usize * k + c];
+            if p.len == 1 {
+                if !is_dead(&self.dead, p.head) {
+                    visit(v, &[data[p.head as usize * k]]);
+                }
+                continue;
+            }
+            firsts.clear();
+            let mut id = p.head;
+            for _ in 0..p.len {
+                if !is_dead(&self.dead, id) {
+                    firsts.push(data[id as usize * k]);
+                }
+                id = ix.next[id as usize];
+            }
+            if !firsts.is_empty() {
+                visit(v, &firsts);
+            }
+        }
+        true
     }
     /// Its live rows, row-major.
     pub fn live_rows(&self) -> Option<Vec<i64>> {
@@ -2944,6 +2983,35 @@ mod posted_tests {
             let measured: Vec<[i64; 4]> = crate::code_rule_dsl::facts::vtab::syntax::measured(source.as_ref()).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect();
             assert_eq!(rel.posted().expect("a relation with its postings"), measured);
         }
+    }
+
+    /// Statistics counted from a relation's postings are those counted from its live rows.
+    #[test]
+    fn statistics_counted_from_postings_are_those_of_the_rows() {
+        use crate::code_rule_dsl::logic::plan::statkeep::RelStats;
+        let node = |d: i64, i: i64| (d << 32) | i;
+        let mut rel = Rel::new("t", b"iiii");
+        for i in 0..900 {
+            // Documents interleaved; a first column that is sometimes a document key; a few-valued column; a value
+            // column past the exact map's size that crosses documents; a reference to another document's node.
+            let d = 1 + (i * 7) % 5;
+            let first = if i % 11 == 0 { d } else { node(d, i) };
+            rel.push(&[first, i % 4, (i * 37) % 300, if i % 3 == 0 { node(6 - d, i % 9) } else { node(d, i % 13) }]);
+        }
+        let old = InRel::moved(rel);
+        let mut gone = Rel::new("g", b"iiii");
+        for id in [3usize, 40, 41, 300] {
+            let r = old.row(id).to_vec();
+            gone.push(&r);
+        }
+        let rel = InRel::moved(Rel::based("t", b"iiii", &old, &InRel::moved(gone)).expect("few dead"));
+        let names: Vec<String> = (0..4).map(|c| format!("c{c}")).collect();
+        let live = rel.live_rows().expect("flat");
+        let mut want = RelStats::paired(names.clone());
+        want.documents(&live, 4, 1);
+        let got = RelStats::from_postings(names, rel.rows() as i64, &mut |c, visit| rel.each_posting(c, visit)).expect("postings");
+        assert_eq!(got, want);
+        assert_eq!(got.statistics(&|_| true), want.statistics(&|_| true));
     }
 
     /// A maintained relation's delta from the relation it started as: the rows it marked dead, and those it added
