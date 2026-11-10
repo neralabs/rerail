@@ -58,7 +58,7 @@ export interface DashboardLink {
   readonly browserOpened: boolean;
   /** Why no browser opened, e.g. "this looks like a remote session". */
   readonly noBrowserReason?: string;
-  /** Set-up did not try to open a browser (an earlier run did): the link alone, with no E6 line. */
+  /** Set-up did not try to open a browser (an earlier run did, or a coding agent runs it): the link alone, with no E6 line. */
   readonly linkOnly?: boolean;
 }
 

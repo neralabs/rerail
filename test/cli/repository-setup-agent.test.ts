@@ -63,7 +63,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
     expect(selected(setup)).toEqual(TS_PACKS);
     expect(environment.connections).toEqual([{ agents: ["claude-code", "cursor"], repoRoot: setup.repo }]);
-    expect(environment.pages).toMatchObject([{ repoRoot: setup.repo, page: "rules", open: true }]);
+    expect(environment.pages).toMatchObject([{ repoRoot: setup.repo, page: "rules", open: false }]);
     expect(started.text()).toContain(`Rerail is on in acme-api · 1 rule pack, ${enabledRules(setup)} rules`);
     const firstStart = startRows(setup);
 
@@ -75,6 +75,17 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(selected(setup)).toEqual(TS_PACKS);
     expect(environment.connections).toHaveLength(1);
     expect(environment.pages.at(-1)).toMatchObject({ repoRoot: setup.repo, page: "rules", open: false });
+  });
+
+  it("opens no browser when it starts Rerail, and shows the dashboard's link instead", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    const started = agentIo();
+    // A coding agent may run set-up where no one watches the screen, or in a sandbox.
+    expect(await runSetup(started, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }))).toMatchObject({ status: "started" });
+    expect(environment.pages).toEqual([expect.objectContaining({ page: "rules", open: false })]);
+    expect(started.text()).toContain("http://127.0.0.1:4737/#rules");
+    expect(started.text()).not.toContain("Opening in your browser.");
   });
 
   it("goes straight to the confirm question where an earlier set-up offered the review and nothing changed there", async () => {
@@ -330,14 +341,6 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(asked.text()).toContain("Which project do you want to start with?");
     expect(asked.text()).not.toContain("pick-myself");
     expect(environment.connections).toEqual([]);
-  });
-
-  it("shows the link and says why when no browser can open", async () => {
-    const setup = await fixture();
-    const summary = agentIo();
-    await runSetup(summary, request(setup, fakeSetupEnvironment({ browser: false }), { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
-    expect(summary.text()).toContain("http://127.0.0.1:4737/#rules");
-    expect(summary.text()).toContain("Couldn’t open your browser. Copy the link instead.");
   });
 
   it("rejects an answer set-up does not know", async () => {

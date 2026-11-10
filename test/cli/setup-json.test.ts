@@ -155,6 +155,18 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(environment.connections).toEqual([{ agents: ["claude-code", "cursor"], repoRoot: setup.repo }]);
   });
 
+  it("never opens a browser, since a coding agent runs it, and ends on the dashboard's link instead", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    const packs = await runSetupStep(request(setup, environment, { answer: "yes", repo: setup.repo }));
+    const start = packs.question!.options.find(option => option.answer === "start")!;
+    const done = await runSetupStep(requestFrom(start.next.args, setup, environment));
+    expect(done).toMatchObject({ step: "done", question: null });
+    expect(environment.pages).toEqual([expect.objectContaining({ page: "rules", open: false })]);
+    expect(done.screen).toContain("http://127.0.0.1:4737/#rules");
+    expect(done.screen).not.toContain("Opening in your browser.");
+  });
+
   it("installs, connects and turns on nothing when the person answers not now", async () => {
     const setup = await fixture();
     const environment = fakeSetupEnvironment();

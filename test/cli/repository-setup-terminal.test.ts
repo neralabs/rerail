@@ -42,6 +42,16 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(io.text()).toContain("Try it");
     expect(io.text()).toContain("Good to know");
     expect(io.text()).not.toContain("optional");
+    // A person at a terminal gets the dashboard in their browser.
+    expect(environment.pages).toMatchObject([{ repoRoot: setup.repo, page: "rules", open: true }]);
+  });
+
+  it("shows the link and says why when no browser can open", async () => {
+    const setup = await fixture();
+    const io = terminalIo(["", "1"]);
+    expect(await runSetup(io, request(setup, fakeSetupEnvironment({ browser: false })))).toMatchObject({ status: "started" });
+    expect(stripAnsi(io.text())).toContain("http://127.0.0.1:4737/#rules");
+    expect(stripAnsi(io.text())).toContain("Couldn’t open your browser. Copy the link instead.");
   });
 
   it("says which numbers it takes when a typed answer names none, then asks again", async () => {

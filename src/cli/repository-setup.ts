@@ -152,7 +152,8 @@ export interface SetupEnvironment {
   setSessionsApproved(approved: boolean): Promise<void>;
   /**
    * A dashboard page scoped to `scope`'s repository and checkout; the link is always returned. `open`: try a
-   * browser (E6 says why none opened). False when an earlier run already opened it, so a re-run shows the link alone.
+   * browser (E6 says why none opened). False when an earlier run already opened it, so a re-run shows the link alone,
+   * and whenever a coding agent runs set-up (the agent lane and `--json`).
    */
   dashboard(scope: RulesDashboardScope, page: DashboardPage, open: boolean): Promise<DashboardLink>;
   /** Where rule packs are fetched from and installed to: npm, into the Rerail home. */
@@ -515,8 +516,13 @@ function dashboardScope(run: Run, repository: Repository): RulesDashboardScope {
   return { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
 }
 
-/** Step 6: what is on, how to try it, the link to manage rules, and the other started repos. */
-async function summary(run: Run, repository: Repository, open: boolean, agents: AgentsConnection): Promise<SetupOutcome> {
+/**
+ * Step 6: what is on, how to try it, the link to manage rules, and the other started repos. `firstStart`: this run
+ * started the repository, so a person at a terminal gets the dashboard in their browser. A coding agent's run (the
+ * agent lane and `--json`) gets the link alone, since it may run where no one watches the screen, or in a sandbox.
+ */
+async function summary(run: Run, repository: Repository, firstStart: boolean, agents: AgentsConnection): Promise<SetupOutcome> {
+  const open = firstStart && run.io.lane === "terminal";
   const scope = dashboardScope(run, repository);
   const { packNames, ruleCount, others } = readDatabase(run, database => {
     const checkout = lookupCheckout(database, repository.root);

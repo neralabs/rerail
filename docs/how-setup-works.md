@@ -127,8 +127,8 @@ agents already connected, to bring the new version's commands and skills.
 
 </details>
 
-**6. Summary.** Set-up lists the packs and rules added, the dashboard link, and agents it could not connect, then
-opens the browser.
+**6. Summary.** Set-up lists the packs and rules added, the dashboard link, and agents it could not connect. In a
+terminal it then opens the browser; run by a coding agent (`--relay`, `--json`), it shows the link alone.
 
 <details>
 <summary>What the summary shows</summary>
@@ -141,7 +141,8 @@ opens the browser.
 - With no agent found, it says so, names the supported ones, and says to rerun `rerail setup` once one is installed.
 - The daemon is the active install's and serves every repository; one from another version or port is replaced
   (`--port` picks the port).
-- The browser opens unless `BROWSER=none`, the session is over SSH, or Linux has no display.
+- In a terminal the browser opens unless `BROWSER=none`, the session is over SSH, or Linux has no display. A coding
+  agent's run opens none: it may run where no one watches the screen, or in a sandbox.
 
 </details>
 
