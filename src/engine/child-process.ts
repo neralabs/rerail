@@ -13,6 +13,7 @@
 import * as childProcess from "node:child_process";
 import { win32 } from "node:path";
 import { promisify } from "node:util";
+import { windowsSystemProgram } from "./system-programs.js";
 
 const HIDDEN = { windowsHide: true } as const;
 
@@ -82,6 +83,54 @@ export const execFile: typeof childProcess.execFile = Object.assign(hidden("exec
     Reflect.apply(childProcess.execFile, undefined, [...withHiddenWindow(args), settle]);
   }),
 });
+
+/** Ends the process tree under `pid` on Windows, calling `failed` when that could not be done; tests pass their own. */
+export type TreeKill = (pid: number, failed: () => void) => void;
+
+/** `taskkill /T /F`, which walks the tree from `pid`: the process must still run for it to find the rest. */
+function taskkillTree(pid: number, failed: () => void): void {
+  const taskkill = spawn(windowsSystemProgram("taskkill.exe"), ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
+  taskkill.on("error", failed);
+  taskkill.on("exit", code => {
+    if (code !== 0) failed();
+  });
+}
+
+/** How {@link endProcessTree} reaches the processes a child started. */
+export interface ProcessTreeOptions {
+  /** Whether the child was started `detached` on macOS and Linux, where it then leads a process group of its own. */
+  group?: boolean;
+  platform?: NodeJS.Platform;
+  killTree?: TreeKill;
+}
+
+/**
+ * Ends `child` and the processes it started. On Windows killing a process leaves its children running (Git for
+ * Windows' launcher runs the real Git as its child, Git Bash's launcher the real bash), so `taskkill /T /F` ends the
+ * tree from `child` while it still runs, since taskkill finds the tree from a live root, and `child` alone is killed
+ * only when taskkill cannot start or fails. On macOS and Linux a child started `detached` leads its own process group,
+ * which goes whole; any other child is killed alone.
+ */
+export function endProcessTree(
+  child: Pick<childProcess.ChildProcess, "pid" | "kill">,
+  { group = false, platform = process.platform, killTree = taskkillTree }: ProcessTreeOptions = {},
+): void {
+  const killChild = (): void => {
+    try {
+      child.kill("SIGKILL");
+    } catch { /* It may have exited already. */ }
+  };
+  if (child.pid === undefined) killChild();
+  else if (platform === "win32") killTree(child.pid, killChild);
+  else if (!group) killChild();
+  else {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      killChild();
+    }
+  }
+}
 
 /**
  * Starts a desktop program whose window the person is meant to see: the browser opener, and nothing else. A Windows

@@ -1,13 +1,11 @@
-import type { ChildProcess } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { spawn } from "../../engine/child-process.js";
+import { endProcessTree, spawn } from "../../engine/child-process.js";
 import { gitBash } from "../../engine/git.js";
 import { processState } from "../../engine/process-liveness.js";
-import { windowsSystemProgram } from "../../engine/system-programs.js";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
 import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../../engine/catalog/repository-model.js";
@@ -83,46 +81,6 @@ function claudeGitBash(env: NodeJS.ProcessEnv): string | undefined {
   return named !== undefined && named !== "" ? named : gitBash();
 }
 
-/** Ends the process tree under `pid`, calling `failed` when that could not be done. */
-export type ProcessTreeKill = (pid: number, failed: () => void) => void;
-
-/** `taskkill /T /F`, which walks the tree from `pid`: the process must still be running for it to find the rest. */
-function taskkillTree(pid: number, failed: () => void): void {
-  const taskkill = spawn(windowsSystemProgram("taskkill.exe"), ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
-  taskkill.on("error", failed);
-  taskkill.on("exit", code => {
-    if (code !== 0) failed();
-  });
-}
-
-function killShell(child: Pick<ChildProcess, "kill">): void {
-  try {
-    child.kill("SIGKILL");
-  } catch { /* The command may already have exited. */ }
-}
-
-/**
- * Ends the previous status line and what it started. A POSIX command runs in its own process group, which goes whole.
- * On Windows killing a process leaves its children running, and the shell is Git Bash's launcher, which runs the real
- * bash as its child: `taskkill /T` ends the tree while the launcher still runs, and the launcher alone is killed only
- * when taskkill fails.
- */
-export function stopPreviousStatus(
-  child: Pick<ChildProcess, "pid" | "kill">,
-  platform: NodeJS.Platform = process.platform,
-  killTree: ProcessTreeKill = taskkillTree,
-): void {
-  if (platform === "win32") {
-    if (child.pid === undefined) killShell(child);
-    else killTree(child.pid, () => killShell(child));
-    return;
-  }
-  try {
-    if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-    else child.kill("SIGKILL");
-  } catch { /* The command may already have exited. */ }
-}
-
 /** Preserve the user's status as a byte stream, including output before errors or timeouts. */
 export async function runClaudeStatus(
   input: Readable = process.stdin,
@@ -155,7 +113,9 @@ export async function runClaudeStatus(
       stdio: ["pipe", "pipe", "ignore"],
     });
     const timer = setTimeout(() => {
-      stopPreviousStatus(child);
+      // The command and what it started: on macOS and Linux its process group (`detached`); on Windows the tree from
+      // Git Bash's launcher, which runs the real bash as its child.
+      endProcessTree(child, { group: true });
       // A process the command started can hold stdout open past the kill (one that left the group, or any child on
       // Windows); the budget holds without waiting for it to let go.
       child.stdout.destroy();

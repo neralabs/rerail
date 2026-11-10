@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
 
-import { assertProgramPath, execFile, execFileSync, spawn, spawnShown, spawnSync, withHiddenWindow } from "../../src/engine/child-process.js";
+import { assertProgramPath, endProcessTree, execFile, execFileSync, spawn, spawnShown, spawnSync, withHiddenWindow } from "../../src/engine/child-process.js";
+import { processState } from "../../src/engine/process-liveness.js";
 import { gitExecutable, gitHead, readGitBlobIds, readGitBlobs, runGit } from "../../src/engine/git.js";
 
 /** Whether a recorded child_process call passed `windowsHide: true` in its options. */
@@ -76,6 +77,43 @@ describe("the child-process helper", () => {
       expect(calls.every(hidesWindow)).toBe(true);
     }
   });
+});
+
+describe("endProcessTree", () => {
+  it("on Windows ends the tree from the child while it runs, and kills the child alone only when that fails", () => {
+    const events: string[] = [];
+    const child = { pid: 4242, kill: () => events.push("kill child") > 0 };
+    let failed: (() => void) | undefined;
+    endProcessTree(child, {
+      platform: "win32",
+      killTree: (pid, onFailure) => {
+        events.push(`taskkill /T /F /PID ${pid}`);
+        failed = onFailure;
+      },
+    });
+    // taskkill /T walks the tree from the pid it is given; once the child is gone it finds nothing to end.
+    expect(events).toEqual(["taskkill /T /F /PID 4242"]);
+    failed!();
+    expect(events).toEqual(["taskkill /T /F /PID 4242", "kill child"]);
+  });
+
+  it("ends a child and the process it started, which holds the child's output, so that output closes", async () => {
+    // The grandchild writes its pid to the output it shares with the child, then both wait; on macOS and Linux the
+    // child leads a process group of its own (`detached`), which goes whole.
+    const grandchild = "process.stdout.write(String(process.pid) + '\\n'); setInterval(() => {}, 1000)";
+    const script = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: ['ignore', 'inherit', 'ignore'], windowsHide: true }); setInterval(() => {}, 1000)`;
+    const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "ignore"], detached: process.platform !== "win32" });
+    const closed = once(child, "close");
+    const [line] = await once(child.stdout.setEncoding("utf8"), "data") as [string];
+    const pid = Number.parseInt(line, 10);
+    endProcessTree(child, { group: true });
+    await Promise.race([closed, new Promise((_resolve, reject) => setTimeout(() => reject(new Error("the output stayed open")), 5_000))]);
+    const deadline = Date.now() + 5_000;
+    while (processState(pid) !== "gone" && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    const survived = processState(pid) !== "gone";
+    if (survived) process.kill(pid);
+    expect(survived).toBe(false);
+  }, 15_000);
 });
 
 describe("spawnShown", () => {

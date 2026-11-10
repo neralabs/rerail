@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
-import { execFile, spawn, spawnSync } from "./child-process.js";
+import { endProcessTree, execFile, spawn, spawnSync } from "./child-process.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -528,11 +528,10 @@ async function lineEndingAttributes(cwd: string, paths: readonly string[]): Prom
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "check-attr", "-z", "--stdin", "text", "eol"], {
     env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
     stdio: ["pipe", "pipe", "ignore"],
-    timeout: DEFAULT_TIMEOUT_MS,
   });
   const chunks: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-  settleWhenDone(child, settle);
+  settleWhenDone(child, settle, DEFAULT_TIMEOUT_MS);
   child.stdin.on("error", () => undefined);
   child.stdin.end(paths.map(path => `${path}\0`).join(""));
   await promise;
@@ -588,11 +587,10 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[]):
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch-check=%(objectname) %(objecttype)"], {
     env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
     stdio: ["pipe", "pipe", "ignore"],
-    timeout: DEFAULT_TIMEOUT_MS,
   });
   const chunks: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-  settleWhenDone(child, settle);
+  settleWhenDone(child, settle, DEFAULT_TIMEOUT_MS);
   child.stdin.on("error", () => undefined);
   child.stdin.end(asked.map(revision => `${revision}\n`).join(""));
   await promise;
@@ -606,25 +604,38 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[]):
   return ids;
 }
 
-/** How long a batch read waits for Git's output once the timeout has killed the process it started. */
+/** How long a batch read waits for Git's output once its time is up and its process tree has been ended. */
 const EXIT_DRAIN_MS = 500;
 
 /**
- * Calls `settle` once `child` fails to start, its output closes, or {@link EXIT_DRAIN_MS} after the timeout kills it,
+ * Calls `settle` once `child` fails to start, its output closes, or {@link EXIT_DRAIN_MS} after `timeoutMs` ends it,
  * whichever comes first. On Windows the process Rerail starts can still be a launcher that runs the real Git as its own
- * child (a scoop shim, or Git for Windows' `cmd\git.exe` without its own git.exe beside it; {@link gitBehindLauncher}).
- * A timeout kills only the launcher, and the real Git keeps the stdout pipe open until it ends on its own, so waiting
- * for `close` alone would hold the answer past the timeout. A Git that exits by itself is read to the end of its output.
+ * child (a scoop shim, or Git for Windows' `cmd\git.exe` without its own git.exe beside it; {@link gitBehindLauncher}),
+ * so the timeout ends the whole tree (`endProcessTree`): killing only the launcher left the real Git running in the
+ * repository. Should the output stay open anyway, the answer does not wait for it. A Git that exits by itself is read
+ * to the end of its output.
  */
-function settleWhenDone(child: ChildProcess, settle: () => void): void {
-  child.on("error", () => settle());
-  child.on("close", () => settle());
-  child.on("exit", (_code, signal) => {
-    if (signal === null) return;
+function settleWhenDone(child: ChildProcess, settle: () => void, timeoutMs: number): void {
+  const drain = (): void => {
+    clearTimeout(timer);
     setTimeout(() => {
       child.stdout?.destroy();
       settle();
     }, EXIT_DRAIN_MS).unref();
+  };
+  const timer = setTimeout(() => {
+    endProcessTree(child);
+    drain();
+  }, timeoutMs);
+  const done = (): void => {
+    clearTimeout(timer);
+    settle();
+  };
+  child.on("error", done);
+  child.on("close", done);
+  // A Git a signal from elsewhere ended is waited for as one the timeout ended.
+  child.on("exit", (_code, signal) => {
+    if (signal !== null) drain();
   });
 }
 
@@ -663,7 +674,6 @@ export async function readGitBlobs(
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch"], {
     env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
     stdio: ["pipe", "pipe", "ignore"],
-    timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
   });
   let next = 0;
   let header: Buffer[] = [];
@@ -699,7 +709,7 @@ export async function readGitBlobs(
       body = { revision, size, kept, remaining: size + 1 };
     }
   });
-  settleWhenDone(child, settle);
+  settleWhenDone(child, settle, options.timeout ?? DEFAULT_TIMEOUT_MS);
   // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
   child.stdin.on("error", () => undefined);
   child.stdin.end(asked.map(revision => `${revision}\n`).join(""));

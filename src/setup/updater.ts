@@ -21,7 +21,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { execFile, spawn } from "../engine/child-process.js";
+import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
 import { removeScratch, renameWithRetry } from "../engine/file-replace.js";
 import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
@@ -489,13 +489,14 @@ export async function validateManagedInstallation(installation: Installation): P
 const CHILD_EXIT_WAIT_MS = 5_000;
 
 /**
- * Kills `child` if it still runs and waits for it to exit, up to {@link CHILD_EXIT_WAIT_MS}: on Windows the kill
- * returns before the process is gone, and the SQLite files it holds open cannot be removed until it is.
+ * Ends `child` and what it started (`endProcessTree`) if it still runs, and waits for it to exit, up to
+ * {@link CHILD_EXIT_WAIT_MS}: on Windows the kill returns before the process is gone, the SQLite files it holds open
+ * cannot be removed until it is, and a Git it started holds the scratch repository until it is ended too.
  */
 async function stopChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const gone = once(child, "exit").then(() => undefined, () => undefined);
-  child.kill();
+  endProcessTree(child);
   await Promise.race([gone, sleep(CHILD_EXIT_WAIT_MS, undefined, { ref: false })]);
 }
 async function pathEntryExists(path: string): Promise<boolean> {
