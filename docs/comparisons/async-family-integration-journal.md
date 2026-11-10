@@ -706,3 +706,68 @@ Exact reservations save 87.7 MB of cumulative capacity but show no reliable CPU 
 Full retention costs roughly 1.5 GB or more, while the existing result memo already bypasses unchanged-file input work.
 The costed recommendation is kind buckets, then demanded line columns, then a direct validated tape reader.
 The complete evidence, overlap limits, effort estimates, and rejected cache assumptions are in `input-lifecycle-opportunities.md`.
+
+## 2026-11-10 — Production input lifecycle conversion
+
+The accepted scope is counted kind postings, demanded line columns, direct validated tape decoding, demanded structural projection, and exact reservations.
+A full retained cache is excluded.
+
+Counted buckets now build kind postings in production. The test-only selection switches are removed.
+Core facts no longer allocate start/end-line arrays. The T-shaped line reader looks up demanded positions in the existing line table.
+A shared tape visitor validates both matcher restoration and direct fact construction.
+The cached-input path writes facts from that visitor, without intermediate matcher records or sibling-link reconstruction.
+Validation still checks source identity, grammar codes, aliases, abstract classes, missing/error nodes, UTF-8, tree boundaries, and sibling ordering.
+The visitor additionally rejects a child subtree whose declared end escapes its parent.
+
+Projection retains its dense core/local ID maps and reserves the core map before filling it.
+Parent IDs derive from existing core columns and the local map.
+Ordinal, subtree-size, depth, and field arrays allocate only when read.
+Token counts preserve the existing ID space. Token ranges materialize only when a token span is read.
+Source and line spans use address arithmetic rather than duplicate range storage.
+Projection line tables share the source and build on first use.
+Regex capture spans remain owned, with unchanged offsets after tokens, source, and lines.
+
+Added direct-versus-restored column checks, malformed-input admission checks, and independent eager projection/ID checks.
+The optimized build and full-workload measurements are pending.
+
+Scope audit: uncached corpus and guest construction now use the same direct reader.
+Callers with an existing matcher tape retain `from_tape`, which does not reparse their source.
+The first new column, corruption, and projection-ID tests passed.
+A borrowed line-table helper now indexes without copying source text. Shared projection line tables remain lazy.
+The final source hashes are captured before the final build and corpus comparison.
+
+The first full validation passed 107 focused test executions, all 120 positives in both ID modes, and all 178 edge-fixture findings.
+Three adjacent warm corpus pairs improved CPU by 1.018–1.196 seconds. SQL stayed at 81 executions and 785,573 VM instructions.
+The uncached 5,725-file run also passed, with 5,725 direct admissions and no input-tree restoration.
+
+A containment regression check exposed repeated lazy-column checks in bulk loops.
+Its exhaustive reference loop rose from about 1.13 to 1.40 CPU seconds.
+A separate real nearest-scope job over 100 files and 3,791,229 nodes improved overall, but local CPU rose from 0.13 to 0.15 seconds.
+Bulk containment/statistics readers now borrow their demanded column slices once outside the loop.
+The reference check does the same while retaining its exhaustive pair comparison.
+Initial measurements are retained under `pre-bulk-*`. Final measurements follow the rebuilt bulk readers.
+
+
+Final production measurements pass the full validation set again: 107 focused checks and 178 edge-fixture findings.
+The three adjacent corpus pairs save 0.793, 1.105, and 1.124 CPU seconds.
+Median corpus CPU falls from 3.926 to 2.934 seconds. Median subprocess CPU falls from 4.014 to 3.035 seconds.
+Every full-corpus report retains 5,725 files, 19,007,630 nodes, zero findings, and 81 SQL executions.
+Both profiles retain 785,573 VM instructions.
+Restore plus fact construction falls from 1.805 to 1.025 CPU seconds. Projection falls from 0.754 to 0.301 seconds.
+The publication metrics show 576.2 MB less cumulative payload/capacity, not peak resident memory.
+Token spans allocate for 34 documents. Projection line tables still materialize for every document and cost 0.094 CPU seconds.
+The uncached corpus passes with 5,725 direct admissions and no input-tree restoration.
+
+The largest-file nearest-scope query preserves all 140,230 rows and improves total phase CPU from 1.02 to 0.86 seconds.
+Its local CPU changes from 0.22 to 0.23 seconds.
+The exhaustive containment test remains slower after bulk access: about 1.10 versus 1.97 subprocess CPU seconds.
+Sampling lands in its quadratic reference calculation but yields only two samples per arm.
+Added separate thread-CPU measurements around reference construction and relation checks to determine the actual split.
+This last change affects only test reporting. The measured production implementation stays unchanged.
+
+
+The final optimized build passes. Both instrumented containment runs pass for 8,416 nodes.
+Reference construction costs 1.425–1.484 CPU seconds. Relation execution and comparisons cost 0.0298–0.0301 seconds.
+About 98% of the measured test phases belong to the quadratic reference calculation.
+This separates the correctness-test runtime regression from the engine query cost.
+The final report retains both results and the source/binary identity of each measurement.

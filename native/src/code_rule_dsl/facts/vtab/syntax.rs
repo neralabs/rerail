@@ -34,7 +34,7 @@ use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
 use crate::code_rule_dsl::logic::front::Value;
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 mod within;
 
@@ -528,12 +528,11 @@ struct Projected {
     core: Vec<u32>,
     /// The node of each core id, `NONE` for one left out.
     local: Vec<u32>,
-    parent: Vec<u32>,
-    idx: Vec<u32>,
-    size: Vec<u32>,
-    depth: Vec<u32>,
+    idx: OnceLock<Vec<u32>>,
+    size: OnceLock<Vec<u32>>,
+    depth: OnceLock<Vec<u32>>,
     /// The nodes hanging from their parent under a field, ascending.
-    fielded: Vec<u32>,
+    fielded: OnceLock<Vec<u32>>,
     /// `core.rr`'s lines and spans; `None` in T's shape.
     extra: Option<Box<Extra>>,
     /// A demanded semantic visit column, shared by every consumer in this document batch.
@@ -586,7 +585,7 @@ impl DefIds {
         let mut unit = vec![0u32; n];
         let mut units: Vec<u32> = Vec::new();
         for l in 0..n {
-            unit[l] = if l == 0 || core_rr::is_unit(dialect.family, dialect.name(f, p.core[l])) { units.push(l as u32); l as u32 } else { unit[p.parent[l] as usize] };
+            unit[l] = if l == 0 || core_rr::is_unit(dialect.family, dialect.name(f, p.core[l])) { units.push(l as u32); l as u32 } else { unit[p.parent(l) as usize] };
         }
         if units.len() >= SPANS as usize {
             return None;
@@ -600,7 +599,7 @@ impl DefIds {
         slot_of.insert(0, 0);
         key.insert(0, String::new());
         for &u in units.iter().skip(1) {
-            let parent = unit[p.parent[u as usize] as usize];
+            let parent = unit[p.parent(u as usize) as usize];
             let name = core_rr::unit_name(f, dialect, p.core[u as usize]).unwrap_or_default().to_owned();
             let ord = seen.entry((parent, name.clone())).or_insert(0);
             let k = format!("{}.{}#{}", key[&parent], name, *ord);
@@ -633,16 +632,18 @@ impl DefIds {
 /// in preorder), then its whole text, then each line.
 struct Extra {
     lines: Arc<core_rr::Lines>,
-    spans: Vec<[u32; 2]>,
+    token_spans: OnceLock<Vec<[u32; 2]>>,
     tokens: u32,
-    /// Where `rx_span`'s spans start in `spans` (after the lines); `spans.len()` when there are none.
-    matched: u32,
+    /// Source and line spans are implicit. Only regex captures need owned ranges.
+    own_text: bool,
+    matches: Vec<[u32; 2]>,
     /// A guest's host lines and placement: its places are the host's (decision 0055). A guest has no source-text
     /// spans of its own (`source`, `src_line`): those are its file's.
     host: Option<(Arc<core_rr::Lines>, Placement)>,
 }
 
 impl Extra {
+    fn matched(&self) -> u32 { self.tokens + if self.own_text { 1 + self.lines.count() as u32 } else { 0 } }
     /// A span's first line, last line and start column, in its file.
     fn place(&self, span: [u32; 2]) -> (u32, u32, u32) {
         match &self.host {
@@ -674,34 +675,31 @@ impl Projected {
             tag: dialect.tag,
             core: Vec::new(),
             local: vec![NONE; f.len()],
-            parent: Vec::new(),
-            idx: Vec::new(),
-            size: Vec::new(),
-            depth: Vec::new(),
-            fielded: Vec::new(),
+            idx: OnceLock::new(),
+            size: OnceLock::new(),
+            depth: OnceLock::new(),
+            fielded: OnceLock::new(),
             extra: None,
             python_visit: Default::default(),
             defs: None,
             facts: Arc::clone(&facts),
         };
-        let mut next_idx: Vec<u32> = Vec::new();
+        let mut tokens = 0;
         let (first, last) = match guest {
             Some((g, _)) => (g.root, f.subtree_end.get(g.root as usize).copied().unwrap_or(g.root + 1).max(g.root + 1)),
             None => (0, f.len() as u32),
         };
-        #[cfg(test)]
-        if crate::code_rule_dsl::facts::core::input_spike::enabled("reserve") && !withheld {
-            let count = (first..last.min(f.len() as u32)).filter(|&id| f.named(id)).count();
+        if !withheld {
+            let count = (first..last.min(f.len() as u32)).filter(|&id| f.named(id) && (shape != Shape::T || dialect.class(f, id) != Class::Comment)).count();
             p.core.reserve_exact(count);
-            p.parent.reserve_exact(count);
-            p.idx.reserve_exact(count);
-            p.depth.reserve_exact(count);
-            next_idx.reserve_exact(count);
         }
         for id in first..if withheld { first } else { last.min(f.len() as u32) } {
-            if !f.named(id) || (shape == Shape::T && dialect.class(f, id) == Class::Comment) {
+            if !f.named(id) {
+                if shape == Shape::Core && f.end[id as usize] > f.start[id as usize]
+                    && f.parent(id).is_some_and(|q| p.local[q as usize] != NONE) { tokens += 1; }
                 continue;
             }
+            if shape == Shape::T && dialect.class(f, id) == Class::Comment { continue; }
             // T walks named children from the root: a node under one left out is not reached.
             let parent = match f.parent(id) {
                 _ if id == first => NONE,
@@ -715,64 +713,76 @@ impl Projected {
             let local = p.core.len() as u32;
             p.local[id as usize] = local;
             p.core.push(id);
-            p.parent.push(parent);
-            next_idx.push(0);
-            if parent == NONE {
-                p.idx.push(0);
-                p.depth.push(0);
-            } else {
-                p.idx.push(next_idx[parent as usize]);
-                next_idx[parent as usize] += 1;
-                p.depth.push(p.depth[parent as usize] + 1);
-                if f.field[id as usize] != 0 {
-                    p.fielded.push(local);
-                }
-            }
-        }
-        p.size = vec![0; p.core.len()];
-        for i in (1..p.core.len()).rev() {
-            let q = p.parent[i] as usize;
-            p.size[q] += p.size[i] + 1;
         }
         drop(identity_span);
         if shape == Shape::Core {
-            let lines_span = crate::code_rule_dsl::logic::profile::span(|| "projection lines".into());
-            let lines = Arc::new(core_rr::Lines::new(&f.source, dialect.family == Family::Python));
-            drop(lines_span);
-            let token_span = crate::code_rule_dsl::logic::profile::span(|| "token spans".into());
-            let mut spans: Vec<[u32; 2]> = Vec::new();
-            let mut token_nodes: Vec<u32> = Vec::new();
-            for (l, &id) in p.core.iter().enumerate() {
-                for &c in f.children(id) {
-                    if !f.named(c) && f.end[c as usize] > f.start[c as usize] {
-                        spans.push([f.start[c as usize], f.end[c as usize]]);
-                        token_nodes.push(l as u32);
-                    }
-                }
-            }
-            drop(token_span);
-            let _metadata = crate::code_rule_dsl::logic::profile::span(|| "projection metadata".into());
+            let lines = Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.family == Family::Python));
             if definition_ids() && guest.is_none() {
-                p.defs = DefIds::new(&p, dialect, &token_nodes);
+                let owners: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize]).map(move |_| l as u32)).collect();
+                p.defs = DefIds::new(&p, dialect, &owners);
             }
-            let tokens = spans.len() as u32;
-            // Raw file text remains valid when its tree is withheld. Guests have no own text spans.
-            if guest.is_none() {
-                spans.push([0, f.source.len() as u32]);
-                spans.extend((1..=lines.count()).map(|l| lines.span(l)));
-            }
-            let matched = spans.len() as u32;
+            let own_text = guest.is_none();
             let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
-            p.extra = Some(Box::new(Extra { lines, spans, tokens, matched, host }));
+            p.extra = Some(Box::new(Extra { lines, tokens, token_spans: OnceLock::new(), matches: Vec::new(), own_text, host }));
         } else if definition_ids() && guest.is_none() {
             // T's shape has no token spans: its nodes alone are numbered per definition.
             p.defs = DefIds::new(&p, dialect, &[]);
         }
         p
     }
+    #[inline]
+    fn parent(&self, local: usize) -> u32 {
+        self.facts.parent(self.core[local]).map_or(NONE, |p| self.local[p as usize])
+    }
+    #[inline]
+    fn idx(&self, local: usize) -> u32 { self.ordinals()[local] }
+    #[inline]
+    fn ordinals(&self) -> &[u32] {
+        self.idx.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "projection ordinals".into());
+            let mut next = vec![0; self.core.len()];
+            let mut out = vec![0; self.core.len()];
+            for (l, slot) in out.iter_mut().enumerate().skip(1) {
+                let p = self.parent(l) as usize;
+                *slot = next[p]; next[p] += 1;
+            }
+            out
+        })
+    }
+    #[inline]
+    fn size(&self, local: usize) -> u32 { self.sizes()[local] }
+    #[inline]
+    fn sizes(&self) -> &[u32] {
+        self.size.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "projection subtree sizes".into());
+            let mut out = vec![0; self.core.len()];
+            for l in (1..out.len()).rev() { let p = self.parent(l) as usize; out[p] += out[l] + 1; }
+            out
+        })
+    }
+    #[inline]
+    fn depth(&self, local: usize) -> u32 { self.depths()[local] }
+    #[inline]
+    fn depths(&self) -> &[u32] {
+        self.depth.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "projection depths".into());
+            let mut out = vec![0; self.core.len()];
+            for l in 1..out.len() { out[l] = out[self.parent(l) as usize] + 1; }
+            out
+        })
+    }
+    fn fielded(&self) -> &[u32] {
+        self.fielded.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "projection fields".into());
+            let count = self.core.iter().skip(1).filter(|&&id| self.facts.field[id as usize] != 0).count();
+            let mut out = Vec::with_capacity(count);
+            out.extend(self.core.iter().enumerate().skip(1).filter_map(|(l, &id)| (self.facts.field[id as usize] != 0).then_some(l as u32)));
+            out
+        })
+    }
     /// Nodes and spans: the ids `text`, `line` and `docof` take.
     fn locs(&self) -> u32 {
-        self.len() + self.extra.as_ref().map_or(0, |x| x.spans.len() as u32)
+        self.len() + self.extra.as_ref().map_or(0, |x| x.matched() + x.matches.len() as u32)
     }
     /// The byte span of node or span `local`.
     fn span(&self, local: u32) -> [u32; 2] {
@@ -781,7 +791,28 @@ impl Projected {
                 let id = self.core[local as usize] as usize;
                 [self.facts.start[id], self.facts.end[id]]
             }
-            Some(i) => self.extra.as_ref().map_or([0, 0], |x| x.spans[i as usize]),
+            Some(i) => self.extra.as_ref().map_or([0, 0], |x| {
+                if i < x.tokens {
+                    let spans = x.token_spans.get_or_init(|| {
+                        let _span = crate::code_rule_dsl::logic::profile::span(|| "token spans".into());
+                        let f = &self.facts;
+                        let mut spans = Vec::with_capacity(x.tokens as usize);
+                        for &id in &self.core {
+                            for &c in f.children(id) {
+                                if !f.named(c) && f.end[c as usize] > f.start[c as usize] {
+                                    spans.push([f.start[c as usize], f.end[c as usize]]);
+                                }
+                            }
+                        }
+                        debug_assert_eq!(spans.len(), x.tokens as usize);
+                        spans
+                    });
+                    spans[i as usize]
+                } else if i < x.matched() {
+                    if i == x.tokens { [0, self.facts.source.len() as u32] }
+                    else { x.lines.span((i - x.tokens) as usize) }
+                } else { x.matches[(i - x.matched()) as usize] }
+            }),
         }
     }
     fn len(&self) -> u32 {
@@ -820,7 +851,7 @@ pub(crate) struct Batch {
     children: Vec<usize>,
     fields: Vec<usize>,
     /// Nodes and spans (`Projected::locs`).
-    locs: Vec<usize>,
+    locs: OnceLock<Vec<usize>>,
     shape: Shape,
     /// The `py.*` families of the batch's Python documents, made on their first read (list step 25).
     py: Option<Py>,
@@ -1039,7 +1070,7 @@ impl Batch {
             let guest = d.guest.as_deref().filter(|_| core);
             let error = if core && (projection.wants("syntax_error") || guest.is_some()) { core_rr::verdict(&d.facts, dialect) } else { None };
             let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
-            let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
+            let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), dialect.family == Family::Python)))));
             let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
             drop(new_span);
@@ -1173,7 +1204,7 @@ impl Batch {
                 c.withheld(&p, &(line, msg.clone()), &mut string);
             }
             if core && (!withheld || guest.is_none()) {
-                c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none());
+                c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
                 if wants_digests && !withheld {
                     c.digests(&p, dialect, &mut string, wants_trees, wants_units);
                 }
@@ -1191,8 +1222,8 @@ impl Batch {
             (py::CONTEXTS.map(|name| string(name) as i64), py::SPREADS.map(|name| string(name) as i64))
         });
         crate::code_rule_dsl::logic::profile::decision("input payload", || {
-            let identities: usize = docs.iter().map(|p| [&p.core, &p.local, &p.parent, &p.idx, &p.size, &p.depth, &p.fielded].iter().map(|v| v.capacity() * 4).sum::<usize>()).sum();
-            let extras: usize = docs.iter().filter_map(|p| p.extra.as_ref()).map(|x| x.spans.capacity() * 8).sum();
+            let identities: usize = docs.iter().map(|p| (p.core.capacity() + p.local.capacity() + [&p.idx, &p.size, &p.depth, &p.fielded].iter().map(|v| v.get().map_or(0, |v| v.capacity())).sum::<usize>()) * 4).sum();
+            let extras: usize = docs.iter().filter_map(|p| p.extra.as_ref()).map(|x| (x.matches.capacity() + x.token_spans.get().map_or(0, |v| v.capacity())) * 8).sum();
             serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities, "extraSpanCapacityBytes": extras}).to_string()
         });
         crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"scalarNodes":if scalar_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"nodes":docs.iter().map(|p|p.core.len()).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
@@ -1247,8 +1278,8 @@ impl Batch {
         };
         let nodes = offsets(&|p| p.core.len());
         let children = offsets(&|p| p.core.len().saturating_sub(1));
-        let fields = offsets(&|p| p.fielded.len());
-        let locs = offsets(&|p| p.locs() as usize);
+        let fields = offsets(&|p| if projection.wants("field") { p.fielded().len() } else { 0 });
+        let locs = OnceLock::new();
         let batch = Arc::new(Batch { docs, dialects, nodes, children, fields, locs, shape, py });
         #[cfg(test)]
         BATCHES.lock().push((batch.docs.iter().map(|p| p.key).collect(), Arc::downgrade(&batch)));
@@ -1260,7 +1291,12 @@ impl Batch {
             View::Node | View::Line | View::Tape | View::Core | View::Visit | View::Depth => &self.nodes,
             View::Child => &self.children,
             View::Field => &self.fields,
-            View::Loc(_) => &self.locs,
+            View::Loc(_) => self.locs.get_or_init(|| {
+                let mut offsets = Vec::with_capacity(self.docs.len() + 1);
+                offsets.push(0);
+                for p in &self.docs { offsets.push(offsets.last().unwrap() + p.locs() as usize); }
+                offsets
+            }),
         }
     }
     /// The document and its row index of `row`.
@@ -1284,7 +1320,7 @@ impl Batch {
     fn loc(&self, n: i64) -> Option<(usize, u32)> {
         let doc = self.doc(n >> 32)?;
         let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
-        (n >= 0 && local < self.docs[doc].locs()).then_some((doc, local))
+        (n >= 0 && (local < self.docs[doc].len() || local < self.docs[doc].locs())).then_some((doc, local))
     }
     /// The view's row of node `local` of document `doc`, if it has one.
     fn row(&self, view: View, doc: usize, local: u32) -> Option<usize> {
@@ -1292,7 +1328,7 @@ impl Batch {
         let within = match view {
             View::Node | View::Line | View::Tape | View::Core | View::Visit | View::Depth | View::Loc(_) => Some(local as usize),
             View::Child => (local > 0).then(|| local as usize - 1),
-            View::Field => p.fielded.binary_search(&local).ok(),
+            View::Field => p.fielded().binary_search(&local).ok(),
         }?;
         Some(self.offsets(view)[doc] + within)
     }
@@ -1507,6 +1543,7 @@ impl Viewed {
             if column == 0 {
                 return p.global(local);
             }
+            if matches!(place, Place::Docof) { return i64::from(p.key); }
             let (line, last, col) = p.extra.as_ref().expect("core.rr's lines").place(p.span(local));
             return match place {
                 Place::Line => i64::from(line),
@@ -1518,11 +1555,11 @@ impl Viewed {
         let local = match self.view {
             View::Node | View::Line | View::Tape | View::Core | View::Visit | View::Depth | View::Loc(_) => i as u32,
             View::Child => i as u32 + 1,
-            View::Field => p.fielded[i],
+            View::Field => p.fielded()[i],
         };
         let l = local as usize;
         let id = p.core[l] as usize;
-        let parent = || if p.parent[l] == NONE { -1 } else { p.global(p.parent[l]) };
+        let parent = || if p.parent(l) == NONE { -1 } else { p.global(p.parent(l)) };
         match (self.view, column) {
             (View::Node | View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id as i64,
@@ -1532,12 +1569,12 @@ impl Viewed {
             }
             (View::Node, 3) => i64::from(p.facts.start[id]),
             (View::Node, 4) => i64::from(p.facts.end[id]),
-            (View::Line, 1) => i64::from(p.facts.start_line[id]),
+            (View::Line, 1) => i64::from(p.facts.start_line(id as u32)),
             (View::Child | View::Field, 0) | (View::Tape, 1) => parent(),
-            (View::Child, 2) => i64::from(p.idx[l]),
+            (View::Child, 2) => i64::from(p.idx(l)),
             (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field[id])),
-            (View::Tape, 2) => i64::from(p.size[l]),
-            (View::Tape, 3) => i64::from(p.depth[l]),
+            (View::Tape, 2) => i64::from(p.size(l)),
+            (View::Tape, 3) => i64::from(p.depth(l)),
             (View::Visit, 1) => {
                 let dialect = &self.batch.dialects[&p.tag];
                 if self.batch.shape == Shape::Core && dialect.family == Family::Python {
@@ -1546,7 +1583,7 @@ impl Viewed {
                     i64::from(local)
                 }
             },
-            (View::Depth, 1) => i64::from(p.depth[l]),
+            (View::Depth, 1) => i64::from(p.depth(l)),
             _ => p.global(local),
         }
     }

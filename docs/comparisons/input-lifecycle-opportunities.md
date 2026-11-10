@@ -13,7 +13,7 @@ The new profiler measures identity maps separately.
 Phase totals sum exclusive CPU across child spans, so finer instrumentation cannot hide the work.
 The new analyzer regression failed before that correction and passes after it.
 
-## Results
+## Original spike results
 
 Two warm baseline profiles give these attributed CPU costs:
 
@@ -62,7 +62,9 @@ Both baseline and combined variants pass 45 focused tests, including exact parit
 These cover core columns, projection contracts, compiler composition, and the profiler adapter.
 The corpus result alone is not a correctness test because it contains no positive findings.
 
-## Costed opportunities
+## Original costed opportunities
+
+These estimates preceded the production conversion. The first five opportunities are now implemented.
 
 Effort estimates are engineering days for implementation, integration, and focused correctness checks.
 Unimplemented rows show ceilings or explicit uncertainty, not promised savings.
@@ -145,7 +147,7 @@ The line tests cover empty input, CR/LF, Unicode separators, reverse traversal, 
 The postings tests cover empty input, sparse keys, extreme keys, and repeated unsorted kinds.
 The counting implementation bounds its bucket range and retains the comparison-sort fallback for unusual inputs.
 
-These switches exist only in test builds. No production configuration path is added.
+At `e3ea1ad6d`, these switches existed only in test builds. The production conversion removes them.
 
 ## Structural follow-ups
 
@@ -170,5 +172,105 @@ Checked-in evidence is under `benchmark/async-family-integration/input-lifecycle
 `manifest.json` identifies the merged revision, source hashes, and measured binary.
 
 The working artifacts are in `/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle`.
-Production has only the additional instrumentation and corrected analysis attribution.
-The algorithm alternatives remain test-only spikes for the implementation decision.
+At `e3ea1ad6d`, production contained only the additional instrumentation and corrected analysis attribution.
+The production conversion described next supersedes those test-only alternatives.
+
+## Production conversion
+
+The five accepted opportunities are now implemented. The full retained cache is excluded.
+The experiment descriptions above refer to commit `e3ea1ad6d`. Their switches are removed from the current source.
+
+- Kind postings use bounded counting placement. A comparison-sort fallback handles unusual key ranges without unbounded allocation.
+- Core facts store no per-node line arrays. A demanded T-shaped line reads the shared source line table.
+- Cached and uncached file inputs use the shared tape validator to write fact columns directly. They no longer construct intermediate matcher records or sibling links.
+- Projection keeps its core/local ID maps. Parents derive from those maps. Ordinals, subtree sizes, depths, and field rows materialize independently when read.
+- Core IDs reserve space before construction. Demanded axis vectors allocate their final length. Token vectors reserve the counted token total.
+
+Anonymous-token counts preserve the previous span address space.
+Token ranges allocate only on first access, in the original parent/preorder sequence.
+Source and line spans are implicit. Regex captures follow the same token/source/line prefix as before.
+Source and line relations materialize only when requested.
+Projection line tables retain the existing language-specific semantics and share the source until first use.
+
+The shared validator serves both matcher restoration and relational admission.
+It checks source identity, grammar codes, aliases, supertypes, node flags, UTF-8 boundaries, subtree bounds, and sibling ordering.
+It rejects child subtrees that escape their parent even when their byte ranges fit.
+This path still decodes the stored wire image into `TapeImage` columns. It removes the subsequent matcher-tree expansion and copy.
+No cross-run input cache, compiler interpreter, or runtime selection switch is introduced.
+
+
+### Measured production result
+
+Three adjacent comparisons use the same 5,725 files and 19,007,630 core nodes.
+The order reverses in the middle pair. Each arm starts a fresh process with a warm tape cache.
+Both result memos remain disabled. Separate runs collect profiles.
+
+| Measurement | Merged baseline | Production conversion |
+|---|---:|---:|
+| Median corpus-job CPU | 3.926 s | 2.934 s |
+| Median corpus-job wall time | 7.581 s | 6.337 s |
+| Median subprocess CPU, including harness overhead | 4.014 s | 3.035 s |
+| Median subprocess wall time | 7.751 s | 6.443 s |
+| SQL executions | 81 | 81 |
+| SQL VM instructions in separate profiles | 785,573 | 785,573 |
+| Findings | 0 | 0 |
+
+The difference between CPU medians is 0.992 seconds, or 25.3%.
+Each adjacent pair saves CPU: 0.793, 1.105, and 1.124 seconds.
+Host contention affects wall time. These measurements do not establish a fixed wall-time speedup.
+An earlier run of the same production algorithms also improved every pair, before the bulk-reader adjustment.
+
+Separate profiles identify the savings:
+
+| Attributed work | Baseline CPU | Production CPU |
+|---|---:|---:|
+| Restore tapes plus construct facts | 1.805 s | 1.025 s |
+| Kind postings, included in facts | 0.337 s | 0.077 s |
+| Project and intern | 0.754 s | 0.301 s |
+| Identity maps, included in projection | 0.220 s | 0.095 s |
+| Token spans | 0.101 s | 0.000744 s |
+| Projection line tables | 0.086 s | 0.094 s |
+
+The rows overlap. Their savings cannot be added.
+Direct validation and column construction still costs 0.587 seconds inside the fact phase.
+Token spans allocate for 34 documents instead of 5,725.
+Subtree sizes allocate for 35 documents, depths for 25, and ordinal/field arrays for none.
+All 5,725 projection line tables still materialize through demanded line input or cardinality queries.
+Their cost remains visible after deferral.
+
+At publication, cumulative core-column payload falls from 848.4 to 696.3 MB.
+Cumulative identity capacity falls from 447.2 to 126.2 MB.
+Cumulative extra-span capacity falls from 103.1 MB to zero at that boundary.
+Later token demand allocates spans for 34 documents, so zero publication capacity does not mean zero lifetime allocation.
+The combined reduction is 576.2 MB across the job. This is not peak resident memory.
+Reported maximum footprints across timing runs range from 233.5–239.2 MB before and 217.5–225.7 MB after.
+
+### Correctness and general consumers
+
+All 107 focused test executions pass, including 120 positive findings in both node-ID modes.
+The four edge fixtures preserve all 178 expected finding keys.
+Column comparisons cover ten grammars, malformed Python, empty input, Unicode, and CRLF.
+Corrupt-image tests exercise the shared admission contract.
+Guest, source, line, regex-span, and definition-ID tests preserve existing behavior.
+
+An uncached full-corpus run also passes, with 5,725 direct admissions and no input-tree restoration.
+Its corpus job costs 13.013 CPU seconds and 11.641 wall seconds.
+There is no paired uncached baseline, so this is coverage evidence rather than a speedup claim.
+
+A separate nearest-scope query covers the 100 largest files: 3,791,229 nodes and 140,230 result rows.
+Its total reported phase CPU falls from 1.02 to 0.86 seconds.
+Local query CPU changes from 0.22 to 0.23 seconds. This small single-pair difference does not establish a query speedup.
+The exhaustive containment correctness test takes longer: approximately 1.10 versus 1.97 subprocess CPU seconds.
+It includes a quadratic independent reference calculation and all result comparisons.
+Sampling found the reference calculation, but only two samples per arm were available.
+Direct phase timing now measures 1.425–1.484 CPU seconds in reference construction and 0.0298–0.0301 seconds in relation execution plus comparisons.
+The reference calculation accounts for about 98% of those phases. The relation work cannot explain the observed test-runtime increase.
+The raw regression results remain in the evidence. They are not discarded in favor of whole-job gains.
+
+### Production evidence
+
+`benchmark/async-family-integration/input-lifecycle-production/` contains the drivers, summaries, source hashes, and audit results.
+`raw-reports.tar.xz` contains the raw reports, test logs, build logs, and earlier bulk-reader measurements.
+`manifest.json` identifies the merged baseline and measured binaries.
+`audit.py` checks counts, SQL budgets, VM work, source hashes, and test results without repeating the workload.
+The full retained cache remains excluded.

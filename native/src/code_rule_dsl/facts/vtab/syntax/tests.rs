@@ -418,15 +418,22 @@ fn within_holds_exactly_the_contained_pairs() {
     let (batch, _, _) = Batch::build(&store, docs, &Projection::default(), false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
+    // Borrow the demanded columns once, as a bulk consumer does. Keep lazy initialization
+    // out of the exhaustive reference loop; that loop checks the relation, not setup cost.
+    let axes: Vec<(&[u32], &[u32])> = batch.docs.iter().map(|p| (p.sizes(), p.depths())).collect();
     // (document, local, size, depth, start, end) of node row r.
     let at = |r: usize| {
-        let (p, local) = batch.locate(View::Node, r);
+        let doc = batch.nodes.partition_point(|&o| o <= r) - 1;
+        let (p, local) = (&batch.docs[doc], r - batch.nodes[doc]);
         let core = p.core[local] as usize;
-        (p.key, local, p.size[local] as usize, p.depth[local] as usize, p.facts.start[core], p.facts.end[core])
+        (p.key, local, axes[doc].0[local] as usize, axes[doc].1[local] as usize, p.facts.start[core], p.facts.end[core])
     };
     let zero = (0..nodes).filter(|&r| at(r).4 == at(r).5).count();
     assert!(zero > 0, "the broken documents have nodes of zero width");
+    let cpu = || { let (u, s) = crate::code_rule_dsl::logic::plan::corpus::thread_usage(); u + s };
+    let (mut reference_cpu, mut relation_cpu) = (0.0, 0.0);
     for mode in [within::Mode::Tree, within::Mode::Span] {
+        let before_reference = cpu();
         let within = within::Within::new(Arc::clone(&batch), mode);
         let mut expected = BTreeSet::new();
         for a in 0..nodes {
@@ -443,6 +450,8 @@ fn within_holds_exactly_the_contained_pairs() {
                 }
             }
         }
+        reference_cpu += cpu() - before_reference;
+        let before_relation = cpu();
         let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
         let ids: Vec<i64> = (0..nodes).map(id).collect();
         // By outer first (half the nodes), then by inner, then the scan: rows made by one lookup serve the others.
@@ -458,7 +467,9 @@ fn within_holds_exactly_the_contained_pairs() {
         if mode == within::Mode::Tree {
             assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
         }
+        relation_cpu += cpu() - before_relation;
     }
+    eprintln!("CONTAINMENT CHECK: {nodes} nodes, reference {reference_cpu:.6} CPU s, relation and comparisons {relation_cpu:.6} CPU s");
 }
 
 /// The kind-set axes (`within::Axis`: `nearest`, `inside`, `has`) hold exactly the pairs a brute-force walk of each
@@ -474,7 +485,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     // (document, local, size) and kind atom of node row r.
     let at = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
-        (p.key, local, p.size[local] as usize)
+        (p.key, local, p.size(local) as usize)
     };
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
@@ -639,4 +650,45 @@ fn candidate_demands_preserve_document_scope_and_receiver_independence() {
     let all=batch.python_candidates(&[1,2],&targets,"async_function","open").unwrap();assert_eq!(all.len(),4);
     let (full,_,_)=Batch::build(&store,docs,&Projection::core(),false).unwrap();
     assert_eq!(all,full.python_candidates(&[1,2],&targets,"async_function","open").unwrap(),"projection must preserve node identity");
+}
+
+#[test]
+fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
+    let f = facts("a.py", "f(a + 1)\ng(b)\n");
+    let dialect = Dialect::new(tape_tag(GrammarDialect::Python).unwrap()).unwrap();
+    let p = Projected::new(7, Arc::clone(&f), &dialect, Shape::Core, false, None);
+    assert_eq!(p.core.capacity(),p.core.len());
+    assert!(p.idx.get().is_none() && p.size.get().is_none() && p.depth.get().is_none() && p.fielded.get().is_none());
+    assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
+    // Independent eager reference: tokens grouped by the named parent's preorder, then source and lines.
+    let mut expected = Vec::new();
+    for &id in &p.core {
+        for &c in f.children(id) {
+            if !f.named(c) && f.end[c as usize] > f.start[c as usize] { expected.push([f.start[c as usize], f.end[c as usize]]); }
+        }
+    }
+    let tokens = expected.len();
+    expected.push([0,f.source.len() as u32]);
+    let lines = core_rr::Lines::new(&f.source,true);
+    expected.extend((1..=lines.count()).map(|l|lines.span(l)));
+    assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
+    assert_eq!(p.locs(),p.len()+expected.len() as u32);
+    // Counting and source/line access never allocate token spans.
+    for i in tokens..expected.len() { assert_eq!(p.span(p.len()+i as u32),expected[i]); }
+    assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
+    for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
+    for l in 0..p.core.len() {
+        let parent=p.parent(l);
+        if l==0 { assert_eq!(parent,NONE); }
+        else {
+            let siblings:Vec<_>=p.children(parent).collect();
+            assert_eq!(p.idx(l),siblings.iter().position(|&c|c==l as u32).unwrap() as u32);
+        }
+        let mut depth=0;let mut up=parent;
+        while up!=NONE { depth+=1;up=p.parent(up as usize); }
+        assert_eq!(p.depth(l),depth);
+        let subtree_end=f.subtree_end[p.core[l] as usize];
+        assert_eq!(p.size(l),p.core[l+1..].iter().filter(|&&id|id<subtree_end).count() as u32);
+    }
+    assert!(p.fielded.get().is_none(),"reading other axes must not build field rows");
 }
