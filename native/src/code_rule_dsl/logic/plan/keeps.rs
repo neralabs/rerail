@@ -651,7 +651,7 @@ fn unfold(reader: &Rule, at: usize, defs: &[&Rule], fresh: usize) -> Option<Vec<
         let mut out = Vec::new();
         for def in defs {
             let mut to = apart(def);
-            let mut body: Vec<Literal> = Vec::new();
+            let mut equal: Vec<(&Term, &Term)> = Vec::new();
             let mut matched: BTreeSet<String> = BTreeSet::new();
             for (h, r) in def.head.args.iter().zip(&read.args) {
                 match (h, r) {
@@ -661,11 +661,20 @@ fn unfold(reader: &Rule, at: usize, defs: &[&Rule], fresh: usize) -> Option<Vec<
                         to.insert(v.clone(), x.clone());
                     }
                     // A head variable named twice, or a head term against a read's: the head's equal to the read's.
-                    _ => body.push(Literal::Cmp { l: h.clone(), op: "=", r: r.clone() }),
+                    _ => equal.push((h, r)),
                 }
             }
             let rename = |l: &Literal| rename_all(l, &to);
-            let mut body: Vec<Literal> = body.iter().map(rename).collect();
+            // Only the head's side is the definition's, renamed: the read's side is the reader's own terms, which
+            // may share a name with one of the definition's variables (`expr_name(t, n, x)` read against the head
+            // `expr_name(n, n, x)`: `n = n` is the reader's `t = n`, not `t = t`).
+            let mut body: Vec<Literal> = equal
+                .into_iter()
+                .map(|(h, r)| match rename(&Literal::Cmp { l: h.clone(), op: "=", r: Term::Wild }) {
+                    Literal::Cmp { l, op, .. } => Literal::Cmp { l, op, r: r.clone() },
+                    _ => unreachable!("a comparison renames to a comparison"),
+                })
+                .collect();
             body.splice(0..0, def.body.iter().map(rename));
             let mut copy = reader.clone();
             copy.body.splice(at..=at, body);
@@ -1181,6 +1190,17 @@ mod tests {
         let two: Vec<String> = unfold(&negated, 1, &[&over_head], 1).unwrap().iter().map(|r| r.to_string()).collect();
         assert_eq!(two, vec!["o($x) :- a($x), !a($x)", "o($x) :- a($x), $x = 3"]);
         assert!(unfold(&negated, 1, &[&def], 1).is_none());
+    }
+
+    /// A head that names a variable twice equates the read's terms there, the read's own: a reader variable named as
+    /// one of the definition's (`n` in both) stays the reader's. (`expr_name(n, n, x) :- ast_name(n, x)` read as
+    /// `expr_name(t, n, x)` once came out `t = t`, leaving the reader's `n` free: every stored name of the batch.)
+    #[test]
+    fn a_head_variable_named_twice_equates_the_readers_terms() {
+        let reader = rule("o(t) :- a(t), b(t, n), r(n).");
+        let def = rule("b(n, n) :- a(n).");
+        let copies = unfold(&reader, 1, &[&def], 1).unwrap();
+        assert_eq!(copies[0].to_string(), "o($t) :- a($t), a($t), $t = $n, r($n)");
     }
 
     /// A body that meets only at a variable the head projects away splits there; a join through a head variable does

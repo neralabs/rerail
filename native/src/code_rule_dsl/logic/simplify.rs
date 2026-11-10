@@ -824,10 +824,13 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             }
             let rename = |l: &Literal| rename_all(l, &to);
             body.extend(def.body.iter().map(rename));
-            // A computed column (`@replace_all($raw, …)`) or a constant, once the domain binds its variables.
+            // A computed column (`@replace_all($raw, …)`) or a constant, once the domain binds its variables. Only the
+            // head's side is renamed: the read's term is the reader's, whose variables may share a name with the
+            // definition's.
             for (h, r) in def.head.args.iter().zip(&read.args) {
                 if !matches!(h, Term::Var(_)) {
-                    body.push(rename(&Literal::Cmp { l: r.clone(), op: "=", r: h.clone() }));
+                    let Literal::Cmp { r: h, .. } = rename(&Literal::Cmp { l: Term::Wild, op: "=", r: h.clone() }) else { unreachable!("a comparison") };
+                    body.push(Literal::Cmp { l: r.clone(), op: "=", r: h });
                 }
             }
             let mut c = rule.clone();
@@ -2163,6 +2166,24 @@ mod tests {
         let rules: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
         // The function of the reader's own line; the domain's second `split_line` read is implied and dropped.
         assert_eq!(rules, vec![r#"line($d, $l, $s) :- picked($d), split_line($d, $l, $raw), $s = @replace_all($raw, "^ +", "")"#], "{rules:?}");
+        // The reader's own `$raw` (here its result, not the definition's `raw`) stays the reader's.
+        let mut prog = super::super::front::parse(
+            r#"
+            .decl split_line(d: int, l: int, t: sym)
+            .input split_line
+            .decl picked(d: int)
+            .input picked
+            .decl trim(raw: sym, s: sym)
+            trim($raw, @replace_all($raw, "^ +", "")) :- split_line(_, _, $raw).
+            .decl line(d: int, l: int, s: sym)
+            .output line
+            line($d, $l, $raw) :- picked($d), split_line($d, $l, $x), trim($x, $raw).
+            "#,
+        )
+        .unwrap();
+        assert!(simplify(&mut prog).inlined.contains(&"trim".to_owned()));
+        let rules: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
+        assert_eq!(rules, vec![r#"line($d, $l, $raw) :- picked($d), split_line($d, $l, $x), $raw = @replace_all($x, "^ +", "")"#], "{rules:?}");
     }
 
     #[test]
