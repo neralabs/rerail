@@ -735,7 +735,9 @@ function planGroupedHooks(
  * status line shows the shell's "No such file or directory" in its place. `"$@"` carries the script and, for a
  * project's settings, the settings path after it. Claude Code runs the status line through Git Bash on Windows too, so
  * every word after it is quoted for a POSIX shell there as well (`claudeStatusCommand`). There the `sh` is a second Git
- * Bash process, about 2% of a status-line run, so Windows keeps the one form registration recognises everywhere.
+ * Bash process: 14 to 23 ms and about 6 MB a run, at most 1.2% of the status line's 2 s budget. The same test written
+ * inline skips it, but registration would then write a second form and recognise one more, so every platform keeps
+ * this one.
  */
 const CLAUDE_STATUS_FALLBACK = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' `;
 
