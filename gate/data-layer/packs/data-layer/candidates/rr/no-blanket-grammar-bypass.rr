@@ -113,3 +113,11 @@ BypassPublic(anchor,name,ordinal,o0,o1,o2) :- ppe_BypassPublic(p,l,o0,o1,o2,name
 BypassPublic(@place(p,l),name,ordinal,o0,o1,o2) :- ppe_BypassPublic(p,l,o0,o1,o2,name,ordinal,anchor), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 pp_report(p,l,"NGB001",cat("public method ",name,"() still exists"),p,l,cat("public method ",name,"() still exists"),0,o0,o1,o2) :- ppe_BypassPublic(p,l,o0,o1,o2,name,ordinal,anchor), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,p,l,cat("public method ",name,"() still exists")) :- ppe_BypassPublic(p,l,o0,o1,o2,name,ordinal,anchor), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
+
+#include "data-layer/supplied-facts.rr"
+sf_config("path_field","file_path").
+sf_config("join_root","true").
+sf_config("message","field").
+sf_config("code","NGB001").
+sf_config("order","message").
+sf_default("message","ServerPlan bypass mechanism found").

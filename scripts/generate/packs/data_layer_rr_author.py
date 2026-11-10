@@ -139,6 +139,7 @@ BuiltinPermission(r) :- permission_raise(r), docof(r, d), permission_selected(d)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
+    parser.add_argument('--check', action='append', help='Regenerate only these checks')
     args = parser.parse_args()
     source = args.source.resolve()
     if git(source, 'rev-parse', 'HEAD') != PIN:
@@ -222,7 +223,10 @@ def main():
                   ('async_sync_delegation', lambda s, t: async_sync_delegation(s, t, header)),
                   ('internal_dead_code', lambda s, t: internal_dead_code(s, t, header)),
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
+    unknown = set(args.check or []) - {name for name, _ in generators}
+    if unknown: parser.error('Unknown checks: '+', '.join(sorted(unknown)))
     for check, generate in generators:
+        if args.check and check not in args.check: continue
         entry = by_check[check]
         path = DESTINATION / (check.replace('_', '-') + '.rr')
         text = generate(source, entry)
@@ -231,7 +235,9 @@ def main():
         previous = next((file for file in manifest['files'] if file['destination'] == path.as_posix()), {})
         item = dict(previous, destination=path.as_posix(), sha256=digest, origin='authored',
                     upstreamPath=f'scripts/lint_{check}.py', sourceCommit=PIN)
-        manifest['files'] = [file for file in manifest['files'] if file['destination'] != path.as_posix()] + [item]
+        matches = [i for i,file in enumerate(manifest['files']) if file['destination'] == path.as_posix()]
+        if matches: manifest['files'][matches[0]] = item
+        else: manifest['files'].append(item)
         if entry.get('ruleSha256') != digest:
             entry.update(status='draft')
             entry.pop('evidence', None)

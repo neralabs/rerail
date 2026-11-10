@@ -74,3 +74,10 @@ BuiltinPermission(@place(p,l),o0,o1,o2) :- ppe_BuiltinPermission(p,l,o0,o1,o2,an
 pp_report(p,l,"builtin_permission_error","Raises built-in PermissionError instead of l1100_exceptions.PermissionError",p,l,"",o0,o0,o1,o2) :- ppe_BuiltinPermission(p,l,o0,o1,o2,anchor), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 .violation ProductionFact(at: span, path: symbol, path_order: symbol, order0: number, order1: number, order2: number, f_path: symbol, f_line: number, f_message: symbol) code "DL_FACT" "production fact"
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,p,l,"Raises built-in PermissionError instead of l1100_exceptions.PermissionError") :- ppe_BuiltinPermission(p,l,o0,o1,o2,anchor), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
+
+#include "data-layer/supplied-facts.rr"
+sf_config("path_field","path").
+sf_config("message","field").
+sf_config("code","builtin_permission_error").
+sf_config("order","line").
+sf_default("message","Raises built-in PermissionError").

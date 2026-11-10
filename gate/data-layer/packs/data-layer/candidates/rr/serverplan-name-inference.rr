@@ -79,3 +79,12 @@ NameInference4(@place(p,l),o0,o1,o2) :- ppe_NameInference4(p,l,o0,o1,o2), pp_api
 NameInference4(@place(p,l),o0,o1,o2) :- ppe_NameInference4(p,l,o0,o1,o2), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 pp_report(p,l,"SPNI004","SQL type is inferred from column spelling",@replace_all(p,"/","\u0000"),o0,"",o1,o0,o1,o2) :- ppe_NameInference4(p,l,o0,o1,o2), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,l,"SPNI004","SQL type is inferred from column spelling") :- ppe_NameInference4(p,l,o0,o1,o2), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
+
+#include "data-layer/supplied-facts.rr"
+sf_config("path_field","bundle").
+sf_config("message","field").
+sf_config("code_field","code").
+sf_config("strict_line","true").
+sf_config("order","bundle").
+sf_strict("code").
+sf_strict("message").

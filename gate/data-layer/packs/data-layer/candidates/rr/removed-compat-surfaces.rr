@@ -150,3 +150,11 @@ Removed(@place(p,l),name,ordinal,o0,o1,o2) :- ppe_Removed(p,l,o0,o1,o2,name,ordi
 pp_report(p,l,"RCS001",cat("removed compatibility surface '",name,"' must not be reintroduced"),p,o0,"",o1,o0,o1,o2) :- ppe_Removed(p,l,o0,o1,o2,name,ordinal,anchor), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 .violation ProductionFact(at: span, path: symbol, path_order: symbol, order0: number, order1: number, order2: number, f_path: symbol, f_line: number, f_name: symbol) code "DL_FACT" "production fact"
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,p,l,name) :- ppe_Removed(p,l,o0,o1,o2,name,ordinal,anchor), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
+
+#include "data-layer/supplied-facts.rr"
+sf_config("path_field","path").
+sf_config("join_root","true").
+sf_config("message","removed").
+sf_config("code","RCS001").
+sf_config("order","input").
+sf_default("name","removed compatibility surface").

@@ -10218,3 +10218,25 @@ These cases pass arbitrary caller-supplied fact values directly to reporters. Th
 The source receipt is `rr-first-ten-supplied-facts-source.json.gz`. It certifies source observations only; native parity remains open.
 The fetched Final rerail shape tip is `d024fa208`, already merged into this worktree. No additional engine merge is needed at this checkpoint.
 
+# Nine native supplied-fact reporters, Final d024, 2026-11-09
+
+Implemented supplied-fact reporting for nine first-ten rules in shared `.rr` relations.
+The ServerPlan surface reporter remains open. Its caller-supplied model validation needs separate work.
+
+The source corpus now has 151 cases. Native coverage includes all 144 cases for the other nine reporters, including 87 positives.
+All nine disabled-reporter controls detect the lost findings without an engine exception.
+The receipt `rr-nine-supplied-fact-reporters-finald024.json.gz` contains 153 verified native executions, source observations, programs, and harness snapshots.
+Its standalone validator rejects missing cases, Boolean-to-integer coercion, missing controls, and changed engines or programs.
+All 222 tooling tests pass. Nine production-root smoke cases also pass complete fact and finding comparisons, using 18 native executions.
+
+The TDD ladder exposed two defects. Numeric JSON array positions cannot use symbol columns.
+A passive transport now retains container types, keys, and positions; Datalog validates the shapes.
+The expanded integer case then showed that `to_number` silently replaced out-of-range line values with the default `1`.
+Native reporters now keep decimal text and sort by sign, digit count, and lexical digits. Boolean line values retain their JSON types.
+Path tests also cover empty paths, repeated separators, dot segments, parent segments, and double-leading slashes.
+This adds no engine implementation or alternative executor.
+
+Final advanced to `957f13520` during the frozen run. The live alignment check correctly requests that merge.
+These results certify the registered `d024fa208` cohort, not that newer commit.
+The nine rules remain drafts. The tenth supplied-fact reporter and complete first-ten refresh remain open.
+

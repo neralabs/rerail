@@ -130,3 +130,10 @@ Inspection4(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection4(p,l,o
 Inspection4(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection4(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 pp_report(p,l,"NSI001",cat(label," is forbidden in tests"),p,l,cat(label," is forbidden in tests"),0,o0,o1,o2) :- ppe_Inspection4(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,full,l,snippet,label) :- ppe_Inspection4(p,l,o0,o1,o2,ordinal,label,snippet), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
+
+#include "data-layer/supplied-facts.rr"
+sf_config("path_field","file_path").
+sf_config("message","inspection").
+sf_config("code","NSI001").
+sf_config("order","message").
+sf_default("pattern_name","source inspection").

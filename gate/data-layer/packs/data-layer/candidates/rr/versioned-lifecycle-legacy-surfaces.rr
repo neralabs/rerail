@@ -67,3 +67,11 @@ Lifecycle(@place(p,l),cls,method,o0,o1,o2) :- ppe_Lifecycle(p,l,o0,o1,o2,cls,met
 pp_report(p,l,"VLL001",cat(cls,".",method," shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering."),p,l,cat(cls,".",method," shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering."),0,o0,o1,o2) :- ppe_Lifecycle(p,l,o0,o1,o2,cls,method,anchor), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 .violation ProductionFact(at: span, path: symbol, path_order: symbol, order0: number, order1: number, order2: number, f_file_path: symbol, f_line: number, f_class_name: symbol, f_method_name: symbol, f_message: symbol) code "DL_FACT" "production fact"
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,p,l,cls,method,cat(cls,".",method," shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering.")) :- ppe_Lifecycle(p,l,o0,o1,o2,cls,method,anchor), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
+
+#include "data-layer/supplied-facts.rr"
+sf_config("path_field","file_path").
+sf_config("join_root","true").
+sf_config("message","field").
+sf_config("code","VLL001").
+sf_config("order","message").
+sf_default("message","Versioned lifecycle legacy surface violation").

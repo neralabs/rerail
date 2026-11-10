@@ -194,4 +194,5 @@ def production(source, check, text):
         if fact_decl is None: suffix += decl; fact_decl = decl
         else: assert fact_decl == decl
         suffix += 'ProductionFact('+','.join(['@place(p,l)','p','@replace_all(p,"/","\\u0000")','o0','o1','o2',*[v for _,v,_ in payload]])+') :- '+event+', option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).\n'
-    return text+suffix
+    from data_layer_rr_supplied_facts import supplied_facts
+    return text+suffix+supplied_facts(original, check)

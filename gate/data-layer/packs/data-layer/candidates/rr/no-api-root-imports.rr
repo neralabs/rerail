@@ -101,3 +101,10 @@ RootExample(@place(p,l),ordinal,piece,pattern,occurrence,o0,o1,o2) :- ppe_RootEx
 RootExample(@place(p,l),ordinal,piece,pattern,occurrence,o0,o1,o2) :- ppe_RootExample(p,l,o0,o1,o2,ordinal,piece,pattern,occurrence), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 pp_report(p,l,"NARI001","String literal or doc example uses deprecated root api import; use data_layer.* or explicit api.lXXXX_* imports",p,l,"String literal or doc example uses deprecated root api import; use data_layer.* or explicit api.lXXXX_* imports",0,o0,o1,o2) :- ppe_RootExample(p,l,o0,o1,o2,ordinal,piece,pattern,occurrence), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,full,l,"String literal or doc example uses deprecated root api import; use data_layer.* or explicit api.lXXXX_* imports") :- ppe_RootExample(p,l,o0,o1,o2,ordinal,piece,pattern,occurrence), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
+
+#include "data-layer/supplied-facts.rr"
+sf_config("path_field","file_path").
+sf_config("message","field").
+sf_config("code","NARI001").
+sf_config("order","message").
+sf_default("message","deprecated root api import").

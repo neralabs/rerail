@@ -180,3 +180,11 @@ BackendBT005(@place(p,l),pattern,occurrence,column,snippet,o0,o1,o2) :- ppe_Back
 BackendBT005(@place(p,l),pattern,occurrence,column,snippet,o0,o1,o2) :- ppe_BackendBT005(p,l,o0,o1,o2,pattern,occurrence,column,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 pp_report(p,l,"BT005","Use BackendType.from_connection_class() instead of class name inspection",p,l,"BT005",0,o0,o1,o2) :- ppe_BackendBT005(p,l,o0,o1,o2,pattern,occurrence,column,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,full,l,column,"Use BackendType.from_connection_class() instead of class name inspection","BT005",snippet) :- ppe_BackendBT005(p,l,o0,o1,o2,pattern,occurrence,column,snippet), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
+
+#include "data-layer/supplied-facts.rr"
+sf_config("path_field","file").
+sf_config("message","field").
+sf_config("code_field","code").
+sf_config("order","code").
+sf_default("code","BT000").
+sf_default("message","Backend type string comparison").

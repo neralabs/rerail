@@ -163,3 +163,15 @@ Asyncgetattr(@place(p,l),method,o0,o1,o2) :- ppe_Asyncgetattr(p,l,o0,o1,o2,metho
 Asyncgetattr(@place(p,l),method,o0,o1,o2) :- ppe_Asyncgetattr(p,l,o0,o1,o2,method), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 pp_report(p,l,"getattr",cat("getattr(..., '",method,"'...) checks for async method existence instead of calling the interface method directly"),@replace_all(p,"/","\u0000"),o0,"",o1,o0,o1,o2) :- ppe_Asyncgetattr(p,l,o0,o1,o2,method), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,l,"getattr",method) :- ppe_Asyncgetattr(p,l,o0,o1,o2,method), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
+
+#include "data-layer/supplied-facts.rr"
+sf_config("path_field","bundle").
+sf_config("message","async").
+sf_config("code_field","pattern_type").
+sf_config("strict_line","true").
+sf_config("order","bundle").
+sf_strict("pattern_type").
+sf_strict("method_name").
+sf_excluded(b) :- sf_bundle(b,p), workspace_root(root), match("(?s:.*)(?:/tests/)(?s:.*)",cat(root,"/",p)).
+sf_excluded(b) :- sf_bundle(b,p), workspace_root(root), match("(?s:.*)(?:lint_hasattr_async\\.py(?:\\z|\\n\\z))(?s:.*)",cat(root,"/",p)).
+sf_excluded(b) :- sf_bundle(b,p), workspace_root(root), match("(?s:.*)(?:__pycache__)(?s:.*)",cat(root,"/",p)).

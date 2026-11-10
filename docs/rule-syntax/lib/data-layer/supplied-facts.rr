@@ -1,0 +1,89 @@
+// Caller-supplied plugin facts. JSON selectors share one decoded document.
+// Ordinals are retained through reporting so equal rows remain distinct.
+.decl sf_config(key: symbol, value: symbol)
+.decl sf_default(key: symbol, value: symbol)
+.decl sf_strict(key: symbol)
+.decl sf_bundle(b: number, path: symbol)
+.input sf_bundle(IO=json,filename="reporter-facts.json",path="/bundles/*/path",projection="python-str")
+.decl sf_container(b: number, kind: symbol)
+.input sf_container(IO=json,filename="reporter-facts.json",path="/bundles/*/kind",projection="python-str")
+.decl sf_shape(b: number, ordinal: number, kind: symbol)
+.input sf_shape(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/kind",projection="python-str")
+// The frontend's generic envelope preserves types and positions without filtering.
+.decl sf_member(b: number, ordinal: number, field: number, key: symbol)
+.input sf_member(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/key",projection="python-str")
+.decl sf_value(b: number, ordinal: number, field: number, value: symbol)
+.input sf_value(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/value",projection="python-str")
+.decl sf_value_type(b: number, ordinal: number, field: number, kind: symbol)
+.input sf_value_type(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/value",projection="type")
+.decl sf_value_json(b: number, ordinal: number, field: number, value: symbol)
+.input sf_value_json(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/value",projection="json")
+.decl sf_property(b: number, ordinal: number, key: symbol, value: symbol)
+sf_property(b,r,k,v) :- sf_member(b,r,f,k), sf_value(b,r,f,v).
+.decl sf_type(b: number, ordinal: number, key: symbol, kind: symbol)
+sf_type(b,r,k,t) :- sf_member(b,r,f,k), sf_value_type(b,r,f,t).
+.decl sf_json(b: number, ordinal: number, key: symbol, value: symbol)
+sf_json(b,r,k,v) :- sf_member(b,r,f,k), sf_value_json(b,r,f,v).
+.decl sf_row(b: number, ordinal: number)
+sf_row(b,r) :- option("entryPoint","_report_facts"), sf_container(b,"array"), sf_shape(b,r,"object").
+.decl sf_field(b: number, ordinal: number, key: symbol, value: symbol)
+sf_field(b,r,k,v) :- sf_row(b,r), sf_property(b,r,k,v).
+sf_field(b,r,k,v) :- sf_row(b,r), sf_default(k,v), !sf_property(b,r,k,_).
+sf_field(b,r,k,cat(root,"/",p)) :- sf_row(b,r), sf_bundle(b,p), workspace_root(root), sf_config("path_field",k), !sf_property(b,r,k,_).
+.decl sf_int(b: number, ordinal: number, value: symbol, json: symbol)
+sf_int(b,r,v,v) :- sf_row(b,r), sf_type(b,r,"line","number"), sf_json(b,r,"line",v), @count_matches("[.eE]",v) = 0.
+sf_int(b,r,"1","true") :- sf_row(b,r), sf_type(b,r,"line","boolean"), sf_json(b,r,"line","true").
+sf_int(b,r,"0","false") :- sf_row(b,r), sf_type(b,r,"line","boolean"), sf_json(b,r,"line","false").
+.decl sf_line(b: number, ordinal: number, value: symbol, json: symbol)
+sf_line(b,r,l,j) :- sf_int(b,r,l,j).
+sf_line(b,r,"1","1") :- sf_row(b,r), !sf_int(b,r,_,_), !sf_config("strict_line","true").
+.decl sf_bad(b: number, ordinal: number)
+sf_bad(b,r) :- sf_row(b,r), sf_strict(k), !sf_type(b,r,k,"string").
+.decl sf_excluded(b: number)
+.decl sf_active(b: number, ordinal: number)
+sf_active(b,r) :- sf_row(b,r), sf_line(b,r,_,_), !sf_bad(b,r), !sf_excluded(b).
+.decl sf_message(b: number, ordinal: number, value: symbol)
+sf_message(b,r,m) :- sf_active(b,r), sf_config("message","field"), sf_field(b,r,"message",m).
+sf_message(b,r,cat("removed compatibility surface ",@python_repr(n)," must not be reintroduced")) :- sf_active(b,r), sf_config("message","removed"), sf_field(b,r,"name",n).
+sf_message(b,r,cat(n," is forbidden in tests")) :- sf_active(b,r), sf_config("message","inspection"), sf_field(b,r,"pattern_name",n).
+sf_message(b,r,cat(p,"(..., '",m,"'...) checks for async method existence instead of calling the interface method directly")) :- sf_active(b,r), sf_config("message","async"), sf_field(b,r,"pattern_type",p), sf_field(b,r,"method_name",m).
+.decl sf_code(b: number, ordinal: number, value: symbol)
+sf_code(b,r,c) :- sf_active(b,r), sf_config("code",c).
+sf_code(b,r,c) :- sf_active(b,r), sf_config("code_field",k), sf_field(b,r,k,c).
+.decl sf_path_input(b: number, ordinal: number, value: symbol)
+sf_path_input(b,r,cat(root,"/",p)) :- sf_active(b,r), sf_config("path_field","bundle"), sf_bundle(b,p), workspace_root(root).
+sf_path_input(b,r,p) :- sf_active(b,r), sf_config("path_field",k), k != "bundle", sf_field(b,r,k,p), !sf_config("join_root","true").
+sf_path_input(b,r,p) :- sf_active(b,r), sf_config("path_field",k), sf_field(b,r,k,p), sf_config("join_root","true"), prefix("/",p).
+sf_path_input(b,r,cat(root,"/",p)) :- sf_active(b,r), sf_config("path_field",k), sf_field(b,r,k,p), sf_config("join_root","true"), !prefix("/",p), workspace_root(root).
+// pathlib normalization is lexical: retain '..' and exactly two leading slashes.
+.decl sf_normalize(input: symbol, step: symbol)
+sf_normalize(p,cat("/",@replace_all(p,"/{2,}","/"))) :- sf_path_input(_,_,p), prefix("//",p), !prefix("///",p).
+sf_normalize(p,@replace_all(p,"/{2,}","/")) :- sf_path_input(_,_,p), !prefix("//",p).
+sf_normalize(p,@replace_all(p,"/{2,}","/")) :- sf_path_input(_,_,p), prefix("///",p).
+.decl sf_clean(input: symbol, value: symbol)
+sf_clean(p,@replace_all(@replace_all(s,"(^|/)(?:\\./)+","$1"),"(^|/)\\.$","$1")) :- sf_normalize(p,s).
+.decl sf_path(b: number, ordinal: number, value: symbol)
+sf_path(b,r,"/") :- sf_path_input(b,r,raw), sf_clean(raw,"/").
+sf_path(b,r,"//") :- sf_path_input(b,r,raw), sf_clean(raw,"//").
+sf_path(b,r,@replace_all(s,"/$","")) :- sf_path_input(b,r,raw), sf_clean(raw,s), s != "", s != "/", s != "//".
+sf_path(b,r,".") :- sf_path_input(b,r,raw), sf_clean(raw,"").
+// Python integer lines are unbounded. Sort by sign, signed digit count and
+// lexical digits; complement negative digits without parsing them into i64.
+.decl sf_flip(digit: symbol, opposite: symbol)
+sf_flip("0","9"). sf_flip("1","8"). sf_flip("2","7"). sf_flip("3","6"). sf_flip("4","5").
+sf_flip("5","4"). sf_flip("6","3"). sf_flip("7","2"). sf_flip("8","1"). sf_flip("9","0").
+.decl sf_negative_digit(value: symbol, ordinal: number, opposite: symbol)
+sf_negative_digit(v,i,opposite) :- sf_line(_,_,v,_), prefix("-",v), match_all("(?<digit>[0-9])",v,i,_,_), sf_flip(digit,opposite).
+.decl sf_line_key(value: symbol, sign: number, length: number, digits: symbol)
+sf_line_key(v,1,strlen(v),v) :- sf_line(_,_,v,_), !prefix("-",v).
+sf_line_key(v,0,-strlen(v),digits) :- sf_line(_,_,v,_), prefix("-",v), digits = join d by i sep "" : { sf_negative_digit(v,i,d) }.
+.decl sf_order(b: number, ordinal: number, first: symbol, sign: number, length: number, digits: symbol, tie: symbol)
+sf_order(b,r,p,s,n,d,m) :- sf_path(b,r,p), sf_line(b,r,l,_), sf_line_key(l,s,n,d), sf_message(b,r,m), sf_config("order","message").
+sf_order(b,r,p,s,n,d,c) :- sf_path(b,r,p), sf_line(b,r,l,_), sf_line_key(l,s,n,d), sf_code(b,r,c), sf_config("order","code").
+sf_order(b,r,p,s,n,d,"") :- sf_path(b,r,p), sf_line(b,r,l,_), sf_line_key(l,s,n,d), sf_config("order","line").
+sf_order(b,r,"",b,0,"","") :- sf_active(b,r), sf_config("order","input").
+sf_order(b,r,@replace_all(p,"/","\u0000"),0,0,"","") :- sf_path(b,r,p), sf_config("order","bundle").
+.violation SuppliedRoot(at: span, root: symbol) code "SF_ROOT" "supplied fact root"
+SuppliedRoot(@place("",0),root) :- option("entryPoint","_report_facts"), workspace_root(root).
+.violation SuppliedReport(at: span, source_code: symbol, file: symbol, line_json: symbol, source_message: symbol, severity: symbol, order0: symbol, order1: number, order2: number, order3: symbol, order4: symbol, bundle: number, ordinal: number) code "SF_REPORT" "{source_message}"
+SuppliedReport(@place("",0),c,p,j,m,s,a,sign,n,d,t,b,r) :- sf_path(b,r,p), sf_code(b,r,c), sf_line(b,r,_,j), sf_message(b,r,m), pp_config("findingSeverity",s), sf_order(b,r,a,sign,n,d,t).

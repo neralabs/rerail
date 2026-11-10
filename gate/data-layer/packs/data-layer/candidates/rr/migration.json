@@ -1331,7 +1331,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
-      "sha256": "e3839772f571891bbf838b4a2502eed0e1f5b93610d63eda5a9dcd30f88be84e",
+      "sha256": "f3a837e9a54a09e261c4be1b1cc8dd6dd06e654c94ba21654a7915ae7dbf56a3",
       "origin": "authored",
       "upstreamPath": "scripts/lint_removed_compat_surfaces.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1355,7 +1355,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
-      "sha256": "c9944d4c5db22fba90545f77947306bf68c3530c7a883c1b24839b2c3952578b",
+      "sha256": "bad72221b969d73d4bd98a221d15bdf6f4bd6c28b076b89f94146d1b871e4c58",
       "origin": "authored",
       "upstreamPath": "scripts/lint_versioned_lifecycle_legacy_surfaces.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1374,7 +1374,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
-      "sha256": "7bf76003720f04ade1d90663283a5a3cefd14891894055f135cd7c667a94bd70",
+      "sha256": "621b6b414c03b22cf1e55d96e122c54707b055d84aec369e9cf113cc3fdf6c5d",
       "origin": "authored",
       "upstreamPath": "scripts/lint_permission_error.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1393,7 +1393,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "sha256": "901cfb2e8295bbf066e0010b34733c696d2373d52949b7b65b20837f7d6c03a7",
+      "sha256": "99c403bc7558bd1b8afcac4539050d931dcd803d9af47a22249636cf1985ea6f",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_source_inspection.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1422,7 +1422,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
-      "sha256": "627e2f92794ef259152dd4bf561eb7cedde5b640b81179865c68ed3ca63e3d7f",
+      "sha256": "3e76103b1d12df4e1b800efa14b905b90cc32b8f683082497aaf554b42f42200",
       "origin": "authored",
       "upstreamPath": "scripts/lint_hasattr_async.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1456,7 +1456,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
-      "sha256": "e86df430fbc60bd7964e3ccbbb56a02ace7bcd9a92af23090b3aed7556c0ab15",
+      "sha256": "a0c5a36d8fa45b1e9339e3d52b1b7243f9760810d7fa6730862e417fa59aaa53",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_blanket_grammar_bypass.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1564,7 +1564,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-api-root-imports.rr",
-      "sha256": "4bd1469c1c7154553dd43fe41fc2de95e5ca24d99be6eb43544d933a34178801",
+      "sha256": "0907f00968e074c161237c53ae7c2e0fc1230d059bee7ae7c7bad344b4366dd0",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_api_root_imports.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1598,7 +1598,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr",
-      "sha256": "0f72787976c21fff647d39038242e0652821bca709d4b6f57e6bd2a8a007ebf1",
+      "sha256": "4137de7ca18edd97b40d46a521739c46ac47814f7bcdf0a3f91da135c6c78082",
       "origin": "authored",
       "upstreamPath": "scripts/lint_backend_type_strings.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1738,7 +1738,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
-      "sha256": "f029975c6cfdd38efeb517c09b6e19ae0aa4c483b1f0c3a248128999e8cccbf4",
+      "sha256": "7a90ef42bc612bb04ea9435ac368ed15a9d8202598673a734f4c3d3de20e6ee4",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2595,6 +2595,11 @@
       "destination": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
       "origin": "authored",
       "sha256": "8ff95f7ba0580b611497016daf3481bad5e526562e267964c000a0f5138ae4dc"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+      "origin": "authored",
+      "sha256": "6f049ad9972b4529237efb98490e674d0c9176ab421841ec87a2c9a886084ede"
     }
   ],
   "rules": [
@@ -2605,7 +2610,7 @@
       "legacySha256": "4c8214eb6c3e30bc6afd0f3d02d25cc2a522e0af1f0343e1e1c64242ead43d6e",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
-      "ruleSha256": "e3839772f571891bbf838b4a2502eed0e1f5b93610d63eda5a9dcd30f88be84e"
+      "ruleSha256": "f3a837e9a54a09e261c4be1b1cc8dd6dd06e654c94ba21654a7915ae7dbf56a3"
     },
     {
       "check": "versioned_lifecycle_legacy_surfaces",
@@ -2614,7 +2619,7 @@
       "legacySha256": "931b8c73be253bff264bf63ea46bd145f8d01fc7bc66290e367841b881465b97",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
-      "ruleSha256": "c9944d4c5db22fba90545f77947306bf68c3530c7a883c1b24839b2c3952578b"
+      "ruleSha256": "bad72221b969d73d4bd98a221d15bdf6f4bd6c28b076b89f94146d1b871e4c58"
     },
     {
       "check": "no_api_root_imports",
@@ -2623,7 +2628,7 @@
       "legacySha256": "48b8a8762bec65d2ac3a648893e8e745094ff84ef5906d6a1b5cd73f8034b377",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-api-root-imports.rr",
-      "ruleSha256": "4bd1469c1c7154553dd43fe41fc2de95e5ca24d99be6eb43544d933a34178801"
+      "ruleSha256": "0907f00968e074c161237c53ae7c2e0fc1230d059bee7ae7c7bad344b4366dd0"
     },
     {
       "check": "backend_type_strings",
@@ -2632,7 +2637,7 @@
       "legacySha256": "0ecc6dab424746bfd6007dfd0684f460851d26361ea3a5c0b1a2734d8f9d190c",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr",
-      "ruleSha256": "0f72787976c21fff647d39038242e0652821bca709d4b6f57e6bd2a8a007ebf1"
+      "ruleSha256": "4137de7ca18edd97b40d46a521739c46ac47814f7bcdf0a3f91da135c6c78082"
     },
     {
       "check": "hasattr_async",
@@ -2641,7 +2646,7 @@
       "legacySha256": "ca10f10fb53277ead5302d5b08e70696bd89d0c454ea8c328006c9148a461208",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
-      "ruleSha256": "627e2f92794ef259152dd4bf561eb7cedde5b640b81179865c68ed3ca63e3d7f"
+      "ruleSha256": "3e76103b1d12df4e1b800efa14b905b90cc32b8f683082497aaf554b42f42200"
     },
     {
       "check": "no_source_inspection",
@@ -2650,7 +2655,7 @@
       "legacySha256": "89f2000f352654e02459f7e7bef1609b0e846a46c64bb1d6606169ef7872185f",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "ruleSha256": "901cfb2e8295bbf066e0010b34733c696d2373d52949b7b65b20837f7d6c03a7"
+      "ruleSha256": "99c403bc7558bd1b8afcac4539050d931dcd803d9af47a22249636cf1985ea6f"
     },
     {
       "check": "serverplan_name_inference",
@@ -2659,7 +2664,7 @@
       "legacySha256": "c1326f54d9381d1efad6d898b9bb0c7d61cd801243d4cf7a9b5132499cef351c",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
-      "ruleSha256": "f029975c6cfdd38efeb517c09b6e19ae0aa4c483b1f0c3a248128999e8cccbf4"
+      "ruleSha256": "7a90ef42bc612bb04ea9435ac368ed15a9d8202598673a734f4c3d3de20e6ee4"
     },
     {
       "check": "no_blanket_grammar_bypass",
@@ -2668,7 +2673,7 @@
       "legacySha256": "700460f3a9868afe3abd8254af2b39324ee22cc13ba4132867b8870a2d4d96da",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
-      "ruleSha256": "e86df430fbc60bd7964e3ccbbb56a02ace7bcd9a92af23090b3aed7556c0ab15"
+      "ruleSha256": "a0c5a36d8fa45b1e9339e3d52b1b7243f9760810d7fa6730862e417fa59aaa53"
     },
     {
       "check": "serverplan_grammar_surface",
@@ -2686,7 +2691,7 @@
       "legacySha256": "f95c0bc0626da3c96900d5bbe3aa72fd9709a3aad7557c0930e4d00db34de3f1",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
-      "ruleSha256": "7bf76003720f04ade1d90663283a5a3cefd14891894055f135cd7c667a94bd70"
+      "ruleSha256": "621b6b414c03b22cf1e55d96e122c54707b055d84aec369e9cf113cc3fdf6c5d"
     },
     {
       "check": "dynamic_module_loading",
