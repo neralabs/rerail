@@ -4,8 +4,8 @@
 //! against a byte-by-byte reference that exists only here, and checked for what it lowers to:
 //! straight bit operations.
 
-// The IR text's helpers, tier 1's (`rerail_tier1::clif_text`).
-pub(super) use rerail_tier1::clif_text::{hot_loop, loop_costs, machine_loop, opcode};
+// The IR text's helpers, tier 1's (`rerail_compiler::clif_text`).
+pub(super) use rerail_compiler::clif_text::{body_of, carried_params, carried_words, hot_loop, loop_costs, machine_loop, opcode, sink_params, state_bits};
 use super::*;
 use super::block::BlockRun;
 
@@ -199,19 +199,8 @@ fn eq_swar_form_equals_reference() {
 
 // --- What each executor lowers to ----------------------------------------------------------
 
-/// The Cranelift IR of the loop body: everything between the body block's label and the next
-/// block's. `block0` is the entry, `block1` a file's row, `block2` the body over its blocks.
-pub(super) fn body_of(clif: &str) -> Vec<String> {
-    hot_loop(clif).into_iter().flat_map(|(_, lines)| lines).collect()
-}
 
 
-/// The sinks' loop-carried values (`native_cpu_block`): a running count per counted output and
-/// no more (a delayed output holds no word).
-pub(super) fn sink_params(native: &native_ir::BlockNative) -> usize {
-    // A delayed output's word is not held (`native_cpu_block::delayed_store`).
-    native_cpu_block::counted(native).len()
-}
 
 
 /// The opcodes a block body may contain: loads and stores of the block, bit operations (the
@@ -345,7 +334,7 @@ fn eq_lowers_to_straight_bit_operations() {
 /// compare and a ballot. Neither loops over bytes.
 #[test]
 fn interpreters_have_no_byte_loops() {
-    let cpu = include_str!("../../../../crates/tier1/src/block.rs");
+    let cpu = include_str!("../../../../crates/compiler/src/block.rs");
     let kernel = &cpu[cpu.find("pub fn eq(block").expect("the eq kernel")..];
     let kernel = &kernel[..kernel.find("\n}\n").expect("its end")];
     for word in ["for ", "while ", "loop {", ".iter()", "[j]", "[i]"] {
@@ -1380,12 +1369,6 @@ fn within_lowers_to_straight_bit_operations() {
 
 
 
-/// The function's loop-carried values, read from the Cranelift IR: the hot body's parameters
-/// after its block index and its byte and output pointers.
-pub(super) fn carried_params(clif: &str) -> usize {
-    let line = clif.lines().find(|l| l.trim_start().starts_with("block2(")).expect("the body block");
-    line.matches(": i64").count() - 3
-}
 
 /// Stage 1's loop's stack loads and stores (a ratchet, to reach 0).
 const STAGE1_LOOP_STACK: usize = 9;
@@ -1448,37 +1431,7 @@ fn rir_loop_size() {
     }
 }
 
-/// A program's carried state in bits (decision 0070): one bit per `toggle`, `escaped` and
-/// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
-/// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one
-/// costs `k - 1` more. Every executor carries these bits and no more: Cranelift packs them into
-/// words, never a word per bit.
-pub(super) fn state_bits(p: &block::BlockProgram) -> usize {
-    use super::block::BlockOp::*;
-    let mut back: std::collections::BTreeMap<u16, u8> = std::collections::BTreeMap::new();
-    for op in &p.ops {
-        if let Prev(a, k) = *op {
-            let m = back.entry(a).or_insert(0);
-            *m = (*m).max(k);
-        }
-    }
-    let ops = p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count();
-    let looks: usize = back
-        .iter()
-        .map(|(&a, &k)| match p.ops[usize::from(a)] {
-            Toggle(_) | Fill(..) => usize::from(k) - 1,
-            _ => usize::from(k),
-        })
-        .sum();
-    ops + looks
-}
 
-/// The values a program's `prev`s read, one carried word each, and its other carried operations.
-pub(super) fn carried_words(p: &block::BlockProgram) -> usize {
-    use super::block::BlockOp::*;
-    let bases: std::collections::BTreeSet<u16> = p.ops.iter().filter_map(|op| if let Prev(a, _) = *op { Some(a) } else { None }).collect();
-    bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count()
-}
 
 /// Byte-local values on the byte vectors (`native_cpu_lanes`) equal the interpreter's masks:
 /// a `prev` of a value that holds on 0x00 (`not eq 'a'`) has no bit before a file, though the

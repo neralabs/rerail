@@ -14,8 +14,9 @@ mod check;
 mod from_tape;
 mod lower;
 mod print;
-mod syntax;
-pub(in crate::code_rule_dsl) mod tape;
+// The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
+use rerail_rr_syntax::syntax;
+pub(in crate::code_rule_dsl) use rerail_rr_syntax::tape;
 mod translate;
 
 #[cfg(test)]
@@ -272,14 +273,6 @@ fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syn
     Ok((out, own))
 }
 
-/// A `.rr` file's tree, as its tape holds it (decision 0061): its nodes in preorder, comments as extras, and an ERROR
-/// leaf for each statement that does not parse. Never fails: a file the engine refuses to run still has a tape.
-pub(in crate::code_rule_dsl) fn tape(src: &str) -> Vec<tape::Node> {
-    let mut parser = syntax::Parser::taped(src);
-    // A taped parse reads on past an error; what it could not read is in the tree.
-    let _ = parser.statements();
-    parser.into_tape().0
-}
 
 /// The first error a `.rr` file's parse gives, as running it would report it: its line and message
 /// (`syntax_error/3`). `None` when it parses.
@@ -291,10 +284,7 @@ pub(in crate::code_rule_dsl) fn syntax_error(src: &str) -> Option<(usize, String
     let mut parser = syntax::Parser::taped(src);
     let _ = parser.statements();
     let at = parser.into_tape().1.map_or(0, |(at, _)| at);
-    let message = match error {
-        Error::Syntax(message) => message,
-        other => format!("{other:?}"),
-    };
+    let rerail_rr_syntax::Error::Syntax(message) = error;
     Some((syntax::line_of(src, at), message))
 }
 

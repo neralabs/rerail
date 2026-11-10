@@ -518,6 +518,15 @@ pub(in crate::code_rule_dsl) enum Error {
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
 }
 
+/// The `.rr` parser's error (`rerail_rr_syntax`) is a syntax error.
+impl From<rerail_rr_syntax::Error> for Error {
+    fn from(e: rerail_rr_syntax::Error) -> Self {
+        match e {
+            rerail_rr_syntax::Error::Syntax(m) => Error::Syntax(m),
+        }
+    }
+}
+
 impl Error {
     /// The component and relation of a stratification failure (a negation or an aggregation inside its own
     /// component): T raised `NotStratifiable` for both, and magic sets recovers from either the same way.

@@ -5,17 +5,17 @@
 //! Each step is checked as the ladder's are (`bitlex_ladder_tests::check_ladder`): the reference
 //! evaluator, the interpreters and Cranelift give the same nodes on every document, and each
 //! step has the compiler's shape. And each document a step parses is parsed by the engine's
-//! own `.rr` parser too (`logic::rr::tape`): the two trees must be equal, node for node (kind,
+//! own `.rr` parser too (`rerail_rr_syntax::tape`): the two trees must be equal, node for node (kind,
 //! field, span, size), and the engine's must have no `ERROR`. A step's kinds and fields are named
-//! as the engine's tape names them (`logic::rr::tape`).
+//! as the engine's tape names them (`rerail_rr_syntax::tape`).
 //!
 //! A step refuses what it does not have yet, so a document the engine parses and the step
 //! refuses is no difference: it is counted.
 
-use super::bitlex_ladder_tests::{Compiled, IdNode, check_ladder, steps_in};
-use crate::code_rule_dsl::logic::rr;
+use rerail_compiler::ladder::{Compiled, IdNode, check_ladder, steps_in};
+use rerail_rr_syntax as rr;
 
-const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/code_rule_dsl/transducer/packed/bitlex_ladder/rr");
+const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../rr_syntax/bitlex_ladder");
 
 /// The bytes a mutation writes: `.rr`'s punctuation, quotes, comment openers and words.
 const ALPHABET: &[u8] = b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\";
@@ -350,10 +350,10 @@ fn rr_steps_parse_as_the_reference_and_the_engine() {
 fn rr_cases_parse_from_their_steps() {
     let mut missing = Vec::new();
     for (name, source) in steps_in(DIR) {
-        let c = super::bitlex_ladder_tests::compile_step(&name, &source);
+        let c = rerail_compiler::ladder::compile_step(&name, &source);
         for &(doc, from) in CASES {
-            if name.as_str() >= from && super::bitlex_ladder_tests::reference(&c, doc.as_bytes()).is_none() {
-                missing.push(format!("{name}: {doc:?}: {}", super::bitlex_ladder_tests::refusal(&c, doc.as_bytes())));
+            if name.as_str() >= from && rerail_compiler::ladder::reference(&c, doc.as_bytes()).is_none() {
+                missing.push(format!("{name}: {doc:?}: {}", rerail_compiler::ladder::refusal(&c, doc.as_bytes())));
             }
         }
     }
@@ -366,7 +366,7 @@ fn rr_cases_parse_from_their_steps() {
 #[test]
 fn a_refused_mark_is_checked() {
     let source = std::fs::read_to_string(format!("{DIR}/10-policy.bitlex")).expect("step 10");
-    assert_eq!(super::bitlex_ladder_tests::compile_error(&source), None);
+    assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
     let refuse = "refuse json_bad in json_document json_inner_object json_inner_array";
     for (from, to, why) in [
         (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
@@ -376,7 +376,7 @@ fn a_refused_mark_is_checked() {
         ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
-        let e = super::bitlex_ladder_tests::compile_error(&source.replace(from, to));
+        let e = rerail_compiler::ladder::compile_error(&source.replace(from, to));
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
 }
@@ -386,20 +386,20 @@ fn a_refused_mark_is_checked() {
 #[test]
 fn a_reading_is_checked() {
     let source = std::fs::read_to_string(format!("{DIR}/12-parenthesized.bitlex")).expect("step 12");
-    assert_eq!(super::bitlex_ladder_tests::compile_error(&source), None);
+    assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
     for (from, to, why) in [
         ("reread parenthesized_strict pattern_tail\n  provisional", "reread nowhere pattern_tail\n  provisional", "no reading of that name"),
         ("reading parenthesized_strict = ", "reading parenthesized = ", "two of that name"),
         ("conjunction gone, atom as call", "conjunction gone, conjunction gone, atom as call", "a kind twice"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
-        let e = super::bitlex_ladder_tests::compile_error(&source.replace(from, to));
+        let e = rerail_compiler::ladder::compile_error(&source.replace(from, to));
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
-    let c = super::bitlex_ladder_tests::compile_step("12", &source);
+    let c = rerail_compiler::ladder::compile_step("12", &source);
     assert_eq!(c.program.readings.maps.len(), 2);
     assert_eq!(c.program.readings.provisional, [c.ids.of("field bare")]);
-    let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, super::native_ir::StructuralOperation::Reread { .. })).count();
+    let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, rerail_compiler::native_ir::StructuralOperation::Reread { .. })).count();
     assert!(rereads > 0, "the words reread");
 }
 
@@ -415,7 +415,7 @@ fn rr_look() {
         None => doc.replace("\\n", "\n"),
     };
     for (name, source) in steps_in(DIR).into_iter().filter(|s| s.0.contains(&step)) {
-        let c = super::bitlex_ladder_tests::compile_step(&name, &source);
+        let c = rerail_compiler::ladder::compile_step(&name, &source);
         let out = ::bitlex::eval::Ev::run(&c.stmts, doc.as_bytes(), &std::collections::HashMap::new()).expect("runs");
         eprintln!("{name}: errors {:?}", out.errors);
         if let Some(Err(e)) = out.tree.as_ref().map(|t| ::bitlex::tree::nodes(t, &out.tokens, doc.len())) {
@@ -426,12 +426,12 @@ fn rr_look() {
         for t in out.tokens.iter().filter(|_| !long) {
             eprintln!("  {:>4}..{:<4} {}{} {:?}", t.start, t.end, if t.mark { "mark " } else { "" }, t.kind, &doc[t.start..t.end]);
         }
-        eprintln!("  reference: {:?}", super::bitlex_ladder_tests::refusal(&c, doc.as_bytes()));
+        eprintln!("  reference: {:?}", rerail_compiler::ladder::refusal(&c, doc.as_bytes()));
         let compiled = c.parser.parse(doc.as_bytes());
         eprintln!("  compiled: {:?}", compiled.as_ref().map(|n| n.len()));
         // Where the compiled tree leaves the reference's: the nodes around it.
-        if let (Ok(nodes), Some(want)) = (&compiled, super::bitlex_ladder_tests::reference(&c, doc.as_bytes())) {
-            let (ours, theirs) = (named(&c, &super::bitlex_ladder_tests::as_ids(nodes.clone())), named(&c, &want));
+        if let (Ok(nodes), Some(want)) = (&compiled, rerail_compiler::ladder::reference(&c, doc.as_bytes())) {
+            let (ours, theirs) = (named(&c, &rerail_compiler::ladder::as_ids(nodes.clone())), named(&c, &want));
             // By kind, field and span: a size differs first at the nodes around the place.
             let spans = |n: &Named| (n.0.clone(), n.1.clone(), n.2, n.3);
             if let Some(at) = ours.iter().zip(&theirs).position(|(a, b)| spans(a) != spans(b)) {
@@ -442,10 +442,10 @@ fn rr_look() {
             }
         }
         let theirs = engine(&doc).0;
-        if let Some(nodes) = super::bitlex_ladder_tests::reference(&c, doc.as_bytes()) {
+        if let Some(nodes) = rerail_compiler::ladder::reference(&c, doc.as_bytes()) {
             let ours = named(&c, &nodes);
             eprintln!("  reference tree: {ours:?}");
-            let compiled = compiled.as_ref().ok().map(|n| named(&c, &super::bitlex_ladder_tests::as_ids(n.clone())));
+            let compiled = compiled.as_ref().ok().map(|n| named(&c, &rerail_compiler::ladder::as_ids(n.clone())));
             eprintln!("  the engine's tree: {}; the compiled tree the reference's: {}", ours == theirs, compiled.as_ref() == Some(&ours));
             if let Some(at) = ours.iter().zip(&theirs).position(|(a, b)| a != b) {
                 eprintln!("  the reference leaves the engine at node {at}: {:?} / {:?}", ours.get(at), theirs.get(at));
@@ -465,8 +465,8 @@ fn rr_corpus() {
     let steps = steps_in(DIR);
     let want = std::env::var("RERAIL_RR_STEP").ok();
     let (name, source) = steps.iter().rev().find(|s| want.as_ref().is_none_or(|w| s.0.contains(w.as_str()))).expect("a step");
-    let c = super::bitlex_ladder_tests::compile_step(name, source);
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("the repository").to_path_buf();
+    let c = rerail_compiler::ladder::compile_step(name, source);
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let mut files = Vec::new();
     let mut work = vec![root];
     while let Some(dir) = work.pop() {
@@ -491,7 +491,7 @@ fn rr_corpus() {
         let Ok(src) = std::str::from_utf8(&bytes) else { continue };
         match c.parser.parse(&bytes) {
             Ok(nodes) => {
-                let ours = named(&c, &super::bitlex_ladder_tests::as_ids(nodes));
+                let ours = named(&c, &rerail_compiler::ladder::as_ids(nodes));
                 let (theirs, error) = engine(src);
                 if error {
                     refused_by_engine.push(f.display().to_string());
@@ -504,7 +504,7 @@ fn rr_corpus() {
                 }
             }
             Err(_) => {
-                let why = super::bitlex_ladder_tests::refusal(&c, &bytes);
+                let why = rerail_compiler::ladder::refusal(&c, &bytes);
                 let mut why = why.split(" (byte").next().unwrap_or("").to_owned();
                 // The grammar's refusal: the token it stops at, and the statement's first word.
                 if why == "the token" {

@@ -852,9 +852,8 @@ mod tests {
             assert_eq!(regions.len(), usize::from(eligible));
             for size in 2..=5 {
                 let mut guarded = program.clone();
-                guarded
-                    .words
-                    .insert(guarded.words.len() - 1, word(SIZE, 0, size));
+                let last = guarded.words.len() - 1;
+                guarded.words.insert(last, word(SIZE, 0, size));
                 guarded.validate().unwrap();
                 let expected = guarded.execute_roots(&tape, [1]).unwrap();
                 // SAVE_CURSOR changes complete state identity on each advance.
@@ -895,10 +894,8 @@ mod tests {
             execute(&ordinary, &tape, 1),
             ordinary.execute_roots(&tape, [1])
         );
-        let invalid = Program {
-            words: vec![word(FORK, GREEDY, u16::MAX)],
-            ..ordinary
-        };
+        let mut invalid = ordinary;
+        invalid.words = vec![word(FORK, GREEDY, u16::MAX)];
         assert_eq!(
             closure_proof::regions(&invalid),
             invalid.validate().map(|()| vec![])

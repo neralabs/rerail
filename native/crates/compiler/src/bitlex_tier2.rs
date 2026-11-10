@@ -13,43 +13,43 @@
 //! - **The end:** the root closes and accepts at the end of the stream; a nested level closes
 //!   its node and returns to switch on the token again.
 
-use super::grammar::{Act, ArmRow, StateRow};
-use super::stream::{ByteSwitch, REFUSE};
+use crate::grammar::{Act, ArmRow, StateRow};
+use crate::stream_ir::{ByteSwitch, REFUSE};
 use std::collections::HashMap;
 
 /// A set of bytes, bit `b` for byte `b`.
-pub(super) type ByteSet = [u64; 4];
+pub type ByteSet = [u64; 4];
 
 fn has(s: &ByteSet, b: u8) -> bool {
     s[usize::from(b / 64)] >> (b % 64) & 1 == 1
 }
 
 /// A token row, as tier 2 reads it.
-pub(super) struct Row {
+pub struct Row {
     /// Its tokens' kind; 0 when every token is a keyword.
-    pub(super) kind: u16,
+    pub kind: u16,
     /// Its tokens are one byte (the start is the last byte).
-    pub(super) one_byte: bool,
+    pub one_byte: bool,
     /// The bytes a token of the row can begin with.
-    pub(super) first: ByteSet,
+    pub first: ByteSet,
     /// Its keywords: a token whose text is the word has the kind.
-    pub(super) keywords: Vec<(Vec<u8>, u16)>,
+    pub keywords: Vec<(Vec<u8>, u16)>,
     /// Its soft keywords: a token whose text is the word has the kind where an arm takes it, and
     /// the row's own elsewhere.
-    pub(super) soft: Vec<(Vec<u8>, u16)>,
+    pub soft: Vec<(Vec<u8>, u16)>,
     /// With a check, the bytes a token passing it can begin with. The check itself is tier 1's
     /// (masks joining the fallback); tier 2 uses the bytes only to tell rows apart.
-    pub(super) check: Option<ByteSet>,
+    pub check: Option<ByteSet>,
     /// Its start mask, the program's mask of that index, when another row can begin with one
     /// of its bytes: `ROW` tests it.
-    pub(super) mask: Option<u16>,
+    pub mask: Option<u16>,
 }
 
 impl Row {
     /// Its tokens' ends are the stream's last bytes (`SPAN m=1`): every row but one of one-byte
     /// tokens. A row of keywords only is no exception: its token runs to its last byte whatever
     /// the word, and `truee` is not `true` (the word's bytes are compared over the whole token).
-    pub(super) fn takes_last(&self) -> bool {
+    pub fn takes_last(&self) -> bool {
         !self.one_byte
     }
 }
@@ -87,21 +87,21 @@ enum Pre {
 }
 
 /// Tier 2 as words: their `rir` text (strings, switches, words).
-pub(super) struct Lowered {
-    pub(super) text: String,
+pub struct Lowered {
+    pub text: String,
     /// The rows `ROW` tests, in order: those that need a start mask.
-    pub(super) tested: Vec<usize>,
+    pub tested: Vec<usize>,
 }
 
 /// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
 /// starts, and whether it is hidden (skipped where no arm takes it).
 #[derive(Clone, Copy)]
-pub(super) struct Mark {
-    pub(super) kind: u16,
-    pub(super) mask: u16,
-    pub(super) hidden: bool,
+pub struct Mark {
+    pub kind: u16,
+    pub mask: u16,
+    pub hidden: bool,
     /// The file's end has it, after the last token.
-    pub(super) end: bool,
+    pub end: bool,
 }
 
 struct Emit<'a> {
@@ -584,14 +584,14 @@ impl Emit<'_> {
 /// Tier 2's words from the state machine and the token rows.
 /// Tier 1's streams the words read: the extract of every token's first byte (`TOKEN`), and the
 /// mask of the last byte of each token whose arm reads it (`SPAN m=1`).
-pub(super) const STARTS: u16 = 0;
-pub(super) const LASTS: u16 = 0;
+pub const STARTS: u16 = 0;
+pub const LASTS: u16 = 0;
 
 /// The words, after `empties` words `EMPTY t` (`t` in `0..empties`): tier 1's fallback totals,
 /// each of which must be zero before the first token is taken. With a `whole` root, an `OPEN` of
 /// the root follows them: no token is taken yet, so it opens at byte 0.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool) -> Result<Lowered, String> {
+pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool) -> Result<Lowered, String> {
     let mut e = Emit {
         states,
         arms,
@@ -654,10 +654,10 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &
     let mut text = String::new();
     use std::fmt::Write as _;
     for (at, s) in e.strings.iter().enumerate() {
-        let _ = writeln!(text, "  string {at} {}", super::rir::quote(s));
+        let _ = writeln!(text, "  string {at} {}", crate::rir_text::quote(s));
     }
     for (at, s) in e.switches.iter().enumerate() {
-        super::rir::switch_rows(&mut text, at, s);
+        crate::rir_text::switch_rows(&mut text, at, s);
     }
     for (pc, (op, mode, arg)) in e.words.iter().enumerate() {
         let _ = write!(text, "  {pc:04} {op}");
