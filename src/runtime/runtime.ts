@@ -1543,6 +1543,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
+  /**
+   * Closes a session that sent no end and has gone quiet, as its end would, without recording an event: its host router
+   * forgets it too, so its next event opens it again from its ledger.
+   */
+  closeIdleSession(sessionId: string): Promise<void> {
+    return this.#ingestLanes.run(sessionId, async () => {
+      const state = this.#sessions.get(sessionId);
+      if (state !== undefined) await this.#router(state.descriptor.host).stop(sessionId);
+    });
+  }
+
   async closeSession(sessionId: string): Promise<void> {
     const state = this.#sessions.get(sessionId);
     if (state !== undefined) {
