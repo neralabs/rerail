@@ -331,6 +331,37 @@ kernel void stage_map(device long* B [[buffer(0)]], device const uint* totals [[
     }
 }
 
+// A join from one binding (a rule's first table): a thread per candidate row, not one thread walking them all.
+kernel void scan_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device atomic_uint* counters [[buffer(2)]],
+                       device uint* counts [[buffer(3)]], device const uint* totals [[buffer(4)]], constant Stage& s [[buffer(5)]],
+                       uint r [[thread_position_in_grid]]) {
+    if (r > s.nr) return;
+    if (r == s.nr || totals[s.in_slot] == 0) { counts[r] = 0; return; }
+    long kv[8];
+    for (uint i = 0; i < s.nkeys && i < 8; i++) kv[i] = s.key_kind[i] == 1 ? L[ulong(s.key_slot[i]) * s.cap_in] : s.key_const[i];
+    uint c = 0;
+    if (matches(s, R, r, kv)) {
+        ulong v = s.nops > 0 ? eval(s, L, 0, R, r) : 0;
+        if (s.counter != NONE) {
+            atomic_fetch_add_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+            for (uint m = 0; m < s.npassed && m < 16; m++) {
+                if (s.passed[m] == NONE || out_bit(s, v, s.passed[m])) atomic_fetch_add_explicit(&counters[s.counter + 1 + m], 1u, memory_order_relaxed);
+            }
+        }
+        c = uint(s.last == NONE || out_bit(s, v, s.last));
+    }
+    counts[r] = c;
+}
+
+kernel void scan_scatter(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device uint* totals [[buffer(2)]],
+                         device const uint* offsets [[buffer(3)]], device long* O [[buffer(4)]], constant Stage& s [[buffer(5)]],
+                         uint r [[thread_position_in_grid]]) {
+    if (r == 0) totals[s.out_slot] = offsets[s.nr];
+    if (r >= s.nr) return;
+    uint at = offsets[r];
+    if (offsets[r + 1] > at && at < s.cap_out) write_row(s, L, 0, R, r, O, at);
+}
+
 // A relation's rows' hash of its key columns, for its sort.
 kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buffer(1)]], constant uint* p [[buffer(2)]],
                      uint t [[thread_position_in_grid]]) {
@@ -579,6 +610,20 @@ impl Batch {
         // Retained by the command buffer, which holds every buffer it binds until it completes.
         let (rbuf, perm, starts, rkeys, nruns): (metal::Buffer, metal::Buffer, metal::Buffer, metal::Buffer, metal::Buffer) =
             (rbuf.to_owned(), perm.to_owned(), starts.to_owned(), rkeys.to_owned(), nruns.to_owned());
+        if left.cap == 1 && stage.mode == JOIN && right.is_some() {
+            // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
+            let scount = pipeline("join", "scan_count", || SOURCE.to_owned())?;
+            let sscatter = pipeline("join", "scan_scatter", || SOURCE.to_owned())?;
+            let n = stage.nr as usize + 1;
+            let counts = scratch(super::metal_sort::FREE, 4 * n)?;
+            let scan = Scan::new(n)?;
+            let pass = self.pass(12)?;
+            let lbuf: &BufferRef = &left.buffer.buffer;
+            pass.run_bytes(&scount, &[lbuf, &rbuf, &counters.buffer.buffer, &counts, &totals.buffer.buffer], stage.bytes(), groups(n));
+            scan.encode(pass, &counts)?;
+            pass.run_bytes(&sscatter, &[lbuf, &rbuf, &totals.buffer.buffer, &counts, &out.buffer.buffer], stage.bytes(), groups(n));
+            return Ok(());
+        }
         let n = left.cap + 1;
         let counts = scratch(super::metal_sort::FREE, 4 * n)?;
         let scan = Scan::new(n)?;
