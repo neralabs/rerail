@@ -733,11 +733,66 @@ Step 24 after the fix: cross part 13.0 s against 8.5 s cold, at load 55–70. On
 no join work. The derived-again strata cost more than their cold form, because of the deltas and the support form.
 
 **What would close it**, in order of size:
-1. Make a derived-again stratum's deltas only when a maintained reader reads them. A reader that is derived
-   again too reads the whole relation. Where they are needed, make them O(change).
+1. Make a derived-again stratum's deltas only when a maintained reader reads them. *Built: see below.*
 2. Derive again in the cold form (the head's own rules, reading the support from the file-local part where the
    cold program does), and keep the support for the next run's counting only where it's maintained.
 3. 0101's per-stratum fixed cost: fewer, larger strata and engine calls.
+
+### Built: a stratum derived again makes its deltas only where they are read (2026-11-10)
+
+Deriving a stratum again also made its deltas against its old rows, `h__plus` and `h__minus`. Each is a full
+anti-join, whatever the change. Now they are deferred, and made where a stratum that runs first reads them.
+
+**The reader's decision is the hard part.** A maintained group picks its form by measuring its input deltas. If
+it measures a deferred delta, the delta must be made, and then nothing is saved: only 3 of the 441 groups derived
+again at step 23 have deltas no group reads. So a group that reads a deferred delta takes its size from an
+**estimate**: the input deltas of the stratum that makes it, at most that stratum's rows new and old. Every group
+derived again carries its own estimate forward, so a large change propagates and a small one stops. A group
+that stays maintained makes the deferred deltas it reads. What a deferred delta reads lives until its last reader.
+
+`RERAIL_AGAIN_DEFER` picks the rule: `estimate` (the default), `propagate` (a reader of a deferred delta is
+derived again without deciding), `measure` (the delta is made to be measured), or `off`.
+
+**Measured.** CPU time alone could not separate the modes: identical work differed by 30% between runs. So each
+comparison ran the modes at once, as separate processes under the same load, and counted the engine's work
+(rows touched, deterministic) and its calls.
+
+| | stress 23 | stress 24 | O125 06: work, calls | 07 | 08 |
+| --- | ---: | ---: | --- | --- | --- |
+| `estimate` | **9.2 s** | **9.5 s** | 1.47 M, 3,015 | 6.41 M, 3,079 | 7.15 M, 2,868 |
+| `propagate` | 8.8 s | 9.4 s | 5.66 M, 2,200 | 6.14 M, 2,529 | 7.56 M, 2,362 |
+| `off` | 10.9 s | 11.7 s | 1.47 M, 3,015 | 6.36 M, 3,744 | 6.88 M, 4,388 |
+
+The cold derive's cross part takes 7.1–7.4 s and does 7.77 M work. `propagate` quadruples step 06's work: 4
+groups crossed θ, and it pulled in 362 more. At about 0.4 µs a unit of work and 0.4 ms an engine call:
+- `estimate` costs the same as `off` at step 06, and 0.2–0.5 s less at 07–08;
+- on the toggles it saves 1.7–2.2 s a step, as `propagate` does.
+
+Steps 08 and 24 equal the full derive, and the findings gate is unchanged.
+
+### Investigated: deriving again without supports (2026-11-10)
+
+The question was whether a stratum derived again should use the program's original form, without counting's
+supports, and keep a support only where the next run maintains it. The data:
+
+- **The cold program has supports too.** Of its 618 supports, 599 are relations it makes. Only 19 are SQL views
+  of one input, `kind__sup0` and `docof__sup0` among them. So the cold form differs from the session's only in
+  those 19.
+- **Those 19 views cost real time in a session.** It makes them relations, keeps them and maintains them. At
+  stress steps 23–24 they take 0.95 s and 0.65 s, where cold they cost nothing. At O125 steps 06–08 they cost
+  nothing, since their changes there are 301–5,930 rows of about 181 K. They also hold 11.4 MB of kept rows in
+  11 relations, against 16.4 MB for the other 444 supports and 19.9 MB for 158 heads. That's about a quarter of
+  what a session keeps.
+- **Folding the other supports into their heads saves little.** The support's join work stays (0.5–0.9 s a
+  step, derived again). What goes is each head's projection of its support: 0.07–0.22 s a step, plus 167–333
+  engine calls at about 0.4 ms each.
+- **A support derived again is rarely maintained next step.** Under `estimate`, 4 of 166 go from derived again
+  to maintained at 07→08, and 5 of 455 at 23→24. So not keeping it would rarely cost a rebuild.
+
+**What this suggests.** Keep a support that is a view of one input a view in a session as well. Its old rows are
+the view over the input's old rows, and its delta is the view over the input's delta. That saves the 19 views'
+time and about a quarter of the kept memory, with no third form in the rewrite. Folding the other supports into
+their heads would save 0.15–0.35 s a step for a third form, and fewer, larger strata is 0101's work anyway.
 
 ### What makes levels expensive
 

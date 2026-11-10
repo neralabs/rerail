@@ -2759,9 +2759,26 @@ impl Run<'_, '_> {
     /// Whether a maintained stratum is derived again (decision 0090 §4): when its input deltas reach θ of its old
     /// rows (`RERAIL_AGAIN_THETA`, default 0.25) and are not too few to matter (`RERAIL_AGAIN_MIN` rows, default
     /// 1,024). `RERAIL_AGAIN=off` maintains every one. Read at each choice, so a test can set them.
-    fn again_wanted(&self, again: &super::front::Again) -> Result<bool> {
+    /// The deferred deltas (decision 0090 §4) among `wanted`, made now: a stratum that runs reads them.
+    fn make_deferred(&mut self, wanted: &[&str], deferred: &mut HashMap<String, (usize, usize, usize)>) -> Result<()> {
+        let prog = self.prog;
+        for r in wanted {
+            let Some((g, k, _)) = deferred.remove(*r) else { continue };
+            let d = &prog.again[g].deltas[k];
+            let _span = super::profile::span(|| format!("delta {} made where it is read", d.head.rel));
+            if !self.native_stratum(&BTreeSet::from([d.head.rel.clone()]), &[d])? {
+                return Err(Error::Plan(format!("{} derived again: the native engine declined", d.head.rel)));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a maintained stratum is derived again (decision 0090 §4), and the size taken for its input deltas. A
+    /// delta not made yet (`deferred`) is taken at its estimate, the input deltas of the stratum that makes it, at
+    /// most that stratum's rows new and old; one made is counted.
+    fn again_wanted(&self, again: &super::front::Again, deferred: &HashMap<String, (usize, usize, usize)>) -> Result<(bool, usize)> {
         if std::env::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
-            return Ok(false);
+            return Ok((false, 0));
         }
         let theta: f64 = std::env::var("RERAIL_AGAIN_THETA").ok().and_then(|t| t.parse().ok()).unwrap_or(0.25);
         let floor: usize = std::env::var("RERAIL_AGAIN_MIN").ok().and_then(|t| t.parse().ok()).unwrap_or(1024);
@@ -2771,16 +2788,19 @@ impl Run<'_, '_> {
                 None => self.count(&format!("SELECT count(*) FROM {}", crate::code_rule_dsl::logic::sql::ident(r))).map_or(0, |n| n as usize),
             }
         };
-        let delta: usize = again.reads.iter().map(|r| rows(r)).sum();
+        let estimated: usize = again.reads.iter().filter_map(|r| deferred.get(r)).map(|d| d.2).sum();
+        let delta: usize = again.reads.iter().filter(|r| !deferred.contains_key(*r)).map(|r| rows(r)).sum::<usize>() + estimated;
         let old: usize = again.olds.iter().map(|r| rows(r)).sum();
         let wanted = delta > 0 && delta >= floor && delta as f64 >= theta * old as f64;
         if std::env::var_os("RERAIL_AGAIN_WHY").is_some() {
-            eprintln!("RERAIL_AGAIN_WHY {:?}: input deltas {delta}, old rows {old}: {}", again.scc.iter().next(), if wanted { "derived again" } else { "maintained" });
+            eprintln!("RERAIL_AGAIN_WHY {:?}: input deltas {delta} ({estimated} estimated), old rows {old}: {}", again.scc.iter().next(), if wanted { "derived again" } else { "maintained" });
         }
         if wanted {
-            super::profile::decision("derived again (decision 0090 §4)", || format!("{:?}: input deltas {delta} rows, {old} old rows, θ {theta}", again.scc));
+            super::profile::decision("derived again (decision 0090 §4)", || format!("{:?}: input deltas {delta} rows ({estimated} estimated), {old} old rows, θ {theta}", again.scc));
         }
-        Ok(wanted)
+        // What its own deltas are taken at, when deferred: at most its rows new and old.
+        let cap: usize = again.olds.iter().map(|r| rows(r)).sum::<usize>() * 2;
+        Ok((wanted, delta.min(cap.max(1))))
     }
 
     /// The rows `select` added to `head`'s relation (keys changed, for a lattice).
@@ -5260,10 +5280,28 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 let l = last.entry(r.to_owned()).or_insert(at);
                 *l = (*l).max(at);
             }
+            // Its deltas may be made late, where a stratum first reads them (`deferred`): what they read lives until
+            // their last reader.
+            let read_to = g.deltas.iter().filter_map(|d| last.get(&d.head.rel)).copied().max().unwrap_or(at).max(at);
+            for r in g.deltas.iter().flat_map(|d| d.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).collect::<Vec<_>>() {
+                let l = last.entry(r).or_insert(read_to);
+                *l = (*l).max(read_to);
+            }
             Some(at)
         })
         .collect();
     let mut again_chosen: Vec<Option<bool>> = vec![None; prog.again.len()];
+    // A stratum derived again makes its deltas against its old rows only when a stratum that runs reads them
+    // (`RERAIL_AGAIN_DEFER`): those not yet made, by name, with the group and rule that make each and the size taken
+    // for it. A group reading one decides by its estimate (`estimate`, the default) and makes it if maintained; or is
+    // derived again without deciding (`propagate`); or makes it and measures (`measure`). `off` makes every delta
+    // where its stratum is derived again.
+    let defer_mode = std::env::var("RERAIL_AGAIN_DEFER").unwrap_or_default();
+    let defer = defer_mode != "off";
+    let propagate = defer_mode == "propagate";
+    let estimate = defer && !propagate && defer_mode != "measure";
+    let mut again_delta: Vec<usize> = vec![0; prog.again.len()];
+    let mut deferred: HashMap<String, (usize, usize, usize)> = HashMap::new();
     let mut unloaded: BTreeSet<String> = BTreeSet::new();
     let gated: BTreeSet<String> = prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
     let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
@@ -5440,16 +5478,43 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             if let Some(&g) = scc.iter().next().and_then(|r| owner.get(r.as_str()))
                 && again_chosen[g].is_none()
             {
-                again_chosen[g] = Some(again_at[g].is_some() && run.again_wanted(&prog.again[g])?);
+                let reads_deferred = prog.again[g].reads.iter().any(|r| deferred.contains_key(r));
+                let wanted: Vec<&str> = prog.again[g].reads.iter().map(String::as_str).collect();
+                again_chosen[g] = Some(if again_at[g].is_none() {
+                    false
+                } else if reads_deferred && propagate {
+                    super::profile::decision("derived again (decision 0090 §4)", || format!("{:?}: reads the deltas of a stratum derived again", prog.again[g].scc));
+                    if std::env::var_os("RERAIL_AGAIN_WHY").is_some() {
+                        eprintln!("RERAIL_AGAIN_WHY {:?}: reads a deferred delta: derived again", prog.again[g].scc.iter().next());
+                    }
+                    true
+                } else {
+                    if !estimate {
+                        run.make_deferred(&wanted, &mut deferred)?;
+                    }
+                    let (chosen, delta) = run.again_wanted(&prog.again[g], &deferred)?;
+                    again_delta[g] = delta;
+                    chosen
+                });
+                // Maintained, it reads its input deltas as they are: those deferred are made.
+                if again_chosen[g] == Some(false) && reads_deferred {
+                    run.make_deferred(&wanted, &mut deferred)?;
+                }
             }
             for g in (0..prog.again.len()).filter(|&g| again_at[g] == Some(at) && again_chosen[g] == Some(true)) {
                 let again = &prog.again[g];
                 let _span = super::profile::span(|| format!("stratum {} derived again", again.scc.iter().next().map_or("", String::as_str)));
+                let wanted: Vec<&str> = again.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()).collect();
+                run.make_deferred(&wanted, &mut deferred)?;
                 let rules: Vec<&Rule> = again.rules.iter().collect();
                 if !run.native_stratum_now(&again.scc, &rules)? {
                     return Err(Error::Plan(format!("{:?} derived again: the native engine declined: {}", again.scc, run.why_not.take().unwrap_or_default())));
                 }
-                for d in &again.deltas {
+                for (k, d) in again.deltas.iter().enumerate() {
+                    if defer {
+                        deferred.insert(d.head.rel.clone(), (g, k, again_delta[g]));
+                        continue;
+                    }
                     let one = BTreeSet::from([d.head.rel.clone()]);
                     if !run.native_stratum_now(&one, &[d])? {
                         return Err(Error::Plan(format!("{} derived again: the native engine declined", d.head.rel)));
@@ -5464,6 +5529,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
+        if !deferred.is_empty() {
+            let wanted: Vec<&str> = rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()).collect();
+            run.make_deferred(&wanted, &mut deferred)?;
+        }
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
         if let Some(ks) = strata_kept.as_deref_mut() {
             let reads = stratum_reads(prog, scc, &rules);
