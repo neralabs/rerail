@@ -372,10 +372,12 @@ samples), and one worker running the file-local part's strata, which the run's t
   part of the 16% of opening, of planning (4%) and of the spec. A survivor's copy of its rows (4%) and the
   sorts (6%) stay, so the most it could save is about 5–8%. And it needs new engine work: a component
   whose relations run once each, in a fixed order. The profile does not rank it first.
-- **New: the file-local part's SQL.** The worker's 7.8 k samples are nearly all one kind of work: a native
-  stratum in the file-local part running a SQL statement (`sqlite3_step`, 7.3 k) whose rows call the
-  symbol functions (`register_symbols`: `sym_text` and string copies, 2.6 k). The run's thread waits
-  for it. This is the largest single item, and the next to look at.
+- **Not a lead: the SQL on a worker.** The sample also showed a worker in SQL (`sqlite3_step`, 7.3 k
+  samples) that the run waited for. That was the cold full run the replay ends with, inside the sample's window.
+  Sampled again without it (`O125_NO_FULL`), the edit steps spend 23 samples in SQLite. The two rules that ran
+  as SQL inside a native component (`py_qrest` and `py_qlast`, `modules.rr`) were there because `substr` had no
+  native function; it has one now (`rr_substr`, SQLite's `substr(s, i + 1, n)` exactly, checked against SQLite),
+  and the session's CPU is the same with it (four alternating runs within 0.3 s).
 
 **§5, extended.**
 
