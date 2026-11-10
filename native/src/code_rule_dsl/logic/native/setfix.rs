@@ -297,6 +297,26 @@ impl Rel {
         for id in 0..self.n { ix.add(&self.data, self.k, id as u32, if id >= self.lo { self.wave } else { 0 }); }
         self.idx.push(ix);
     }
+    /// Room for `n` more rows, so a wave's rows are not rehashed as the tables grow (the pack's joins spent 18 s of
+    /// 155 s growing them): the dedup set by `n`, each index by `n` times its keys per row so far (a column of few
+    /// values does not reserve a key a row).
+    fn reserve(&mut self, n: usize) {
+        if n < 64 {
+            return;
+        }
+        let k = self.k;
+        self.data.reserve(n * k);
+        let data = &self.data;
+        self.set.reserve(n, |&i| hash_vals(data[i as usize * k..][..k].iter().copied()));
+        let rows = self.n.max(1);
+        for ix in &mut self.idx {
+            ix.next.reserve(n);
+            // Keys per row so far; a relation still empty reserves for a key every 8 rows.
+            let keys = if self.n == 0 { n / 8 } else { (n as u128 * ix.table.len() as u128 / rows as u128) as usize };
+            let cols = &ix.cols;
+            ix.table.reserve(keys, |p| hash_vals(cols.iter().map(|&c| data[p.head as usize * k + c])));
+        }
+    }
     /// Adds a row (of the next wave, its delta) unless it is there.
     fn push(&mut self, row: &[i64]) -> bool {
         let h = hash_vals(row.iter().copied());
@@ -517,12 +537,12 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                         }
                     }
                     if seeded {
-                        for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                        { let rows = read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)?; rel.reserve(rows.len()); for row in rows { rel.push(&row); } }
                     }
                 } else if let Some(sql) = from {
-                    for row in read_sql(conn, &sql, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                    { let rows = read_sql(conn, &sql, &rel.types.clone(), &mut syms)?; rel.reserve(rows.len()); for row in rows { rel.push(&row); } }
                 } else if !empty {
-                    for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                    { let rows = read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)?; rel.reserve(rows.len()); for row in rows { rel.push(&row); } }
                 }
                 // A relation started from a kept one has none of its rows in its table (made this run).
                 rel.stored = if kept_base { 0 } else { rel.n };
@@ -708,6 +728,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             per[pi].1 += n;
         }
         let k = store.rels[0].k;
+        store.rels[0].reserve(fresh[0].n);
         for i in 0..fresh[0].n { store.rels[0].push(&fresh[0].data[i * k..][..k]); }
         let lanes = crate::code_rule_dsl::logic::lanes::executor();
         let ran = closure::run(&cl, store, &mut syms, lanes);
@@ -901,6 +922,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         for (r, f) in fresh.into_iter().enumerate() {
             let rel = &mut store.rels[r];
             let (lo, k) = (rel.n, rel.k);
+            rel.reserve(f.n);
             for i in 0..f.n { any |= rel.push(&f.data[i * k..][..k]); }
             lo_of[r] = lo;
             if !gates_done.contains(&r) { let hi = rel.n; rel.set_delta(lo, hi); }
@@ -993,6 +1015,7 @@ pub fn add(conn: &Connection, name: &str, table: &str, rows: &[Vec<i64>]) -> Res
     let rel = &mut store.rels[r];
     if rel.lo != rel.hi { return Err(err(format!("{name}: {table} was added to twice in one pause"))); }
     let lo = rel.n;
+    rel.reserve(rows.len());
     let new = rows.iter().filter(|row| rel.push(row)).count();
     let hi = rel.n;
     rel.set_delta(lo, hi);

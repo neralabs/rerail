@@ -108,6 +108,7 @@ impl RelStats {
         let n = flat.len() / width;
         self.rows += sign * n as i64;
         let mut counts: FxHashMap<(i64, i64), i64> = FxHashMap::default();
+        counts.reserve(n.min(1 << 16));
         let mut values: FxHashMap<i64, i64> = FxHashMap::default();
         let mut crossing: FxHashMap<i64, bool> = FxHashMap::default();
         for (c, col) in self.cols.iter_mut().enumerate().take(width) {
@@ -121,12 +122,19 @@ impl RelStats {
                 *crossing.entry(dof).or_default() |= !names(v, row);
             }
             col.sqd += sign * counts.values().map(|k| k * k).sum::<i64>();
-            // Distinct values per document: (document, value) pairs, by the document a row names.
-            let mut per_doc: FxHashMap<(i64, i64), ()> = FxHashMap::default();
-            for row in flat.chunks_exact(width) {
-                per_doc.insert((of(row).1, row[c]), ());
-            }
-            col.local_ndv += sign * per_doc.len() as i64;
+            // Distinct values per document: (document, value) pairs, by the document a row names. By a column (`at`)
+            // a row's two documents are one, so the pairs are `counts`' keys.
+            col.local_ndv += sign
+                * if at.is_some() {
+                    counts.len() as i64
+                } else {
+                    let mut per_doc: rustc_hash::FxHashSet<(i64, i64)> = Default::default();
+                    per_doc.reserve(counts.len());
+                    for row in flat.chunks_exact(width) {
+                        per_doc.insert((of(row).1, row[c]));
+                    }
+                    per_doc.len() as i64
+                };
             col.crossing += sign * crossing.values().filter(|x| **x).count() as i64;
             Self::values(col, &values, sign);
         }
