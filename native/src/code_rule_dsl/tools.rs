@@ -60,6 +60,8 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
         #[serde(default)]
         queries: Vec<Query>,
         #[serde(default)]
+        query_plans: Vec<serde_json::Value>,
+        #[serde(default)]
         changes: Vec<Vec<serde_json::Value>>,
         #[serde(default)]
         snapshots: Vec<serde_json::Value>,
@@ -159,7 +161,14 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
             .map(|s| serde_json::from_str::<serde_json::Value>(&s))
             .transpose()
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(serde_json::json!({"execution": execution, "updates":updates, "queries": queries}))
+        let query_plans=request.query_plans.into_iter().map(|plan| {
+            let result=session.query_plan(plan.to_string())?;
+            serde_json::from_str::<serde_json::Value>(&result)
+                .map_err(|e|napi::Error::from_reason(e.to_string()))
+        }).collect::<napi::Result<Vec<_>>>()?;
+        let mut result=serde_json::json!({"execution": execution, "updates":updates, "queries": queries});
+        if !query_plans.is_empty() {result["query_plans"]=serde_json::json!(query_plans);}
+        Ok(result)
     })()
     .map_err(|e| e.to_string())?;
     serde_json::to_string_pretty(&result)

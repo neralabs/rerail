@@ -45,6 +45,7 @@ mod walks;
 use super::logic::sql::lattices;
 use super::logic::sql::program;
 mod runtime;
+mod work_graph;
 mod session;
 mod wire;
 
@@ -87,6 +88,8 @@ pub struct CodeRuleSqlExecutor {
     next_trace: usize,
     stats_ready: std::cell::Cell<bool>,
     statistics: session::Statistics,
+    last_sql_work_plan: Option<Value>,
+    worker_profile_totals: Arc<work_graph::Accounting>,
     catalog_dirty: std::cell::Cell<bool>,
     control_ready: std::cell::Cell<bool>,
     #[cfg(any(test, feature = "headless"))]
@@ -123,6 +126,8 @@ impl CodeRuleSqlExecutor {
             next_trace: 0,
             stats_ready: std::cell::Cell::new(false),
             statistics: session::Statistics::default(),
+            last_sql_work_plan: None,
+            worker_profile_totals: Arc::new(work_graph::Accounting::default()),
             catalog_dirty: std::cell::Cell::new(true),
             control_ready: std::cell::Cell::new(false),
             #[cfg(any(test, feature = "headless"))]
@@ -559,6 +564,34 @@ impl CodeRuleSqlExecutor {
             })();
             budget.leave(this.db.connection_mut());
             result
+        })
+    }
+
+    /// Execute a read-only graph over bound facts and versioned results. Nodes declare
+    /// {name, sql, width, reads}; output columns are c0..cN and nullable integer cells.
+    /// Independent groups share the process pool and one operation's SQL/VM/time limits.
+    #[napi]
+    pub fn query_plan(&mut self, plan_json: String) -> Result<String> {
+        self.profiled("query_plan", |this| {
+            this.last_sql_work_plan = None;
+            let request: work_graph::Request=serde_json::from_str(&plan_json).map_err(error)?;
+            let names=request.nodes.iter().map(|n|n.name.as_str()).collect::<BTreeSet<_>>();
+            let inputs=request.nodes.iter().flat_map(|n|&n.reads)
+                .filter(|n|!names.contains(n.as_str())).collect::<BTreeSet<_>>();
+            // Resolve only referenced bindings. No snapshot-wide metadata query or row copy.
+            // The mutable owner stays parked until every worker has joined.
+            let sources=inputs.into_iter().map(|name| {
+                let source=super::facts::vtab::bound_source(&this.db,name)
+                    .ok_or_else(||error(format!("SQL work input {name} needs a bound native relation")))?;
+                Ok((name.clone(),source.frozen().unwrap_or(source)))
+            }).collect::<Result<BTreeMap<_,_>>>()?;
+            let result=work_graph::execute_accounted(request,sources,&this.limits,this.db.profiler(),Some(this.worker_profile_totals.clone()))?;
+            this.last_sql_work_plan = Some(result.explain.clone());
+            let rows=result.rows.iter().map(|(name,rows)|(name,rows.rows.iter().map(|row|
+                row.iter().map(|v|v.map_or(Value::Null,wire::integer)).collect::<Vec<_>>()
+            ).collect::<Vec<_>>())).collect::<BTreeMap<_,_>>();
+            serde_json::to_string(&json!({"rows":rows,"plan":result.explain,
+                "submissions":result.submissions,"vmSteps":result.vm_steps})).map_err(error)
         })
     }
 }

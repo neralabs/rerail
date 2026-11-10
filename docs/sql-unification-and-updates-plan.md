@@ -3241,3 +3241,62 @@ Required work remains:
 5. Report placement, dependencies, grouping decisions, actual submissions, queue time, CPU, and failures through explain and profiling.
 6. Verify complete corpus and opaque-producer sessions, failure and retry, sparse changes, and multi-thread parity against the independent oracle.
    The complete-session allowance remains 100. Native helpers construct storage; AST matching stays outside SQL.
+
+### Bounded read-only SQL graphs on the shared executor (2026-11-10)
+
+The SQL lane now executes physical read-only graphs through `queryPlan` and the standalone request's `query_plans` array.
+This is an executable graph planner, separate from the retained rule planner.
+It does not yet replace retained recursive wave execution.
+
+The graph names SQL operators, their input dependencies, output widths, and requested roots.
+Its planner validates dependencies, rejects cycles, and removes unobserved operators.
+Connected operators become materialized CTEs. Independent components share groups when the submission allowance requires it.
+Preparation estimates include dependency references with multiplicity.
+The current bounds are 20,000 estimated expansion units and 400 output arms per statement.
+A cut exports only requested roots and dependencies needed by another group. It does not recompute earlier operators.
+Exports preserve duplicate rows and nullable cells. Lazy indexes support later joins without requiring uniqueness proofs.
+Cut roots leave memory after their last reader completes.
+
+Ready groups run as SQL-only programs on the existing shared pool.
+Each worker owns its connection and binds native sources without executing schema or population statements.
+The session owner stays parked until all workers finish, preserving the input versions during the operation.
+Queries permit known pure SQLite functions. Writes, parameters, and unknown callbacks are rejected before execution.
+The existing owner query API remains available for stored SQL tables, other result types, and connection-specific functions.
+
+Planning checks the complete graph's submission count before dispatch.
+Every worker shares one statement allowance, VM counter, deadline, and cancellation state.
+A smaller allowance causes compatible independent work to combine; it never resets an allowance per worker or group.
+Failures cancel remaining work, join the workers, and return no partial result.
+This graph allowance does not yet cover owner statements in a complete retained rule session.
+
+`explain()` includes the latest successful work graph without executing SQL.
+The returned plan shows group placement, dependencies, inputs, outputs, preparation costs, and planned submissions.
+Worker SQL profiles include graph and group identities. Session totals aggregate worker and owner counters.
+The shared SQL scoreboard records queue time, CPU, completion, and failure for each group.
+Profiler tests verify that worker binding and setup execute no helper statements.
+
+Debug verification passes all 185 SQL tests, with two subprocess helpers ignored by the parent runner.
+Tests cover recursive joins, shared intermediates, statement cuts, duplicate and nullable rows, admission, cancellation, recovery, and overlapping SQLite readers.
+The profiling subprocess verifies complete worker statement coverage and session totals.
+A four-component example executes 512 SQL operators over 10,000 rows in four submissions and 36,043,620 VM steps.
+Its first capture took 0.329 seconds within the graph test. This excludes session creation and JSON serialization.
+Two ordered debug pairs measured 0.798/0.840 seconds with one worker and 0.285/0.495 seconds with four workers.
+Both configurations executed four statements and identical VM work. Their median wall times were 0.819 and 0.390 seconds.
+Other work was active on the machine; this narrow example does not establish a general CPU improvement.
+This synthetic graph result does not establish complete-session or whole-product performance acceptance.
+
+The one-worker check exposed an incoming pool-initialization problem.
+Library initialization registered the test runner's main thread as worker 0. That thread parks while tests run elsewhere.
+With `RERAIL_THREADS=1`, asynchronous SQL jobs then had no worker to run them.
+Test builds now create actual pool workers instead. The controlled CLI's main-thread configuration is unchanged.
+The profiling regression runs subprocesses with one and two workers, with a bounded wait that detects this stall.
+
+Remaining integration work:
+
+1. Adapt checked rule and maintenance graphs to this physical planner. Preserve opaque producer gates and synchronized input versions.
+2. Lower recursive feedback with its retained contexts, support roots, and maintenance cursors.
+   The existing head-only component comparison cannot replace that state or justify a second evaluation pass.
+3. Extend one operation's statement admission across owner setup, transactions, publication, worker groups, and failures.
+   Keep the complete-session target at 100 submissions; rejecting or splitting a graph does not establish that target.
+4. Replace level-wide waits when a successor can overlap an unrelated running group. Evaluate worker connection and preparation reuse.
+5. Repeat complete corpus, snapshot/file-change, opaque producer, failure/retry, and warm replay checks against the independent oracle.

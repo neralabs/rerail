@@ -108,6 +108,7 @@ const result = JSON.parse(session.query(
 | `runFile(path, dialect, maxWaves?)` | Reads a `.rr` file, its includes, and `core.rr`, then runs it. |
 | `applyChanges(changesJson, maxWaves?)` | Applies an atomic fact batch and maintains retained results and dependent programs. |
 | `query(sql, parametersJson?, maxRows?)` | Returns columns, row arrays, and a `truncated` flag. |
+| `queryPlan(planJson)` | Fuses a read-only SQL graph and schedules independent groups on the shared worker pool. |
 | `reset()` | Clears generated outputs and keeps fact bindings and registered extensions. |
 | `setLimits(limitsJson)` | Sets per-operation `max_steps` and `timeout_ms`; `{}` removes limits. |
 | `createIndex(relation, columns)` | Retains an index on a session-owned result. Columns are zero-based positions. |
@@ -137,6 +138,52 @@ Blob values return as `{"blob": [byte, ...]}`.
 Integers outside JavaScript's safe range return as `{"integer": "9007199254740993"}`.
 Pass that same tag in query parameters and fact rows to preserve signed 64-bit values.
 Convert the tag with `BigInt(value.integer)` when a JavaScript integer is required.
+
+### Read-only SQL work graphs
+
+`queryPlan` accepts named SQL nodes, their dependencies, and the requested outputs:
+
+```js
+const result = JSON.parse(session.queryPlan(JSON.stringify({
+  nodes: [
+    { name: "by_source", sql: "SELECT src, count(*) FROM edge GROUP BY src",
+      width: 2, reads: ["edge"] },
+    { name: "answer", sql: "SELECT c0, c1 * 2 FROM by_source",
+      width: 2, reads: ["by_source"] },
+    { name: "largest", sql: "SELECT max(dst) FROM edge",
+      width: 1, reads: ["edge"] },
+  ],
+  outputs: ["answer", "largest"],
+  max_submissions: 100,
+})));
+```
+
+Each node exposes columns `c0`, `c1`, and so on. Cells must be nullable integers; symbol atoms remain integers.
+Node queries can use joins, aggregates, windows, and recursive CTEs.
+Dependencies must name bound native relations or other nodes. Node names are unique, including case differences.
+Local SQL identifiers must avoid other graph names unless `reads` declares that dependency.
+Use `query` for stored SQL tables, text or blob results, parameters, and connection-specific functions.
+
+The planner combines connected nodes into materialized CTEs. Shared intermediates execute once.
+It cuts a graph when its preparation estimate or output-arm count reaches the configured bound.
+Only cut edges and requested outputs leave SQLite. Native code stores those rows without evaluating rule expressions.
+Independent groups run on the existing `RERAIL_THREADS` pool. Each worker owns its connection and reads pinned inputs.
+The session owner waits for every worker before it can change those inputs.
+
+The default submission allowance is 100 for the complete graph. A smaller allowance combines independent work when it fits.
+Planning rejects a graph that exceeds its allowance before any group executes.
+Every dispatched group consumes one submission, including queries that fail during execution.
+Workers share the operation's `max_steps` and `timeout_ms` limits. They never reset these limits per group.
+Worker queries permit known pure functions. Writes and connection-specific callbacks require the owner connection.
+
+The response contains `rows`, `plan`, `submissions`, and `vmSteps`.
+`explain()` also includes the latest successful graph plan without executing SQL.
+SQL profiles include every worker connection. Session profile totals include worker statements, including failures.
+The shared SQL scoreboard records group placement, queue time, CPU time, completion, and failures.
+The standalone SQL request accepts these same graphs in a `query_plans` array and returns their results under that key.
+
+This graph API and retained rule execution currently have separate physical planners.
+Retained rule phases use the SQL scoreboard, but their recursive wave loop still runs on the owning connection.
 
 Fact bindings can include `types`, with one entry per column: `number`, `symbol`, `node`, or `loc`.
 Strings become interned symbol IDs; numeric columns reject strings. Integer values can also supply existing symbol IDs.

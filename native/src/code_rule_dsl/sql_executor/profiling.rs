@@ -28,7 +28,10 @@ pub(super) fn scope(db: &Database, stage: &str) -> Scope {
 impl CodeRuleSqlExecutor {
     /// Rust probes can reuse the installed trace instead of replacing SQLite's sole callback.
     pub fn sql_profile_totals(&self) -> Option<[u64; 6]> {
-        self.db.profiler().map(|p| p.totals())
+        self.db.profiler().map(|p| {
+            let owner=p.totals();let workers=self.worker_profile_totals.totals();
+            std::array::from_fn(|n|owner[n].saturating_add(workers[n]))
+        })
     }
     pub(super) fn profiled<T>(
         &mut self,
