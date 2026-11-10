@@ -42,6 +42,8 @@ def install(backend,module,detectors=False):
         return rendered[identity]
     def inventory_is_empty(items):return not backend.native(CHECK,'inventory_is_empty',[],dict(dispatchInventory=list(items)))
     def unapproved_findings(findings,approved_entries):
+        missing={key(f):f for f in findings if key(f) not in inventories}
+        if missing:project(missing.values(),[module.ROOT]*len(missing))
         rows=backend.native(CHECK,'unapproved_findings',[],dict(dispatchInventory=[inventory(f) for f in findings],dispatchApproved=sorted(approved_entries)))
         if any(r['code']!='DISPATCH_UNAPPROVED' for r in rows):raise AssertionError('Unexpected dispatch inventory response')
         return tuple(findings[r['parameters']['ordinal']] for r in sorted(rows,key=lambda r:r['parameters']['ordinal']))
