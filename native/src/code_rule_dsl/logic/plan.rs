@@ -2365,7 +2365,8 @@ struct Fx<'a> {
     direct: bool,
 }
 impl Fx<'_> {
-    /// The planner's spec goes to the engine as values in process; through the SQL function as its text.
+    /// The planner's spec goes to the engine as values in process. Over text symbols the SQL functions are T's
+    /// extension's own engine (`native/extension`, a copy with its own components), which reads the spec's text.
     fn open(&self, spec: &ComponentSpec) -> Result<()> {
         let _span = super::profile::span(|| "engine open (load inputs, build indexes)".into());
         if self.direct {
@@ -3786,7 +3787,7 @@ impl Run<'_, '_> {
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
         // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
         let lab = super::native::component::lab::wanted(&name, shape.work)
-            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &spec.to_text(), &path));
+            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &spec, &path));
         // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
         let mut timed: Vec<f64> = Vec::new();
         self.fx().open(&spec)?;
