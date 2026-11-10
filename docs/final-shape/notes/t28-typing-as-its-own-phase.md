@@ -300,7 +300,7 @@ Still to come:
 
 ## The order
 
-The plan for what is left, with every cache as facts (decision 0102) and the sibling worktrees' work, is
+The plan for what is left, with every cache as two rules (decision 0103) and the sibling worktrees' work, is
 t32 (`t32-the-rest-of-t28-a-plan.md`).
 
 

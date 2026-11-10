@@ -1795,7 +1795,15 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
     }
     // An input no rule reads needs no statistics: a `.rr` program declares every `core.rr` relation (its prelude).
     let read: BTreeSet<&str> = prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).map(|a| a.rel.as_str()).collect();
-    for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel) && read.contains(rel.as_str())) {
+    // A cache's last rows (`x__kept`, decision 0103): one row until the run holds them and measures them.
+    for rel in prog.inputs.iter().filter(|rel| super::front::caches::kept_of(rel).is_some()) {
+        stats.card.insert(rel.clone(), 1.0);
+        for col in 0..prog.decls[rel].len() {
+            ndv.insert((rel.clone(), col), 1.0);
+            stats.fan.insert((rel.clone(), col), 1.0);
+        }
+    }
+    for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel) && read.contains(rel.as_str()) && super::front::caches::kept_of(rel).is_none()) {
         for col in 0..prog.decls[rel].len() {
             let name = sql_col(rel, col);
             let Some(&[rows, n, sq, _]) = stats.col.get(&(rel.clone(), name.clone())) else {
@@ -4847,7 +4855,8 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         }
         let (h, b) = (&rule.head, &rule.body);
         let [Literal::Atom(a)] = b.as_slice() else { continue };
-        if a.neg || !prog.inputs.contains(&a.rel) {
+        // A cache's last rows (decision 0103) are held in the engine, not a table a view can read.
+        if a.neg || !prog.inputs.contains(&a.rel) || super::front::caches::kept_of(&a.rel).is_some() {
             continue;
         }
         let order = vec![Step { at: 0, lit: b[0].clone(), mode: None }];
@@ -5183,6 +5192,24 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let mut strata_kept = hooks.strata.take().filter(|_| prog.gates.is_empty());
     if let Some(ks) = strata_kept.as_deref_mut() {
         ks.program(&choices::key(prog));
+        // A cache's last rows (decision 0103 §2): input `x__kept` holds x as the last run of the program left it, or
+        // no rows when nothing was kept. Taken now, before this run's rows of x can be written over them.
+        for r in prog.inputs.iter().filter(|r| super::front::caches::kept_of(r).is_some()) {
+            let x = super::front::caches::kept_of(r).expect("a kept input");
+            let (types, rows, n) = match if ks.has_rows(x) { ks.rows(x) } else { None } {
+                Some(got) => got,
+                None => (prog_types(prog, r).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes(), Vec::new(), 0),
+            };
+            let k = types.len();
+            for c in 0..k {
+                let d = rows.iter().skip(c).step_by(k).copied().collect::<rustc_hash::FxHashSet<i64>>().len().max(1) as f64;
+                run.model.ndv.insert((r.clone(), c), d);
+                run.model.stats.fan.insert((r.clone(), c), (n as f64 / d).max(1.0));
+            }
+            super::native::component::hold_rows(db, r, types, rows, n);
+            run.native_rels.insert(r.clone());
+            run.model.stats.card.insert(r.clone(), (n as f64).max(1.0));
+        }
     }
     let input_set: BTreeSet<&str> = prog.inputs.iter().map(String::as_str).collect();
     let produced_here = super::answers::produced(prog);

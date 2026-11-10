@@ -1,4 +1,4 @@
-# t32. The rest of t28: a plan, with every cache as facts
+# t32. The rest of t28: a plan, with every cache as two rules
 
 ## Intro
 
@@ -6,183 +6,157 @@ t28 made Python typing three phases: P1 `struct.rr`, P2 `types.rr`, P3 `calls_p3
 `calls_cx.rr` answers (6,410 agree), and a session maintains P2 from struct's delta (a function added: 9.4 s to
 2.5 s). This note plans what is left, under two constraints:
 
-- **Every cache is facts** (rr-align's decision 0102). An entry records what it read as `cache_read` rows, and its
-  payload as rows of its relations. `lib/cache.rr` decides freshness, and the engine runs it. That holds for
-  state a session keeps in memory too: it is a resident copy of facts the store also holds, not a cache of its own.
-  So no cache writes SQLite in a way of its own.
-- **Stay compatible with the sibling worktrees.** Several of them are building the parts this work stands on. This
-  plan builds on their parts and does not make a second copy of any of them.
+- **A cache is two rules** (decision 0103). The key rule derives the key from the input facts; the output rule
+  derives the result from the key. The engine keeps both as relations and runs the output rule for new keys only.
+  Nothing else may be a cache: no table of a cache's own, no digest compared in Rust, no map in memory that
+  outlives a run. What a session holds in memory is the resident copy of stored relations.
+- **Stay compatible with the sibling worktrees.** This plan builds on their parts and makes no second copy of any.
 
-The plan has three parts:
-- what the siblings are doing (surveyed read-only, 2026-11-10);
-- the principles that follow from it;
-- the work, in order, each step with where it is built, what it waits for, and when it is done.
+This note replaces its first version (47dd0e29b), which planned on an earlier 0102 ("a cache is stored facts").
+rr-align undid that form (37f8b67d8) for the reason 0103 gives: it was one more mechanism beside the facts.
 
-The four decisions that are the user's are at the end.
-
-## What the siblings are doing
+## What the siblings are doing (2026-11-10)
 
 | Worktree, branch | Work that touches this plan | State |
 |---|---|---|
-| final-shape-rr-align | **0102 "a cache is stored facts, its freshness a rule"** (b4a68891d): `corpus::cached`, `lib/cache.rr`, the architecture tests, the constants moved. Uncommitted: the whole-run cutoff moved (`cache_changed`, `World::still` gone). c66b24bb4: constants of phase exports derived once, before the chunks | not in the hub; 67 commits ahead of our merge base, matrix-offload's merge included |
-| More-ergonomic-rule-syntax | **a second 0102, "write-back"** (1dedbfa32, 3731ebe12): one writer thread per store; memo entries, prepared program, choices, kept statistics and kept strata queued as closures that encode their own rows | built there; a merge of the hub in progress |
-| Matrix-offload-spikes | **kept strata across processes** (470e92fde, a12ae9ebc): a cross program's input and relation digests and rows kept in the tape cache, with early cutoff; plan choices kept (c99cf4686) | in More-ergonomic and rr-align, not yet in the hub |
-| Two-pass-roots-and-cross-file | 0090 §4 "derived again" (uncommitted): a maintained stratum whose deltas outgrow it is derived from empty; edits `maintain.rs` `rewrite()` and `plan::run`'s stratum loop | uncommitted, on an older base |
-| wolfeel (trunk) | 0100 §11 chaining in `plan::run`'s level loop (ede95ba5d); the decisions register | 4 commits not in the hub |
-| Final-shape-quality (hub) | 0101 draft (skip strata whose deltas are all empty); a merge of Parser-generators' tier 1 crate in progress | 0101 not built |
-| Typing-support | per-definition node ids the default (uncommitted `syntax/granules.rs`) | uncommitted |
-| Current-state-benchmarks | t31, the one-file-edit workplan: B4 keeps relations between processes "as column blocks", D4 is 0090's delta steps | a note; nothing built of B4 |
-| rer-131 | edab96dda: a stratum whose rules all join an empty relation keeps its facts (near 0101 §1) | in tbelanger's integration |
+| final-shape-rr-align | its 0102 (caches as `cache_entry` tables) undone; c66b24bb4: the constants of phase exports derived once, before the chunks; `held_rows` for them | merged here (0e7305ed3) |
+| More-ergonomic-rule-syntax | **0102 write-back**: one writer thread per store; the run goes on from memory | merged here (135d67609) |
+| Matrix-offload-spikes | **kept strata across processes** (470e92fde): each derived relation's rows and digest kept per cross program, with early cutoff | merged here, through the two above |
+| Two-pass-roots-and-cross-file | "derive again by input delta" (0090 §4, 3c2f02444) in `maintain.rs` and `plan::run` | the hub is merging it now; not merged here |
+| wolfeel (trunk) | 0100 §11 chaining in `plan::run`'s level loop; uncommitted executor work | not merged here |
+| Final-shape-quality (hub) | 0101 draft (skip strata whose deltas are all empty) | 0101 not built |
+| Typing-support | per-definition node ids (uncommitted `syntax/granules.rs`) | uncommitted |
+| Current-state-benchmarks | t31, the one-file-edit workplan: B4 keeps relations between processes "as column blocks" | a note |
 
-Nobody else edits `typing/programs/*.rr`, `phases.rs` or `session.rs`. Nobody plans searches (0083 §4), `__all__`
-or async call typing. Two numbering clashes need settling: 0102 is used for two decisions, and rer-131 has its
-own t28. Our 6afe7e79f (a program reading no document has no file-local part) and rr-align's c66b24bb4 do not
-conflict: ours takes P2's case, theirs a program that reads documents and phase exports.
+Nobody else edits `typing/programs/*.rr`, `phases.rs` or `session.rs`. This branch's 0103 work adds two small
+blocks to code others are changing: one at the start of `maintain::rewrite`'s loop (a cache's stratum), and one
+where `plan::run` opens its kept strata (a cache's last rows). Both are insertions, so a merge with Two-pass's
+"derive again" should only touch their edges.
 
 ## Principles
 
-1. **One representation.** Every kept thing is a 0102 entry: `cache_entry`, `cache_read`, and payload rows.
-   - A phase's exports, versions and deltas are entries of the phase.
-   - A stratum's kept relations are entries of the cross program.
-   - A search's answers are entries of the search.
-   - No new table is made outside `cached`'s three. 0102's architecture test enforces it.
-2. **One transport.** Write-back's single writer per store is how entries reach SQLite: memory ahead, SQLite
-   behind, as decided. Its jobs carry entries, written by `cached::Entry::keep`, and no job encodes rows of its
-   own. So the two 0102s compose: rr-align's says what is kept, More-ergonomic's says when it is written.
-3. **Memory is the resident copy.** A session's fields hold the entries it uses, in engine form (relations,
-   indexes), and are named by the entry they copy. A new process loads the same entry from SQLite, and nothing is
-   kept only in memory. 0102's checks gain a third list, the session's fields and the entries behind them. The
-   list of fields not yet moved may only shrink.
-4. **Freshness and change are rules.** Whether an entry is fresh, what changed in what it read, and the delta
-   between two versions of a relation are rules over facts, run by the engine (`lib/cache.rr`). Rust compares no
-   digests.
-5. **Build where the owner builds.** 0101, 0090 §4 and the levels loop belong to the branches that own
-   `plan::run`. Kept strata belong to matrix-offload's work, and the cache pattern to rr-align's. This branch
-   uses them and moves its own parts onto them.
+1. **A cache is two rules in the program's `.rr` (0103).** Its key and its output are relations. A new cache,
+   moved or made, is written that way, or it is not made.
+2. **Rules over facts are not cached.** Their results are relations, kept between runs and brought up to date from
+   their reads' changes (0077, 0090). A phase's exports are such relations. Its run record (`phase_record`,
+   `export_versions`, `store_epoch`) is a freshness test of its own, so it goes.
+3. **Memory is the resident copy.** A session keeps relations in engine form between runs; the store keeps the
+   same relations, written by the one writer (0102). A new process reads them from the store. Nothing is kept only
+   in memory past a run.
+4. **Build where the owner builds.** 0101, "derive again" and the level loop belong to the branches that own
+   `plan::run`. This branch uses them.
 
 ## The work
 
 Each step is measured before the next, on the 84-file corpus: P3's answers against `calls_cx.rr` and Jedi; P2's
 exports against a full run; CPU and instructions retired, cold, warm and after the O125 edits.
 
-### Stage 0. Settle and merge (no code)
+### Stage 1. The cache form (done: 0103)
 
-- **0.1** Settle the numbers on trunk's register (0094 §9): the two 0102s, and the notes clash.
-- **0.2** Merge the hub again once it has taken rr-align (0102 and kept strata) and More-ergonomic (write-back).
-  Until then this branch adds no cache and no table.
-- **0.3** Tell rr-align, whose 0102 step 3 moves the run record, about the fix the merge needed here. Since
-  58a5243a1, a run that reads no document consults nothing. The run record deleted such a record, so P2 was
-  never kept and ran again on every unchanged run. An empty record is now kept, and the key (which holds the
-  upstream exports' versions) decides alone. As facts, that is an entry with no `cache_read` beyond its key's.
-- **0.4** Tell Two-pass-roots that `phases.rs` reports a phase run the session maintained as maintained. A
-  stratum derived again (0090 §4) inside it is still correct, and is counted as maintained work.
+| Step | Change | State |
+|---|---|---|
+| 1.1 | `.cache C by K` read and checked (`front::caches`); a broken form refuses the program | built, tested |
+| 1.2 | In a session, a cache's stratum maintained by its key (`maintain::rewrite`); counting leaves it alone | built, tested |
+| 1.3 | Without a session, the kept strata give `K__kept` and `C__kept`, and the cache runs in its kept form | built, tested |
+| 1.4 | `corpus::cache_architecture`: the tables and freshness calls made before 0103, which may only shrink | built |
 
-### Stage 1. P3 and P2 rules (this branch, now, independent)
+What 1.3 leaves open: the stratum of `C` always runs (its kept inputs have no recorded digest), and copies `C`'s
+kept rows, a cost in `|C|`. For a large cache (the per-file memo) that has to become an in-place update.
 
-Typing programs are this engine's (0047). Nobody else edits them.
+### Stage 2. P3 and P2 rules (this branch, now)
 
 | Step | Change | Done when |
 |---|---|---|
-| 1.1 | **P1 exports annotations parsed**, as facts (`struct__ann(e, i, head, arg)`), in place of P2 splitting their text with regexes. That fixes, at once: unions inside brackets (`AbstractContextManager[_T_co, bool \| None]`), nested generics (`_GeneratorContextManagerBase[Generator[_T_co, ...]]`, so `tparam` takes every base) and `Callable[P, A]` | `gin`, `grest`, `garg`, `alt` read `struct__ann`; P2's exports equal or a superset; the 5.4 s `nclass` class of cost gone |
-| 1.2 | `__all__`: P1 exports a module's `__all__` list as `struct__all(m, x)`; P2's `import *` reads it when there is one | a test over a miniature stub; P3's agree count measured |
-| 1.3 | Overloads by keyword: `lfit` by the keyword names a call passes, against `struct__param`'s names | `os.environ.get(k, default=d)` picks its overload in a test |
-| 1.4 | Overloads by argument type, where the argument's class is known (`lv`/`pv`) and the parameter declares a class: an argument that is an instance of neither the class nor a subclass rules the overload out. It is a negation over P3's values, so it is stratified after them, by the overload choice's own stratum | a test; no answer worse on the corpus |
-| 1.5 | Async: P1 flags a library `async def` (`struct__flag(f, "async")`), so `await lib.f()` is f's declared return and a plain call is a coroutine; `async for` and `async with` are `__aiter__`/`__anext__`/`__aenter__` implicit calls | tests for each; awaited library values counted on the corpus |
-| 1.6 | Nested runs' profile: a rise on a phase's worker is charged to the phase's span | a profiled P3 run shows P2's workers under P2 |
+| 2.1 | **P1 exports annotations as structure** (`struct__ann(e, i, head, arg)`), read off the annotation's own tree in the file, in place of P2 splitting its text with regexes. A string annotation (`"Foo"`) is parsed: a cache, `.cache ann_tree by ann_text`, once caches run in the file-local part (5.1). Fixes unions inside brackets, nested generics and `Callable[P, A]` at once | `gin`, `grest`, `garg`, `alt` read `struct__ann`; P2's exports equal or a superset; the `nclass` cost gone |
+| 2.2 | `__all__`: P1 exports a module's `__all__` as `struct__all(m, x)`; P2's `import *` reads it | a test over a miniature stub; P3's agree count measured |
+| 2.3 | Overloads by keyword: `lfit` by the keyword names a call passes, against `struct__param`'s names | `os.environ.get(k, default=d)` picks its overload in a test |
+| 2.4 | Overloads by argument type, where the argument's class is known and the parameter declares one | a test; no answer worse on the corpus |
+| 2.5 | Async: P1 flags a library `async def`; `async for` and `async with` as implicit calls | tests for each |
+| 2.6 | Nested runs' profile: a rise on a phase's worker is charged to the phase's span | a profiled P3 run shows P2's workers under P2 |
 
-### Stage 2. A phase's state as facts (this branch, after 0.2)
-
-0102 orders the phase store as its step 3 (`phase_record`, `run_record`, `unchanged_phase`), in rr-align's hands.
-The rest of the phase store is this branch's, since `phases.rs` keep and maintain are: `phase_granules`,
-`phase_cones` and `export_versions`. These two steps are agreed with rr-align first, so the phase store moves
-once.
+### Stage 3. A phase's state is relations (this branch)
 
 | Step | Change | Done when |
 |---|---|---|
-| 2.1 | **A phase's exports are an entry.** Cache `phase:<name>`. Its reads: the program's text, the engine's build, the root and options, and each upstream export's version (P2 reads struct's). Its payload: each export's rows, by granule. A version is an entry's id, so "the version before" is the entry it replaced | `phase_granules` and `export_versions` gone; 0102's test lists them as moved |
-| 2.2 | **A delta is a rule.** `lib/phase.rr` derives an export's `plus`/`minus` between two entries' rows, as `cache_changed` derives what changed. Granule freshness (`unit`, the derivation records) is `cache_read` of each definition's digest | `keep` and `keep_in_session` compare no rows in Rust; P2 over the O125 edits gives the same exports and deltas |
-| 2.3 | **The session holds entries, not rows.** `Session::phase_rows` (added in 6afe7e79f) and `Session::phased` become resident copies of the entries of 2.1, named by entry id; write-back writes the entry behind the run | 0102's session list has them as moved; a new process given the session's store finds the same entries |
-| 2.4 | The cones (`phase_cones`, `record_documents`) as `cache_read` rows of the entry | the table gone |
+| 3.1 | **The run record goes.** A phase's nested run keeps its strata as any run does (the kept strata, or the session). An unchanged run is a run whose inputs have no change: every stratum clean, nothing derived | `phase_record`, `export_versions`, `store_epoch` and `unchanged_phase` gone; off the 0103 lists |
+| 3.2 | **A phase's per-document rows are a cache.** `.owner` and `phase_granules` become two rules in `struct.rr`: `doc_key(d, h)` from each document's content digest, and the per-document exports from it | `phase_granules` and `.owner` gone; P2 over the O125 edits gives the same exports |
+| 3.3 | `Session::phase_rows` (6afe7e79f) goes: the session's kept relations are the phase's exports | the field gone |
+| 3.4 | The cones (`phase_cones`) go with 3.1 | the table gone |
 
-### Stage 3. P2 maintained across processes (after kept strata are in, and are entries)
+3.2 needs caches in the file-local part (5.1), since `struct.rr`'s exports are per document.
 
-t28's step 7 left one gap: a new process runs P2 in full after any struct change (3.8 s). Matrix-offload's kept
-strata already keep a cross program's derived relations between processes, by digests. 0102's step 6 makes them
-entries. P2 then needs no mechanism of its own:
+### Stage 4. P2 maintained across processes
+
+t28's step 7 left one gap: a new process runs P2 in full after any struct change (3.8 s). The kept strata hold
+every derived relation's rows between processes, but a stratum whose reads changed is derived again. A session
+maintains it from the deltas instead.
 
 | Step | Change | Done when |
 |---|---|---|
-| 3.1 | Kept strata as entries (0102 step 6): cache `strata:<cross program>`, read = each input's version, payload = each stored relation's rows (0099's "store" relations only) and, under counting, their supports' counts | matrix-offload's `kept_strata*` tables gone (with rr-align and matrix-offload) |
-| 3.2 | **A stale entry whose reads changed only in versions with known deltas is brought up to date, not dropped.** `cache_changed` names the reads that changed. When each is an upstream export whose delta between the two versions is known (2.2), the run loads the entry as its retained state and maintains it from those deltas, as a session does. Otherwise it derives in full | a new process after E1: P2 under 3 s and its exports equal to a full run's; after E2 and E3 (no export changes) under 0.5 s |
-| 3.3 | Measure what loading costs. P2's stored relations are read back whole, so loading has to cost less than the 3.8 s full run. If it does not, keep fewer relations (0099), or load lazily by the strata the delta reaches | a table of load against derive, per edit |
+| 4.1 | **A new process maintains from the kept rows**, as a session does: the kept strata's rows are the `__old` rows of `maintain::rewrite`, and an input's delta is its kept rows against its new ones | a new process after E1: P2 under 3 s, exports equal to a full run's; after E2 and E3 under 0.5 s |
+| 4.2 | Measure what reading the kept rows costs, against the 3.8 s full run; keep fewer relations (0099) or read lazily if it is more | a table, per edit |
 
-This is 0083 §5's stored fixpoint brought up to date, which 0102 leaves open (O131). It is built as an ordinary
-use of entries and deltas, so it is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's
-"column blocks" would then be entries' payload rows in a columnar encoding, under write-back, not a format of
-their own.
+This is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's "column blocks" would be the
+kept relations' encoding, not a format of their own.
 
-### Stage 4. Strata the delta does not reach (the owners' work, measured here)
+### Stage 5. Caches in the file-local part; the existing caches moved (the owners, in order)
+
+| Step | Change | Owner |
+|---|---|---|
+| 5.1 | Caches in the file-local part: a chunk's cache kept by key across runs, so the per-file memo can be one | engine |
+| 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §7) | engine |
+| 5.3 | Each other cache of 0103 §7 | its owner |
+
+### Stage 6. Strata the delta does not reach (the owners' work, measured here)
 
 E1 maintains 92 of P2's 99 strata for a 3-row delta, 2.4 s against a full run's 2.9 s. 0101 §1 (skip a stratum
-whose deltas are all empty) is the fix. It goes in `plan::run`'s stratum loop, where wolfeel's chaining
-(0100 §11) and Two-pass's "derived again" (0090 §4) are also landing, so it is built by the hub's owners. This
-branch re-runs `spike_t28_a_session_maintains_the_typing_phase` after each lands. Done when E1's P2 costs under
-0.5 s.
+whose deltas are all empty) is the fix, in `plan::run`'s stratum loop, built by the hub's owners. This branch
+re-runs `spike_t28_a_session_maintains_the_typing_phase` after it lands. Done when E1's P2 costs under 0.5 s.
 
-### Stage 5. Searches (this branch, a decision first)
+### Stage 7. Searches (this branch, a decision first)
 
-Generic instantiation (`inst`) and member lookup through the MRO (`mro_find`) as 0083 §4's searches. P3's eager
-`gpar`, `gbind`, `wbind`, `lgpar`, `lcbind` and `found`/`lfound` are what they replace (`wbind` alone was 2.7 M
-join work units for 23 rows, t27).
+Generic instantiation (`inst`) and member lookup through the MRO (`mro_find`) as 0083 §4's searches, in place of
+P3's eager `gpar`, `gbind`, `wbind`, `lgpar`, `lcbind` and `found`/`lfound` (`wbind` alone was 2.7 M join work
+units for 23 rows, t27). A search's answers are the 0103 form exactly: the request is the key, the answer the
+output.
+
+```text
+.cache mro_found by mro_ask
+mro_ask(c, x) :- …                                      // the key: a class and a name some call asks for
+mro_found(c, x, d) :- mro_ask(c, x), <the search>.      // the output: where the name is found
+```
 
 | Step | Change | Done when |
 |---|---|---|
-| 5.1 | A decision draft, its number reserved on trunk. A search is a program kind. A request is a fact (`inst__ask(f, targs)`). The engine answers a wave's new requests in one batch, and the answers enter as the next wave's delta (0065 §2a's loop) | reviewed |
-| 5.2 | **Answers are entries.** Cache `search:inst`, key = the request. Reads = the granules the answer probed (P2's export rows, by granule digest) and other searches' keys. Misses are kept too. So invalidation is `lib/cache.rr`'s, and in a session the maintenance's | no memo of the search's own |
-| 5.3 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches, and its keys (class, name) are few per call | P3's agree count unchanged; the `found` strata's work measured before and after |
-| 5.4 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`): `inst(f, targs)` over P2's `tparam`/`tmap`/`rgen` | `wbind`/`gpar` work gone |
+| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | reviewed |
+| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | P3's agree count unchanged; the `found` strata's work measured |
+| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | `wbind`/`gpar` work gone |
 
-### Stage 6. P3 on symbols (this branch, after 1.1 and 5.3)
+### Stage 8. P3 on symbols (this branch, after 2.1 and 7.2)
 
-t28's "P3 without libraries", as far as it is left:
-- workspace names resolve through `types__binds` and `types__member`, not `qv`/`rr_cx_reach`, which leaves P3
-  with no cross-file reach of its own;
-- targets become symbols, placed by `struct__at` at the end.
+- Workspace names resolve through `types__binds` and `types__member`, not `qv`/`rr_cx_reach`, which leaves P3
+  with no cross-file reach of its own.
+- Targets become symbols, placed by `struct__at` at the end.
 
-That also gives the cross-file memo its finer key. A P3 component reads export rows, so its entry's reads are
-those granules, and an edit misses only the components whose granules changed (t28's memo item). This
-waits for per-definition node ids (Typing-support's `granules.rs`), so positions stay out of what is compared.
+That also gives the cross-file memo its finer key. This waits for per-definition node ids (Typing-support's
+`granules.rs`), so positions stay out of what is compared.
 
 ## Order, and what each stage waits for
 
 | Stage | Waits for | Where |
 |---|---|---|
-| 0 | the user's decisions below | register, merges |
-| 1 | nothing | this branch, now |
-| 2 | the hub having 0102 and write-back (0.2); agreement with rr-align on the phase store | this branch |
-| 3 | kept strata merged and moved to entries (0102 step 6), 2.2's deltas | this branch, with rr-align |
-| 4 | 0101 §1 in the hub | the hub's owners; measured here |
-| 5 | 2 (answers as entries) | this branch |
-| 6 | 1.1, 5.3, per-definition node ids | this branch |
-
-Stage 1 can start at once. Stages 2 and 3 are the cross-process work, built only on 0102.
+| 1 | — | done |
+| 2 | nothing (2.1's string annotations: 5.1) | this branch, now |
+| 3 | 3.1: nothing; 3.2: 5.1 | this branch |
+| 4 | Two-pass's "derive again" merged (same code) | this branch |
+| 5 | 1 | engine and the owners |
+| 6 | 0101 §1 in the hub | the hub's owners; measured here |
+| 7 | 1 | this branch |
+| 8 | 2.1, 7.2, per-definition node ids | this branch |
 
 ## What this branch must not do
 
-- Add a table, or a digest comparison outside `lib/cache.rr`. 0102's tests will fail on either.
-- Build its own kept strata, its own writer, or 0101's skip.
-- Edit `maintain.rs` `rewrite()` or `plan::run`'s stratum loop while Two-pass and wolfeel have changes there that
-  are not merged.
-- Keep anything in a session that is not a copy of an entry. `Session::phase_rows` is such a field today, and
-  2.3 moves it.
-
-## Decisions for the user
-
-1. **The two 0102s.** Proposed: caches-are-facts keeps 0102, and write-back is renumbered 0103 and amended so
-   that its jobs carry 0102 entries only (principle 2).
-2. **Who moves the phase store.** Proposed: rr-align moves the run record (its step 3), and this branch moves the
-   exports, versions, deltas and cones (stage 2), agreed first.
-3. **P1 exports annotations parsed (1.1).** It changes struct.rr's exports, read by P2 and by readers of struct.
-   Proposed: yes, as an added export, with the text export kept until P2 no longer reads it.
-4. **Session fields under 0102's checks (principle 3).** Proposed: 0102 gains the session list, so in-memory state
-   is held to the same pattern as stored state.
+- Make a cache in any form but 0103's. `corpus::cache_architecture` fails on a new table or freshness call.
+- Build its own writer, or 0101's skip.
+- Keep anything in a session that the store does not also keep. `Session::phase_rows` is such a field today, and
+  3.3 removes it.

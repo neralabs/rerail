@@ -33,6 +33,10 @@ mod scoping;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod kept_strata;
+#[cfg(test)]
+mod cache_architecture;
+#[cfg(test)]
+mod cache_tests;
 mod prepared;
 mod maintain;
 mod supports;
@@ -4698,8 +4702,28 @@ fn run_observed(
                 }
                 None => {
                     let exported: BTreeSet<&String> = split.exports.iter().collect();
+                    // A cache (decision 0103) kept from run to run reads the last run's rows of its key and of itself,
+                    // `K__kept` and `C__kept`, and runs its output rule for the new keys only (`caches::kept_form`).
+                    let keeps = durable.is_some() && one_fixpoint;
+                    let caches = if keeps { crate::code_rule_dsl::logic::front::caches::caches(&cross.program)? } else { Vec::new() };
+                    let kept_cross;
+                    let cross: &lower::Lowered = if caches.is_empty() {
+                        &cross
+                    } else {
+                        let mut c = cross.clone();
+                        for (from, made) in crate::code_rule_dsl::logic::front::caches::kept_form(&mut c.program, &caches) {
+                            if let Some(d) = c.domains.get(&from).cloned() {
+                                c.domains.insert(made, d);
+                            }
+                        }
+                        crate::code_rule_dsl::logic::profile::decision("caches (decision 0103)", || {
+                            format!("{} kept by their keys: {}", caches.len(), caches.iter().map(|c| format!("{} by {}", c.out, c.key)).collect::<Vec<_>>().join(", "))
+                        });
+                        kept_cross = c;
+                        &kept_cross
+                    };
                     // Without a session, the strata are kept in the tape cache from run to run (decision 0077 §4).
-                    let mut kept_strata = (durable.is_some() && one_fixpoint).then(|| kept_strata::Kept::new(store, retain::key(&prepared_key, &cross.program), &cross_inputs));
+                    let mut kept_strata = keeps.then(|| kept_strata::Kept::new(store, retain::key(&prepared_key, &cross.program), &cross_inputs));
                     let loaded = kept_strata.as_ref().map(|k| std::rc::Rc::clone(&k.loaded));
                     let mut load = |rels: &[String]| -> Result<()> {
                         for rel in rels.iter().filter(|r| exported.contains(r)) {
