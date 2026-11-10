@@ -1,0 +1,1 @@
+Rerail's database no longer grows by about 250 KB with each audited edit: every audit kept its own copy of which rules ran and where, and now shares one copy per rule set. Audits already recorded move to it when you update and read as before. The file does not shrink; new history reuses the freed space.
