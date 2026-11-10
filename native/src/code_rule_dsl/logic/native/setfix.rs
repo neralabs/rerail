@@ -447,7 +447,10 @@ struct LevelLine { cand: usize, chk: usize, held: usize, gone: usize, live: usiz
                    /// Candidate rows seen (a prefix of `cand`), those checked or passed, and those of the level checked.
                    seen: usize, decided: Vec<bool>, batch: Vec<u32>,
                    /// `live`'s rows by level, and how many of them are shown; its rows gone.
-                   order: Vec<u32>, shown: usize, gone_rows: Vec<u64> }
+                   order: Vec<u32>, shown: usize, gone_rows: Vec<u64>,
+                   /// `live`'s rows dead before it was checked (deleted in an earlier run, a later copy live): never
+                   /// shown, and never a candidate's row.
+                   was_dead: Vec<u64> }
 
 fn revive(dead: &mut [u64], id: u32) -> bool {
     let w = id as usize >> 6;
@@ -458,11 +461,18 @@ fn revive(dead: &mut [u64], id: u32) -> bool {
 }
 
 impl Rel {
-    /// A row's id, dead or not.
-    fn id_of(&self, row: &[i64]) -> Option<u32> {
+    /// A row's id, hidden or not, but not one of `was_dead` (a copy deleted before: the row's live copy, if any,
+    /// is a later one, with its own level).
+    fn id_of(&self, row: &[i64], was_dead: &[u64]) -> Option<u32> {
         let (data, k) = (&self.data, self.k);
-        self.set.find(hash_vals(row.iter().copied()), |&id| &data[id as usize * k..][..k] == row).copied()
+        self.set.find(hash_vals(row.iter().copied()), |&id| !is_dead(was_dead, id) && &data[id as usize * k..][..k] == row).copied()
     }
+}
+
+/// `RERAIL_LEVELS_TRACE=<value>`: the candidates holding the value, and how each is decided.
+fn levels_traced(row: &[i64]) -> bool {
+    static V: std::sync::LazyLock<Option<i64>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_LEVELS_TRACE").ok().and_then(|v| v.parse().ok()));
+    V.is_some_and(|v| row.contains(&v))
 }
 
 impl Levels {
@@ -471,7 +481,8 @@ impl Levels {
         self.started = true;
         for ln in &mut self.lines {
             let live = &mut store.rels[ln.live];
-            let mut order: Vec<u32> = (0..live.n as u32).collect();
+            ln.was_dead = live.dead.clone();
+            let mut order: Vec<u32> = (0..live.n as u32).filter(|&id| !is_dead(&ln.was_dead, id)).collect();
             if live.level.len() == live.n {
                 order.sort_by_key(|&i| live.level[i as usize]);
             }
@@ -491,9 +502,10 @@ impl Levels {
                 let lo = store.rels[ln.gone].n;
                 for &id in &ln.batch {
                     let row = store.rels[ln.cand].row(id as usize).to_vec();
+                    if levels_traced(&row) { eprintln!("RERAIL_LEVELS_TRACE {} {row:?} at level {l}: {}", store.rels[ln.cand].table, if store.rels[ln.held].contains(&row) { "held" } else { "gone" }); }
                     if store.rels[ln.held].contains(&row) { continue; }
                     any |= store.rels[ln.gone].push(&row);
-                    if let Some(lid) = store.rels[ln.live].id_of(&row) { kill(&mut ln.gone_rows, lid); }
+                    if let Some(lid) = store.rels[ln.live].id_of(&row, &ln.was_dead) { kill(&mut ln.gone_rows, lid); }
                 }
                 ln.batch.clear();
                 let hi = store.rels[ln.gone].n;
@@ -507,7 +519,8 @@ impl Levels {
             let (cand, live) = (&store.rels[ln.cand], &store.rels[ln.live]);
             ln.decided.resize(cand.n, false);
             for id in ln.seen..cand.n {
-                let level = live.id_of(cand.row(id)).filter(|_| live.level.len() == live.n).map(|lid| live.level[lid as usize]);
+                let level = live.id_of(cand.row(id), &ln.was_dead).filter(|_| live.level.len() == live.n).map(|lid| live.level[lid as usize]);
+                if levels_traced(cand.row(id)) { eprintln!("RERAIL_LEVELS_TRACE {} {:?}: candidate, level {level:?}, last {:?}", cand.table, cand.row(id), self.last); }
                 match level {
                     Some(l) if self.last.is_none_or(|last| l > last) => self.heap.push(std::cmp::Reverse((l, li, id as u32))),
                     _ => ln.decided[id] = true,
@@ -688,7 +701,7 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
                 probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Join(joins(join, &mut syms)?), whole: w, wkey: whole.clone() });
             }
             Line::Levels { cand, chk, held, gone, live } => levels.lines.push(LevelLine { cand: *cand, chk: *chk, held: *held, gone: *gone, live: *live,
-                                                       seen: 0, decided: Vec::new(), batch: Vec::new(), order: Vec::new(), shown: 0, gone_rows: Vec::new() }),
+                                                       seen: 0, decided: Vec::new(), batch: Vec::new(), order: Vec::new(), shown: 0, gone_rows: Vec::new(), was_dead: Vec::new() }),
             Line::Edge(e) => {
                 let mut pat = Vec::new();
                 for t in &e.pat {
