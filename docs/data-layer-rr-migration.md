@@ -97,6 +97,11 @@ The current inventory has **two accepted ports, 93 drafts, and five absent trans
 Its checkpoint validates 1,277 native executions, including detector positives, CLI actions, production, and persistent updates.
 `execution_authority_bypass` retains historical acceptance on Final `04e3b5b83`; revalidation on the newest engine remains open.
 The global migration is incomplete. Historical draft descriptions below retain the evidence available at each checkpoint.
+The first-ten direct suites now pass all 567 selected cases through snapshot and workspace APIs, including their positive results.
+The four remaining original CLI implementations have native reporting and status rules; the semantic guard rejects their Python bodies.
+Their 33 exact CLI cases pass through both APIs. Fifty-seven assertion translations remain explicit, including replacements for three source skips.
+The [first-ten checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-first-ten-native-cli-final93-checkpoint.json.gz) records 1,391 validated native executions and five failing-behavior controls.
+This checkpoint does not admit those ten rules. Production discovery, persistent updates, and associated external suites remain open.
 The 90th draft, `raw_execute_regression`, has native detector, CLI, and persistent-workspace contracts.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
 Production discovery, reporting, and lifecycle behavior remain open.

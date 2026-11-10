@@ -5,8 +5,7 @@
 .mode block
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_no_api_root_imports.py
 #include "python/ast.rr"
-.scope include "impl/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l????_*/**/*.py"
-.scope exclude "**/tests/**", "**/test/**", "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"
+.scope include "**/*.py"
 .decl nari_regex_0(t: symbol, ordinal: number, start: number, end: number)
 nari_regex_0(t, i, a, b) :- nari_piece(_, _, t, _, _), match_all("(^|\\n)[ \\t]*from api import [^\\n]+", t, i, a, b).
 .decl nari_regex_1(t: symbol, ordinal: number, start: number, end: number)

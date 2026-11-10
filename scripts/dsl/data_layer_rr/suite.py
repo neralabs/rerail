@@ -592,6 +592,9 @@ class Suite:
             if check == 'backend_type_strings':
                 from backend_types_port import install
                 install(self, module)
+            if check in {'backend_type_strings', 'no_source_inspection', 'hasattr_async'}:
+                from text_cli_port import install
+                install(self, module, check)
             if check == 'connection_caches':
                 from connection_caches_port import install
                 install(self, module)
@@ -624,8 +627,7 @@ class Suite:
             if event != 'call' or frame.f_code not in originals:
                 return
             check, name, passive = originals[frame.f_code]
-            host = {'hasattr_async': {'_default_directories'},
-                    'admin_async_purity': {'cli_main'},
+            host = {'admin_async_purity': {'cli_main'},
                     'async_executor': {'cli_main'}, 'dynamic_module_loading': {'cli_main'}, 'classvar_check': {'cli_main'},
                     'type_safety_patterns': {'cli_main'},
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},

@@ -1331,7 +1331,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
-      "sha256": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6",
+      "sha256": "1db5ea3e799279507387f5326c74d184b3d9f19ee54e07753f0ede5d77facdaa",
       "origin": "authored",
       "upstreamPath": "scripts/lint_removed_compat_surfaces.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1340,36 +1340,94 @@
           "before": "fe6cb20060963766c446edae143d49d4f1dd0da51e0ec31cb3fc5c8cb74ea120",
           "after": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6",
           "reason": "Preserve normalized identifiers, semantic visit order, distinct configured reporter events, and exact configured scope/source gates"
+        },
+        {
+          "before": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6",
+          "after": "1db5ea3e799279507387f5326c74d184b3d9f19ee54e07753f0ede5d77facdaa",
+          "reason": "Admit direct API documents in workspace mode; preserve production filtering in relations after 15 positive test failures"
         }
       ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
-      "sha256": "1a7cd837c201cb4daa6f8ff15484c794be5cc80f5da7fa778ee7251f849a2514",
+      "sha256": "b1034642a77b74d6cb18a5eec20b485c723eb216ad6cfe639726b16323d07807",
       "origin": "authored",
       "upstreamPath": "scripts/lint_versioned_lifecycle_legacy_surfaces.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "1a7cd837c201cb4daa6f8ff15484c794be5cc80f5da7fa778ee7251f849a2514",
+          "after": "b1034642a77b74d6cb18a5eec20b485c723eb216ad6cfe639726b16323d07807",
+          "reason": "Admit direct API documents in workspace mode; preserve production filtering in relations after 15 positive test failures"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
-      "sha256": "879eb5309ccf547e9696f406e0f892c50645b5d8b3160c7cc65535b7778b0433",
+      "sha256": "e82050a7d65b89cb07fb7b770971bab3c4a22e61a7bd59b0af2bac336d6e30b5",
       "origin": "authored",
       "upstreamPath": "scripts/lint_permission_error.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "879eb5309ccf547e9696f406e0f892c50645b5d8b3160c7cc65535b7778b0433",
+          "after": "e82050a7d65b89cb07fb7b770971bab3c4a22e61a7bd59b0af2bac336d6e30b5",
+          "reason": "Admit direct API documents in workspace mode; preserve production filtering in relations after 15 positive test failures"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "sha256": "f1e1184cf3c7a49752323471bdfa41f621e625d500cfdbc58f2fdbc43ac54172",
+      "sha256": "52edbc4b29626f7055ebd439659fd7a9233028ee6f8532632ab295e06f1b2a82",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_source_inspection.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "f1e1184cf3c7a49752323471bdfa41f621e625d500cfdbc58f2fdbc43ac54172",
+          "after": "54f9e75be12baf4e6b6ce0c0f850762eba4e71a9116e009b0c7a0aba8897f51d",
+          "reason": "Native whole-batch CLI configuration, reporting and status"
+        },
+        {
+          "before": "54f9e75be12baf4e6b6ce0c0f850762eba4e71a9116e009b0c7a0aba8897f51d",
+          "after": "1b54d907613519564f73a226a7e3139247840a60beeb0dcc9c93c964df44e470",
+          "reason": "Separate API document admission from logical production scope; workspace red corpus has 60 failures"
+        },
+        {
+          "before": "1b54d907613519564f73a226a7e3139247840a60beeb0dcc9c93c964df44e470",
+          "after": "52edbc4b29626f7055ebd439659fd7a9233028ee6f8532632ab295e06f1b2a82",
+          "reason": "Bind all regex spelling, flag, label and exclusion assertions to a native configuration batch"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
-      "sha256": "5823f95fa8fc70bf202f8f037ab7ae4e2c99d0e86de660c1607e1a88a84aa977",
+      "sha256": "46a3b12986be60218a8bb5fdc9f2dab2db3f256741c3467331187c340aa9f995",
       "origin": "authored",
       "upstreamPath": "scripts/lint_hasattr_async.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "5823f95fa8fc70bf202f8f037ab7ae4e2c99d0e86de660c1607e1a88a84aa977",
+          "after": "6a3724a2979bac3dc22d978c5b302359df1787ae13b393969fbffa680d086965",
+          "reason": "Native whole-batch CLI configuration, reporting and status"
+        },
+        {
+          "before": "6a3724a2979bac3dc22d978c5b302359df1787ae13b393969fbffa680d086965",
+          "after": "a2527f067301bf31b1deba596145e16a62d66bed971320222648491e792314e6",
+          "reason": "Separate API document admission from logical production scope; workspace red corpus has 60 failures"
+        },
+        {
+          "before": "a2527f067301bf31b1deba596145e16a62d66bed971320222648491e792314e6",
+          "after": "67c37f810fc327449cf7257260d55fc2260e0c526e00683dab4c8b0ff82f39f6",
+          "reason": "Bind all regex spelling, flag, label and exclusion assertions to a native configuration batch"
+        },
+        {
+          "before": "67c37f810fc327449cf7257260d55fc2260e0c526e00683dab4c8b0ff82f39f6",
+          "after": "46a3b12986be60218a8bb5fdc9f2dab2db3f256741c3467331187c340aa9f995",
+          "reason": "Match the layer-directory name, rather than letting a child path complete an invalid l9999_ root"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
@@ -1476,10 +1534,17 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-api-root-imports.rr",
-      "sha256": "6ffc0dcfcb1929261cb1fe6f5c7b941ed9eaff582111d1e6ad3f87b930852675",
+      "sha256": "00068380538c7836d2bfbc63d45c941277a064afc78f1ef11c68e9ae9058f3b5",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_api_root_imports.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "6ffc0dcfcb1929261cb1fe6f5c7b941ed9eaff582111d1e6ad3f87b930852675",
+          "after": "00068380538c7836d2bfbc63d45c941277a064afc78f1ef11c68e9ae9058f3b5",
+          "reason": "Admit direct API documents in workspace mode; preserve production filtering in relations after 15 positive test failures"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/error-handling.rr",
@@ -1498,7 +1563,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr",
-      "sha256": "9f936bb3c4c3734030a40a33f8e6249a15cfa37b120537b982a5fe660aee008a",
+      "sha256": "3883a3db4e9ff8ea82942f15dd13ef7354be80bdca3686de47989b91c2ab0005",
       "origin": "authored",
       "upstreamPath": "scripts/lint_backend_type_strings.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1508,15 +1573,32 @@
           "before": "41dbca04772eda255af78100a035697850e2ffccf75be4c8e649da414493d38d",
           "after": "9f936bb3c4c3734030a40a33f8e6249a15cfa37b120537b982a5fe660aee008a",
           "reason": "Preserve native file-selection and skip-helper observations alongside backend findings"
+        },
+        {
+          "before": "9f936bb3c4c3734030a40a33f8e6249a15cfa37b120537b982a5fe660aee008a",
+          "after": "67a7f3be7fe6a4997332e05c4c86792d2bbfb8a2487add55b0a16f4804b0b2db",
+          "reason": "Native whole-batch CLI configuration, reporting and status"
+        },
+        {
+          "before": "67a7f3be7fe6a4997332e05c4c86792d2bbfb8a2487add55b0a16f4804b0b2db",
+          "after": "3883a3db4e9ff8ea82942f15dd13ef7354be80bdca3686de47989b91c2ab0005",
+          "reason": "Separate API document admission from logical production scope; workspace red corpus has 60 failures"
         }
       ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "sha256": "19b3e6a210866b3d80c0edca7fe36275bf2e0d0be09102aa8c4e23cd9c7c7587",
+      "sha256": "2cc0a891f13600d299b6d6a04d2e3b1f0909445e99eb29293d27b29eaada4d18",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_grammar_surface.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "19b3e6a210866b3d80c0edca7fe36275bf2e0d0be09102aa8c4e23cd9c7c7587",
+          "after": "2cc0a891f13600d299b6d6a04d2e3b1f0909445e99eb29293d27b29eaada4d18",
+          "reason": "Native complete ServerPlan CLI reporting"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs.rr",
@@ -1611,10 +1693,17 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
-      "sha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
+      "sha256": "f7e4a8b065226e2a9acae4cfbc025405f49c3bd93111f4373acb35aba322bad3",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
-      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "repairs": [
+        {
+          "before": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
+          "after": "f7e4a8b065226e2a9acae4cfbc025405f49c3bd93111f4373acb35aba322bad3",
+          "reason": "Admit direct API documents in workspace mode; preserve production filtering in relations after 15 positive test failures"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/sql-grammar-escape-hatches.rr",
@@ -2429,6 +2518,28 @@
       "sha256": "526a949b2f904822f49b73edf42b6c2d7653e5761d6e5ae8b0da17b235b331d4",
       "importedSha256": "526a949b2f904822f49b73edf42b6c2d7653e5761d6e5ae8b0da17b235b331d4",
       "origin": "authored"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/text-cli.rr",
+      "origin": "authored",
+      "sha256": "dfeef17df5951363dc9f5c47d419f4886b01e9711d2f19a5317e945632c5f2aa",
+      "repairs": [
+        {
+          "before": "176bbeba67163a28d64c7acc29744c078f1d3f8517b80fba9955a2ad9b8f6ebf",
+          "after": "4c52b00a84f2b19eacd67e96b1d1b83404bfbeb068dfb521456037337e6871ec",
+          "reason": "Native complete ServerPlan CLI reporting"
+        },
+        {
+          "before": "4c52b00a84f2b19eacd67e96b1d1b83404bfbeb068dfb521456037337e6871ec",
+          "after": "af5b63dbc979b107b53c6e9c8694427cb74676b058e724d75590d564847c2be2",
+          "reason": "Preserve source CLI output before callback exceptions"
+        },
+        {
+          "before": "af5b63dbc979b107b53c6e9c8694427cb74676b058e724d75590d564847c2be2",
+          "after": "dfeef17df5951363dc9f5c47d419f4886b01e9711d2f19a5317e945632c5f2aa",
+          "reason": "Native relative-path validation preserves complete report prefix before the first exception"
+        }
+      ]
     }
   ],
   "rules": [
@@ -2439,7 +2550,7 @@
       "legacySha256": "4c8214eb6c3e30bc6afd0f3d02d25cc2a522e0af1f0343e1e1c64242ead43d6e",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
-      "ruleSha256": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6"
+      "ruleSha256": "1db5ea3e799279507387f5326c74d184b3d9f19ee54e07753f0ede5d77facdaa"
     },
     {
       "check": "versioned_lifecycle_legacy_surfaces",
@@ -2448,7 +2559,7 @@
       "legacySha256": "931b8c73be253bff264bf63ea46bd145f8d01fc7bc66290e367841b881465b97",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
-      "ruleSha256": "1a7cd837c201cb4daa6f8ff15484c794be5cc80f5da7fa778ee7251f849a2514"
+      "ruleSha256": "b1034642a77b74d6cb18a5eec20b485c723eb216ad6cfe639726b16323d07807"
     },
     {
       "check": "no_api_root_imports",
@@ -2457,7 +2568,7 @@
       "legacySha256": "48b8a8762bec65d2ac3a648893e8e745094ff84ef5906d6a1b5cd73f8034b377",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-api-root-imports.rr",
-      "ruleSha256": "6ffc0dcfcb1929261cb1fe6f5c7b941ed9eaff582111d1e6ad3f87b930852675"
+      "ruleSha256": "00068380538c7836d2bfbc63d45c941277a064afc78f1ef11c68e9ae9058f3b5"
     },
     {
       "check": "backend_type_strings",
@@ -2466,7 +2577,7 @@
       "legacySha256": "0ecc6dab424746bfd6007dfd0684f460851d26361ea3a5c0b1a2734d8f9d190c",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr",
-      "ruleSha256": "9f936bb3c4c3734030a40a33f8e6249a15cfa37b120537b982a5fe660aee008a"
+      "ruleSha256": "3883a3db4e9ff8ea82942f15dd13ef7354be80bdca3686de47989b91c2ab0005"
     },
     {
       "check": "hasattr_async",
@@ -2475,7 +2586,7 @@
       "legacySha256": "ca10f10fb53277ead5302d5b08e70696bd89d0c454ea8c328006c9148a461208",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
-      "ruleSha256": "5823f95fa8fc70bf202f8f037ab7ae4e2c99d0e86de660c1607e1a88a84aa977"
+      "ruleSha256": "46a3b12986be60218a8bb5fdc9f2dab2db3f256741c3467331187c340aa9f995"
     },
     {
       "check": "no_source_inspection",
@@ -2484,7 +2595,7 @@
       "legacySha256": "89f2000f352654e02459f7e7bef1609b0e846a46c64bb1d6606169ef7872185f",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "ruleSha256": "f1e1184cf3c7a49752323471bdfa41f621e625d500cfdbc58f2fdbc43ac54172"
+      "ruleSha256": "52edbc4b29626f7055ebd439659fd7a9233028ee6f8532632ab295e06f1b2a82"
     },
     {
       "check": "serverplan_name_inference",
@@ -2493,7 +2604,7 @@
       "legacySha256": "c1326f54d9381d1efad6d898b9bb0c7d61cd801243d4cf7a9b5132499cef351c",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
-      "ruleSha256": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670"
+      "ruleSha256": "f7e4a8b065226e2a9acae4cfbc025405f49c3bd93111f4373acb35aba322bad3"
     },
     {
       "check": "no_blanket_grammar_bypass",
@@ -2511,7 +2622,7 @@
       "legacySha256": "f6dbbb2f93e3b973b8a6906c0197beb2207d06ea1c7634078e5441c2912f5c28",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "ruleSha256": "19b3e6a210866b3d80c0edca7fe36275bf2e0d0be09102aa8c4e23cd9c7c7587"
+      "ruleSha256": "2cc0a891f13600d299b6d6a04d2e3b1f0909445e99eb29293d27b29eaada4d18"
     },
     {
       "check": "permission_error",
@@ -2520,7 +2631,7 @@
       "legacySha256": "f95c0bc0626da3c96900d5bbe3aa72fd9709a3aad7557c0930e4d00db34de3f1",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
-      "ruleSha256": "879eb5309ccf547e9696f406e0f892c50645b5d8b3160c7cc65535b7778b0433"
+      "ruleSha256": "e82050a7d65b89cb07fb7b770971bab3c4a22e61a7bd59b0af2bac336d6e30b5"
     },
     {
       "check": "dynamic_module_loading",

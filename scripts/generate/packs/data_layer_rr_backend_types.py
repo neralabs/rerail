@@ -22,6 +22,8 @@ def backend_type_strings(source, target, header):
     text = header('backend_type_strings', target).replace('#include "python/ast.rr"\n', '')
     text = re.sub(r'^\.scope include .*$', '.scope include "impl/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"', text, flags=re.M)
     text = re.sub(r'^\.scope exclude .*$', '.scope exclude "**/tests/**", "**/test/**", "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"', text, flags=re.M)
+    from data_layer_rr_cli import api_scope
+    text = api_scope(text)
     text += '.decl bts_config(key: symbol, ordinal: number, value: symbol)\n'
     for key, values in [('BACKEND_STRINGS', sorted(original.BACKEND_STRINGS)),
                         ('SKIP_PATTERNS', original.SKIP_PATTERNS),
@@ -84,6 +86,7 @@ bts_code(m, "BT000") :- bts_matched(m), !bts_dialect(m), !bts_backend(m), !bts_s
     for code, message in MESSAGES.items():
         text += f'.violation Backend{code}(at: span, pattern: number, occurrence: number, column: number, snippet: symbol) code {q(code)} {q(message)}\n'
         text += f'Backend{code}(@place(path, l), pattern, occurrence, a + 1, snippet) :- bts_occurrence(d, l, pattern, occurrence, a, matched, snippet), bts_code(matched, {q(code)}), doc(d, path, _).\n'
+    from data_layer_rr_cli import cli_suffix
     return text + r'''
 .violation Skip(at: span) code "BTS_SKIP" "true"
 Skip(@place("backend-policy", 1)) :- option("entryPoint", "should_skip_file"), option("path", path), bts_skip(path).
@@ -94,4 +97,4 @@ Skipped(@place("backend-policy", 1)) :- option("entryPoint", entry),
 File(@place("backend-policy", 1), path) :- option("entryPoint", "find_python_files"), option_item("candidates", _, path), suffix(".py", path).
 .violation Configuration(at: span, key: symbol, ordinal: number, value: symbol) code "BTS_CONFIG" "{value}"
 Configuration(@place("backend-policy", 1), key, i, value) :- option("entryPoint", "configuration"), bts_config(key, i, value).
-'''
+''' + cli_suffix(source, 'backend_type_strings')

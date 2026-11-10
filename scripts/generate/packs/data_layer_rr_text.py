@@ -104,10 +104,18 @@ def no_source_inspection(source, target, header):
     _, space, _ = classes()
     quote = json.dumps
     text = header('no_source_inspection', target).replace('#include "python/ast.rr"\n', '')
+    from data_layer_rr_cli import api_scope
+    text = api_scope(text)
+    text += '''.decl inspection_selected(d: number)
+inspection_selected(d) :- doc(d,_,_), option("entryPoint",_).
+inspection_selected(d) :- doc(d,p,_), !option("entryPoint",_), (prefix("tests/",p) ; prefix("conform/",p)), !inspection_framework_hidden(d).
+.decl inspection_framework_hidden(d: number)
+inspection_framework_hidden(d) :- path_part(d,p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "tmp").
+'''
     text += '.decl inspection_skip(x: symbol)\n'
     text += ''.join(f'inspection_skip({quote(x)}).\n' for x in original.EXCLUDED_PATHS)
     text += '.decl inspection_line(d: number, l: number, t: symbol)\n'
-    text += f'inspection_line(d, l, t) :- split_line(d, l, t), !match({quote("(?s)" + space + "*#.*")}, t), !inspection_excluded(d), !option("entryPoint", "pattern_search").\n'
+    text += f'inspection_line(d, l, t) :- inspection_selected(d), split_line(d, l, t), !match({quote("(?s)" + space + "*#.*")}, t), !inspection_excluded(d), !option("entryPoint", "pattern_search").\n'
     text += '.decl inspection_excluded(d: number)\ninspection_excluded(d) :- path_part(d, x), inspection_skip(x).\n'
     trim = r'\A' + space + '+|' + space + r'+\z'
     for index, (pattern, label) in enumerate(original.FORBIDDEN_PATTERNS):
@@ -115,7 +123,8 @@ def no_source_inspection(source, target, header):
         text += f'Inspection{index}(@place(p, l), {index}, {quote(label)}, @replace_all(t, {quote(trim)}, "")) :- inspection_line(d, l, t), doc(d, p, _), match({quote(search(pattern))}, t).\n'
         text += f'\n.violation PatternProbe{index}(at: span, ordinal: number) code "NSI_PATTERN"\n    {quote(label)}\n'
         text += f'PatternProbe{index}(@place("input.py", 1), {index}) :- option("entryPoint", "pattern_search"), option("patternOrdinal", "{index}"), option("patternText", t), match({quote(search(pattern))}, t).\n'
-    return text
+    from data_layer_rr_cli import cli_suffix
+    return text + cli_suffix(source, 'no_source_inspection')
 
 
 def serverplan_name_inference(source, target, header):
@@ -123,8 +132,10 @@ def serverplan_name_inference(source, target, header):
     _, space, _ = classes()
     quote = json.dumps
     text = header('serverplan_name_inference', target).replace('#include "python/ast.rr"\n', '')
+    from data_layer_rr_cli import logical_scope
+    text = logical_scope(text, 'name_selected')
     text += '.decl name_scan(d: number, l: number, t: symbol)\n'
-    text += f'name_scan(d, l, t) :- split_line(d, l, t), !match({quote("(?s)" + space + "*#.*")}, t).\n'
+    text += f'name_scan(d, l, t) :- name_selected(d), split_line(d, l, t), !match({quote("(?s)" + space + "*#.*")}, t).\n'
     patterns = [('_COLUMN_SHAPE_RE', 'column shape selects semantic behavior'),
                 ('_REFERENCE_PARSE_RE', 'reference text selects semantic behavior'),
                 ('_REFERENCE_SYNTHESIS_RE', 'semantic reference is synthesized from text'),
@@ -144,6 +155,16 @@ def hasattr_async(source, target, header):
     _, space, _ = classes()
     quote = json.dumps
     text = header('hasattr_async', target).replace('#include "python/ast.rr"\n', '')
+    from data_layer_rr_cli import api_scope
+    text = api_scope(text)
+    text += '''.decl async_selected(d: number)
+async_selected(d) :- doc(d,_,_), option("entryPoint",_).
+async_selected(d) :- doc(d,p,_), !option("entryPoint",_), !async_production_hidden(d), tcli_config("directory",_,base), prefix(cat(base,"/"),p).
+async_selected(d) :- doc(d,p,_), !option("entryPoint",_), !async_production_hidden(d), tcli_config("layer_regex",_,regex), root = @replace_all(p,"/.*",""), match(regex,root).
+.decl async_production_hidden(d: number)
+async_production_hidden(d) :- path_part(d,p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "tmp" ; p = "test" ; p = "tests" ; p = "__pycache__").
+async_production_hidden(d) :- doc(d,p,_), suffix("lint_hasattr_async.py",p).
+'''
     text += '.decl async_allowed(d: number, l: number)\n'
     for pattern in original.ALLOWED_PATTERNS:
         text += f'async_allowed(d, l) :- split_line(d, l, t), match({quote(search(re.compile(pattern)))}, t).\n'
@@ -156,7 +177,7 @@ def hasattr_async(source, target, header):
     for pattern in original.EXCLUDE_PATTERNS:
         text += f'PathProbe(@place("input.py", 1)) :- option("entryPoint", "should_exclude"), option("path", t), match({quote(search(re.compile(pattern)))}, t).\n'
     text += '.decl async_line(d: number, l: number, t: symbol)\n'
-    text += f'async_line(d, l, t) :- split_line(d, l, t), !match({quote("(?s)" + space + "*#.*")}, t), !async_allowed(d, l).\n'
+    text += f'async_line(d, l, t) :- async_selected(d), split_line(d, l, t), !match({quote("(?s)" + space + "*#.*")}, t), !async_allowed(d, l).\n'
     for kind, pattern in [('hasattr', original.HASATTR_ASYNC_PATTERN), ('getattr', original.GETATTR_ASYNC_PATTERN)]:
         # Both pinned expressions have one unnamed capture: the method spelling.
         if pattern.groups != 1 or pattern.groupindex or pattern.pattern.count(r'(\w+_async)') != 1:
@@ -168,7 +189,8 @@ def hasattr_async(source, target, header):
         text += f'Async{kind}(@place(p, l), method) :- async_line(d, l, t), doc(d, p, _), match({quote(regex)}, t).\n'
         text += f'\n.violation Probe{kind}(at: span, method: symbol) code "ASYNC_PATTERN" "{{method}}"\n'
         text += f'Probe{kind}(@place("input.py", 1), method) :- option("entryPoint", "pattern_search"), option("patternOrdinal", {quote(kind)}), option("patternText", t), match({quote(regex)}, t).\n'
-    return text
+    from data_layer_rr_cli import cli_suffix
+    return text + cli_suffix(source, 'hasattr_async')
 
 
 def no_blanket_grammar_bypass(source, target, header):

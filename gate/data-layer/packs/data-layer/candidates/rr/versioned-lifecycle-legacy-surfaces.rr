@@ -3,10 +3,22 @@
 .description "Port of nera-data-layer versioned_lifecycle_legacy_surfaces at 2b1504adc4291daaf080b2e932962b134da1a69a."
 .language python
 .mode block
-.scope include "impl/**/*.py"
-.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**", "**/test/**", "**/tests/**"
+.scope include "**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_versioned_lifecycle_legacy_surfaces.py
 #include "python/ast.rr"
+.decl lifecycle_selected(d: number)
+lifecycle_selected(d) :- doc(d,_,_), option("entryPoint",_).
+.decl lifecycle_selected_included(d: number)
+lifecycle_selected_included(d) :- doc(d,p,_), glob("impl/**/*.py",p).
+.decl lifecycle_selected_excluded(d: number)
+lifecycle_selected_excluded(d) :- doc(d,p,_), glob("**/.git/**",p).
+lifecycle_selected_excluded(d) :- doc(d,p,_), glob("**/.venv/**",p).
+lifecycle_selected_excluded(d) :- doc(d,p,_), glob("**/venv/**",p).
+lifecycle_selected_excluded(d) :- doc(d,p,_), glob("**/__pycache__/**",p).
+lifecycle_selected_excluded(d) :- doc(d,p,_), glob("**/tmp/**",p).
+lifecycle_selected_excluded(d) :- doc(d,p,_), glob("**/test/**",p).
+lifecycle_selected_excluded(d) :- doc(d,p,_), glob("**/tests/**",p).
+lifecycle_selected(d) :- lifecycle_selected_included(d), !lifecycle_selected_excluded(d), !option("entryPoint",_).
 .decl lifecycle_method(x: symbol)
 lifecycle_method("commit").
 lifecycle_method("commit_async").
@@ -21,4 +33,4 @@ lifecycle_class(c, x) :- kind(c, "class_definition"), def_name(c, x),
 .violation Lifecycle(at: node, cls: symbol, method: symbol) code "VLL001"
     "{cls}.{method} shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering."
 Lifecycle(f, cls, name) :- lifecycle_class(c, cls), field(c, "body", b), body_stmt(b, st, _), defstmt(f, st),
-    kind(f, "function_definition"), def_name(f, name), lifecycle_method(name), docof(c, d), !syntax_error(d, _, _).
+    kind(f, "function_definition"), def_name(f, name), lifecycle_method(name), docof(c, d), lifecycle_selected(d), !syntax_error(d, _, _).

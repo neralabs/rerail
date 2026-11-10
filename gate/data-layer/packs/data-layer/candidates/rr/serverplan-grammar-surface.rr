@@ -169,3 +169,13 @@ sgp_framework_hidden(i) :- sgp_candidate(i, path),
 .violation FileSelection(at: span, ordinal: number, result: symbol) code "SPG_PATH" "{result}"
 FileSelection(@place("inventory", 1), i, path) :- sgp_candidate(i, path),
     option_item("regularFiles", _, path), !sgp_framework_hidden(i), option("entryPoint", "collector_paths").
+
+.decl tcli_kind(value: symbol)
+tcli_kind("surface").
+.decl tcli_config(key: symbol, ordinal: number, value: symbol)
+tcli_config("guidance",0,"ARCHITECTURAL VIOLATION: this is not a linter failure.").
+tcli_config("guidance",1,"These checks validate architecture and require subsystem refactoring, not patches.").
+tcli_config("guidance",2,"Architectural family: serverplan").
+tcli_config("guidance",3,"Remediation stance: Deleted ServerPlan grammar helper surface").
+tcli_config("guidance",4,"Documentation: docs/design/architecture_linter_rules/serverplan/serverplan_grammar_surface.md").
+#include "data-layer/text-cli.rr"

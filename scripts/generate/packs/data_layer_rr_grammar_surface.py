@@ -88,4 +88,4 @@ sgp_framework_hidden(i) :- sgp_candidate(i, path),
 .violation FileSelection(at: span, ordinal: number, result: symbol) code "SPG_PATH" "{result}"
 FileSelection(@place("inventory", 1), i, path) :- sgp_candidate(i, path),
     option_item("regularFiles", _, path), !sgp_framework_hidden(i), option("entryPoint", "collector_paths").
-'''
+''' + __import__('data_layer_rr_cli').cli_suffix(source, 'serverplan_grammar_surface')

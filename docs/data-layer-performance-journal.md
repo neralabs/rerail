@@ -10092,3 +10092,47 @@ Next work for this ten-rule group:
 
 The global inventory remains two historically accepted ports, 93 drafts, and five absent translations.
 No full-repository cold benchmark was run. No Linear issues were created.
+
+### 2026-11-10 — Remove the remaining first-ten source CLI execution
+
+Fetched Final rerail shape. Its remote tip remains `93cadec37`, which this branch already contains.
+The root engine and its registered optimized artifact remain unchanged. No engine rebuild was needed.
+
+The semantic guard now rejects all five previously permitted first-ten CLI implementations, plus the async default-directory helper.
+The red commit, `ab07c6522`, records a positive backend CLI test failing at that boundary.
+Native relations now supply backend, source-inspection, async-attribute, and grammar-surface reporting and exit decisions.
+The test frontend transports argparse results, discovery inputs, callback rows, and output streams.
+The generic shared discovery helpers remain frontend code; this checkpoint does not certify an installed production frontend.
+
+Configuration batches verify the scanner constants used by assertion-only tests.
+Source-inspection checks cover directories, exclusions, regex spellings, flags, and labels.
+Async checks cover directories, both detection regexes, flags, allowed patterns, and exclusion patterns.
+The existing backend and blanket-bypass configuration checks remain in place.
+
+Workspace tests exposed 75 additional scope failures: 60 across the four CLI rules, then 15 across the remaining five rules.
+Static production globs rejected direct API documents. Snapshot input selection had hidden those failures.
+The policies now admit API documents and apply production filters in relations.
+Generators preserve these changes. All ten generators reproduce their current policies with `PYTHONHASHSEED=0`.
+
+The exact CLI corpus also exposed missing partial output before an out-of-root source-inspection error.
+Native rows now select the first invalid path and retain the heading and preceding findings.
+The host transports the standard `Path.relative_to` exception after writing those native output rows.
+A focused production check found another defect: a child path made an invalid `l9999_` directory match the layer regex.
+The native rule now matches the directory name alone. Valid ASCII and Unicode layer names still produce findings.
+
+The locked checkpoint records all 567 selected direct-suite cases passing through both APIs.
+Each mode compares 399 complete API observations and performs 649 native executions, with no missing results or original semantic fallbacks.
+The source recording includes 234 positive detector calls. Those results remain compared in both modes.
+Each run retains 57 mechanical assertion translations, including the stronger replacements for three source skips.
+This is not a claim that all original test bytecode runs unchanged.
+
+All 33 exact CLI cases pass through both APIs, with complete streams, statuses, exception data, and callback protocols.
+They cover duplicates, component-wise path sorting, numeric line sorting, Unicode previews, help, invalid flags, and default directories.
+Five controls reject changed counts, previews, ordering, documentation, and exit status. Unexpected exceptions cannot satisfy a control.
+All 205 tooling tests pass. The [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-first-ten-native-cli-final93-checkpoint.json.gz) validates 1,391 native executions.
+It binds the engine, policies, libraries, source files, and loaded harness code.
+
+This closes the source-CLI gap in the first-ten direct suites. These rules remain drafts.
+Full production discovery, registry metadata, supplied-fact reporting, persistent updates, and associated external suites remain admission work.
+The inventory remains two historically accepted ports, 93 drafts, and five absent translations.
+No full-repository cold run or new Linear issue was added.

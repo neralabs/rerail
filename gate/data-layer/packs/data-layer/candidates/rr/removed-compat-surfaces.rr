@@ -3,8 +3,7 @@
 .description "Port of nera-data-layer removed_compat_surfaces at 2b1504adc4291daaf080b2e932962b134da1a69a."
 .language python
 .mode block
-.scope include "data_layer/**/*.py", "impl/**/*.py", "l4100_queue/**/*.py", "l4400_scheduler/**/*.py", "l4250_timers/**/*.py", "l4300_timers/**/*.py", "l4350_timer_driver/**/*.py", "l7000_versioned_schema/**/*.py"
-.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**", "**/test/**", "**/tests/**"
+.scope include "**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_removed_compat_surfaces.py
 #include "python/ast.rr"
 .decl removed_name(x: symbol)

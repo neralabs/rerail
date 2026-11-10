@@ -40,6 +40,8 @@ def header(check, target):
 def removed(source, target):
     values = constants(source / 'scripts/lint_removed_compat_surfaces.py')['_FORBIDDEN_NAMES']
     text = header('removed_compat_surfaces', target)
+    from data_layer_rr_cli import api_scope
+    text = api_scope(text)
     text += '.decl removed_name(x: symbol)\n'
     text += ''.join(f'removed_name({json.dumps(x)}).\n' for x in sorted(values))
     text += '.decl removed_root(x: symbol)\n'
@@ -82,6 +84,8 @@ Removed(n, x, i) :- removed_symbol(n, x), docof(n, d), removed_selected(d), visi
 def lifecycle(source, target):
     values = constants(source / 'scripts/lint_versioned_lifecycle_legacy_surfaces.py')['BANNED_METHODS']
     text = header('versioned_lifecycle_legacy_surfaces', target)
+    from data_layer_rr_cli import logical_scope
+    text = logical_scope(text, 'lifecycle_selected')
     text += '.decl lifecycle_method(x: symbol)\n'
     text += ''.join(f'lifecycle_method({json.dumps(x)}).\n' for x in sorted(values))
     return text + '''
@@ -91,13 +95,15 @@ lifecycle_class(c, x) :- kind(c, "class_definition"), def_name(c, x),
 .violation Lifecycle(at: node, cls: symbol, method: symbol) code "VLL001"
     "{cls}.{method} shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering."
 Lifecycle(f, cls, name) :- lifecycle_class(c, cls), field(c, "body", b), body_stmt(b, st, _), defstmt(f, st),
-    kind(f, "function_definition"), def_name(f, name), lifecycle_method(name), docof(c, d), !syntax_error(d, _, _).
+    kind(f, "function_definition"), def_name(f, name), lifecycle_method(name), docof(c, d), lifecycle_selected(d), !syntax_error(d, _, _).
 '''
 
 
 def permission_error(source, target):
     suppression = constants(source / 'scripts/lint_permission_error.py')['SUPPRESSION_COMMENT']
     text = header('permission_error', target)
+    from data_layer_rr_cli import logical_scope
+    text = logical_scope(text, 'permission_selected')
     text += '''
 // The collector is ordered: an import encountered after a raise does not excuse it.
 .decl permission_import(i: node)
@@ -121,7 +127,7 @@ permission_trigger(d) :- split_line(d, _, t), contains("PermissionError", t).
     text += '''
 .violation BuiltinPermission(at: node) code "builtin_permission_error"
     "Raises built-in PermissionError instead of l1100_exceptions.PermissionError"
-BuiltinPermission(r) :- permission_raise(r), docof(r, d), permission_trigger(d), line(r, l),
+BuiltinPermission(r) :- permission_raise(r), docof(r, d), permission_selected(d), permission_trigger(d), line(r, l),
     !permission_authorized(r), !permission_suppressed(d, l), !permission_suppressed(d, l - 1), !syntax_error(d, _, _).
 '''
     return text

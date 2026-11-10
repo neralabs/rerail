@@ -3,11 +3,25 @@
 .description "Port of nera-data-layer serverplan_name_inference at 2b1504adc4291daaf080b2e932962b134da1a69a."
 .language python
 .mode block
-.scope include "l2060_query_builder/**/*.py", "l2070_batching/**/*.py", "impl/common/l2070_server_plan/**/*.py"
-.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**", "**/test/**", "**/tests/**"
+.scope include "**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_name_inference.py
+.decl name_selected(d: number)
+name_selected(d) :- doc(d,_,_), option("entryPoint",_).
+.decl name_selected_included(d: number)
+name_selected_included(d) :- doc(d,p,_), glob("l2060_query_builder/**/*.py",p).
+name_selected_included(d) :- doc(d,p,_), glob("l2070_batching/**/*.py",p).
+name_selected_included(d) :- doc(d,p,_), glob("impl/common/l2070_server_plan/**/*.py",p).
+.decl name_selected_excluded(d: number)
+name_selected_excluded(d) :- doc(d,p,_), glob("**/.git/**",p).
+name_selected_excluded(d) :- doc(d,p,_), glob("**/.venv/**",p).
+name_selected_excluded(d) :- doc(d,p,_), glob("**/venv/**",p).
+name_selected_excluded(d) :- doc(d,p,_), glob("**/__pycache__/**",p).
+name_selected_excluded(d) :- doc(d,p,_), glob("**/tmp/**",p).
+name_selected_excluded(d) :- doc(d,p,_), glob("**/test/**",p).
+name_selected_excluded(d) :- doc(d,p,_), glob("**/tests/**",p).
+name_selected(d) :- name_selected_included(d), !name_selected_excluded(d), !option("entryPoint",_).
 .decl name_scan(d: number, l: number, t: symbol)
-name_scan(d, l, t) :- split_line(d, l, t), !match("(?s)[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*#.*", t).
+name_scan(d, l, t) :- name_selected(d), split_line(d, l, t), !match("(?s)[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*#.*", t).
 
 .violation NameInference1(at: span) code "SPNI001"
     "column shape selects semantic behavior"

@@ -3,8 +3,7 @@
 .description "Port of nera-data-layer backend_type_strings at 2b1504adc4291daaf080b2e932962b134da1a69a."
 .language python
 .mode block
-.scope include "impl/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "l*/**/*.py"
-.scope exclude "**/tests/**", "**/test/**", "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"
+.scope include "**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_backend_type_strings.py
 .decl bts_config(key: symbol, ordinal: number, value: symbol)
 bts_config("BACKEND_STRINGS", 0, "dolt").
@@ -117,3 +116,12 @@ Skipped(@place("backend-policy", 1)) :- option("entryPoint", entry),
 File(@place("backend-policy", 1), path) :- option("entryPoint", "find_python_files"), option_item("candidates", _, path), suffix(".py", path).
 .violation Configuration(at: span, key: symbol, ordinal: number, value: symbol) code "BTS_CONFIG" "{value}"
 Configuration(@place("backend-policy", 1), key, i, value) :- option("entryPoint", "configuration"), bts_config(key, i, value).
+
+.decl tcli_kind(value: symbol)
+tcli_kind("backend").
+.decl tcli_config(key: symbol, ordinal: number, value: symbol)
+tcli_config("description",0,"Lint for backend type string comparisons").
+tcli_config("epilog",0,"Linter to detect string-based backend type comparisons.\n\nThis linter finds code that uses string literals for backend type comparisons\ninstead of the type-safe BackendType enum.\n\nUsage:\n    uv run python scripts/lint_backend_type_strings.py [--check] [paths...]\n\nOptions:\n    --check     Exit with error code if violations found (for CI)\n    paths       Specific paths to check (defaults to api/ impl/)\n\nDetects:\n    - dialect.name == \"postgres\" (should use BackendType enum)\n    - dialect.name in (\"mysql\", \"mariadb\") (should use .is_mysql_family)\n    - backend_type == \"sqlite\" (should use BackendType enum)\n    - \"postgres\" in class_name (should use BackendType.from_connection_class)\n    - conn.__class__.__name__.lower() patterns\n\nIgnores:\n    - Test files (conform/, tests/, *_test.py)\n    - The BackendType enum definition itself\n    - URL scheme parsing (postgresql://)\n    - Config/YAML file references\n").
+tcli_config("check_help",0,"Exit with error code if violations found (for CI)").
+tcli_config("paths_help",0,"Paths to check (default: api/ impl/ data_layer/ lXXXX_*/)").
+#include "data-layer/text-cli.rr"

@@ -3,10 +3,24 @@
 .description "Port of nera-data-layer permission_error at 2b1504adc4291daaf080b2e932962b134da1a69a."
 .language python
 .mode block
-.scope include "api/**/*.py", "impl/**/*.py", "l1100_exceptions/**/*.py"
-.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**", "**/test/**", "**/tests/**"
+.scope include "**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_permission_error.py
 #include "python/ast.rr"
+.decl permission_selected(d: number)
+permission_selected(d) :- doc(d,_,_), option("entryPoint",_).
+.decl permission_selected_included(d: number)
+permission_selected_included(d) :- doc(d,p,_), glob("api/**/*.py",p).
+permission_selected_included(d) :- doc(d,p,_), glob("impl/**/*.py",p).
+permission_selected_included(d) :- doc(d,p,_), glob("l1100_exceptions/**/*.py",p).
+.decl permission_selected_excluded(d: number)
+permission_selected_excluded(d) :- doc(d,p,_), glob("**/.git/**",p).
+permission_selected_excluded(d) :- doc(d,p,_), glob("**/.venv/**",p).
+permission_selected_excluded(d) :- doc(d,p,_), glob("**/venv/**",p).
+permission_selected_excluded(d) :- doc(d,p,_), glob("**/__pycache__/**",p).
+permission_selected_excluded(d) :- doc(d,p,_), glob("**/tmp/**",p).
+permission_selected_excluded(d) :- doc(d,p,_), glob("**/test/**",p).
+permission_selected_excluded(d) :- doc(d,p,_), glob("**/tests/**",p).
+permission_selected(d) :- permission_selected_included(d), !permission_selected_excluded(d), !option("entryPoint",_).
 
 // The collector is ordered: an import encountered after a raise does not excuse it.
 .decl permission_import(i: node)
@@ -29,5 +43,5 @@ permission_suppressed(d, l) :- split_line(d, l, t), contains("lint: allow-builti
 
 .violation BuiltinPermission(at: node) code "builtin_permission_error"
     "Raises built-in PermissionError instead of l1100_exceptions.PermissionError"
-BuiltinPermission(r) :- permission_raise(r), docof(r, d), permission_trigger(d), line(r, l),
+BuiltinPermission(r) :- permission_raise(r), docof(r, d), permission_selected(d), permission_trigger(d), line(r, l),
     !permission_authorized(r), !permission_suppressed(d, l), !permission_suppressed(d, l - 1), !syntax_error(d, _, _).

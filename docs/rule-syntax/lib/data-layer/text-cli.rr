@@ -1,0 +1,79 @@
+// Whole callback batches enter as parallel typed columns. Ordinals preserve duplicates.
+.violation TextCliConfig(at: span, key: symbol, ordinal: number, value: symbol) code "TEXT_CLI_CONFIG" "CLI configuration"
+TextCliConfig(@place("",0),k,i,v) :- option("entryPoint","_cli_configuration"), tcli_config(k,i,v).
+.decl tcli_active()
+tcli_active() :- option("entryPoint","_cli_report").
+.decl tcli_count(n: number)
+tcli_count(n) :- tcli_active(), n = count : { option_item("cliFile",_,_) }.
+.decl tcli_file(i: number, path: symbol, key: symbol)
+// Path objects compare tuples of components, not slash-separated strings.
+tcli_file(i,p,@replace_all(p,"/","\u0000")) :- tcli_active(), option_item("cliFile",i,p).
+.violation TextCliOutput(at: span, phase: number, group: number, ordinal: number, stdout: symbol, stderr: symbol) code "TEXT_CLI_OUTPUT" "CLI output"
+.violation TextCliExit(at: span, value: number) code "TEXT_CLI_EXIT" "CLI status"
+TextCliExit(@place("",0),0) :- tcli_count(0).
+TextCliExit(@place("",0),0) :- tcli_count(n), n > 0, tcli_kind(k), (k = "backend" ; k = "source"), option("checkMode","0"), !tcli_source_error(_).
+TextCliExit(@place("",0),1) :- tcli_count(n), n > 0, (tcli_kind("async") ; tcli_kind("surface") ; option("checkMode","1")), !tcli_source_error(_).
+
+// Backend report: path groups sort, within-group rows keep callback order.
+.decl tcli_backend_path(path: symbol, key: symbol)
+tcli_backend_path(p,k) :- tcli_kind("backend"), tcli_file(_,p,k).
+.decl tcli_backend_group(path: symbol, ordinal: number)
+tcli_backend_group(p,n) :- tcli_backend_path(p,k), n = count : { tcli_backend_path(_,other), @str_cmp(other,k) < 0 }.
+TextCliOutput(@place("",0),0,0,0,"No backend type string violations found.\n","") :- tcli_kind("backend"), tcli_count(0).
+TextCliOutput(@place("",0),0,0,0,cat("Found ",to_string(n)," backend type string violations:\n\n"),"") :- tcli_kind("backend"), tcli_count(n), n > 0.
+TextCliOutput(@place("",0),1,g,0,cat(p,":\n"),"") :- tcli_backend_group(p,g).
+TextCliOutput(@place("",0),1,g,i+1,cat("  ",line,":",column,": [",code,"] ",message,"\n    > ",snippet,"\n"),"") :- tcli_kind("backend"), tcli_file(i,p,_), tcli_backend_group(p,g), option_item("cliLine",i,line), option_item("cliColumn",i,column), option_item("cliCode",i,code), option_item("cliMessage",i,message), option_item("cliSnippet",i,snippet).
+TextCliOutput(@place("",0),1,g,n+1,"\n","") :- tcli_backend_group(_,g), tcli_count(n).
+.decl tcli_backend_code(code: symbol)
+tcli_backend_code(code) :- tcli_kind("backend"), tcli_active(), option_item("cliCode",_,code).
+TextCliOutput(@place("",0),2,0,0,"Summary by violation type:\n","") :- tcli_kind("backend"), tcli_count(n), n > 0.
+TextCliOutput(@place("",0),2,0,g+1,cat("  ",code,": ",to_string(n),"\n"),"") :- tcli_backend_code(code), n = count : { option_item("cliCode",_,code) }, g = count : { tcli_backend_code(other), @str_cmp(other,code) < 0 }.
+TextCliOutput(@place("",0),3,0,0,cat("\nFailed: ",to_string(n)," violations found\n"),"") :- tcli_kind("backend"), tcli_count(n), n > 0, option("checkMode","1").
+
+// Source inspection: preserve occurrence order and scalar-based 80-character previews.
+TextCliOutput(@place("",0),0,0,0,"Scanning test files for source inspection patterns...\n\n","") :- tcli_kind("source"), option("entryPoint","_cli_begin").
+TextCliOutput(@place("",0),1,0,0,"No source inspection patterns found in test files.\n","") :- tcli_kind("source"), tcli_count(0).
+TextCliOutput(@place("",0),1,0,0,cat("Found ",to_string(n)," violation(s):\n\n"),"") :- tcli_kind("source"), tcli_count(n), n > 0.
+.decl tcli_preview(i: number, value: symbol)
+tcli_preview(i,t) :- tcli_kind("source"), tcli_active(), option_item("cliSnippet",i,t), strlen(t) <= 80.
+tcli_preview(i,cat(@slice(t,0,80),"...")) :- tcli_kind("source"), tcli_active(), option_item("cliSnippet",i,t), strlen(t) > 80.
+.decl tcli_source_path(i: number, path: symbol)
+tcli_source_path(i,".") :- tcli_kind("source"), tcli_file(i,p,_), option("sourceRoot",p).
+tcli_source_path(i,@slice(p,strlen(root)+1,strlen(p))) :- tcli_kind("source"), tcli_file(i,p,_), option("sourceRoot",root), root != "/", prefix(cat(root,"/"),p).
+tcli_source_path(i,@slice(p,1,strlen(p))) :- tcli_kind("source"), tcli_file(i,p,_), option("sourceRoot","/"), prefix("/",p), !prefix("//",p).
+tcli_source_path(i,p) :- tcli_kind("source"), tcli_file(i,p,_), option("sourceRoot","."), !prefix("/",p).
+.decl tcli_source_error(i: number)
+tcli_source_error(i) :- tcli_kind("source"), tcli_file(i,_,_), !tcli_source_path(i,_).
+.decl tcli_source_blocked(i: number)
+tcli_source_blocked(i) :- tcli_file(i,_,_), tcli_source_error(e), e < i.
+.violation TextCliPathError(at: span, ordinal: number, path: symbol) code "TEXT_CLI_PATH_ERROR" "Path is outside the source root"
+TextCliPathError(@place("",0),i,p) :- tcli_source_error(i), !tcli_source_blocked(i), tcli_file(i,p,_).
+TextCliOutput(@place("",0),2,0,i,cat("  ",p,":",line,"\n    Pattern: ",pattern,"\n    Line: ",preview,"\n\n"),"") :- tcli_kind("source"), tcli_source_path(i,p), !tcli_source_blocked(i), option_item("cliLine",i,line), option_item("cliPattern",i,pattern), tcli_preview(i,preview).
+TextCliOutput(@place("",0),3,0,0,"======================================================================\nWHY THIS IS FORBIDDEN:\n\n  Using inspect.getsource() in tests is a lazy anti-pattern that:\n  1. Tests implementation details, not behavior\n  2. Is fragile to refactoring\n  3. Doesn't actually verify the code works correctly\n  4. Can pass even when the code is broken\n\n  Instead, write BEHAVIORAL tests that:\n  - Call the actual functions/methods\n  - Verify return values and side effects\n  - Test error conditions with pytest.raises()\n  - Use mocking to verify delegation patterns\n======================================================================\n","") :- tcli_kind("source"), tcli_count(n), n > 0, !tcli_source_error(_).
+
+// Async detection: tuple sort (path components, numeric line, pattern, method).
+.decl tcli_async_row(i: number, key: symbol, line: number, pattern: symbol, method: symbol)
+tcli_async_row(i,k,to_number(line),p,m) :- tcli_kind("async"), tcli_file(i,_,k), option_item("cliLine",i,line), option_item("cliPattern",i,p), option_item("cliMethod",i,m).
+.decl tcli_async_before(a: number, b: number)
+tcli_async_before(a,b) :- tcli_async_row(a,k,l,p,m), tcli_async_row(b,q,n,r,s), (@str_cmp(k,q) < 0 ; (k = q, l < n) ; (k = q, l = n, @str_cmp(p,r) < 0) ; (k = q, l = n, p = r, @str_cmp(m,s) < 0) ; (k = q, l = n, p = r, m = s, a < b)).
+TextCliOutput(@place("",0),0,0,0,"OK: No hasattr/getattr async antipatterns found\n","") :- tcli_kind("async"), tcli_count(0).
+TextCliOutput(@place("",0),0,0,0,"ERROR: Found hasattr/getattr antipattern for async methods:\n\nThese patterns check if async methods exist before calling them.\nThis is wrong - async methods should be part of the interface.\nIn async code paths, call the async method directly.\n\n","") :- tcli_kind("async"), tcli_count(n), n > 0.
+TextCliOutput(@place("",0),1,0,n,cat("  ",path,":",line,": ",p,"(..., '",m,"'...)\n"),"") :- tcli_async_row(i,_,_,p,m), tcli_file(i,path,_), option_item("cliLine",i,line), n = count : { tcli_async_before(_,i) }.
+TextCliOutput(@place("",0),2,0,0,cat("\nTotal: ",to_string(n)," issues found\n"),"") :- tcli_kind("async"), tcli_count(n), n > 0.
+
+.decl tcli_async_base(i: number, path: symbol)
+tcli_async_base(i,p) :- tcli_kind("async"), tcli_config("directory",i,p).
+.decl tcli_async_layer(path: symbol)
+tcli_async_layer(p) :- tcli_kind("async"), option("entryPoint","_cli_directories"), option_item("topDirs",_,p), tcli_config("layer_regex",_,regex), (p = "data_layer" ; match(regex,p)), !tcli_async_base(_,p).
+.decl tcli_async_layer_before(a: symbol, b: symbol)
+tcli_async_layer_before(a,b) :- tcli_async_layer(a), tcli_async_layer(b), (a = "data_layer", b != "data_layer" ; a != "data_layer", b != "data_layer", @str_cmp(a,b) < 0).
+.violation TextCliDirectory(at: span, ordinal: number, value: symbol) code "TEXT_CLI_DIRECTORY" "CLI directory"
+TextCliDirectory(@place("",0),i,p) :- option("entryPoint","_cli_directories"), tcli_async_base(i,p).
+TextCliDirectory(@place("",0),base+n,p) :- tcli_async_layer(p), base = count : { tcli_async_base(_,_) }, n = count : { tcli_async_layer_before(_,p) }.
+
+// ServerPlan guidance and messages use the same complete native stream protocol.
+.violation SurfaceMessage(at: span, ordinal: number, value: symbol) code "SPG_MESSAGE" "message"
+SurfaceMessage(@place("",0),i,cat(p,":",line,": ",message)) :- tcli_kind("surface"), option("entryPoint","_surface_messages"), option_item("cliFile",i,p), option_item("cliLine",i,line), option_item("cliMessage",i,message).
+TextCliOutput(@place("",0),0,0,i,cat(line,"\n"),"") :- tcli_kind("surface"), tcli_count(n), n > 0, tcli_config("guidance",i,line).
+TextCliOutput(@place("",0),1,0,0,"\nCategory documentation:\n  docs/design/serverplan_grammar_rules/GRAMMAR-SURFACE-HELPER-DEFINITION.md\n  docs/design/serverplan_grammar_rules/GRAMMAR-SURFACE-DIRECT-HELPER.md\n  docs/design/serverplan_grammar_rules/GRAMMAR-SURFACE-HELPER-ATTRIBUTE.md\n  docs/design/serverplan_grammar_rules/GRAMMAR-SURFACE-DDL-ESCAPE.md\n  docs/design/serverplan_grammar_rules/GRAMMAR-SURFACE-DDL-IMPORT.md\n\n","") :- tcli_kind("surface"), tcli_count(n), n > 0.
+TextCliOutput(@place("",0),2,0,i,cat(line,"\n"),"") :- tcli_kind("surface"), tcli_file(i,line,_).

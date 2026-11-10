@@ -48,8 +48,13 @@ def install(suite, module):
             for bundle in view.files.values() if spec.extractor_id in bundle.facts), key=lambda f: f.path)))
 
     def messages(root, facts):
-        return [f"{root / str(file.path)}:{hit.line}: {hit.message}"
+        from text_cli_port import columns
+        data = [(root / str(file.path), hit.line, hit.message)
                 for file in facts.files for hit in file.grammar_surface_hits]
+        rows = suite.native(CHECK, '_surface_messages', [], columns(data, ['File', 'Line', 'Message']))
+        if any(r['code'] != 'SPG_MESSAGE' for r in rows):
+            raise AssertionError('Unexpected native surface messages')
+        return [r['parameters']['value'] for r in sorted(rows, key=lambda r: r['parameters']['ordinal'])]
 
     def view(root, *, required_facts, files=None, fact_store=None, max_workers=None):
         if tuple(required_facts) != (spec,):
@@ -105,3 +110,11 @@ def install(suite, module):
         suite.replace(owner, 'project_serverplan_facts_from_view', project)
         suite.replace(owner, 'grammar_surface_messages', messages)
     suite.replace(module, 'serverplan_grammar_surface_plugin', plugin)
+    def cli_main():
+        from text_cli_port import emit
+        project_view = module.build_serverplan_fact_engine_view(module.ROOT,
+            required_facts=(module.SERVERPLAN_SURFACE_EXTRACTOR,), files=module.iter_python_files(module.ROOT))
+        facts = module.project_serverplan_facts_from_view(project_view, module.SERVERPLAN_SURFACE_EXTRACTOR)
+        violations = module.grammar_surface_messages(module.ROOT, facts)
+        return emit(suite, CHECK, dict(cliFile=violations))
+    suite.replace(module, 'cli_main', cli_main)

@@ -88,4 +88,5 @@ nari_part_rank(n, piece, rank) :- nari_matched_piece(n, piece), rank = max r : {
 RootExample(@place(path, l), rank, piece, pattern, occurrence) :- nari_text(n, piece, l, pattern, occurrence),
     nari_part_rank(n, piece, rank), docof(n, d), doc(d, path, _).
 '''
-    return text.replace('__DIGITS__', json.dumps(digits)[1:-1])
+    from data_layer_rr_cli import api_scope
+    return api_scope(text.replace('__DIGITS__', json.dumps(digits)[1:-1]))
