@@ -10,42 +10,10 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
-Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`04e3b5b83`. Its new root build and acceptance checks are in progress.
-The completed Final 49 cohort remains recorded with its frozen CLI and exact source trees.
-Merge `219657a9a` adopts the latest Metal join implementation.
-The root planner also preserves literal facts when every derivation joins an empty relation (`4367e310b`).
-The latest accepted dedicated step-suite cohort is repaired Final `004df7e75`.
-Its checkpoint preserves the remaining broad-inventory gaps. The earlier Final `735bc4422` receipt remains historical evidence.
-Earlier adoption `2b494d4ef` and merge `60839bc48` brought Final's equal-request sharing and stage-three measurement notes.
-Merge `f286e6a13` adopts Final's first library-module implementation.
-Merge `7a846bfca` adopts Final's parser-generator updates and the preceding library-module design.
-The preceding merge adds cross-file rows memoized by import component.
-The preceding merge adopts committed compilation resolutions, scope forms, bounded-graph capture fixes, and narrower stored-program parts.
-The preceding merge adopts SQL execution phases, fused reductions, and the phased-facts direction.
-Merge `16e572605` adopts in-fixpoint request answers, retained cross-file session strata, bulk memo replay, and span/grammar updates.
-Merge `a8124a128` adopts Final's terminating hiding pass, type checks, and rule-specific planning errors.
-Merge `eae3e8e01` adopts Final's live run dumps and span memory profiling.
-Merge `13874e415` adopts Final's regex scans over node kinds and captures.
-It also adopts Final's 64-bit boundary for corpus row bindings.
-Earlier merge `928d3800e` adopts Final's Bitlex tier-2 transducer instructions and native lowering.
-Earlier merge `5eb3269a0` adopts narrower cross-file rows, scope selection, and file-local typing changes.
-Earlier merge `43e884a18` adopts retained SQL waves and recursive SQL iterations across updates.
-Earlier merge `acec50e98` adopts import-component memoization and the current SQL executor.
-The typed input reader retains `projection` alongside Final shape's new `query` parameter.
-Earlier merge `ee5b50fa2` adopts stored cross-file typing and discovery derivations.
-Loaded documents have the same evaluation rules as other documents; `load` and `loaded` have no role column.
-Earlier merge `0b094980e` takes the memo reuse and session resolutions.
-Merge `2ffa7a028` takes combined-rule planning and cycle analysis through `044449ca7`.
-Merge `0ca019c6d` takes the cached matcher automata, guest specialization, and store resolutions.
-Merge `57ad2b1ee` takes prepared-program facts and tapes through `6c22fca95` (decision 0074).
-Matcher automata compile once and persist in the content store (decision 0075).
-Merge `8f9f001a4` adopts persistent prepared-program storage (decision 0073).
-Merge `a15fa3c73` takes the typing and runtime resolutions through `b10c6c996`.
-Merge `98ceb503a` also takes the generated Bitlex parser pipeline, tape changes, and residency changes.
-The upstream library stage and replay are withdrawn. Decision 0065 describes typing as one fixpoint over stored derivations.
-The frontend, executor, corpus scheduler, typing, transducer, residency, and content-store code retain the upstream resolutions.
-Older transaction and alignment receipts remain historical evidence for their stated binaries.
+Build and develop the engine in this repository root. The current accepted direct-execution cohort includes Final `bc83f6ae8`.
+Its frozen CLI is `193ba7fd4d9bf3e8…`, with native tree `260daf34bdc84c51eedadc9225871c434f68c385`.
+The manifest records the source trees, reviewed generic extensions, and exact executable hash.
+Historical integration and validation entries remain below. They certify only their stated cohorts.
 
 The native planner also maps extrema to their projected input columns (`c45450e23`).
 Constant filters remove columns from a native input. The aggregate now uses the same mapping as its atom tokens.
@@ -68,7 +36,7 @@ The `annotation_constant_repr` relation supplies non-string literal values withi
 It shares the existing demanded native AST pass and excludes literals outside annotations.
 Large integer formatting uses the existing bigint library to convert nondecimal source spelling into decimal values.
 Boolean operand formatting also follows CPython: each operand increases the required precedence, with saturation at `ATOM`.
-The manifest records all 33 extension files, including typed syntax columns, graph operators, batched SQL ordering, host metadata, and stored-program repairs.
+The manifest records the reviewed extension files, including typed syntax columns, graph operators, batched SQL ordering, host metadata, and stored-program repairs.
 Each file has an exact hash.
 `migration.py inventory` checks the adopted commit's ancestry and these extension bytes.
 It rejects retired checkouts and native changes outside the reviewed extension boundary.
@@ -91,7 +59,7 @@ The older `.rerail/data-layer-batch-seven/engine-source` checkout is also retire
 Existing receipts retain their historical engine hashes. They do not certify the current engine.
 The replay harness rejects libraries loaded from another checkout, even when their bytes match.
 New acceptance runs use a frozen binary built from this root, with a receipt that records its source commit.
-The manifest's `engineSource.cliArtifact` also binds acceptance to the exact compiled binary and four source trees.
+The manifest's `engineSource.cliArtifact` also binds acceptance to the exact compiled binary and five source trees.
 After a successful build, run `migration.py register-artifact <build-receipt.json>` before native acceptance.
 Registration checks the adopted Final commit, committed source trees, build ancestry, and binary hash before it writes the manifest.
 Both native execution boundaries reject an older frozen binary. Hashes are cached by file identity and timestamps within each process.
@@ -124,9 +92,11 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **94 target drafts and six absent translations**. None has full migration acceptance yet.
-The 94th draft, `execution_authority_bypass`, passes all seven original tests and sixty supplemental scanner and registry cases.
-Production and full migration acceptance remain open for that draft.
+The current inventory has **two accepted ports, 93 drafts, and five absent translations**.
+`impl_direct_execution` has complete recorded-contract acceptance on Final `bc83f6ae8`, including all original linter and shared-ratchet tests.
+Its checkpoint validates 1,277 native executions, including detector positives, CLI actions, production, and persistent updates.
+`execution_authority_bypass` retains historical acceptance on Final `04e3b5b83`; revalidation on the newest engine remains open.
+The global migration is incomplete. Historical draft descriptions below retain the evidence available at each checkpoint.
 The 90th draft, `raw_execute_regression`, has native detector, CLI, and persistent-workspace contracts.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
 Production discovery, reporting, and lifecycle behavior remain open.
