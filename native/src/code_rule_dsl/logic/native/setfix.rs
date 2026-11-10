@@ -2049,10 +2049,13 @@ impl InRel {
     fn grow_spike(&self, name: &str, hot: &[Vec<usize>], orders: Vec<Vec<usize>>) -> String {
         let (k, n, rows) = (self.k, self.n, &self.rows);
         // Waves: runs of one level, or of 4096 rows.
+        // The rows a maintained run added to the kept relation it started as (`Origin::Based`), else the last wave:
+        // the delta path, timed apart.
+        let based = match &self.from { Some(Origin::Based { n: old, .. }) if *old < n => Some(*old), _ => None };
         let mut waves: Vec<(usize, usize)> = Vec::new();
         let mut lo = 0;
         for id in 1..=n {
-            let cut = id == n || if self.level.len() == n { self.level[id] != self.level[lo] } else { id - lo >= 4096 };
+            let cut = id == n || Some(id) == based || if self.level.len() == n { self.level[id] != self.level[lo] } else { id - lo >= 4096 };
             if cut {
                 waves.push((lo, id));
                 lo = id;
@@ -2075,6 +2078,9 @@ impl InRel {
             offers.push(o);
         }
         let offered: usize = offers.iter().map(Vec::len).sum();
+        let split = based.unwrap_or_else(|| waves.last().map_or(0, |w| w.0));
+        let in_delta = |wi: usize| waves[wi].0 >= split;
+        let delta_offers: usize = offers.iter().enumerate().filter(|(i, _)| in_delta(*i)).map(|(_, o)| o.len()).sum();
         // Today: a fresh relation with the kept one's composite chains, the engine's own push.
         let t = Instant::now();
         let mut now = Rel::new(name, &self.types);
@@ -2083,7 +2089,15 @@ impl InRel {
             if ix.cols.len() > 1 { now.add_multi(&ix.cols); }
         }
         let mut held_now = 0usize;
-        for o in &offers {
+        let (mut now_delta, mut now_copy) = (0.0f64, 0.0f64);
+        for (wi, o) in offers.iter().enumerate() {
+            if wi > 0 && in_delta(wi) && !in_delta(wi - 1) {
+                // Today a maintained run starts from a copy of the kept relation's set and chains (`Rel::based`).
+                let t = Instant::now();
+                std::hint::black_box((now.set.clone(), now.idx.clone()));
+                now_copy = t.elapsed().as_secs_f64() * 1e3;
+            }
+            let tw = Instant::now();
             let lo = now.n;
             now.reserve(o.len());
             for &id in o {
@@ -2091,6 +2105,9 @@ impl InRel {
             }
             let hi = now.n;
             now.set_delta(lo, hi);
+            if in_delta(wi) {
+                now_delta += tw.elapsed().as_secs_f64() * 1e3;
+            }
         }
         let now_ms = t.elapsed().as_secs_f64() * 1e3;
         let now_bytes = now.set.capacity() * 5 + now.idx.iter().map(|ix| ix.next.capacity() * 4 + ix.table.capacity() * (std::mem::size_of::<Post>() + 1)).sum::<usize>();
@@ -2104,7 +2121,13 @@ impl InRel {
         let mut held_new = 0usize;
         let (mut t_set, mut t_placed, mut t_runs) = (0.0f64, 0.0f64, 0.0f64);
         let mut seen = vec![0u64; n.div_ceil(64)];
-        for o in &offers {
+        let (mut new_delta, mut new_copy) = (0.0f64, 0.0f64);
+        for (wi, o) in offers.iter().enumerate() {
+            if wi > 0 && in_delta(wi) && !in_delta(wi - 1) {
+                let t = Instant::now();
+                std::hint::black_box((set.clone_slots(), placed.iter().map(ordered::Growing::clone_slots).collect::<Vec<_>>(), runs.iter().map(|r| r.runs.clone()).collect::<Vec<_>>()));
+                new_copy = t.elapsed().as_secs_f64() * 1e3;
+            }
             let t0 = Instant::now();
             // The wave's rows by hash, so the inserts walk the table forward.
             let mut hs: Vec<(u64, u32)> = o.iter().map(|&id| (ordered::key_hash(rows[id as usize * k..][..k].iter().copied()), id)).collect();
@@ -2139,12 +2162,15 @@ impl InRel {
             t_runs += t2.elapsed().as_secs_f64();
             t_placed += (t2 - t1).as_secs_f64();
             t_set += (t1 - t0).as_secs_f64();
+            if in_delta(wi) {
+                new_delta += t0.elapsed().as_secs_f64() * 1e3;
+            }
         }
         let new_ms = t.elapsed().as_secs_f64() * 1e3;
         let new_bytes = set.bytes() + placed.iter().map(ordered::Growing::bytes).sum::<usize>() + runs.iter().map(ordered::Runs::bytes).sum::<usize>();
-        GROWN.with(|g| { let mut g = g.borrow_mut(); g.0 += now_ms; g.1 += new_ms; g.2 += offered; g.3 += held_now; g.4 += now_bytes; g.5 += new_bytes; g.6 += t_set * 1e3; g.7 += t_placed * 1e3; g.8 += t_runs * 1e3; });
+        GROWN.with(|g| { let mut g = g.borrow_mut(); g.0 += now_ms; g.1 += new_ms; g.2 += offered; g.3 += held_now; g.4 += now_bytes; g.5 += new_bytes; g.6 += t_set * 1e3; g.7 += t_placed * 1e3; g.8 += t_runs * 1e3; g.9 += delta_offers; g.10 += now_delta; g.11 += now_copy; g.12 += new_delta; g.13 += new_copy; g.14 += set.rehashed + placed.iter().map(|p| p.rehashed).sum::<usize>(); g.15 += usize::from(based.is_some()); });
         format!(
-            "grown over {} waves, {offered} offers ({dup:.2} duplicates a row): today {now_ms:.1} ms {:.1} B/row ({held_now} held), mixed {new_ms:.1} ms = set {:.1} + {} placed {:.1} + {} orders {:.1} ms, {:.1} B/row ({held_new} held; set grew {}x, runs {:?})",
+            "grown over {} waves, {offered} offers ({dup:.2} duplicates a row): today {now_ms:.1} ms {:.1} B/row ({held_now} held), mixed {new_ms:.1} ms = set {:.1} + {} placed {:.1} + {} orders {:.1} ms, {:.1} B/row ({held_new} held; set grew {}x, {} rows read again, runs {:?}); delta {delta_offers} offers{}: today {now_delta:.2} ms + copy {now_copy:.2}, mixed {new_delta:.2} ms + copy {new_copy:.2}",
             waves.len(),
             now_bytes as f64 / held_now.max(1) as f64,
             t_set * 1e3,
@@ -2154,13 +2180,15 @@ impl InRel {
             t_runs * 1e3,
             new_bytes as f64 / held_new.max(1) as f64,
             set.grew,
-            runs.iter().map(|r| r.runs.len()).collect::<Vec<_>>()
+            set.rehashed,
+            runs.iter().map(|r| r.runs.len()).collect::<Vec<_>>(),
+            if based.is_some() { " (a maintained run's)" } else { " (the last wave)" }
         )
     }
     /// The spike's growth totals since the last take: today's ms, the mixed ms, offers, rows held, today's bytes, the
     /// mixed bytes, and the mixed ms by part (set, placed, orders).
-    pub fn index_spike_grown() -> (f64, f64, usize, usize, usize, usize, f64, f64, f64) {
-        GROWN.with(|g| std::mem::take(&mut *g.borrow_mut()))
+    pub fn index_spike_grown() -> Grown {
+        GROWN.with(|g| std::mem::replace(&mut *g.borrow_mut(), GROWN_ZERO))
     }
     /// The spike's mixed shape's bytes and probe-weighted ns, summed over the relations measured since the last take.
     pub fn index_spike_mixed() -> (usize, f64) {
@@ -2348,11 +2376,17 @@ pub fn prefetch_tables(conn: &Connection, wants: &std::collections::BTreeSet<(St
     table::prefetch(wants, |name| DERIVED.lock().unwrap().get(&(at, name.to_owned())).cloned()).map_err(err)
 }
 
+/// The index-cost spike's growth totals (`InRel::grow_spike`): today's ms, the mixed ms, offers, rows held, today's
+/// bytes, the mixed bytes, the mixed ms by part (set, placed, orders); the delta path's offers, today's ms and copy
+/// ms, the mixed ms and copy ms; rows read again by doublings; relations with a maintained run's delta.
+pub type Grown = (f64, f64, usize, usize, usize, usize, f64, f64, f64, usize, f64, f64, f64, f64, usize, usize);
+const GROWN_ZERO: Grown = (0.0, 0.0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0, 0);
+
 thread_local! {
     /// The index-cost spike's mixed shape totals (`InRel::index_spike`).
     static MIXED: std::cell::RefCell<(usize, f64)> = const { std::cell::RefCell::new((0, 0.0)) };
     /// Its growth totals (`InRel::grow_spike`).
-    static GROWN: std::cell::RefCell<(f64, f64, usize, usize, usize, usize, f64, f64, f64)> = const { std::cell::RefCell::new((0.0, 0.0, 0, 0, 0, 0, 0.0, 0.0, 0.0)) };
+    static GROWN: std::cell::RefCell<Grown> = const { std::cell::RefCell::new(GROWN_ZERO) };
 }
 
 /// Tests: this thread's count steps build their tables at their first probe.
