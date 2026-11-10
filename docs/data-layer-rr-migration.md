@@ -10,7 +10,10 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
-Build and develop the engine in this repository root. The active development cohort includes Final `93cadec37`. The accepted direct-execution cohort includes Final `bc83f6ae8`.
+Build and develop the engine in this repository root. The active development cohort includes Final `d024fa208`.
+The latest complete first-ten validation remains bound to Final `93cadec37`.
+The merged `d024fa208` cohort has a registered optimized CLI and focused engine, production-root, and CLI checks.
+The accepted direct-execution cohort includes Final `bc83f6ae8`.
 Its frozen CLI is `193ba7fd4d9bf3e8…`, with native tree `260daf34bdc84c51eedadc9225871c434f68c385`.
 The manifest records the source trees, reviewed generic extensions, and exact executable hash.
 Historical integration and validation entries remain below. They certify only their stated cohorts.

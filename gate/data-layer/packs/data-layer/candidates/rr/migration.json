@@ -3811,7 +3811,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "d024fa208a8067b46e7d0d8aa3bd82f7b0700311",
-    "status": "Final d024fa208 merged; structured joins retain per-destination execution and projected aggregate columns. New source cohort awaits build and validation.",
+    "status": "Final d024fa208 root profiling CLI registered; 121 focused engine tests, 215 tooling tests, ten production-root cases and 33 workspace CLI cases pass. Full first-ten cohort refresh and supplied-fact reporter admission remain open.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4048,6 +4048,32 @@
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       }
+    },
+    "cliArtifact": {
+      "engineCommit": "e7cf472c4cb0b0ba14cb7a719a9ea48b573a948a",
+      "upstreamCommit": "d024fa208a8067b46e7d0d8aa3bd82f7b0700311",
+      "sourceTrees": {
+        "native": "5448727abe710fa60b80b6dbe1684d107f93e49e",
+        "accel": "591103d408e3d642fc614716cc590b7a03b52100",
+        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+        "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
+        "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-b3c1bbbfaca58c25",
+      "sha256": "b3c1bbbfaca58c259ea2891c52575e1f69512db04376afc87dad662720416dad",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "rerail-engine",
+        "--features",
+        "headless",
+        "--bin",
+        "rerail-engine",
+        "--profile",
+        "profiling"
+      ],
+      "seconds": 210.359
     }
   },
   "engineSourceSnapshots": [

@@ -10190,3 +10190,24 @@ Final advanced to `31523a5a3` during validation. This evidence remains bound to 
 The next merge must retain that attribution. Supplied-fact reporter inputs and per-rule admission remain open.
 The global inventory remains two historically accepted ports, 93 drafts, and five absent translations.
 No full-repository cold benchmark or Linear issue was added.
+
+### 2026-11-10 — Merge the next Final engine cohort
+
+Committed the first-ten production checkpoint before changing engine sources.
+Its 2,499 native executions remain attributed to Final `93cadec37`.
+All 575 original cases pass per API, including the associated MCP module.
+
+Merged Final `31523a5a3`, then its newer structured level-batch and executor commits through `d024fa208`.
+The merge uses Final's typed `JoinSpec`, `JoinSource`, and `JoinItem` representation.
+Two existing generic fixes remain: shared whole joins retain every destination, and aggregates address projected input columns.
+String-join value and ordering columns use the same retained-column mapping.
+The existing regression tests for those fixes remain in the root engine.
+
+The adoption audit records native, acceleration, lexer, and Cargo source trees.
+The optimized CLI and unit binaries built at nice level 19 in 210.359 and 241.576 seconds.
+The CLI hash is `b3c1bbbfaca58c25…`; the unit hash is `fb8a92ce2b23293c…`.
+The [new-engine receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-finald024-engine-validation.json.gz) records 121 passing focused engine tests and two existing ignored helpers.
+All 215 tooling tests pass. Each of the ten production-root comparisons and all 33 workspace CLI cases pass on this binary.
+A broader production shard reached the 115-second cap; bounded single-case root shards completed successfully.
+Full first-ten original, production, and persistent acceptance remains attributed to `93cadec37` until its complete cohort is refreshed.
+The earlier test results do not certify those unrefreshed contracts on the new engine.
