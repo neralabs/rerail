@@ -1099,18 +1099,37 @@ export function browserOpener(url: string, platform: NodeJS.Platform = process.p
   return { command: "xdg-open", args: [url] };
 }
 
-/** Hands the URL to the desktop's default browser. Returns once the opener has been spawned. */
-export function openInBrowser(url: string, machine: DaemonMachine = THIS_MACHINE): void {
+/**
+ * `BROWSER=none`: whoever runs Rerail asks that no browser open, as tools that open one commonly honour. Set-up
+ * (`noBrowserReason`) and every page opener here read it.
+ */
+export function browserOff(env: NodeJS.ProcessEnv): boolean {
+  return env.BROWSER === "none";
+}
+
+/** What a command prints when `BROWSER=none` kept it from opening a page; it shows the link itself. */
+export const BROWSER_OFF_NOTE = "BROWSER is set to none, so no browser opened.";
+
+/**
+ * Hands the URL to the desktop's default browser, unless `BROWSER=none` ({@link browserOff}); whether it did. Returns
+ * once the opener has been spawned.
+ */
+export function openInBrowser(url: string, machine: DaemonMachine = THIS_MACHINE): boolean {
+  if (browserOff(machine.env)) return false;
   const { command, args, cwd } = browserOpener(url, machine.platform, machine.env);
   const child = machine.spawnShown(command, args, { detached: true, stdio: "ignore", ...(cwd === undefined ? {} : { cwd }) });
   child.once("error", () => {
     process.stderr.write(`rerail: could not open a browser; visit ${url}\n`);
   });
   child.unref();
+  return true;
 }
 
-/** Where a page ended up: a tab in the current Orca window, or the desktop's default browser. */
-export type PageOpening = "orca-tab" | "system-browser";
+/**
+ * Where a page ended up: a tab in the current Orca window, the desktop's default browser, or nowhere, under
+ * `BROWSER=none` ({@link browserOff}), when the caller shows the link instead.
+ */
+export type PageOpening = "orca-tab" | "system-browser" | "not-opened";
 
 /** How long Orca gets to acknowledge a tab before the desktop browser takes over. */
 const ORCA_TAB_TIMEOUT_MS = 10_000;
@@ -1137,7 +1156,8 @@ export async function dashboardAccessLink(url: string, home: string, platform: N
 /**
  * Opens a page of the home daemon's dashboard, with its access capability when it needs one, as a tab in the current
  * Orca window when running under Orca (`ORCA_TAB_ID` set and an Orca CLI installed at one of its fixed locations),
- * otherwise in the desktop browser. Never throws: an Orca failure falls back to the desktop browser.
+ * otherwise in the desktop browser. Under `BROWSER=none` it opens neither and answers `not-opened`, and the caller
+ * shows the link. Never throws: an Orca failure falls back to the desktop browser.
  */
 export async function openDashboard(
   page: string,
@@ -1145,6 +1165,7 @@ export async function openDashboard(
   candidates: readonly string[] = ORCA_EXECUTABLES,
 ): Promise<PageOpening> {
   const { env, platform } = machine;
+  if (browserOff(env)) return "not-opened";
   const url = await dashboardAccessLink(page, defaultRerailHome(env), platform);
   const orca = env.ORCA_TAB_ID === undefined || env.ORCA_TAB_ID === "" ? undefined : orcaExecutable(candidates, platform);
   if (orca === undefined) {

@@ -205,6 +205,14 @@ describe("/rerail-manage", () => {
     expect(notices).toEqual([{ message: `Opening ${scoped} in the Orca window`, level: "info" }]);
   });
 
+  it("gives the link to open by hand when BROWSER=none kept the browser shut", async () => {
+    mocks.rulesDashboard.mockResolvedValue({ url: scoped, reason: null });
+    mocks.openDashboard.mockResolvedValue("not-opened");
+    const { run, notices } = commandHarness();
+    await run("rerail-manage");
+    expect(notices).toEqual([{ message: `BROWSER is set to none, so no browser opened. Open ${scoped}`, level: "info" }]);
+  });
+
   it("reports why there is no dashboard instead of opening nothing", async () => {
     mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
     const { run, notices } = commandHarness();

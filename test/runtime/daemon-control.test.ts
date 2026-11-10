@@ -29,6 +29,7 @@ import {
   launchDetached,
   lookupDaemon,
   openDashboard,
+  openInBrowser,
   processAlive,
   readDaemonState,
   recordedDaemonAlive,
@@ -364,6 +365,16 @@ describe("openDashboard", () => {
     expect(opener).toEqual({ command: String.raw`D:\Windows\System32\rundll32.exe`, args: ["url.dll,FileProtocolHandler", url], cwd: homedir() });
     expect(browserOpener(url, "darwin")).toEqual({ command: "open", args: [url] });
     expect(browserOpener(url, "linux")).toEqual({ command: "xdg-open", args: [url] });
+  });
+
+  it("opens no browser and no Orca tab under BROWSER=none, and says so, so the caller shows the link", async () => {
+    for (const env of [outsideOrca, underOrca]) {
+      const { commands, machine } = opening({ ...env, BROWSER: "none" }, () => { throw new Error("orca must not be spawned"); });
+      expect(await openDashboard(url, machine, candidates)).toBe("not-opened");
+      expect(commands).toEqual([]);
+    }
+    // `rerail daemon start --open` hands its link to the browser opener alone; the fake machine refuses every spawn.
+    expect(openInBrowser(url, fakeMachine("win32", { env: { BROWSER: "none" } }))).toBe(false);
   });
 
   it("uses the desktop browser outside Orca", async () => {

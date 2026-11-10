@@ -41,6 +41,7 @@ import {
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
   accessTokenKept,
+  BROWSER_OFF_NOTE,
   dashboardAccessLink,
   dashboardLink,
   daemonNotRunningMessage,
@@ -52,6 +53,7 @@ import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   type DaemonLookup,
+  type PageOpening,
   type RunningDaemon,
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
@@ -257,7 +259,7 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
       ? `Dashboard link (anyone holding it can read and change your rules; ${lifetime}): ${link}\n`
       : "The dashboard needs its access link in a browser; rerail manage opens it, or run rerail daemon start in a terminal to see it.\n");
   }
-  if (flags.has("--open")) openInBrowser(link);
+  if (flags.has("--open") && !openInBrowser(link)) process.stdout.write(`${BROWSER_OFF_NOTE}\n`);
   return 0;
 }
 
@@ -371,6 +373,15 @@ function runSeedCommand(args: readonly string[]): number {
 }
 
 /**
+ * What a command says once it asked for a page to open: that it is in the Orca window, or that `BROWSER=none` kept any
+ * browser from opening, with `link` when the command has not printed it. The desktop browser needs no word.
+ */
+function reportOpening(opening: PageOpening, link?: string): void {
+  if (opening === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
+  if (opening === "not-opened") process.stdout.write(`${BROWSER_OFF_NOTE}${link === undefined ? "" : ` Open ${link}`}\n`);
+}
+
+/**
  * The rules page of the daemon serving this checkout; `--print` only reports the URL. At a terminal the printed URL
  * carries the daemon's capability, so it opens in any browser of this machine; piped, as a coding agent runs it, the
  * URL is the plain one.
@@ -383,7 +394,7 @@ async function runManageCommand(args: readonly string[]): Promise<number> {
     return 3;
   }
   process.stdout.write(`${process.stdout.isTTY ? await dashboardAccessLink(page.url, defaultRerailHome()) : page.url}\n`);
-  if (!flags.has("--print") && await openDashboard(page.url) === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
+  if (!flags.has("--print")) reportOpening(await openDashboard(page.url));
   return 0;
 }
 
@@ -500,7 +511,7 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
   if (!open) return 0;
   const page = presentation?.url ?? rulesUrl;
   if (page === null) return 3;
-  if (await openDashboard(page) === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
+  reportOpening(await openDashboard(page), page);
   return 0;
 }
 

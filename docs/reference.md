@@ -395,8 +395,8 @@ rerail start                   # start Rerail in this checkout and the checkouts
 rerail stop [<host> [<session-id>]]   # stop Rerail in this checkout and the checkouts inside it (--repository: every checkout); the shared daemon keeps running for other checkouts and coding agents, and the reply names rerail daemon stop. A coding agent's host sets the reply's command sigil, and its session (rerail stop codex: CODEX_THREAD_ID) makes the reply name the rules that steered it
 rerail state                   # prints started, stopped, or not-set-up for this checkout
 rerail status                  # whether Rerail is on here, then the daemon, its engine and its model (Model: ok, or the problem and file, e.g. checksum mismatch (model.safetensors)); exit 3 when the daemon is not running, 4 when it does not answer, 5 when its engine or model is not ok
-rerail manage [--print]        # prints the dashboard's Overview URL and opens it; --print only prints
-rerail session [<host> <session-id>] [--open]   # this session's status line and page URL; --open opens it
+rerail manage [--print]        # prints the dashboard's Overview URL and opens it; --print only prints, and so does BROWSER=none
+rerail session [<host> <session-id>] [--open]   # this session's status line and page URL; --open opens it, unless BROWSER=none
 rerail daemon stop             # shut the daemon down for every checkout and coding agent; a graceful stop (SIGTERM, or on Windows a request over its API); forced termination after 10 s, and an error if the process outlives that by 5 s. A coding agent's session in a checkout where Rerail is started starts it again with its next event, unless RERAIL_AUTOSTART=0
 ```
 

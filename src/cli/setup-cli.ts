@@ -27,6 +27,7 @@ import { LOCKS_DIR } from "../engine/native/file-lock.js";
 import { contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
   autostartOff,
+  browserOff,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
@@ -709,7 +710,7 @@ export function setupIo(args: readonly string[] = []): SetupIo {
 
 /** Why no browser can open here (E6), or undefined when one can. */
 export function noBrowserReason(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | undefined {
-  if (env.BROWSER === "none") return "BROWSER is set to none";
+  if (browserOff(env)) return "BROWSER is set to none";
   if (env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY) return "this looks like a remote session";
   if (platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY) return "there is no display here";
   return undefined;

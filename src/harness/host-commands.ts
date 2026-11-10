@@ -4,7 +4,7 @@ import { commandLine } from "../engine/command-line.js";
 import { ENTRY_POINTS } from "../engine/package-root.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
-import { nodeExecutable, openDashboard, type PageOpening } from "../runtime/daemon-control.js";
+import { BROWSER_OFF_NOTE, nodeExecutable, openDashboard, type PageOpening } from "../runtime/daemon-control.js";
 import { bugReportInstructions, createRuleInstructions, RERAIL_COMMANDS, showMeInstructions, type RerailCommandName } from "./rerail-commands.js";
 import { renderRerailSummary } from "./rerail-summary.js";
 import { repositoryName } from "../engine/catalog/repository-identity.js";
@@ -97,8 +97,12 @@ function notifyResult(ctx: HostCommandContext, name: string, result: LauncherRes
   ctx.ui.notify((result.stdout + result.stderr).trim() || `/${name} exited with code ${result.code}.`, result.code === 0 ? "info" : "error");
 }
 
-/** The notice for a page that was just opened; an Orca tab says so, the desktop browser needs no qualifier. */
+/**
+ * The notice for a page that was just opened; an Orca tab says so, the desktop browser needs no qualifier, and under
+ * `BROWSER=none` the notice gives the link to open by hand.
+ */
 function openingNotice(url: string, opening: PageOpening): string {
+  if (opening === "not-opened") return `${BROWSER_OFF_NOTE} Open ${url}`;
   return opening === "orca-tab" ? `Opening ${url} in the Orca window` : `Opening ${url}`;
 }
 
