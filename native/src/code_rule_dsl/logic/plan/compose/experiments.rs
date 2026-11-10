@@ -303,6 +303,7 @@ pub(super) fn physical_sql(mut sql: String, prog: &Program) -> String {
     if !candidate && !membership {return sql;}
     let ctes=bodies(&sql);
     if candidate {
+        super::super::super::profile::decision("candidate spike rewrite", || "after projection planning".into());
         let target_relations:BTreeSet<_>=prog.natives.values().filter_map(|native| match native {
             super::super::super::front::Native::Python {kind,input,targets:Some(target)} if kind=="qualified" && input=="async_reference" => Some(target),
             _=>None,

@@ -647,3 +647,34 @@ Median worker batch CPU falls from 5.858 to 0.418 seconds against the late exper
 All fourteen acceptance gates pass, including the unchanged execution and VM ceilings.
 The host remains busy, so CPU is the primary comparison. Wall-time samples and warmups remain in the evidence.
 The final report separates profiled costs, repeated timings, preparation cost, and remaining tape/core-fact work.
+
+
+## Built-in structural profile analysis
+
+The profiler now writes `analysis.txt` and `analysis.json`, and places the summary first in `profile.txt`.
+It reports attributed CPU, evidence, confidence, and a concrete action for each finding.
+It does not execute diagnostic queries or change the physical plan.
+
+The first test run has six expected failures and two passing negative controls.
+The implemented analyzer then passes ten direct tests and three production-adapter tests.
+Two fixture rows come from the original archived production profile, preserving both 1,342,302,187-row joins.
+The negative controls reject the assumption that zero findings or a large scan alone prove wasted work.
+Automatic indexes and point probes produce investigation advice, not an automatic index or batching prescription.
+
+Projection planning records consumer relation paths before input construction.
+Tape-cache instrumentation distinguishes hits from misses. Existing join, cursor, SQL, projection, and reprepare counters supply the other evidence.
+The diagnostics distinguish observed behavior from a possible optimization. Reported CPU is not a claim of recoverable savings.
+
+Both full 5,725-file runs pass the existing execution budget and finding checks. The positive fixture retains all 120 findings.
+The late rewrite reports `LATE_PROJECTION`: 3.944 own CPU seconds, 12,535,139 scalar visits, and 4,187,794 batch strings.
+Its consumer path is `text <- async_open_receiver <- p3_ASYNC230`.
+
+The current run clears late projection, unrequested scalars, and automatic-reprepare warnings.
+It reports 1.546 own CPU seconds in tape restoration and core-fact construction, plus 0.427 seconds in identity projection.
+The cache counters include 5,725 corpus tapes and two rule-program tapes. All are hits.
+Identity projection still constructs 12,535,139 node identities. These are measured costs, not proven savings from a cache.
+Both runs execute 81 statements. Current VM instructions remain 785,573.
+
+[The checked-in reports](../../benchmark/async-family-integration/analysis/current-analysis.txt) include the current findings.
+The sibling files contain the failing-shape report, raw profiles, test logs, command environments, and source hashes.
+Normal `RERAIL_PROFILE=<directory>` runs produce the analysis automatically. No separate analysis script or experimental engine path is required.

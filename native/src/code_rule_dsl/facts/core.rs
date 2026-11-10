@@ -172,10 +172,12 @@ pub(crate) fn build_cached_source(file: &FileInput, cache: &crate::content_store
     let grammar = tape::Grammar::new(language)?;
     let primary = match stored.and_then(|id| cache.get_tapes_bulk(&[id]).ok()?.remove(&id)) {
         Some((stored, _)) => {
+            crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
             TapeImage::from_bytes(&stored, &grammar)?
         }
         None => {
+            crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             // Its own work: the source prepared for the parser (tree-sitter and the encoding charge their own).
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source.len() as u64);

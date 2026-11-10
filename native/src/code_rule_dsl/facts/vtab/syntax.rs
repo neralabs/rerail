@@ -96,6 +96,7 @@ impl Projection {
     /// `core.rr`'s shape for a program that includes `core.rr` (declares every relation it declares as an input),
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
     pub(crate) fn of(program: &crate::code_rule_dsl::logic::front::Program, reads: BTreeSet<String>) -> Self {
+        crate::code_rule_dsl::logic::profile::projection_plan(program, &reads);
         let core = crate::code_rule_dsl::logic::rr::core_names();
         let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
         let partial = program.facts.get(GUEST_POLICY).into_iter().flatten().filter_map(|row| match row.as_slice() {
