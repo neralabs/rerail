@@ -624,15 +624,15 @@ class Suite:
             if event != 'call' or frame.f_code not in originals:
                 return
             check, name, passive = originals[frame.f_code]
-            host = {'no_source_inspection': {'cli_main'}, 'hasattr_async': {'cli_main', '_default_directories'},
+            host = {'hasattr_async': {'_default_directories'},
                     'admin_async_purity': {'cli_main'},
                     'async_executor': {'cli_main'}, 'dynamic_module_loading': {'cli_main'}, 'classvar_check': {'cli_main'},
                     'type_safety_patterns': {'cli_main'},
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},
                     'data_layer_facade_purity': {'cli_main', '_print_results'},
                     'backend_coupling': {'cli_main', 'get_project_root'},
-                    'connection_caches': {'cli_main'}, 'backend_type_strings': {'cli_main'},
-                    'serverplan_grammar_surface': {'cli_main'}, 'unresolved_forward_refs': {'cli_main'}}
+                    'connection_caches': {'cli_main'},
+                    'unresolved_forward_refs': {'cli_main'}}
             if not passive and name not in host.get(check, set()):
                 self.semantic_fallbacks.append(f'{check}:{name}')
                 raise AssertionError('Original semantic execution: ' + self.semantic_fallbacks[-1])
