@@ -152,3 +152,41 @@ fn levels_with_a_node_and_without_keep_apart() {
     let states = m.lines().filter(|l| l.starts_with("state ")).count();
     assert_eq!(states, 2 + 2 * 11, "{m}");
 }
+
+/// States of `machine(src)`, and its text.
+fn states(src: &str) -> (usize, String) {
+    let m = machine(src);
+    (m.lines().filter(|l| l.starts_with("state ")).count(), m)
+}
+
+#[test]
+fn remembered_words_share_their_states() {
+    // Three words, each a variable that a wrap gives back its own kind: written once per word,
+    // each word's state before its wrap acts apart (its tail, the same, is merged); remembered,
+    // one state, the wrap naming the level's word's kind (`as word`). In `.rr` the copies
+    // differ further on (a reading at an aggregate's `:`), so every state between does.
+    let copies = format!("tree t {{\n  node root = (item)*\n  choice item nested = a as v (wrap w f as a {TEN}) | b as v (wrap w f as b {TEN}) | c as v (wrap w f as c {TEN})\n}}");
+    let one = format!("tree t {{\n  node root = (item)*\n  choice item nested = a as v (wrap w f as a {TEN})\n}}");
+    let remembered = format!("tree t {{\n  node root = (item)*\n  remember word\n  choice word = a | b | c\n  choice item nested = word as v (wrap w f as word {TEN})\n}}");
+    let (copies, _) = states(&copies);
+    let (one, _) = states(&one);
+    let (remembered, m) = states(&remembered);
+    assert_eq!(remembered, one, "{m}");
+    assert_eq!(copies, one + 2, "{copies} states as copies, {one} as one word");
+    // Each arm that takes a word remembers its own kind (three words, from the root's start
+    // and from after an item); the wrap's moved node takes the level's word.
+    assert_eq!(m.matches(" remember ").count(), 6, "{m}");
+    assert!(m.contains(&format!(" as {} ", crate::stream_ir::REMEMBERED)), "{m}");
+}
+
+#[test]
+fn a_rule_that_takes_a_remembered_word_stays_inlined() {
+    // Used twice and long enough to be a call, but it takes a remembered word: a call's level
+    // would give its caller's word back when it ends, so it stays inlined.
+    let tail = format!("choice tail = word as v {TEN}");
+    let mut src = format!("tree t {{\n  node root = (p tail (wrap w f as word q) | r tail (wrap w f as word q))*\n  remember word\n  choice word = a | b\n  {tail}\n}}");
+    let tokens: Vec<String> = TOKENS.iter().map(|t| t.to_string()).collect();
+    assert_eq!(grammar::shared_names(&tree(&src), &tokens), NONE);
+    src = src.replace("remember word\n", "");
+    assert_eq!(grammar::shared_names(&tree(&src), &tokens), ["tail"]);
+}

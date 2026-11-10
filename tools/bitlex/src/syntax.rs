@@ -212,6 +212,10 @@ pub enum Stmt {
     /// `provisional FIELD …` (in a tree): fields a node holds only until a later token decides
     /// what it is; a node that holds one at the file's end refuses the file.
     Provisional(Vec<String>),
+    /// `remember CHOICE …` (in a tree): choices of tokens whose token is remembered at its
+    /// level; `as CHOICE` (and a reading's `K as CHOICE`) then names that token's kind. A nested
+    /// level starts with its caller's and gives it back when it ends.
+    Remember(Vec<String>),
 }
 
 impl Stmt {
@@ -959,6 +963,16 @@ impl P {
                     }
                 }
                 Stmt::Reading { name, reading }
+            }
+            "remember" => {
+                let mut names = vec![];
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    names.push(self.ident()?);
+                }
+                if names.is_empty() {
+                    return self.err("remember CHOICE …");
+                }
+                Stmt::Remember(names)
             }
             "provisional" => {
                 let mut fields = vec![];

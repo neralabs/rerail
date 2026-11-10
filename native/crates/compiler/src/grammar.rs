@@ -69,6 +69,9 @@ pub enum Act {
     /// The node just made at this level and the nodes inside it, read by reading `reading`
     /// (`reread R`).
     Reread { reading: u16 },
+    /// The token taken is its level's word, of kind `kind` (a `remember` choice's): a kind
+    /// `stream_ir::REMEMBERED` names it from here, until the next.
+    Remember { kind: u16 },
 }
 /// A transition: from a state, on a token of a kind, its acts, to a state; `push`: the calls it
 /// makes, each entering a nested level and keeping the state to return to, outermost first (a
@@ -135,6 +138,9 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 Act::Reread { reading } => {
                     let _ = write!(acts, " reread {reading}");
                 }
+                Act::Remember { kind } => {
+                    let _ = write!(acts, " remember {kind}");
+                }
             }
         }
         let push: String = arm.push.iter().map(|p| format!(" push {p}")).collect();
@@ -179,8 +185,9 @@ enum E {
 /// the one before it, as a leaf of `into`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pos {
-    /// A token kind, and its leaf's kind (0: the token's).
-    Tok(u16, u16),
+    /// A token kind, its leaf's kind (0: the token's), and whether it is remembered (a
+    /// `remember` choice's token: its level's word from here).
+    Tok(u16, u16, bool),
     Call(usize),
     Merge { token: u16, into: u16 },
 }
@@ -277,6 +284,8 @@ struct Builder<'a> {
     choices: Vec<(String, Option<String>, Gram)>,
     ids: &'a Ids<'a>,
     positions: Vec<(usize, Pos)>,
+    /// The `remember` choices.
+    remember: Vec<String>,
 }
 
 impl Builder<'_> {
@@ -306,8 +315,16 @@ impl Builder<'_> {
                     }
                     inlining.push(name.clone());
                     let (supertype, body) = (self.choices[c].1.clone(), self.choices[c].2.clone());
+                    let from = self.positions.len();
                     let e = self.expand(level, &body, inlining)?;
                     inlining.pop();
+                    // A `remember` choice: each token it may take is its level's word.
+                    if self.remember.contains(name) {
+                        for p in from..self.positions.len() {
+                            let Pos::Tok(token, leaf, _) = self.positions[p].1 else { return Err(format!("remember {name}: a choice of tokens only")) };
+                            self.positions[p].1 = Pos::Tok(token, leaf, true);
+                        }
+                    }
                     match supertype {
                         Some(s) => E::Wrap(Wrap::Super((self.ids.kind)(&s)?), Box::new(e)),
                         None => e,
@@ -328,14 +345,14 @@ impl Builder<'_> {
                 let w = Wrap::Wrapped {
                     kind: (self.ids.kind)(kind)?,
                     field: field.as_deref().map(|f| (self.ids.field)(f)).transpose()?.unwrap_or(0),
-                    moved: moved.as_deref().map(|m| (self.ids.kind)(m)).transpose()?.unwrap_or(0),
+                    moved: moved.as_deref().map(|m| self.kind(m)).transpose()?.unwrap_or(0),
                 };
                 E::Wrap(w, Box::new(self.expand(level, body, inlining)?))
             }
             Gram::Relabel { field, moved, inner, body } => {
                 let w = Wrap::Relabel {
                     field: field.as_deref().map(|f| (self.ids.field)(f)).transpose()?.unwrap_or(0),
-                    moved: moved.as_deref().map(|m| (self.ids.kind)(m)).transpose()?.unwrap_or(0),
+                    moved: moved.as_deref().map(|m| self.kind(m)).transpose()?.unwrap_or(0),
                     inner: inner.as_deref().map(|f| (self.ids.field)(f)).transpose()?.unwrap_or(0),
                 };
                 E::Wrap(w, Box::new(self.expand(level, body, inlining)?))
@@ -344,10 +361,30 @@ impl Builder<'_> {
             Gram::Reread { reading, body } => E::Wrap(Wrap::Reread((self.ids.reading)(reading)?), Box::new(self.expand(level, body, inlining)?)),
             Gram::As(k, a) => {
                 let e = self.expand(level, a, inlining)?;
-                let E::Tok(p) = e else { return Err(format!("`as {k}`: not a token")) };
-                let Pos::Tok(token, _) = self.positions[p].1 else { return Err(format!("`as {k}`: not a token")) };
-                self.positions[p].1 = Pos::Tok(token, (self.ids.kind)(k)?);
-                E::Tok(p)
+                // A token, or a choice of tokens (`aggregate_word as variable`): each one's leaf.
+                fn toks(e: &E, out: &mut Vec<usize>) -> bool {
+                    match e {
+                        E::Tok(p) => {
+                            out.push(*p);
+                            true
+                        }
+                        E::Alt(alts) => alts.iter().all(|a| toks(a, out)),
+                        _ => false,
+                    }
+                }
+                let mut ps = Vec::new();
+                if !toks(&e, &mut ps) {
+                    return Err(format!("`as {k}`: not a token"));
+                }
+                let kind = self.kind(k)?;
+                if kind == crate::stream_ir::REMEMBERED {
+                    return Err(format!("`as {k}` on a token: a word's kind is for a wrap's, a relabel's or a reading's node"));
+                }
+                for p in ps {
+                    let Pos::Tok(token, _, r) = self.positions[p].1 else { return Err(format!("`as {k}`: not a token")) };
+                    self.positions[p].1 = Pos::Tok(token, kind, r);
+                }
+                e
             }
             Gram::Balanced { kind, .. } => return Err(format!("balanced {kind}: not desugared")),
             Gram::Any(_) => return Err("any: not desugared".into()),
@@ -362,11 +399,17 @@ impl Builder<'_> {
         })
     }
 
+    /// A kind named in the grammar; a `remember` choice's name is its level's word's
+    /// (`stream_ir::REMEMBERED`).
+    fn kind(&self, name: &str) -> Result<u16, String> {
+        if self.remember.iter().any(|r| r == name) { Ok(crate::stream_ir::REMEMBERED) } else { (self.ids.kind)(name) }
+    }
+
     fn tok(&mut self, level: usize, name: &str) -> Result<E, String> {
         if !(self.ids.is_token)(name) {
             return Err(format!("`{name}` is no rule, choice or token kind"));
         }
-        self.positions.push((level, Pos::Tok((self.ids.kind)(name)?, 0)));
+        self.positions.push((level, Pos::Tok((self.ids.kind)(name)?, 0, false)));
         Ok(E::Tok(self.positions.len() - 1))
     }
 }
@@ -702,6 +745,18 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
             Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => {}
         }
     }
+    // What takes a remembered token, by inlining: inlined for good, as a call's level would
+    // give its caller's word back when it ends.
+    let remember: Vec<&String> = stmts.iter().filter_map(|s| if let Stmt::Remember(n) = s { Some(n.iter()) } else { None }).flatten().collect();
+    for r in rules.iter().map(|r| r.kind.clone()).chain(choices.iter().map(|c| c.0.clone())) {
+        let mut reached = Vec::new();
+        if let Some(b) = body(&r) {
+            reach(b, &ctx, &mut reached);
+        }
+        if remember.contains(&&r) || reached.iter().any(|n| remember.contains(&n)) {
+            f.kept.push(r);
+        }
+    }
     for l in &refusing {
         if let Some(b) = rules.iter().chain(levels).find(|r| r.kind == *l).map(|r| &r.body) {
             reach(b, &ctx, &mut f.kept);
@@ -761,7 +816,8 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
     }
     let whole = rules[0].whole;
     let mut root_empty = false;
-    let mut b = Builder { rules, choices, ids, positions: Vec::new() };
+    let remember: Vec<String> = stmts.iter().filter_map(|s| if let Stmt::Remember(n) = s { Some(n.iter().cloned()) } else { None }).flatten().collect();
+    let mut b = Builder { rules, choices, ids, positions: Vec::new(), remember };
     // The levels: the root (rule 0) and each nested rule.
     let level_rules: Vec<usize> = (0..b.rules.len()).filter(|&r| r == 0 || b.rules[r].nested).collect();
     let mut levels = Vec::new();
@@ -838,8 +894,11 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
             let mut p = pending.clone();
             p.enter(&edge.enters, &mut acts);
             match positions[q].1 {
-                Pos::Tok(kind, leaf) => {
+                Pos::Tok(kind, leaf, remembered) => {
                     acts.push(Act::Leaf { field: p.field, supers: p.supers, kind: leaf });
+                    if remembered {
+                        acts.push(Act::Remember { kind });
+                    }
                     out.push((kind, acts, q, push.clone()));
                 }
                 Pos::Merge { token, into } => {

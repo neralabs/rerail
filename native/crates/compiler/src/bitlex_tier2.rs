@@ -181,6 +181,9 @@ impl Emit<'_> {
         let at = self.pc();
         let a = &self.arms[arm];
         let (token, to, ret) = (a.token, a.to, a.push.clone());
+        // A remembered token is the word of the level it is taken at: after the calls the arm
+        // makes, which keep their caller's (`PUSH`), so the innermost level's.
+        let mut remember = None;
         for act in a.acts.clone() {
             let (supers, field) = match act {
                 Act::Close => {
@@ -219,6 +222,10 @@ impl Emit<'_> {
                 // Mode 3: the node made last at this level, and the nodes inside it, read.
                 Act::Reread { reading } => {
                     self.push("RETAG", 3, Arg::Num(reading));
+                    continue;
+                }
+                Act::Remember { kind } => {
+                    remember = Some(kind);
                     continue;
                 }
                 Act::Relabel { field, moved, inner } => {
@@ -272,6 +279,9 @@ impl Emit<'_> {
             _ => {
                 for &p in &ret {
                     self.push("PUSH", 0, Arg::Return(p));
+                }
+                if let Some(k) = remember {
+                    self.push("REMEMBER", 0, Arg::Kind(k));
                 }
                 self.push("GOTO", 0, Arg::State(to));
             }

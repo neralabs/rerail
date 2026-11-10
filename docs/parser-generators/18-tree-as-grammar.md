@@ -66,6 +66,15 @@ tree json {
   states to 18. Tier 2's words do not change (they were merged already, `merge_words`); the
   machine, and every table made from it, is smaller.
 
+- **Remembered words.** `.rr`'s five aggregate words (`min`, `max`, `sum`, `mean`, `join`)
+  were written out once each, in seven places, and differed only in their own kind. Now they
+  are one choice, `remember aggregate_word`: the token it takes is its level's word, and
+  `as aggregate_word` (a wrap's or a relabel's moved node, a reading's `K as C`) names that
+  token's kind. Tier 2's `REMEMBER K` sets the level's word; a call keeps its caller's beside
+  its return and gives it back there, so a nested level starts with its caller's. A rule that
+  takes a remembered word stays inlined (a call would give the word back as it ends).
+  `.rr`: 284 states to 252, 2,881 arms to 2,396.
+
 - **Shared arms.** Tier 2's code also has one copy of each arm body. An arm is a run of
   plain words (its span, keyword check and acts) ending in a `GOTO`. Runs with the same words
   are one body, lowered once. Each place enters it with the index of its own target, and the

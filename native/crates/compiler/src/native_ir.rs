@@ -141,6 +141,8 @@ pub enum StructuralOperation {
     NodeField { field: u16, on: On },
     NodeSuper { kind: u16 },
     Push { target: u16 },
+    /// The token just taken is its level's word, of `kind` (`REMEMBER`).
+    Remember { kind: u16 },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
@@ -198,6 +200,7 @@ impl StructuralOperation {
             Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
             Self::NodeSuper { kind } => (NODE_SUPER, 0, kind),
             Self::Push { target } => (PUSH, 0, target),
+            Self::Remember { kind } => (REMEMBER, 0, kind),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -427,6 +430,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             NODE_FIELD => StructuralOperation::NodeField { field: operand, on: On::of(mode) },
             NODE_SUPER => StructuralOperation::NodeSuper { kind: operand },
             PUSH => StructuralOperation::Push { target: operand },
+            REMEMBER => StructuralOperation::Remember { kind: operand },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,
             _ => {

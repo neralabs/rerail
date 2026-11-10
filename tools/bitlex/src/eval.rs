@@ -67,6 +67,8 @@ pub struct TreeDecl {
     pub readings: Vec<(String, crate::syntax::Reading)>,
     /// The `provisional` fields: none may be left in a finished tree.
     pub provisional: Vec<String>,
+    /// The `remember` choices: the token each takes is its level's word (`as CHOICE`).
+    pub remember: Vec<String>,
 }
 
 pub struct Output {
@@ -396,6 +398,7 @@ impl<'a> Ev<'a> {
             Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
             Stmt::Reading { name, reading } => self.tree.get_or_insert_with(TreeDecl::default).readings.push((name.clone(), reading.clone())),
             Stmt::Provisional(fields) => self.tree.get_or_insert_with(TreeDecl::default).provisional.extend(fields.iter().cloned()),
+            Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             Stmt::Mark { kind, at, end } => {
                 let m = self.mask(at)?;
                 self.marks.push((kind.clone(), m, *end));

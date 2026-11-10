@@ -20,7 +20,7 @@ use crate::Error;
 
 use crate::native_cpu_shape::Step;
 use crate::native_ir::{On, Structure, StructuralOperation as Op};
-use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, Refused};
+use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, REMEMBERED, Refused};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -346,10 +346,12 @@ enum Mem {
     Sel,
     /// A shared arm's words' distance from its body's first place's, for a refusal there.
     Shift,
+    /// The level's word (`REMEMBER`), kept beside each call's return.
+    Word,
 }
 
 impl Mem {
-    const COUNT: u32 = 8;
+    const COUNT: u32 = 9;
 }
 
 struct Vars {
@@ -818,7 +820,7 @@ pub struct SharedRuns {
 fn plain(op: &Op) -> bool {
     matches!(
         op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. }
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. }
     )
 }
 
@@ -1085,6 +1087,19 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
             let at = f.ins().iconst(types::I64, pc as i64 + 1);
             f.ins().brif(bad, refuse, &[BlockArg::from(at)], ok, &[]);
             f.switch_to_block(ok);
+        };
+        // A kind as a word names it: its level's word's (`REMEMBERED`, `REMEMBER`), refused where
+        // the level has none; else the kind.
+        let remembers = words.iter().any(|b| matches!(b.operation, Op::Remember { .. }));
+        let kind_of = |f: &mut FunctionBuilder<'_>, kind: u16, pc: usize| {
+            if kind == REMEMBERED {
+                let w = mget(f, Mem::Word);
+                let none = f.ins().icmp_imm(IntCC::Equal, w, 0);
+                guard(f, none, pc);
+                w
+            } else {
+                f.ins().iconst(types::I64, i64::from(kind))
+            }
         };
         // Column `c`'s slot `i` (u32s).
         let slot = |f: &mut FunctionBuilder<'_>, c: Value, i: Value| {
@@ -1438,8 +1453,14 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.def_var(v.nodes, nodes);
                     f.ins().jump(fall, &[]);
                 }
+                Op::Remember { kind } => {
+                    let k = f.ins().iconst(types::I64, i64::from(kind));
+                    mset(&mut f, Mem::Word, k);
+                    f.ins().jump(fall, &[]);
+                }
                 Op::Retag { kind, on: On::Moved } => {
-                    let (m, k) = (mget(&mut f, Mem::Moved), f.ins().iconst(types::I64, i64::from(kind)));
+                    let m = mget(&mut f, Mem::Moved);
+                    let k = kind_of(&mut f, kind, pc);
                     put(&mut f, kind_c, m, k);
                     f.ins().jump(fall, &[]);
                 }
@@ -1535,7 +1556,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let bad = f.ins().bor(none, no_last);
                     guard(&mut f, bad, pc);
                     let r = f.ins().iadd_imm(last, -1);
-                    let x = f.ins().iconst(types::I64, i64::from(kind));
+                    let x = if matches!(w.operation, Op::Retag { .. }) { kind_of(&mut f, kind, pc) } else { f.ins().iconst(types::I64, i64::from(kind)) };
                     let col = if matches!(w.operation, Op::Retag { .. }) { kind_c } else { field_c };
                     put(&mut f, col, r, x);
                     f.ins().jump(fall, &[]);
@@ -1651,7 +1672,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                                 f.ins().jump(next, &[]);
                             }
                             m => {
-                                let m = f.ins().iconst(types::I64, i64::from(m));
+                                let m = kind_of(&mut f, m, pc);
                                 put(&mut f, kind_c, n, m);
                                 f.ins().jump(next, &[]);
                             }
@@ -1779,6 +1800,14 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 Op::Push { target } => {
                     let ret = f.use_var(v.ret);
                     let t = f.ins().iconst(types::I64, i64::from(target));
+                    // The caller's word beside its return, in the high half (`REMEMBER`).
+                    let t = if remembers {
+                        let w = mget(&mut f, Mem::Word);
+                        let w = f.ins().ishl_imm(w, 16);
+                        f.ins().bor(t, w)
+                    } else {
+                        t
+                    };
                     put(&mut f, ret_c, ret, t);
                     let ret = f.ins().iadd_imm(ret, 1);
                     f.def_var(v.ret, ret);
@@ -1796,6 +1825,14 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let p = {
                         let a = slot(&mut f, ret_c, ret);
                         f.ins().uload32(flags, a, 0)
+                    };
+                    // The caller's word back (`REMEMBER`), from beside its return.
+                    let p = if remembers {
+                        let w = f.ins().ushr_imm(p, 16);
+                        mset(&mut f, Mem::Word, w);
+                        f.ins().band_imm(p, 0xffff)
+                    } else {
+                        p
                     };
                     // A compare tree over the places `PUSH` names.
                     let t: Vec<(u32, Block)> = pushes.iter().map(|&p| (u32::from(p), word(p + u16::from(again)))).collect();
