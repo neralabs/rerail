@@ -27,6 +27,7 @@ import { installPack, removeInstalledPacks } from "../support/installed-packs.js
 import { attachPacks, fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { removeFixtures, TS_PACKS, fixture, gitRepository, agentIo, request, selected, enabledRules, startRows, expectUntouched, failStarts, SETUP_TIMEOUT_MS, TYPESCRIPT, offerReview } from "../support/repository-setup.js";
 import { shellWord } from "../../src/engine/index.js";
+import { stubUserHome } from "../support/user-home.js";
 
 afterEach(async () => {
   readsRepository.mockClear();
@@ -374,7 +375,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const setup = await fixture();
     const home = join(setup.root, "user");
     mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    stubUserHome(home);
     const asked = agentIo();
     expect(await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "start", repo: "~" }))).toEqual({ status: "waiting" });
     expect(asked.text()).toContain("Start Rerail inside a repository, not your home folder.");

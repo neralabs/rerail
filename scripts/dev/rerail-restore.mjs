@@ -256,13 +256,19 @@ export function launcherPath(home) {
   return join(home, "bin", process.platform === "win32" ? "rerail.cmd" : "rerail");
 }
 
-/** Run the home's installed launcher with `RERAIL_HOME` pinned to it and autostart off. */
+/**
+ * Run the home's installed launcher with `RERAIL_HOME` pinned to it and autostart off. On Windows the launcher is
+ * `rerail.cmd`, which only cmd starts; its path is quoted there, since cmd splits an unquoted path at a space (a
+ * profile folder can hold one).
+ */
 export function runLauncher(home, args, { env = process.env, timeout = 120_000 } = {}) {
-  return spawnSync(launcherPath(home), args, {
+  const windows = process.platform === "win32";
+  return spawnSync(windows ? `"${launcherPath(home)}"` : launcherPath(home), args, {
     env: { ...env, RERAIL_HOME: home, RERAIL_AUTOSTART: "0" },
     encoding: "utf8",
     timeout,
-    shell: process.platform === "win32",
+    shell: windows,
+    windowsHide: true,
   });
 }
 

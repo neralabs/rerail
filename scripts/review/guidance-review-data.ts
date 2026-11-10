@@ -305,7 +305,8 @@ function caseOf(id: string, kind: ReviewCase["kind"], file: SourceFile, violatio
     snippet,
     flagged,
     upstream,
-    guidance: violations.length === 0 ? "" : renderSteer(violations, { kind: "edit" }),
+    // Written for sh on every machine, so the data and each rule's digest do not change with the platform it ran on.
+    guidance: violations.length === 0 ? "" : renderSteer(violations, { kind: "edit" }, "posix"),
     failures,
   };
 }

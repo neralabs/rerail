@@ -14,6 +14,7 @@ import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionData
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
+import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
 
@@ -281,7 +282,7 @@ describe("Claude Code one-shot hook", () => {
     const home = join(root, "home");
     await mkdir(home);
     await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 4791, url: "http://127.0.0.1:4791/",
-      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1, packageRoot: home }));
+      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: testEngineEndpoint(home), ui: "bundled", startedAt: 1, packageRoot: home }));
     vi.stubEnv("RERAIL_HOME", home);
     try {
       const common = { session_id: "claude-session", cwd: root };

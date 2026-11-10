@@ -4,7 +4,7 @@
 // every registered checkout's dev daemon (their state stays, so `just rerail-dev` brings them back).
 import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
@@ -67,9 +67,16 @@ export function configBackupName(path, home) {
 /**
  * A predicate for "this string points into the Rerail home": the resolved path, its realpath, and the `~`/`$HOME`
  * spellings when the home sits under HOME. Covers `<home>/current/...` (the npm install and the dev bridge alike).
+ *
+ * On Windows (`platform`) one path has several spellings in the configs Rerail writes: backslashes in an exec-form or
+ * PowerShell hook, each backslash written twice in the status line's POSIX-quoted word for Git Bash, and `/` from
+ * other tools, in any case. There the text and the home are compared with every run of slashes and backslashes as
+ * one `/`, in lower case.
  */
-export function rerailHomeMatcher(rerailHome, home) {
-  const roots = new Set([resolve(rerailHome)]);
+export function rerailHomeMatcher(rerailHome, home, platform = process.platform) {
+  const paths = platform === "win32" ? win32 : posix;
+  const spelled = platform === "win32" ? text => text.replaceAll(/[\\/]+/gu, "/").toLowerCase() : text => text;
+  const roots = new Set([paths.resolve(rerailHome)]);
   try {
     roots.add(realpathSync(rerailHome));
   } catch {
@@ -77,13 +84,18 @@ export function rerailHomeMatcher(rerailHome, home) {
   }
   const needles = [];
   for (const root of roots) {
-    needles.push(`${root}${sep}`);
-    const inside = relative(home, root);
-    if (inside !== "" && !inside.startsWith("..") && !isAbsolute(inside)) {
-      for (const prefix of ["~", "$HOME", "${HOME}"]) needles.push(`${prefix}/${inside.split(sep).join("/")}/`);
+    needles.push(spelled(`${root}${paths.sep}`));
+    const inside = paths.relative(home, root);
+    if (inside !== "" && !inside.startsWith("..") && !paths.isAbsolute(inside)) {
+      for (const prefix of ["~", "$HOME", "${HOME}"]) needles.push(spelled(`${prefix}/${inside.split(paths.sep).join("/")}/`));
     }
   }
-  return text => typeof text === "string" && ([...roots].includes(text) || needles.some(needle => text.includes(needle)));
+  const spelledRoots = new Set([...roots].map(spelled));
+  return text => {
+    if (typeof text !== "string") return false;
+    const value = spelled(text);
+    return spelledRoots.has(value) || needles.some(needle => value.includes(needle));
+  };
 }
 
 function referencesDeep(value, matches) {

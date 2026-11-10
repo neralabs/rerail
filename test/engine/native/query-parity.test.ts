@@ -106,9 +106,9 @@ describe("query parity options", () => {
     expect(() => parseOptions([...sides, "--corpus", "/corpus"], {})).toThrow(/--manifest <paths.json>.* go together/);
     expect(parseOptions([...sides, "--workload", "select-when"], {}).corpus).toBeUndefined();
     expect(parseOptions(sides, { RERAIL_QUERY_PARITY_CORPUS: "/corpus", RERAIL_QUERY_PARITY_MANIFEST: "/manifest.json" }).corpus)
-      .toEqual({ root: "/corpus", manifest: "/manifest.json" });
+      .toEqual({ root: resolve("/corpus"), manifest: resolve("/manifest.json") });
     expect(parseOptions([...sides, "--corpus", "/flag", "--manifest", "/flag.json"], { RERAIL_QUERY_PARITY_CORPUS: "/env", RERAIL_QUERY_PARITY_MANIFEST: "/env.json" }).corpus)
-      .toEqual({ root: "/flag", manifest: "/flag.json" });
+      .toEqual({ root: resolve("/flag"), manifest: resolve("/flag.json") });
   });
 
   it("requires a reference addon unless sides are explicit", () => {

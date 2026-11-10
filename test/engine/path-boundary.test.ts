@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, type TestContext } from "vitest";
 import {
   checkoutPathBoundary, deniedByPathBoundary, SENSITIVE_FOLDER_NAMES, sensitiveByName,
 } from "../../src/engine/path-boundary.js";
+import { symlinkOrSkip } from "../support/platform/links.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -12,13 +13,13 @@ afterEach(() => {
 });
 
 /** A checkout with a `.env`, a tracked file linked to it, and an ordinary file. */
-function checkout(): string {
+function checkout(context: TestContext): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-path-boundary-")));
   roots.push(root);
   writeFileSync(join(root, ".env"), "API_KEY=x\n");
   mkdirSync(join(root, "docs"));
   writeFileSync(join(root, "docs", "guide.md"), "# Guide\n");
-  symlinkSync("../.env", join(root, "docs", "a.md"));
+  symlinkOrSkip(context, "../.env", join(root, "docs", "a.md"));
   return root;
 }
 
@@ -114,8 +115,8 @@ describe("the path boundary", () => {
     expect(deniedByPathBoundary("src/app.ts")).toBe(false);
   });
 
-  it("judges a path by where it leads in a checkout, and by its name where it does not resolve", () => {
-    const root = checkout();
+  it("judges a path by where it leads in a checkout, and by its name where it does not resolve", context => {
+    const root = checkout(context);
     expect(sensitiveByName("docs/a.md")).toBe(false);
     const boundary = checkoutPathBoundary(root);
     expect(boundary.leadsTo("docs/a.md")).toBe(".env");
@@ -127,18 +128,18 @@ describe("the path boundary", () => {
     expect(boundary.sensitive("config/secrets.yaml")).toBe(true);
   });
 
-  it("judges a link out of the checkout by the absolute path it leads to", () => {
-    const root = checkout();
+  it("judges a link out of the checkout by the absolute path it leads to", context => {
+    const root = checkout(context);
     const outside = realpathSync(mkdtempSync(join(tmpdir(), "rerail-path-boundary-home-")));
     roots.push(outside);
     mkdirSync(join(outside, ".aws"));
     writeFileSync(join(outside, ".aws", "credentials"), "[default]\n");
-    symlinkSync(join(outside, ".aws", "credentials"), join(root, "docs", "b.md"));
+    symlinkOrSkip(context, join(outside, ".aws", "credentials"), join(root, "docs", "b.md"));
     expect(checkoutPathBoundary(root).sensitive("docs/b.md")).toBe(true);
   });
 
-  it("judges by name alone past its resolutions, and in a checkout that does not exist", () => {
-    const root = checkout();
+  it("judges by name alone past its resolutions, and in a checkout that does not exist", context => {
+    const root = checkout(context);
     const spent = checkoutPathBoundary(root, 1);
     expect(spent.sensitive("docs/guide.md")).toBe(false);
     expect(spent.sensitive("docs/a.md")).toBe(false);

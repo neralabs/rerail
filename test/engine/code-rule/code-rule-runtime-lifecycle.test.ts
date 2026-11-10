@@ -282,6 +282,8 @@ describe("source-scoped steers", () => {
     await writeFile(join(root, "existing.py"), "safe\n");
     await writeFile(join(root, "removed.py"), "NEEDLE\n");
     git("init", "--quiet", "--initial-branch=main");
+    // Git writes the files as committed, LF, though Git for Windows sets core.autocrlf=true for every repository.
+    git("config", "core.autocrlf", "false");
     git("add", ".");
     git("commit", "--quiet", "-m", "seed");
     git("switch", "--quiet", "-c", "other");

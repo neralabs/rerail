@@ -1,17 +1,19 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService } from "../../src/runtime/engine-service.js";
+import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { testEmbedder } from "../support/hook-events.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 
 describe("engine service session concurrency", () => {
   it("does not let one opening agent session block another", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const engine = { socketPath };
     startTestRepository(root, join(root, "rerail.sqlite"));
     const blockedOpened = Promise.withResolvers<void>();
@@ -79,7 +81,7 @@ describe("engine service session concurrency", () => {
       gate.resolve();
       await Promise.allSettled(requests);
       await service.close();
-      await rm(root, { recursive: true, force: true });
+      await removeFolder(root);
     }
   });
 });

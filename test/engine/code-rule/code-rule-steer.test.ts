@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildSteer, type CodeRuleViolation, renderSteer, SECRET_FILE_FINDING_MESSAGE, STEER_FIX_CHARS } from "../../../src/engine/code-rule/code-rule.js";
 import { checkoutPathBoundary } from "../../../src/engine/path-boundary.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
 
 const span = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({
   startByte: 0, endByte: 0, startLine, startColumn, endLine, endColumn,
@@ -142,12 +143,12 @@ describe("buildSteer", () => {
       + "`$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, a space and the line, then `'@ | rerail feedback p -`.");
   });
 
-  it("withholds the message and fix of a finding in a file that links to a secret, judged in its checkout", () => {
+  it("withholds the message and fix of a finding in a file that links to a secret, judged in its checkout", context => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-steer-link-")));
     try {
       writeFileSync(join(root, ".env"), "API_KEY=hunter2\n");
       mkdirSync(join(root, "docs"));
-      symlinkSync("../.env", join(root, "docs", "a.md"));
+      symlinkOrSkip(context, "../.env", join(root, "docs", "a.md"));
       const linked = violation({ path: "docs/a.md", message: "`API_KEY=hunter2` is plaintext", fix: { span: span(0, 0, 0, 7), text: "API_KEY=" } });
       expect(renderSteer([linked])).toContain("`API_KEY=hunter2` is plaintext");
       const steer = buildSteer([linked, violation()], { kind: "edit" }, undefined, checkoutPathBoundary(root).sensitive, "posix");

@@ -15,6 +15,7 @@ import {
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const discovery = vi.hoisted(() => ({
   reads: new Map<string, Array<() => Promise<void>>>(),
@@ -88,7 +89,7 @@ afterEach(async () => {
   discovery.directories.clear();
   await Promise.all(passes.splice(0));
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(removeFolder));
 });
 
 async function workspace(): Promise<string> {
@@ -800,6 +801,9 @@ async function twoBranches(): Promise<string> {
   await writeFile(join(root, "src", "a.py"), "old\n");
   await writeFile(join(root, "src", "gone.py"), "gone\n");
   git(root, "init", "--quiet", "--initial-branch=main");
+  // Git writes the files as committed, LF, whatever the machine sets: Git for Windows sets core.autocrlf=true for every
+  // repository. The describe block on core.autocrlf sets it for its own repositories.
+  git(root, "config", "core.autocrlf", "false");
   git(root, "add", ".");
   git(root, "commit", "--quiet", "-m", "seed");
   git(root, "switch", "--quiet", "-c", "other");
@@ -1043,6 +1047,20 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     git(root, "worktree", "remove", "--force", worktree);
     roots.length = 0;
     await bridge.checkpoint("turn");
+    walk.release();
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const walk = holdDiscovery("directories", join(worktree, "src"));
+    await bridge.checkpoint("turn");
+    await walk.entered;
+    git(root, "worktree", "remove", worktree);
+    roots.length = 0;
     walk.release();
     await bridge.settleWorktreeWalk();
     expect(auditGeneratedEdits).not.toHaveBeenCalled();

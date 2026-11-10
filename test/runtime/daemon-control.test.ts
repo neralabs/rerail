@@ -64,12 +64,19 @@ import {
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
+import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
 
 const originalRerailHome = process.env.RERAIL_HOME;
+
+/**
+ * The engine endpoint every recorded state names: a socket path nothing listens on, or on Windows a named pipe the
+ * daemon control tests hold open, since a lookup there counts a recorded daemon whose pipe is gone as stale.
+ */
+const ENGINE_ENDPOINT = testEngineEndpoint("/nowhere");
 
 function stateFor(overrides: Partial<DaemonState>): DaemonState {
   return {
@@ -79,7 +86,7 @@ function stateFor(overrides: Partial<DaemonState>): DaemonState {
     url: "http://127.0.0.1:1/",
     version: "0.0.0-test",
     databasePath: "/nowhere/rerail.sqlite",
-    kernelSocketPath: "/nowhere/engine.sock",
+    kernelSocketPath: ENGINE_ENDPOINT,
     ui: "dev",
     startedAt: 0,
     packageRoot: "/nowhere/rerail",
@@ -112,13 +119,16 @@ describe("engine service IPC endpoints", () => {
 
 describe("Rerail daemon control", () => {
   let home: string;
+  let releaseEndpoint: () => Promise<void>;
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "rerail-home-"));
     process.env.RERAIL_HOME = join(home, "catalog-home");
+    releaseEndpoint = await holdEngineEndpoint(ENGINE_ENDPOINT);
   });
 
   afterEach(async () => {
+    await releaseEndpoint();
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
     await rm(home, { recursive: true, force: true });

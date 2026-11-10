@@ -20,6 +20,7 @@ import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../../src/e
 import { editSteer } from "../support/steers.js";
 import { encodeRerailEventResult, RERAIL_EVENT_PROTOCOL_PREFACE } from "../../src/runtime/index.js";
 import { runRerailEventStream, serveRerailEventStream } from "../../src/harness/event-stream.js";
+import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -90,7 +91,7 @@ describe("Rerail event stream", () => {
     const checkout = join(home, "checkout");
     await mkdir(checkout);
     await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 4791, url: "http://127.0.0.1:4791/",
-      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1, packageRoot: home }));
+      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: testEngineEndpoint(home), ui: "bundled", startedAt: 1, packageRoot: home }));
     vi.stubEnv("RERAIL_HOME", home);
     cleanups.push(async () => { vi.unstubAllEnvs(); });
     const steer: AdapterDelivery = { sessionId: "s1", requested: "steer", mechanism: "additional-context", content: editSteer("acme:no-print", "Remove print."), ruleIds: ["acme:no-print"], rules: [{ id: "acme:no-print", state: "steered" }] };
@@ -141,7 +142,7 @@ describe("rerail events in a main build", () => {
   it("sends every event to the daemon engine service instead of evaluating in-process", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-main-"));
     cleanups.push(async () => await rm(root, { recursive: true, force: true }));
-    const socketPath = join(root, "engine.sock");
+    const socketPath = testEngineEndpoint(root);
     const received = await fakeEngineService(socketPath);
     routing.isMainRerailBuild.mockReturnValue(true);
     routing.daemonEngineEndpoint.mockResolvedValue({ socketPath, accessToken: "daemon-capability" });

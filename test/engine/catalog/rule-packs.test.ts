@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -27,6 +27,7 @@ import { recordCheckout } from "../../../src/engine/catalog/repository-registry.
 import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
 import { installPack, removeInstalledPacks } from "../../support/installed-packs.js";
 import { repositoryPath } from "../../support/oracles.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -407,7 +408,7 @@ describe("recommendRulePacks", () => {
     }
   });
 
-  it("reads no package.json that is a symlink, outside the repository or to a device, and none larger than 1 MiB", async () => {
+  it("reads no package.json that is a symlink, outside the repository or to a device, and none larger than 1 MiB", async context => {
     const parent = await temporaryDirectory("rerail-manifest-guard-");
     const typescriptManifest = JSON.stringify({ devDependencies: { typescript: "5.9.0" } });
     writeFiles(parent, { "outside/package.json": typescriptManifest });
@@ -419,8 +420,8 @@ describe("recommendRulePacks", () => {
     });
     mkdirSync(join(root, "linked"));
     mkdirSync(join(root, "device"));
-    symlinkSync(join(parent, "outside/package.json"), join(root, "linked/package.json"));
-    symlinkSync("/dev/zero", join(root, "device/package.json"));
+    symlinkOrSkip(context, join(parent, "outside/package.json"), join(root, "linked/package.json"));
+    symlinkOrSkip(context, "/dev/zero", join(root, "device/package.json"));
     execFileSync("git", ["init", "-q", root]);
     execFileSync("git", ["-C", root, "add", "."]);
 

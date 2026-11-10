@@ -21,6 +21,7 @@ import {
   type HostCommandOptions,
 } from "../../src/harness/host-commands.js";
 import { SETUP_CANCELLED } from "../../src/harness/setup-picker.js";
+import { posixShell } from "../support/platform/posix-shell.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -66,7 +67,7 @@ async function launcherPackage(script: string): Promise<string> {
   await mkdir(join(root, "dist", "cli"), { recursive: true });
   await writeFile(join(root, "dist", "cli", "cli.js"), [
     "const { spawnSync } = require(\"node:child_process\");",
-    `const result = spawnSync("/bin/sh", ["-c", ${JSON.stringify(`set -eu\n${script}\n`)}, "sh", ...process.argv.slice(2)], { stdio: "inherit" });`,
+    `const result = spawnSync(${JSON.stringify(posixShell())}, ["-c", ${JSON.stringify(`set -eu\n${script}\n`)}, "sh", ...process.argv.slice(2)], { stdio: "inherit" });`,
     "process.exit(result.status ?? 1);",
     "",
   ].join("\n"));

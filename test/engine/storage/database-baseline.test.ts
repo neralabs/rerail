@@ -164,10 +164,12 @@ describe("the baseline schema", () => {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, "plain text, not a database\n".repeat(200));
     chmodSync(path, 0o644);
+    // The mode as the platform reports it: Windows keeps no permission bits and reports 0o666 for a writable file.
+    const mode = statSync(path).mode;
     const before = readFileSync(path);
     expectRefused(path, unreadable(path, "not an SQLite database"));
     expect(readFileSync(path)).toEqual(before);
-    expect(statSync(path).mode & 0o777).toBe(0o644);
+    expect(statSync(path).mode).toBe(mode);
   });
 
   // A file another program wrote keeps its rollback journal and mode: a writable open refuses it before it
@@ -182,10 +184,11 @@ describe("the baseline schema", () => {
       other.close();
     }
     chmodSync(path, 0o644);
+    const mode = statSync(path).mode;
     const before = readFileSync(path);
     expectRefused(path, unreadable(path, "no Rerail schema version"));
     expect(readFileSync(path)).toEqual(before);
-    expect(statSync(path).mode & 0o777).toBe(0o644);
+    expect(statSync(path).mode).toBe(mode);
     expect(existsSync(`${path}-wal`)).toBe(false);
     const reopened = new Database(path, { readonly: true });
     try {
@@ -475,12 +478,14 @@ describe("the migration path", () => {
     settledBytes(path);
     const before = readFileSync(path);
     chmodSync(path, 0o400);
+    // Read-only as the platform reports it: 0o444 on Windows, which keeps a read-only flag and no permission bits.
+    const mode = statSync(path).mode;
     try {
       // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(() => listRepositoryRules(openRerailDatabase(path, { readonly: true }), loadRuleCatalog(), "repo"))
           .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
-        expect(statSync(path).mode & 0o777).toBe(0o400);
+        expect(statSync(path).mode).toBe(mode);
       }
     } finally {
       chmodSync(path, 0o600);
@@ -639,12 +644,13 @@ describe("the migration path", () => {
     stampedFile(locked, SETTING_ROW);
     settledBytes(locked);
     chmodSync(locked, 0o400);
+    const lockedMode = statSync(locked).mode;
     try {
       // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(() => openRerailDatabase(locked, { readonly: true, migrations: [noteStep({ count: 0 })] }))
           .toThrow(/needs this Rerail's schema steps \(add-rule-settings-note\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
-        expect(statSync(locked).mode & 0o777).toBe(0o400);
+        expect(statSync(locked).mode).toBe(lockedMode);
       }
     } finally {
       chmodSync(locked, 0o600);

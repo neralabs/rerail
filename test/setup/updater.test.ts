@@ -438,11 +438,14 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
 
     expect(await readlink(updater.currentLink)).toBe(installed.current.packageRoot);
     const shim = await readFile(updater.launcherPath, "utf8");
-    expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
-    expect(shim).toContain(`'${join(updater.currentLink, "dist", "cli", "cli.js")}'`);
-    expect(shim).toContain(`NODE='${pinnedNodePath()}'`);
-    expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
     expect(shim).toBe(launcherShim(updater.currentLink, pinnedNodePath()));
+    // The sh launcher; on Windows the launcher is `rerail.cmd`, whose form the Windows junction test below checks.
+    if (process.platform !== "win32") {
+      expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
+      expect(shim).toContain(`'${join(updater.currentLink, "dist", "cli", "cli.js")}'`);
+      expect(shim).toContain(`NODE='${pinnedNodePath()}'`);
+      expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
+    }
 
     // Re-running is a no-op: same root, nothing reinstalled, launcher untouched.
     const again = await updater.install();

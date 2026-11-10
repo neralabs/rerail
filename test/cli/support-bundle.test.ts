@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { defaultRerailDatabasePath, events, openRerailDatabase, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
 import { runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 
 const directories: string[] = [];
 const fileRerailHome = process.env.RERAIL_HOME;
@@ -304,7 +305,8 @@ describe("rerail support-bundle", () => {
     expect(bundle.problems).toEqual([expect.stringContaining("steered 1 time")]);
   });
 
-  it("writes the file for the person's user only", async () => {
+  it("writes the file for the person's user only", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
     const world = await reportedWorld();
     await run(world);
     expect(statSync(world.output).mode & 0o777).toBe(0o600);

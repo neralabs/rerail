@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -7,6 +7,8 @@ import { PassThrough, Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE } from "../../src/runtime/index.js";
 import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
+import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { linkFolder } from "../support/platform/links.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
 /** The Rerail home and which daemon pid answers on each local port; a step may change either to stage a restart. */
@@ -71,7 +73,7 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
     url: `http://127.0.0.1:${daemon.port}/`,
     version: "0.0.0",
     databasePath: join(home, "rerail.sqlite"),
-    kernelSocketPath: daemon.kernelSocketPath ?? "/tmp/rerail-bridge-test.sock",
+    kernelSocketPath: daemon.kernelSocketPath ?? testEngineEndpoint(home),
     ui: "bundled",
     startedAt: daemon.startedAt ?? 0,
     packageRoot: "/tmp/rerail-bridge-test-package",
@@ -252,7 +254,7 @@ describe("Rerail MCP bridge", () => {
       const checkout = join(root, "dépôt 項目");
       await mkdir(checkout);
       const link = join(root, "link");
-      await symlink(checkout, link);
+      linkFolder(checkout, link);
       const headers: string[] = [];
       const bodies: string[] = [];
       const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });

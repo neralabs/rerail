@@ -132,12 +132,13 @@ describe("buildArchive", () => {
     scratch.push(base);
     const file = join(base, "data.tar");
     writeFileSync(file, buildArchive([...files, ...long]).tar);
-    const listed = spawnSync("tar", ["-tf", file], { encoding: "utf8" });
+    // Paths relative to the folder: GNU tar, first on PATH in Git Bash on Windows, reads `C:` in an absolute path as a host.
+    const listed = spawnSync("tar", ["-tf", "data.tar"], { cwd: base, encoding: "utf8" });
     expect(listed.status).toBe(0);
     expect(listed.stdout.trim().split("\n").sort()).toEqual([...files, ...long].map(({ path }) => path).sort());
     const out = join(base, "out");
     mkdirSync(out);
-    expect(spawnSync("tar", ["-xf", file, "-C", out]).status).toBe(0);
+    expect(spawnSync("tar", ["-xf", "data.tar", "-C", "out"], { cwd: base }).status).toBe(0);
     for (const { path, bytes } of [...files, ...long]) expect(readFileSync(join(out, path)).equals(bytes)).toBe(true);
   });
 

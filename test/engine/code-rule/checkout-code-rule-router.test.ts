@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +22,7 @@ import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import { checkouts, repositoryAudits } from "../../../src/engine/storage/schema.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -312,7 +313,7 @@ describe("CheckoutCodeRuleRouter", () => {
     expect(violations(audits)).toEqual([]);
   });
 
-  it("rejects a symlink whose target leaves its checkout", async () => {
+  it("rejects a symlink whose target leaves its checkout", async context => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
     const session = await repository(join(root, "session"));
@@ -320,7 +321,7 @@ describe("CheckoutCodeRuleRouter", () => {
     setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
     setUpTestRepository(sibling, { library: [file(needle("test:sibling", "SIBLING"))] }, databasePath);
     await writeFile(join(sibling, "api", "x.py"), "NEEDLE\n");
-    await symlink(join(sibling, "api", "x.py"), join(session, "api", "escape.py"));
+    symlinkOrSkip(context, join(sibling, "api", "x.py"), join(session, "api", "escape.py"));
     const { recorder, audits } = recordingAudits();
     const auditor = router(session, databasePath, recorder);
 
@@ -431,7 +432,7 @@ describe("CheckoutCodeRuleRouter", () => {
     expect(violations(audits)).toEqual([{ checkout: session, path: "api/z.py", code: "SESSION", mode: "block" }]);
   });
 
-  it("rejects a parent's file that is a symlink into a nested checkout, which the parent's rules would otherwise judge", async () => {
+  it("rejects a parent's file that is a symlink into a nested checkout, which the parent's rules would otherwise judge", async context => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
     const { parent, sub } = await withSubmodule(root);
@@ -440,7 +441,7 @@ describe("CheckoutCodeRuleRouter", () => {
     await mkdir(join(sub, "api"), { recursive: true });
     await writeFile(join(sub, "api", "b.py"), "NEEDLE\n");
     // Lexically `api/link.py` is the parent's; really it is the submodule's `api/b.py`.
-    await symlink(join(sub, "api", "b.py"), join(parent, "api", "link.py"));
+    symlinkOrSkip(context, join(sub, "api", "b.py"), join(parent, "api", "link.py"));
     const { recorder, audits } = recordingAudits();
     const auditor = router(parent, databasePath, recorder);
 

@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadRuleCatalog } from "../../src/engine/index.js";
 import type { NpmRunner } from "../../src/runtime/index.js";
@@ -66,9 +66,11 @@ describe("npmPackStore", () => {
       { id: "typescript", directory: join(run, "typescript", "node_modules", "@neralabs", "rerail-pack-typescript") },
       { id: "complexity", directory: join(run, "complexity", "node_modules", "@neralabs", "rerail-pack-complexity") },
     ]);
-    for (const [args, id] of calls.map((args, index) => [args, ["typescript", "complexity"][index]!] as const)) {
+    // The installs run at once, and each reaches npm after its own setup, so they may call it in either order.
+    expect(calls.map(prefixOf).sort()).toEqual([join(run, "complexity"), join(run, "typescript")]);
+    for (const args of calls) {
+      const id = basename(prefixOf(args));
       expect(args[0]).toBe("install");
-      expect(prefixOf(args)).toBe(join(run, id));
       expect(args).toContain("--ignore-scripts");
       expect(specsOf(args)).toEqual([`@neralabs/rerail-pack-${id}@latest`]);
     }

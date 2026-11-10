@@ -9,5 +9,6 @@ test("a child that exits without reading its input settles the run instead of en
   const settled = await new ProcessCommandRunner()
     .run([process.execPath, "-e", "process.exit(3)"], { input })
     .then((result) => result.exitCode, (error: NodeJS.ErrnoException) => error.code);
-  assert.ok(settled === 3 || settled === "EPIPE", `settled with ${String(settled)}`);
+  // Windows reports the write to a pipe the child closed as EOF, where Linux and macOS report EPIPE.
+  assert.ok(settled === 3 || settled === "EPIPE" || settled === "EOF", `settled with ${String(settled)}`);
 });
