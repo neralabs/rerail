@@ -942,7 +942,15 @@ impl Component<'_> {
                 st[rel][id as usize] |= P;
                 lv[rel][id as usize] = l;
             }
-            (st, lv)
+            if self.carried_fits(&st) {
+                (st, lv)
+            } else {
+                eprintln!("recursive spike:   levels, checked: the carried state is stale, built again");
+                let e = self.ev.emitted();
+                let r = self.derive(OLD);
+                self.ev.emitted.set(e);
+                r
+            }
         } else {
             let e = self.ev.emitted();
             let r = self.derive(OLD);
@@ -1252,6 +1260,13 @@ impl Component<'_> {
         n
     }
 
+    /// Whether a carried state's rows are the old rows (else it is stale: the component moved without it).
+    fn carried_fits(&self, st: &[Vec<u8>]) -> bool {
+        self.scc.iter().all(|&rel| {
+            (0..self.ev.stores[rel].len() as usize).all(|i| st[rel].get(i).is_some_and(|s| s & P != 0) == self.old_p[rel].get(i).is_some_and(|s| s & P != 0))
+        })
+    }
+
     /// The component's name across runs: its relations, sorted.
     fn key(&self) -> String {
         let mut names: Vec<&str> = self.scc.iter().map(|&r| self.ev.names[r].as_str()).collect();
@@ -1265,7 +1280,7 @@ impl Component<'_> {
         // each row's supports from below.
         let (c0, e0) = (cpu(), self.ev.emitted());
         let carried = if std::env::var_os("RERAIL_SPIKE_RECURSIVE_CARRY").is_some() { CARRY.lock().unwrap().get(&self.key()).cloned() } else { None };
-        let was_carried = carried.is_some();
+        let mut was_carried = carried.is_some();
         let (mut st, mut lv, mut cnt) = if let Some(map) = carried {
             let mut placed: Vec<(usize, u32, u32, u32)> = Vec::new();
             for &rel in &self.scc.clone() {
@@ -1282,7 +1297,15 @@ impl Component<'_> {
                 lv[rel][id as usize] = l;
                 cnt[rel][id as usize] = c;
             }
-            (st, lv, cnt)
+            if self.carried_fits(&st) {
+                (st, lv, cnt)
+            } else {
+                eprintln!("recursive spike:   levels: the carried state is stale, built again");
+                was_carried = false;
+                let (st, lv) = self.derive(OLD);
+                let cnt: Vec<Vec<u32>> = self.ev.stores.iter().map(|s| vec![0; s.len() as usize]).collect();
+                (st, lv, cnt)
+            }
         } else {
             let (st, lv) = self.derive(OLD);
             let cnt: Vec<Vec<u32>> = self.ev.stores.iter().map(|s| vec![0; s.len() as usize]).collect();
@@ -1753,11 +1776,22 @@ pub(in crate::code_rule_dsl) fn run(
         let new_of = |rel: &str| derived.iter().find(|(r, _, _)| r == rel).map(|(_, w, h)| rel_rows(h, *w)).or_else(|| inputs.iter().find(|(r, _)| r == rel).map(|(_, s)| rows_of(s.as_ref())));
         let old_of = |rel: &str| old.kept(rel).map(|(h, w)| rel_rows(h, w)).or_else(|| old.input_source(rel).map(|s| rows_of(s.as_ref())));
         let old_rows: usize = scc.iter().filter_map(|r| old_of(r)).map(|r| r.len()).sum();
+        // A component not maintained this run loses what it carried: its rows moved without it.
+        let forget = || {
+            let mut names: Vec<&str> = scc.iter().map(String::as_str).collect();
+            names.sort_unstable();
+            let key = names.join(",");
+            let mut carry = CARRY.lock().unwrap();
+            carry.remove(&key);
+            carry.remove(&format!("check:{key}"));
+        };
         if old_rows < min_rows {
+            forget();
             continue;
         }
         // `RERAIL_SPIKE_RECURSIVE_ONLY=r`: only the component holding relation `r`.
         if std::env::var("RERAIL_SPIKE_RECURSIVE_ONLY").is_ok_and(|r| !scc.contains(&r)) {
+            forget();
             continue;
         }
         let lattices: Vec<&String> = scc.iter().chain(&reads).filter(|r| program.lattice.contains_key(*r)).collect();
@@ -1808,6 +1842,7 @@ pub(in crate::code_rule_dsl) fn run(
         }
         if let Some(why) = skip {
             eprintln!("recursive spike: component of {} relations skipped: {why}", scc.len());
+            forget();
             continue;
         }
         let rel_of = |r: &str| index.get(r).copied();
@@ -1830,6 +1865,7 @@ pub(in crate::code_rule_dsl) fn run(
             Ok(c) => c,
             Err(why) => {
                 eprintln!("recursive spike: component of {} relations skipped: {why}", scc.len());
+                forget();
                 continue;
             }
         };

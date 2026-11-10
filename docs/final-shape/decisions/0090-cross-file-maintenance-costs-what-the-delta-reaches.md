@@ -474,6 +474,62 @@ The caveats:
 - Emitted rows stand in for derivations.
 - The witness is built from scratch here; how it is kept across runs (with the kept rows, under 0096) is not built.
 
+## Pressure-tested: levels over 26 steps, carried from run to run (2026-11-09)
+
+The runs above build each algorithm's state from scratch at every step. These runs carry it from step to step, as
+a real session would (`RERAIL_SPIKE_RECURSIVE_CARRY`). A level scheme can drift there: its levels inflate as edits
+pile up, and fewer supports count as being from below.
+
+**The replay.** Steps 1–20 are O125's recorded edits. Steps 21–26 are made up to be the worst case for any
+counting scheme:
+
+| steps | change |
+| --- | --- |
+| 21, 22 | delete, then restore, `l1400_types/__init__.py` (47 importers) |
+| 23, 24 | delete, then restore, `purity.py` and `lazy_mixin.py` (51 importers each) |
+| 25, 26 | delete, then restore, the whole `l2055_lazy_result` package (24 of 78 files) |
+
+**A fourth algorithm.** *Levels, checked*: levels without counts.
+- **What it keeps.** Each row keeps only its level, and every present row has a derivation from rows below it.
+- **Deletion.** A row that lost a derivation is checked in level order. It stays when a derivation from rows below
+  it still holds. Those rows are already decided, so the check is exact and one step deep, where B/F's search is
+  open-ended.
+- **Insertion.** New rows go above every level held (the maximum plus the wave). So no firing has to name its
+  premises, and the first levels are the waves of an ordinary derive: there is no counting pass.
+- **Cost.** 4 bytes a row.
+
+All 39 components, CPU seconds summed over them. All five algorithms equal the derive from scratch at every step,
+with every count and every below-support verified.
+
+| steps | recompute | DRed | levels | B/F | levels, checked |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| edits 1–20 | 83.8 | 36.3 | 18.2 | 21.6 | **12.9** |
+| toggles 21–26 | 23.4 | 20.0 | 28.2 | 23.8 | 23.6 |
+| toggles, recompute when cheaper | — | **14.8** | 17.5 | 15.9 | 15.6 |
+
+What the data says:
+
+- **Edits.** *Levels, checked* is the cheapest at nearly every step of 1–20, at 2.8× less than DRed and 1.4× less
+  than counted levels. Its levels inflate as edits pile up (in the 58-relation component, a mean of 219 and a max
+  of 421 by step 25, against 5 and 22 fresh), and that costs it nothing measurable. Counted levels barely drift
+  (mean 5.44 against 5.13 fresh at step 25).
+- **Mass deletes.** At steps 23 and 25 every maintained algorithm costs more than deriving again (5–8 s against
+  2.6–3.0 s). So the §4 threshold is needed whichever algorithm is chosen. With it, DRed is about 5% ahead of
+  *levels, checked* on the toggles.
+- **Overall.** Over the 26 steps, *levels, checked* takes 28.5 s against DRed's 51.1 s (with the threshold), and it
+  keeps 1.8–1.9 MB.
+
+**Choice.** For recursive strata: *levels, checked*, with §4's derive-again threshold for large changes. DRed stays
+for the non-recursive strata.
+
+Pitfalls found on the way, beyond those above:
+- **Carried state goes stale.** A component skipped one run (here, under the spike's size floor) moved without its
+  state, and both level schemes then missed 297 rows. Carried state must be dropped whenever a run does not
+  maintain it, and checked against the kept rows when it is read.
+- **The engine's kept rows drift.** They include more and more rows a derive from scratch does not produce: 2 at
+  step 3, 16 by step 7, with the per-step equality check off (`O125_NO_FULL`). This is open; it looks like a defect
+  in the engine's DRed path.
+
 ## What the prior work says
 
 - **Target architecture (03):**
