@@ -1048,6 +1048,33 @@ impl Model {
                     rows /= self.ndv_or_1(&a.rel, c);
                 }
             }
+            // A relation of the component being solved, probed by a value an earlier step bound: a column's fanout
+            // is the rows per value it holds (`fan`), so a probe is priced as if it always hits. Most do not where
+            // the binding ranges over more values than the column holds: `fbind`'s `fcall($c, $f, $i, $a)` by `$a`,
+            // 399 rows, probed by `pv($a, "inst", $k)`'s 280,000, was priced at a row a probe and planned after
+            // `tfix` by `$k` (19 M rows of work for 220). The probes that hit are the column's share of the binding's
+            // values (containment): its distinct values over the binding's, where both are measured (live counts),
+            // the binding's by the fewest distinct values of an atom of bound variables that holds it.
+            if stats.solving.contains(&a.rel) {
+                let mut hit = 1.0f64;
+                for &c in &cols {
+                    let Term::Var(v) = &a.args[c] else { continue };
+                    let Some(&here) = self.ndv.get(&(a.rel.clone(), c)) else { continue };
+                    let from = body
+                        .iter()
+                        .filter_map(|l| match l {
+                            Literal::Atom(b) if !b.neg && !std::ptr::eq(b, a) && b.vars().iter().all(|x| bound.contains(x)) => {
+                                b.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).and_then(|c2| self.ndv.get(&(b.rel.clone(), c2)).copied())
+                            }
+                            _ => None,
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    if from.is_finite() && from > here.max(1.0) {
+                        hit = hit.min(here.max(1.0) / from);
+                    }
+                }
+                rows *= hit;
+            }
             // Every column bound: a membership test, at most one row of a set.
             if cols.len() == a.args.len() && !prog.lattice.contains_key(&a.rel) {
                 rows = rows.min(1.0);

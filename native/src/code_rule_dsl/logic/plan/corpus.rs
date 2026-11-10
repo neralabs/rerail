@@ -2623,7 +2623,7 @@ fn run_observed(
             }
         };
         let stopped = 'docs: {
-        for (i, (d, path, module)) in asked.iter().enumerate() {
+        for (i, (d, path, _)) in asked.iter().enumerate() {
             let last = i + 1 == asked.len();
             worker_doing.set("parse");
             let made = if helpers > 0 { ordered.take(i) } else { build(i) };
