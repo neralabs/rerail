@@ -10,6 +10,7 @@
  * `floor` and an older build keeps opening the file. Which steps a file has run is recorded in
  * `schema_migrations`; an id this build does not know (a newer build's step) is left alone.
  */
+import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { RerailDatabase } from "./database.js";
 import { schemaMigrations } from "./schema.js";
@@ -125,7 +126,54 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       for (const statement of LOGGED_BY_AUDIT_MODE_REPAIR) database.run(sql.raw(statement));
     },
   },
+  {
+    // An audit names its rule provenance in `audit_rule_provenances`, which keeps each distinct one once, instead of
+    // holding a copy in `rule_provenance_json` (221 KB for 767 rules, written again by every audited edit). Steps run
+    // before the DDL, so the table is created here as this step introduced it; then the column, and the audits a file
+    // holds move their provenance there (`moveRuleProvenances`). No floor, by choice: builds at the baseline keep
+    // opening the file, so agent hosts on different installed versions keep sharing it. An older build writes its
+    // audits' provenance inline as before, and this build reads it there; for the audits this build wrote or moved it
+    // reads `[]`, which only its audit API and remote sink show, as its dashboard reads no provenance.
+    id: "audit-rule-provenance-once",
+    up(database) {
+      if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audits'`).length === 0) return;
+      for (const statement of AUDIT_RULE_PROVENANCES_TABLE) database.run(sql.raw(statement));
+      addColumn(database, "audits", "rule_provenance_id", "integer");
+      moveRuleProvenances(database);
+    },
+  },
 ];
+
+/** `audit_rule_provenances` and its digest index as `audit-rule-provenance-once` introduced them. */
+const AUDIT_RULE_PROVENANCES_TABLE: readonly string[] = [
+  "CREATE TABLE IF NOT EXISTS `audit_rule_provenances` (\n\t`provenance_id` integer PRIMARY KEY NOT NULL,\n\t`digest` text NOT NULL,\n\t`rule_provenance_json` text NOT NULL,\n\tCONSTRAINT \"audit_rule_provenances_json\" CHECK(json_type(\"audit_rule_provenances\".\"rule_provenance_json\") = 'array')\n)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS `audit_rule_provenances_digest_unique` ON `audit_rule_provenances` (`digest`)",
+];
+
+/** How many audits `moveRuleProvenances` reads at a time, so it never holds every audit's provenance in memory. */
+const MOVED_PER_BATCH = 100;
+
+/**
+ * `audit-rule-provenance-once`'s move: each audit with its provenance inline names the stored copy of that JSON text
+ * instead, stored first when no audit before it had the same text, and keeps `[]` inline. The text moves as it is, so
+ * every audit reads the same provenance after. Its key is the SHA-256 of the text, as the audit store keys the
+ * provenance it writes, so the store's later audits of the same rules name the copy moved here. Each batch leaves the
+ * query, so the next one reads on from the first audit not moved yet.
+ */
+function moveRuleProvenances(database: RerailDatabase): void {
+  const client = database.$client;
+  const inline = client.prepare<[number], { auditId: string; json: string }>(`SELECT audit_id AS auditId, rule_provenance_json AS json
+    FROM audits WHERE rule_provenance_id IS NULL AND rule_provenance_json <> '[]' LIMIT ?`);
+  const stored = client.prepare<[string], number>("SELECT provenance_id FROM audit_rule_provenances WHERE digest = ?").pluck();
+  const store = client.prepare<[string, string]>("INSERT INTO audit_rule_provenances (digest, rule_provenance_json) VALUES (?, ?)");
+  const name = client.prepare<[number, string]>("UPDATE audits SET rule_provenance_id = ?, rule_provenance_json = '[]' WHERE audit_id = ?");
+  for (let rows = inline.all(MOVED_PER_BATCH); rows.length > 0; rows = inline.all(MOVED_PER_BATCH)) {
+    for (const { auditId, json } of rows) {
+      const digest = createHash("sha256").update(json).digest("hex");
+      name.run(stored.get(digest) ?? Number(store.run(digest, json).lastInsertRowid), auditId);
+    }
+  }
+}
 
 /**
  * `audit-violations-logged-by-audit-mode`'s repair: every row of an audit in Log mode becomes `logged`, and each

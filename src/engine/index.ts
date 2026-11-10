@@ -121,6 +121,7 @@ export { AUDIT_HISTORY_TRIGGER_STATEMENTS } from "./storage/audit-history.js";
 export {
   auditRequests,
   auditResultPages,
+  auditRuleProvenances,
   auditRuleSetRules,
   auditRuleSets,
   auditRuleSetUses,
