@@ -29,25 +29,24 @@ k6("dictionary").
 .decl m116(n: node)
 .decl m117(n: node)
 .decl m118(n: node)
-.decl m119(n: node)
-.decl m126(n: node)
+.decl m125(n: node)
 .decl m13(n: node)
+.decl m130(n: node)
 .decl m131(n: node)
-.decl m132(n: node)
-.decl m134(n: node)
-.decl m136(n: node)
-.decl m138(n: node)
-.decl m140(n: node)
+.decl m133(n: node)
+.decl m135(n: node)
+.decl m137(n: node)
+.decl m139(n: node)
+.decl m143(n: node)
 .decl m144(n: node)
-.decl m145(n: node)
-.decl m147(n: node)
-.decl m149(n: node)
-.decl m151(n: node)
+.decl m146(n: node)
+.decl m148(n: node)
+.decl m150(n: node)
+.decl m152(n: node)
 .decl m153(n: node)
 .decl m154(n: node)
-.decl m155(n: node)
+.decl m162(n: node)
 .decl m163(n: node)
-.decl m164(n: node)
 .decl m19(n: node)
 .decl m20(n: node)
 .decl m22(n: node)
@@ -79,7 +78,6 @@ k6("dictionary").
 .decl m96(n: node)
 .decl m97(n: node)
 .decl m99(n: node)
-.decl never(n: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
 .decl runtime_seed_kind(k: symbol)
@@ -169,35 +167,33 @@ m103(n) :- field(v102, "name", n), node(_, v102, "keyword_argument", _, _).
 m105(n) :- child(v104, n, _), node(_, v104, "parameters", _, _).
 m106(n) :- node(_, n, "function_definition", _, _), field(n, "name", v75), node(_, v75, "identifier", _, _), text(v75, v76), v76 = "compile", inside(v77, n, k1), node(_, v77, "identifier", _, _), text(v77, v78), v78 = "ReadThroughAuthorityOwnedTableRecord", !m81(v77), !m83(v77), !m85(v77), !m87(v77), !m89(v77).
 m106(n) :- node(_, n, "decorated_definition", _, _), child(n, v90, _), node(_, v90, "function_definition", _, _), field(v90, "name", v91), node(_, v91, "identifier", _, _), text(v91, v92), v92 = "compile", inside(v93, v90, k1), node(_, v93, "identifier", _, _), text(v93, v94), v94 = "ReadThroughAuthorityOwnedTableRecord", !m97(v93), !m99(v93), !m101(v93), !m103(v93), !m105(v93).
-m116(n) :- child(n, v113, _), node(_, v113, "function_definition", _, _), field(v113, "name", v114), node(_, v114, "identifier", _, _), text(v114, v115), v115 = "compile".
-m116(n) :- never(n).
-m117(n) :- node(_, n, "function_definition", _, _), field(n, "name", v111), node(_, v111, "identifier", _, _), text(v111, v112), v112 = "compile".
-m117(n) :- node(_, n, "decorated_definition", _, _), m116(n).
-m118(n) :- child(v108, n, v109), child(v108, v107, v110), v110 < v109, m117(v107).
-m119(n) :- field(n, "body", v73), child(v73, v74, _), m106(v74), !m118(v74).
-violation("data-layer-readthrough-authority-architecture", "durable-ownership", "RTA006", p, l) :- node(_, n, "class_definition", _, _), field(n, "name", v71), node(_, v71, "identifier", _, _), text(v71, v72), v72 = "ReadThroughDeleteChangedPrincipalRowsStep", !m119(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m126(n) :- field(n, "type", v125).
-m131(n) :- node(_, n, "import_statement", _, _).
-m131(n) :- node(_, n, "import_from_statement", _, _).
-m132(n) :- inside(n, v130, k3), m131(v130).
-m134(n) :- field(v133, "name", n), node(_, v133, "function_definition", _, _).
-m136(n) :- field(v135, "name", n), node(_, v135, "class_definition", _, _).
-m138(n) :- field(v137, "name", n), node(_, v137, "keyword_argument", _, _).
-m140(n) :- child(v139, n, _), node(_, v139, "parameters", _, _).
-m144(n) :- node(_, n, "import_statement", _, _).
-m144(n) :- node(_, n, "import_from_statement", _, _).
-m145(n) :- inside(n, v143, k3), m144(v143).
-m147(n) :- field(v146, "name", n), node(_, v146, "function_definition", _, _).
-m149(n) :- field(v148, "name", n), node(_, v148, "class_definition", _, _).
-m151(n) :- field(v150, "name", n), node(_, v150, "keyword_argument", _, _).
-m153(n) :- child(v152, n, _), node(_, v152, "parameters", _, _).
-m154(n) :- inside(v141, n, k6), node(_, v141, "identifier", _, _), text(v141, v142), v142 = "established_at", !m145(v141), !m147(v141), !m149(v141), !m151(v141), !m153(v141).
-m155(n) :- inside(v122, n, k1), node(_, v122, "assignment", _, _), field(v122, "left", v123), node(_, v123, "identifier", _, _), text(v123, v124), v124 = "lease_conflict_update", !m126(v122), field(v122, "right", v127), node(_, v127, "dictionary", _, _), inside(v128, v127, k6), node(_, v128, "identifier", _, _), text(v128, v129), v129 = "last_authenticated", !m132(v128), !m134(v128), !m136(v128), !m138(v128), !m140(v128), !m154(v127).
-violation("data-layer-readthrough-authority-architecture", "preserve-establishment", "RTA009", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v120), node(_, v120, "identifier", _, _), text(v120, v121), v121 = "_remote_authority_lease_steps", !m155(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m163(n) :- node(_, n, "identifier", _, _), text(n, v160), v160 = "require_publication_precondition".
-m163(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v161), node(_, v161, "identifier", _, _), text(v161, v162), v162 = "require_publication_precondition".
-m164(n) :- inside(v158, n, k1), node(_, v158, "call", _, _), field(v158, "function", v159), m163(v159).
-violation("data-layer-readthrough-authority-architecture", "publication-precondition", "RTA007", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v156), node(_, v156, "identifier", _, _), text(v156, v157), (v157 = "_lower_generic_cache_first_object" ; v157 = "_lower_generic_rowset_merge"), !m164(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m116(n) :- node(_, n, "function_definition", _, _), field(n, "name", v111), node(_, v111, "identifier", _, _), text(v111, v112), v112 = "compile".
+m116(n) :- node(_, n, "decorated_definition", _, _), child(n, v113, _), node(_, v113, "function_definition", _, _), field(v113, "name", v114), node(_, v114, "identifier", _, _), text(v114, v115), v115 = "compile".
+m117(n) :- child(v108, n, v109), child(v108, v107, v110), v110 < v109, m116(v107).
+m118(n) :- field(n, "body", v73), child(v73, v74, _), m106(v74), !m117(v74).
+violation("data-layer-readthrough-authority-architecture", "durable-ownership", "RTA006", p, l) :- node(_, n, "class_definition", _, _), field(n, "name", v71), node(_, v71, "identifier", _, _), text(v71, v72), v72 = "ReadThroughDeleteChangedPrincipalRowsStep", !m118(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m125(n) :- field(n, "type", v124).
+m130(n) :- node(_, n, "import_statement", _, _).
+m130(n) :- node(_, n, "import_from_statement", _, _).
+m131(n) :- inside(n, v129, k3), m130(v129).
+m133(n) :- field(v132, "name", n), node(_, v132, "function_definition", _, _).
+m135(n) :- field(v134, "name", n), node(_, v134, "class_definition", _, _).
+m137(n) :- field(v136, "name", n), node(_, v136, "keyword_argument", _, _).
+m139(n) :- child(v138, n, _), node(_, v138, "parameters", _, _).
+m143(n) :- node(_, n, "import_statement", _, _).
+m143(n) :- node(_, n, "import_from_statement", _, _).
+m144(n) :- inside(n, v142, k3), m143(v142).
+m146(n) :- field(v145, "name", n), node(_, v145, "function_definition", _, _).
+m148(n) :- field(v147, "name", n), node(_, v147, "class_definition", _, _).
+m150(n) :- field(v149, "name", n), node(_, v149, "keyword_argument", _, _).
+m152(n) :- child(v151, n, _), node(_, v151, "parameters", _, _).
+m153(n) :- inside(v140, n, k6), node(_, v140, "identifier", _, _), text(v140, v141), v141 = "established_at", !m144(v140), !m146(v140), !m148(v140), !m150(v140), !m152(v140).
+m154(n) :- inside(v121, n, k1), node(_, v121, "assignment", _, _), field(v121, "left", v122), node(_, v122, "identifier", _, _), text(v122, v123), v123 = "lease_conflict_update", !m125(v121), field(v121, "right", v126), node(_, v126, "dictionary", _, _), inside(v127, v126, k6), node(_, v127, "identifier", _, _), text(v127, v128), v128 = "last_authenticated", !m131(v127), !m133(v127), !m135(v127), !m137(v127), !m139(v127), !m153(v126).
+violation("data-layer-readthrough-authority-architecture", "preserve-establishment", "RTA009", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v119), node(_, v119, "identifier", _, _), text(v119, v120), v120 = "_remote_authority_lease_steps", !m154(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m162(n) :- node(_, n, "identifier", _, _), text(n, v159), v159 = "require_publication_precondition".
+m162(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v160), node(_, v160, "identifier", _, _), text(v160, v161), v161 = "require_publication_precondition".
+m163(n) :- inside(v157, n, k1), node(_, v157, "call", _, _), field(v157, "function", v158), m162(v158).
+violation("data-layer-readthrough-authority-architecture", "publication-precondition", "RTA007", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v155), node(_, v155, "identifier", _, _), text(v155, v156), (v156 = "_lower_generic_cache_first_object" ; v156 = "_lower_generic_rowset_merge"), !m163(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 violation("data-layer-readthrough-authority-architecture", "runtime-seed", "RTA002", p, l) :- node(d, s, k, _, _), runtime_seed_kind(k), value(s, "__readthrough_local_overlays"), value_type_of(s, "str"), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(s, l).
 complete_identity_compile(g) :- node(_, g, "function_definition", _, _), field(g, "name", nm), node(_, nm, "identifier", _, _), text(nm, "compile").
 complete_identity_def(m, m) :- complete_identity_compile(m).

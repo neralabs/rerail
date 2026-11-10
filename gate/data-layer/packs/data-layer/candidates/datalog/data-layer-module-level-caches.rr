@@ -160,19 +160,17 @@ list_scopes("class_definition"). list_scopes("function_definition"). list_scopes
 .decl m436(n: node)
 .decl m446(n: node)
 .decl m448(n: node)
-.decl m449(n: node)
-.decl m453(n: node)
+.decl m452(n: node)
+.decl m456(n: node)
 .decl m457(n: node)
-.decl m458(n: node)
 .decl m46(n: node)
-.decl m462(n: node)
+.decl m461(n: node)
+.decl m463(n: node)
 .decl m464(n: node)
-.decl m465(n: node)
-.decl m468(n: node)
-.decl m472(n: node)
-.decl m476(n: node)
-.decl m477(n: node)
-.decl m481(n: node)
+.decl m467(n: node)
+.decl m474(n: node)
+.decl m475(n: node)
+.decl m479(n: node)
 .decl m50(n: node)
 .decl m54(n: node)
 .decl m55(n: node)
@@ -195,7 +193,6 @@ list_scopes("class_definition"). list_scopes("function_definition"). list_scopes
 .decl name(n: node, s: symbol)
 .decl named_list_name(v: node)
 .decl named_list_value(n: node)
-.decl never(n: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl option_on(name: symbol)
@@ -549,26 +546,22 @@ m446(n) :- node(_, n, "attribute", _, _), field(n, "object", v442), node(_, v442
 m448(n) :- m446(n).
 m448(n) :- node(_, n, "call", _, _), field(n, "function", v447), u440(v447).
 u440(n) :- m448(n).
-m449(n) :- child(n, v439, _), u440(v439).
-m449(n) :- never(n).
-m453(n) :- inside(n, v452, k3), node(_, v452, "class_definition", _, _).
-m457(n) :- inside(n, v456, k3), node(_, v456, "class_definition", _, _).
-m458(n) :- field(n, "name", v450), node(_, v450, "identifier", _, _), text(v450, v451), v451 = "_commit_branch_domain_metadata", !m453(n).
-m458(n) :- field(n, "name", v454), node(_, v454, "identifier", _, _), text(v454, v455), v455 = "_commit_branch_tree_validation_type_filters", !m457(n).
-m462(n) :- node(_, n, "module", _, _), node_text(n, v459), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v459).
-m462(n) :- inside(n, v460, k1), node(_, v460, "module", _, _), node_text(v460, v461), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v461).
-violation("data-layer-module-level-caches", "decorator-file-0", "lru_cache", p, l) :- node(_, n, "function_definition", _, _), !m433(n), !m436(n), child(v437, n, _), node(_, v437, "decorated_definition", _, _), child(v437, v438, _), node(_, v438, "decorator", _, _), m449(v438), !m458(n), m462(n), doc(d, p, m), p = "impl/common/l2070_server_plan/steps/intent_transaction.py", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m464(n) :- node(_, n, "function_definition", _, _).
-m464(n) :- node(_, n, "lambda", _, _).
-m465(n) :- inside(n, v463, k2), m464(v463).
-m468(n) :- inside(n, v466, k3), node(_, v466, "class_definition", _, _), inside(v466, v467, k3), node(_, v467, "class_definition", _, _).
-m472(n) :- child(n, v471, _), u440(v471).
-m472(n) :- never(n).
-m476(n) :- inside(n, v475, k3), node(_, v475, "class_definition", _, _).
-m477(n) :- field(n, "name", v473), node(_, v473, "identifier", _, _), text(v473, v474), v474 = "_get_sql_branded_types", !m476(n).
-m481(n) :- node(_, n, "module", _, _), node_text(n, v478), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v478).
-m481(n) :- inside(n, v479, k1), node(_, v479, "module", _, _), node_text(v479, v480), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v480).
-violation("data-layer-module-level-caches", "decorator-file-1", "lru_cache", p, l) :- node(_, n, "function_definition", _, _), !m465(n), !m468(n), child(v469, n, _), node(_, v469, "decorated_definition", _, _), child(v469, v470, _), node(_, v470, "decorator", _, _), m472(v470), !m477(n), m481(n), doc(d, p, m), p = "impl/common/l2100_sql_grammar/fast_params.py", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m452(n) :- inside(n, v451, k3), node(_, v451, "class_definition", _, _).
+m456(n) :- inside(n, v455, k3), node(_, v455, "class_definition", _, _).
+m457(n) :- field(n, "name", v449), node(_, v449, "identifier", _, _), text(v449, v450), v450 = "_commit_branch_domain_metadata", !m452(n).
+m457(n) :- field(n, "name", v453), node(_, v453, "identifier", _, _), text(v453, v454), v454 = "_commit_branch_tree_validation_type_filters", !m456(n).
+m461(n) :- node(_, n, "module", _, _), node_text(n, v458), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v458).
+m461(n) :- inside(n, v459, k1), node(_, v459, "module", _, _), node_text(v459, v460), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v460).
+violation("data-layer-module-level-caches", "decorator-file-0", "lru_cache", p, l) :- node(_, n, "function_definition", _, _), !m433(n), !m436(n), child(v437, n, _), node(_, v437, "decorated_definition", _, _), child(v437, v438, _), node(_, v438, "decorator", _, _), child(v438, v439, _), u440(v439), !m457(n), m461(n), doc(d, p, m), p = "impl/common/l2070_server_plan/steps/intent_transaction.py", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m463(n) :- node(_, n, "function_definition", _, _).
+m463(n) :- node(_, n, "lambda", _, _).
+m464(n) :- inside(n, v462, k2), m463(v462).
+m467(n) :- inside(n, v465, k3), node(_, v465, "class_definition", _, _), inside(v465, v466, k3), node(_, v466, "class_definition", _, _).
+m474(n) :- inside(n, v473, k3), node(_, v473, "class_definition", _, _).
+m475(n) :- field(n, "name", v471), node(_, v471, "identifier", _, _), text(v471, v472), v472 = "_get_sql_branded_types", !m474(n).
+m479(n) :- node(_, n, "module", _, _), node_text(n, v476), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v476).
+m479(n) :- inside(n, v477, k1), node(_, v477, "module", _, _), node_text(v477, v478), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v478).
+violation("data-layer-module-level-caches", "decorator-file-1", "lru_cache", p, l) :- node(_, n, "function_definition", _, _), !m464(n), !m467(n), child(v468, n, _), node(_, v468, "decorated_definition", _, _), child(v468, v469, _), node(_, v469, "decorator", _, _), child(v469, v470, _), u440(v470), !m475(n), m479(n), doc(d, p, m), p = "impl/common/l2100_sql_grammar/fast_params.py", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 decorator_cache(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "cache" ; s = "lru_cache").
 decorator_cache(n) :- node(_, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "functools"), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "cache" ; s = "lru_cache").
 decorator_cache(n) :- node(_, n, "call", _, _), field(n, "function", f), decorator_cache(f).

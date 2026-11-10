@@ -104,9 +104,6 @@ struct Walk<'a> {
     /// Relations the compiler also asks of the gaps (`compile::ast_rule::gap_test`), by path:
     /// a token test that is their target, or an `any` alternative of it, is `lowered`.
     lowered: BTreeSet<String>,
-    /// How many utils deep the walk is below a lowered relation's target (`matches` as the
-    /// target, the parts walk follows it): its token tests are `lowered` too.
-    walked: usize,
 }
 
 const COMPOSITE: [&str; 3] = ["all", "any", "not"];
@@ -158,10 +155,9 @@ impl Walk<'_> {
             let here = format!("{path}/{key}");
             match key.as_str() {
                 "has" | "follows" | "precedes" | "inside" => {
-                    use crate::code_rule_dsl::compile::ast_rule::{gap_test, walk_test};
-                    use crate::code_rule_dsl::matcher::{AstMatcher, StopBy};
-                    let stop = if value.get("stopBy").is_none_or(|stop| stop == "neighbor") { StopBy::Neighbor } else { StopBy::End };
-                    if gap_test(key, value, self.lang.dialect, Some(Box::new(AstMatcher::Never))).is_some() || walk_test(key, value, self.lang.dialect, &AstMatcher::Never, &stop).is_some() {
+                    use crate::code_rule_dsl::compile::ast_rule::gap_test;
+                    use crate::code_rule_dsl::matcher::AstMatcher;
+                    if gap_test(key, value, self.lang.dialect, Some(Box::new(AstMatcher::Never))).is_some() {
                         self.lowered.insert(here.clone());
                     }
                     let field = value.get("field").and_then(Value::as_str).map(str::to_owned);
@@ -190,16 +186,12 @@ impl Walk<'_> {
                         if self.active.contains(&name) {
                             continue;
                         }
-                        let target = ["/any/", "/all/"].iter().find_map(|sep| path.rsplit_once(sep).filter(|(_, at)| at.parse::<usize>().is_ok()).map(|(relation, _)| relation)).unwrap_or(path);
-                        let via = usize::from(self.lowered.contains(path) || self.lowered.contains(target));
-                        let context = format!("{name} {rel:?} {from:?} {frame:?} {negated} {}", self.walked + via);
+                        let context = format!("{name} {rel:?} {from:?} {frame:?} {negated}");
                         if let Some(util) = self.utils.get(&name).cloned()
                             && self.seen.insert(context)
                         {
                             self.active.push(name.clone());
-                            self.walked += via;
                             self.rule(&util, rel, from, &frame, negated, &format!("utils/{name}"));
-                            self.walked -= via;
                             self.active.pop();
                         }
                     }
@@ -240,7 +232,7 @@ impl Walk<'_> {
         let target = ["/any/", "/all/"].iter().find_map(|sep| path.rsplit_once(sep).filter(|(_, at)| at.parse::<usize>().is_ok()).map(|(relation, _)| relation)).unwrap_or(path);
         let category = if category != "never" && implied.is_empty() {
             "stored"
-        } else if self.lowered.contains(path) || self.lowered.contains(target) || self.walked > 0 {
+        } else if self.lowered.contains(path) || self.lowered.contains(target) {
             "lowered"
         } else if negated && (category == "root" || (category != "never" && !matches!(rel, Rel::Sibling { end: false, .. }))) {
             // A `not` on the token's own node, over a set (the node matched, a node's children,
@@ -320,7 +312,7 @@ fn census(mut each: impl FnMut(&str, &str, &str, Test)) {
                     let Some(ast) = clause.pointer("/forbid/ast").and_then(Value::as_object) else { continue };
                     let Some(language) = ast.get("language").and_then(Value::as_str) else { continue };
                     let Some(lang) = langs.entry(language.to_owned()).or_insert_with(|| dialect_by_label(language).and_then(Lang::of)).as_ref() else { continue };
-                    let mut walk = Walk { lang, utils: &utils, tests: BTreeSet::new(), active: Vec::new(), seen: BTreeSet::new(), lowered: BTreeSet::new(), walked: 0 };
+                    let mut walk = Walk { lang, utils: &utils, tests: BTreeSet::new(), active: Vec::new(), seen: BTreeSet::new(), lowered: BTreeSet::new() };
                     let base = format!("clauses/{at}");
                     if let Some(rule) = ast.get("rule") {
                         walk.rule(rule, &Rel::Root("rule"), &Frame::default(), &Frame::default(), false, &format!("{base}/rule"));

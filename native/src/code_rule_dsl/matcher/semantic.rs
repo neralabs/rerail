@@ -181,7 +181,7 @@ impl Semantic {
                 Some(node)
             }
             Self::Layout(layout) => layout.match_node(node, env),
-            Self::Gap(test) => test.matches(&node, env).then_some(node),
+            Self::Gap(test) => test.holds(&node).then_some(node),
             Self::FilePath(condition) => super::resolve::file_path()
                 .filter(|path| condition.holds(path))
                 .map(|_| node),

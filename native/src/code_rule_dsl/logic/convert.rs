@@ -314,10 +314,7 @@ impl Emitter {
                 body.extend(self.condition(condition, &p)?);
                 body
             }
-            // A walk over the parts whose target no implied token can pass: the relation beside it
-            // says all (t31).
-            AstMatcher::Semantic(Semantic::Gap(test)) if !test.can_hold() => self.never(n),
-            AstMatcher::Semantic(Semantic::Gap(test)) if test.walk.is_none() && test.past.is_none() => self.gap_test(test, n)?,
+            AstMatcher::Semantic(Semantic::Gap(test)) if test.past.is_none() => self.gap_test(test, n)?,
             AstMatcher::Semantic(other) => return gap(format!("semantic {}", semantic_name(other))),
             AstMatcher::Call(_) => return gap("utility call"),
             AstMatcher::Compare(_) => return gap("compare"),
