@@ -58,7 +58,7 @@ def source_case(module,case):
         def observe(call):
             out,err=io.StringIO(),io.StringIO()
             with redirect_stdout(out),redirect_stderr(err):
-                try:result=dict(value=canonical(call()))
+                try:result=dict(value=canonical(call(),root))
                 except Exception as error:result=dict(error=dict(type=type(error).__name__,args=canonical(error.args)))
             return dict(result,stdout=out.getvalue(),stderr=err.getvalue())
         return dict(findings=observe(lambda:module._findings(view)),report=observe(lambda:plugin.reporter(view)))
