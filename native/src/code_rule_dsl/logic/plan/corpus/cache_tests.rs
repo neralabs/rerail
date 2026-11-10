@@ -40,7 +40,7 @@ impl Corpus {
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
         std::fs::create_dir_all(dir.join("ws")).unwrap();
         let rule = dir.join("cache.rr");
-        std::fs::write(&rule, program).unwrap();
+        std::fs::write(&rule, PROGRAM).unwrap();
         let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
         Corpus { dir, marker: format!("# {:?}\n", std::time::SystemTime::now()), text }
     }

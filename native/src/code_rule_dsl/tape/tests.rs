@@ -1788,3 +1788,28 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
     assert!(documents > 0 && checked_detects);
     println!("{documents} documents, {nodes} nodes, {memberships} memberships: all equal the cursor's");
 }
+
+#[test]
+fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
+    use crate::code_rule_dsl::facts::core;
+    let source = Arc::new("é = foo(1)\n".to_owned());
+    let (_, _, image, grammar) = fixture(&source, GrammarDialect::Python);
+    let lines = Arc::new(LineTable::new(&source, Terminators::of(GrammarDialect::Python)));
+    let reject = |image: &TapeImage| {
+        assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), image, &|| false).is_err());
+        assert!(core::from_image(Arc::clone(&source), &grammar, image, Arc::clone(&lines)).is_err());
+    };
+    let mut corrupt = image.clone(); corrupt.source_digest[0] ^= 1; reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.code.pop(); reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.size[0..2].copy_from_slice(&0u16.to_le_bytes()); reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.codes[0].alias = SENTINEL - 1; reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.codes[0].class_count = MAX_NODE_SUPERTYPES as u8 + 1; reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.tail[0..2].copy_from_slice(&u16::MAX.to_le_bytes()); reject(&corrupt);
+    let leaf = (1..image.node_count()).find(|&i| image.start_at(i) == 0 && image.size_at(i) == 1 && image.tail_at(i) == 2).unwrap();
+    let mut corrupt = image.clone(); corrupt.tail[leaf*2..leaf*2+2].copy_from_slice(&1u16.to_le_bytes()); reject(&corrupt);
+    // A malformed nested size whose byte span still fits cannot escape its parent's subtree.
+    let (_, _, nested, ng) = fixture("f(g(x))\n", GrammarDialect::Python);
+    let mut corrupt = nested.clone();
+    corrupt.size[2..4].copy_from_slice(&2u16.to_le_bytes());
+    assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, &corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
+}

@@ -70,7 +70,7 @@ fn test_of(rel: &str) -> Option<&'static str> {
 }
 
 /// The built-ins that take a relation, and its position.
-pub(super) const RELATION_ARG: [(&str, &[usize]); 8] = [
+pub(super) const RELATION_ARG: [(&str, &[usize]); 13] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
     ("precedes_stop", &[2]),
@@ -79,6 +79,11 @@ pub(super) const RELATION_ARG: [(&str, &[usize]); 8] = [
     ("dfs_first", &[3, 4]),
     ("dfs_first_memo", &[3, 4, 5]),
     ("components", &[3, 4]),
+    ("python_candidates", &[4,5]),
+    ("python_qualified", &[2,3]),
+    ("python_origins", &[2]),
+    ("python_assigned", &[2]),
+    ("python_arguments", &[5]),
 ];
 
 fn not_yet<T>(what: impl std::fmt::Display) -> Result<T, Error> {
@@ -323,7 +328,9 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     if l.prog.doc_scopes.is_none() {
         l.prog.doc_scopes = scope_globs(&l.prog.settings).map(|g| vec![g]);
     }
-    crate::code_rule_dsl::logic::front::finish(l.prog)
+    let mut program = crate::code_rule_dsl::logic::front::finish(l.prog)?;
+    super::aggregate_demand::optimize(&mut program);
+    Ok(program)
 }
 
 /// A nullary relation is a Boolean set: empty, or the single empty tuple. SQL tables need a column,
@@ -1928,6 +1935,40 @@ impl Lowerer {
                 let rel = self.dfs_first(&edge, &target, roots.as_deref());
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(r)?, self.term(hit)?, self.term(first)?], neg, gated: false }));
             }
+            ("python_candidates", [call,report,reference,receiver,input,targets,context,member]) => {
+                let name=|t:&STerm|match t{STerm::Var(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate inputs are relation names".into()))};
+                let literal=|t:&STerm|match t{STerm::Str(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate context and member must be string literals".into()))};
+                let (input,targets,context,member)=(name(input)?,name(targets)?,literal(context)?,literal(member)?);
+                if !crate::code_rule_dsl::facts::producers::python::families::CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
+                for name in [&input,&targets] {
+                    if !self.prog.decls.get(name).is_some_and(|cols|cols.len()==1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
+                }
+                let native=Native::PythonCandidates{input:input.clone(),targets:targets.clone(),context,member};
+                let rel=if let Some((name,_))=self.prog.natives.iter().find(|(_,n)|**n==native) {name.clone()}else {
+                    let mut serial=self.prog.natives.len();
+                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(&name){break name;}serial+=1;};
+                    let v=|s:&str|Term::Var(s.to_owned());
+                    let a=|r:&str,args:Vec<Term>|Literal::Atom(Atom{rel:r.into(),args,neg:false,gated:false});
+                    let mut body=vec![a(&input,vec![v("d")])];
+                    // Locality proof only: the native contract emits nodes from these documents.
+                    for n in ["c","f","r","o"] {body.push(a("node",vec![v("d"),v(n),Term::Wild,Term::Wild,Term::Wild]));}
+                    self.prog.decls.insert(rel.clone(),["c","f","r","o"].into_iter().map(|n|(n.into(),"node".into())).collect());
+                    self.prog.rules.push(Rule{head:Atom{rel:rel.clone(),args:["c","f","r","o"].into_iter().map(v).collect(),neg:false,gated:false},body});
+                    self.prog.natives.insert(rel.clone(),native);rel
+                };
+                return Ok(Literal::Atom(Atom{rel,args:[call,report,reference,receiver].into_iter().map(|a|self.term(a)).collect::<Result<Vec<_>,_>>()?,neg,gated:false}));
+            }
+            ("python_qualified" | "python_origins" | "python_assigned" | "python_arguments", _) => {
+                let kind=rel.strip_prefix("python_").unwrap();
+                let width=if kind=="arguments" {5}else{2};
+                let expected=width+1+usize::from(kind=="qualified");
+                if args.len()!=expected {return Err(Error::Syntax(format!("{rel}: expected {expected} arguments")));}
+                let name=|t:&STerm|match t{STerm::Var(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python producer inputs are relation names".into()))};
+                let input=name(&args[width])?;
+                let targets=if kind=="qualified" {Some(name(&args[width+1])?)}else{None};
+                let producer=self.python_producer(kind,&input,targets.as_deref());
+                return Ok(Literal::Atom(Atom{rel:producer,args:args[..width].iter().map(|a|self.term(a)).collect::<Result<Vec<_>,_>>()?,neg,gated:false}));
+            }
             ("components", [d, c, k, edge, own]) => {
                 let name = |t: &STerm| match t {
                     STerm::Var(v) => Ok(v.clone()),
@@ -1943,6 +1984,35 @@ impl Lowerer {
         }
         let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
         Ok(Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false }))
+    }
+
+    fn python_producer(&mut self, kind:&str, input:&str, targets:Option<&str>)->String {
+        let native = Native::Python {kind:kind.into(),input:input.into(),targets:targets.map(str::to_owned)};
+        let base = format!("rr_python_{kind}_{input}_{}",targets.unwrap_or(""));
+        let mut rel = base.clone();
+        let mut collision = 0;
+        while let Some(existing) = self.prog.natives.get(&rel) {
+            if existing == &native { return rel; }
+            collision += 1;
+            rel = format!("{base}__{collision}");
+        }
+        let vars=if kind=="arguments" {vec![("n","node"),("i","int"),("keyword","sym"),("spread","sym"),("value","node")]}else if kind=="qualified"{vec![("n","node"),("q","sym")]}else{vec![("n","node"),("value","node")]};
+        let v=|s:&str|Term::Var(s.to_owned());
+        let atom=|r:&str,args:Vec<Term>|Literal::Atom(Atom{rel:r.into(),args,neg:false,gated:false});
+        let mut body=vec![atom(input,vec![v("n")]),atom("node",vec![v("d"),v("n"),Term::Wild,Term::Wild,Term::Wild])];
+        if let Some(t)=targets {body.push(atom(t,vec![v("q")]));}
+        else {
+            body.push(atom("node",vec![v("d"),v("value"),Term::Wild,Term::Wild,Term::Wild]));
+            if kind=="arguments" {
+                for (name,value) in [("i",Term::Int(0)),("keyword",Term::Str(String::new())),("spread",Term::Str(String::new()))] {
+                    body.push(Literal::Cmp{l:v(name),op:"=",r:value});
+                }
+            }
+        }
+        self.prog.decls.insert(rel.clone(),vars.iter().map(|(n,t)|(n.to_string(),t.to_string())).collect());
+        self.prog.rules.push(Rule{head:Atom{rel:rel.clone(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body});
+        self.prog.natives.insert(rel.clone(),native);
+        rel
     }
 
     /// `dfs_first(_, _, _, edge, target)`'s relation `rr_dfs_<edge>_<target>` (`_<roots>` for `dfs_first_memo`):

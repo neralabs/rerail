@@ -3,7 +3,7 @@
 //! verifier. It holds no language: everything comes from the file.
 //!
 //! The parser is the reference evaluator's (`tools/bitlex`), so Bitlex is parsed in one place, and
-//! the evaluator is the compiler's test oracle (`bitlex_compile_tests`).
+//! the evaluator is the compiler's test oracle (`rerail_parser_tests`'s `compile_tests`).
 //!
 //! Built one construct at a time (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 //!
@@ -953,7 +953,7 @@ impl Lowering {
                 self.back_fill(start, end)
             }
             "at_least" | "above" => {
-                let mut operand = |me: &mut Self, i: usize| -> Result<Vec<Val>, String> {
+                let operand = |me: &mut Self, i: usize| -> Result<Vec<Val>, String> {
                     match args.get(i) {
                         Some(Arg::E(Expr::Name(n))) if n == "position" => me.number(&NExpr::Position),
                         Some(Arg::E(Expr::Name(n))) => me.numbers.get(n).cloned().ok_or_else(|| format!("{f}: {n} is not a number")),

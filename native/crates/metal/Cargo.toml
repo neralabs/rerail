@@ -1,0 +1,22 @@
+[package]
+name = "rerail-metal"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The engine's Metal runtime: device, buffer budget, mapped buffers, pipelines, launches."
+
+[features]
+# Per-thread buffer ledgers and buffer observations, for tests (the engine's and this crate's).
+test-hooks = []
+
+[dependencies]
+rerail-accel = { path = "../../../accel" }
+rerail-compiler = { path = "../compiler" }
+rerail-prof = { path = "../prof" }
+libc = "0.2.189"
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block = "0.1.6"
+metal = "0.33.0"

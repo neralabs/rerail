@@ -543,7 +543,7 @@ mod settings_tests {
 //   rerail-engine check-rr <rule>... | convert-rr <rule>...
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr <rule>...";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr <rule>...";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -572,6 +572,10 @@ pub fn cli(args: &[String]) -> Result<String, String> {
             _ => Err("usage: rerail-engine sql <store.sqlite> <request.json>".into()),
         },
         Some("logic") => logic_command(&args[1..]),
+        Some("repeat") => match &args[1..] {
+            [script] => repeat_command(&read(script)?),
+            _ => Err("usage: rerail-engine repeat <script>".into()),
+        },
         Some("facts-stamp") => facts_stamp_command(&args[1..]),
         Some("run-rr") if args.len() == 4 || args.len() == 5 => {
             let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
@@ -607,6 +611,75 @@ pub fn cli(args: &[String]) -> Result<String, String> {
         Some(command @ ("dump" | "gc")) => Err(format!("{command} is not in this build (its feature, `dump-cli` or `tape-cache`, is off)")),
         _ => Err(USAGE.into()),
     }
+}
+
+/// `repeat`: several commands in one process, so a session (decision 0063, `RERAIL_SESSION`) can be measured from the
+/// command line (t31 step 0.2). One command per line of `script`:
+///
+/// ```text
+/// env RERAIL_SESSION=/tmp/s        // set (or, with no `=`, remove) a variable before the next command
+/// logic rules/ corpus/ out/cold    // any engine command, as its arguments; a session starts at the first one
+/// sh echo "x = 1" >> corpus/a.py   // an edit between runs, through /bin/sh
+/// # a comment, and blank lines, are skipped
+/// ```
+///
+/// Each engine command prints one line to stderr: its CPU (user + sys) and the process's footprint, now and at most.
+#[cfg(not(target_family = "wasm"))]
+fn repeat_command(script: &str) -> Result<String, String> {
+    let cpu = || {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        let time = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        (time(usage.ru_utime), time(usage.ru_stime))
+    };
+    let mut out = String::new();
+    for (n, line) in script.lines().enumerate().map(|(n, l)| (n + 1, l.trim())) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
+        match word {
+            "env" => match rest.split_once('=') {
+                Some((k, v)) => {
+                    unsafe { std::env::set_var(k.trim(), v.trim()) };
+                    // The profiler reads its directory once: each run's report goes where the script says.
+                    if k.trim() == "RERAIL_PROFILE" {
+                        crate::code_rule_dsl::logic::profile::set(true);
+                        crate::code_rule_dsl::logic::profile::set_directory(Path::new(v.trim()));
+                    }
+                }
+                None => unsafe { std::env::remove_var(rest.trim()) },
+            },
+            "sh" => {
+                let status = std::process::Command::new("/bin/sh").arg("-c").arg(rest).status().map_err(|e| format!("line {n}: {e}"))?;
+                if !status.success() {
+                    return Err(format!("line {n}: `{rest}` exited with {status}"));
+                }
+            }
+            _ => {
+                let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
+                let (u0, s0) = cpu();
+                let result = cli(&args);
+                let (u1, s1) = cpu();
+                eprintln!(
+                    "repeat line {n}: {:.2} s CPU ({:.2} user + {:.2} sys); footprint {} MB, at most {} MB; {}",
+                    (u1 - u0) + (s1 - s0),
+                    u1 - u0,
+                    s1 - s0,
+                    crate::code_rule_dsl::prof::footprint_mb(),
+                    crate::code_rule_dsl::prof::max_footprint_mb(),
+                    if result.is_ok() { "ok" } else { "failed" }
+                );
+                out.push_str(&result.map_err(|e| format!("line {n}: {e}"))?);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(target_family = "wasm")]
+fn repeat_command(_: &str) -> Result<String, String> {
+    Err("repeat is not in the browser build".into())
 }
 
 /// `logic`: a program over a corpus, its outputs as T's (list step 23).

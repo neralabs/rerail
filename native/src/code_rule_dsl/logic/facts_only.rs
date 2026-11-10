@@ -59,6 +59,9 @@ const FACT_STORE: &[&str] = &[
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
     "x",
+    // native_demand's tests' tables.
+    "keys",
+    "facts",
     "a",
     "b",
     "c",
@@ -157,6 +160,8 @@ const NOT_YET_TABLES_PIN: usize = 61;
 const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
     ("code_rule_dsl/logic/costs.rs", "WRITER"),
+    // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
+    ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
@@ -182,6 +187,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
+    ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
@@ -192,6 +198,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
+    ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),

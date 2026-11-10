@@ -1,0 +1,69 @@
+{
+  "reference_commit": "e1ffeaf254bc52133fd6edc8f721b2a7258f24a6",
+  "integration_base": "49035cc9098d3cafb19a1e4c33bc45ab796dce28",
+  "files": [
+    {
+      "source": "native/src/code_rule_dsl/query/plan/python_structure.rs",
+      "destination": "native/src/code_rule_dsl/facts/producers/python/python_structure.rs",
+      "source_sha256": "e9b25334cf04321f03f1f1bf80610f1d820dc04cb87ddabf7c5af07c3fcb01af",
+      "destination_sha256": "e9b25334cf04321f03f1f1bf80610f1d820dc04cb87ddabf7c5af07c3fcb01af",
+      "byte_identical": true
+    },
+    {
+      "source": "native/src/code_rule_dsl/query/plan/call_batch.rs",
+      "destination": "native/src/code_rule_dsl/facts/producers/python/call_batch.rs",
+      "source_sha256": "58c0eaf52ce5bb6ad40b0573cf2bd1be1ed505dd6f6bb75c509484b015abf94c",
+      "destination_sha256": "ed5f3df7b0b0241c7d5a3b88fe195149a91f64944b90baf2e2a745736ccfffff",
+      "byte_identical": false
+    },
+    {
+      "source": "native/src/code_rule_dsl/query/plan/import_screen.rs",
+      "destination": "native/src/code_rule_dsl/facts/producers/python/import_screen.rs",
+      "source_sha256": "6e9ce516203b7417f24daab22ace2d6caf339cb77727b029c780b329d1738ae7",
+      "destination_sha256": "6a1634f2f4407622367d2a39ad462f0975a073ec0ad4f3cff367717c729c79c8",
+      "byte_identical": false
+    },
+    {
+      "source": "native/src/code_rule_dsl/matcher/python_facts.rs",
+      "destination": "native/src/code_rule_dsl/facts/producers/python/python_facts.rs",
+      "source_sha256": "cc79e0ce8b1b9ac2f96318e2fd6ce5641d7f2d8bac5b06b2221509ba8c613630",
+      "destination_sha256": "cc79e0ce8b1b9ac2f96318e2fd6ce5641d7f2d8bac5b06b2221509ba8c613630",
+      "byte_identical": true
+    },
+    {
+      "source": "native/src/code_rule_dsl/query/plan/contract.rs",
+      "destination": "native/src/code_rule_dsl/findings/contract.rs",
+      "source_sha256": "a846c968e721cf00f1fe1722a8f9d0d5238648076110da715a3eeb09be9b90cf",
+      "destination_sha256": "a846c968e721cf00f1fe1722a8f9d0d5238648076110da715a3eeb09be9b90cf",
+      "byte_identical": true
+    },
+    {
+      "source": "native/src/code_rule_dsl/query/plan/sql_shape.rs",
+      "destination": "native/src/code_rule_dsl/findings/shape/sql_shape.rs",
+      "source_sha256": "23947616578c35a853badafeedaf4ae54ff4d393ab20f324f3bfe6b8e049e3d8",
+      "destination_sha256": "f4f059b081f1345d96a30eee48848d103170e00111cac258cf24da1fd4ad8c51",
+      "byte_identical": false
+    },
+    {
+      "source": "native/src/code_rule_dsl/query/plan/async_reference/generated_shape.rs",
+      "destination": "native/src/code_rule_dsl/findings/shape/generated_shape.rs",
+      "source_sha256": "6ffa03b97a204b13f13a925eec5474870a99d1d0816d1a77e1fe65e946dde5ba",
+      "destination_sha256": "7e9fefc0123feb532d8c22049e360a62ebe10ed212f33e4189447167c7e0261a",
+      "byte_identical": false
+    },
+    {
+      "source": "native/src/code_rule_dsl/query/plan/async_reference.rs",
+      "destination": "native/src/code_rule_dsl/findings/tests/async_reference.rs",
+      "source_sha256": "eae2aa8e07b3d0ebed9f256b573243ffe3004f176c145933eecb4bf1e4fb3b23",
+      "destination_sha256": "d06226fc133bbfca47eebdf1ecdf3b15fe33d4b3d01dd3bea9da45dde6e9f190",
+      "byte_identical": false
+    },
+    {
+      "source": "native/src/code_rule_dsl/query/plan/async_reference/native_oracle.rs",
+      "destination": "native/src/code_rule_dsl/findings/tests/s_native_oracle.rs",
+      "source_sha256": "2ce804b4720dbc72f1a34282560aa2ab665b90e6e41a2632e2da7086d5ad2e6a",
+      "destination_sha256": "ef176c94063509481d961c3ea7222164afa40422bf6e8209eef07e918f67c3d5",
+      "byte_identical": false
+    }
+  ]
+}

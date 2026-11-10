@@ -391,7 +391,6 @@ pub(super) fn bind(
     let query = match kind {
         ClauseKind::Forbid(query) => Some(emitting(query)),
         ClauseKind::RequireEach { .. } | ClauseKind::Budget { .. } | ClauseKind::Llm => None,
-        #[cfg(test)]
         ClauseKind::Relational(_) => None,
     };
     let mut names = BTreeSet::new();

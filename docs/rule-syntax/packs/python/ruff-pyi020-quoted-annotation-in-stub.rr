@@ -22,5 +22,5 @@ quoted(s) :- plain_str(s, _), !inside_concat(s).
 .decl inside_concat(s: node)
 inside_concat(s) :- child(c, s, _), kind(c, "concatenated_string").
 .decl parsed_within(s: node, q: node)
-parsed_within(s, q) :- parsed(s, "annotation", r), (q = r ; within(q, r)).
+parsed_within(s, q) :- str_node(s), parsed(s, "annotation", r), (q = r ; within(q, r)).
 parsed_within(s, q) :- parsed_within(s, p), quoted(p), parsed_within(p, q).
