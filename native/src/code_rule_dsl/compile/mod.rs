@@ -265,6 +265,9 @@ pub(super) fn compile_document(
     document: &Value,
     capabilities: &Capabilities,
 ) -> Result<(String, RuleMode, CodeRuleScope, Vec<CompiledClause>, Value)> {
+    // Every query, grammar and `languageOptions` that reaches a shared utility compiles its
+    // regexes again: the document's terms share one regex per pattern.
+    let _regexes = crate::code_rule_dsl::regexes::Sharing::begin();
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
     let root = object(document, "/")?;

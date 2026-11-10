@@ -96,12 +96,12 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
                 let names = resolves.globals.iter().map(|name| regex::escape(name));
                 let names = names.chain(this).collect::<Vec<_>>().join("|");
                 let pattern = format!(r"^(?:{names}|\((?s:.*))$");
-                match Regex::new(&pattern) {
-                    Ok(regex) => Condition::Text {
+                match crate::code_rule_dsl::regexes::compile(&pattern) {
+                    Some(regex) => Condition::Text {
                         probe: TextProbe::compile(regex.as_str()),
                         regex,
                     },
-                    Err(_) => Condition::Always,
+                    None => Condition::Always,
                 }
             },
             exact: false,

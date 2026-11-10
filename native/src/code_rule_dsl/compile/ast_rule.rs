@@ -15,10 +15,10 @@ use crate::code_rule_dsl::matcher::{
     Related, Semantic, StopBy, UtilCall, UtilRef, parse_exported,
 };
 use crate::code_rule_dsl::model::Limits;
+use crate::code_rule_dsl::regexes;
 use ast_grep_core::Language;
 use ast_grep_core::matcher::{KindMatcher, Pattern, PatternNode};
 use napi::Result;
-use regex::Regex;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -150,8 +150,8 @@ pub(super) fn validate_ast_rule(
             "maxRegexPatternBytes",
             limits.max_regex_pattern_bytes,
         )?;
-        Regex::new(source)
-            .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
+        regexes::compile(source)
+            .ok_or_else(|| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
     }
     if let Some(nth) = rule.get("nthChild") {
         validate_nth_child(nth, &format!("{path}/nthChild"), limits, utils)?;
@@ -462,9 +462,9 @@ pub(crate) fn compile_ast_rule(
         });
     }
     if let Some(regex) = rule.get("regex").and_then(Value::as_str) {
-        terms.push(AstMatcher::Regex(Regex::new(regex).map_err(|_| {
-            invalid(format!("{path}/regex: Parsing text matcher fails."))
-        })?));
+        terms.push(AstMatcher::Regex(regexes::compile(regex).ok_or_else(
+            || invalid(format!("{path}/regex: Parsing text matcher fails.")),
+        )?));
     }
     if let Some(capture) = rule.get("capture") {
         terms.push(
@@ -863,7 +863,7 @@ pub(crate) fn compile_ast_rule(
     }
     #[cfg(test)]
     if let Some(regex) = rule.get("testUnknown").and_then(Value::as_str) {
-        terms.push(AstMatcher::TestUnknown(Regex::new(regex).map_err(
+        terms.push(AstMatcher::TestUnknown(regex::Regex::new(regex).map_err(
             |_| invalid(format!("{path}/testUnknown: Parsing text matcher fails.")),
         )?));
     }

@@ -253,3 +253,67 @@ impl Table {
         Some(())
     }
 }
+
+/// What a compiled document holds, read from jemalloc's counters: Windows builds use the system
+/// allocator, which keeps none.
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use crate::code_rule_dsl::test_support::*;
+    use serde_json::{Map, Value, json};
+
+    /// The bytes `build` leaves allocated on this thread, with what it built: jemalloc's
+    /// per-thread counters, which other tests' threads do not move.
+    fn retained<T>(build: impl FnOnce() -> T) -> (T, i64) {
+        use tikv_jemalloc_ctl::thread::{allocatedp, deallocatedp};
+        let allocated = allocatedp::read().expect("jemalloc counts the thread's allocations");
+        let deallocated = deallocatedp::read().expect("jemalloc counts the thread's frees");
+        let held = || allocated.get() as i64 - deallocated.get() as i64;
+        let before = held();
+        let built = build();
+        (built, held() - before)
+    }
+
+    /// A rule generated from a table, as a port of a linter's list of built-in APIs is: one
+    /// define whose utilities repeat a few patterns, reached by queries that each declare the
+    /// globals they read, so each query's `languageOptions` compiles them in a table of its own,
+    /// once per grammar.
+    fn generated_from_a_table(utilities: usize, queries: usize) -> Value {
+        let utils = (0..utilities)
+            .map(|index| {
+                let rule = json!({ "any": [
+                    { "kind": "property_identifier", "regex": format!("^name{}$", index % 4) },
+                    { "kind": "string", "value": { "regex": format!("^(?:node:)?module{}$", index % 4) } },
+                ] });
+                (format!("u{index}"), rule)
+            })
+            .collect::<Map<_, _>>();
+        let reach = (0..utilities)
+            .map(|index| json!({ "matches": format!("u{index}") }))
+            .collect::<Vec<_>>();
+        let mut clauses =
+            vec![json!({ "id": "table", "define": { "language": "typescript", "utils": utils } })];
+        clauses.extend((0..queries).map(|query| {
+            json!({ "id": format!("q{query}"), "violation": violation(), "forbid": { "ast": {
+                "language": "typescript",
+                "languageOptions": { "globals": { format!("g{query}"): "readonly" } },
+                "rule": { "any": reach },
+            } } })
+        }));
+        json!({ "format": "rerail.policy/v1", "id": "table", "revision": 1, "mode": "steer", "clauses": clauses })
+    }
+
+    #[test]
+    fn a_document_holds_each_regex_pattern_once_however_many_tables_compile_it() {
+        // 8 queries, 3 grammars and 120 utilities of 2 regexes each: 5,760 regex terms over 8
+        // patterns. Compiled one per term they held about 85 MiB.
+        let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
+        let (compiled, held) =
+            retained(|| compile_document_with(generated_from_a_table(120, 8), &capabilities));
+        compiled.unwrap_or_else(|error| panic!("{}", error.reason));
+        assert!(
+            held < 16 << 20,
+            "the compiled document holds {} MiB",
+            held >> 20
+        );
+    }
+}

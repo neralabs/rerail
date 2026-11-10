@@ -20,10 +20,10 @@ use crate::code_rule_dsl::matcher::{
     SemanticText, StopBy, Transform, parse_exported, table_reading,
 };
 use crate::code_rule_dsl::model::Limits;
+use crate::code_rule_dsl::regexes;
 use crate::code_rule_dsl::soundness::sound_under_errors;
 use ast_grep_core::matcher::KindMatcher;
 use napi::Result;
-use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -142,8 +142,8 @@ pub(super) fn validate_sub_rule(
             "maxRegexPatternBytes",
             limits.max_regex_pattern_bytes,
         )?;
-        Regex::new(source)
-            .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
+        regexes::compile(source)
+            .ok_or_else(|| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
     }
     if let Some(capture) = rule.get("capture") {
         capture_name(capture, &format!("{path}/capture"))?;
@@ -422,9 +422,9 @@ pub(super) fn compile_sub_rule(
         ));
     }
     if let Some(regex) = rule.get("regex").and_then(Value::as_str) {
-        terms.push(AstMatcher::Regex(Regex::new(regex).map_err(|_| {
-            invalid(format!("{path}/regex: Parsing text matcher fails."))
-        })?));
+        terms.push(AstMatcher::Regex(regexes::compile(regex).ok_or_else(
+            || invalid(format!("{path}/regex: Parsing text matcher fails.")),
+        )?));
     }
     if let Some(capture) = rule.get("capture") {
         terms.push(AstMatcher::Semantic(Semantic::Capture(

@@ -240,7 +240,9 @@ impl Constrained {
 pub(super) enum AstMatcher {
     Pattern(Pattern),
     Kind(KindMatcher),
-    Regex(Regex),
+    /// The node's text matches; the terms of a document that write one pattern share its regex
+    /// (`regexes`).
+    Regex(Arc<Regex>),
     All(Vec<AstMatcher>),
     Any(Vec<AstMatcher>),
     Not(Box<AstMatcher>),

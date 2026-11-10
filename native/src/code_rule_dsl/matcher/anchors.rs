@@ -125,7 +125,7 @@ enum Condition {
     Always,
     Pattern(Vec<Requirement>),
     Text {
-        regex: Regex,
+        regex: Arc<Regex>,
         probe: TextProbe,
     },
     All(Vec<AnchorPlan>),
@@ -375,7 +375,7 @@ impl AnchorPlan {
             AstMatcher::Regex(regex) => Self {
                 root_kinds: None,
                 condition: Condition::Text {
-                    regex: regex.clone(),
+                    regex: Arc::clone(regex),
                     probe: TextProbe::compile(regex.as_str()),
                 },
                 exact: true,

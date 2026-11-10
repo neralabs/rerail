@@ -3,16 +3,19 @@
 //! character repeats) runs on fancy-regex, a backtracking engine, with a backtrack limit and a cap
 //! on the text it reads; past either the verdict is unknown.
 
+use crate::code_rule_dsl::regexes;
 use crate::code_rule_dsl::value::MAX_STRING_BYTES;
 use regex::Regex;
 use regex_syntax::ast::ErrorKind;
+use std::sync::Arc;
 
 /// Backtracking steps one match may take.
 pub(crate) const BACKTRACK_LIMIT: usize = 1_000_000;
 
 #[derive(Clone, Debug)]
 pub(crate) enum TextRegex {
-    Plain(Regex),
+    /// Shared with the document's other terms of the same pattern (`regexes`).
+    Plain(Arc<Regex>),
     /// A pattern with backreferences.
     Backreferences(fancy_regex::Regex),
 }
@@ -21,7 +24,7 @@ impl TextRegex {
     /// Compiles a pattern: Rust syntax, or Rust syntax with backreferences. `None` for anything
     /// else (look-around, atomic groups, conditionals, a malformed pattern).
     pub(crate) fn new(pattern: &str) -> Option<Self> {
-        if let Ok(regex) = Regex::new(pattern) {
+        if let Some(regex) = regexes::compile(pattern) {
             return Some(Self::Plain(regex));
         }
         // Only a pattern whose one fault is a backreference goes on.
