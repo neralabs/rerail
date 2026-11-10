@@ -692,6 +692,17 @@ impl Drop for KeepPlans {
 }
 
 thread_local! {
+    /// Whether a plan is explained step by step whether or not the run is profiled (`explaining`): the choice of
+    /// what a relation keeps re-prices each step of its plans (decision 0097).
+    static EXPLAIN_ALWAYS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Plans explained step by step while `on` (`EXPLAIN_ALWAYS`), the setting before returned.
+pub(in crate::code_rule_dsl) fn explaining(on: bool) -> bool {
+    EXPLAIN_ALWAYS.with(|e| e.replace(on))
+}
+
+thread_local! {
     /// Whether the planner reads its statistics skewed (`Model::plan_inner`, `RERAIL_STATS_SKEW`).
     static SKEWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -1537,7 +1548,7 @@ impl Model {
         // The orders priced, charged to the planning span they were priced in (the roofline's candidate work).
         super::profile::work(super::profile::Unit::Candidate, candidates);
         // Also when the run may use the device: placement prices each join step from these (decision 0095).
-        let explained = (explain && (super::profile::on() || placement::device_on())).then(|| {
+        let explained = (explain && (super::profile::on() || placement::device_on() || EXPLAIN_ALWAYS.with(std::cell::Cell::get))).then(|| {
             let _explain = super::profile::span(|| "explain record".into());
             // The chosen order step by step, priced as the search priced it.
             let mut bound: BTreeSet<String> = BTreeSet::new();
@@ -2751,6 +2762,7 @@ impl Run<'_, '_> {
 /// patterns its positive atoms were read with (T's `observe`). The first step (the delta, or a seed's anchor) is
 /// skipped.
 fn observe(stats: &mut Stats, rule: u64, order: &[Step], counts: &[(i64, i64)]) {
+    keeps::observe_steps(rule, order, counts);
     let mut bound = BTreeSet::new();
     for (i, (s, &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
         if i > 0
@@ -3877,7 +3889,16 @@ impl Run<'_, '_> {
         // keeps (decision 0097, `keeps::observe`).
         {
             let ruled: Vec<(u64, &[(u64, u64)])> = order_rules.iter().zip(&counted).map(|(&r, c)| (r, c.as_slice())).collect();
-            let sizes: Vec<(&str, f64)> = rels.iter().filter_map(|r| Some((r.as_str(), *self.model.stats.card.get(*r)?))).collect();
+            // Each relation's rows, and per column its distinct values and fanout as the live counts left them.
+            let sizes: Vec<keeps::Seen> = rels
+                .iter()
+                .filter_map(|r| {
+                    let rows = *self.model.stats.card.get(*r)?;
+                    let width = prog.decls.get(*r).map_or(0, Vec::len);
+                    let cols = (0..width).map(|c| (self.model.ndv.get(&((*r).clone(), c)).copied(), self.model.stats.fan.get(&((*r).clone(), c)).copied())).collect();
+                    Some(keeps::Seen { rel: r.as_str(), rows, cols })
+                })
+                .collect();
             keeps::observe(&ruled, &sizes, self.model.stats.nodes);
         }
         if profiling {
