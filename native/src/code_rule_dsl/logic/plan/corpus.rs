@@ -3798,11 +3798,15 @@ fn run_observed(
                 }
             }
             // A text test's rows are strings (`strtest_<k>(s)`, decision 0037), no document's: each is the files' whose
-            // text holds it. Found once, for the strings the chunk's tests hold.
+            // text holds it (`memo::owner`, as `value_type`'s values are). Found once, for the strings the chunk's
+            // string-keyed rows hold.
             let wanted: std::collections::HashSet<i64> = base_seen
                 .iter()
-                .filter(|(rel, _, _)| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION))
-                .flat_map(|(_, at, source)| { let c = at.first().copied(); (0..source.len()).filter_map(move |r| c.map(|c| source.value(r, c))) })
+                .filter_map(|(rel, at, source)| match memo::owner(rel) {
+                    memo::Owner::Text(i) => at.get(i).map(|&c| (c, source)),
+                    memo::Owner::Node(_) => None,
+                })
+                .flat_map(|(c, source)| (0..source.len()).map(move |r| source.value(r, c)))
                 .collect();
             let mut string_files: HashMap<i64, BTreeSet<i64>> = HashMap::new();
             if !wanted.is_empty() {
@@ -3823,11 +3827,17 @@ fn run_observed(
                 }
             }
             'base: for (rel, at, source) in &base_seen {
-                let strings = rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
+                let (strings, owner) = match memo::owner(rel) {
+                    memo::Owner::Text(i) => (true, i),
+                    memo::Owner::Node(i) => (false, i),
+                };
+                // A value no file's text holds (`value_type` of a constant a rule made): every file of the chunk
+                // keeps it, as a rule-made string a joined test reads is kept.
+                let made_value = !rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) && strings;
                 let key = memo::base_key(rel);
                 // A semi-join's relation: the rows of the nodes the chunk's exports hold, as the cross part keeps.
                 let node = semijoin.contains(rel).then(|| source.columns().iter().position(|h| h == "n")).flatten();
-                let Some(&first) = at.first() else {
+                let Some(&first) = at.get(owner) else {
                     memo_why.insert(format!("base {rel}: a row naming no document"));
                     attributable = false;
                     break 'base;
@@ -3848,7 +3858,7 @@ fn run_observed(
                         }
                         // A string no file's text holds (a rule made it): every file of the chunk keeps the row,
                         // where the cross-file rules read the test only joined.
-                        if files.is_empty() && joined_tests.contains(rel.as_str()) { entries.keys().copied().collect() } else { files }
+                        if files.is_empty() && (made_value || joined_tests.contains(rel.as_str())) { entries.keys().copied().collect() } else { files }
                     } else {
                         let d = memo::document_of(v);
                         match &run {
