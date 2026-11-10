@@ -1813,6 +1813,8 @@ fn spike_o125_session_maintains_calls() {
 #[test]
 #[ignore = "calls.rr in a session over real commits (minutes)"]
 fn spike_o125_replay() {
+    // Several sessions and full runs of the corpus: more than a test's 10 minutes, never hours.
+    crate::test_watchdog::allow(std::time::Duration::from_secs(1200));
     use crate::code_rule_dsl::logic::plan::corpus::session;
     let replay = PathBuf::from(std::env::var("O125_REPLAY").unwrap());
     let (a, b): (usize, usize) = {
