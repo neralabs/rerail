@@ -381,8 +381,78 @@ job is a job:
 **What stays a thread of its own.** None of these runs a run's work on the cores:
 
 - each device lane's worker (SME, the GPU, the Neural Engine), which submits to its device and waits for it;
-- the transducer's Metal dispatcher, which does the same for the parser's GPU path;
 - the profile's watchers and the residency's drop timer, which sleep until their deadline.
+
+(The transducer had its own Metal dispatcher thread, a batcher of single files. Nothing called it; it is gone.)
+
+**Waits are measured.** A thread that runs another's job while it waits can find what it waited for ready only
+when that job ends. The profile's table `Waits that ran others' jobs` gives, for each place that waits (a batch's
+launches, a host job, the main thread's next chunk, the cone's answer, a wave chunk's sources):
+
+- its waits, how many ran jobs, and the jobs' wall and CPU;
+- how many ended right after a job they ran, so were late by at most that job's wall (`late ms<=`), and the
+  longest;
+- how late exactly, where the waited work says when it ended (a batch's launches, a host job);
+- the longest job run, by name.
+
+Below it, the jobs that made waits late, by name. Every job carries one (`exec::as_job`, `Jobs::spawn`); a
+parallel loop's pieces show as `(unnamed)`.
+
+**Long jobs first.** The chunk builder starts the documents within its reach longest first, by their source's
+bytes. Other threads take a thread's jobs oldest first, and a wait takes its own thread's newest. So the long
+builds start soonest, on other threads, and a waiting thread runs the short ones.
+
+On the pack, the main thread's waits for its next chunk:
+
+| Order of the documents' builds | Late, at most (all waits) | Longest late | Jobs run in waits |
+|---|---|---|---|
+| In order | 159 ms (2 waits) | 93 ms, a document built | 42 |
+| Longest first | 27 ms (4 waits) | 26 ms, a document built | 126 |
+
+The waits now run more, shorter jobs, and are held far less past their chunk.
+
+### 13. Every dispatch is a launch
+
+Every piece of work sent to a device or to the cores' kernels is a launch of the executor: priced, placed,
+claimed by whichever lane reaches it first, run on that lane's worker, and scored. That includes the work whose
+kernel the engine makes itself, as the parser's programs are.
+
+Such work is a **program** (`rerail_accel::kernel::Program`, `Kernel::Program`). A program gives:
+
+- its name and its size in units (bytes, for a program over text);
+- its seconds a unit on each lane it has a form for: none, and the lane does not take it;
+- a run on each of those lanes, whose result is the caller's own type.
+
+The executor prices a program by its own rates, not by the forms' table. A program's cores' form is one job on
+one thread, so its price is not divided over the cores. A device's form submits its own command buffers, on the
+one device and queue (`gpu::shared`); a device form that refuses the work (its capacity, a shape it lacks) runs
+the cores' form instead, so the launch does not fail.
+
+**The first program is the span prefilter's** (decision 0081 §3): a chunk's regexes over its sources, as block
+programs, which tell where a match can end. It was a direct call that chose Metal under the device binding and
+waited for it on whatever thread projected the chunk. Now it is one launch:
+
+```rust
+// facts/vtab/syntax.rs: a chunk's patterns over its sources, one launch
+let (ends, ran) = ends_launch(executor_for(metal), &programs, &sources, &files, metal)?;
+```
+
+Its GPU form is the generated block program; its cores' form, the interpreter. Its sources are the documents'
+own (`Arc<String>`), not copied. Its rates are priors, for now: 30 ps a byte and operation on one core, 1 ps on
+the GPU. Over the fixtures, a pattern over every file gave the same rows on both bindings. Under the device
+binding, the executor placed one batch on the cores and one on the GPU; the GPU's took 2.1 ms against its
+0.28 ms estimate, so the prior is low.
+
+**One device and one queue.** The engine's own Metal programs (`METAL_DEVICE`) take the process's device from
+`gpu::shared`, and the block programs' queue is the shared queue. So the executor's lanes and the engine's
+programs submit in one order.
+
+**What is not yet a launch.** The transducer's other Metal paths (the waves' set steps and label passes, nearest,
+the lattice, the packed demand backends) are reached only from the slice, the demand driver, SQL functions and
+tests, never from a corpus run. Each would become a program in turn. Most are several passes resident on the
+device, so each is one program whose GPU form runs its passes.
+
+
 
 ## Order of work
 
@@ -581,7 +651,16 @@ job is a job:
       | One pool | 63.3 s | 59.8 s |
 
       The load moves the CPU by more than the change: the build before took 53.2 s at a load of 53.
-15. **Gates:**
+15. **Waits measured; long jobs first (§12).** *Built*: the profile's table of waits that ran others' jobs, every
+    job named; the chunk builder's documents started longest first.
+16. **Every dispatch a launch (§13).** *Built*:
+    - `Kernel::Program`. A test places three programs by their own prices: one with only a cores' form, one with
+      only a GPU's, one far cheaper on the GPU. Each runs the form of the lane it lands on, and the scoreboard
+      counts it.
+    - The span prefilter is a program. Its test checks every (file, pattern) against the pattern alone, pinned to
+      the cores, pinned to the GPU, and placed by price.
+    - The engine's Metal programs use the shared device and queue; the dead dispatcher is removed.
+17. **Gates:**
    - The pack's findings are identical, and so are the data layer's at scale.
    - Host CPU (user + sys) of the device joins is below the CPU radix sort join's, on the lab's 232 joins and on
      the pack.
@@ -590,10 +669,11 @@ job is a job:
 ## Open
 
 - **Which waits run jobs.** A thread waiting on the pool may run a long job of another's, and its own work then
-  waits for it. On the pack this costs nothing measurable; a critical path that suffers from it would wait
-  without running jobs, at the cost of a thread.
-- **The parser's Metal dispatcher** (`tempo-metal-dispatch`) is a thread of its own, as the device lanes'
-  workers are. Whether it becomes a lane of the executor is open.
+  waits for it (§12, measured). A critical path that still suffers from it would wait without running jobs, at
+  the cost of a thread.
+- **Program prices are priors.** The span prefilter's rates are guesses; the scoreboard measures each launch, and
+  the rates should come from it.
+- **The transducer's other GPU paths** become programs (§13) as they reach a corpus run.
 
 - **Count tables and the scalar summaries overlap.** The engine's per-key memo of scalar summaries answers a count
   once per key, and a count table answers it once per relation. Since the merge, a count the memo serves never walks
