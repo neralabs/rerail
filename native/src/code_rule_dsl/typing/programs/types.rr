@@ -26,7 +26,7 @@
 #include "core.rr"
 
 .phase types
-.export binds, bases, anc, attr, sig, rtype, vtype, owner, callret, tparam, tmap, rvar, rgen, ropen, pgen, rcarg, wgen
+.export binds, bases, anc, attr, sig, rtype, vtype, owner, callret, tparam, tmap, rvar, rgen, ropen, pgen, rcarg, wgen, proto
 
 .decl struct__def(s: symbol, k: symbol)
 .decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
@@ -197,6 +197,10 @@ ropen(f) :- struct__ret(f, a), owner(f, m), !head_of(m, a, _).
 ropen(f) :- struct__ret(f, a), owner(f, m), head_of(m, a, h), !hclass(m, a, h), !tv(m, h, _).
 
 // ---- classes ---------------------------------------------------------------------------------------------------
+// proto(c): class c is a protocol (a base `Protocol` or `Protocol[...]`): a class need not derive from it to be one.
+.decl proto(c: symbol)
+proto(c) :- struct__base(c, _, e), owner(c, m), struct__ann(m, e, _, "Protocol").
+proto(c) :- struct__base(c, _, e), owner(c, m), struct__ann(m, e, _, h), split_dot(h, _, "Protocol").
 .decl bases(c: symbol, i: number, b: symbol)
 bases(c, i, b) :- struct__base(c, i, e), owner(c, m), rexpr(m, e, b), struct__def(b, "class").
 .decl anc(c: symbol, a: symbol)

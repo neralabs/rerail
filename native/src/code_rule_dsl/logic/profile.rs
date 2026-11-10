@@ -387,7 +387,25 @@ pub(in crate::code_rule_dsl) fn statement(text: Option<String>) {
 }
 
 /// An open span; it closes when dropped.
-pub(in crate::code_rule_dsl) struct Span(bool);
+pub(crate) struct Span(bool);
+
+/// This thread's innermost open span's path (only when profiling): a worker the thread starts opens its spans under
+/// it (`span_at`), so the worker's work is charged to what started it (a phase's run, say).
+pub(crate) fn here() -> Option<String> {
+    if !on() {
+        return None;
+    }
+    STACK.with(|s| s.lock().opens.last().map(|o| o.path.clone()))
+}
+
+/// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
+/// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
+pub(crate) fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
+    match under {
+        Some(p) => open(format!("{p}/{}", name())),
+        None => span(name),
+    }
+}
 
 /// Opens span `name` (made only when profiling) under this thread's open span.
 pub(in crate::code_rule_dsl) fn span(name: impl FnOnce() -> String) -> Span {
@@ -395,13 +413,21 @@ pub(in crate::code_rule_dsl) fn span(name: impl FnOnce() -> String) -> Span {
         return Span(false);
     }
     let name = name();
+    let path = STACK.with(|s| match s.lock().opens.last() {
+        Some(top) => format!("{}/{name}", top.path),
+        None => name,
+    });
+    open(path)
+}
+
+/// Opens the span at `path`.
+fn open(path: String) -> Span {
+    if !on() {
+        return Span(false);
+    }
     memory::sample();
     STACK.with(|s| {
         let mut s = s.lock();
-        let path = match s.opens.last() {
-            Some(top) => format!("{}/{name}", top.path),
-            None => name,
-        };
         let alloc = s.counters.read();
         s.opens.push(Open { path, start: cpu(), children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0 });
     });
