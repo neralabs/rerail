@@ -1795,7 +1795,15 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
     }
     // An input no rule reads needs no statistics: a `.rr` program declares every `core.rr` relation (its prelude).
     let read: BTreeSet<&str> = prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).map(|a| a.rel.as_str()).collect();
-    for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel) && read.contains(rel.as_str())) {
+    // A cache's last rows (`x__kept`, decision 0103): one row until the run holds them and measures them.
+    for rel in prog.inputs.iter().filter(|rel| super::front::caches::kept_of(rel).is_some()) {
+        stats.card.insert(rel.clone(), 1.0);
+        for col in 0..prog.decls[rel].len() {
+            ndv.insert((rel.clone(), col), 1.0);
+            stats.fan.insert((rel.clone(), col), 1.0);
+        }
+    }
+    for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel) && read.contains(rel.as_str()) && super::front::caches::kept_of(rel).is_none()) {
         for col in 0..prog.decls[rel].len() {
             let name = sql_col(rel, col);
             let Some(&[rows, n, sq, _]) = stats.col.get(&(rel.clone(), name.clone())) else {
@@ -4681,6 +4689,32 @@ pub(in crate::code_rule_dsl) struct Hooks<'a> {
     pub(in crate::code_rule_dsl) answer: Option<Answer<'a>>,
     /// The strata an earlier run of the program kept (decision 0077 §4): a stratum whose reads are unchanged is not run.
     pub(in crate::code_rule_dsl) strata: Option<&'a mut dyn KeptStrata>,
+    /// Where the program's caches keep their rows by key (decision 0103).
+    pub(in crate::code_rule_dsl) caches: Option<&'a mut dyn CacheStore>,
+}
+
+/// Where a cache's rows are kept by key (decision 0103, `content_store::cache_rows`).
+pub(in crate::code_rule_dsl) trait CacheStore {
+    /// The keys of `keys` (flat, `width` values each) cache `id` has seen: each one's index, and its rows (flat).
+    fn hits(&mut self, id: &[u8; 32], width: usize, keys: &[i64]) -> Result<Vec<(usize, Vec<i64>)>>;
+    /// Keeps `keys` (flat, `key_width` each) with their rows among `rows` (flat, `width` each, the key in columns
+    /// `cols`); a key with none is kept as seen.
+    fn keep(&mut self, id: &[u8; 32], key_width: usize, keys: &[i64], cols: &[usize], width: usize, rows: &[i64]);
+}
+
+/// Holds input `name` of `prog`'s run with `rows` (flat), measured as `kept_strata_hold` measures a relation.
+fn hold_kept(run: &mut Run<'_, '_>, db: &Connection, prog: &Program, name: &str, rows: Vec<i64>) {
+    let types = prog_types(prog, name).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
+    let k = types.len();
+    let n = if k == 0 { 0 } else { rows.len() / k };
+    for c in 0..k {
+        let d = rows.iter().skip(c).step_by(k).copied().collect::<rustc_hash::FxHashSet<i64>>().len().max(1) as f64;
+        run.model.ndv.insert((name.to_owned(), c), d);
+        run.model.stats.fan.insert((name.to_owned(), c), (n as f64 / d).max(1.0));
+    }
+    super::native::component::hold_rows(db, name, types, rows, n);
+    run.native_rels.insert(name.to_owned());
+    run.model.stats.card.insert(name.to_owned(), (n as f64).max(1.0));
 }
 
 /// What an earlier run of a program kept of its strata, and what this run gives back (decision 0077 §4).
@@ -4840,14 +4874,17 @@ pub(in crate::code_rule_dsl) fn view_sql(rel: &str, query: &Query) -> String {
 /// The views `run` makes of one-atom projections of an input, each as its query (`view_sql`).
 fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&Rule>>) -> Result<Vec<(String, Query)>> {
     let mut views = Vec::new();
+    // A cache's key (decision 0103) is held in the engine: its rows are looked up in the store by value.
+    let keys: BTreeSet<String> = super::front::caches::running(prog).into_iter().map(|c| c.key).collect();
     for (&rel, rs) in rules_by {
         let [rule] = rs.as_slice() else { continue };
-        if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
+        if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) || keys.contains(rel) {
             continue;
         }
         let (h, b) = (&rule.head, &rule.body);
         let [Literal::Atom(a)] = b.as_slice() else { continue };
-        if a.neg || !prog.inputs.contains(&a.rel) {
+        // A cache's last rows (decision 0103) are held in the engine, not a table a view can read.
+        if a.neg || !prog.inputs.contains(&a.rel) || super::front::caches::kept_of(&a.rel).is_some() {
             continue;
         }
         let order = vec![Step { at: 0, lit: b[0].clone(), mode: None }];
@@ -5186,6 +5223,13 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     let input_set: BTreeSet<&str> = prog.inputs.iter().map(String::as_str).collect();
     let produced_here = super::answers::produced(prog);
+    // The caches the program runs (decision 0103), and the store their rows are read from and written to.
+    let running = super::front::caches::running(prog);
+    let mut cache_store = hooks.caches.take();
+    // The store's keys among K's rows this run, by cache, once looked up (`K__kept` and `C__kept` are bound).
+    let mut looked_up: BTreeSet<String> = BTreeSet::new();
+    // A cache's new keys, written with their rows once the output rule has made them.
+    let mut new_keys: HashMap<String, Vec<i64>> = HashMap::new();
     // This run's digest of each derived relation (`None`: not known, as for a stratum SQL ran); clean relations not
     // yet held; the strata evaluated whose rows' digests are not taken yet. A stratum waiting on its device wave has
     // no rows yet: its digest is taken once its wave ran (a stratum that reads it finishes the wave first).
@@ -5270,9 +5314,28 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             let plain = !scc.iter().any(|r| prog.natives.contains_key(r) || prog.lattice.contains_key(r) || run.views.contains(r) || produced_here.contains_key(r.as_str()))
                 && !rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Ast { .. })));
             let mut clean = plain && !rules.is_empty() && scc.iter().all(|r| ks.has_rows(r));
+            // A cache's own strata (decision 0103: `K__plus`, `C__ins`, `C`) are as they were exactly while its key's
+            // rows are: the output then stands as the store keeps it, whatever else its rule reads. A changed key runs
+            // them, the output rule for the new keys only.
+            let own = running.iter().find(|c| {
+                let (plus, ins) = (super::front::caches::named(&c.key, "plus"), super::front::caches::named(&c.out, "ins"));
+                scc.iter().any(|r| *r == plus || *r == ins || *r == c.out)
+            });
+            if let Some(cache) = own {
+                let k = &cache.key;
+                let now = if fresh.contains_key(k) { fresh[k] } else if input_set.contains(k.as_str()) { ks.input(k) } else { None };
+                clean = clean && now.is_some() && now == ks.was(k);
+            }
             for r in &reads {
-                if !clean {
+                if !clean || own.is_some() {
                     break;
+                }
+                // A cache's kept rows (decision 0103) are as they were while its key's rows are.
+                if let Some(cache) = super::front::caches::kept_of(r).and_then(|x| running.iter().find(|c| c.key == x || c.out == x)) {
+                    let k = &cache.key;
+                    let now = if fresh.contains_key(k) { fresh[k] } else if input_set.contains(k.as_str()) { ks.input(k) } else { None };
+                    clean = now.is_some() && now == ks.was(k);
+                    continue;
                 }
                 let now = if fresh.contains_key(r) {
                     fresh[r]
@@ -5302,6 +5365,48 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 held_again += 1;
             }
             evaluated.push(at);
+        }
+        // A cache (decision 0103): the store's rows of this run's keys, looked up when the run reaches them; the new
+        // keys taken when the output rule is about to make their rows, and written with those rows.
+        if !running.is_empty() {
+            let reads = stratum_reads(prog, scc, &rules);
+            for cache in &running {
+                let (kk, ck) = (super::front::caches::kept(&cache.key), super::front::caches::kept(&cache.out));
+                if (reads.contains(&kk) || reads.contains(&ck)) && looked_up.insert(cache.out.clone()) {
+                    let kw = prog.decls[&cache.key].len();
+                    // The key's rows are this run's: held first when its stratum was clean.
+                    if let Some(ks) = strata_kept.as_deref_mut()
+                        && deferred.remove(&cache.key)
+                    {
+                        held_rows += kept_strata_hold(ks, db, &mut run, &cache.key)?;
+                        held_again += 1;
+                    }
+                    let keys = super::native::component::kept_rows(db, &cache.key).map(|(_, rows, _)| rows).unwrap_or_default();
+                    let hits = match cache_store.as_deref_mut() {
+                        Some(store) if kw > 0 => store.hits(&cache.id, kw, &keys)?,
+                        _ => Vec::new(),
+                    };
+                    let mut found = Vec::with_capacity(hits.len() * kw);
+                    let mut rows = Vec::new();
+                    for (i, r) in &hits {
+                        found.extend_from_slice(&keys[i * kw..i * kw + kw]);
+                        rows.extend_from_slice(r);
+                    }
+                    hold_kept(&mut run, db, prog, &kk, found);
+                    hold_kept(&mut run, db, prog, &ck, rows);
+                }
+                let (plus, ins) = (super::front::caches::named(&cache.key, "plus"), super::front::caches::named(&cache.out, "ins"));
+                if cache_store.is_some() && scc.contains(&ins) {
+                    new_keys.insert(cache.out.clone(), super::native::component::kept_rows(db, &plus).map(|(_, rows, _)| rows).unwrap_or_default());
+                }
+                if let Some(store) = cache_store.as_deref_mut()
+                    && scc.contains(&cache.out)
+                    && let Some(keys) = new_keys.remove(&cache.out)
+                {
+                    let made = super::native::component::kept_rows(db, &ins).map(|(_, rows, _)| rows).unwrap_or_default();
+                    store.keep(&cache.id, prog.decls[&cache.key].len(), &keys, &cache.cols, prog.decls[&cache.out].len(), &made);
+                }
+            }
         }
         let _stratum = super::profile::span(|| format!("stratum {}", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
         // A produced relation above its request (decision 0065 §2a): its request is whole, so it is answered once, or

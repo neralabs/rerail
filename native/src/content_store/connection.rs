@@ -311,7 +311,7 @@ impl ThreadConnection {
 pub(super) const CACHE_KIB: i64 = 1_024;
 
 /// When profiling, each statement of a store connection is reported to the profile, which counts the ones a wave's
-/// thread runs while waves are under way as hazards (decision 0103: no wave waits for SQL).
+/// thread runs while waves are under way as hazards (decision 0104: no wave waits for SQL).
 fn trace_for_hazards(connection: &Connection) {
     use rusqlite::ffi;
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {

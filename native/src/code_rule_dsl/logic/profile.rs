@@ -544,7 +544,7 @@ fn hazard_class(conn: &str, path: &str, text: &str) -> &'static str {
 }
 
 /// A statement that connection `conn` (`run`: the run's database; `store`: the content store) ran in `ns`
-/// nanoseconds: inside the waves, on a wave's thread, it is a hazard (decision 0103: no wave waits for SQL).
+/// nanoseconds: inside the waves, on a wave's thread, it is a hazard (decision 0104: no wave waits for SQL).
 pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
     if !in_waves() {
         return;

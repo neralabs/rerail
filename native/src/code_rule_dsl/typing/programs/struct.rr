@@ -24,7 +24,7 @@
 #include "python/conditions.rr"
 
 .phase struct
-.export unit, def, binds, base, member, param, ret, vann, alias, flag, shape, tvar, module_file, at
+.export unit, def, binds, base, member, param, ret, vann, alias, flag, shape, tvar, module_file, at, ann, annarg
 // Where a definition is: kept, and handed on to the findings that cite it, but not part of its granule's digest.
 .positions at
 // Which document each definition is in: the store replaces a changed document's granules on their own.
@@ -185,3 +185,78 @@ module_file(q, p) :- modnode(d, m), modname(m, q), doc(d, p, _).
 // at(s, p, l): where definition s is, path and line: a position, kept out of freshness (`.positions`).
 .decl at(s: symbol, p: symbol, l: number)
 at(q, p, l) :- sym(n, q), docof(n, d), doc(d, p, _), line(n, l).
+
+// ---- annotations, read off their own trees -------------------------------------------------------------------
+// What P2 resolves an annotation by: its alternatives, each one's head name and its arguments. Read from the tree,
+// so a union inside brackets (`dict[str, list[int] | None]`), a nested generic and `Callable[P, A]` are each what
+// they are, and the text is never split.
+//
+// ```text
+// def f(a: int | None, b: dict[str, list[int]]): ...
+//   ann("m", "int | None", "int", "int").  ann("m", "int | None", "None", "None").
+//   ann("m", "dict[str, list[int]]", "dict[str, list[int]]", "dict").
+//   annarg("m", "dict[str, list[int]]", 0, "str").  annarg("m", "dict[str, list[int]]", 1, "list[int]").
+//   ann("m", "list[int]", "list[int]", "list").  annarg("m", "list[int]", 0, "int").  ann("m", "str", "str", "str").
+// ```
+//
+// aroot(t, q): an annotation written in module q: a parameter's, a return's, a declared value's, a class's base,
+// and each argument inside one's brackets. Syntax only, so made per file: a dead branch's or a nested function's
+// annotations are read too, and P2 reads only those `param`, `ret`, `vann` and `base` name.
+.decl aroot(t: node, q: symbol)
+aroot(t, q) :- kind(f, "function_definition"), field(f, "parameters", ps), child(ps, p, _), field(p, "type", t), amod(t, q).
+aroot(t, q) :- kind(f, "function_definition"), field(f, "return_type", t), amod(t, q).
+aroot(t, q) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), field(g, "type", t), nearest(g, s, scope), ascope(s),
+    amod(t, q).
+aroot(e, q) :- kind(c, "class_definition"), field(c, "superclasses", args), child(args, e, _), !kind(e, "keyword_argument"), amod(e, q).
+aroot(y, q) :- aroot(t, q), aalt(t, n), kind(n, "generic_type"), child(n, tp, _), kind(tp, "type_parameter"), child(tp, y, _).
+aroot(y, q) :- aroot(t, q), aalt(t, n), kind(n, "subscript"), child(n, y, j), j > 0.
+// amod(n, q): node n is in module q's document.
+.decl amod(n: node, q: symbol)
+amod(n, q) :- docof(n, d), doc(d, _, q), q != "".
+.decl ascope(s: node)
+ascope(s) :- kind(s, "module").
+ascope(s) :- kind(s, "class_definition").
+// aunion(t, u): u is a part of annotation t's union, before it is split: `A | B` (an operator at the top),
+// `list[A | B]`'s argument (a union type inside brackets), `(A | B)`.
+.decl aunion(t: node, u: node)
+aunion(t, u) :- aroot(t, _), kind(t, "type"), child(t, u, 0).
+aunion(t, t) :- aroot(t, _), !kind(t, "type").
+aunion(t, v) :- aunion(t, u), kind(u, "binary_operator"), op(u, "|"), field(u, "left", v).
+aunion(t, v) :- aunion(t, u), kind(u, "binary_operator"), op(u, "|"), field(u, "right", v).
+aunion(t, v) :- aunion(t, u), kind(u, "union_type"), child(u, w, _), kind(w, "type"), child(w, v, 0).
+aunion(t, v) :- aunion(t, u), kind(u, "parenthesized_expression"), child(u, v, 0).
+.decl asplit(u: node)
+asplit(u) :- kind(u, "binary_operator"), op(u, "|").
+asplit(u) :- kind(u, "union_type").
+asplit(u) :- kind(u, "parenthesized_expression").
+// aalt(t, a): alternative a of annotation t.
+.decl aalt(t: node, a: node)
+aalt(t, a) :- aunion(t, a), !asplit(a).
+// ahead(a, h): the name alternative a's head is: a name, a dotted name, None, a subscript's or a generic's head.
+.decl ahead(a: node, h: symbol)
+ahead(a, h) :- aalt(_, a), kind(a, "identifier"), text(a, h).
+ahead(a, h) :- aalt(_, a), kind(a, "attribute"), text(a, w), h = @replace_all(w, "\\s+", "").
+ahead(a, "None") :- aalt(_, a), kind(a, "none").
+ahead(a, h) :- aalt(_, a), kind(a, "generic_type"), child(a, i, 0), text(i, w), h = @replace_all(w, "\\s+", "").
+ahead(a, h) :- aalt(_, a), kind(a, "subscript"), field(a, "value", v), text(v, w), h = @replace_all(w, "\\s+", "").
+// A quoted forward reference (`"C"`, `'list[B] | None'`): its text's parts at each `|`, each one's head before its
+// brackets. Its text is not parsed yet, so a `|` inside its brackets splits it too (open: parse the string, a cache
+// by its text, decision 0103).
+ahead(a, h) :- astr(a, s), match("^\\s*(?<h>[A-Za-z_][A-Za-z_0-9.]*).*$", s).
+.decl astr(a: node, s: symbol)
+astr(a, s) :- aalt(_, a), kind(a, "string"), child(a, c, _), kind(c, "string_content"), text(c, s).
+astr(a, b) :- astr(a, s), match("^[^|]*\\|(?<b>.*)$", s).
+// atext(n, w): annotation node n's text, as `param`, `ret`, `vann` and `base` give it: on one line.
+.decl atext(n: node, w: symbol)
+atext(n, w) :- aroot(n, _), text(n, x), w = @replace_all(x, "\\s+", " ").
+atext(n, w) :- aalt(_, n), text(n, x), w = @replace_all(x, "\\s+", " ").
+// ann(m, e, a, h): annotation e, as written in module m, has alternative a, whose head is the name h ("" for one with
+// no name, such as `[int]` or a literal).
+.decl ann(m: symbol, e: symbol, a: symbol, h: symbol)
+ann(q, e, a, h) :- aroot(t, q), aalt(t, n), atext(t, e), atext(n, a), ahead(n, h).
+ann(q, e, a, "") :- aroot(t, q), aalt(t, n), atext(t, e), atext(n, a), !ahead(n, _).
+// annarg(m, a, j, x): alternative a, written in module m, a generic or a subscript, has x as its j-th argument.
+.decl annarg(m: symbol, a: symbol, j: number, x: symbol)
+annarg(q, a, j, x) :- aroot(t, q), aalt(t, n), kind(n, "generic_type"), child(n, tp, _), kind(tp, "type_parameter"), child(tp, y, j),
+    atext(n, a), atext(y, x).
+annarg(q, a, i, x) :- aroot(t, q), aalt(t, n), kind(n, "subscript"), child(n, y, j), j > 0, pred(j, i), atext(n, a), atext(y, x).

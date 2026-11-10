@@ -1,4 +1,4 @@
-//! Everything kept is facts (decision 0103): the checks that keep a cache from being built beside them.
+//! Everything kept is facts (decision 0104): the checks that keep a cache from being built beside them.
 //!
 //! A cache is a rule that makes a key fact from what decides validity, and a rule that makes the result from the
 //! key by a native step. The engine keeps both like any fact, so an unchanged key is no delta and the step does not
@@ -10,7 +10,7 @@
 //! - **fact store**: where facts and documents live (atoms, tapes, sources, the writer's queue);
 //! - **scratch**: a table a query makes and drops inside one statement or one test lab;
 //! - **state**: what is not kept for later use (registries of open things, queues, profiling, switches);
-//! - **not yet facts**: a cache still to move. Each names the step of 0103 that moves it.
+//! - **not yet facts**: a cache still to move. Each names the step of 0104 that moves it.
 //!
 //! A new table or map in none of the lists fails. So does a listed one that is gone: the list is cut, never left
 //! stale. The not-yet-facts lists may only shrink: their sizes are pinned, and a move lowers the pin.
@@ -33,6 +33,8 @@ const FACT_STORE: &[&str] = &[
     "object_pins",
     "store_state",
     "push_pending",
+    // A `.cache`'s two relations between runs, by key (decision 0103 §2), written by the one writer.
+    "cache_rows",
     "rows",
     "git_alias",
     "git_trees",
@@ -81,7 +83,7 @@ const SCRATCH: &[&str] = &[
     "{t} in code_rule_dsl/logic/native/setfix/lab.rs",
     "{} in code_rule_dsl/slice.rs",
 ];
-/// Caches between runs not yet facts: (table, the 0103 step that moves it).
+/// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("constant_rows", "1"),
     ("run_record", "1"),
@@ -227,7 +229,7 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
     ("content_store/write_back.rs", "WRITERS"),
 ];
-/// Maps (file, static) that are caches not yet facts, with the 0103 step that moves each.
+/// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "CONSULTED", "1"),
     ("code_rule_dsl/logic/strings/git.rs", "STATE", "1"),
@@ -344,7 +346,7 @@ fn every_table_is_facts_or_listed() {
     let found = tables();
     let listed: BTreeSet<&str> = FACT_STORE.iter().chain(SCRATCH).copied().chain(NOT_YET_TABLES.iter().map(|t| t.0)).collect();
     let new: Vec<String> = found.iter().filter(|(t, _)| !listed.contains(t.as_str())).map(|(t, f)| format!("{t}\t{}", f.iter().cloned().collect::<Vec<_>>().join(" "))).collect();
-    assert!(new.is_empty(), "tables in no list of decision 0103 (a cache is facts: keep it as rows of a relation, not a table of its own):\n{}", new.join("\n"));
+    assert!(new.is_empty(), "tables in no list of decision 0104 (a cache is facts: keep it as rows of a relation, not a table of its own):\n{}", new.join("\n"));
     let gone: Vec<&&str> = listed.iter().filter(|t| !found.contains_key(**t)).collect();
     assert!(gone.is_empty(), "listed tables no longer made (cut them from the list, and lower the pin if moved): {gone:?}");
     let mut seen = BTreeSet::new();
@@ -361,7 +363,7 @@ fn every_kept_map_is_state_or_listed() {
     let listed: BTreeSet<(String, String)> =
         STATE.iter().map(|(f, s)| (f.to_string(), s.to_string())).chain(NOT_YET_MAPS.iter().map(|(f, s, _)| (f.to_string(), s.to_string()))).collect();
     let new: Vec<String> = found.difference(&listed).map(|(f, s)| format!("{f}\t{s}")).collect();
-    assert!(new.is_empty(), "maps in no list of decision 0103 (a result kept for later use is facts, not a map of its own):\n{}", new.join("\n"));
+    assert!(new.is_empty(), "maps in no list of decision 0104 (a result kept for later use is facts, not a map of its own):\n{}", new.join("\n"));
     let gone: Vec<String> = listed.difference(&found).map(|(f, s)| format!("{f}\t{s}")).collect();
     assert!(gone.is_empty(), "listed maps no longer there (cut them from the list, and lower the pin if moved):\n{}", gone.join("\n"));
     assert!(NOT_YET_MAPS.len() <= NOT_YET_MAPS_PIN, "a cache map added to the list (it may only shrink): {} > {NOT_YET_MAPS_PIN}", NOT_YET_MAPS.len());

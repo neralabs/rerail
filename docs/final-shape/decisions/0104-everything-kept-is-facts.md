@@ -1,4 +1,4 @@
-# 0103: Everything kept is facts, on the same fact path
+# 0104: Everything kept is facts, on the same fact path
 
 Status: decided (2026-11-10). The checks are built; the moves are in the order below.
 
@@ -63,15 +63,16 @@ key, a table, a map or a validity test of its own.
 
 ## The pattern
 
+A cache takes 0103's form, `.cache C by K`: a key rule and an output rule in the program's `.rr`.
+
 ```text
-// A key fact: what decides whether the result is still right.
-.decl choose(program: symbol, build: symbol)
+// The key: what decides whether the result is still right.
 choose(p, b) :- program(p), engine_build(b).
 
-// The result: the native step answers each new key (0065 §2a). An unchanged
-// key is no delta, so it is not asked again.
-.decl chosen(program: symbol, rel: symbol, keep: symbol)
-.answer choose -> chosen
+// The result, from the key, by the native step (here a relation made on
+// demand). An unchanged key is no delta, so the step is not asked again.
+.cache chosen by choose
+chosen(p, b, rel, keep) :- choose(p, b), choices_of(p, b, rel, keep).
 ```
 
 1. **Inputs are facts.** A file's content digest, a directory's listing, the engine's build and a
@@ -86,6 +87,16 @@ choose(p, b) :- program(p), engine_build(b).
    as relation rows. A new process loads them and maintains them from the delta of its observations.
 5. **Memory is ahead of SQLite.** The session's facts are the resident copy. The 0102 writer writes
    them behind the run.
+
+## No wave waits for SQL
+
+SQL is in a run's data path only before its first wave and after its last. A wave that runs, reads
+or waits on SQL either waits for SQLite or reads rows it was not given. So what a run reads from the
+store is read before the first wave. What it writes goes to the writer (0102). Meanwhile, memory
+holds it.
+
+The profile reports every statement that a wave's thread runs, and every wait for the writer, under
+"Forces SQL waits (hazards)". Each is a hazard to remove.
 
 ## What is checked
 
