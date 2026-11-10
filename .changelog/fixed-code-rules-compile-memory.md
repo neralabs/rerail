@@ -1,0 +1,1 @@
+Code rules take far less memory once compiled. The Node.js pack's `n-no-unsupported-features-node-builtins` held about 500 MB and now holds under 90 MB, and it compiles in half the time. The packs a JavaScript or TypeScript repository installs together go from about 760 MB to 150 MB.

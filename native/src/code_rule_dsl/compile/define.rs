@@ -151,11 +151,14 @@ fn check_dialects<'u>(
     let ignored = std::cell::RefCell::new(BTreeSet::new());
     // A shared utility's `calls` terms are the calling queries' (their seeds carry its rule).
     let calls = crate::code_rule_dsl::calls::CallsCollector::new(String::new(), false);
+    let names: Arc<[String]> = utils.keys().cloned().collect();
+    let framed: Arc<[bool]> = utils.values().map(|util| !util.params.is_empty()).collect();
+    let origins: Arc<[_]> = vec![None; utils.len()].into();
     let new_table = || {
         Arc::new(UtilTable::new(
-            utils.keys().cloned().collect(),
-            utils.values().map(|util| !util.params.is_empty()).collect(),
-            vec![None; utils.len()],
+            Arc::clone(&names),
+            Arc::clone(&framed),
+            Arc::clone(&origins),
         ))
     };
     for ((dialect, grammar), side) in &sides {

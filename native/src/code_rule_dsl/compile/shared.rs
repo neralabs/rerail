@@ -52,8 +52,11 @@ struct Language<'a> {
     defs: Vec<&'a UtilDef<'a>>,
     ids: UtilIds<'a>,
     indices: HashMap<&'a str, usize>,
+    /// Each utility's id and whether it has parameters, which every table of the language names.
+    names: Arc<[String]>,
+    framed: Arc<[bool]>,
     /// Each utility's `UtilOrigin`, once a table needs them; `None` where they cannot be computed.
-    origins: OnceCell<Option<Vec<Option<UtilOrigin>>>>,
+    origins: OnceCell<Option<Arc<[Option<UtilOrigin>]>>>,
 }
 
 /// A shared table and what compiling each utility in it added to the queries that reach it.
@@ -100,6 +103,8 @@ impl<'a> SharedTables<'a> {
                         .enumerate()
                         .map(|(index, id)| (id.as_str(), index))
                         .collect(),
+                    names: utils.keys().cloned().collect(),
+                    framed: utils.values().map(|util| !util.params.is_empty()).collect(),
                     origins: OnceCell::new(),
                 };
                 (language.language, language)
@@ -175,11 +180,8 @@ impl Language<'_> {
             .clone()?;
         Some(Table {
             table: Arc::new(UtilTable::new(
-                self.utils.keys().cloned().collect(),
-                self.defs
-                    .iter()
-                    .map(|util| !util.params.is_empty())
-                    .collect(),
+                Arc::clone(&self.names),
+                Arc::clone(&self.framed),
                 origins,
             )),
             added: self.defs.iter().map(|_| None).collect(),
@@ -273,12 +275,32 @@ mod tests {
         (built, held() - before)
     }
 
-    /// A rule generated from a table, as a port of a linter's list of built-in APIs is: one
-    /// define whose utilities repeat a few patterns, reached by queries that each declare the
-    /// globals they read, so each query's `languageOptions` compiles them in a table of its own,
-    /// once per grammar.
-    fn generated_from_a_table(utilities: usize, queries: usize) -> Value {
-        let utils = (0..utilities)
+    /// The bytes a compiled document of one define, `utils`, holds, with a query per rule of
+    /// `reaches`. Each query declares a global of its own, as a rule generated from a linter's
+    /// list of built-in APIs declares the ones it reads, so its `languageOptions` compile the
+    /// utilities it reaches in a shared table of their own, once per grammar.
+    fn held_by(utils: Map<String, Value>, reaches: Vec<Value>) -> i64 {
+        let mut clauses =
+            vec![json!({ "id": "table", "define": { "language": "typescript", "utils": utils } })];
+        clauses.extend(reaches.into_iter().enumerate().map(|(query, rule)| {
+            json!({ "id": format!("q{query}"), "violation": violation(), "forbid": { "ast": {
+                "language": "typescript",
+                "languageOptions": { "globals": { format!("g{query}"): "readonly" } },
+                "rule": rule,
+            } } })
+        }));
+        let document = json!({ "format": "rerail.policy/v1", "id": "table", "revision": 1, "mode": "steer", "clauses": clauses });
+        let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
+        let (compiled, held) = retained(|| compile_document_with(document, &capabilities));
+        compiled.unwrap_or_else(|error| panic!("{}", error.reason));
+        held
+    }
+
+    #[test]
+    fn a_document_holds_each_regex_pattern_once_however_many_tables_compile_it() {
+        // 120 utilities of 2 regexes each over 8 patterns, all reached by 8 queries in 3
+        // grammars: 5,760 regex terms. Compiled one per term they held about 85 MiB.
+        let utils = (0..120)
             .map(|index| {
                 let rule = json!({ "any": [
                     { "kind": "property_identifier", "regex": format!("^name{}$", index % 4) },
@@ -286,34 +308,25 @@ mod tests {
                 ] });
                 (format!("u{index}"), rule)
             })
-            .collect::<Map<_, _>>();
-        let reach = (0..utilities)
+            .collect();
+        let every = (0..120)
             .map(|index| json!({ "matches": format!("u{index}") }))
             .collect::<Vec<_>>();
-        let mut clauses =
-            vec![json!({ "id": "table", "define": { "language": "typescript", "utils": utils } })];
-        clauses.extend((0..queries).map(|query| {
-            json!({ "id": format!("q{query}"), "violation": violation(), "forbid": { "ast": {
-                "language": "typescript",
-                "languageOptions": { "globals": { format!("g{query}"): "readonly" } },
-                "rule": { "any": reach },
-            } } })
-        }));
-        json!({ "format": "rerail.policy/v1", "id": "table", "revision": 1, "mode": "steer", "clauses": clauses })
+        let held = held_by(utils, vec![json!({ "any": every }); 8]);
+        assert!(held < 16 << 20, "the document holds {} MiB", held >> 20);
     }
 
     #[test]
-    fn a_document_holds_each_regex_pattern_once_however_many_tables_compile_it() {
-        // 8 queries, 3 grammars and 120 utilities of 2 regexes each: 5,760 regex terms over 8
-        // patterns. Compiled one per term they held about 85 MiB.
-        let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
-        let (compiled, held) =
-            retained(|| compile_document_with(generated_from_a_table(120, 8), &capabilities));
-        compiled.unwrap_or_else(|error| panic!("{}", error.reason));
-        assert!(
-            held < 16 << 20,
-            "the compiled document holds {} MiB",
-            held >> 20
-        );
+    fn a_shared_table_holds_only_the_utilities_its_queries_reach() {
+        // 24 queries in 3 grammars, each reaching one of 2,000 utilities: 72 shared tables. With
+        // room for every utility's rule and memo in each, they held about 30 MiB.
+        let utils = (0..2000)
+            .map(|index| (format!("u{index}"), json!({ "kind": "identifier" })))
+            .collect();
+        let reaches = (0..24)
+            .map(|query| json!({ "matches": format!("u{query}") }))
+            .collect();
+        let held = held_by(utils, reaches);
+        assert!(held < 8 << 20, "the document holds {} MiB", held >> 20);
     }
 }
