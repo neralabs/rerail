@@ -8,10 +8,12 @@ pub(super) struct Operator {
     pub result: String,
     pub improvements: String,
     pub active: bool,
+    pub(super) empty_body: bool,
     pub comparison: versions::Version,
     pub(super) ready: bool,
     pub(super) phase_eligible: bool,
     pub(super) phase_arms: usize,
+    pub(super) sql_kernel: bool,
     pub(super) seen: BTreeMap<String, versions::Version>,
     pub(super) pending: BTreeMap<String, Pending>,
 }
@@ -24,7 +26,10 @@ pub(super) struct Pending {
 impl Pending {
     pub(super) fn add(&self, w: &mut Work<'_>, d: &Delta) -> Result<()> {
         if let Some(store) = w.versions {
+            let operation = w.profiler.map(|p| p.operation("native journal composition", ("sql-extension",0),0,
+                vec![("insertions".into(),d.inserted as i64),("deletions".into(),d.deleted as i64)]));
             if store.compose(&self.plus, &self.minus, &d.plus, &d.minus)? {
+                if let Some(operation) = operation { operation.finish(store.version(&self.plus).len()+store.version(&self.minus).len()); }
                 return Ok(());
             }
         }
@@ -144,9 +149,11 @@ impl Operator {
     ) -> Result<Self> {
         let (step, query) = &trace.steps[id];
         let spec = &trace.relations[&step.output];
+        let sql_kernel = !spec.lattice && walks::kernel(query);
         let result = format!("{prefix}_o{id}");
         let mut query = query.clone();
         bind(&mut query, inputs);
+        order(&mut query, w.db);
         let mut emitted = (*trace.emitted).clone();
         emitted.setup.clear();
         emitted.views.clear();
@@ -197,13 +204,10 @@ impl Operator {
             sql: format!("INSERT OR IGNORE INTO new_{result} {}", query.render()),
         }];
         emitted.queries = vec![Some(query)];
-        let run = session::Execution {
+        let mut run = session::Execution {
+            logical_relations: Arc::new(emitted.program.relations.clone()),
             inputs: dependencies,
-            objects: vec![
-                (result.clone(), true),
-                (format!("new_{result}"), true),
-                (format!("delta_{result}"), true),
-            ],
+            objects: vec![(result.clone(), true)],
             emitted: Arc::new(emitted),
             counts: BTreeMap::from([(result.clone(), 0)]),
             outputs: vec![result.clone()],
@@ -215,21 +219,16 @@ impl Operator {
             program: Arc::new(crate::code_rule_dsl::logic::front::Program::default()),
             producers: BTreeMap::new(),
         };
-        let planned = reductions::planned(w.db, &run, true)?;
-        let phase_eligible = planned.get(&result).is_some_and(|s| s.can_fuse());
+        let planned = if sql_kernel { reductions::pool::Plans::default() } else { reductions::planned(w.db, &run, true)? };
+        let phase_eligible = planned.get(&result).is_some_and(|s| s.common_phase().proven);
         let phase_arms = planned.get(&result).map_or(0, |s| s.phase_arms());
-        for (name, keys) in [
-            (result.clone(), spec.keys),
-            (format!("new_{result}"), spec.width),
-            (format!("delta_{result}"), spec.keys),
-        ] {
-            if phase_eligible {
-                store.create_readonly(w.db, &name, versions::Schema::integers(spec.width, keys))?;
-            } else {
-                store.create(w.db, &name, versions::Schema::integers(spec.width, keys))?;
-            }
-            store.restrict_indexes(&name, &[])?;
-        }
+        // This wrapper never executes a cold INSERT frontier. It initializes
+        // from retained support, then publishes native patches from SQL results.
+        store.create_readonly(w.db, &result, versions::Schema::integers(spec.width, spec.keys))?;
+        // An acyclic successor probes this cache as its current input. Keep
+        // the same access paths as the ordinary frozen relation facade.
+        let staged_input = phase_eligible && trace.stage_decisions.get(&step.output).is_some_and(|d| d.proven);
+        store.restrict_indexes(&result, if staged_input { &spec.indexes } else { &[] })?;
         let mut seen = BTreeMap::new();
         let mut pending = BTreeMap::new();
         for (at, name) in run.inputs.iter().enumerate() {
@@ -259,16 +258,19 @@ impl Operator {
             versions::Schema::integers(spec.width, spec.keys),
         )?;
         store.restrict_indexes(&improvements, &[])?;
+        run.reductions = (!planned.is_empty()).then_some(planned.clone());
         Ok(Self {
-            logical_analysis: trace.frames.first().and_then(|f|f.operators.get(id)).map(|op|Arc::clone(&op.logical_analysis)).unwrap_or_else(||Arc::new(json!(planned.values().map(reductions::Retained::explain).collect::<Vec<_>>()))),
+            logical_analysis: trace.frames.first().and_then(|f|f.operators.get(id)).map(|op|Arc::clone(&op.logical_analysis)).unwrap_or_else(||Arc::new(if sql_kernel { json!({"execution":"recursive SQL kernel","proof":"Generated walk CTEs and allowlisted pure expressions; set output with original SQL UNION and NULL semantics","invalidation":"Equal input versions and empty journals skip evaluation","limits":"SQL step, time and memory guards; outer Datalog wave limits remain unchanged","storage":"One result root; no lifted walk or support tables"}) } else {json!(planned.values().map(reductions::Retained::explain).collect::<Vec<_>>())})),
             run,
             result,
             improvements,
             active: false,
+            empty_body: false,
             comparison: store.version(&inputs[&step.output]),
             ready: false,
             phase_eligible,
             phase_arms,
+            sql_kernel,
             seen,
             pending,
         })
@@ -280,6 +282,26 @@ impl Operator {
                 .unwrap(),
             w.db,
         );
+        if self.sql_kernel {
+            self.evaluate_kernel(w, store)?;
+            self.ready = true;
+            return Ok(());
+        }
+        if self.run.emitted.queries[0].as_ref().unwrap().ctes.is_empty() {
+            let mut plans = reductions::planned(w.db, &self.run, true)?;
+            if let Some(state) = plans.get_mut(&self.result).filter(|s| s.isolated_phase().proven) {
+                let _context = w.profile_scope(||json!({"stage":"isolated checked support initialization","logicalAnalysis":state.explain()}));
+                state.declare_phase(w.db, &mut self.run.objects, store)?;
+                let mut phase = super::super::phase::Phase::default();
+                state.append_phase(w, &BTreeMap::new(), &mut phase, true)?;
+                phase.execute(w)?;
+                state.ready = true;
+                self.run.counts.insert(self.result.clone(), store.version(&self.result).len() as u64);
+                self.run.reductions = Some(plans);
+                self.ready = true;
+                return Ok(());
+            }
+        }
         walks::prepare(w, &mut self.run, Some(store))
             .map_err(|e| error(format!("{}: temporal walks: {e}", self.result)))?;
         let mut potential = self.run.inputs.clone();
@@ -329,6 +351,21 @@ impl Operator {
         self.ready = true;
         Ok(())
     }
+    fn evaluate_kernel(&mut self, w: &mut Work<'_>, store: &versions::Store) -> Result<()> {
+        let _context = w.profile_scope(|| json!({"stage":"recursive SQL kernel","logicalAnalysis":self.logical_analysis.as_ref()}));
+        let query = self.run.emitted.queries[0].as_ref().unwrap().render();
+        // Match the original INSERT OR IGNORE: a NULL head does not publish a row.
+        let count = store.select_available(w.db, &self.result, &query, true, true)?;
+        self.run.counts.insert(self.result.clone(), count as u64);
+        Ok(())
+    }
+    pub(super) fn append_kernel(&self, phase: &mut super::super::phase::Phase, width: usize) -> String {
+        let query = self.run.emitted.queries[0].as_ref().unwrap();
+        let evaluated = phase.relation(width, &query.render());
+        let present = (0..width).map(|c|format!("c{c} IS NOT NULL")).collect::<Vec<_>>().join(" AND ");
+        // Preserve INSERT OR IGNORE's NULL-head behavior before bulk validation.
+        phase.view(width, &format!("SELECT * FROM {evaluated} WHERE {present}"))
+    }
     pub fn update(
         &mut self,
         w: &mut Work<'_>,
@@ -343,7 +380,7 @@ impl Operator {
                 p.add(w, d)?;
             }
         }
-        if self.ready && self.clear_empty_body(store)? {
+        if self.ready && self.clear_empty_body(w.db,store)? {
             return Ok(true);
         }
         if !active {
@@ -356,6 +393,11 @@ impl Operator {
                 ));
             }
             self.initialize(w, store)?;
+        } else if self.sql_kernel {
+            if self.seen.iter().any(|(r,v)| !v.same(&store.version(r)))
+                || self.pending.values().any(|p| store.version(&p.plus).len() + store.version(&p.minus).len() > 0) {
+                self.evaluate_kernel(w, store)?;
+            }
         } else {
             let mut changes = BTreeMap::new();
             for (r, v) in &self.seen {
@@ -432,5 +474,31 @@ impl Operator {
                     .values()
                     .flat_map(|p| [(p.plus.clone(), true), (p.minus.clone(), true)]),
             )
+    }
+}
+
+pub(super) fn combine_summaries(operators: &mut [Operator]) {
+    let mut plans = reductions::pool::Plans::default();
+    let mut queries = vec![];
+    for (id,op) in operators.iter_mut().enumerate() {
+        queries.push(op.run.emitted.queries[0].clone());
+        if let Some(local) = &mut op.run.reductions {
+            for (name,mut state) in std::mem::take(&mut local.states) {
+                state.set_step(id);
+                plans.states.insert(name,state);
+            }
+        }
+    }
+    reductions::pool::combine_cursors(&mut plans,&queries);
+    let storage = plans.storage;
+    for op in operators {
+        if let Some(state) = plans.states.remove(&op.result) {
+            let local = op.run.reductions.as_mut().unwrap();
+            op.phase_arms = state.phase_arms();
+            op.phase_eligible = state.common_phase().proven;
+            op.logical_analysis = Arc::new(json!([state.explain()]));
+            local.states.insert(op.result.clone(),state);
+            local.storage=storage.clone();
+        }
     }
 }

@@ -1,56 +1,6 @@
 //! Recompute only changed keys, preserving the cold kernel's merge and widening order.
 use super::*;
 
-pub(super) fn apply(
-    w: &mut Work<'_>,
-    spec: &Relation,
-    keys: &str,
-    previous: &str,
-    previous_counts: Option<&str>,
-    output: &str,
-    frontier: &str,
-    counts: Option<&str>,
-    candidates: Vec<&str>,
-) -> Result<()> {
-    let mut phase = phase::Phase::default();
-    let queries = candidates
-        .into_iter()
-        .filter(|table| !w.versions.is_some_and(|s| s.version(table).len() == 0))
-        .map(|table| {
-            format!(
-                "SELECT c.* FROM {keys} k CROSS JOIN {} c WHERE {}",
-                quote(table),
-                same("c", "k", spec.keys)
-            )
-        })
-        .collect::<Vec<_>>();
-    let grouping = (queries.len() == 1).then(|| spec.grouping());
-    let candidates = if queries.is_empty() {
-        format!("SELECT {} WHERE 0", vec!["NULL"; spec.width].join(","))
-    } else {
-        queries.join(if spec.grouping().reduction.duplicate_insensitive() {
-            " UNION ALL "
-        } else {
-            " UNION "
-        })
-    };
-    append(
-        w,
-        &mut phase,
-        spec,
-        keys,
-        previous,
-        previous_counts,
-        output,
-        frontier,
-        counts,
-        &candidates,
-        grouping,
-        false,
-    )?;
-    phase.execute(w).map(|_| ())
-}
-
 pub(super) fn append(
     w: &Work<'_>,
     phase: &mut phase::Phase,

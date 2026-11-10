@@ -91,7 +91,8 @@ fn snapshot(
                         .and_then(|c| c.get(column))
                         .map_or("int", String::as_str);
                     if documents || matches!(ty, "sym" | "symbol") {
-                        session.verification_cell(ty, *v).map_err(|e| e.into())
+                        session.verification_cell(ty, *v).map_err(|e|
+                            format!("checkpoint {check}: {name}[{column}] domain {ty}, raw {v:?}: {e}").into())
                     } else {
                         Ok(v.map(|n| json!(n.to_string())).unwrap_or(Value::Null))
                     }

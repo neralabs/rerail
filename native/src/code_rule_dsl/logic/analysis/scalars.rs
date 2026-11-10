@@ -78,6 +78,16 @@ pub(in crate::code_rule_dsl) struct Scalar {
     pub non_null: bool,
 }
 impl Scalar {
+    pub fn independent_evaluation(&self) -> Decision {
+        if self.kind != Kind::Exists { return self.compatible(self); }
+        let proven = !self.dependent && self.non_null
+            && self.keys.iter().chain(&self.predicates).chain(&self.lookup).all(Expression::stable);
+        Decision::new(proven, if proven {
+            "Independent existence lookup uses its own support-count summary with pure keys and filters"
+        } else {
+            "Dependent, nullable, or opaque existence lookup retains its evaluation boundary"
+        })
+    }
     pub fn compatible(&self, other: &Self) -> Decision {
         self.compatibility(other, true)
     }
@@ -235,7 +245,7 @@ impl Analysis {
         self.evaluation_order(expressions)
     }
     pub fn evaluation_order(&self, expressions: &[Expression]) -> Decision {
-        let reason = if self.inputs.iter().any(|s| !s.compatible(s).proven) {
+        let reason = if self.inputs.iter().any(|s| !s.independent_evaluation().proven) {
             Some("A scalar has dependent, opaque, nullable, or ordered semantics")
         } else if expressions.iter().any(|e| !e.stable()) {
             Some("Outer expressions have no evaluation-order proof")

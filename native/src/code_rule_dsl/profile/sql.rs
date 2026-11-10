@@ -14,7 +14,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::{CStr, c_int, c_uint, c_void};
 use std::fs::{File, create_dir_all};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Write, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::sync::Arc;
@@ -133,6 +133,8 @@ struct Running {
 
 #[derive(Default)]
 struct State {
+    saved_queries: usize,
+    query_prefix: u64,
     explained: usize,
     running: HashMap<usize, Running>,
     ids: HashMap<String, usize>,
@@ -374,17 +376,58 @@ impl Profiler {
             return Err(io_error(std::io::Error::other(error.clone())));
         }
         let origins: serde_json::Map<String, Value> = ORIGINS.iter().enumerate().map(|(i, name)| ((*name).to_owned(), json!({"started":state.origin_started[i], "completed":state.origin_completed[i], "running":state.origin_started[i].saturating_sub(state.origin_completed[i])}))).collect();
-        let data = json!({"version":1,"pid":std::process::id(),"events":state.events,
-            "clock":"process monotonic nanoseconds","originUnixUs":ORIGIN.1,"cpuClock":if cfg!(unix) {"thread CPU"} else {"unavailable"},
-            "writtenAtUnixMs":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis(),
-            "queries":state.queries,"error":state.error,
-            "executionCoverage":{"source":"code-rule-dsl","fromSessionStart":true,
-                "started":state.sql_started,"completed":state.sql_completed,"running":state.running.len(), "origins":origins}});
-        let file = File::create(self.stem.with_extension("json")).map_err(io_error)?;
+        // Explained query records are immutable. Reuse their persisted prefix
+        // instead of walking every earlier bytecode array at every checkpoint.
+        // Copy to a temporary file before appending so failures preserve the last
+        // complete snapshot. std::fs::copy can clone extents on supported filesystems.
+        let path = self.stem.with_extension("json");
+        let temporary = self.stem.with_extension("json.tmp");
+        let prefix = state.query_prefix;
+        let file = if prefix > 0 {
+            let copied = std::fs::copy(&path, &temporary).map_err(io_error)?;
+            if copied < prefix {
+                return Err(io_error(std::io::Error::other("SQL profile catalog prefix is truncated")));
+            }
+            let mut file = std::fs::OpenOptions::new().write(true).open(&temporary).map_err(io_error)?;
+            file.set_len(prefix).map_err(io_error)?;
+            file.seek(SeekFrom::Start(prefix)).map_err(io_error)?;
+            file
+        } else { File::create(&temporary).map_err(io_error)? };
         let mut writer = BufWriter::new(file);
-        serde_json::to_writer(&mut writer, &data)
-            .map_err(|e| io_error(std::io::Error::other(e)))?;
+        if prefix == 0 { writer.write_all(b"{\"queries\":[").map_err(io_error)?; }
+        let saved = state.saved_queries;
+        for (id, query) in state.queries.iter().enumerate().skip(saved) {
+            if id > 0 { writer.write_all(b",").map_err(io_error)?; }
+            serde_json::to_writer(&mut writer, query).map_err(|e|io_error(std::io::Error::other(e)))?;
+        }
+        let query_prefix = writer.stream_position().map_err(io_error)?;
+        writer.write_all(b"],").map_err(io_error)?;
+        let mut header = Vec::new();
+        let write = (|| -> serde_json::Result<()> {
+            use serde::ser::{SerializeMap, Serializer};
+            let mut serializer = serde_json::Serializer::new(&mut header);
+            let mut data = serializer.serialize_map(Some(10))?;
+            data.serialize_entry("version", &1)?;
+            data.serialize_entry("pid", &std::process::id())?;
+            data.serialize_entry("events", &state.events)?;
+            data.serialize_entry("clock", "process monotonic nanoseconds")?;
+            data.serialize_entry("originUnixUs", &ORIGIN.1)?;
+            data.serialize_entry("cpuClock", if cfg!(unix) {"thread CPU"} else {"unavailable"})?;
+            data.serialize_entry("writtenAtUnixMs", &SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis())?;
+            data.serialize_entry("metadataPublication", &json!({"serializedQueries":state.queries.len()-saved,
+                "reusedQueryBytes":prefix.saturating_sub(12)}))?;
+            data.serialize_entry("error", &state.error)?;
+            data.serialize_entry("executionCoverage", &json!({"source":"code-rule-dsl","fromSessionStart":true,
+                "started":state.sql_started,"completed":state.sql_completed,"running":state.running.len(),"origins":origins}))?;
+            data.end()
+        })();
+        write.map_err(|e| io_error(std::io::Error::other(e)))?;
+        writer.write_all(&header[1..]).map_err(io_error)?;
         writer.flush().map_err(io_error)?;
+        drop(writer);
+        std::fs::rename(temporary,path).map_err(io_error)?;
+        state.saved_queries = state.queries.len();
+        state.query_prefix = query_prefix;
         Ok(())
     }
 }

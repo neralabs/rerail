@@ -1,5 +1,5 @@
 //! Development probe: SQL session phases and SQLite work counters. Results stay outside the repo.
-//! cargo run --profile profiling --example sql-executor-bench -- <store> <request.json>
+//! cargo run --example sql-executor-bench -- <store> <request.json>
 use rerail_engine::tools::CodeRuleSqlExecutor;
 use rusqlite::ffi;
 use serde_json::{Value, json};

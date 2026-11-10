@@ -157,8 +157,7 @@ impl Partitioned {
                     }
                 }
             }
-            w.db.execute(&format!("INSERT OR IGNORE INTO {parts} {}", q.render()), [])
-                .map_err(error)?;
+            w.insert(parts,&q.render(),true)?;
         }
         for r in restored {
             let d = &changes[&r];

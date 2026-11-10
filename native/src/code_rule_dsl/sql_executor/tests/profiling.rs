@@ -226,6 +226,10 @@ fn profiled_session_child() {
     );
     e.db.profile_checkpoint();
     versions.close(&e.db).unwrap();
+    // Exercise the SQL storage adapter as well as the default retained graph.
+    e.legacy_initial=true;
+    e.bind_relation(json!({"name":"profile_seed","columns":["n"],"rows":[[1],[2]]}).to_string()).unwrap();
+    e.run(".decl profile_seed(n:number)\n.input profile_seed\n.decl profile_out(n:number)\nprofile_out(n) :- profile_seed(n).\n.output profile_out\n".into(),"python".into(),None).unwrap();
     drop(e);
     let store = tempfile::tempdir().unwrap();
     super::super::super::tools::sql(&store.path().join("constant.sqlite"),&json!({"program":".decl answer(n:number)\nanswer(7).\n.output answer\n","queries":[{"sql":"SELECT * FROM answer"}]}).to_string()).unwrap();

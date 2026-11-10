@@ -30,6 +30,10 @@ pub(super) struct Mark {
 }
 
 impl Pool {
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl::sql_executor) fn names(&self) -> Vec<String> {
+        self.tables.values().flatten().cloned().collect::<BTreeSet<_>>().into_iter().collect()
+    }
     pub fn clear(&mut self, db: &rusqlite::Connection, store: &versions::Store) -> Result<()> {
         for name in self.tables.values().flatten() {
             if store.owns(name) {

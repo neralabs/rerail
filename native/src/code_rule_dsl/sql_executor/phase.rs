@@ -8,6 +8,7 @@ mod reads;
 struct Definition {
     sql: String,
     materialized: bool,
+    width: usize,
 }
 
 enum Keys {
@@ -15,6 +16,7 @@ enum Keys {
     Query(String),
     Incoming,
     Replace,
+    Insert(bool),
 }
 
 struct Output {
@@ -28,14 +30,25 @@ struct Output {
 pub(super) struct Counts {
     pub keys: usize,
     pub rows: usize,
+    pub strategy: crate::code_rule_dsl::logic::analysis::storage::Publication,
 }
 #[derive(Default)]
 pub(super) struct Phase {
     pub analyses: Vec<Value>,
     definitions: Vec<Definition>,
     outputs: Vec<Output>,
+    key_sets: BTreeMap<String, crate::code_rule_dsl::logic::analysis::key_sets::KeySet>,
+    read_arms: usize,
 }
 impl Phase {
+    pub fn arm_bound(&self) -> usize {
+        self.read_arms
+    }
+    pub fn defines(&self, name: &str) -> bool {
+        name.strip_prefix("__rr_phase_")
+            .and_then(|n| n.parse::<usize>().ok())
+            .is_some_and(|n| n < self.definitions.len())
+    }
     pub fn relation(&mut self, width: usize, query: &str) -> String {
         self.define(width, query, "MATERIALIZED")
     }
@@ -53,8 +66,69 @@ impl Phase {
         self.definitions.push(Definition {
             sql: format!("{name}({columns}) AS {hint} ({query})"),
             materialized: hint == "MATERIALIZED",
+            width,
         });
         name
+    }
+    /// Membership lineage is separate from SQL strings and bag evaluation.
+    pub fn key_set(
+        &self,
+        source: &str,
+        width: usize,
+    ) -> crate::code_rule_dsl::logic::analysis::key_sets::KeySet {
+        self.key_sets
+            .get(source)
+            .map(|s| s.project(&(0..width).collect::<Vec<_>>()))
+            .unwrap_or_else(|| {
+                crate::code_rule_dsl::logic::analysis::key_sets::KeySet::source(source, width)
+            })
+    }
+    pub fn union_keys(&mut self, width: usize, sources: &[String]) -> String {
+        use crate::code_rule_dsl::logic::analysis::key_sets::KeySet;
+        // A direct copy of a phase output preserves its rows and evaluation fence.
+        // Reuse the name so publication can also share its SQL result arm.
+        if sources.len() == 1
+            && sources[0]
+                .strip_prefix("__rr_phase_")
+                .and_then(|n| n.parse::<usize>().ok())
+                .and_then(|n| self.definitions.get(n))
+                .is_some_and(|d| d.width == width)
+        {
+            return sources[0].clone();
+        }
+        let set = KeySet::union(width, sources.iter().map(|s| self.key_set(s, width)));
+        let sql = if sources.is_empty() {
+            format!("SELECT {} WHERE 0", vec!["NULL"; width].join(","))
+        } else {
+            let fields = (0..width)
+                .map(|c| format!("c{c}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            sources
+                .iter()
+                .map(|s| format!("SELECT {fields} FROM {}", quote(s)))
+                .collect::<Vec<_>>()
+                .join(" UNION ")
+        };
+        let name = self.relation(width, &sql);
+        self.key_sets.insert(name.clone(), set);
+        name
+    }
+    /// Compute membership subtraction once. A correlated probe over a materialized
+    /// CTE can scan the complete replacement set for every affected row.
+    pub fn difference_keys(&mut self, width: usize, included: &str, excluded: &str) -> String {
+        let fields = (0..width)
+            .map(|c| format!("c{c}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        self.relation(
+            width,
+            &format!(
+                "SELECT {fields} FROM {} EXCEPT SELECT {fields} FROM {}",
+                quote(included),
+                quote(excluded)
+            ),
+        )
     }
     pub fn patch(
         &mut self,
@@ -83,6 +157,9 @@ impl Phase {
         }
         self.output(store, table, source, Keys::Incoming)
     }
+    pub fn insert(&mut self,store:&versions::Store,table:&str,source:&str,ignore:bool)->Result<()> {
+        self.output(store,table,source,Keys::Insert(ignore))
+    }
     pub fn replace_all(
         &mut self,
         store: &versions::Store,
@@ -104,6 +181,7 @@ impl Phase {
         let old = store
             .available(table)
             .ok_or_else(|| error("missing SQL phase output"))?;
+        self.read_arms += 1 + usize::from(matches!(keys, Keys::Query(_)));
         self.outputs.push(Output {
             table: table.into(),
             source: source.into(),
@@ -132,7 +210,7 @@ impl Phase {
                 .join(","),
             reads.arms.join(" UNION ALL ")
         );
-        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>(),"publication":self.outputs.iter().map(|o|json!({"table":o.table,"previous_rows":o.old.len(),"strategy":if o.old.len()==0{"bulk empty root"}else if matches!(o.keys,Keys::Replace){"bulk replacement"}else{"validated persistent patch; dense preparation can bulk rebuild"}})).collect::<Vec<_>>(),"logicalAnalyses":self.analyses,"outputProtocol":{"sqlArms":reads.arms.len(),"logicalReads":reads.logical_reads}}));
+        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>(),"publication":self.outputs.iter().map(|o|json!({"table":o.table,"previous_rows":o.old.len(),"strategy":if o.old.len()==0{"bulk empty root"}else if matches!(o.keys,Keys::Replace){"bulk replacement"}else{"validated patch; affected-key density selects bulk rebuilding"}})).collect::<Vec<_>>(),"logicalAnalyses":self.analyses,"outputProtocol":{"sqlArms":reads.arms.len(),"logicalReads":reads.logical_reads}}));
         // Delta-first CROSS JOINs and primary-key probes fix the sparse access
         // paths. Reuse preparation across wave scopes while xFilter reads their
         // current immutable roots; rows and expressions are never cached here.
@@ -165,7 +243,7 @@ impl Phase {
         }
         drop(cursor);
         drop(statement);
-        let counts = self
+        let mut counts = self
             .outputs
             .iter()
             .zip(&rows)
@@ -174,13 +252,18 @@ impl Phase {
                 let keys = match &o.keys {
                     Keys::Native(k) => k.len(),
                     Keys::Query(_) => keys.len(),
-                    Keys::Incoming | Keys::Replace => rows.len(),
+                    Keys::Incoming | Keys::Replace | Keys::Insert(_) => rows.len(),
                 };
                 (
                     o.table.clone(),
                     Counts {
                         keys,
                         rows: rows.len(),
+                        strategy: if o.old.len() == 0 {
+                            crate::code_rule_dsl::logic::analysis::storage::Publication::BulkEmpty
+                        } else if matches!(o.keys, Keys::Replace) {
+                            crate::code_rule_dsl::logic::analysis::storage::Publication::BulkReplacement
+                        } else { crate::code_rule_dsl::logic::analysis::storage::Publication::SparsePatch },
                     },
                 )
             })
@@ -228,19 +311,17 @@ impl Phase {
                                     "SQL phase patch requires the complete primary key",
                                 ));
                             }
-                            let (next, shared) = o.old.patched_rows_reusing(
-                                keys.rows(),
-                                rows,
-                                w.preparing,
-                                candidates,
-                            )?;
+                            let (next, shared, strategy) =
+                                o.old
+                                    .patched_rows_reusing(keys.rows(), rows, true, candidates)?;
+                            counts.get_mut(&o.table).unwrap().strategy = strategy;
                             shared_roots += usize::from(shared);
                             next
                         }
                         Keys::Query(_) => {
-                            let (next, shared) =
-                                o.old
-                                    .patched_rows_reusing(keys, rows, w.preparing, candidates)?;
+                            let (next, shared, strategy) =
+                                o.old.patched_rows_reusing(keys, rows, true, candidates)?;
+                            counts.get_mut(&o.table).unwrap().strategy = strategy;
                             shared_roots += usize::from(shared);
                             next
                         }
@@ -251,6 +332,15 @@ impl Phase {
                             o.old.loaded(rows, false, false)?
                         }
                         Keys::Replace => o.old.loaded(rows, false, true)?,
+                        Keys::Insert(ignore) => {
+                            let next=o.old.inserted_rows(rows,ignore)?;
+                            let inserted=next.len()-o.old.len();
+                            let count=counts.get_mut(&o.table).unwrap();
+                            count.rows=inserted;
+                            count.keys=inserted;
+                            count.strategy=crate::code_rule_dsl::logic::analysis::storage::publication(o.old.len(),inserted);
+                            next
+                        }
                     }
                 };
                 if o.old.len() > 0 && o.old.shares_rows(&next) {
@@ -274,6 +364,23 @@ impl Phase {
                 return Err(error);
             }
         };
+        let _publication_context = w.profile_scope(|| {
+            json!({"logicalAnalyses":[{
+                "analysis":"publication strategy","outputs":counts.iter().map(|(table,c)|json!({
+                    "table":table,"affected_keys":c.keys,"rows":c.rows,"strategy":c.strategy
+                })).collect::<Vec<_>>()
+            }]})
+        });
+        if let Some(profiler) = w.profiler {
+            profiler
+                .operation(
+                    "SQL phase publication strategies",
+                    ("sql-extension", 0),
+                    0,
+                    vec![],
+                )
+                .finish_unobserved();
+        }
         super::super::logic::profile::decision("SQL phase root reuse", || {
             format!(
                 "{shared_roots} equal ordered initial outputs shared validated roots; {retained_roots} nonempty outputs retained their row roots within this phase"

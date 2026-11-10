@@ -120,6 +120,31 @@ pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
     plans.storage.push(Report { analysis, groups, evaluation_boundary: "Bag storage ignores outer lookup dependencies; each consumer keeps its own lookup and dependency index. Cross-gate transitions require equal input snapshots and maintenance cursors" });
 }
 
+/// Wave gates can share a layout, but their applied input cursors can diverge.
+/// Keep distinct names for their immutable roots; transitions share only after
+/// the input-version and maintenance-cursor proof succeeds.
+pub(in crate::code_rule_dsl::sql_executor) fn combine_cursors(plans: &mut Plans, queries: &[Option<Query>]) {
+    let names = plans.states.iter().flat_map(|(out,state)|state.rules.iter().enumerate().flat_map(move |(rule,r)|
+        r.reducers.iter().enumerate().map(move |(scalar,s)|{
+            let (groups,values,_,_)=reducer::combined::storage(s);
+            ((out.clone(),rule,scalar),(groups,values))
+        })))
+        .collect::<BTreeMap<_,_>>();
+    combine(plans,queries);
+    for (out,state) in &mut plans.states {
+        for (rule,r) in Arc::make_mut(&mut state.rules).iter_mut().enumerate() {
+            for (scalar,s) in r.reducers.iter_mut().enumerate() {
+                let (groups,values) = &names[&(out.clone(),rule,scalar)];
+                reducer::combined::cursor_names(s,groups,values);
+            }
+            r.rewrite(queries[r.step].as_ref().unwrap());
+        }
+    }
+    for report in &mut plans.storage {
+        report.evaluation_boundary = "Independent wave gates retain separate cursor roots. Equal input versions, summary roots, and pending journals permit shared initialization or transition evaluation";
+    }
+}
+
 /// A maintenance pass keeps immutable dirty-key snapshots across scratch rewinds.
 /// Nested passes get their own cache; a later batch always applies its delta again.
 pub(in crate::code_rule_dsl::sql_executor) type Cache = BTreeMap<(usize, String), Cached>;

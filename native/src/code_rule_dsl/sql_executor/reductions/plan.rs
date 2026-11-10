@@ -349,11 +349,21 @@ impl Rule {
         expression
     }
     pub fn evaluation(&self, table: &str) -> Query {
+        self.evaluation_with(table, &BTreeMap::new())
+    }
+    pub fn evaluation_with(&self, table: &str, summaries: &BTreeMap<String, reducer::staged::Source>) -> Query {
         let mut query = self.evaluation.clone();
+        query.body.relations_mut(&mut |r| {
+            if let Rel::Bound { rel, table } = r
+                && let Some(source) = summaries.get(rel)
+            {
+                *table = source.sql.clone();
+            }
+        });
         let mut projections = vec!["rr_input.*".into()];
         let mut from = format!("{} rr_input", quote(table));
         for reducer in &self.reducers {
-            reducer.append_join(self, &mut projections, &mut from);
+            reducer.append_join(self, &mut projections, &mut from, summaries);
         }
         let source = if projections.len() == 1 {
             quote(table)

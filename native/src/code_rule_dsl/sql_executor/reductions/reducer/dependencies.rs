@@ -20,7 +20,9 @@ impl Reducer {
             .collect::<Vec<_>>()
             .join(",");
         if let Some(storage) = storage {
-            storage.create(
+            let readonly=super::super::super::super::facts::vtab::bound_source(db,&rule.contexts).is_some_and(|s|!s.writable());
+            let create=if readonly {versions::Store::create_readonly} else {versions::Store::create};
+            create(storage,
                 db,
                 &table,
                 versions::Schema::generated(&format!(
@@ -36,13 +38,20 @@ impl Reducer {
         } else {
             db.execute_batch(&format!("CREATE TEMP TABLE {table}({},{keys},PRIMARY KEY({})) WITHOUT ROWID; CREATE INDEX {table}_keys ON {table}({})", schema(rule.width), names("",rule.width), (0..self.keys()).map(|i|format!("k{i}")).collect::<Vec<_>>().join(","))).map_err(error)?;
         }
-        execute(db, &self.dependency_insert(rule, &rule.contexts))?;
+        if let Some(storage)=storage {
+            storage.load_select(db,&table,&self.dependency_query(rule,&rule.contexts),false)?;
+        } else {
+            execute(db, &self.dependency_insert(rule, &rule.contexts))?;
+        }
         Ok(())
     }
     pub fn dependency_object(&self) -> Option<String> {
         self.dynamic().then(|| self.dependencies())
     }
     fn dependency_insert(&self, rule: &Rule, table: &str) -> String {
+        format!("INSERT INTO {} {}",self.dependencies(),self.dependency_query(rule,table))
+    }
+    fn dependency_query(&self, rule: &Rule, table: &str) -> String {
         let keys = self
             .context_keys(rule, "rr_context")
             .iter()
@@ -50,9 +59,9 @@ impl Reducer {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "INSERT INTO {} SELECT {},{keys} FROM {table} rr_context",
-            self.dependencies(),
+            "SELECT {},{keys} FROM {table} rr_context ORDER BY {}",
             names("rr_context", rule.width)
+            ,names("rr_context",rule.width)
         )
     }
     pub fn mark_contexts(&self, w: &Work<'_>, rule: &Rule, keys: &str, dirty: &str) -> Result<()> {
@@ -112,6 +121,13 @@ impl Reducer {
         active: &str,
     ) -> Result<()> {
         if self.dynamic() {
+            if let Some(store)=w.versions.filter(|s|s.available(&self.dependencies).is_some()) {
+                let mut phase=phase::Phase::default();
+                let values=phase.relation(rule.width+self.keys(),&self.dependency_query(rule,active));
+                phase.patch(store,&self.dependencies,dirty,&values)?;
+                phase.execute(w)?;
+                return Ok(());
+            }
             execute(
                 w.db,
                 &format!(

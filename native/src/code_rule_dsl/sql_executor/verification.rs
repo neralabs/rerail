@@ -29,7 +29,7 @@ impl CodeRuleSqlExecutor {
     pub fn verification_relations(&self) -> Result<Vec<(String, usize)>> {
         let mut relations = BTreeMap::new();
         for run in &self.executions {
-            relations.extend(run.emitted.program.relations.iter().cloned());
+            relations.extend(run.logical_relations.iter().cloned());
             for (name, _) in &run.emitted.views {
                 let width = self
                     .db
@@ -75,14 +75,21 @@ impl CodeRuleSqlExecutor {
             if self.mutable_inputs.contains(name) {
                 continue;
             }
+            // Compiler-introduced native inputs need domains too, even without
+            // an explicit declaration in the user's program.
+            types.entry(name.clone()).or_insert_with(|| vec!["int".into();source.columns().len()]);
             for (column, field) in source.columns().iter().enumerate() {
                 let domain = if field == "d" {
                     Some("document")
-                } else if matches!(
-                    (name.as_str(), column),
-                    ("node", 2) | ("kind", 1) | ("field", 1)
-                ) {
-                    Some("int")
+                } else if name == "tape" && column < 2 {
+                    // Native tape identities are packed nodes, even when the
+                    // compiler introduces this input without a user declaration.
+                    // verification_cell preserves the negative root sentinel.
+                    Some("node")
+                } else if matches!((name.as_str(), column), ("node", 2) | ("kind", 1)) {
+                    Some("kind")
+                } else if (name.as_str(), column) == ("field", 1) {
+                    Some("field")
                 } else {
                     None
                 };
@@ -256,6 +263,28 @@ impl CodeRuleSqlExecutor {
 mod tests {
     use super::*;
     #[test]
+    fn empty_stores_keep_grammar_constants_distinct_from_interned_names() {
+        let p=".decl node(d:number,n:node,k:symbol,start:number,end:number)\n.decl field(p:node,f:symbol,c:node)\n.input node,field\n.decl kinds(k:symbol)\nkinds(\"integer\"). kinds(\"identifier\").\n.decl fields(f:symbol)\nfields(\"name\").\n.decl labels(s:symbol)\nlabels(\"integer\").\n.decl selected(n:node)\nselected(n) :- node(_,n,k,_,_), kinds(k).\nselected(n) :- field(n,f,_), fields(f).\n.output kinds,fields,labels,selected\n";
+        for cold in [false,true] {
+            let dir=tempfile::tempdir().unwrap();
+            let mut e=CodeRuleSqlExecutor::new(dir.path().join("s.sqlite").to_string_lossy().into()).unwrap();
+            if cold {e.use_cold_oracle();}
+            e.bind_snapshot(json!({"files":[]}).to_string()).unwrap();
+            e.run(p.into(),"python".into(),None).unwrap();
+            let types=e.verification_types();
+            assert_eq!(types["kinds"],vec!["kind"]);
+            assert_eq!(types["fields"],vec!["field"]);
+            assert_eq!(types["labels"],vec!["sym"]);
+            for rel in ["kinds","fields","labels"] {
+                for row in e.verification_rows(&format!("SELECT * FROM {rel}")).unwrap() {
+                    let cell=e.verification_cell(&types[rel][0],row[0]).unwrap();
+                    if rel=="labels" {assert_eq!(cell,json!({"symbol":"integer"}));}
+                    else {assert!(cell.is_string());}
+                }
+            }
+        }
+    }
+    #[test]
     fn document_and_symbol_cells_compare_across_different_store_local_ids() {
         let a = tempfile::tempdir().unwrap();
         let b = tempfile::tempdir().unwrap();
@@ -275,7 +304,10 @@ mod tests {
                 .unwrap();
             e.run(p.into(), "python".into(), None).unwrap();
         }
-        for relation in ["doc", "seen", "names", "kind", "kinds"] {
+        assert_ne!(one.verification_rows("SELECT n FROM tape").unwrap(), two.verification_rows("SELECT n FROM tape").unwrap());
+        assert_eq!(one.verification_cell("node", Some(-1)).unwrap(), json!("-1"));
+        assert_eq!(&one.verification_types()["tape"][..2], ["node", "node"]);
+        for relation in ["doc", "seen", "names", "kind", "kinds", "tape"] {
             let read = |e: &CodeRuleSqlExecutor| {
                 let types = e.verification_types();
                 let mut rows = e

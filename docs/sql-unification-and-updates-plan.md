@@ -2117,3 +2117,737 @@ node scripts/profiling/sql-session.mjs RUNNER /tmp/scalar.json /tmp/scalar-repor
 
 The remaining boundaries concern unsupported effects, SQL phase-size limits, and complete-product workload coverage.
 They no longer leave either checked document replay over its execution allowance.
+
+### Matched debug comparison (2026-11-09)
+
+This comparison uses `62dade151` as the control and `0203c0e8e` as the current implementation.
+Both binaries use Rust 1.95.0 and the Cargo `dev` profile, with identical features.
+The engine remains unoptimized. The repository configures optimized dependencies in this profile.
+No release or `profiling` build is part of this comparison.
+
+Both builds use these flags:
+
+```sh
+cargo build --profile dev -p rerail-engine --no-default-features \
+  --features headless,lang-python,lang-rr,lang-sql,python-syntax-error,tape-cache \
+  --example sql-executor-bench --example sql-session-verify
+```
+
+Each synthetic workload has four alternating before/after pairs, with a fresh process, store, and tape cache for every trial.
+CPU trials disable SQL tracing and run sequentially. Separate captures provide SQL counters and complete replay checks.
+The host has substantial competing load, so these results do not establish wall-time improvements.
+
+Document trials use 24 publications: four repetitions of a six-operation cycle.
+The cycle renames a function, deletes/adds files, repeats an unchanged upsert, restores files, deletes all files, and restores all files.
+Sparse CPU is the median changed-file publication after the first cycle.
+Dense CPU is the median delete-all/restore publication after the first cycle.
+Recursive trials use 600 sparse publications, with guards against changes outside the edited region.
+Their warm measurement sums the final 594 publications.
+
+| Workload | Initial CPU, before / current | Sparse or warm CPU, before / current | Dense CPU, before / current | Peak RSS, before / current |
+| --- | ---: | ---: | ---: | ---: |
+| Projection, 32 files | 113.94 / 114.92 ms | 11.56 / 9.80 ms | 42.93 / 45.90 ms | 43.38 / 44.67 MiB |
+| Scalar, 32 files | 56.96 / 66.89 ms | 4.31 / 6.23 ms | 20.26 / 29.90 ms | 38.45 / 40.79 MiB |
+| Projection, 1,000 files | 1.663 / 1.574 s | 12.32 / 10.23 ms | 1.744 / 2.035 s | 181.70 / 195.39 MiB |
+| Scalar, 1,000 files | 1.029 / 1.129 s | 4.76 / 5.28 ms | 555.17 / 862.24 ms | 116.21 / 133.67 MiB |
+| Recursive facts, 1,000 regions | 970.11 / 990.67 ms | 2.925 / 3.053 s | — | 82.30 / 82.46 MiB |
+| Recursive facts, 10,000 regions | 10.121 / 10.097 s | 3.653 / 3.588 s | — | 499.16 / 499.31 MiB |
+
+Table entries are medians across trials. Initial CPU includes open, bind, lower, and run.
+The runner explicitly lowers before execution, so the run phase alone excludes that first preparation cost.
+Engine CPU excludes final validation queries and process teardown.
+Peak RSS is the cumulative process maximum before validation queries, rather than phase-local allocation.
+Each trial compares complete final output rows and every reported public insertion/deletion count across versions.
+
+Paired percentages use each current trial divided by its matching control, rather than the ratio of the table medians.
+Sparse projection CPU improves in all four pairs at both sizes, with median improvements of 17.1% and 14.1%.
+Scalar sparse CPU regresses in all pairs, with median increases of 44.5% and 12.6%.
+Scalar dense CPU also regresses in all pairs, with median increases of 47.6% and 55.4%.
+The 1,000-file scalar workload uses 15.0% more peak RSS in the median pair.
+Projection dense CPU increases by a median 17.8% at 1,000 files, with one improving pair.
+The 10,000-region recursive workload has no consistent CPU improvement.
+The 1,000-region warm recursive workload increases by 4.4% in the median pair, with all pairs slower.
+
+The submission reduction does not establish a general CPU or memory improvement.
+Dense publication and scalar maintenance require further work before performance acceptance.
+
+The broader sample uses the nine CPython modules in the committed corpus, about 123 KB of source.
+The `workload.rr` program covers findings, type propagation, recursive relations, and aggregates.
+Two alternating pairs each append a function to `json/decoder.py`, repeat that unchanged publication, restore the file, and repeat the restore.
+Each trial repeats this cycle three times, for 12 publications.
+The appended function is:
+
+```python
+def debug_extra(text):
+    return eval(text)
+```
+
+Complete final outputs and public update counts agree across versions in both pairs.
+Median initial CPU increases from 14.647 to 18.155 seconds.
+Median changed-file CPU increases from 7.526 to 8.470 seconds.
+Median engine CPU for the complete timing request increases from 59.962 to 69.137 seconds.
+Both pairs regress, but two pairs do not establish a precise effect size.
+Unchanged publications remain inexpensive, with median CPU of 0.157 ms before and 0.163 ms currently.
+
+The `calls.rr` program has one complete timing pair with the same 12-publication pattern.
+Initial CPU increases from 21.108 to 21.883 seconds.
+Changed-file CPU increases from 34.565 to 35.745 seconds.
+Complete engine CPU increases from 227.844 to 232.791 seconds.
+Peak RSS increases from 1,594.03 to 1,707.27 MiB.
+Complete final outputs and all public update counts agree.
+This single pair establishes workload cost, but does not establish a small relative CPU effect.
+Changed-file maintenance costs more than initial execution in both versions.
+
+Separate matched traces reproduce the 32-file submission reductions: projection uses 190/76 submissions, and scalar uses 276/83.
+Both current replays satisfy the unchanged 100-submission allowance and complete-state parity checks.
+The scalar trace also exposes additional work beneath the smaller statement count:
+
+| Scalar replay measurement | Before | Current |
+| --- | ---: | ---: |
+| SQLite VM instructions | 27,366 | 60,622 |
+| SQL phase publications | 4 | 22 |
+| SQL phase preparations | 4 | 23 |
+| Recorded native publication CPU | 1.58 ms | 11.38 ms |
+| Recorded preparation CPU | 0.63 ms | 4.09 ms |
+
+These traced CPU values identify costs. They are not substitutes for the unprofiled paired measurements.
+Mixed-frame composition and grouped scalar publication replace many helper statements with more phase preparation, intermediate results, and persistent-root publication.
+The next change must reduce that work while preserving the shared graph, rollback semantics, and complete-job allowance.
+
+The matched recursive replays use 95 submissions at both sizes, on both versions.
+The 1,000-region replay uses 5,259,002 VM instructions on both versions.
+The 10,000-region replay uses 52,221,002 VM instructions on both versions.
+All four complete-state replay comparisons pass.
+The earlier 91-submission capture does not reproduce in this matched comparison.
+The previous 95-to-91 result is therefore unconfirmed, and does not establish a recursive SQL-work improvement.
+
+#### Remaining work in larger programs
+
+The broader traced programs still exceed the allowance by large margins.
+
+| Current capture | Recorded checkpoints | Submissions | Setup submissions | Matching and cleanup submissions |
+| --- | --- | ---: | ---: | ---: |
+| CPython `workload.rr` | Initial, failed edit, retry, unchanged edit, restore | 16,421 | 466 | 15,944 |
+| CPython `calls.rr` | Initial and one successful edit | 13,648 | 1,322 | 12,318 |
+
+The call-analysis capture has limited replay coverage. It does not include failure rollback or recovery.
+Neither capture satisfies complete-job acceptance.
+The workload capture has 11 transaction submissions. The call-analysis capture has eight.
+Both have zero unknown origins, incomplete operations, and unexpected explanation failures.
+
+The workload trace attributes repeated helpers to lifted walks for `augdef`, `defines_class`, and `defines_fn`.
+Two scratch-table delete statements run 2,044 and 2,038 times.
+Several frontier-copy and reconciliation statements each run approximately 1,000 times.
+The 100-submission allowance cannot accommodate this per-iteration execution shape.
+Setup also exceeds the allowance before matching work counts.
+The current graph therefore solves the checked small-program overruns, but does not solve the broader execution shape.
+
+Both broader captures also expose a verifier defect.
+The verifier treats native `tape.n` and `tape.par` as ordinary integers, although they contain store-local node identities.
+New symbols change later document identifiers in a fresh cold store.
+At each edited checkpoint, 4,935 tape rows differ solely through those identifiers.
+All other recorded relation contents agree before any additional normalization.
+
+A separate comparison decodes only these two tape columns through each store's actual atom arena.
+Nonnegative identities become document paths and local node identifiers. The root sentinel `-1` remains numeric.
+After this normalization, all 43 workload relations agree at all five checkpoints.
+All 99 call-analysis relations agree at both checkpoints.
+This comparison preserves row multiplicity, columns, and every other cell.
+The original acceptance reports remain rejected. The verifier still requires a schema-domain correction and another acceptance run.
+The shorter call-analysis replay also requires failure and recovery coverage before acceptance.
+
+#### Dense maintenance costs and proposed fixes
+
+Separate traced runs use the same 24-publication requests as the timing trials.
+These phase counters exclude connection-open setup and final validation queries.
+
+| Measurement | Projection before / current | Scalar before / current |
+| --- | ---: | ---: |
+| Phase VM instructions | 254,044,629 / 273,664,008 | 2,032,389 / 21,467,687 |
+| Phase publications | 88 / 104 | 20 / 102 |
+| Recorded native publication CPU | 5.812 / 6.583 s | 7.50 / 797.70 ms |
+
+The most expensive current scalar statement runs four times and uses 17,259,052 VM instructions.
+It records 4,096,012 full-scan steps.
+Its plan contains correlated anti-joins that scan materialized key sets.
+One old-row branch selects keys from a direct copy of the replacement-key set, then excludes that same replacement-key set.
+That branch is empty by construction. SQLite still executes the correlated scans.
+The same pattern appears when a single contributor replaces all improvements for the affected keys.
+
+The emitter loses this set relationship when it renders each intermediate definition as a SQL string.
+A shared analysis of key sets can prove equality and containment through projections, copies, and unions.
+The SQL executor can then omit impossible old-row branches and redundant materialization.
+The native executor can use the same proofs for reconciliation.
+Explain must show the proof, the omitted branch, and the executor's selected publication strategy.
+
+Persistent-root publication adds another dense-update cost.
+`Phase::execute` passes `w.preparing` as the dense-rebuild permission to `Version::patched_rows_reusing`.
+Ordinary updates therefore retain individual persistent patches even when most old keys change.
+A publication decision based on affected-key density can select the existing bulk-rebuild path for those updates.
+The decision must preserve row identities, schema checks, multiplicity, and atomic publication of every root.
+
+The next implementation order is:
+
+1. Correct semantic domains for native tape columns in the verifier. Include different symbol-allocation orders and the negative parent sentinel in regression coverage.
+2. Add shared equality and containment proofs for affected and replacement key sets. Remove provably empty old-row branches and expose these decisions in explain.
+3. Select bulk publication for dense updates and reduce duplicate phase outputs. Preserve the existing sparse path when its cost is smaller.
+4. Replace per-iteration lifted-walk helpers with a recursive SQL kernel or batched phase. Allocate internal root metadata without separate SQL setup for every helper.
+5. Repeat matched debug CPU measurements and complete replay checks. Extend call-analysis coverage to failure rollback, recovery, unchanged publication, restoration, and empty input.
+
+The existing debug measurements do not establish whole-product performance acceptance.
+The cold oracle shares the compiler and native functions with retained execution, so it cannot expose every common-mode semantic defect.
+Temporary build directories and captures are task-local and are removed after this analysis.
+
+### Next debug fixes: implementation and verification
+
+The implementation follows the five fixes above. All builds use the Cargo development profile.
+The engine remains unoptimized. These measurements do not use release builds or the Cargo profiling profile.
+
+#### Key reconciliation and publication
+
+Native tape inputs now declare node domains in verification, including compiler-introduced inputs without explicit declarations.
+The regression changes symbol-allocation order between stores and checks the negative parent sentinel.
+
+The shared `logic::analysis::key_sets` module represents unions of projected source memberships.
+It proves containment from source identity, projection, and union lineage. It does not infer uniqueness or alter bag multiplicity.
+Exhaustive finite examples check its proofs across empty, reordered, overlapping, and duplicate source projections.
+SQL reconciliation omits old-row branches when those proofs establish that replacement keys cover every affected key.
+Explain includes both successful and rejected proofs.
+
+Containment alone does not solve reconciliation between overlapping, unequal key sets.
+Those paths now materialize SQL `EXCEPT` results, then join native rows through their key indexes.
+Unique support transitions use the same set-difference operation.
+Ordered extrema retain indexed first-value probes. Their exclusion filters use tuple membership over enforced non-null keys.
+This avoids repeated scans without changing nullable or opaque scalar evaluation.
+
+The shared storage policy selects bulk publication when an update affects at least half of a relation with 512 existing rows.
+Smaller changes retain persistent patches. Empty destinations can share an identical result root.
+Publication validates every output before changing any root within a phase. The enclosing transaction covers all phases and dependent programs.
+Explain and profile receipts report actual publication strategies, affected keys, and output rows.
+
+#### Bounded waves and metadata
+
+Generated, allowlisted tree walks execute through their original recursive SQL queries inside materialization fences.
+They retain SQL union, null, step, memory, and deadline semantics. Datalog waves retain their existing limits.
+Equal input versions and empty journals skip reevaluation.
+Unsupported, effectful, nullable, and lattice shapes retain their established evaluation paths where the kernel proof does not apply.
+
+Large waves no longer abandon all composition when their outputs exceed SQLite's compound-query limit.
+They split cache evaluation into bounded SQL batches, preserving frozen wave inputs across every batch.
+Immutable versions retain affected-key journals while scratch slots are reused.
+All cache batches finish before relation folds publish the next wave.
+This replaces the duplicate whole-frame helper path. Explain reports actual batch counts, and profile contexts identify each batch.
+
+Typed integer constants bind immutable native roots directly, without replay through SQL scratch tables.
+Compatible scalar summary roots also avoid separate virtual-table declarations.
+Named outputs keep SQL tables and hooks. Intermediate relations expose immutable query facades that share retained roots.
+Those facades support indexes and inputs to later programs. Regression coverage checks dependent publication, rollback, empty input, and reinsertion.
+
+#### Native pending journals
+
+The extended empty-input replay exposed a separate native bottleneck after the SQL set-difference fixes.
+It reached the five-minute debug replay timeout before completing recovery.
+A process sample placed every sampled stack in `Pending::add`, with most work inside persistent-tree insertion during journal composition.
+This work occurred between SQL statements. SQL instruction counters alone did not expose it.
+
+Empty journals now share immutable incoming roots, including their complete-row and row-ID indexes.
+Large incoming deltas use set composition and one bulk rebuild per resulting journal.
+The threshold requires at least 512 incoming rows and at least half as many rows as the existing journals.
+Small deltas retain persistent updates. Addition and deletion still cancel in their original order.
+A regression compares dense and sparse transitions with a set model, including overlapping inputs, active scopes, root sharing, and rollback.
+The shared storage analysis defines the threshold. Explain describes the policy, and profiling records native journal composition separately.
+
+#### Grammar domains in empty-state verification
+
+After journal optimization, retained workload replay completed deletion and restoration within the existing debug timeout.
+The cold oracle then failed while normalizing `const_kind` in the empty snapshot.
+Its grammar identifier `1025` was labeled as an interned symbol. An empty store had no symbol with that identifier.
+Previous populated snapshots could mask this distinction through unrelated symbol allocations.
+
+The emitter now preserves the lowering pass's actual integer, node, kind, field, and name domains.
+Verification uses those domains for constant relations as well as propagated columns.
+Grammar identifiers remain exact integers; names still require valid symbol-arena entries.
+This uses compiler metadata rather than a permissive fallback for unknown symbols.
+A regression covers grammar and ordinary-name constants together in empty stores, through retained and cold execution.
+Normalization errors now identify their checkpoint, relation, column, domain, and raw value.
+
+#### Scalar suspension and restoration
+
+Full call-analysis verification exposed a recovery defect after deleting all files and restoring the initial snapshot.
+The retained result omitted three `nopaque` rows and three dependent `dec1` rows. The other 97 relations matched.
+The missing relation counts concern internal facts; public-output checks alone did not expose the defect in this fixture.
+
+The empty-body shortcut cleared positive contexts but preserved a scalar cursor over the same source.
+Restoration returned that source to an identical version. Maintenance detected no scalar delta and never reconstructed the cleared contexts.
+The shortcut now preserves positive contexts when their source also supplies a retained scalar.
+Suspended operators also retain protected external journals. Common publication cleanup previously discarded those journals after the shortcut returned.
+Focused regressions check identical restoration, later deltas, and external scalar changes while a positive consumer remains suspended.
+
+Nonscalar native inputs now support the shortcut through exact zero row counts.
+A zero estimate alone does not prove emptiness. Scalar input histories retain their existing maintenance boundaries.
+Explain reports each operator's actual `empty_positive_body` choice.
+
+#### Journal cancellation and profiling costs
+
+A second unprofiled sample found snapshot restoration still spending time in pending-journal set composition.
+It placed 387 of 486 sampled stacks inside `Pending::add` during one second of restoration.
+Many waiting gates were canceling equal full snapshots. Their journals now cancel through immutable-root equality without enumerating members.
+Identical repeated insertions also leave an unchanged journal directly.
+The journal regression checks complete cancellation alongside dense overlap, sparse changes, scope isolation, and rollback.
+
+The complete call-analysis diagnostic also exceeded a ten-minute profiling timeout during a checkpoint.
+A sample placed 276 of 392 stacks in deferred explanation and 116 in checkpoint serialization.
+Accumulated query metadata occupied approximately 112 MiB. The old checkpoint cloned that complete catalog before serialization.
+Checkpoints now serialize borrowed query metadata and atomically replace the metadata file.
+A write-failure regression verifies that the last complete snapshot remains readable.
+Deferred EXPLAIN preparation remains additional diagnostic work. Unprofiled CPU trials measure engine costs separately.
+
+The verifier driver now accepts an explicit debug wall-time timeout and records it in the run metadata.
+Its default remains five minutes. The complete-job allowance remains 100 SQL submissions, with no reset or larger execution budget.
+Timeout errors now report the actual process error instead of an empty stderr string.
+
+#### Final debug results
+
+The final development build passes 155 SQL-executor tests, 10 profiling tests, 12 shared-analysis tests, and 44 JavaScript profiling-tool tests.
+One existing SQL test remains ignored. The structure gate adds no findings against the baseline.
+
+All five complete-session comparisons pass. Each comparison checks full relation contents, multiplicity, documents, output deltas, failure rollback, and subsequent recovery.
+The call-analysis replay checks all 99 relations at seven checkpoints. The workload replay checks all 43 relations at seven checkpoints.
+Their coverage includes unchanged publication, restoration, empty input, and recovery from empty input.
+Both broader jobs still fail the unchanged execution allowance.
+
+| Complete debug session | SQL submissions | Result against 100 | Complete-state parity |
+| --- | ---: | --- | --- |
+| Scalar, 1,000 files | 82 | Pass | Pass |
+| Projection, 1,000 files | 76 | Pass | Pass |
+| Recursive lattice, 10,000 regions | 95 | Pass | Pass |
+| CPython workload | 1,944 | Fail | Pass, 43 relations at seven checkpoints |
+| CPython call analysis | 7,969 | Fail | Pass, 99 relations at seven checkpoints |
+
+The final broader captures have zero unknown SQL origins, incomplete operations, and unexpected explanation failures.
+The corpus replays used the explicit 600-second debug verifier timeout. This setting does not relax the SQL execution allowance.
+Earlier recursive captures used 91 submissions. The final capture uses 95, including 24 transaction submissions and 65 matching submissions.
+The matched baseline capture also used 91. These captures do not establish a recursive submission improvement; use the final 95-count result for headroom.
+
+Twenty-two fresh timing processes compare baseline `0203c0e8e` with the implementation.
+Each process uses a fresh store and tape cache. Before and current trials alternate order between pairs.
+SQL capture and profiling are disabled. Tests, builds, and session captures are stopped during timing.
+Engine CPU includes opening, binding, lowering, initial execution, and every successful edit. It excludes final validation queries and process teardown.
+The benchmark checks complete final outputs and every public edit delta between versions. All comparisons pass, without truncated output queries.
+
+| Workload | Pairs | Baseline total engine CPU | Current total engine CPU | Median paired change |
+| --- | ---: | ---: | ---: | ---: |
+| Scalar, 1,000 files | 3 | 3.072 s | 1.968 s | -33.4% |
+| Projection, 1,000 files | 3 | 8.070 s | 3.829 s | -52.8% |
+| Recursive lattice, 10,000 regions | 2 | 7.464 s | 7.526 s | +0.8% |
+| CPython workload | 2 | 25.035 s | 9.109 s | -63.6% |
+| CPython call analysis | 1 | 66.352 s | 18.790 s | -71.7% |
+
+CPU columns contain medians across processes. Percentage changes use matched pairs, rather than ratios of separate medians.
+Scalar and projection trials include twelve publications through two complete edit, no-op, deletion, and restoration cycles.
+Recursive trials include 120 region edits, with guards against publication outside the changed region.
+Corpus timing trials include an edit, unchanged publication, restoration, and another unchanged publication.
+The separate seven-checkpoint verification covers corpus empty-input recovery. The corpus timing table does not measure that longer replay.
+
+Dense scalar publication falls from 585 ms to 338 ms. Its paired reductions range from 36.2% to 43.7%.
+Dense projection publication falls from 1.639 s to 0.636 s. Its paired reductions range from 60.4% to 63.9%.
+Sparse scalar edits remain approximately 3–4 ms. Their paired changes range from -2.4% to +20.5%, with a median regression of 8.3%.
+Sparse projection edits remain approximately 7–9 ms. Their paired changes range from -11.5% to +29.9%, without a consistent improvement.
+No-op costs remain small; their measured percentage changes are not stable.
+
+The recursive initial CPU remains approximately 7.1 seconds. Warm edit CPU remains approximately 3.3–3.4 ms.
+This work does not establish better CPU headroom for the 10,000-region job.
+The broader workload's initial CPU falls from 12.384 s to 5.855 s; call-analysis initial CPU falls from 15.042 s to 7.722 s.
+Median peak RSS before validation falls from 721.5 MiB to 423.9 MiB for workload, and from 1,711.8 MiB to 1,268.2 MiB for calls.
+The call-analysis CPU and memory measurements have one pair. They need repetition before a performance acceptance claim.
+Host load averages vary substantially during the trials. Large reductions repeat across the multi-pair cases; small changes remain uncertain.
+
+#### Remaining execution shape and proposed next work
+
+The broader overruns still have concrete structural causes.
+Workload uses 203 setup submissions, 17 transaction submissions, and 1,724 matching or cleanup submissions.
+Call analysis uses 745 setup submissions, 15 transaction submissions, and 7,209 matching or cleanup submissions.
+Setup alone exceeds the allowance in both jobs.
+Legacy retained operators still create writable helper tables and issue separate context, contribution, and head-maintenance statements.
+The phase eligibility check rejects all function calls, including conservative exclusions for `coalesce`, `sym_cat`, and checked `abs` expressions.
+Dependent, ordered, nullable, and opaque scalar paths also retain their established boundaries.
+General reconciliation remains necessary when multiple producers lack sufficient uniqueness or support proofs.
+
+With the current scheduler, one SQL statement per frame still exceeds the complete call-analysis allowance, even without separate helpers.
+The capture contains 323 distinct SQL-bearing wave frames across its checkpoints and 350 composed wave-phase submissions.
+Initial execution uses 63 such frames. The four changed publications each use 65.
+Workload contains 85 SQL-bearing frames and 85 composed wave-phase submissions.
+Its wave phases and transaction statements already total 102, before any setup or separate maintenance helpers.
+
+These frame counts do not establish the number of necessary recursive iterations.
+The whole-program trace includes acyclic dependency stages, fixed-point iterations, retained-history replay, and a closing frame.
+Each replay starts with every step pending and traverses the retained frame history.
+The readiness gate separates dependent strata, and each frame reads the preceding frame's versions.
+Thus, an acyclic chain can cross several frames even though SQL can evaluate its dependencies in one CTE graph.
+The capture summary does not separate productive recursive iterations from these other frame categories.
+
+First classify the frames and collapse avoidable acyclic stage boundaries.
+Use shared dependency and effect analysis to preserve negation, aggregate, error, merge, and widening semantics.
+Avoid unchanged history work where input versions and maintenance cursors prove it safe.
+Only then assess whether actual recursive components need a kernel that carries immutable relation-version references between iterations.
+Rule joins, projections, reducers, merges, and widening remain SQL.
+Native helpers build and index physical roots.
+AST matching stays outside SQL, and the extension database retains its ordinary query interface.
+A small experiment through the debug SQL API confirms that a recursive CTE can carry JSON state and use a correlated aggregate subquery.
+It produces states `[0]`, `[1]`, `[2]`, and `[3]` in one statement.
+This establishes a useful SQLite shape, not a complete rule compiler or a performance result.
+It does not establish that a recursive kernel is the next required optimization.
+If such a kernel is justified, typed native version references should replace JSON copying.
+
+The implementation order is:
+
+1. Explain frame purpose and productive work per recursive component. Separate acyclic gates, recursive iterations, unchanged replay, and closing work.
+2. Collapse compatible acyclic dependencies into SQL phase graphs. Use shared component and function-effect analysis. If version and cursor proofs permit it, skip unchanged replay.
+3. Remove DDL from remaining private writable roots. Migrate legacy maintenance helpers into the common SQL phase graph. Separate total, checked, ordered, nullable, and opaque effects explicitly.
+4. Measure remaining recursive iterations before a decision about a recursive SQL kernel. Preserve input snapshots, scalar cursors, merge order, and widening counters. Preserve execution limits, atomic failure, and retry.
+5. Repeat the existing complete sessions and debug CPU trials. Retain the unchanged 100-submission allowance.
+
+Deferred EXPLAIN still recompiles statement shapes and remains additional diagnostic cost.
+Capture plans from the executed preparation where possible, with the correct input-version context.
+Avoid another checkpoint-wide copy or replay of unchanged metadata.
+Initial root construction and remaining statement complexity still need targeted work for the 10,000-region CPU case.
+Whole-product performance acceptance and upstream unchanged cross-file analysis require separate verification beyond these headless sessions.
+
+
+### Compatible stages and retained maintenance (2026-11-10)
+
+The executor now composes compatible acyclic stages and independent summary maintenance into the common wave phase.
+These changes preserve incremental support. They do not replace sparse maintenance with complete relation evaluation.
+
+#### Root causes and implementation
+
+The previous scheduler treated ordinary dependency stages like iteration boundaries.
+Shared dependency analysis now identifies strongly connected components and orders the component graph.
+Acyclic positive stages pass their replacement values and signed deltas directly to later stages in the same SQL phase.
+Recursive rules still read frozen preceding-frame inputs.
+Negation, scalar dependencies, lattice merges, and widening retain their scheduler gates.
+
+Function-effect analysis distinguishes total builtins, checked builtins, and opaque callbacks.
+Total expressions permit dependency-stage composition.
+Checked expressions retain their original gate and materialized context fence, but can share SQL publication with compatible neighbors.
+Opaque callbacks retain their existing boundary.
+The explain output includes the component graph, stage proofs, common-phase decisions, and rejected proofs.
+
+A complete-recomputation prototype passed parity but failed existing sparse-work limits. The implementation rejects that approach.
+The retained pipeline preserves context indexes and support counts through staged SQL differences.
+The three-stage, 10,000-row regression uses 1,275 VM instructions for deletion and 1,487 for insertion, with zero full scans.
+
+SQLite expands references inside dependent CTE graphs, including materialized definitions.
+An unbounded 90-stage pipeline exceeded SQLite's 65,535-reference limit during preparation.
+The executor now bounds dependent incremental batches at four stages and bounds result arms separately.
+Batch boundaries publish immutable roots and retain pending signed deltas for later consumers.
+The 90-stage deletion, empty-input, and restoration regression passes.
+These bounds are implementation limits, not semantic requirements for additional waves.
+
+Scalar transitions previously published summaries before a second statement evaluated their consumers.
+Count, existence, and compatible count/sum/min/max transitions now append their calculations to the caller's phase.
+Consumers read staged summaries before native publication. Support reconciliation and the outer wave fold use the same statement.
+Existence summaries retain support counts and invalidate lookups only at truth-value transitions.
+Builtin lattice supports use the same support phase and retain the outer merge and widening gate.
+
+Independent gates retain separate summary cursors and root names.
+Shared bag analysis gives compatible consumers the same projection and summary layout.
+Shared initialization or transition evaluation requires equal input versions, previous summary roots, value roots, and pending journals.
+The same proof applies to a completed transition and to a transition staged inside the current statement.
+Each consumer retains its lookup mapping. Failed publication adds no transition to the reuse cache.
+
+A first staged lookup joined against a union of old and replacement groups.
+SQLite materialized unchanged groups and exceeded existing recursive sparse-work limits.
+The final lookup probes the persistent old-group index and the small dirty-key and replacement sets separately.
+The original sparse-work limits pass without increases.
+
+Closing and inactive retained frames now carry native roots without SQL.
+Equal versions and synchronized cursors also permit complete frame reuse.
+The unchanged-replay regression verifies zero SQL phases. Suspended journals remain available for later activation.
+Unused staging roots no longer require writable virtual-table declarations.
+
+Profile checkpoints no longer serialize every previous EXPLAIN and bytecode record again.
+A checkpoint copies the immutable encoded query prefix and appends new records and the current header.
+Unchanged checkpoints serialize zero query records. Atomic replacement preserves the previous snapshot on failure.
+The copy can use filesystem cloning, but this implementation does not promise constant I/O on every filesystem.
+
+#### Complete debug verification
+
+All builds use Rust 1.95 development or test profiles. No release or profiling-profile build runs.
+The same corpus requests compare all relations against a separate cold SQL process at seven checkpoints.
+The checkpoints include a failed edit, retry, unchanged publication, restoration, deletion, and recovery from empty input.
+The 600-second diagnostic timeout and the 100-submission allowance remain unchanged.
+Verification SELECTs count against the allowance. Diagnostic EXPLAIN and the independent oracle do not count.
+
+| Complete session | Previous total | Current setup | Current transactions | Current matching and cleanup | Current total | Full parity |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| CPython workload | 1,944 | 8 | 17 | 104 | 129 | 43 relations at seven checkpoints |
+| CPython call analysis | 7,969 | 15 | 17 | 356 | 388 | 99 relations at seven checkpoints |
+
+Both captures have complete lifecycles, zero unknown SQL origins, and no parity errors.
+Both still fail the unchanged 100-submission allowance.
+Three additional complete debug sessions pass parity and the same allowance:
+
+| Additional complete session | SQL submissions | Checkpoints | Result |
+| --- | ---: | ---: | --- |
+| Scalar snapshot/file-change replay, 1,000 files | 59 | 7 | Pass |
+| Projection snapshot/file-change replay, 1,000 files | 69 | 7 | Pass |
+| Recursive lattice, 10,000 regions | 89 | 9 | Pass |
+
+The corpus captures contain no private support-table DDL. Remaining DDL defines public outputs and shared diagnostic tables.
+Separate summary initialization still uses nine SELECTs for workload and forty for call analysis.
+
+The current development suite passes 163 SQL-executor tests, 14 shared-analysis tests, and 12 SQL-profiler tests.
+One existing profiler child remains ignored as a standalone test. Its parent invokes it and passes.
+The report, execution-budget, and session-parity JavaScript suites pass 44 tests.
+The SQL suite includes sparse edits, duplicate supports, empty groups, overflow, budget failure, rollback, and retry.
+Adapter tests explicitly select the legacy initialization path when they manipulate SQL-owned support tables.
+Default-path tests use the retained graph and check native root ownership through reset.
+
+These captures do not establish end-to-end CPU acceptance.
+Profile instrumentation, deferred EXPLAIN, and concurrent host work affect their timings.
+The earlier 10,000-region CPU limitation remains unproven by these submission reductions.
+
+#### Measured recursion and the next execution boundary
+
+A frame with a recursive rule is not necessarily a productive recursive iteration.
+The trace now records component membership, seed steps, recursive steps, recursive input presence, candidate improvements, and output frontiers.
+A productive-feedback frame has nonempty recursive inputs, recursive candidate improvements, and a nonempty component frontier.
+Counts describe the current algorithm. They are not a lower bound for another scheduler or SQL kernel.
+
+| Session trace | Workload | Call analysis |
+| --- | ---: | ---: |
+| Scheduled frames across five evaluations | 85 | 325 |
+| Acyclic dependency frames | 8 | 76 |
+| Frames with recursive rules | 63 | 205 |
+| Closing or inactive history frames | 14 | 44 |
+| Common SQL phase submissions | 71 | 282 |
+| Frames with productive recursive feedback | 52 | 140 |
+
+Inactive history and closing frames issue no SQL.
+One extra call-analysis phase comes from the bounded result-arm batching policy.
+Each nonempty call-analysis publication has 35 productive-feedback frames. The empty-input publication has none.
+The four nonempty publications therefore exceed 100 submissions under the current per-frame strategy, before setup or other helpers.
+
+| Call-analysis recursive component | Productive-feedback frames across the session |
+| --- | ---: |
+| `tgt` | 4 |
+| `vpos` | 8 |
+| `walk` | 8 |
+| `qn` | 12 |
+| `base`, `bv`, `found`, `need_attr`, `pv`, `qv`, `sub` | 44 |
+| `anc` | 4 |
+| `reach_sync` | 0 |
+| `attr_open`, `base_open`, `bopen`, `qopen`, `vopen` | 52 |
+| `open_sync` | 12 |
+
+Component counts can overlap within one frame. Their sum is not the number of SQL statements.
+The two large mutually recursive components account for 96 component-feedback occurrences.
+This evidence justifies a prototype that executes a recursive component inside SQL.
+It does not establish a performance benefit or justify replacing every specialized recursive kernel.
+The prototype must preserve delta semantics, empty-set termination, merge order, widening counters, execution limits, atomic failure, and retry.
+A component scheduler and existing specialized kernels remain comparison points.
+
+#### Follow-up work at that checkpoint (superseded by the next section)
+
+1. Remove private DDL from the remaining dependent, ordered, nullable, and opaque fallback paths.
+   The common corpus paths satisfy this requirement. The complete executor does not yet satisfy it.
+   Preserve callback order and dependent-key refresh through explicit materialization and publication boundaries.
+2. Append compatible summary initialization to the common phase. Preserve the same initialization-reuse proof across gates.
+3. Compare component scheduling with a recursive SQL prototype on the measured mutually recursive components.
+   Rule joins and reductions must remain SQL. Native functions can manage immutable version references and storage indexes.
+4. Repeat the complete sessions after those changes and run separate unprofiled debug CPU trials.
+   Whole-product acceptance and upstream unchanged cross-file analysis still require their own checks.
+
+Temporary captures supply these counts and are removed after the results are recorded.
+No evidence archive is a deliverable.
+
+
+### Cold initialization and native fallback roots (2026-11-10)
+
+This section supersedes the preceding checkpoint. All measurements use development or test builds.
+
+#### Remaining causes and changes
+
+Separate cold summary initialization required nine SELECTs for workload and forty for call analysis.
+Initialization now appends group and value-index construction to the common SQL phase.
+The same projection supplies compatible initial reducers. Initial min/max groups and their value indexes share one materialized bag.
+Consumer support and wave publication read those staged roots before publication.
+A failed phase adds no entry to the initialization cache.
+Reuse requires equal source versions and the complete projection, layout, and ordering signature.
+The corpus captures now contain zero standalone summary-initialization SELECTs.
+Call analysis needs two additional bounded phase batches, so its net reduction is thirty-eight statements.
+
+Dependent, ordered, computed-key, and nullable scalar paths previously required writable support roots.
+They now use immutable native roots with explicit SQL evaluation fences.
+The sequence preserves positive contexts, scalar transitions, affected contexts, dependency indexes, ordered heads, and final support reconciliation.
+Sum state retains exact wide intermediates. Ordered joins filter each overlay branch by group before combining old and changed values.
+Registered lattice support uses the existing AVL algorithm and SQL merge callbacks.
+Its nodes and roots now use persistent native storage patches.
+The profiler records native index CPU under `registered lattice support index`.
+Explain identifies head storage, lattice index storage, execution scopes, and the original relation interface.
+
+The first schema audit found twenty private walk and support schema entries, including indexes.
+Lifted walk roots now load their original SQL probes into native storage.
+Overdelete and rederive use native candidate, frontier, and journal sets.
+SQL still evaluates the joins and support probes. Native code validates and publishes their storage changes.
+Native INSERT preserves existing rows and row identities, rejects conflicts, and implements INSERT OR IGNORE without silent replacement.
+Publication validates every destination before changing any root.
+
+A second audit found ordinary cold `new_` and `delta_` tables outside the retained path.
+The cold frontier adapter now stores candidates, deltas, and widening counters in immutable native roots.
+It preserves stratum readiness, emitted step order, frozen wave inputs, merge order, and widening counters.
+SQL evaluates rules, aggregates, merges, and widening. Opaque producer SELECTs keep their original SQL.
+Native scheduling removes the private pending-step and dependency-control tables.
+Public result tables retain SQL triggers and extension indexes.
+The independent cold oracle and explicit legacy adapter tests retain their SQL implementation.
+Opaque-producer fallback also keeps generated private projections in native roots.
+Native projections use their own cardinality and index statistics. SQL ANALYZE applies only to SQL-owned projections.
+The invariant integer domain uses the same native source during producer preparation and execution.
+A new regression covers the original workload with an opaque producer, file edits, restoration, and reset.
+
+The six standard captures create only public outputs and shared `wave_delta` and `wave_stats` diagnostic tables.
+The closure audit retains its public result index and contains no private frontier table.
+The walk audit contains no private support, walk, or scratch schema entries.
+Source inspection confirms that remaining writable helper declarations belong to the oracle or explicit legacy adapters.
+The invariant integer domain now uses a native query source. Its SQL interface and connection-level reuse remain unchanged.
+Extension-owned SQL objects retain their existing interfaces.
+
+The verifier records relation arities before executor-private walk lowering.
+It compares every original compiled relation and projection against the independent SQL oracle.
+Lifted storage helpers do not enter the logical interface.
+This change enables a complete walk session without querying implementation tables that the independent oracle does not own.
+
+#### Final debug verification
+
+The SQL-executor suite passes 168 tests. The profiler child remains ignored separately. Its parent invokes it and passes.
+Shared analysis passes fourteen tests, SQL profiling passes twelve, and the JavaScript report, budget, and parity suites pass forty-four.
+Coverage includes sparse work limits, duplicate supports, empty groups, ordered callbacks, nullable values, overflow, budget failure, rollback, and retry.
+The new cold tests compare global gates, positive frontiers, widening counters, failed edits, reset, and recovery against the independent SQL scheduler.
+
+| Complete session | Prior checkpoint | Setup | Transactions | Evaluation and cleanup | Final total | Allowance of 100 | Complete parity |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| CPython workload | 129 | 8 | 17 | 95 | 120 | Fail | 43 relations, seven checkpoints |
+| CPython call analysis | 388 | 15 | 17 | 318 | 350 | Fail | 99 relations, seven checkpoints |
+| Scalar replay, 1,000 files | 59 | 7 | 17 | 34 | 58 | Pass | Seven checkpoints |
+| Projection replay, 1,000 files | 69 | 7 | 17 | 45 | 69 | Pass | Seven checkpoints |
+| Recursive lattice, 10,000 regions | 89 | 6 | 24 | 59 | 89 | Pass | Nine checkpoints |
+| Checked scalar/tree-walk replay | 298 | 4 | 15 | 252 | 271 | Fail | Seven relations, seven checkpoints |
+
+The original broader totals were 1,944 and 7,969. They count complete sessions, including setup and transaction statements.
+The final captures have zero unknown origins, incomplete operations, and unexpected explanation failures.
+No execution allowance increases or resets apply. Verification SELECTs count. Diagnostic EXPLAIN and the separate oracle do not count.
+The corpus and walk comparisons include failed publication, retry, unchanged publication, restoration, deletion, and recovery from empty input.
+Capture instrumentation and concurrent capture processes prevent CPU comparisons from these traces.
+
+#### Recursive component measurements and decision
+
+| Measured work across the complete session | Workload | Call analysis |
+| --- | ---: | ---: |
+| Scheduled frames | 85 | 325 |
+| Acyclic dependency frames | 8 | 76 |
+| Recursive evaluation frames | 63 | 205 |
+| Closing and inactive history frames | 14 | 44 |
+| Main SQL phase submissions | 71 | 284 |
+| Frames with productive recursive feedback | 52 | 140 |
+
+Closing and inactive history frames submit no SQL. Equal versions and synchronized cursors also permit complete frame reuse.
+The unchanged-replay regression verifies zero phase submissions and preserves journals for suspended operators.
+Each nonempty workload evaluation has thirteen feedback frames. Each nonempty call-analysis evaluation has thirty-five.
+Four nonempty evaluations produce the session feedback totals of fifty-two and one hundred forty.
+These counts describe the current algorithm. They do not establish a semantic minimum for iterations or SQL submissions.
+
+| Recursive call-analysis component | Productive-feedback occurrences |
+| --- | ---: |
+| `tgt` | 4 |
+| `vpos` | 8 |
+| `walk` | 8 |
+| `qn` | 12 |
+| `base`, `bv`, `found`, `need_attr`, `pv`, `qv`, `sub` | 44 |
+| `anc` | 4 |
+| `attr_open`, `base_open`, `bopen`, `qopen`, `vopen` | 52 |
+| `open_sync` | 12 |
+
+Several components can produce feedback in one frame. The component counts must not be added to calculate statement counts.
+The two large mutually recursive components account for ninety-six component-feedback occurrences.
+One host SQL submission per current feedback frame already exceeds the call-analysis session allowance.
+This result justifies a component-level SQL prototype and a comparison with component scheduling.
+It does not justify replacing all recursive paths with a general kernel without that comparison.
+The current task stops at this measured decision. A production general recursive kernel is subsequent work.
+
+The checked tree-walk case has a different remaining cause: 198 submissions execute individual fused relational phases.
+Its lifted walk maintenance still performs many dependent set and reducer operations.
+Private DDL removal does not eliminate these SQL evaluation boundaries.
+Batching independent affected-set operations and avoiding duplicate cold walk construction require a separate comparison.
+This result prevents a claim that recursion explains every remaining overrun.
+
+#### Mixed opaque-producer coverage
+
+A separate audit adds an opaque SQL producer to the original workload and uses one Python file.
+The producer returns a constant. Its raw SQL has no checked effect proof, so the whole program retains the cold execution path.
+The initial audit found one generated document-projection table outside the common retained graph.
+The adapter now retains that projection as a native root.
+SQL ANALYZE skips native projections because their sources already provide cardinality and index statistics.
+This change also prevents ANALYZE from opening a durable statistics write against an eponymous native source.
+Producer preparation uses the native integer domain, so its temporary schema resolver also avoids private domain-table DDL.
+
+The additional complete replay passes parity for all forty-four relations at seven checkpoints.
+It covers failed publication, retry, unchanged publication, restoration, deletion, and recovery.
+The capture has zero private table DDL, native ANALYZE statements, unknown origins, and incomplete capture operations.
+Its 2,395 submissions contain 196 setup statements, eighteen transaction statements, and 2,181 evaluation or cleanup statements.
+The reporter records six SQLite-internal executions separately.
+It fails the unchanged allowance of 100. This fixture differs from the standard corpus workload and has no previous matched count.
+The result establishes storage and replay coverage, not optimized execution for mixed opaque programs.
+
+The fallback still declares SQL-owned logical relations and resolves producer schemas through temporary public relation declarations.
+Its checked portions also retain separate stratum execution and maintenance.
+A component SQL kernel alone cannot remove this fallback overhead.
+The next execution comparison must include regions separated by opaque producers and preserve SQL visibility at those boundaries.
+
+#### Separate unprofiled debug CPU observations
+
+Ten fresh processes run two trials per workload. Builds, unit tests, and profiled captures stop before these trials.
+Each process uses a fresh store and tape cache. SQL profiling and the benchmark trace callback are disabled.
+Engine CPU includes opening, binding, explicit lowering, initial execution, and successful publications.
+It excludes final validation queries and teardown.
+
+| Workload | Trials | Median engine CPU | Median initial execution CPU | Median edit CPU total | Median peak RSS before validation |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Scalar, 1,000 files | 2 | 0.646 s | 0.049 s | 0.047 s | 123.3 MiB |
+| Projection, 1,000 files | 2 | 1.181 s | 0.602 s | 0.047 s | 161.8 MiB |
+| Recursive lattice, 10,000 regions | 2 | 6.864 s | 6.318 s | 0.357 s | 498.5 MiB |
+| CPython workload | 2 | 9.846 s | 5.198 s | 4.474 s | 498.9 MiB |
+| CPython call analysis | 2 | 17.796 s | 6.821 s | 10.771 s | 1,693.5 MiB |
+
+Scalar and projection each execute twelve snapshot publications, including edits, identical snapshots, and restoration.
+The recursive case executes 120 edits with guards against publication outside the changed region.
+Each corpus case executes an edit, unchanged publication, restoration, and another unchanged publication.
+Timing sanity checks compare queried outputs and counts. The recursive runs also verify every expected edit delta.
+Complete-state parity comes from the separate verification sessions.
+These observations have no freshly matched baseline. Different replay shapes also prevent comparison with earlier CPU tables.
+They establish current debug costs, not a measured speedup or whole-product performance acceptance.
+The large recursive case still spends approximately 6.3 CPU seconds in initial execution.
+
+#### Requirement audit for this stage
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| Collapse compatible acyclic stages | Shared component and effect analysis; retained signed-delta pipelines | Three-stage sparse bounds, ninety-stage batching, mixed negative/scalar dependencies, complete sessions |
+| Combine maintenance helpers | Staged initialization and transitions; shared consumer support and wave folds | Zero standalone corpus summary-initialization SELECTs; support, scalar, extrema, and rollback regressions |
+| Remove private maintenance-table DDL | Native support, dependency, lattice-index, walk, scratch, candidate, delta, and widening roots | Cold and retained schema regressions; SQL capture inventories across all seven complete sessions |
+| Skip unchanged replay with proofs | Equal input/counter versions, gate masks, synchronized cursors, and empty active journals | Zero-phase replay regression; suspended scalar journals; unchanged complete-session checkpoints |
+| Measure actual recursive work before a kernel decision | Component-level seed, feedback, frontier, and reuse observations | Raw complete-session events yield 52 and 140 productive-feedback frames; component counts are recorded here |
+
+The requested implementation and measurement stage is complete. Three standard sessions and the opaque-producer audit exceed the unchanged SQL allowance.
+The next performance stage must compare execution strategies against these measured causes.
+Acyclic batching limits and isolated effect boundaries remain explicit in explain.
+The verification scope covers this SQL extension and its complete sessions. It does not establish whole-product performance acceptance.
+
+#### Remaining performance work
+
+1. Compare component scheduling with a SQL loop on the two measured mutually recursive components.
+   Preserve signed deltas, termination, merge order, widening clocks, execution limits, atomic failure, and retry.
+2. Combine compatible affected-set operations in lifted walk maintenance. Measure cold walk construction and retained initialization separately.
+3. Reduce statement preparation and CTE expansion costs at the remaining bounded phase boundaries.
+4. Extend composition across checked regions separated by opaque producer boundaries. Reduce repeated public schema preparation without changing producer visibility.
+5. Repeat matched CPU comparisons before a performance acceptance claim. Complete-session parity alone does not establish whole-product acceptance.

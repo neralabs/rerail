@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn failed_metadata_checkpoint_preserves_the_previous_complete_snapshot() {
+    let directory=tempdir();
+    let connection=Connection::open_in_memory().unwrap();
+    // SAFETY: this profiler drops before its connection.
+    let profiler=unsafe {Profiler::new(&connection,directory.path())}.unwrap();
+    connection.execute_batch("SELECT 1").unwrap();
+    profiler.checkpoint(&connection).unwrap();
+    let path=profiler.stem.with_extension("json");
+    let before=std::fs::read(&path).unwrap();
+    let temporary=profiler.stem.with_extension("json.tmp");
+    std::fs::create_dir(&temporary).unwrap();
+    assert!(profiler.checkpoint(&connection).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(),before);
+    std::fs::remove_dir(&temporary).unwrap();
+    profiler.checkpoint(&connection).unwrap();
+    let snapshot:Value=serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(snapshot["executionCoverage"]["started"],1);
+    assert!(snapshot["queries"][0]["plan"].is_array());
+    assert!(!temporary.exists());
+}
+
+
+#[test]
 fn incremental_explanations_survive_input_release_and_only_visit_new_queries() {
     let directory = tempdir();
     let connection = Connection::open_in_memory().unwrap();
@@ -475,4 +498,28 @@ fn nested_operator_cpu_excludes_child_sql_and_child_operators() {
         value(middle, "cpuNs"),
         value(middle, "selfCpuNs") + value(inner, "selfCpuNs") + sql_cpu
     );
+}
+#[test]
+fn metadata_checkpoints_reuse_explained_records_and_append_new_queries() {
+    let directory = tempdir();
+    let connection = Connection::open_in_memory().unwrap();
+    // SAFETY: the profiler drops before its connection.
+    let profiler = unsafe { Profiler::new(&connection, directory.path()) }.unwrap();
+    connection.query_row("SELECT 1", [], |_|Ok(())).unwrap();
+    profiler.checkpoint(&connection).unwrap();
+    let path = profiler.stem.with_extension("json");
+    let first: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(first["metadataPublication"]["serializedQueries"],1);
+    profiler.checkpoint(&connection).unwrap();
+    let unchanged: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(unchanged["metadataPublication"]["serializedQueries"],0);
+    assert_eq!(unchanged["queries"],first["queries"]);
+    connection.query_row("SELECT 2", [], |_|Ok(())).unwrap();
+    profiler.checkpoint(&connection).unwrap();
+    let next: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(next["metadataPublication"]["serializedQueries"],1);
+    assert!(next["metadataPublication"]["reusedQueryBytes"].as_u64().unwrap()>0);
+    assert_eq!(next["queries"][0],first["queries"][0]);
+    assert!(next["queries"][1]["plan"].is_array());
+    assert_eq!(next["executionCoverage"]["completed"],2);
 }

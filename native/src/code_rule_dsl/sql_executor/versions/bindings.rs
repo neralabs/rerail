@@ -102,6 +102,9 @@ impl Store {
         let writable = self.slots.borrow().get(name).is_none_or(|s| s.sql_writable);
         self.fork_access(db, name, version, writable)
     }
+    pub fn fork_readonly_version(&self, db: &rusqlite::Connection, name: &str, version: Version) -> Result<()> {
+        self.fork_access(db, name, version, false)
+    }
     fn fork_access(
         &self,
         db: &rusqlite::Connection,

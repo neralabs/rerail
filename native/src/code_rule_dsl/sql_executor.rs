@@ -18,6 +18,7 @@ use std::sync::Arc;
 mod catalog;
 mod compiler;
 mod explain;
+mod frontiers;
 mod constants;
 // A row of a corpus binding is `PROBE | document << 32 | row`: a 64-bit target only.
 #[cfg(target_pointer_width = "64")]
@@ -88,6 +89,8 @@ pub struct CodeRuleSqlExecutor {
     control_ready: std::cell::Cell<bool>,
     #[cfg(any(test, feature = "headless"))]
     cold_oracle: bool,
+    #[cfg(test)]
+    legacy_initial: bool,
 }
 
 #[napi]
@@ -122,6 +125,8 @@ impl CodeRuleSqlExecutor {
             control_ready: std::cell::Cell::new(false),
             #[cfg(any(test, feature = "headless"))]
             cold_oracle: false,
+            #[cfg(test)]
+            legacy_initial: false,
         })
     }
 
@@ -671,6 +676,10 @@ impl CodeRuleSqlExecutor {
             self.clear_control()?;
             self.db.reset_execution();
             let _budget = limits.enter(&self.db)?;
+            #[cfg(any(test, feature = "headless"))]
+            let retained = !self.cold_oracle;
+            #[cfg(not(any(test, feature = "headless")))]
+            let retained = true;
             let needs_integers = emitted
                 .queries
                 .iter()
@@ -685,6 +694,11 @@ impl CodeRuleSqlExecutor {
                 {
                     continue;
                 }
+                if retained && setup.starts_with("CREATE TEMP TABLE rdl_int(") {
+                    // The integer domain is invariant; retain its SQL interface without DDL.
+                    constants::integer_domain(&self.db)?;
+                    continue;
+                }
                 // The split-position table is invariant across programs in this session.
                 if statement.starts_with("CREATE TEMP TABLE rdl_int")
                     && self.db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name = 'rdl_int')", [], |r| r.get::<_, bool>(0)).map_err(error)?
@@ -693,15 +707,25 @@ impl CodeRuleSqlExecutor {
                 }
                 self.db.execute_batch(statement).map_err(error)?;
             }
-            #[cfg(any(test, feature = "headless"))]
-            let retained = !self.cold_oracle;
-            #[cfg(not(any(test, feature = "headless")))]
-            let retained = true;
-            let minimal_setup = emitted.queries.iter().all(Option::is_some);
-            if minimal_setup { schedule::declare_outputs(&self.db, &emitted.program).map_err(error)?; }
+            #[cfg(test)]
+            let native_frontiers = retained && !self.legacy_initial;
+            #[cfg(not(test))]
+            let native_frontiers = retained;
+            let minimal_setup = emitted.queries.iter().zip(&emitted.program.steps).all(|(q,s)| q.is_some() || retained && emitted.constant_rows.contains_key(&s.output));
+            let native_relations = if retained && minimal_setup && temporal::initial::eligible(&emitted,&producers) {
+                emitted.program.relations.iter().filter(|(r,_)|!outputs.contains(r)).map(|(r,_)|r.clone()).collect::<BTreeSet<_>>()
+            } else if native_frontiers {
+                emitted.views.iter().filter(|(r,_)|r.starts_with("__sql_")).map(|(r,_)|r.clone()).collect()
+            } else { BTreeSet::new() };
+            if minimal_setup || native_frontiers {
+                let mut public=emitted.program.clone();
+                public.relations.retain(|(r,_)|!native_relations.contains(r));
+                schedule::declare_outputs(&self.db, &public).map_err(error)?;
+            }
             else { schedule::declare_sql(&self.db, &emitted.program).map_err(error)?; }
             for (table, columns) in &indexes {
-                if minimal_setup && !emitted.program.relations.iter().any(|(r, _)| r == table) { continue; }
+                if native_relations.contains(table) { continue; }
+                if (minimal_setup || native_frontiers) && !emitted.program.relations.iter().any(|(r, _)| r == table) { continue; }
                 session::index(&self.db, table, columns).map_err(error)?;
             }
             self.control_ready.set(true);
@@ -730,6 +754,7 @@ impl CodeRuleSqlExecutor {
                 }
             }
             let mut execution = session::Execution {
+                logical_relations: Arc::new(emitted.program.relations.clone()),
                 inputs: dependencies,
                 objects: objects.clone(),
                 counts,
@@ -746,16 +771,28 @@ impl CodeRuleSqlExecutor {
             work.versions = Some(&self.versions);
             work.profiler = self.db.profiler();
             let materialized_views = 0;
-            let constant_tables = constants::prepare(&self.db, &mut execution)?;
-            let native_initial = if retained {
-                temporal::initial::run(&mut work, &self.versions, &mut execution, trace_namespace, &emitted.program, !minimal_setup)?
+            let constant_tables = constants::prepare(&self.db, &mut execution, retained.then_some(&self.versions))?;
+            #[cfg(test)]
+            let retained_initial = retained && !self.legacy_initial;
+            #[cfg(not(test))]
+            let retained_initial = retained;
+            let native_initial = if retained_initial {
+                temporal::initial::run(&mut work, &self.versions, &mut execution, trace_namespace, &emitted.program, !minimal_setup, native_relations.clone())?
             } else { None };
             let mut initializations = Vec::new();
             let waves = if let Some(waves) = native_initial {
+                for (table,columns) in &indexes {
+                    if native_relations.contains(table) { session::index(&self.db,table,columns).map_err(error)?; }
+                }
                 waves
             } else {
                 let _scope = profiling::scope(&self.db, "cold execution");
-                if minimal_setup {
+                if native_frontiers {
+                    frontiers::declare(&work, &emitted.program)?;
+                    for (table, columns) in &indexes {
+                        session::index(&self.db, table, columns).map_err(error)?;
+                    }
+                } else if minimal_setup {
                     schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
                     for (table, columns) in &indexes {
                         session::index(&self.db, table, columns).map_err(error)?;
@@ -787,10 +824,11 @@ impl CodeRuleSqlExecutor {
                 }
                 if retain {
                     for (name,_) in &emitted.views {
+                        if self.versions.owns(name) { continue; }
                         self.db.execute_batch(&format!("ANALYZE temp.{}",quote(name))).map_err(error)?;
                     }
                     let _support = profiling::scope(&self.db, "support preparation");
-                    let walks = walks::prepare(&mut work, &mut execution, None)?;
+                    let walks = walks::prepare(&mut work, &mut execution, Some(&self.versions))?;
                     if !walks.is_empty() { reductions::cold::after_walks(&work, &mut execution)?; }
                     initializations.extend(walks);
                     let mut potential = execution.inputs.clone();
@@ -798,7 +836,7 @@ impl CodeRuleSqlExecutor {
                         &mut work,
                         &mut execution,
                         &mut potential,
-                        None,
+                        Some(&self.versions),
                     )?);
                     initializations.sort();
                     initializations.dedup();

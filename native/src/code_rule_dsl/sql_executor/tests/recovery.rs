@@ -39,6 +39,8 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
             );
         }
         if output == "call_target" {
+            assert!(e.explain_value().to_string().contains("One recursive SQL kernel; versioned result root"),
+                "the original call analysis must exercise recursive SQL kernels");
             let snapshot=json!({"files":corpus.iter().map(|(p,s)|json!({"path":p,"source":s,"language":"python"})).collect::<Vec<_>>()}).to_string();
             let (snapshot, _) =
                 super::super::super::eval::parse_snapshot(&snapshot, false).unwrap();

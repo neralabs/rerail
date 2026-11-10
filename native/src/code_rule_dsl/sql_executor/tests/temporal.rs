@@ -72,7 +72,7 @@ fn initial() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     assert!(e.executions[0].recursive.is_empty());
     (d, e)
 }
-fn check(e: &CodeRuleSqlExecutor, p: &str, inputs: &[(&str, &[&str])], outputs: &[&str]) {
+pub(super) fn check(e: &CodeRuleSqlExecutor, p: &str, inputs: &[(&str, &[&str])], outputs: &[&str]) {
     let (_d, mut fresh) = executor();
     fresh.cold_oracle=true;
     for (name, columns) in inputs {
@@ -444,6 +444,8 @@ fn recursive_splitters_retain_the_immutable_integer_domain() {
     bind(&mut e, "seed", &["s"], json!([["a.b.c"]]));
     let p = ".decl owner(n:number)\n.decl seed(s:symbol)\n.input owner,seed\n.decl best(n:number,v:max<>) widen 20\nbest(n,0) :- owner(n).\nbest(n,strlen(m)) :- owner(n), best(_,v), v>=0, seed(s), split_dot(s,m,x).\n.output best\n";
     e.run(p.into(), "python".into(), None).unwrap();
+    assert_eq!(rows(&e,"SELECT count(*),min(i),max(i) FROM rdl_int"),json!([[4096,1,4096]]));
+    assert_eq!(rows(&e,"SELECT name FROM temp.sqlite_schema WHERE name='rdl_int'"),json!([]));
     assert!(!e.executions[0].temporal.is_empty());
     for patch in [
         json!([{"name":"seed","delete":[["a.b.c"]],"insert":[["long.word.suffix"]]}]),
@@ -465,6 +467,10 @@ fn recursive_splitters_retain_the_immutable_integer_domain() {
             rows(&fresh, "SELECT * FROM best ORDER BY c0")
         );
     }
+    e.reset().unwrap();
+    e.run(p.into(),"python".into(),None).unwrap();
+    assert_eq!(rows(&e,"SELECT count(*) FROM rdl_int"),json!([[4096]]));
+    assert_eq!(rows(&e,"SELECT name FROM temp.sqlite_schema WHERE name='rdl_int'"),json!([]));
 }
 
 #[test]

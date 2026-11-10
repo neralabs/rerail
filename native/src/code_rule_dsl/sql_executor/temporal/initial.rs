@@ -5,13 +5,14 @@ pub(in crate::code_rule_dsl::sql_executor) fn eligible(
     e: &plan::emit::Emitted,
     producers: &BTreeMap<String, Vec<String>>,
 ) -> bool {
-    if !producers.is_empty() || e.queries.iter().any(Option::is_none) || e.program.steps.is_empty() {
+    if !producers.is_empty() || e.queries.iter().zip(&e.program.steps)
+        .any(|(q,s)| q.is_none() && !e.constant_rows.contains_key(&s.output)) || e.program.steps.is_empty() {
         return false;
     }
     let positions = e.program.steps.iter().map(|s|(s.output.as_str(),s.stratum)).collect::<BTreeMap<_,_>>();
     let recursive = |s:&schedule::Step,q:&Query| s.stratum>0 && q.reads().iter()
         .filter_map(|r|r.program_relation()).any(|r|positions.get(r)==Some(&s.stratum));
-    let recursive_steps=e.program.steps.iter().zip(&e.queries).filter(|(s,q)|recursive(s,q.as_ref().unwrap())).collect::<Vec<_>>();
+    let recursive_steps=e.program.steps.iter().zip(&e.queries).filter(|(s,q)|q.as_ref().is_some_and(|q|recursive(s,q))).collect::<Vec<_>>();
     if recursive_steps.iter().any(|(s,q)|maintenance::barrier(q.as_ref().unwrap()) ||
         e.program.lattices.iter().any(|(r,_,_)|positions.get(r.as_str())==Some(&s.stratum))) {
         return true;
@@ -21,7 +22,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn eligible(
     if !recursive_steps.is_empty() {
         composable && e.queries.iter().flatten().any(maintenance::barrier)
     } else {
-        composable && e.program.lattices.is_empty() && !e.views.is_empty()
+        e.queries.iter().flatten().all(|q| q.ctes.is_empty())
     }
 }
 
@@ -32,11 +33,12 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
     namespace: usize,
     original: &schedule::Program,
     declared_counts: bool,
+    native_relations: BTreeSet<String>,
 ) -> Result<Option<u32>> {
     if !eligible(&run.emitted, &run.producers) { return Ok(None); }
     let e = run.emitted.clone();
     let outputs = original.relations.iter().map(|(r,_)|r.clone()).collect::<BTreeSet<_>>();
-    let steps = e
+    let mut steps = e
         .program
         .steps
         .iter()
@@ -50,6 +52,10 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
             ))
         })
         .collect::<Result<Vec<_>>>()?;
+    plan::acyclic::order(&mut steps);
+    let stage_decisions = plan::acyclic::analyze(&steps,
+        &original.relations.iter().cloned().collect(),
+        &original.lattices.iter().map(|(r,_,_)| r.clone()).collect());
     let probes = indexes::native(steps.iter().map(|(_, q)| q));
     let relations = original
         .relations
@@ -100,11 +106,14 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
     }
     let mut trace = Trace {
         whole: true,
+        native_relations,
         templates: Arc::new(BTreeMap::new()),
         prefix: format!("__it{namespace}_global"),
         emitted: e,
         relations,
+        components: Arc::new(components(&steps)),
         steps: Arc::new(steps),
+        stage_decisions,
         after,
         frames: vec![],
         limit: run.max_waves,
@@ -134,10 +143,16 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         let final_versions = trace.frames.last().unwrap().versions(store);
         for (r, spec) in &trace.relations {
             let frame = trace.frames.last().unwrap();
-            let _scope = store.activate(frame.scope())?;
-            w.db.execute(&format!("INSERT INTO {} SELECT * FROM {}",quote(r),quote(&frame.published[r])),[]).map_err(error)?;
+            if trace.native_relations.contains(r) {
+                let _scope = store.activate(0)?;
+                store.alias_readonly(w.db,r,final_versions.published[r].clone(),
+                    (0..spec.width).map(|c|format!("c{c}")).collect())?;
+            } else {
+                let _scope = store.activate(frame.scope())?;
+                w.db.execute(&format!("INSERT INTO {} SELECT * FROM {}",quote(r),quote(&frame.published[r])),[]).map_err(error)?;
+            }
             if spec.widening() {
-                let counters=store.version(&frame.counters[r]);
+                let counters=final_versions.counters[r].clone();
                 let _public=store.activate(0)?;
                 let table=format!("__sql_changes_{r}");
                 if declared_counts && !store.contains(&table) {
@@ -210,7 +225,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn apply(
                     json!({"inserted":d.inserted,"deleted":d.deleted}),
                 );
             }
-            incremental.push(r.clone());
+            if d.inserted+d.deleted>0 { incremental.push(r.clone()); }
             changes.insert(r, d);
         }
         report["positive_waves"] = json!(waves);

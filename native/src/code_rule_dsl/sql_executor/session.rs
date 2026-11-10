@@ -10,6 +10,8 @@ pub(super) struct Execution {
     pub inputs: BTreeSet<String>,
     pub objects: Vec<(String, bool)>,
     pub emitted: Arc<plan::emit::Emitted>,
+    /// Physical arities at the compiler boundary, before executor-private walk lowering.
+    pub logical_relations: Arc<Vec<(String,usize)>>,
     /// The program as declared (pruned, before lowering), for the catalog.
     pub program: Arc<front::Program>,
     /// Relations made by SQL producers, each with the session inputs its query reads. Tuple

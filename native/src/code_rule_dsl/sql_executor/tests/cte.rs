@@ -96,6 +96,7 @@ fn named_positive_ctes_use_one_initial_schedule_and_bounded_edits() {
             777,
             &original,
             false,
+            BTreeSet::new(),
         )
         .unwrap();
         assert!(

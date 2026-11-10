@@ -120,6 +120,9 @@ It does not select a SQL dialect: execution uses SQLite.
 Results remain available for later SQL queries and rule programs on the same session.
 A later program can declare a previous output as an input.
 The `.output` directive selects the derived relations to compute. Their intermediate relations also remain available for queries.
+Declared outputs retain SQL tables, including their indexes and publication hooks.
+Fully retained programs expose intermediate relations through immutable native query facades.
+These facades support `createIndex()` and inputs to later programs. Their publication shares retained roots instead of copying SQL rows.
 Output names must not overlap persistent SQL objects or bound inputs.
 A later run can atomically replace session-owned outputs. It invalidates their dependent programs.
 Rebinding an input invalidates programs that read it and their dependents. Independent outputs remain available.
@@ -305,7 +308,7 @@ A no-op batch returns no program reports.
 `bindRelation()` builds the mutable fact source and its indexes. Initial execution prepares projection relations and retained support.
 Projection rules use the same dependency graph and wave gates as other checked relations.
 The executor does not convert live views into a separate maintenance pipeline.
-Public results remain SQL tables, so SQL triggers, indexes, and transactional publication keep their existing behavior.
+Declared outputs remain SQL tables, so SQL triggers, indexes, and transactional publication keep their existing behavior.
 These costs remain proportional to input size, distinct values, and positive body combinations, and occur before the first edit.
 A large join can require many retained contexts. Compatible reducers share their bag state and value indexes.
 A single eligible count, sum, min, or max uses the same grouped SQL publication protocol as a compatible family.
@@ -553,6 +556,10 @@ The update report includes `recursive_frames` per program and `version_nodes` fo
 The latter counts native version-diff traversal, which SQLite instruction counts do not include.
 
 Generated walks support scalar queries and negation in their seed and output blocks; their traversal arms remain positive.
+Eligible generated walks remain recursive SQL kernels inside a shared phase.
+They preserve the original UNION and NULL semantics, without separate SQL submissions for each traversal iteration.
+Equal input versions and empty journals skip kernel evaluation.
+Opaque calls, unsupported functions, and lattice heads retain their existing specialized paths.
 Aggregate bodies with joins lower to retained helper relations. `split_dot` retains its immutable integer domain.
 Acyclic positive CTEs can use arbitrary names when the final SELECT uses DISTINCT.
 Their arms can use UNION or UNION ALL. The final DISTINCT makes duplicate derivations safe to retain as sets.
@@ -571,9 +578,18 @@ Initial loads bulk-build complete-row, primary-key, row-id, and required seconda
 Dense initial joins reuse unchanged rows and tree branches. Sparse edits keep their delta path.
 Frozen lookups share an immutable version. Contiguous scans stream through that version without repeated rank lookups.
 Scratch deltas share roots and prepare secondary indexes only when a lookup needs them.
+Empty pending journals also share incoming roots. Equal opposite journals cancel directly. Large journal inputs compose through a bulk set merge.
+Native journal composition has its own profile operation, including incoming and retained row counts.
 Bulk loads preserve the integer checks of the writable virtual tables.
 
-Positive, call-free caches can combine contexts, contributions, support counts, improvements, and folds into one statement per wave.
+Positive caches and eligible recursive SQL kernels combine their outputs in bounded SQL batches.
+Each batch stays below SQLite's 500-arm compound-query limit. Sizing includes key journals and publication results.
+Every operator reads the same frozen wave inputs, even when its caches publish in an earlier batch.
+Immutable key journals survive scratch reuse. Relation folds run after all operator caches finish.
+Frame `phase_batches` and profile `phaseBatch` contexts expose these boundaries.
+Exact zero native row counts can clear nonscalar positive-body caches without scanning their contexts.
+Scalar input cursors and their positive contexts remain consistent during suspension. Protected journals survive until reactivation.
+Each operator's `empty_positive_body` reports the selected shortcut.
 Materialized CTEs evaluate the expressions. A tagged result stream returns the affected rows and keys.
 Native code validates every replacement before publication and maintains persistent storage roots.
 Complete cache rebuilds use inline views for pure projections and set operations.
@@ -584,6 +600,8 @@ Scalar reducers, registered lattice joins, and other checked shapes retain their
 Merge and widening functions still execute through SQLite.
 
 Private phase outputs and fact deltas use read-only native bindings, which avoid CREATE and DROP statements.
+Integer constants also use immutable native bindings. Their typed values come from the compiler, without SQL text parsing or scratch-table replay.
+The compatibility field `constant_tables` includes these native constant bindings.
 Initial execution creates public results and wave diagnostics first. The cold fallback declares its remaining control tables when needed.
 Widening counters retain their `__sql_changes_RELATION` names and `changes` columns as read-only diagnostics.
 These diagnostics share retained roots. Additional indexes requested by extensions survive sparse publication and rollback.
@@ -607,8 +625,48 @@ The report contains SQL text, EXPLAIN plans, bytecode, CPU time, VM instructions
 Explain includes disjoint-producer proofs, dependent bag-storage decisions, and the requirements for shared transitions across wave gates.
 Shared transitions require the same input snapshot, prior summary roots, pending delta journal, projection, layout, and ordering.
 Each consumer retains its own lookup mapping and dependency index. Nullable values and opaque callbacks retain their existing effect boundaries.
+Compatible acyclic positive stages pass replacement values and signed deltas through one SQL phase.
+Each recursive step still reads frozen preceding-frame inputs.
+Checked expressions retain their scheduler gate and materialized context fence while sharing compatible SQL publication.
+Independent count, existence, and count/sum/min/max transitions can share the consumer support and wave-fold statement.
+Staged summary lookups probe the persistent old-group index and the small replacement sets separately.
+Independent gates retain separate cursor roots, even when a proven transition shares its evaluation.
+
+Cold summary initialization can share the consumer and publication phase.
+Group and value-index construction use one projection when their input versions, projection, layout, and ordering agree.
+Only successful publication adds reusable initialization state.
+Dependent, ordered, computed-key, and nullable reducers use native roots with explicit evaluation fences.
+Their dependency refresh and ordered head evaluation retain the original sequence.
+Registered lattice support indexes use persistent native nodes and roots. SQL still invokes each merge callback.
+The profiler records native index CPU under `registered lattice support index`.
+
+Ordinary cold execution also uses native candidate, delta, and widening-counter roots.
+Its readiness gates and emitted step order preserve the cold SQL wave contract.
+The invariant `rdl_int` split-position domain also uses a native query source without helper DDL.
+SQL evaluates rules, merges, and widening. Native scheduling needs no private pending-step tables.
+Public result tables keep their SQL triggers and extension indexes.
+Explain reports this adapter under `cold_frontiers`; the original compiled relation inventory appears under `relation_interface`.
+The independent cold oracle and explicit legacy adapter tests retain writable SQL storage.
+Opaque-producer fallback keeps generated private projections in native roots.
+SQL ANALYZE applies to SQL-owned relations. Native sources supply their own cardinality and index statistics.
+Opaque producers still prevent whole-program retained composition, so mixed programs can require substantially more SQL submissions.
+
+The explain output includes `dependency_components`, `acyclic_stages`, `acyclic_sql_depth_bound`, and per-operator `common_wave_phase` decisions.
+Dependent incremental batches currently contain at most four stages because SQLite expands nested CTE references during preparation.
+Result-arm bounds can introduce further SQL batches. These boundaries retain immutable roots and pending signed deltas.
+Closing and inactive history frames carry native roots without SQL. Equal versions and synchronized cursors permit complete frame reuse.
+
+Frame work records separate acyclic stages, recursive evaluation, closing, and retained history.
+Component records distinguish seeds, recursive inputs, recursive candidate improvements, and output frontiers.
+A productive-feedback frame has nonempty recursive inputs, candidate improvements, and a new component frontier.
+This metric describes the current algorithm and does not prove a semantic lower bound on SQL submissions.
+
 Contexts identify the API operation, preparation stage, recursive component, frame, relation, and rule step.
 Native version differences have separate operator records. Failed operations and rollback remain in the trace.
+Profile checkpoints retain an encoded prefix of immutable query records and append only new records.
+The profiler copies that prefix and replaces metadata files atomically.
+An unchanged checkpoint serializes zero query records. Filesystem copies can still require I/O.
+A failed metadata write preserves the previous complete snapshot.
 Retained support initialization records exclusive native CPU, excluding child SQL and child operators.
 
 Native table counters include compound-key prefix probes and candidate inspections, including candidates that SQLite rejects.
@@ -625,15 +683,31 @@ Its context records SQL bytes, CTE definitions, result branches, and logical rea
 A phase can distribute one materialized result to several destinations.
 Each destination retains its own key width and constraint checks.
 
+Shared analysis proves containment between key sets through source identities, projections, copies, and unions.
+It describes set membership only. It does not discard bag multiplicity.
+The SQL emitter omits old-row branches when the replacement keys cover every affected key.
+`explain()` reports these decisions under each frame's `key_set_decisions`, including rejected proofs and omitted branches.
+Unproven membership subtraction uses a materialized SQL `EXCEPT`, avoiding correlated scans of the replacement set.
+Ordered extrema use indexed probes with non-null tuple membership filters. Nullable values retain their separate path.
+The shared analysis has no SQL or storage dependencies, so native execution can use the same proofs.
+
+Phase publication selects bulk rebuilding when at least 512 old rows exist and the affected-key count reaches half of the old row count.
+Sparse updates retain persistent patches. Both paths preserve existing row identities, constraints, and atomic publication across roots.
+Frame `publication_decisions` and SQL profile receipts report the selected strategies.
+
+The session driver defaults to a five-minute timeout per verifier process.
+`RERAIL_SQL_VERIFY_TIMEOUT_MS` permits a longer debug diagnostic. It does not change the 100-submission allowance.
+The driver records this setting and reports process timeout errors.
+
 The standalone report is diagnostic. It does not supply an output oracle or grant performance acceptance.
 The existing complete-job execution allowance and missing-parity checks remain visible in the report.
 
 The headless verifier supplies complete-state parity for explicit fact requests:
 
 ```sh
-cargo build --profile profiling --no-default-features --features headless,lang-python,lang-rr --example sql-session-verify
+cargo build --profile dev --no-default-features --features headless,lang-python,lang-rr --example sql-session-verify
 python3 benchmark/sql-executor.py --session-request 1000 /tmp/request.json
-node scripts/profiling/sql-session.mjs target/profiling/examples/sql-session-verify /tmp/request.json /tmp/sql-session-1000
+node scripts/profiling/sql-session.mjs target/debug/examples/sql-session-verify /tmp/request.json /tmp/sql-session-1000
 ```
 
 The output directory must be fresh. The command writes the report before it enforces acceptance.
@@ -656,11 +730,25 @@ The document generator covers replacement snapshots, file additions and deletion
 
 ```sh
 python3 benchmark/sql-executor.py --document-session-request 32 /tmp/documents.json
-node scripts/profiling/sql-session.mjs target/profiling/examples/sql-session-verify /tmp/documents.json /tmp/sql-documents
+node scripts/profiling/sql-session.mjs target/debug/examples/sql-session-verify /tmp/documents.json /tmp/sql-documents
 ```
 
 `--projection` adds projection-view coverage. `--scalar-consumers` selects the mixed set/scalar fallback case.
 The report enforces the same complete-job allowance for every variant. Correct parity alone does not satisfy that allowance.
+
+Verification retains the compiler's distinction between interned names, grammar kinds, and grammar fields.
+Grammar identifiers remain stable integers across stores. They do not require symbol-arena entries in an empty snapshot.
+Normalization failures identify the checkpoint, relation, column, domain, and raw value.
+
+The corpus generator includes failure rollback, retry, unchanged publication, restoration, empty input, and recovery for both original CPython rule programs:
+
+```sh
+python3 benchmark/sql-executor.py --corpus-session-request workload /tmp/workload.json
+python3 benchmark/sql-executor.py --corpus-session-request calls /tmp/calls.json
+```
+
+Native tape identities compare as nodes even when the compiler introduces the tape input implicitly.
+The negative parent sentinel remains an integer.
 
 `steps` supplies changes, optional limits, and an optional expected error class.
 The generated request includes instruction-limit and wave-limit failures, followed by a successful retry and six edits.

@@ -1,5 +1,20 @@
 //! Reconstructible contribution rows: retain a complete context key and project pure fields.
 use super::{Decision, scalars::Expression};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(in crate::code_rule_dsl) enum Publication {
+    SparsePatch,
+    BulkEmpty,
+    BulkDense,
+    BulkReplacement,
+}
+/// A conservative work threshold, shared by storage implementations.
+pub(in crate::code_rule_dsl) fn publication(existing: usize, affected: usize) -> Publication {
+    if existing == 0 { Publication::BulkEmpty }
+    else if existing >= 512 && affected >= existing.div_ceil(2) { Publication::BulkDense }
+    else { Publication::SparsePatch }
+}
 #[derive(Clone, Debug, serde::Serialize)]
 pub(in crate::code_rule_dsl) struct Projection {
     pub context_width: usize,
@@ -25,4 +40,9 @@ pub(in crate::code_rule_dsl) fn projection(
     };
     Projection { context_width, heads, decision: Decision::new(reason.is_none(),reason.unwrap_or(
         "Complete context keys and pure direct head projections reconstruct contribution rows without duplicate storage")) }
+}
+
+/// Large journal inputs justify one set merge even when the old journal is small.
+pub(in crate::code_rule_dsl) fn bulk_journal(existing: usize, incoming: usize) -> bool {
+    incoming >= 512 && incoming >= existing.div_ceil(2)
 }

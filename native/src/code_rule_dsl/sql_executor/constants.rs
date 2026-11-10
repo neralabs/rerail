@@ -5,6 +5,16 @@ use super::super::logic::sql::{
 };
 use super::*;
 
+/// The split-position domain is a shared immutable input, including producer preparation.
+pub(super) fn integer_domain(db:&Database)->Result<()> {
+    if super::super::facts::vtab::bound_source(db,"rdl_int").is_none() {
+        db.bind("rdl_int",Arc::new(live::Live::from_rows(
+            vec!["i".into()],(1..=4096).map(|i|vec![i]),
+        ))).map_err(error)?;
+    }
+    Ok(())
+}
+
 pub(super) fn uses_integer_domain(query: &Query) -> bool {
     fn block(select: &Select) -> bool {
         let mut found = select
@@ -37,7 +47,7 @@ pub(super) fn uses_integer_domain(query: &Query) -> bool {
         .any(block)
 }
 
-pub(super) fn prepare(db: &rusqlite::Connection, run: &mut session::Execution) -> Result<usize> {
+pub(super) fn prepare(db: &rusqlite::Connection, run: &mut session::Execution, storage: Option<&versions::Store>) -> Result<usize> {
     let e = Arc::make_mut(&mut run.emitted);
     let mut count = 0;
     for (id, (step, query)) in e.program.steps.iter_mut().zip(&mut e.queries).enumerate() {
@@ -55,6 +65,11 @@ pub(super) fn prepare(db: &rusqlite::Connection, run: &mut session::Execution) -
             .1;
         let name = format!("__sql_constants_{}_{}", step.output, id);
         let columns = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
+        if let Some((storage, rows)) = storage.zip(e.constant_rows.get(&step.output)) {
+            storage.create_readonly(db, &name, versions::Schema::integers(width,width))?;
+            storage.restrict_indexes(&name, &[])?;
+            storage.load_rows(&name, rows.iter().map(|r|r.iter().copied().map(Some).collect()).collect(), true)?;
+        } else {
         db.execute_batch(&format!(
             "CREATE TEMP TABLE {}({},PRIMARY KEY({})) WITHOUT ROWID",
             quote(&name),
@@ -76,6 +91,7 @@ pub(super) fn prepare(db: &rusqlite::Connection, run: &mut session::Execution) -
             step.output
         ))
         .map_err(error)?;
+        }
         let q = Query {
             ctes: vec![],
             body: Select {

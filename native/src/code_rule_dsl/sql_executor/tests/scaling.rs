@@ -201,6 +201,7 @@ fn ordered(e: &CodeRuleSqlExecutor, table: &str) -> Value {
 #[test]
 fn wide_old_sql_joins_use_indexed_deletion_rows_and_rollback_restores_them() {
     let (_d, mut e) = executor();
+    e.legacy_initial=true;
     bind(
         &mut e,
         "item",
@@ -484,15 +485,10 @@ owns(p,o) :- node(d,n,"call",_,_), doc(d,p,_), nearest(n,a,scope), field(a,"name
             json!([]),
             "{report}"
         );
-        assert!(
-            rows(
-                &e,
-                "SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_walk_*'"
-            )[0][0]
-                .as_u64()
-                .unwrap()
-                > 0
-        );
+        let walks=e.executions[0].objects.iter().filter(|(name,_)|name.starts_with("__sql_walk_")).map(|(name,_)|name).collect::<Vec<_>>();
+        assert!(!walks.is_empty());
+        assert!(walks.iter().all(|name|e.versions.owns(name)));
+        assert_eq!(rows(&e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_walk_*' OR name GLOB '__sql_state_*' OR name GLOB '__rr_update_*'"),json!([[0]]));
         let (_fresh_dir, mut fresh) = executor();
         fresh.bind_snapshot(snapshot(&files)).unwrap();
         fresh.run(program.into(), "python".into(), None).unwrap();

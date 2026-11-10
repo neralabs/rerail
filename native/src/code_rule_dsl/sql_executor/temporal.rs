@@ -4,11 +4,13 @@ use super::maintenance::{Delta, Work};
 use super::*;
 use crate::code_rule_dsl::logic::native::aggregation::{Grouping, Reduction};
 mod compose;
+mod batches;
 mod fold;
 mod frame;
 pub(super) mod initial;
 mod operator;
 mod quiescent;
+mod pipeline;
 use frame::Frame;
 const UNSUPPORTED: &str = "unsupported temporal retention: ";
 
@@ -124,14 +126,49 @@ pub(super) fn delta(
 #[derive(Clone)]
 pub(super) struct Trace {
     whole: bool,
+    native_relations: BTreeSet<String>,
     templates: Arc<BTreeMap<usize, frame::Prepared>>,
     prefix: String,
     emitted: Arc<plan::emit::Emitted>,
     relations: BTreeMap<String, Relation>,
     steps: Arc<Vec<(schedule::Step, Query)>>,
+    stage_decisions: BTreeMap<String, crate::code_rule_dsl::logic::analysis::Decision>,
+    components: Arc<crate::code_rule_dsl::logic::analysis::stages::Components>,
     after: BTreeSet<(u32, u32)>,
     frames: Vec<Frame>,
     limit: u32,
+}
+
+fn components(steps: &[(schedule::Step, Query)]) -> crate::code_rule_dsl::logic::analysis::stages::Components {
+    let mut edges = BTreeMap::<String, BTreeSet<String>>::new();
+    for (s, q) in steps {
+        edges.entry(s.output.clone()).or_default().extend(q.reads().iter()
+            .filter_map(|r| r.program_relation()).map(str::to_owned));
+    }
+    crate::code_rule_dsl::logic::analysis::stages::Components::analyze(&edges)
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use super::*;
+    #[test]
+    fn equal_versions_and_cursors_reuse_frames_without_sql_phases() {
+        let (_dir, mut e) = super::super::tests::executor();
+        e.bind_relation(json!({"name":"seed","columns":["v"],"rows":[[1],[2]]}).to_string()).unwrap();
+        e.run(".decl seed(v:number)\n.input seed\n.decl r(v:number)\nr(v) :- seed(v).\nr(v) :- r(v), n=count : {seed(_)}, n>0.\n.output r\n".into(),"python".into(),None).unwrap();
+        let pool = e.scratch.clone();
+        let mut work = Work::new(&e.db, &pool);
+        work.versions = Some(&e.versions);
+        let trace = e.executions[0].temporal.get_mut(&0).unwrap();
+        assert!(trace.frames.iter().any(|f| !f.observation["recursive_components"].as_array().unwrap().is_empty()));
+        let before = trace.frames.last().unwrap().versions(&e.versions);
+        trace.replay(&mut work, &e.versions, &BTreeMap::new(), 100).unwrap();
+        assert!(trace.frames.iter().all(|f| f.observation["reused"] == true), "{}", trace.explain());
+        assert!(trace.frames.iter().all(|f| f.phase_batches == 0));
+        let after = trace.frames.last().unwrap().versions(&e.versions);
+        for (r, version) in before.published { assert!(version.same(&after.published[&r])); }
+        work.cleanup().unwrap();
+    }
 }
 
 impl Trace {
@@ -144,10 +181,12 @@ impl Trace {
         })).collect()
     }
     pub(in crate::code_rule_dsl::sql_executor) fn scalar_storage_explanations(&self) -> Vec<Value> {
-        self.templates.values().flat_map(|p|p.operator.run.reductions.iter().flat_map(|s|s.storage.iter()).map(|s|json!(s))).collect()
+        let mut seen = BTreeSet::new();
+        self.templates.values().flat_map(|p|p.operator.run.reductions.iter().flat_map(|s|s.storage.iter()))
+            .filter(|s|seen.insert(Arc::as_ptr(&s.analysis) as usize)).map(|s|json!(s)).collect()
     }
     pub(in crate::code_rule_dsl::sql_executor) fn explain(&self) -> Value {
-        json!({"execution_shape":if self.whole {"One retained relation graph, including checked projections"} else {"Retained recursive component"},"public_storage":if self.whole {"SQL result tables; publish actual deltas from retained roots"}else{"SQL-owned component results"},"phase_policy":"Operator-specific boundaries preserve phase composition for compatible neighbors","scalar_storage_boundary":"Wave gates reuse transitions only for equal input versions, prior summary roots, and pending journals", "summary_transition_proof":crate::code_rule_dsl::logic::analysis::scalars::maintenance_equivalent(true,true),"frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"operators":f.operators.iter().map(|op|json!({"active":op.active,"phase_eligible":op.phase_eligible,"boundary":if op.phase_eligible {"Composed support and fold"}else{"Separate retained operator evaluation; shared wave publication"},"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+        json!({"execution_shape":if self.whole {"One retained relation graph, including checked projections"} else {"Retained recursive component"},"native_relation_facades":self.native_relations,"acyclic_stages":self.stage_decisions,"acyclic_sql_depth_bound":pipeline::Pipeline::MAX_DEPTH,"dependency_components":self.components.as_ref(),"journal_policy":"Share empty-journal inputs and cancel equal roots; bulk set composition for large deltas; sparse patches for small deltas","public_storage":if self.whole {"Declared outputs keep SQL result tables and hooks; intermediate relations are immutable query facades"}else{"SQL-owned component results"},"phase_policy":"Compatible acyclic stages pass signed deltas through one SQL graph; recursive steps read frozen preceding-frame inputs; bounded batches preserve staged deltas","scalar_storage_boundary":"Wave gates reuse transitions only for equal input versions, prior summary roots, and pending journals", "summary_transition_proof":crate::code_rule_dsl::logic::analysis::scalars::maintenance_equivalent(true,true),"frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"native_scope":f.scope(),"composed":f.composed,"phase_batches":f.phase_batches,"acyclic_pipeline":f.pipeline,"work":f.observation,"key_set_decisions":f.key_set_decisions,"publication_decisions":f.publication_decisions,"operators":f.operators.iter().enumerate().map(|(id,op)|json!({"relation":self.steps[id].0.output,"result_root":op.result,"active":op.active,"empty_positive_body":op.empty_body,"phase_eligible":op.phase_eligible,"boundary":if op.sql_kernel {"One recursive SQL kernel; versioned result root"}else if op.phase_eligible {"Composed support and fold"}else{"Separate retained operator evaluation; shared wave publication"},"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
     }
     pub fn stable_phases(&self, program: &schedule::Program) -> bool {
         self.whole
@@ -157,13 +196,13 @@ impl Trace {
                 .relations
                 .iter()
                 .all(|(r, _)| self.relations.contains_key(r))
-            && self.frames.iter().all(|f| f.fused(self.relations.len()))
+            && self.frames.iter().all(|f| f.composed)
     }
     pub fn frames(&self) -> usize {
         self.frames.len()
     }
     fn ready(&self, pending: &BTreeSet<usize>) -> BTreeSet<usize> {
-        pending
+        let mut ready = pending
             .iter()
             .copied()
             .filter(|&i| {
@@ -172,7 +211,20 @@ impl Trace {
                         .contains(&(self.steps[i].0.stratum, self.steps[j].0.stratum))
                 })
             })
-            .collect()
+            .collect::<BTreeSet<_>>();
+        if let Some(frame) = self.frames.first() {
+            loop {
+                let before = ready.len();
+                for &id in pending {
+                    if frame.pipeline.contains(&id) && pending.iter().all(|&j| {
+                        !self.after.contains(&(self.steps[id].0.stratum, self.steps[j].0.stratum))
+                            || ready.contains(&j) && frame.pipeline.contains(&j)
+                    }) { ready.insert(id); }
+                }
+                if ready.len() == before { break; }
+            }
+        }
+        ready
     }
     fn replay(
         &mut self,
@@ -190,9 +242,10 @@ impl Trace {
         // a large, obsolete frontier from the preceding active wave.
         let mut needs_close = false;
         let mut diagnostic_rows = vec![];
+        let components = &self.components;
         while at < self.frames.len() || !pending.is_empty() || needs_close {
-            let _context = w.profile_scope(||json!({"stage":if preparing {"recursive initialization"} else {"recursive update"},"component":self.prefix,"frame":at}));
-            let _cpu = super::super::logic::profile::span(|| "recursive iteration".into());
+            let _context = w.profile_scope(||json!({"stage":if preparing {"retained initialization"} else {"retained update"},"component":self.prefix,"frame":at}));
+            let _cpu = super::super::logic::profile::span(|| "retained frame replay".into());
             if !pending.is_empty() {
                 if waves >= limit {
                     return Err(error(format!(
@@ -202,11 +255,6 @@ impl Trace {
                 }
                 waves += 1;
             }
-            let active = self.ready(&pending);
-            if !pending.is_empty() && active.is_empty() {
-                return Err(error("temporal strata have no ready step"));
-            }
-            pending.retain(|s| !active.contains(s));
             let fresh = at == self.frames.len();
             if fresh {
                 let frame = if at == 0 {
@@ -216,6 +264,11 @@ impl Trace {
                 };
                 self.frames.push(frame);
             }
+            let active = self.ready(&pending);
+            if !pending.is_empty() && active.is_empty() {
+                return Err(error("temporal strata have no ready step"));
+            }
+            pending.retain(|s| !active.contains(s));
             let desired = if at == 0 {
                 None
             } else {
@@ -237,6 +290,9 @@ impl Trace {
             };
             let mark = w.mark();
             let frame = &mut self.frames[at];
+            frame.journal(w, store, if fresh { &no_external_changes } else { changes })?;
+            let skipped = !fresh && frame.reusable(store, desired.as_ref(), &active)?;
+            if !skipped {
             frame
                 .advance(
                     w,
@@ -244,13 +300,60 @@ impl Trace {
                     &self.relations,
                     &self.steps,
                     desired,
-                    if fresh { &no_external_changes } else { changes },
+                    &no_external_changes,
                     &active,
                     preparing,
                     &self.templates,
                     limit,
                 )
                 .map_err(|e| Error::new(e.status, format!("{} frame {at}: {e}", self.prefix)))?;
+            } else {
+                frame.phase_batches = 0;
+            }
+            let recursive_components = active.iter().filter_map(|&id| {
+                let (s, q) = &self.steps[id];
+                let members = &components.members[&s.output];
+                q.reads().iter().filter_map(|r| r.program_relation()).any(|r| members.contains(r))
+                    .then(|| members.clone())
+            }).collect::<BTreeSet<_>>();
+            let component_work = recursive_components.iter().map(|members| {
+                let produced = members.iter().map(|r| store.version_at(frame.scope(), &frame.frontiers[r]).len()).sum::<usize>();
+                let mut seed_steps = 0;
+                let mut recursive_steps = 0;
+                let mut recursive_candidate_rows = 0;
+                let mut recursive_inputs_nonempty = false;
+                for &id in &active {
+                    let (s,q) = &self.steps[id];
+                    if !members.contains(&s.output) { continue; }
+                    let reads = q.reads().into_iter().filter(|r| r.program_relation().is_some_and(|r| members.contains(r))).collect::<Vec<_>>();
+                    if reads.is_empty() { seed_steps += 1; } else {
+                        recursive_steps += 1;
+                        recursive_candidate_rows += store.version_at(frame.scope(), &frame.operators[id].improvements).len();
+                    }
+                    recursive_inputs_nonempty |= reads.iter().filter_map(|r|read(r))
+                        .filter_map(|r| frame.inputs.get(&r)).any(|table| store.version_at(frame.scope(), table).len()>0);
+                }
+                json!({"relations":members,"frontier_rows":produced,"productive":produced>0,
+                    "executed":!skipped,"seed_steps":seed_steps,"recursive_steps":recursive_steps,
+                    "recursive_inputs_nonempty":recursive_inputs_nonempty,
+                    "recursive_candidate_rows":recursive_candidate_rows,
+                    "productive_feedback":!skipped && recursive_inputs_nonempty && recursive_candidate_rows>0 && produced>0})
+            }).collect::<Vec<_>>();
+            frame.observation = json!({"purpose":if active.is_empty() {
+                if needs_close {"closing"} else {"retained history"}
+            } else if !recursive_components.is_empty() {"recursive evaluation"} else {"acyclic dependency stage"},
+                "scheduled_steps":active.len(),"reused":skipped,"sql_phases":frame.phase_batches,
+                "inactive_carry":!skipped && active.is_empty(),
+                "recursive_components":component_work,
+                "reuse_proof":if skipped {Some("Equal input and counter versions, identical gate mask, synchronized active cursors, and empty active journals; inactive journals retain edits")}else{None}});
+            if let Some(profiler) = w.profiler {
+                let _context = w.profile_scope(|| json!({"frameWork":frame.observation}));
+                profiler.operation("retained frame work", ("sql-extension",0),0,
+                    vec![("scheduled_steps".into(),active.len() as i64),
+                        ("recursive_components".into(),recursive_components.len() as i64),
+                        ("reused".into(),i64::from(skipped)),
+                        ("sql_phases".into(),frame.phase_batches as i64)]).finish_unobserved();
+            }
             if preparing {
                 for (id, template) in frame.prepared(store) {
                     Arc::make_mut(&mut self.templates)
@@ -263,7 +366,9 @@ impl Trace {
                     if frame.has_frontier(store, r) {
                         for (i, (s, _)) in self.steps.iter().enumerate() {
                             if s.reads.contains(r) {
-                                pending.insert(i);
+                                let consumed = active.contains(&i) && frame.pipeline.contains(&i)
+                                    && active.iter().any(|id| frame.pipeline.contains(id) && self.steps[*id].0.output == *r);
+                                if !consumed { pending.insert(i); }
                             }
                         }
                     }
@@ -327,6 +432,11 @@ impl Trace {
                 continue;
             }
             let cols = names("", spec.width);
+            if self.native_relations.contains(r) {
+                let _scope = store.activate(0)?;
+                store.alias_readonly(w.db,r,after.published[r].clone(),
+                    (0..spec.width).map(|c|format!("c{c}")).collect())?;
+            } else {
             if d.deleted > 0 {
                 w.db.execute(
                     &format!(
@@ -344,6 +454,7 @@ impl Trace {
                     [],
                 )
                 .map_err(error)?;
+            }
             }
             if spec.widening() {
                 let table = format!("__sql_changes_{r}");
@@ -487,11 +598,14 @@ pub(super) fn prepare(
         }
         let mut trace = Trace {
             whole: false,
+            native_relations: BTreeSet::new(),
             templates: Arc::new(BTreeMap::new()),
             prefix: format!("__it{namespace}_s{stratum}"),
             emitted: e.clone(),
             relations,
+            components: Arc::new(components(&steps)),
             steps: Arc::new(steps),
+            stage_decisions: BTreeMap::new(),
             after,
             frames: vec![],
             limit: run.max_waves,

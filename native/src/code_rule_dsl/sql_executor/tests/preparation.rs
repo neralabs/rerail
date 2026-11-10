@@ -37,11 +37,11 @@ fn first_edit_uses_prepared_inputs_projections_and_reducers_with_bounded_work() 
 }
 
 fn scratch_names(e: &CodeRuleSqlExecutor) -> Vec<String> {
-    rows(e,"SELECT name FROM temp.sqlite_schema WHERE type='table' AND name GLOB '__rr_update_*' ORDER BY name").as_array().unwrap().iter().map(|r|r[0].as_str().unwrap().to_owned()).collect()
+    e.scratch.names()
 }
 
 #[test]
-fn warm_edits_reuse_scratch_schema_and_failures_preserve_empty_pooled_tables() {
+fn warm_edits_reuse_scratch_roots_and_failures_preserve_empty_pool() {
     let (_dir, mut e) = executor();
     edge(&mut e, json!([[1, 2], [2, 3]]));
     e.run(CLOSURE.into(), "python".into(), None).unwrap();
@@ -55,6 +55,8 @@ fn warm_edits_reuse_scratch_schema_and_failures_preserve_empty_pooled_tables() {
     }
     let names = scratch_names(&e);
     assert!(!names.is_empty());
+    assert!(names.iter().all(|name|e.versions.owns(name)));
+    assert_eq!(rows(&e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__rr_update_*'"),json!([[0]]));
     let schema = rows(&e, "PRAGMA temp.schema_version");
     for insert in [true, false, true, false] {
         let patch = if insert {

@@ -13,8 +13,9 @@ mod fused;
 mod join_tree;
 mod lattice;
 mod maintain;
+mod native_maintain;
 mod plan;
-mod reducer;
+pub(in crate::code_rule_dsl::sql_executor) mod reducer;
 mod sums;
 mod scalar_phase;
 mod properties;
@@ -388,7 +389,7 @@ impl Retained {
         storage: Option<&versions::Store>,
     ) -> Result<()> {
         let db=w.db;
-        let fused = self.can_fuse() && storage.is_some_and(|s| s.contains(&self.output));
+        let fused = w.versions.is_some() && storage.is_some();
         owned_phase(
             db,
             objects,
@@ -539,7 +540,9 @@ impl Retained {
             )?;
         }
         if let Some(tree) = self.lattice.as_ref().and_then(|l| l.tree.as_ref()) {
-            tree.initialize(db, &self.heads, objects, storage)?;
+            let operation=w.profiler.map(|p|p.operation("registered lattice support index",("sql-extension",0),0,vec![]));
+            tree.initialize(db, &self.heads, objects, storage, w.versions.is_some())?;
+            if let Some(operation)=operation {operation.finish_unobserved();}
         }
         Ok(())
     }
@@ -551,14 +554,18 @@ impl Retained {
         if self.scalar_phase_eligible() && w.versions.is_some() {
             return scalar_phase::apply(self,w,changes);
         }
-        if self.can_fuse()
+        if (self.can_fuse() || self.isolated_phase().proven)
             && w.versions.is_some_and(|s| {
                 s.available(&self.output).is_some() && s.available(&self.heads).is_some()
             })
         {
             fused::apply(self, w, changes)
         } else {
-            maintain::apply(self, w, changes)
+            if w.versions.is_some_and(|s|s.available(&self.heads).is_some()) {
+                native_maintain::apply(self,w,changes)
+            } else {
+                maintain::apply(self, w, changes)
+            }
         }
     }
 }

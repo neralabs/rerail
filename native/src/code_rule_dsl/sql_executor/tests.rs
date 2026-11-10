@@ -9,6 +9,7 @@ mod updates;
 mod temporal;
 mod profiling;
 mod initial;
+mod frontiers;
 mod cte;
 mod analysis;
 mod sharing;

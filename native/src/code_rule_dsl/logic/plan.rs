@@ -4701,6 +4701,7 @@ fn decoded_outputs(
 }
 
 pub(in crate::code_rule_dsl) mod emit;
+pub(in crate::code_rule_dsl) mod acyclic;
 mod sql_kernel;
 
 #[cfg(test)]

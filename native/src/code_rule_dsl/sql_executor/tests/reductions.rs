@@ -597,8 +597,11 @@ fn retained_support_is_owned_by_the_program_and_recreated_after_reset() {
     bind(&mut e, "owner", &["g"], json!([[1]]));
     e.run(AGG.into(), "python".into(), None).unwrap();
     change(&mut e, json!([{"name":"event","insert":[[2,1,8]]}]));
-    assert!(rows(&e,"SELECT count(*) FROM temp.sqlite_schema WHERE type='table' AND name LIKE '__sql_state_%'")[0][0].as_u64().unwrap()>0);
+    let supports = e.executions[0].objects.iter().filter(|(name,_)|name.starts_with("__sql_state_")).map(|(name,_)|name.clone()).collect::<Vec<_>>();
+    assert!(!supports.is_empty());
+    assert!(supports.iter().all(|name|e.versions.owns(name)));
     e.reset().unwrap();
+    assert!(supports.iter().all(|name|!e.versions.owns(name)));
     assert_eq!(
         rows(
             &e,
@@ -646,9 +649,11 @@ fn initial_execution_prepares_reducers_and_edits_skip_unrelated_state() {
     let initial: Value =
         serde_json::from_str(&e.run(p.into(), "python".into(), None).unwrap()).unwrap();
     assert_eq!(
-        initial["preparation"]["initializations"],
-        json!(["count_large", "count_small"])
+        initial["preparation"]["initial_execution"],
+        json!("retained")
     );
+    assert_eq!(rows(&e,"SELECT * FROM count_small"), json!([[1]]));
+    assert_eq!(rows(&e,"SELECT * FROM count_large"), json!([[20000]]));
     e.set_limits(json!({"max_steps":10000}).to_string())
         .unwrap();
     let report = change(&mut e, json!([{"name":"small","insert":[[2]]}]));

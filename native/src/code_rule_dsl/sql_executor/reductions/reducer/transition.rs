@@ -110,18 +110,38 @@ fn cursor(r: &Reducer, w: &Work<'_>, changes: &BTreeMap<String, Delta>) -> Optio
         minus: store.available(&delta.minus)?,
     })
 }
-pub(super) fn apply(
+pub(in crate::code_rule_dsl::sql_executor::reductions) struct Pending {
+    signature: Arc<str>,
+    before: Cursor,
+}
+impl Pending {
+    pub(super) fn equivalent(&self, other: &Self) -> bool {
+        self.signature == other.signature && scalars::maintenance_equivalent(
+            self.before.input.same(&other.before.input),
+            self.before.groups.same(&other.before.groups)
+                && same_optional(&self.before.values, &other.before.values)
+                && self.before.plus.same(&other.before.plus)
+                && self.before.minus.same(&other.before.minus),
+        ).proven
+    }
+}
+pub(in crate::code_rule_dsl::sql_executor::reductions) enum Prepared {
+    Reused(Option<(String, u64)>),
+    Evaluate(Option<Pending>),
+}
+
+pub(in crate::code_rule_dsl::sql_executor::reductions) fn prepare(
     r: &Reducer,
     w: &mut Work<'_>,
     changes: &BTreeMap<String, Delta>,
-) -> Result<Option<(String, u64)>> {
+) -> Result<Prepared> {
     if r.combined.as_ref().is_some_and(|s| s.owner) && r.pool_consumers > 1 {
         if let Some(result) = super::super::pool::recalled(w, &r.groups)? {
-            return Ok(result);
+            return Ok(Prepared::Reused(result));
         }
     }
     let Some(before) = cursor(r, w, changes) else {
-        return r.apply_uncached(w, changes);
+        return Ok(Prepared::Evaluate(None));
     };
     let signature = Arc::clone(r.transition_key.as_ref().unwrap());
     let found = w.summary_transitions.iter().find(|entry| {
@@ -162,15 +182,27 @@ pub(super) fn apply(
         if let Some(operation) = operation {
             operation.finish(1);
         }
-        return Ok(result);
+        return Ok(Prepared::Reused(result));
     }
-    let result = r.apply_uncached(w, changes)?;
+    Ok(Prepared::Evaluate(Some(Pending { signature, before })))
+}
+
+pub(in crate::code_rule_dsl::sql_executor::reductions) fn remember(
+    r: &Reducer,
+    w: &mut Work<'_>,
+    pending: Option<Pending>,
+    result: &Option<(String, u64)>,
+) -> Result<()> {
+    if r.pool_consumers > 1 {
+        super::super::pool::remember(w, &r.groups, result, r.keys())?;
+    }
+    let Some(Pending { signature, before }) = pending else { return Ok(()); };
     let store = w.versions.unwrap();
     let keys = result
         .as_ref()
         .map(|(table, n)| store.available(table).map(|v| (v, *n)));
     if keys.as_ref().is_some_and(Option::is_none) {
-        return Ok(result);
+        return Ok(());
     }
     // A bounded operation-local cache retains no history across failed or later batches.
     if w.summary_transitions.len() == 128 {
@@ -185,7 +217,22 @@ pub(super) fn apply(
         values: store.available(&r.values),
         result: keys.flatten(),
     });
-    Ok(result)
+    Ok(())
+}
+
+pub(super) fn apply(
+    r: &Reducer,
+    w: &mut Work<'_>,
+    changes: &BTreeMap<String, Delta>,
+) -> Result<Option<(String, u64)>> {
+    match prepare(r, w, changes)? {
+        Prepared::Reused(result) => Ok(result),
+        Prepared::Evaluate(pending) => {
+            let result = r.apply_uncached(w, changes)?;
+            remember(r, w, pending, &result)?;
+            Ok(result)
+        }
+    }
 }
 
 fn signature(r: &Reducer) -> String {
@@ -226,10 +273,65 @@ fn signature(r: &Reducer) -> String {
 pub(in crate::code_rule_dsl::sql_executor) struct Initial {
     owner: String,
     scope: usize,
-    signature: Arc<str>,
-    input: Input,
+    before: InitialCursor,
     groups: versions::Version,
     values: Option<versions::Version>,
+}
+
+pub(super) struct InitialCursor {
+    signature: Arc<str>,
+    input: Input,
+}
+impl InitialCursor {
+    pub(super) fn equivalent(&self, other: &Self) -> bool {
+        self.signature==other.signature && self.input.same(&other.input)
+    }
+}
+pub(super) enum InitialPrepared {
+    Reused,
+    Evaluate(Option<InitialCursor>),
+}
+
+pub(super) fn prepare_initial(
+    r: &Reducer,
+    w: &mut Work<'_>,
+    objects: &mut Vec<(String,bool)>,
+) -> Result<InitialPrepared> {
+    let Some(input) = input(r,w) else { return Ok(InitialPrepared::Evaluate(None)); };
+    let signature = Arc::clone(r.transition_key.as_ref().unwrap());
+    let before = InitialCursor { signature, input };
+    let store = w.versions.unwrap();
+    let found = w.summary_initializations.iter().find(|i|before.equivalent(&i.before));
+    if let Some(entry) = found {
+        let _context=w.profile_scope(||json!({"stage":"shared summary initialization","source_group":entry.owner,"source_scope":entry.scope,"target_group":r.groups,"target_scope":store.current_scope(),"logicalAnalysis":crate::code_rule_dsl::logic::analysis::scalars::maintenance_equivalent(true,true)}));
+        let operation = w.profiler.map(|p|p.operation("shared summary initialization",("sql-extension",0),0,vec![]));
+        for (name,version) in std::iter::once((&r.groups,&entry.groups))
+            .chain(entry.values.as_ref().map(|v|(&r.values,v)))
+        {
+            if store.available(name).is_some() {
+                store.replace_available(name,version.clone())?;
+            } else if w.versions.is_some() {
+                store.fork_readonly_version(w.db,name,version.clone())?;
+            } else {
+                store.fork_version(w.db,name,version.clone())?;
+            }
+            objects.push((name.clone(),true));
+        }
+        w.summary_reuses+=1;
+        if let Some(operation)=operation { operation.finish(1); }
+        return Ok(InitialPrepared::Reused);
+    }
+    Ok(InitialPrepared::Evaluate(Some(before)))
+}
+
+pub(super) fn remember_initial(r: &Reducer, w: &mut Work<'_>, before: Option<InitialCursor>) {
+    let Some(before)=before else { return; };
+    let store=w.versions.unwrap();
+    if w.summary_initializations.len()==128 { w.summary_initializations.remove(0); }
+    w.summary_initializations.push(Initial {
+        owner:r.groups.clone(),scope:store.current_scope(),before,
+        groups:store.available(&r.groups).unwrap(),values:store.available(&r.values),
+    });
 }
 
 pub(in crate::code_rule_dsl::sql_executor::reductions) fn initialize(
@@ -238,55 +340,15 @@ pub(in crate::code_rule_dsl::sql_executor::reductions) fn initialize(
     objects: &mut Vec<(String, bool)>,
     storage: Option<&versions::Store>,
 ) -> Result<()> {
-    if storage.is_none() || objects.iter().any(|(n, _)| n == &r.groups) {
-        return r.initialize(w.db, objects, storage);
+    if storage.is_none() || objects.iter().any(|(n,_)|n==&r.groups) || !r.shared_owner() {
+        return r.initialize(w.db,objects,storage,w.versions.is_some());
     }
-    let Some(input) = input(r, w) else {
-        return r.initialize(w.db, objects, storage);
-    };
-    let signature = Arc::clone(r.transition_key.as_ref().unwrap());
-    let store = storage.unwrap();
-    let found = w
-        .summary_initializations
-        .iter()
-        .find(|i| i.signature == signature && i.input.same(&input));
-    if let Some(entry) = found {
-        let _context=w.profile_scope(||json!({"stage":"shared summary initialization","source_group":entry.owner,"source_scope":entry.scope,"target_group":r.groups,"target_scope":store.current_scope(),"logicalAnalysis":crate::code_rule_dsl::logic::analysis::scalars::maintenance_equivalent(true,true)}));
-        let operation = w.profiler.map(|p| {
-            p.operation(
-                "shared summary initialization",
-                ("sql-extension", 0),
-                0,
-                vec![],
-            )
-        });
-        for (name, version) in std::iter::once((&r.groups, &entry.groups))
-            .chain(entry.values.as_ref().map(|v| (&r.values, v)))
-        {
-            if store.available(name).is_some() {
-                store.replace_available(name, version.clone())?;
-            } else {
-                store.fork_version(w.db, name, version.clone())?;
-            }
-            objects.push((name.clone(), true));
+    match prepare_initial(r,w,objects)? {
+        InitialPrepared::Reused => Ok(()),
+        InitialPrepared::Evaluate(before) => {
+            r.initialize(w.db,objects,storage,w.versions.is_some())?;
+            remember_initial(r,w,before);
+            Ok(())
         }
-        w.summary_reuses += 1;
-        if let Some(operation) = operation {
-            operation.finish(1);
-        }
-        return Ok(());
     }
-    r.initialize(w.db, objects, storage)?;
-    if w.summary_initializations.len() == 128 {
-        w.summary_initializations.remove(0);
-    }
-    w.summary_initializations.push(Initial {
-        owner: r.groups.clone(),
-        scope: store.current_scope(),
-        signature,
-        input,
-        groups: store.available(&r.groups).unwrap(),
-        values: store.available(&r.values),
-    });
-    Ok(())
 }

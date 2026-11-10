@@ -170,8 +170,6 @@ pub(super) fn apply(
             equal("h", "d", width)
         ),
     )?;
-    let plus = w.table(width)?;
-    let minus = w.table(width)?;
     // Retain raw candidate multiplicities for lattice outputs. Fold only affected keys.
     if state.lattice.is_some() {
         execute(
@@ -191,6 +189,25 @@ pub(super) fn apply(
         let (delta, touched) = lattice::apply(state, w, &totals)?;
         return Ok((delta, contexts, groups + touched));
     }
+    if let Some(store) = w.versions.filter(|s| s.contains(&state.output)) {
+        // Support arithmetic is complete. Publish both fact deltas and the
+        // replacement result from one frozen SQL graph, with no writable slots.
+        execute(w.db, &format!("DELETE FROM {} WHERE ({cols}) IN (SELECT {cols} FROM {totals} WHERE n=0)",state.heads))?;
+        execute(w.db, &format!("INSERT OR REPLACE INTO {} SELECT {cols},n FROM {totals} WHERE n>0",state.heads))?;
+        let plus = w.output_table(width)?;
+        let minus = w.output_table(width)?;
+        let mut phase = phase::Phase::default();
+        let added = phase.relation(width, &format!("SELECT {cols} FROM {totals} WHERE old_n=0 AND n>0"));
+        let removed = phase.relation(width, &format!("SELECT {cols} FROM {totals} WHERE old_n>0 AND n=0"));
+        phase.load_empty(store, &plus, &added)?;
+        phase.load_empty(store, &minus, &removed)?;
+        let keys = phase.union_keys(width, &[added.clone(), removed]);
+        phase.patch_computed(store, &state.output, &keys, &added)?;
+        let counts = phase.execute(w)?;
+        return Ok((Delta { inserted:counts[&plus].rows as u64,deleted:counts[&minus].rows as u64,plus,minus },contexts,groups));
+    }
+    let plus = w.table(width)?;
+    let minus = w.table(width)?;
     let inserted = execute(
         w.db,
         &format!("INSERT INTO {plus} SELECT {cols} FROM {totals} WHERE old_n=0 AND n>0"),
