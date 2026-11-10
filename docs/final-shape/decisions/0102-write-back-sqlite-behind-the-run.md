@@ -124,8 +124,18 @@ read from the memo.
 - **Reads a new process needs.** The memo, the prepared program and the choices are read from the store
   by a process that did not make them. A long-lived session keeps all three in memory, so it reads none
   of them.
-- **The strata the native engine declines.** They run in SQLite, so they read and write SQL tables by
-  nature. This is one stratum on the slice, 0.05 s.
+- **The strata the native engine declines.** A declined stratum runs in SQLite. It reads and writes
+  SQL tables, so every stratum after it that reads those tables waits for SQLite. The cost is the wait,
+  not the stratum's CPU.
+  - There was one on the slice: `sym_at`. Its head is `sym_at($e, @cat(1539, $x))`, the builtins'
+    names qualified by a constant scope. A head's `@cat` had a native form only when both parts were
+    variables.
+  - Now a head `@cat` of constants and bound variables is made into a slot before the head, with the
+    engine's existing `cat` step. The slice has no declined stratum. The findings are unchanged.
+  - The profile's reason was wrong too. It probed the body's prefixes with the rule's full head, so a
+    head the engine could not form was blamed on the body's first step ("read of input
+    fl842_up_unbound"). Prefixes are now probed with a bare head, and a head with no native form is
+    reported as "a head term".
 
 The statistics keeper's counting is about 0.9 s on the slice. It is in memory, and it does no reading
 of SQLite on a cold run.

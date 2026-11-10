@@ -3588,11 +3588,23 @@ impl<'a> Run<'a, '_> {
             }
         }
         let mut head = Vec::new();
-        for t in &h.args {
+        for (k, t) in h.args.iter().enumerate() {
             match t {
-                Term::Call(f, args) if f == "cat" && args.iter().all(|x| matches!(x, Term::Var(_))) => {
+                Term::Call(f, args) if f == "cat" && args.len() == 2 && args.iter().all(|x| matches!(x, Term::Var(v) if slots.contains_key(v))) => {
                     let (Some(Tok::Slot(a)), Some(Tok::Slot(b))) = (tok(&args[0], &mut slots), tok(&args[1], &mut slots)) else { return None };
                     head.push(HeadTok::Cat(a, b));
+                }
+                // `sym_at($e, @cat(1539, $x))`: a qualified name of a constant scope (the planner folds a scope's name
+                // to its symbol) and a bound part, or two constants: the name made into a slot of its own first.
+                Term::Call(f, args) if f == "cat" && args.len() == 2 => {
+                    let part = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Int(_) | Term::Str(_)) || matches!(t, Term::Var(v) if slots.contains_key(v));
+                    if !args.iter().all(|x| part(x, &slots)) {
+                        return None;
+                    }
+                    let (a, b) = (tok(&args[0], &mut slots)?, tok(&args[1], &mut slots)?);
+                    let out = tok(&Term::Var(format!("rr_head_cat{k}")), &mut slots)?;
+                    lines.push(JoinItem::Cat { out: out.clone(), a, b });
+                    head.push(HeadTok::Tok(out));
                 }
                 // `q(…, @concat(m, ".", a))`, `q(…, @add($i, 1))`: the computed term made into a slot before the head
                 // reads it.
@@ -3796,16 +3808,28 @@ impl<'a> Run<'a, '_> {
         // Its shape and planned work, for where it runs (`placement`, decision 0095).
         let mut shape = placement::Shape::default();
         // The first step of `order` without a native step (EXPLAIN's reason the engine declined).
+        // Prefixes are probed with a head of no terms: the rule's own head names variables a prefix has not bound yet,
+        // so every prefix would fail at its first step. `None`: every step has one, and the head is what has none.
+        let first_missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> Option<usize> {
+            let bare = Atom { rel: h.rel.clone(), args: Vec::new(), neg: false, gated: false };
+            (1..=order.len()).find(|&k| this.join_spec(&bare, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none())
+        };
         let missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
-            let k = (1..=order.len()).find(|&k| this.join_spec(h, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none()).unwrap_or(order.len());
-            let s = &order[k.saturating_sub(1)];
-            format!("{}{} has no native step", s.lit, if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
+            match first_missing(this, h, order, at) {
+                Some(k) => {
+                    let s = &order[k - 1];
+                    format!("{}{} has no native step", s.lit, if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
+                }
+                None => format!("the head {h} has no native form"),
+            }
         };
         // The same step's kind (`decline_class`).
         let missing_class = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
-            let k = (1..=order.len()).find(|&k| this.join_spec(h, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none()).unwrap_or(order.len());
-            let s = &order[k.saturating_sub(1)];
-            if s.mode == Some(Mode::Range) { "a range read inside a document".to_owned() } else { decline_class(&s.lit, prog, native_rels) }
+            match first_missing(this, h, order, at) {
+                Some(k) if order[k - 1].mode == Some(Mode::Range) => "a range read inside a document".to_owned(),
+                Some(k) => decline_class(&order[k - 1].lit, prog, native_rels),
+                None => "a head term".to_owned(),
+            }
         };
         for r in &seeds {
             let span = planning(r, "plan");
