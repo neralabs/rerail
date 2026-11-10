@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { basename, join } from "node:path";
 import { Readable, Writable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
 import { encodeRerailEventResult } from "../../src/runtime/index.js";
@@ -306,6 +307,37 @@ describe("hook host durable state", () => {
       await vi.waitFor(() => expect(engine.received).toEqual(["parent-session:tool-call:agent-a-write", "parent-session:tool-call:agent-b-write"]), { timeout: 5_000 });
       engine.answerFirst();
       await expect(Promise.all(hooks)).resolves.toEqual([{}, {}]);
+    } finally {
+      engine.answerFirst();
+      await Promise.allSettled(hooks);
+      await engine.close();
+    }
+  });
+
+  it("keeps a Cursor session's lock while its transcript's lines are checked, so a prompt meanwhile still turns transcript reading off", { timeout: 20_000 }, async () => {
+    const root = await temporaryDirectory();
+    const engine = await heldEngine(root);
+    const transcript = join(root, "transcript.jsonl");
+    const reply = (text: string) => `${JSON.stringify({ role: "assistant", message: { content: [{ type: "text", text }] } })}\n`;
+    await writeFile(transcript, reply("Reading the file."));
+    const { embedder: _embedder, ...options } = hookOptions(root);
+    const session = { conversation_id: "session-1", workspace_roots: [root], transcript_path: transcript };
+    const run = (input: HookInput) => runCursorHook({ ...session, ...input }, { ...options, kernelSocketPath: engine.socketPath });
+    const toolResult = (id: string) => run({ hook_event_name: "postToolUse", tool_use_id: id, tool_name: "Read", tool_output: "x = 1" });
+    const hooks: Promise<unknown>[] = [];
+    try {
+      // A tool result's hook checks the transcript's new reply, and the daemon holds that check.
+      hooks.push(toolResult("read-1"));
+      await engine.firstArrived;
+      // The person's next prompt reaches Rerail through Cursor's own prompt hook, so the transcript is read no more.
+      hooks.push(run({ hook_event_name: "beforeSubmitPrompt", prompt: "Next." }));
+      // Time for the prompt's hook to run, were the session's lock free.
+      await delay(500);
+      engine.answerFirst();
+      await Promise.all(hooks);
+      await appendFile(transcript, reply("Done."));
+      await toolResult("read-2");
+      expect(engine.received.filter(id => id.includes(":transcript:"))).toHaveLength(1);
     } finally {
       engine.answerFirst();
       await Promise.allSettled(hooks);

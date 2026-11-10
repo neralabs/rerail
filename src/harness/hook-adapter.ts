@@ -272,11 +272,14 @@ async function releaseLock(path: string, serializedOwner: string): Promise<void>
 }
 
 /**
- * The lock a hook holds for its session, which guards the session's held steers. `released` lets go of it while `work`
- * runs, for work that touches no session file, such as waiting for the daemon's answer, and takes it again after.
+ * The lock a hook holds for its session, which guards the session's files: its held steers, and Cursor's transcript
+ * sidecar. `released` lets go of it while `work` runs, for work that touches no session file, such as waiting for the
+ * daemon's answer, and takes it again after. `kept` holds it while `work` runs, through every `released` within: for
+ * work that reads a session file before such a wait and writes it after, as Cursor's transcript ingest does.
  */
 export interface SessionLock {
   released<T>(work: () => Promise<T>): Promise<T>;
+  kept<T>(work: () => Promise<T>): Promise<T>;
 }
 
 export interface SessionLockOptions {
@@ -318,9 +321,18 @@ async function withLockFile<T>(
   const serializedOwner = JSON.stringify(owner);
   await acquireLock(path, serializedOwner, label, platform);
   let held = true;
+  let keeping = 0;
   const lock: SessionLock = {
+    async kept(work) {
+      keeping += 1;
+      try {
+        return await work();
+      } finally {
+        keeping -= 1;
+      }
+    },
     async released(work) {
-      if (!held) return await work();
+      if (!held || keeping > 0) return await work();
       await releaseLock(path, serializedOwner);
       held = false;
       try {

@@ -17,8 +17,8 @@ export async function runCursorHook(
 ): Promise<CursorHookOutput> {
   const workspace = cursorWorkspace(input);
   if (!await hookRerailStarted("cursor", workspace, options.databasePath)) return {};
-  return runHostHook("cursor", workspace, cursorSession(input).sessionId, input.hook_event_name === "sessionStart", options, (runtime, storageRoot) =>
-    handleCursorEvent(input, runtime, storageRoot), String(input.hook_event_name));
+  return runHostHook("cursor", workspace, cursorSession(input).sessionId, input.hook_event_name === "sessionStart", options, (runtime, storageRoot, lock) =>
+    handleCursorEvent(input, runtime, storageRoot, lock), String(input.hook_event_name));
 }
 
 // `serveHook` answers `{}` and exits 0 whatever fails, as Rerail does where it is not started, so Cursor carries on: a

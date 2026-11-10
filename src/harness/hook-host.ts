@@ -11,6 +11,7 @@ import {
   withSessionLock,
   type HookHost,
   type HookOutput,
+  type SessionLock,
 } from "./hook-adapter.js";
 import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
 import { SqliteSessionStore } from "../runtime/session-store.js";
@@ -96,7 +97,7 @@ export async function runHostHook(
   sessionId: string,
   startsSession: boolean,
   options: HookOptions,
-  handle: (runtime: RerailEventLoop, storageRoot: string) => Promise<HookOutput>,
+  handle: (runtime: RerailEventLoop, storageRoot: string, lock: SessionLock) => Promise<HookOutput>,
   event = "unknown",
 ): Promise<HookOutput> {
   try {
@@ -114,7 +115,7 @@ async function runHostHookOnce(
   sessionId: string,
   startsSession: boolean,
   options: HookOptions,
-  handle: (runtime: RerailEventLoop, storageRoot: string) => Promise<HookOutput>,
+  handle: (runtime: RerailEventLoop, storageRoot: string, lock: SessionLock) => Promise<HookOutput>,
   event: string,
 ): Promise<HookOutput> {
   const { storageRoot, modelPath } = resolveSessionPaths(workspace, options);
@@ -122,10 +123,10 @@ async function runHostHookOnce(
   const session: AdapterSession = { host, sessionId, cwd: workspace };
   const { embedder } = options;
   if (embedder !== undefined) {
-    return withSessionLock(storageRoot, host, sessionId, async () => {
+    return withSessionLock(storageRoot, host, sessionId, async lock => {
       const runtime = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: workspace, embedder });
       try {
-        const output = await handle(runtime, storageRoot);
+        const output = await handle(runtime, storageRoot, lock);
         return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
       } finally {
         await runtime.dispose();
@@ -144,14 +145,14 @@ async function runHostHookOnce(
   }
   const configuration = { storageRoot, databasePath, modelPath, workspaceRoot: workspace };
   return withSessionLock(storageRoot, host, sessionId, async lock => {
-    // The daemon orders a session's events itself, so the lock guards only the session's held steers: a hook lets go
-    // of it while the daemon checks its event, and the hooks of a session's parallel subagents, which all carry the
-    // parent's session id, do not queue behind each other's checks until one gives up on its event.
+    // The daemon orders a session's events itself, so the lock guards only the session's files: a hook lets go of it
+    // while the daemon checks its event, unless it keeps it (`SessionLock.kept`), and the hooks of a session's parallel
+    // subagents, which all carry the parent's session id, do not queue behind each other's checks until one gives up.
     const ingest = (adapterEvent: AdapterEvent) => lock.released(() => ingestEngineEvent(engine, adapterEvent, configuration))
       .catch((error: unknown) => {
         throw unreachable(error);
       });
-    const output = await handle({ ingest }, storageRoot);
+    const output = await handle({ ingest }, storageRoot, lock);
     return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
   });
 }

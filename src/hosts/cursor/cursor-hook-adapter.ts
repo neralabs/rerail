@@ -13,6 +13,7 @@ import {
   routeDeliveries,
   type HookInput,
   type HookOutput,
+  type SessionLock,
 } from "../../harness/hook-adapter.js";
 import { headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
@@ -159,16 +160,23 @@ export function cursorHookOutput(hook: string, deliveries: readonly AdapterDeliv
   return {};
 }
 
+/**
+ * `lock` is the session's lock the hook holds, which a test that runs no hook leaves out. The transcript's sidecar is
+ * read before its lines are checked and written after, so the hook keeps the lock through those checks: another hook of
+ * the session writing the sidecar meanwhile would have its write undone.
+ */
 export async function handleCursorEvent(
   input: CursorHookInput,
   eventLoop: RerailEventLoop,
   storageRoot: string,
+  lock?: SessionLock,
 ): Promise<CursorHookOutput> {
   const hook = requiredText(input, "hook_event_name");
   const event = cursorHookEvent(input);
   const descriptor = event.session ?? cursorSession(input);
   const path = pendingPath(storageRoot, "cursor", descriptor.sessionId);
-  const transcriptOwnsText = hook !== "sessionStart" && await ingestCursorTranscript(input, descriptor, eventLoop, storageRoot);
+  const transcript = () => ingestCursorTranscript(input, descriptor, eventLoop, storageRoot);
+  const transcriptOwnsText = hook !== "sessionStart" && await (lock === undefined ? transcript() : lock.kept(transcript));
   const deliveries = transcriptOwnsText && (hook === "afterAgentResponse" || hook === "stop")
     ? []
     : await eventLoop.ingest(event);
