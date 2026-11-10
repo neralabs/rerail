@@ -10310,3 +10310,11 @@ The inventory audit passes. The full migration gate remains red: 93 drafts and f
 The 450-execution complete reporter receipts remain bound to Final 957; they are not relabeled as Final 041 results.
 The shared project helper and complete first-ten cohort refresh remain next.
 
+# Shared model projection source contract, 2026-11-09
+
+Recorded 205 source cases for the shared project helper and message formatter.
+The successful results retain complete values, nested model types, tuple storage, frozen metadata, and explicit field presence.
+The error results retain exception type, arguments, ordered details, and display text.
+The native positive failed because the projection policy was absent. This source receipt does not certify native parity.
+The source artifact is `rr-model-projection-source.json.gz`.
+
