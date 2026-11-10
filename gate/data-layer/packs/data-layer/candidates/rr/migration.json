@@ -3829,8 +3829,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "957f1352013cd1993a84e1ac97ae5a80ac18d68e",
-    "status": "Final 957f13520 root CLI registered. 125 focused engine tests pass (two existing helpers ignored). Nine reporter checkpoint: 153 native executions. Surface checkpoint: 297 native executions, including all nine original cases per API. Full first-ten refresh and admission remain open.",
+    "upstreamCommit": "04173bf00bc872fdfe1c9b602e0867f2f0f9d86b",
+    "status": "Final 04173bf00 merged, preserving inlined-relation retention and ordered document builders. Root rebuild and focused validation pending. Last complete reporter cohort: Final 957, 450 native executions.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3930,11 +3930,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "8ea00c0665effc89e57e4c0ae103d4a35355709e9d2c9f30033d3c7fd85a98d4"
+        "sha256": "2c91a3697489f15f9143582c7a91ebb1ac066589410ea4b9bcabc0de5daab83d"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "6b22ed89cef0b3e3cbabb63e0924d57d158ef22e1f0c6b4966b2e20ebebb37e3"
+        "sha256": "f6187cb61fb448b517f34d1eb07ff37593e21e35be2a25ffd42727a7e0d8e8ca"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
