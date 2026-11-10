@@ -66,10 +66,6 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
-    // And, as the library loads (before `main` in the engine's binary, as Node loads the addon), before any pool
-    // is made: the one pool, of the most threads the process uses (`RERAIL_THREADS`), the process's main thread
-    // one of them when it is the one loading.
-    threads::configure(threads::is_main_thread());
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // SAFETY: jemalloc's malloc accepts any size.
@@ -106,6 +102,17 @@ fn install_tree_sitter_allocator() {
             free,
         }));
     }
+}
+
+/// The one pool, of the most threads the process uses (`RERAIL_THREADS`), the loading thread one of them when it is
+/// the process's main thread: made as Node registers the addon's exports, before any of them runs, and not in the
+/// library's constructor. A constructor runs inside `dlopen`, which holds glibc's loader lock; rayon's
+/// `use_current_thread` waits for every pool thread to start, and each one's first thread-local with a destructor
+/// registers it through `__cxa_thread_atexit_impl`, which takes that lock: the load never returned.
+#[cfg(not(target_family = "wasm"))]
+#[napi(module_exports)]
+pub fn configure_thread_pool(_exports: napi::bindgen_prelude::Object) {
+    threads::configure(threads::is_main_thread());
 }
 
 #[napi(object)]
