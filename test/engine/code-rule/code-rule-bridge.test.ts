@@ -276,15 +276,13 @@ describe("CodeRuleBridge", () => {
     }));
   });
 
-  it("gives a shell write the preimage Git or the session holds only when its digest is the file's before the write", async () => {
+  it("gives a shell write the preimage the session or Git holds, including its first sight of a file Git does not hold", async () => {
     const root = await workspace();
     const clean = join(root, "src", "clean.py");
     const dirty = join(root, "src", "dirty.py");
     await writeFile(clean, "one\n");
     await writeFile(dirty, "committed\n");
-    execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "."], { cwd: root });
-    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
+    commitAll(root);
     // Changed before the session and never staged: neither the index nor HEAD holds what the session first saw.
     await writeFile(dirty, "uncommitted\n");
     await awaitClockAfter(clean, dirty);
@@ -293,16 +291,14 @@ describe("CodeRuleBridge", () => {
     await bridge.openWorkspace("session-1");
     await bridge.checkpoint("turn");
 
+    // The session's first sight of a file Git does not hold is kept, so a shell write to it counts only its own lines.
     await bridge.begin("shell-1", "shell", { command: "./rewrite.sh" });
     await writeFile(clean, "one\ntwo\n");
     await writeFile(dirty, "uncommitted\nmore\n");
     await bridge.finish("shell-1");
     expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
       { path: "src/clean.py", language: "python", previousText: "one\n", generatedText: "one\ntwo\n" },
-      {
-        path: "src/dirty.py", language: "python",
-        previousReadError: "Source changed outside a tool with a captured preimage", generatedText: "uncommitted\nmore\n",
-      },
+      { path: "src/dirty.py", language: "python", previousText: "uncommitted\n", generatedText: "uncommitted\nmore\n" },
     ]);
 
     // The session saw what the first write made of the file, so the next write knows its preimage.
@@ -311,6 +307,81 @@ describe("CodeRuleBridge", () => {
     await bridge.finish("shell-2");
     expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
       { path: "src/dirty.py", language: "python", previousText: "uncommitted\nmore\n", generatedText: "uncommitted\nmore\nagain\n" },
+    ]);
+  });
+
+  it("gives a shell write to a file untracked before the session the text the session first saw", async () => {
+    const root = await workspace();
+    const untracked = join(root, "src", "untracked.py");
+    await writeFile(join(root, "src", "kept.py"), "kept\n");
+    commitAll(root);
+    await writeFile(untracked, "draft\n");
+    await awaitClockAfter(untracked);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, () => writeFile(untracked, "draft\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/untracked.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
+    ]);
+  });
+
+  it("keeps first-sight text only within its budget, and measures a shell edit past it as before", async () => {
+    const root = await workspace();
+    const [first, second] = [join(root, "src", "a.py"), join(root, "src", "b.py")];
+    await writeFile(first, "old\n");
+    await writeFile(second, "old\n");
+    commitAll(root);
+    await writeFile(first, "aaaa\n");
+    await writeFile(second, "bbbb\n");
+    await awaitClockAfter(first, second);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { firstSightTextBytes: 5 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await shell(bridge, async () => {
+      await writeFile(first, "aaaa\nmine\n");
+      await writeFile(second, "bbbb\nmine\n");
+    });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([[
+      { path: "src/a.py", language: "python", previousText: "aaaa\n", generatedText: "aaaa\nmine\n" },
+      {
+        path: "src/b.py", language: "python",
+        previousReadError: "Source changed outside a tool with a captured preimage", generatedText: "bbbb\nmine\n",
+      },
+    ]]);
+  });
+
+  it("measures a shell edit from the text a later walk first saw in a folder the baseline could not read", async () => {
+    const root = await realpath(await workspace());
+    const draft = join(root, "deep", "draft.py");
+    await writeFile(join(root, "src", "kept.py"), "kept\n");
+    commitAll(root);
+    await mkdir(join(root, "deep"));
+    await writeFile(draft, "draft\n");
+    await awaitClockAfter(draft);
+    discovery.directories.set(join(root, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // The next walk reads the folder: its first sight of the file.
+    await bridge.checkpoint("turn");
+    await shell(bridge, () => writeFile(draft, "draft\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "deep/draft.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
+    ]);
+  });
+
+  it("audits nothing Git wrote over a file changed before the session, and measures the next shell edit from Git's text", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await awaitClockAfter(dirty);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // The session's first sight of the file is no change of its own, and no longer the file's text once Git wrote over it.
+    await shell(bridge, () => git(root, "stash", "--quiet"));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shell(bridge, () => writeFile(dirty, "committed\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/dirty.py", language: "python", previousText: "committed\n", generatedText: "committed\nmine\n" }],
     ]);
   });
 
@@ -790,6 +861,12 @@ describe("ledgerPreimage", () => {
 function git(cwd: string, ...args: string[]): void {
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
 }
+/** Makes `root` a repository whose one commit holds every file in it. */
+function commitAll(root: string): void {
+  git(root, "init", "--quiet");
+  git(root, "add", ".");
+  git(root, "commit", "--quiet", "-m", "seed");
+}
 /** A repository on `main`, with a branch `other` ahead of it: it changes `src/a.py`, adds `src/new.py` and removes `src/gone.py`. */
 async function twoBranches(): Promise<string> {
   const root = await workspace();
@@ -864,6 +941,19 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode])).toEqual([
       [[relative(root, join(worktree, "src", "a.py"))], "log"],
       [["src/a.py"], undefined],
+    ]);
+  });
+
+  it("measures a shell edit to a file changed before the session, in a worktree inside its folder, from the text first seen", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(root, "wt"));
+    const path = join(worktree, "src", "a.py");
+    await writeFile(path, "old\nviolation\nlocal\n");
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shellInWorktree(bridge, () => writeFile(path, "old\nviolation\nlocal\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "wt/src/a.py", language: "python", previousText: "old\nviolation\nlocal\n", generatedText: "old\nviolation\nlocal\nmine\n" }],
     ]);
   });
 
