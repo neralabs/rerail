@@ -86,6 +86,10 @@ pub(super) fn add(prog: &mut front::Program) -> Result<()> {
     for (rel, cols) in components.decls.into_iter().filter(|(rel, _)| missing.contains(rel)) {
         prog.decls.insert(rel, cols);
     }
+    // And what it keeps (`.decl rr_cx_edge(…) no_inline`, decision 0099).
+    for (rel, words) in components.qualifiers.into_iter().filter(|(rel, _)| missing.contains(rel)) {
+        prog.qualifiers.entry(rel).or_default().extend(words);
+    }
     for (rel, rows) in components.facts.into_iter().filter(|(rel, _)| missing.contains(rel)) {
         prog.facts.entry(rel).or_insert(rows);
     }
