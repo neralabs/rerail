@@ -498,6 +498,9 @@ struct Dialect {
     /// Whether W reads values of the dialect's nodes (its family's `ValueRules::SUPPORTED`): `Extra`'s `value` and
     /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rr` file's).
     values: bool,
+    /// The grammar's token automata: the tokens a named-only tape leaves out, in the gaps between a
+    /// parent's stored children (`tree::Tree`'s `token`, `prev_token`; t31).
+    grammar: Option<Arc<crate::code_rule_dsl::tape::tokens::TokenGrammar>>,
 }
 impl Dialect {
     fn new(tag: u8) -> StoreResult<Self> {
@@ -517,7 +520,8 @@ impl Dialect {
             codes.entry(c).or_default().push(k as u16);
         }
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
-        Ok(Self { tag, family, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values })
+        let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(dialect);
+        Ok(Self { tag, family, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
     }
     /// Node `id`'s kind code (ERROR's is `u16::MAX`).
     fn code(&self, f: &Facts, id: u32) -> u16 {

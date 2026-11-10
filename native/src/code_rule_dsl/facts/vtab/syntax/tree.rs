@@ -9,6 +9,13 @@
 //!                              or "import" (an anonymous token's text is its kind)
 //! token(p, i, s, start, end)   p's tape children in order, anonymous ones and comments included (W's `precedes` and
 //!                              `follows` at a neighbour): each one's text and byte range
+//! ```
+//!
+//! A named-only tape (RER-131) stores no token its grammar implies: `token` and `prev_token` take those from the gaps
+//! between p's stored children (`TokenGrammar::gaps`, the kind's automaton over them), each its word, placed before
+//! the gap's comments, its range the gap's (`parts`).
+//!
+//! ```text
 //! visit_index(n, i)            n's place in CPython's `ast` visit order, from 0 per document (Python documents)
 //! ```
 //!
@@ -65,17 +72,17 @@ impl Tree {
         if self.prev_token || self.token {
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
-                let children = f.children(id);
+                let parts = parts(f, dialect, id);
                 if self.token {
-                    for (i, &c) in children.iter().enumerate() {
-                        self.tokens.push([n, i as i64, string(f.text(c)) as i64, i64::from(f.start[c as usize]), i64::from(f.end[c as usize])]);
+                    for (i, part) in parts.iter().enumerate() {
+                        self.tokens.push([n, i as i64, string(part.text) as i64, i64::from(part.start), i64::from(part.end)]);
                     }
                 }
                 if self.prev_token {
-                    for pair in children.windows(2) {
-                        let after = p.local[pair[1] as usize];
+                    for pair in parts.windows(2) {
+                        let after = pair[1].child.map_or(NONE, |c| p.local[c as usize]);
                         if after != NONE {
-                            self.prev_tokens.push([p.global(after), string(f.text(pair[0])) as i64]);
+                            self.prev_tokens.push([p.global(after), string(pair[0].text) as i64]);
                         }
                     }
                 }
@@ -248,4 +255,48 @@ impl Order<'_> {
         out.append(&mut defaults);
         out
     }
+}
+
+/// One of a parent's parts: a stored child (`child`), or a token its grammar implies in a gap.
+struct Part<'a> {
+    child: Option<u32>,
+    text: &'a str,
+    start: u32,
+    end: u32,
+}
+
+/// `id`'s parts in order: its stored children, and in each gap between them the tokens the kind's automaton implies
+/// there (`TokenGrammar::gaps`), placed after the last child before the gap that is no extra, with the gap's range.
+/// The stored children alone where the grammar has no automaton for the kind or refuses the children.
+fn parts<'a>(f: &'a Facts, dialect: &'a Dialect, id: u32) -> Vec<Part<'a>> {
+    let children = f.children(id);
+    let stored = |c: u32| Part { child: Some(c), text: f.text(c), start: f.start[c as usize], end: f.end[c as usize] };
+    let field = |c: u32| match f.field[c as usize] {
+        0 => "",
+        code => dialect.catalog.field_name(code).unwrap_or(""),
+    };
+    let gaps = dialect.grammar.as_deref().and_then(|grammar| grammar.gaps(dialect.name(f, id), children.iter().map(|&c| (f.named(c), dialect.name(f, c), field(c)))));
+    let Some(gaps) = gaps else { return children.iter().map(|&c| stored(c)).collect() };
+    let extra = |c: u32| f.flags[c as usize] & 2 != 0;
+    let mut out: Vec<Part<'a>> = Vec::with_capacity(children.len());
+    // Where the next gap's words go (after the last child that is no extra), and where its range starts.
+    let (mut at, mut from) = (0usize, f.start[id as usize]);
+    let mut place = |out: &mut Vec<Part<'a>>, at: usize, words: &[(&'a str, &'a str)], from: u32, to: u32| {
+        for (k, (word, _)) in words.iter().enumerate() {
+            out.insert(at + k, Part { child: None, text: word, start: from, end: to });
+        }
+        words.len()
+    };
+    for (k, &c) in children.iter().enumerate() {
+        let words = gaps.before.get(k).map(Vec::as_slice).unwrap_or_default();
+        let placed = place(&mut out, at, words, from, f.start[c as usize]);
+        at += placed;
+        out.push(stored(c));
+        if !extra(c) {
+            at = out.len();
+            from = f.end[c as usize];
+        }
+    }
+    place(&mut out, at, &gaps.end, from, f.end[id as usize]);
+    out
 }

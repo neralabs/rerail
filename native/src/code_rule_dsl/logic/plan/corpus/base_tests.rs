@@ -958,7 +958,7 @@ ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), line(n, l).
 
 /// `prev_token(n, s)` is W's `follows` at a neighbour, anonymous tokens included (`,` and `import` in
 /// sql-grammar-escape-hatches' usage clauses); `token(p, i, s, start, end)` read at the next position is W's
-/// `precedes` at a neighbour.
+/// `precedes` at a neighbour. Tokens the grammar implies are among them, from the gaps.
 #[test]
 fn tokens_are_ws_neighbours() {
     let files = [("i.py", "from m import a, b\nimport x, y.z\nf(a, b, c=1)  # done\n")];
@@ -993,6 +993,9 @@ before(k, t, l, c) :- kinds(k), node(_, n, k, s, e), child(p, n, _), token(p, i,
         }
     }
     assert!(after.iter().any(|r| r.starts_with("dotted_name\t,\t")) && after.iter().any(|r| r.starts_with("dotted_name\timport\t")), "{after:?}");
+    // The call's `(` and `)` are implied (a named-only tape leaves them out, RER-131): both sides read them from the
+    // gaps.
+    assert!(after.iter().any(|r| r.starts_with("identifier\t(\t")) && before.iter().any(|r| r.starts_with("keyword_argument\t)\t")), "{after:?} {before:?}");
     assert_eq!(got, [csv(after), csv(before)]);
     let _ = std::fs::remove_dir_all(&dir);
 }

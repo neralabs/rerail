@@ -85,6 +85,9 @@ pub(in crate::code_rule_dsl) enum Relation {
     Precedes,
     /// `has` (a neighbour): the node's own parts.
     Has,
+    /// `has` past the neighbours (`stopBy: end` or a stop rule): the parts of the node and of
+    /// each node below it the walk reaches, as ast-grep descends.
+    Below,
 }
 
 impl std::fmt::Debug for GapTest {
@@ -97,21 +100,28 @@ impl GapTest {
     /// Whether the relation holds of `node`: a walk over the parts, or the gap's word at its place.
     pub(in crate::code_rule_dsl) fn matches<'t, D: Doc>(&self, node: &Node<'t, D>, env: &mut Cow<MetaVarEnv<'t, D>>) -> bool {
         let Some(walk) = &self.walk else { return self.holds(node) };
-        if !*walk.names_token.get_or_init(|| names_token(&walk.target, &self.grammar, 0)) {
+        if !self.can_hold() {
             return false;
         }
         match walk.relation {
             Relation::Has => {
                 let parts: Vec<Part<'t, D>> = node.parts().collect();
-                (0..parts.len()).any(|at| part_matches(&walk.target, &parts, at, node, env))
+                (0..parts.len()).any(|at| parts[at].node().is_none() && token_matches(&walk.target, &parts, at, node, env, 0))
             }
+            Relation::Below => below(node, &walk.stop, &walk.target, env, 0),
             Relation::Follows | Relation::Precedes => {
                 let Some(parent) = node.parent() else { return false };
                 let parts: Vec<Part<'t, D>> = parent.parts().collect();
                 let Some(at) = parts.iter().position(|part| part.named().is_some_and(|named| named.node_id() == node.node_id())) else { return false };
-                sibling_walk(&parts, at, walk.relation == Relation::Precedes, &walk.stop, &walk.target, &parent, env)
+                sibling_walk(&parts, at, walk.relation == Relation::Precedes, &walk.stop, &walk.target, &parent, env, true)
             }
         }
+    }
+
+    /// Whether the test can hold anywhere: a walk only where its target can pass an implied
+    /// token ([`names_token`], read once its utilities are filled).
+    pub(in crate::code_rule_dsl) fn can_hold(&self) -> bool {
+        self.walk.as_ref().is_none_or(|walk| *walk.names_token.get_or_init(|| names_token(&walk.target, &self.grammar, 0)))
     }
 
     /// Whether an implied token the regex matches is at the test's place.
@@ -193,13 +203,42 @@ fn part_matches<'t, D: Doc>(rule: &AstMatcher, parts: &[Part<'t, D>], at: usize,
     }
 }
 
+/// Whether `target` holds of an implied token of `node` or, depth first, of a stored node below
+/// it: a named child is descended into unless it matched `stop`, as ast-grep descends. Stored
+/// parts are the relation's own walk's (beside this one).
+fn below<'t, D: Doc>(node: &Node<'t, D>, stop: &StopBy, target: &AstMatcher, env: &mut Cow<MetaVarEnv<'t, D>>, depth: usize) -> bool {
+    if depth > 256 {
+        return false;
+    }
+    let parts: Vec<Part<'t, D>> = node.parts().collect();
+    for at in 0..parts.len() {
+        if parts[at].node().is_none() && token_matches(target, &parts, at, node, env, 0) {
+            return true;
+        }
+        let Some(child) = parts[at].named() else { continue };
+        let stopped = match stop {
+            StopBy::Neighbor => true,
+            StopBy::End => false,
+            StopBy::Rule(rule) => rule.match_node_with_env(child.clone(), &mut Cow::Owned(MetaVarEnv::new())).is_some(),
+        };
+        if !stopped && below(&child, stop, target, env, depth + 1) {
+            return true;
+        }
+    }
+    false
+}
+
 /// `follows` (backward) or `precedes` (`forward`) from part `at`, as ast-grep's sibling walk:
 /// each part in turn is tested, and the walk ends after the neighbour, at the end, or after the
-/// first part the stop rule matches (that part is still tested).
-fn sibling_walk<'t, D: Doc>(parts: &[Part<'t, D>], at: usize, forward: bool, stop: &StopBy, target: &AstMatcher, parent: &Node<'t, D>, env: &mut Cow<MetaVarEnv<'t, D>>) -> bool {
+/// first part the stop rule matches (that part is still tested). `tokens_only`: the relation's
+/// own walk answers for its stored parts (the walk is beside it, `compile::ast_rule::with_gap`),
+/// so only implied tokens are tested against the target.
+#[allow(clippy::too_many_arguments)]
+fn sibling_walk<'t, D: Doc>(parts: &[Part<'t, D>], at: usize, forward: bool, stop: &StopBy, target: &AstMatcher, parent: &Node<'t, D>, env: &mut Cow<MetaVarEnv<'t, D>>, tokens_only: bool) -> bool {
     let order: Box<dyn Iterator<Item = usize>> = if forward { Box::new(at + 1..parts.len()) } else { Box::new((0..at).rev()) };
     for next in order {
-        if part_matches(target, parts, next, parent, env) {
+        let tested = if tokens_only && parts[next].node().is_some() { false } else { part_matches(target, parts, next, parent, env) };
+        if tested {
             return true;
         }
         let stopped = match stop {
@@ -229,8 +268,8 @@ fn token_matches<'t, D: Doc>(rule: &AstMatcher, parts: &[Part<'t, D>], at: usize
         AstMatcher::All(rules) => rules.iter().all(|rule| token_matches(rule, parts, at, parent, env, depth + 1)),
         AstMatcher::Any(rules) => rules.iter().any(|rule| token_matches(rule, parts, at, parent, env, depth + 1)),
         AstMatcher::Util(util) => util.with_target(|rule| token_matches(rule, parts, at, parent, env, depth + 1)).unwrap_or(false),
-        AstMatcher::Follows(related, stop) => sibling_walk(parts, at, false, stop, related.rule(), parent, env),
-        AstMatcher::Precedes(related, stop) => sibling_walk(parts, at, true, stop, related.rule(), parent, env),
+        AstMatcher::Follows(related, stop) => sibling_walk(parts, at, false, stop, related.rule(), parent, env, false),
+        AstMatcher::Precedes(related, stop) => sibling_walk(parts, at, true, stop, related.rule(), parent, env, false),
         AstMatcher::Inside(related, stop) => {
             let mut trial = env.clone();
             let found = match stop {
@@ -268,7 +307,7 @@ fn names_token(rule: &AstMatcher, grammar: &TokenGrammar, depth: usize) -> bool 
         return false;
     }
     match rule {
-        AstMatcher::Regex(regex) => grammar.implied_texts().iter().any(|token| regex.is_match(token)),
+        AstMatcher::Regex(regex) => grammar.tests_implied(regex),
         AstMatcher::All(rules) => rules.iter().any(|rule| names_token(rule, grammar, depth + 1)) && rules.iter().all(|rule| token_possible(rule, grammar, depth + 1)),
         AstMatcher::Any(rules) => rules.iter().any(|rule| names_token(rule, grammar, depth + 1)),
         AstMatcher::Util(util) => util.with_target(|rule| names_token(rule, grammar, depth + 1)).unwrap_or(false),

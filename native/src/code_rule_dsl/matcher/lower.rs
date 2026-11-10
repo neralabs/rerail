@@ -514,7 +514,9 @@ impl Lowering {
             Semantic::Resolves(resolves) => !super::semantic::flow(resolves.language),
             // A label's view has no host path to read.
             Semantic::FilePath(_) => return Err(Unsupported(name)),
-            Semantic::Value(_) | Semantic::Layout(_) | Semantic::Gap(_) | Semantic::Arguments(_) => false,
+            Semantic::Value(_) | Semantic::Layout(_) | Semantic::Arguments(_) => false,
+            // A token the grammar implies is in a gap or not: never unknown (t31).
+            Semantic::Gap(_) => true,
             Semantic::Binding(test) => {
                 if test.occurrence.is_some() {
                     return Err(Unsupported("resolves.binding occurrence"));

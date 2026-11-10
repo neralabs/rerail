@@ -104,6 +104,9 @@ struct Walk<'a> {
     /// Relations the compiler also asks of the gaps (`compile::ast_rule::gap_test`), by path:
     /// a token test that is their target, or an `any` alternative of it, is `lowered`.
     lowered: BTreeSet<String>,
+    /// How many utils deep the walk is below a lowered relation's target (`matches` as the
+    /// target, the parts walk follows it): its token tests are `lowered` too.
+    walked: usize,
 }
 
 const COMPOSITE: [&str; 3] = ["all", "any", "not"];
@@ -187,12 +190,16 @@ impl Walk<'_> {
                         if self.active.contains(&name) {
                             continue;
                         }
-                        let context = format!("{name} {rel:?} {from:?} {frame:?} {negated}");
+                        let target = ["/any/", "/all/"].iter().find_map(|sep| path.rsplit_once(sep).filter(|(_, at)| at.parse::<usize>().is_ok()).map(|(relation, _)| relation)).unwrap_or(path);
+                        let via = usize::from(self.lowered.contains(path) || self.lowered.contains(target));
+                        let context = format!("{name} {rel:?} {from:?} {frame:?} {negated} {}", self.walked + via);
                         if let Some(util) = self.utils.get(&name).cloned()
                             && self.seen.insert(context)
                         {
                             self.active.push(name.clone());
+                            self.walked += via;
                             self.rule(&util, rel, from, &frame, negated, &format!("utils/{name}"));
+                            self.walked -= via;
                             self.active.pop();
                         }
                     }
@@ -233,7 +240,7 @@ impl Walk<'_> {
         let target = ["/any/", "/all/"].iter().find_map(|sep| path.rsplit_once(sep).filter(|(_, at)| at.parse::<usize>().is_ok()).map(|(relation, _)| relation)).unwrap_or(path);
         let category = if category != "never" && implied.is_empty() {
             "stored"
-        } else if self.lowered.contains(path) || self.lowered.contains(target) {
+        } else if self.lowered.contains(path) || self.lowered.contains(target) || self.walked > 0 {
             "lowered"
         } else if negated && (category == "root" || (category != "never" && !matches!(rel, Rel::Sibling { end: false, .. }))) {
             // A `not` on the token's own node, over a set (the node matched, a node's children,
@@ -320,7 +327,7 @@ fn token_readers() {
                     let Some(ast) = clause.pointer("/forbid/ast").and_then(Value::as_object) else { continue };
                     let Some(language) = ast.get("language").and_then(Value::as_str) else { continue };
                     let Some(lang) = langs.entry(language.to_owned()).or_insert_with(|| dialect_by_label(language).and_then(Lang::of)).as_ref() else { continue };
-                    let mut walk = Walk { lang, utils: &utils, tests: BTreeSet::new(), active: Vec::new(), seen: BTreeSet::new(), lowered: BTreeSet::new() };
+                    let mut walk = Walk { lang, utils: &utils, tests: BTreeSet::new(), active: Vec::new(), seen: BTreeSet::new(), lowered: BTreeSet::new(), walked: 0 };
                     let base = format!("clauses/{at}");
                     if let Some(rule) = ast.get("rule") {
                         walk.rule(rule, &Rel::Root("rule"), &Frame::default(), &Frame::default(), false, &format!("{base}/rule"));

@@ -71,15 +71,16 @@ side_effect_block("block").
 .decl m131(n: node)
 .decl m172(n: node)
 .decl m173(n: node)
-.decl m189(n: node)
-.decl m196(n: node)
-.decl m206(n: node)
-.decl m216(n: node)
-.decl m226(n: node)
+.decl m180(n: node)
+.decl m190(n: node)
+.decl m197(n: node)
+.decl m207(n: node)
+.decl m217(n: node)
+.decl m227(n: node)
 .decl m23(n: node)
-.decl m236(n: node)
+.decl m237(n: node)
 .decl m24(n: node)
-.decl m242(n: node)
+.decl m243(n: node)
 .decl m38(n: node)
 .decl m39(n: node)
 .decl m40(n: node)
@@ -753,26 +754,28 @@ m172(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v168), name(v168
 m172(n) :- node(_, n, "identifier", _, _), text(n, v171), suffix("_post_op", v171).
 m173(n) :- node(_, n, "call", _, _), field(n, "function", v167), m172(v167).
 violation("data-layer-serverplan-steps", "closed-migration-postop", "STEP-027", p, l) :- node(v152, n, _, _, _), doc(v152, v153, _), node(_, n, "call", _, _), field(n, "function", v154), node(_, v154, "identifier", _, _), text(v154, v155), v155 = "CompiledStep", inside(n, v156, k4), node(_, v156, "module", _, _), child(v156, v157, _), node(_, v157, "expression_statement", _, _), child(v157, v158, _), node(_, v158, "assignment", _, _), field(v158, "left", v159), node(_, v159, "identifier", _, _), text(v159, v160), v160 = "CLOSED_POST_OP_STRICT", field(v158, "right", v161), node(_, v161, "true", _, _), field(n, "arguments", v162), child(v162, v163, _), node(_, v163, "keyword_argument", _, _), field(v163, "name", v164), node(_, v164, "identifier", _, _), text(v164, v165), v165 = "post_op", field(v163, "value", v166), !m173(v166), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(v166, l).
-violation("data-layer-serverplan-steps", "terminal-projection-dispatch", "STEP-037", p, l) :- node(v174, n, _, _, _), doc(v174, v175, _), node(_, n, "comparison_operator", _, _), node(v176, n, _, _, _), doc(v176, v177, _), glob("**/terminal_projection_builders.py", v177), child(n, v178, _), node(_, v178, "identifier", _, _), text(v178, v179), v179 = "projection_kind", inside(n, v180, k0), node(_, v180, "function_definition", _, _), field(v180, "name", v181), node(_, v181, "identifier", _, _), text(v181, v182), v182 = "materialize_terminal_projection", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m189(n) :- field(n, "arguments", v187), child(v187, v188, _).
-violation("data-layer-serverplan-steps", "empty-result-assertion", "STEP-038", p, l) :- node(v183, n, _, _, _), doc(v183, v184, _), node(_, n, "call", _, _), field(n, "function", v185), node(_, v185, "identifier", _, _), text(v185, v186), v186 = "ResultAssertionSpec", !m189(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m196(n) :- node(_, n, "identifier", _, _), text(n, v193), v193 = "ResultMaterializationSpec".
-m196(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v194), node(_, v194, "identifier", _, _), text(v194, v195), v195 = "ResultMaterializationSpec".
-m206(n) :- node(_, n, "identifier", _, _), text(n, v203), v203 = "ResultMaterializationSpec".
-m206(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v204), node(_, v204, "identifier", _, _), text(v204, v205), v205 = "ResultMaterializationSpec".
-m216(n) :- node(_, n, "identifier", _, _), text(n, v213), v213 = "ResultMaterializationSpec".
-m216(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v214), node(_, v214, "identifier", _, _), text(v214, v215), v215 = "ResultMaterializationSpec".
-m226(n) :- node(_, n, "identifier", _, _), text(n, v223), v223 = "runtime_refs_post_op".
-m226(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v224), node(_, v224, "identifier", _, _), text(v224, v225), v225 = "runtime_refs_post_op".
-m236(n) :- node(_, n, "identifier", _, _), text(n, v233), (v233 = "BatchChildResultSpec" ; v233 = "CompiledStep").
-m236(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v234), node(_, v234, "identifier", _, _), text(v234, v235), (v235 = "BatchChildResultSpec" ; v235 = "CompiledStep").
-m242(n) :- node(_, n, "call", _, _), field(n, "function", v192), m196(v192), field(n, "arguments", v197), child(v197, v198, _), node(_, v198, "keyword_argument", _, _), field(v198, "name", v199), node(_, v199, "identifier", _, _), text(v199, v200), v200 = "source_refs", field(v198, "value", v201).
-m242(n) :- node(_, n, "call", _, _), field(n, "function", v202), m206(v202), field(n, "arguments", v207), child(v207, v208, _), node(_, v208, "keyword_argument", _, _), field(v208, "name", v209), node(_, v209, "identifier", _, _), text(v209, v210), v210 = "source_names", field(v208, "value", v211).
-m242(n) :- node(_, n, "call", _, _), field(n, "function", v212), m216(v212), field(n, "arguments", v217), child(v217, v218, _), node(_, v218, "keyword_argument", _, _), field(v218, "name", v219), node(_, v219, "identifier", _, _), text(v219, v220), v220 = "source_materializer", field(v218, "value", v221).
-m242(n) :- node(_, n, "call", _, _), field(n, "function", v222), m226(v222), field(n, "arguments", v227), child(v227, v228, _), node(_, v228, "keyword_argument", _, _), field(v228, "name", v229), node(_, v229, "identifier", _, _), text(v229, v230), v230 = "source_refs", field(v228, "value", v231).
-m242(n) :- node(_, n, "call", _, _), field(n, "function", v232), m236(v232), field(n, "arguments", v237), child(v237, v238, _), node(_, v238, "keyword_argument", _, _), field(v238, "name", v239), node(_, v239, "identifier", _, _), text(v239, v240), v240 = "raw_payload_ref_id", field(v238, "value", v241).
-violation("data-layer-serverplan-steps", "source-ref-ingress", "STEP-042", p, l) :- node(v190, n, _, _, _), doc(v190, v191, _), m242(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-serverplan-steps", "parse-error", "PARSE", p, 1) :- node(v243, n, _, _, _), doc(v243, v244, _), node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
+m180(n) :- child(n, v178, _), node(_, v178, "identifier", _, _), text(v178, v179), v179 = "projection_kind".
+m180(n) :- never(n).
+violation("data-layer-serverplan-steps", "terminal-projection-dispatch", "STEP-037", p, l) :- node(v174, n, _, _, _), doc(v174, v175, _), node(_, n, "comparison_operator", _, _), node(v176, n, _, _, _), doc(v176, v177, _), glob("**/terminal_projection_builders.py", v177), m180(n), inside(n, v181, k0), node(_, v181, "function_definition", _, _), field(v181, "name", v182), node(_, v182, "identifier", _, _), text(v182, v183), v183 = "materialize_terminal_projection", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m190(n) :- field(n, "arguments", v188), child(v188, v189, _).
+violation("data-layer-serverplan-steps", "empty-result-assertion", "STEP-038", p, l) :- node(v184, n, _, _, _), doc(v184, v185, _), node(_, n, "call", _, _), field(n, "function", v186), node(_, v186, "identifier", _, _), text(v186, v187), v187 = "ResultAssertionSpec", !m190(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m197(n) :- node(_, n, "identifier", _, _), text(n, v194), v194 = "ResultMaterializationSpec".
+m197(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v195), node(_, v195, "identifier", _, _), text(v195, v196), v196 = "ResultMaterializationSpec".
+m207(n) :- node(_, n, "identifier", _, _), text(n, v204), v204 = "ResultMaterializationSpec".
+m207(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v205), node(_, v205, "identifier", _, _), text(v205, v206), v206 = "ResultMaterializationSpec".
+m217(n) :- node(_, n, "identifier", _, _), text(n, v214), v214 = "ResultMaterializationSpec".
+m217(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v215), node(_, v215, "identifier", _, _), text(v215, v216), v216 = "ResultMaterializationSpec".
+m227(n) :- node(_, n, "identifier", _, _), text(n, v224), v224 = "runtime_refs_post_op".
+m227(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v225), node(_, v225, "identifier", _, _), text(v225, v226), v226 = "runtime_refs_post_op".
+m237(n) :- node(_, n, "identifier", _, _), text(n, v234), (v234 = "BatchChildResultSpec" ; v234 = "CompiledStep").
+m237(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v235), node(_, v235, "identifier", _, _), text(v235, v236), (v236 = "BatchChildResultSpec" ; v236 = "CompiledStep").
+m243(n) :- node(_, n, "call", _, _), field(n, "function", v193), m197(v193), field(n, "arguments", v198), child(v198, v199, _), node(_, v199, "keyword_argument", _, _), field(v199, "name", v200), node(_, v200, "identifier", _, _), text(v200, v201), v201 = "source_refs", field(v199, "value", v202).
+m243(n) :- node(_, n, "call", _, _), field(n, "function", v203), m207(v203), field(n, "arguments", v208), child(v208, v209, _), node(_, v209, "keyword_argument", _, _), field(v209, "name", v210), node(_, v210, "identifier", _, _), text(v210, v211), v211 = "source_names", field(v209, "value", v212).
+m243(n) :- node(_, n, "call", _, _), field(n, "function", v213), m217(v213), field(n, "arguments", v218), child(v218, v219, _), node(_, v219, "keyword_argument", _, _), field(v219, "name", v220), node(_, v220, "identifier", _, _), text(v220, v221), v221 = "source_materializer", field(v219, "value", v222).
+m243(n) :- node(_, n, "call", _, _), field(n, "function", v223), m227(v223), field(n, "arguments", v228), child(v228, v229, _), node(_, v229, "keyword_argument", _, _), field(v229, "name", v230), node(_, v230, "identifier", _, _), text(v230, v231), v231 = "source_refs", field(v229, "value", v232).
+m243(n) :- node(_, n, "call", _, _), field(n, "function", v233), m237(v233), field(n, "arguments", v238), child(v238, v239, _), node(_, v239, "keyword_argument", _, _), field(v239, "name", v240), node(_, v240, "identifier", _, _), text(v240, v241), v241 = "raw_payload_ref_id", field(v239, "value", v242).
+violation("data-layer-serverplan-steps", "source-ref-ingress", "STEP-042", p, l) :- node(v191, n, _, _, _), doc(v191, v192, _), m243(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-steps", "parse-error", "PARSE", p, 1) :- node(v244, n, _, _, _), doc(v244, v245, _), node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
 sps_on(e) :- sps_entry(e), option_value("entryPoint", v), (v = "all" ; v = "_scan_source" ; v = "_scan_file").
 sps_on(e) :- sps_entry(e), option_value("entryPoint", e).
 sps_text(n, s) :- node_text(n, s).

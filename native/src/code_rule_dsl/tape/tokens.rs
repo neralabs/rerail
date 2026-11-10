@@ -434,6 +434,13 @@ impl TokenGrammar {
         &self.implied_texts
     }
 
+    /// Whether `regex` tests a token the grammar implies somewhere: it matches one, and is not a
+    /// test of a node's text that reaches tokens by accident (`(?s).*`, `.`, `^_`: it also matches
+    /// a name or a number), which a tape's leaving the token out does not change.
+    pub(in crate::code_rule_dsl) fn tests_implied(&self, regex: &regex::Regex) -> bool {
+        self.implied_texts.iter().any(|token| regex.is_match(token)) && !["x", "foo_bar", "0"].iter().any(|text| regex.is_match(text))
+    }
+
     /// Whether `kind` is one of the grammar's extras (a comment and the like).
     pub(in crate::code_rule_dsl) fn is_extra(&self, kind: &str) -> bool {
         self.extras.contains(kind)

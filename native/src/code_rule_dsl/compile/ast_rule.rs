@@ -1127,11 +1127,12 @@ mod tests {
     }
 
     #[test]
-    fn kindless_rules_are_accepted_and_test_anonymous_tokens() {
+    fn kindless_rules_are_accepted_and_test_stored_tokens() {
         // ast-grep 0.45.3 rejects a rule with no inferable kinds ("Rule must specify a set of AST
         // kinds to match"). Rerail keeps accepting it: it is the only way to report an anonymous
         // token (`kind` names named kinds only), such as `==`, `,` or `default`. Such a rule tests
-        // every node, so it can report punctuation.
+        // every node the tape holds: a stored token, never one the grammar implies (RER-131), so
+        // the parentheses of `(1)` are not there to report.
         let compiled = compile_typescript_rule(json!({
             "inside": { "kind": "parenthesized_expression" },
             "not": { "kind": "number" },
@@ -1139,7 +1140,7 @@ mod tests {
         .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "(1);\n";
         let result = evaluate_file(&compiled, "typescript", "a.ts", source);
-        assert_eq!(matched_texts(&result, source), ["(", ")"]);
+        assert!(matched_texts(&result, source).is_empty());
         let operator = compile_typescript_rule(json!({
             "regex": "^==$",
             "inside": { "kind": "binary_expression" },
@@ -1308,7 +1309,7 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
         return None;
     }
     let regex = Regex::new(&regexes.join("|")).ok()?;
-    if !grammar.implied_texts().iter().any(|token| regex.is_match(token)) {
+    if !grammar.tests_implied(&regex) {
         return None;
     }
     let past = if past_extras { Some(past?) } else { None };
@@ -1329,7 +1330,7 @@ fn with_gap(term: AstMatcher, gap: Option<crate::code_rule_dsl::matcher::gap::Ga
 }
 
 /// The walk a relation needs whose target is a token and more (t31): `follows`, `precedes` or
-/// `has` (a neighbour, no field) whose target says `regex` of a token the dialect's grammar
+/// `has` (no field; a neighbour, or below) whose target says `regex` of a token the dialect's grammar
 /// implies somewhere, beside other tests (`{regex: "^,$", follows: {matches: first-arg}}`). The
 /// relation is then also walked over the parent's parts, implied tokens among them
 /// (`matcher::gap::Walk`). `None` for anything else.
@@ -1343,6 +1344,7 @@ pub(in crate::code_rule_dsl) fn walk_test(key: &str, relation: &Value, language:
         ("follows", _) => Relation::Follows,
         ("precedes", _) => Relation::Precedes,
         ("has", StopBy::Neighbor) => Relation::Has,
+        ("has", _) => Relation::Below,
         _ => return None,
     };
     let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language)?;
