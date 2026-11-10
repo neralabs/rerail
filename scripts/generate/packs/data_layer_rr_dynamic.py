@@ -1,5 +1,6 @@
 """Translate the source scanner's state machine, including its deliberate textual heuristics."""
 import json
+from dataclasses import asdict
 from data_layer_rr_text import classes, module, search
 
 
@@ -7,7 +8,17 @@ def dynamic_module_loading(source, target, header):
     original = module(source, 'dynamic_module_loading')
     _, space, _ = classes()
     q = json.dumps
-    text = header('dynamic_module_loading', target).replace('#include "python/ast.rr"\n', '#include "data-layer/signing.rr"\n')
+    from data_layer_rr_cli import api_scope
+    text = api_scope(header('dynamic_module_loading', target)).replace('#include "python/ast.rr"\n', '#include "data-layer/signing.rr"\n')
+    text += '.scope text "**/*.py"\n#include "data-layer/dynamic-api.rr"\n'
+    config = dict(linter=[original.LINTER_NAME],signature=[original.ALLOWLIST_SIGNATURE],allowed=list(original.ALLOWLISTED_FILES),fast=list(original._FAST_SUBSTRINGS),extractor=[json.dumps(asdict(original.DYNAMIC_MODULE_LOADING_EXTRACTOR))])
+    for name, patterns in [('primary',original._PATTERNS),('imports',original._IMPORT_MODULE_PATTERNS)]:
+        config[name+'.pattern']=[p.pattern for p,_ in patterns]
+        config[name+'.flags']=[str(p.flags) for p,_ in patterns]
+        config[name+'.label']=[label for _,label in patterns]
+    for key,values in sorted(config.items()):
+        text += f'dml_config_key({q(key)}).\n'
+        for i,value in enumerate(values):text += f'dml_config({q(key)},{i},{q(value)}).\n'
     trim = r'\A' + space + r'+|' + space + r'+\z'
     left = r'\A' + space + '+'
     text += '.decl dml_line(d: number, l: number, t: symbol, clean: symbol, indent: number)\n'
@@ -60,7 +71,7 @@ dml_type_checking(d, l) :- dml_demand(d, l), dml_line(d, l, _, _, indent),
 DynamicTypeCheckingProbe(@place("input.py", l)) :- option("entryPoint", "_is_in_type_checking_block"),
     dml_type_checking(_, l).
 .violation DynamicLoading(at: span, ordinal: number, snippet: symbol, label: symbol) code "DML001" tag {ordinal} "{label}"
-DynamicLoading(@place(p, l), ordinal, clean, label) :- doc(d, p, _), !dml_allowed(p),
+DynamicLoading(@place(p, l), ordinal, clean, label) :- doc(d, p, _), dml_owner(d,owner), !dml_allowed(owner),
     !option("entryPoint", "_is_in_type_checking_block"), dml_candidate(d, l, ordinal, label),
     dml_line(d, l, _, clean, _), !prefix("#", clean), dml_state(d, l, ""), dml_quotes(d, l, 0, 0),
     !dml_type_checking(d, l), (ordinal < 3 ; ordinal >= 3, !dml_primary(d, l)).

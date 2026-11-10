@@ -1519,7 +1519,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr",
-      "sha256": "6ae4bd9834aa34a287bf1a1f5fd2a4c36bbead1cc4a336825b69efa5fe0d6223",
+      "sha256": "5c671bcc694a0a71e3e0f51dfe35a7ae9e4442a244a9b16bec5ba4d6f035da19",
       "origin": "authored",
       "upstreamPath": "scripts/lint_dynamic_module_loading.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2754,6 +2754,12 @@
     {
       "destination": "docs/rule-syntax/lib/data-layer/dispatch-cli.rr",
       "sha256": "9aba6ea867f8200e371f1a3f6c83f27379797ffdcd4a484dea64c0c86f5a37f5"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/dynamic-api.rr",
+      "sha256": "a90924666d0eae39c11cf3f1343874115b3c2d2c6ac6439799ce42a8324c9fbb",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
   "rules": [
@@ -3291,7 +3297,7 @@
       "legacySha256": "60a9cff5845cb22edfd90b365ba5ac41e948b605115c0233af66a81ab68d6478",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr",
-      "ruleSha256": "6ae4bd9834aa34a287bf1a1f5fd2a4c36bbead1cc4a336825b69efa5fe0d6223"
+      "ruleSha256": "5c671bcc694a0a71e3e0f51dfe35a7ae9e4442a244a9b16bec5ba4d6f035da19"
     },
     {
       "check": "forwardref",

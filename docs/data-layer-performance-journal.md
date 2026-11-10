@@ -11220,3 +11220,14 @@ The inventory is 12 accepted ports, 84 drafts, and four absent translations, acr
 No full-repository cold benchmark ran. No Linear ticket was created.
 
 The final tooling run passes 394 tests and 165 subtests in 12.67 seconds elapsed.
+
+### Dynamic-loading scanner checkpoint before engine refresh, 2026-11-10
+
+The native raw-text scanner passes all 116 recorded cases through each API on the frozen Final af8 CLI.
+The [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-dynamic-source-finalaf8-green.json.gz) retains all sixteen shard reports and the source observations.
+The repairs bind allowlists to logical source paths and permit API documents outside production directory scopes.
+Native rows now supply scanner configuration and the pre-read allowlist decision.
+Coverage includes positive findings, lexical edge cases, TYPE_CHECKING state, read failures, and constant values.
+
+This is scanner evidence, not complete rule admission. Discovery, CLI, plugin/fact projections, original shared assertions, and update controls remain open.
+The inventory remains 12 accepted ports, 84 drafts, and four absent translations.

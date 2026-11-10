@@ -1,15 +1,17 @@
 """Record dynamic-loading scanner, state-machine, helper, and metadata contracts."""
 from pathlib import Path
+import json
+from dataclasses import asdict
 from dto import canonical
 
 CHECK='dynamic_module_loading'
 
 
 def settings(module):
-    result=dict(linter=[module.LINTER_NAME],signature=[module.ALLOWLIST_SIGNATURE],allowed=list(module.ALLOWLISTED_FILES),fast=list(module._FAST_SUBSTRINGS))
+    result=dict(linter=[module.LINTER_NAME],signature=[module.ALLOWLIST_SIGNATURE],allowed=list(module.ALLOWLISTED_FILES),fast=list(module._FAST_SUBSTRINGS),extractor=[json.dumps(asdict(module.DYNAMIC_MODULE_LOADING_EXTRACTOR))])
     for name,patterns in [('primary',module._PATTERNS),('imports',module._IMPORT_MODULE_PATTERNS)]:
         result[name+'.pattern']=[p.pattern for p,_ in patterns];result[name+'.flags']=[str(p.flags) for p,_ in patterns];result[name+'.label']=[label for _,label in patterns]
-    return result
+    return {k:result[k] for k in sorted(result)}
 
 
 def cases(module):

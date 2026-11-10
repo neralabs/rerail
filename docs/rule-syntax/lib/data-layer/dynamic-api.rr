@@ -1,0 +1,12 @@
+// Logical API paths are independent of temporary document names.
+.decl dml_owner(d: number,path: symbol)
+dml_owner(d,p) :- doc(d,physical,_),option_item("dmlDocuments",i,physical),option_item("dmlPaths",i,p).
+dml_owner(d,p) :- doc(d,p,_),!option_item("dmlDocuments",_,_).
+.decl dml_config_key(key: symbol)
+.decl dml_config(key: symbol,ordinal: number,value: symbol)
+.violation DynamicConfigKey(at: span,key: symbol) code "DML_CONFIG_KEY" "dynamic configuration key"
+DynamicConfigKey(@place("",0),k) :- option("entryPoint","_dynamic_configuration"),dml_config_key(k).
+.violation DynamicConfig(at: span,key: symbol,ordinal: number,value: symbol) code "DML_CONFIG" "dynamic configuration"
+DynamicConfig(@place("",0),k,i,v) :- option("entryPoint","_dynamic_configuration"),dml_config(k,i,v).
+.violation DynamicRead(at: span,ordinal: number,path: symbol) code "DML_READ" "dynamic source read"
+DynamicRead(@place("",0),i,p) :- option("entryPoint","_dynamic_prepare"),option_item("dmlCandidates",i,p),!dml_allowed(p).
