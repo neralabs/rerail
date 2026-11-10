@@ -86,6 +86,16 @@ function keepsSamples(host: RerailHost): boolean {
 }
 
 /**
+ * Keeps a session's tool calls awaiting their result (`callsAwaitingResult`) current with `event`: a call waits for its
+ * result, and the turn's end settles every call left, since a call the user refused gets none.
+ */
+function noteCallsAwaitingResult(calls: Set<string>, event: AdapterEvent): void {
+  if (event.kind === "call") calls.add(event.toolCallId);
+  else if (event.kind === "result") calls.delete(event.toolCallId);
+  else if (event.kind === "turn-end") calls.clear();
+}
+
+/**
  * How long a one-shot hook (Claude Code, Codex, Cursor) waits after a tool for that edit's rule check, so a steer lands
  * under the edit and the coding agent can act on it in the same turn. A check usually takes tens of milliseconds; one
  * that runs longer goes out at the next hook (with the experimental missed-steer digest, in the digest the turn's end
@@ -329,18 +339,25 @@ export function scrubbedLedgerLine(line: string): string | undefined {
   return stored === entry ? undefined : JSON.stringify(stored);
 }
 
+/**
+ * A session's samples, as its semantic workspace reads them. One that does not keep them (a hook host's session,
+ * `keepsSamples`) holds none: the session's ledger records every sample.
+ */
 class MutableContentSource implements ContentSource {
   readonly id = "host:event";
   readonly #items = new Map<string, ContentItem>();
+  readonly #keeps: boolean;
   #revision = 0;
 
-  constructor(items: readonly ContentItem[]) {
+  constructor(items: readonly ContentItem[], keeps: boolean) {
+    this.#keeps = keeps;
+    if (!keeps) return;
     for (const item of items) this.#items.set(item.ref.id, item);
     this.#revision = items.length;
   }
 
   append(item: ContentItem): void {
-    if (this.#items.has(item.ref.id)) return;
+    if (!this.#keeps || this.#items.has(item.ref.id)) return;
     this.#items.set(item.ref.id, item);
     this.#revision += 1;
   }
@@ -891,12 +908,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         ...(preimages === undefined ? {} : { preimages }),
       });
       state.pendingCodeRuleCalls.push({ id, toolName: event.toolName });
-      state.callsAwaitingResult.add(id);
     }
     await this.#router(descriptor.host).ingest(event);
-    if (event.kind === "turn-end") state.callsAwaitingResult.clear();
+    noteCallsAwaitingResult(state.callsAwaitingResult, event);
     if (event.kind === "result") {
-      state.callsAwaitingResult.delete(event.toolCallId);
       const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
         const [call] = state.pendingCodeRuleCalls.splice(index, 1);
@@ -1447,7 +1462,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #initialSessionState({ session, checkout, startedAt, ledger, restored, watermarks, steerStrategy }: SessionStart): RuntimeSessionState {
     const { registry, turn, ruleSync } = restored;
     const items = ledger.entries.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
-    const source = new MutableContentSource(keepsSamples(session.host) ? items : []);
+    const source = new MutableContentSource(items, keepsSamples(session.host));
     const secrets = secretCallsOf(ledger.entries);
     return {
       descriptor: session,
@@ -1732,7 +1747,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         fields: { eventId: sample.eventId, sampleSource: sample.source, boundary: sample.boundary },
       },
     };
-    if (keepsSamples(state.descriptor.host)) state.source.append(item);
+    state.source.append(item);
     // A result stored without its output leaves its text out of the ledger as well; matching still reads it.
     await this.#append(state, { type: "sample", item: state.withheldResults.has(sample.eventId) ? { ...item, text: "" } : item });
     const registry = state.registry;

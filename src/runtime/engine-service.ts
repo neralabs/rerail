@@ -237,7 +237,7 @@ function resolveRuntimeRoute(
     }
     return { runtimeKey: configuredRuntimeKey ?? candidates!.values().next().value! };
   }
-  const { accessToken: _accessToken, idleSessionMs: _idleSessionMs, now: _now, idleRuntimeMs: _idleRuntimeMs, ...serviceDefaults } = options;
+  const { accessToken: _accessToken, ...serviceDefaults } = options;
   const runtimeOptions: RerailRuntimeOptions = configuration === undefined
     ? {
         ...serviceDefaults,
