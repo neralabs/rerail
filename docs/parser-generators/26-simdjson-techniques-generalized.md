@@ -148,8 +148,24 @@ simdjson's index is positions, not masks: stage 2 reads only what is there.
 
 - **General rule.** An output with a bit in under a few percent of blocks is written as
   positions, behind a branch, instead of a dense mask word per block.
-- **Where it applies.** The 15 marks, the rare ones above.
-- **Status: missing.**
+- **Where it applies.** `.rr`'s marks. Over the corpus (138,791 blocks), 7 of its 10 are
+  set in under 1% of blocks (`options_on`, `over_on` and `no_value` in none, `one_name`
+  0.04%, `fix_on` 0.08%, `empty_parens` 0.12%, `suppress_on` 0.87%); `json_bad` is in 35%,
+  `newline` in 52% and `line` in 56%.
+- **Status: measured, not taken.** The most it could save is what tier 1 does without the
+  7 masks at all, their making included. Over the corpus (8.82 MB):
+
+  | `.rr` tier 1 | Instructions | Memory | CPU | Metal GPU |
+  |---|---|---|---|---|
+  | With the 7 masks | 5471 | 482 | 57.0 ms | 41.1 ms |
+  | Without them | 5370 | 437 | 55.6 ms | 41.9 ms |
+
+  Neither executor is faster without them (load 110 to 127, best of 9 and of 5): a mask word
+  stored a block is not where the time goes. What they cost is room, 56 of the 128 bytes
+  tier 1 writes a block. Written as positions they would also cost tier 2 a merge at every
+  token, or a lookup at each mark's test, more than the stores. The test is
+  `rerail_rr_parser`'s `token_local_tests::rr_sparse_marks_bound`. Still open: the room, if
+  a batch's outputs press on the memory budget.
 
 ### 1.8 The fast carried operations
 
@@ -285,7 +301,7 @@ Each transformation is tested three ways:
 | 2 | Values remade in each pass, never stored: constants, `within` (positions measured, not taken) | §1.10 |
 | 3 | Delayed masks not held across the loop. Done (§7) | §1.4 |
 | 4 | The fallback's totals folded into one word (done: one flag) | §1.5 |
-| 5 | Sparse outputs as positions | §1.6, §1.7 |
+| 5 | Sparse outputs as positions (measured, not taken) | §1.6, §1.7 |
 | 6 | Local values minimized from their truth tables | §1.9 |
 | 7 | Cuts where few values cross | §1.11 |
 | 8 | Token-level checks to tier 2, by the cost model | §1.15 |
