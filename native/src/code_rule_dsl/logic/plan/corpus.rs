@@ -1579,9 +1579,7 @@ fn run_observed(
                     Ok(path.to_owned())
                 }).collect::<Result<Vec<_>>>()?;
                 let label = match language.as_deref() {
-                    Some("python") => "python",
-                    Some("rust") => "rust",
-                    Some("rr") => "rr",
+                    Some(name) if let Some(label) = crate::code_rule_dsl::language::label_named(name) => label,
                     Some(other) => return Err(Error::Plan(format!("explicit input batch: unsupported corpus language {other:?}"))),
                     None if files.iter().filter(|p| p.ends_with(".rs")).count() > files.len() / 2 => "rust",
                     None => "python",
@@ -5448,35 +5446,38 @@ impl crate::code_rule_dsl::facts::vtab::Source for Rows {
 
 /// A corpus's files by language: Python's, Rust's and `.rr` rule files.
 struct CorpusFiles {
-    python: Vec<String>,
-    rust: Vec<String>,
-    rr: Vec<String>,
+    /// Each dialect's files, by its label (the language registry's).
+    by_label: BTreeMap<&'static str, Vec<String>>,
     /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`front::Program::text_globs`).
     text: Vec<String>,
 }
 
 impl CorpusFiles {
     /// The run's documents: the language's files, then the text ones, in path order.
-    fn of(self, label: &str) -> Vec<String> {
-        let mut files = match label {
-            "rust" => self.rust,
-            "rr" => self.rr,
-            _ => self.python,
-        };
+    fn of(mut self, label: &str) -> Vec<String> {
+        let mut files = self.by_label.remove(label).unwrap_or_default();
         files.extend(self.text);
         files.sort();
         files
     }
+
+    /// How many files of `label` there are.
+    fn count(&self, label: &str) -> usize {
+        self.by_label.get(label).map_or(0, Vec::len)
+    }
+
+    /// How many files of any grammar there are.
+    fn parsed(&self) -> usize {
+        self.by_label.values().map(Vec::len).sum()
+    }
 }
 
-/// The language a corpus run reads: the one its program names (`.language python`, `rust` or `rr`), else Rust or
-/// Python by `Typing::rust`, or by whichever has more files.
+/// The language a corpus run reads: the one its program names (`.language`: any dialect of the registry this build
+/// parses), else Rust or Python by `Typing::rust`, or by whichever has more files.
 fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles) -> &'static str {
     match language {
-        Some("python") => "python",
-        Some("rust") => "rust",
-        Some("rr") => "rr",
-        _ if typing.rust.unwrap_or(found.rust.len() > found.python.len()) => "rust",
+        Some(name) if let Some(label) = crate::code_rule_dsl::language::label_named(name) => label,
+        _ if typing.rust.unwrap_or(found.count("rust") > found.count("python")) => "rust",
         _ => "python",
     }
 }
@@ -5492,12 +5493,12 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::V
         return found;
     }
     let scopes = front::resolve_scopes(&prog.doc_scopes, options);
-    let before = found.python.len() + found.rust.len() + found.rr.len();
-    for files in [&mut found.python, &mut found.rust, &mut found.rr, &mut found.text] {
+    let before = found.parsed();
+    for files in found.by_label.values_mut().chain([&mut found.text]) {
         files.retain(|p| front::in_doc_scopes(&scopes, p));
     }
     crate::code_rule_dsl::logic::profile::decision("documents", || {
-        format!("{} of {before} files, by the policies' `.scope`; {} read as text (`.scope text`)", found.python.len() + found.rust.len() + found.rr.len(), found.text.len())
+        format!("{} of {before} files, by the policies' `.scope`; {} read as text (`.scope text`)", found.parsed(), found.text.len())
     });
     found
 }
@@ -5505,12 +5506,10 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::V
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
 /// (`.rr`), skipping hidden directories and `target`.
 fn corpus_files(root: &Path) -> Result<CorpusFiles> {
-    let (mut python, mut rust, mut rr, mut text) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
     let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
-        Some("python") => python.push(relative),
-        Some("rust") => rust.push(relative),
-        Some("rr") => rr.push(relative),
-        _ => text.push(relative),
+        Some(label) => by_label.entry(label).or_default().push(relative),
+        None => text.push(relative),
     };
     // In a Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
     // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
@@ -5557,19 +5556,17 @@ fn corpus_files(root: &Path) -> Result<CorpusFiles> {
         }
     }
     }
-    python.sort();
-    rust.sort();
-    rr.sort();
+    by_label.values_mut().for_each(|files| files.sort());
     text.sort();
     // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
     if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
         // Documents read as text too: a rule that reads every text document (a check over the repository's docs)
         // would otherwise read all of them in every sample.
-        for files in [&mut python, &mut rust, &mut rr, &mut text] {
+        for files in by_label.values_mut().chain([&mut text]) {
             *files = files.iter().step_by(n).cloned().collect();
         }
     }
-    Ok(CorpusFiles { python, rust, rr, text })
+    Ok(CorpusFiles { by_label, text })
 }
 
 /// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to
@@ -5940,7 +5937,7 @@ mod tests {
         let files = super::corpus_files(&root).unwrap();
         let listed = super::thread_usage();
         let mut digests = 0;
-        for f in &files.python {
+        for f in files.by_label.get("python").into_iter().flatten() {
             digests += super::observe(|o| o.digest(&root.join(f))).map_or(0, |_| 1);
         }
         let digested = super::thread_usage();
@@ -5953,8 +5950,8 @@ mod tests {
         println!(
             "phase 0 over {}: {} python, {} other files; {digests} digests; files {:.2} s, digests {:.2} s, flush {:.2} s CPU; peak RSS {:.0} MB\n  {did}",
             root.display(),
-            files.python.len(),
-            files.rust.len() + files.rr.len() + files.text.len(),
+            files.count("python"),
+            files.parsed() - files.count("python") + files.text.len(),
             cpu(start, listed),
             cpu(listed, digested),
             cpu(digested, flushed),
