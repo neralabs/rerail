@@ -2042,7 +2042,11 @@ impl InRel {
     /// (`ordered`) and by today's per-column chains, timed on keys of its own rows (every `stride`th), with the
     /// counts checked equal; and its dedup test by the set and by the order holding every column. A line, and the
     /// orders' bytes; `None` for a view.
-    pub fn index_spike(&self, name: &str, shapes: &[Vec<usize>], counts: &[u64]) -> Option<(String, usize, f64, f64, f64)> {
+    /// The spike's mixed shape's bytes and probe-weighted ns, summed over the relations measured since the last take.
+    pub fn index_spike_mixed() -> (usize, f64) {
+        MIXED.with(|m| std::mem::take(&mut *m.borrow_mut()))
+    }
+    pub fn index_spike(&self, name: &str, shapes: &[Vec<usize>], counts: &[u64]) -> Option<(String, usize, usize, usize, f64, f64, f64)> {
         if self.view.is_some() || self.k == 0 || self.n == 0 {
             return None;
         }
@@ -2051,9 +2055,15 @@ impl InRel {
         let cover = ordered::cover(shapes, k);
         let orders: Vec<ordered::Ordered> = cover.iter().map(|o| ordered::Ordered::build(rows, k, n, |id| is_dead(&self.dead, id), o.clone(), false)).collect();
         let build_ms = t.elapsed().as_secs_f64() * 1e3;
+        let load: f64 = std::env::var("RERAIL_PLACED_LOAD").ok().and_then(|v| v.parse().ok()).unwrap_or(0.75);
         let t = Instant::now();
-        let hashed: Vec<ordered::Ordered> = cover.iter().map(|o| ordered::Ordered::build(rows, k, n, |id| is_dead(&self.dead, id), o.clone(), true)).collect();
+        let mut placed_sets: Vec<Vec<usize>> = shapes.to_vec();
+        placed_sets.push((0..k).collect());
+        let placed: Vec<ordered::Placed> = placed_sets.iter().map(|c| ordered::Placed::build(rows, k, n, |id| is_dead(&self.dead, id), c.clone(), load)).collect();
         let hashed_ms = t.elapsed().as_secs_f64() * 1e3;
+        let placed_bytes: usize = placed.iter().map(ordered::Placed::bytes).sum();
+        // Placed for dedup only, the orders for the probes.
+        let dedup_placed = placed.last().map_or(0, ordered::Placed::bytes);
         let bytes: usize = orders.iter().map(ordered::Ordered::bytes).sum();
         let now = self.set.capacity() * 5 + self.chains.iter().map(|ix| ix.next.capacity() * 4 + ix.table.capacity() * (std::mem::size_of::<Post>() + 1)).sum::<usize>();
         let live: Vec<u32> = (0..n as u32).filter(|&id| !is_dead(&self.dead, id)).collect();
@@ -2063,6 +2073,7 @@ impl InRel {
         let (mut w_now, mut w_new, mut w_hash) = (0.0f64, 0.0f64, 0.0f64);
         let mut checks = shapes.to_vec();
         checks.push((0..k).collect());
+        let mut measured: Vec<(Vec<usize>, bool, f64, f64, u64)> = Vec::new();
         for (si, shape) in checks.iter().enumerate() {
             let dedup = si == shapes.len();
             let Some((oi, len)) = orders.iter().enumerate().find_map(|(i, o)| o.prefix(shape).map(|l| (i, l))) else { continue };
@@ -2084,7 +2095,19 @@ impl InRel {
                 (ns, got)
             };
             let (new_ns, got_new) = time(o);
-            let (hash_ns, got_hash) = time(&hashed[oi]);
+            let pl = &placed[si];
+            let (mut hash_ns, mut got_hash) = (f64::MAX, 0usize);
+            for _ in 0..3 {
+                let t = Instant::now();
+                got_hash = 0;
+                let mut key = vec![0i64; pl.cols.len()];
+                for &id in &sample {
+                    let r = self.row(id as usize);
+                    for (j, &c) in pl.cols.iter().enumerate() { key[j] = r[c]; }
+                    pl.each(rows, k, &key, |x| { std::hint::black_box(x); got_hash += 1 });
+                }
+                hash_ns = hash_ns.min(t.elapsed().as_nanos() as f64 / sample.len() as f64);
+            }
             // Today's: the dedup set for the whole row; else a chain on exactly the key's columns, or the shortest
             // single-column chain, walked and filtered on the key.
             let (mut now_ns, mut got_now) = (f64::MAX, 0usize);
@@ -2111,14 +2134,42 @@ impl InRel {
             }
             now_ns = now_ns.min(t.elapsed().as_nanos() as f64 / sample.len() as f64);
             }
+            measured.push((shape.clone(), dedup, new_ns, hash_ns, counts.get(si).copied().unwrap_or(0)));
             let same = got_now == got_new && got_now == got_hash;
             let w = counts.get(si).copied().unwrap_or(0) as f64;
             (w_now, w_new, w_hash) = (w_now + w * now_ns, w_new + w * new_ns, w_hash + w * hash_ns);
-            parts.push(format!("{}{shape:?}: {now_ns:.0} ns now, {new_ns:.0} fenced, {hash_ns:.0} hashed{}", if dedup { "dedup " } else { "" }, if same { String::new() } else { format!(" (COUNTS DIFFER: {got_now} vs {got_new} vs {got_hash})") }));
+            parts.push(format!("{}{shape:?}: {now_ns:.0} ns now, {new_ns:.0} fenced, {hash_ns:.0} placed{}", if dedup { "dedup " } else { "" }, if same { String::new() } else { format!(" (COUNTS DIFFER: {got_now} vs {got_new} vs {got_hash})") }));
         }
+        // The mixed shape: the whole row placed (dedup); each probed set probed at least once a live row a step
+        // whose placed index is faster than its order placed too; the rest covered by orders.
+        let live_n = live.len().max(1);
+        let mut mixed_bytes = dedup_placed;
+        let mut mixed_ns = 0.0f64;
+        let mut rest: Vec<Vec<usize>> = Vec::new();
+        for (shape, dedup, fenced, placed_ns, count) in &measured {
+            if *dedup {
+                continue;
+            }
+            let hot = *count as usize >= live_n && placed_ns < fenced;
+            if hot {
+                mixed_bytes += placed.iter().find(|p| p.cols == *shape).map_or(0, ordered::Placed::bytes);
+                mixed_ns += *count as f64 * placed_ns;
+            } else {
+                rest.push(shape.clone());
+                mixed_ns += *count as f64 * fenced;
+            }
+        }
+        if !rest.is_empty() {
+            let mut chains = ordered::cover(&rest, k);
+            // The whole row is placed already: an order for it alone is not needed.
+            chains.retain(|o| rest.iter().any(|s| o[..s.len()].iter().all(|c| s.contains(c))));
+            mixed_bytes += chains.len() * live_n * 4 + chains.len() * (live_n / ordered::FENCE + 1) * 8;
+        }
+        MIXED.with(|m| { let mut m = m.borrow_mut(); m.0 += mixed_bytes; m.1 += mixed_ns; });
+        parts.push(format!("mixed {:.1} B/row", mixed_bytes as f64 / live_n as f64));
         Some((
             format!(
-                "  SPIKE {name}: {} rows, k {k}; {} orders {:?}, {:.2} MB ({:.1} B/row) vs sets and chains {:.2} MB ({:.1} B/row); built in {build_ms:.1} ms fenced, {hashed_ms:.1} ms hashed; {}",
+                "  SPIKE {name}: {} rows, k {k}; {} orders {:?}, {:.2} MB ({:.1} B/row) vs sets and chains {:.2} MB ({:.1} B/row); built in {build_ms:.1} ms fenced, {hashed_ms:.1} ms placed; placed on every set {:.1} B/row, on the whole row {:.1} B/row; {}",
                 live.len(),
                 orders.len(),
                 orders.iter().map(|o| o.order.clone()).collect::<Vec<_>>(),
@@ -2126,9 +2177,13 @@ impl InRel {
                 bytes as f64 / live.len().max(1) as f64,
                 now as f64 / 1e6,
                 now as f64 / live.len().max(1) as f64,
+                placed_bytes as f64 / live.len().max(1) as f64,
+                dedup_placed as f64 / live.len().max(1) as f64,
                 parts.join("; ")
             ),
             bytes,
+            placed_bytes,
+            dedup_placed,
             w_now,
             w_new,
             w_hash,
@@ -2165,6 +2220,11 @@ impl InRel {
 pub fn prefetch_tables(conn: &Connection, wants: &std::collections::BTreeSet<(String, Vec<usize>)>) -> Result<(usize, usize)> {
     let at = scope(conn);
     table::prefetch(wants, |name| DERIVED.lock().unwrap().get(&(at, name.to_owned())).cloned()).map_err(err)
+}
+
+thread_local! {
+    /// The index-cost spike's mixed shape totals (`InRel::index_spike`).
+    static MIXED: std::cell::RefCell<(usize, f64)> = const { std::cell::RefCell::new((0, 0.0)) };
 }
 
 /// Tests: this thread's count steps build their tables at their first probe.

@@ -143,6 +143,83 @@ impl Ordered {
     }
 }
 
+/// A key's hash: the key columns' values mixed in turn.
+#[inline]
+pub(super) fn key_hash(vals: impl Iterator<Item = i64>) -> u64 {
+    vals.fold(0x243f_6a88_85a3_08d3u64, |h, v| mix((h.rotate_left(23) ^ v as u64) as i64))
+}
+
+/// mldb's frozen `PathIndex` (the IdHash idea, `plugins/tabular/tabular_dataset.cc`): the live rows sorted by the hash
+/// of their key columns and each placed at the slot its hash interpolates to (`hash * m / 2^64`), or the first free
+/// slot after the one before it. Slot order is hash order, so a key's rows are in one run that starts at or after its
+/// home slot and ends before the next empty slot. A slot is 32 bits: the row id + 1, and above it as many bits of the
+/// hash as fit (a fingerprint that skips most rows without reading them).
+pub(super) struct Placed {
+    pub(super) cols: Vec<usize>,
+    slots: Vec<u32>,
+    m: usize,
+    id_bits: u32,
+}
+
+impl Placed {
+    pub(super) fn build(rows: &[i64], k: usize, n: usize, dead: impl Fn(u32) -> bool, cols: Vec<usize>, load: f64) -> Placed {
+        let row = |id: u32| &rows[id as usize * k..][..k];
+        let mut hs: Vec<(u64, u32)> = (0..n as u32).filter(|&i| !dead(i)).map(|id| (key_hash(cols.iter().map(|&c| row(id)[c])), id)).collect();
+        hs.sort_unstable();
+        let m = ((hs.len() as f64 / load).ceil() as usize).max(1);
+        let id_bits = 32 - (n as u32 + 1).leading_zeros();
+        let mut slots = vec![0u32; m + 1];
+        let mut next = 0usize;
+        for &(h, id) in &hs {
+            let at = (((h as u128) * (m as u128)) >> 64) as usize;
+            let at = at.max(next);
+            if at + 1 >= slots.len() {
+                slots.resize(at + 2, 0);
+            }
+            slots[at] = Self::enc(id, h, id_bits);
+            next = at + 1;
+        }
+        slots.shrink_to_fit();
+        Placed { cols, slots, m, id_bits }
+    }
+
+    #[inline]
+    fn fp(h: u64, id_bits: u32) -> u32 {
+        if id_bits >= 32 { 0 } else { (h as u32) >> id_bits }
+    }
+
+    #[inline]
+    fn enc(id: u32, h: u64, id_bits: u32) -> u32 {
+        if id_bits >= 32 { id + 1 } else { (Self::fp(h, id_bits) << id_bits) | (id + 1) }
+    }
+
+    /// Calls `f` on each live row id whose key columns hold `key` (in `cols` order).
+    #[inline]
+    pub(super) fn each(&self, rows: &[i64], k: usize, key: &[i64], mut f: impl FnMut(u32)) {
+        let h = key_hash(key.iter().copied());
+        let (ib, fp) = (self.id_bits, Self::fp(h, self.id_bits));
+        let mask = if ib >= 32 { u32::MAX } else { (1u32 << ib) - 1 };
+        let mut at = (((h as u128) * (self.m as u128)) >> 64) as usize;
+        while let Some(&s) = self.slots.get(at) {
+            if s == 0 {
+                break;
+            }
+            if ib >= 32 || s >> ib == fp {
+                let id = (s & mask) - 1;
+                let r = &rows[id as usize * k..][..k];
+                if self.cols.iter().zip(key).all(|(&c, v)| r[c] == *v) {
+                    f(id);
+                }
+            }
+            at += 1;
+        }
+    }
+
+    pub(super) fn bytes(&self) -> usize {
+        self.slots.capacity() * 4
+    }
+}
+
 /// Column orders that cover `sets` (key-column sets, each sorted) and the whole row of `k` columns: each set is a
 /// prefix of one order, with as few orders as can be (a minimum chain cover of the sets by inclusion: a maximum
 /// matching of each set to a larger one holding it, Dilworth). Each order is its chain's sets' columns in turn, then
@@ -221,6 +298,26 @@ mod tests {
             }
             assert_eq!(ix.range(&rows, k, &[3, 3, 3]).len(), 1);
             assert_eq!(ix.range(&rows, k, &[3, 3, 4]).len(), 0);
+        }
+    }
+
+    #[test]
+    fn a_placed_index_finds_every_row_of_a_key_and_no_other() {
+        let k = 3;
+        let rows: Vec<i64> = (0..1000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
+        for load in [0.5, 0.75, 0.95] {
+            let ix = Placed::build(&rows, k, 1000, |id| id == 5, vec![0, 1], load);
+            for (key, want) in [(vec![3i64, 4], 14usize), (vec![5, 5], 14), (vec![11, 0], 0)] {
+                let mut got = 0;
+                ix.each(&rows, k, &key, |id| { assert_eq!(&rows[id as usize * k..][..2], &key[..]); got += 1 });
+                assert_eq!(got, want, "{key:?} load {load}");
+            }
+            let full = Placed::build(&rows, k, 1000, |id| id == 5, vec![0, 1, 2], load);
+            let mut got = 0;
+            full.each(&rows, k, &[5, 5, 5], |_| got += 1);
+            assert_eq!(got, 0);
+            full.each(&rows, k, &[6, 6, 6], |_| got += 1);
+            assert_eq!(got, 1);
         }
     }
 }
