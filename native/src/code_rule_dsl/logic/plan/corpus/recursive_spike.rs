@@ -187,8 +187,10 @@ struct Eval<'c> {
     cat: &'c dyn Fn(i64, i64) -> i64,
     /// Rows emitted by firings.
     emitted: std::cell::Cell<u64>,
-    /// `RERAIL_SPIKE_RECURSIVE_PROFILE`: CPU seconds and firings by rule.
-    profile: Option<std::cell::RefCell<Vec<(f64, u64)>>>,
+    /// `RERAIL_SPIKE_RECURSIVE_PROFILE`: CPU seconds, firings, rows probed and premises visibility asked, by (rule, plan).
+    profile: Option<std::cell::RefCell<FxHashMap<(usize, usize), (f64, u64, u64, f64)>>>,
+    /// Rows probed (index hits or scanned) by firings.
+    probes: std::cell::Cell<u64>,
 }
 
 fn compare(op: Op, a: i64, b: i64) -> bool {
@@ -277,13 +279,20 @@ impl Eval<'_> {
         let head_row = if let Seed::Head(row) = seed { Some(row.to_vec()) } else { None };
         let steps = &rule.plans[plan];
         let mut emitted = 0u64;
-        let c0 = if self.profile.is_some() { cpu() } else { 0.0 };
+        let (c0, p0) = if self.profile.is_some() { (cpu(), self.probes.get()) } else { (0.0, 0) };
         self.go(r, steps, 0, &mut slots, &mut prem, vis, head_row.as_deref(), emit, &mut emitted);
         self.emitted.set(self.emitted.get() + emitted);
         if let Some(p) = &self.profile {
+            let t = cpu() - c0;
+            if t > 2.0 {
+                eprintln!("recursive spike:     slow firing {t:.2} s ({emitted} emitted, plan {plan}) of {}: {:?}", rule.text, steps);
+            }
             let mut p = p.borrow_mut();
-            p[r].0 += cpu() - c0;
-            p[r].1 += 1;
+            let e = p.entry((r, plan)).or_default();
+            e.0 += t;
+            e.1 += 1;
+            e.2 += self.probes.get() - p0;
+            e.3 += emitted as f64;
         }
     }
 
@@ -323,6 +332,7 @@ impl Eval<'_> {
             Step::Neg { lit, rel, mask, key, eqs } => {
                 let store = &self.stores[*rel];
                 let blocked = |id: u32| {
+                    self.probes.set(self.probes.get() + 1);
                     let row = store.row(id);
                     eqs.iter().all(|(a, b)| row[*a] == row[*b]) && vis(*lit, *rel, id)
                 };
@@ -340,6 +350,7 @@ impl Eval<'_> {
             Step::Pos { lit, rel, mask, key, binds, eqs } => {
                 let store = &self.stores[*rel];
                 let mut each = |id: u32, slots: &mut [i64], prem: &mut Vec<(usize, u32)>| -> bool {
+                    self.probes.set(self.probes.get() + 1);
                     if !vis(*lit, *rel, id) {
                         return true;
                     }
@@ -514,13 +525,17 @@ fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>) -> Result
                 steps.push(Step::Assign { slot, from });
                 continue;
             }
+            // A column bound to a slot (a join key) is worth more than one bound to a constant (`pv($o, 221, $k)`
+            // with `$o` free is most of `pv`); ties go to the earlier literal.
             let best = left
                 .iter()
                 .enumerate()
                 .filter(|(_, i)| matches!(&lits[**i], Lit::Atom { neg: false, .. }))
-                .max_by_key(|(_, i)| {
+                .max_by_key(|(p, i)| {
                     let Lit::Atom { args, .. } = &lits[**i] else { unreachable!() };
-                    args.iter().filter(|a| matches!(a, Arg::Const(_)) || matches!(a, Arg::Slot(s) if bound.contains(s))).count()
+                    let slots = args.iter().filter(|a| matches!(a, Arg::Slot(s) if bound.contains(s))).count();
+                    let consts = args.iter().filter(|a| matches!(a, Arg::Const(_))).count();
+                    (slots, consts, std::cmp::Reverse(*p))
                 })
                 .map(|(p, _)| p)
                 .ok_or_else(|| format!("no literal can be placed in {}", rule))?;
@@ -826,6 +841,9 @@ impl Component<'_> {
                     delta.push((rel, id));
                 }
             }
+            if self.ev.profile.is_some() {
+                eprintln!("recursive spike:     derive round {round}: {} new rows, {} emitted so far", delta.len(), self.ev.emitted());
+            }
             if delta.is_empty() {
                 break;
             }
@@ -1056,7 +1074,7 @@ impl Component<'_> {
                 let vis = |j: usize, r2: usize, i2: u32| {
                     let s = st_ref[r2].get(i2 as usize).copied().unwrap_or(0);
                     let here = if is_scc[r2] { s & P != 0 } else { stores[r2].io[i2 as usize] & OLD != 0 };
-                    let processed = s & X != 0 && !(j > i && (r2, i2) == seed);
+                    let processed = s & X != 0 && !(j >= i && (r2, i2) == seed);
                     // A negation is blocked by a row present in the old rows, or by an inserted row processed.
                     if negs[j] { here || processed } else { here && !processed }
                 };
@@ -1145,7 +1163,7 @@ impl Component<'_> {
                     // A premise new this run (a row inserted, an input row new, or for a negation one gone): seen once
                     // processed, the seed itself only after its own literal.
                     let fresh = if is_scc[r2] { s & N != 0 } else if negs[j] { io & OLD != 0 && io & NEW == 0 } else { io & NEW != 0 && io & OLD == 0 };
-                    let allowed = !fresh || if (r2, i2) == seed { j > i } else { s & Y != 0 };
+                    let allowed = !fresh || if (r2, i2) == seed { j >= i } else { s & Y != 0 };
                     let here = if is_scc[r2] { s & P != 0 } else { io & NEW != 0 };
                     if negs[j] { here || !allowed } else { here && allowed }
                 };
@@ -1193,6 +1211,15 @@ impl Component<'_> {
                 let vis = |_: usize, r: usize, i: u32| if is_scc[r] { st_ref[r].get(i as usize).is_some_and(|s| s & P != 0) } else { stores[r].io[i as usize] & NEW != 0 };
                 let n = self.count_supports(rel, id, &lv, &vis);
                 if n == 0 || n != cnt[rel][id as usize] {
+                    if wrong_counts < 6 {
+                        eprintln!(
+                            "recursive spike:     levels count: {}{:?} level {} counted {} recounted {n}",
+                            self.ev.names[rel],
+                            self.ev.stores[rel].row(id),
+                            lv[rel][id as usize],
+                            cnt[rel][id as usize]
+                        );
+                    }
                     wrong_counts += 1;
                 }
             }
@@ -1488,7 +1515,7 @@ pub(in crate::code_rule_dsl) fn run(
         }
         let scc_ids: Vec<usize> = (0..names.len()).filter(|i| is_scc[*i]).collect();
         let want_rows: usize = want.iter().map(|w| w.len()).sum();
-        let mut c = Component { ev: Eval { stores, names: names.clone(), rules: compiled, cat, emitted: std::cell::Cell::new(0), profile: None }, scc: scc_ids, is_scc, reads: reads_of, want, old_p: Vec::new(), gone, came };
+        let mut c = Component { ev: Eval { stores, names: names.clone(), rules: compiled, cat, emitted: std::cell::Cell::new(0), profile: None, probes: std::cell::Cell::new(0) }, scc: scc_ids, is_scc, reads: reads_of, want, old_p: Vec::new(), gone, came };
         let _ = &c.ev.names;
         eprintln!(
             "recursive spike: component of {} relations ({}…), {} rules, {} inputs; rows {old_rows} old, {want_rows} after; inputs' rows {} gone, {} new{}",
@@ -1507,17 +1534,34 @@ pub(in crate::code_rule_dsl) fn run(
         // The old rows: derived over the old inputs (the engine's kept rows are not every algorithm's start, as some
         // of them are not closed under these rules), and how they differ from the engine's.
         if std::env::var_os("RERAIL_SPIKE_RECURSIVE_PROFILE").is_some() {
-            c.ev.profile = Some(std::cell::RefCell::new(vec![(0.0, 0); c.ev.rules.len()]));
+            c.ev.profile = Some(std::cell::RefCell::new(FxHashMap::default()));
         }
         // The rules that took most CPU since the last call, and none counted after.
         let show = |c: &Component, what: &str| {
             let Some(p) = &c.ev.profile else { return };
-            let mut by: Vec<(usize, (f64, u64))> = p.borrow().iter().copied().enumerate().collect();
+            let mut by: Vec<((usize, usize), (f64, u64, u64, f64))> = p.borrow().iter().map(|(k, v)| (*k, *v)).collect();
             by.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
-            for (r, (t, n)) in by.into_iter().take(4).filter(|(_, (t, _))| *t > 0.05) {
-                eprintln!("recursive spike:     {what}: {t:.2} s in {n} firings of {}", c.ev.rules[r].text);
+            let total: f64 = by.iter().map(|x| x.1.0).sum();
+            eprintln!("recursive spike:     {what}: {total:.2} s in firings");
+            for ((r, plan), (t, n, probes, em)) in by.into_iter().take(6).filter(|(_, (t, ..))| *t > 0.05) {
+                let rule = &c.ev.rules[r];
+                let order: Vec<String> = rule.plans[plan]
+                    .iter()
+                    .map(|s| match s {
+                        Step::Pos { rel, mask, .. } => format!("{}/{mask:b}", c.ev.names[*rel]),
+                        Step::Neg { rel, mask, .. } => format!("!{}/{mask:b}", c.ev.names[*rel]),
+                        Step::Cmp { .. } => "cmp".into(),
+                        Step::Assign { .. } => "=".into(),
+                    })
+                    .collect();
+                let seed = match plan { 0 => "none".to_string(), 1 => "head".into(), i => format!("lit {}", i - 2) };
+                eprintln!(
+                    "recursive spike:       {t:.2} s, {n} firings seeded {seed}, {probes} probes, {em} emitted: {} | {}",
+                    order.join(" "),
+                    rule.text
+                );
             }
-            p.borrow_mut().iter_mut().for_each(|x| *x = (0.0, 0));
+            p.borrow_mut().clear();
         };
         let (old_p, _) = c.derive(OLD);
         show(&c, "derive old");
