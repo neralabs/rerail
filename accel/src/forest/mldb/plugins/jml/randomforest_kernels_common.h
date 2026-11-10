@@ -1820,3 +1820,58 @@ fixupBucketsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
         }
     }
 }
+
+
+// Prediction (rerail's addition): a forest flattened into nodes, routing each row by its buckets as training did.
+
+// One node of a flattened forest. A child is a node's index when it is at least 0, and leaf -(child + 1) when it is
+// below 0.
+typedef struct PredictNode {
+    uint32_t feature;       // The feature's index (its bucket column)
+    uint32_t splitBucket;   // The bucket the trainer split at
+    uint32_t ordinal;       // 1: true is the buckets below splitBucket; 0: true is splitBucket itself
+    int32_t childTrue;
+    int32_t childFalse;
+} PredictNode;
+
+// [row]: the forest's prediction for row r, the trees' leaf distributions (two labels) weighted. Each walk is at
+// most maxDepth steps; a walk that has not reached a leaf by then gives NaN.
+UKL_FUNCTION(v1,void,
+predictForestImpl) (uint32_t numRows,
+                    uint32_t numTrees,
+                    uint32_t maxDepth,
+                    ROBUFFER(uint32_t) bucketData,
+                    ROBUFFER(uint32_t) bucketDataOffsets,
+                    ROBUFFER(uint32_t) bucketEntryBits,
+                    ROBUFFER(PredictNode) nodes,
+                    ROBUFFER(int32_t) treeRoots,
+                    ROBUFFER(float) treeWeights,
+                    ROBUFFER(float) leafPreds,
+                    RWBUFFER(float) predictionsOut,
+                    uint32_t r)
+{
+    if (r >= numRows)
+        return;
+
+    float p0 = 0.0f, p1 = 0.0f;
+    for (uint32_t t = 0;  t < numTrees;  ++t) {
+        int32_t at = treeRoots[t];
+        for (uint32_t d = 0;  d < maxDepth && at >= 0;  ++d) {
+            PredictNode node = nodes[at];
+            uint16_t bucket = extract16BitRange32(bucketData + bucketDataOffsets[node.feature],
+                                                  bucketEntryBits[node.feature], r);
+            bool isTrue = node.ordinal ? bucket < node.splitBucket : bucket == node.splitBucket;
+            at = isTrue ? node.childTrue : node.childFalse;
+        }
+        if (at >= 0) {
+            p0 = p1 = NAN;
+            break;
+        }
+        uint32_t leaf = (uint32_t)(-(at + 1));
+        float w = treeWeights[t];
+        p0 += w * leafPreds[2 * leaf];
+        p1 += w * leafPreds[2 * leaf + 1];
+    }
+    predictionsOut[2 * r] = p0;
+    predictionsOut[2 * r + 1] = p1;
+}

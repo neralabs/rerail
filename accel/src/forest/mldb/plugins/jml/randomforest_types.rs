@@ -772,7 +772,12 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
     let hash = f.info.ok_or("get_node: feature without a column")?;
     let column = fs.column_info.get(&hash).ok_or("get_node: feature's column not in the feature space")?;
     let feature = fs.get_feature(hash);
-    let split_val = if f.ordinal {
+    let split_val = if f.ordinal && best_split as u32 == column.bucket_descriptions.numeric.offset && best_split > 0 {
+        // The nulls (bucket 0) on the left, every number on the right: upstream's `getSplit` throws here (there is
+        // no split point below the first numeric bucket), failing the training. As a value, -inf: every number is
+        // false and a null is missing, which goes left.
+        f32::NEG_INFINITY
+    } else if f.ordinal {
         match column.bucket_descriptions.get_split(best_split as u32)? {
             c @ (CellValue::Integer(_) | CellValue::Float(_)) => c.to_double() as f32,
             _ => best_split as f32,
@@ -781,7 +786,10 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
         best_split as f32
     };
     let split = Split::new(feature, split_val, if f.ordinal { Op::Less } else { Op::Equal })?;
-    let missing = get_leaf(tree, &W::default());
+    // A missing value is a null, which training put in bucket 0: on the left of an ordinal split (whose bucket is
+    // at least 1), and on the left of a categorical one only when that is bucket 0. Upstream gave the missing
+    // branch an empty leaf (a 0/0 prediction).
+    let missing = if f.ordinal || best_split == 0 { left } else { right };
     let node = tree.new_node();
     {
         let n = tree.node_mut(node).unwrap();
@@ -790,6 +798,7 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
         n.child_false = right;
         n.child_missing = missing;
         n.z = best_score;
+        n.split_bucket = best_split;
     }
     fill_in_base(tree, node, &(w_left + w_right));
     Ok(node)

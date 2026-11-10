@@ -50,41 +50,7 @@ Committee(const std::shared_ptr<const Feature_Space> & feature_space,
 {
 }
 
-float
-Committee::
-predict(int label, const Feature_Set & features,
-        PredictionContext * context) const
-{
-    if (label >= bias.size())
-        throw Exception("Committee::predict(): invalid label");
-
-    float result = bias[label];
-
-    for (unsigned i = 0;  i < classifiers.size();  ++i) {
-        if (weights[i] == 0.0) continue;
-        result += weights[i] * classifiers[i]->predict(label, features, context);
-    }
-
-    return result;
-}
-
-Label_Dist
-Committee::
-predict(const Feature_Set & features,
-        PredictionContext * context) const
-{
-    Label_Dist result = bias;
-
-    for (unsigned i = 0;  i < classifiers.size();  ++i) {
-        if (weights[i] == 0.0) continue;
-
-        Label_Dist sub_result = classifiers[i]->predict(features, context);
-
-        result += weights[i] * sub_result;
-    }
-
-    return result;
-}
+// Committee::predict (one label and all): in committee.rs.
 
 bool
 Committee::

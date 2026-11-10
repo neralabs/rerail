@@ -305,3 +305,26 @@ fixupBucketsKernel(__constant const TreeTrainingInfo & treeTrainingInfo,
     fixupBucketsImpl(&treeTrainingInfo, &treeDepthInfo, buckets, wAll, partitionInfo, smallSideIndexes,
                      get_global_id(1), get_global_id(0), get_global_size(0));
 }
+
+struct PredictForestArgs {
+    uint32_t numRows;
+    uint32_t numTrees;
+    uint32_t maxDepth;
+};
+
+// [row]
+__kernel void
+predictForestKernel(__constant const PredictForestArgs & args,
+                    __global const uint32_t * bucketData,
+                    __global const uint32_t * bucketDataOffsets,
+                    __global const uint32_t * bucketEntryBits,
+                    __global const PredictNode * nodes,
+                    __global const int32_t * treeRoots,
+                    __global const float * treeWeights,
+                    __global const float * leafPreds,
+                    __global float * predictionsOut,
+                    uint32_t id [[thread_position_in_grid]])
+{
+    predictForestImpl(args.numRows, args.numTrees, args.maxDepth, bucketData, bucketDataOffsets, bucketEntryBits,
+                      nodes, treeRoots, treeWeights, leafPreds, predictionsOut, id);
+}

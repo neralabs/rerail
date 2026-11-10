@@ -111,6 +111,23 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
             r.set_grid_expression("[numPartitionsAtOnce,ceilDiv(numActiveBuckets,gridBlockSize)]", "[1,gridBlockSize]");
             r.set_compute_function("randomforest_kernels", "clearBucketsKernel");
         }
+        "predictForest" => {
+            r.add_dimension("r", "numRows");
+            r.add_parameter("numRows", "r", "u32")
+                .add_parameter("numTrees", "r", "u32")
+                .add_parameter("maxDepth", "r", "u32")
+                .add_parameter("bucketData", "r", "u32[bucketDataLength]")
+                .add_parameter("bucketDataOffsets", "r", "u32[nf + 1]")
+                .add_parameter("bucketEntryBits", "r", "u32[nf]")
+                .add_parameter("nodes", "r", "PredictNode[numNodes]")
+                .add_parameter("treeRoots", "r", "i32[numTrees]")
+                .add_parameter("treeWeights", "r", "f32[numTrees]")
+                .add_parameter("leafPreds", "r", "f32[numLeafPreds]")
+                .add_parameter("predictionsOut", "w", "f32[numRows * 2]");
+            r.add_tuneable("threadsPerBlock", MAX_WORK_GROUP_SIZE);
+            r.set_grid_expression("[ceilDiv(numRows,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", "predictForestKernel");
+        }
         "updatePartitionNumbers" => {
             r.add_dimension("r", "numRows");
             r.add_parameter("treeTrainingInfo", "r", "TreeTrainingInfo[1]")
@@ -179,7 +196,7 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
 }
 
 /// The registered grid kernels, in the order a tree's training runs them.
-pub const GRID_KERNELS: [&str; 9] = ["decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets"];
+pub const GRID_KERNELS: [&str; 10] = ["decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest"];
 
 /// Grid kernel `name`, specialized against its Metal function (once).
 pub fn kernel(name: &str) -> Result<&'static GridComputeKernelSpecialization, String> {

@@ -275,37 +275,8 @@ optimized_predict_impl(int label,
     return results;
 }
 
-template<class GetFeatures, class Results>
-void
-Decision_Tree::
-predict_recursive_impl(const GetFeatures & get_features,
-                       Results & results,
-                       const Tree::Ptr & ptr,
-                       double weight) const
-{
-    if (!ptr) return;
-
-    if (!ptr.node()) {
-        ExcAssert(ptr.leaf());
-        results(ptr.leaf()->pred, weight);
-        return;
-    }
-
-    const Tree::Node & node = *ptr.node();
-    
-    Split::Weights weights = get_features(node.split);
-    
-    /* Go down all of the edges that we need to for this example. */
-    if (weights[true] > 0.0)
-        predict_recursive_impl(get_features, results, node.child_true,
-                               weights[true]);
-    if (weights[false] > 0.0)
-        predict_recursive_impl(get_features, results, node.child_false,
-                               weights[false]);
-    if (weights[MISSING] > 0.0)
-        predict_recursive_impl(get_features, results, node.child_missing,
-                               weights[MISSING]);
-}
+// Decision_Tree::predict_recursive_impl: in decision_tree.rs (the predict entry points above call it; their
+// Rust forms are DecisionTree::predict_values and predict_buckets).
 
 std::string
 printLabels(const distribution<float> & dist)
