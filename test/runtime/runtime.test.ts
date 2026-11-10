@@ -901,6 +901,7 @@ describe("A runtime's closed sessions", () => {
       for (let index = 0; index <= 16; index += 1) {
         const session = { host: "claude-code" as const, sessionId: `s${index}`, cwd: root };
         await runtime.ingest({ kind: "session-start", eventId: `s${index}:start`, session });
+        await runtime.codeRulesOpened(session.sessionId);
         await runtime.ingest({ kind: "session-end", eventId: `s${index}:end`, sessionId: session.sessionId, session });
       }
       expect(() => runtime.recordSteer("s1", "late")).not.toThrow();
