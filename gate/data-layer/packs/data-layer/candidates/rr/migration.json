@@ -3451,9 +3451,60 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-classvar-check.json",
       "legacySha256": "9056ad18066c1d44a2d9c8d6ae676f25a4aada9c2130cd698976d64c48857eda",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/classvar-check.rr",
-      "ruleSha256": "acbbfe4655cc9892d15b404465a905ce0ddf94fe713a13a73600cc72b31485c0"
+      "ruleSha256": "acbbfe4655cc9892d15b404465a905ce0ddf94fe713a13a73600cc72b31485c0",
+      "evidence": {
+        "assertions": 8,
+        "positives": 5,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "acbbfe4655cc9892d15b404465a905ce0ddf94fe713a13a73600cc72b31485c0",
+        "engineCommit": "ba106b5311f06fb8f77abec8c4009780d37ffbd9",
+        "corpusSha256": "27f6f7a184baa70c94ca96f8d9904b0c7424348be1412d6dd6a92aaca2a896fb",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "63278a96b660a897b54396e66b40ba3fff50035da44f9250b1907d307a50e66f",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-classvar-check-family-native-snapshot.json",
+            "sha256": "f01776bc68643c8a7c200273e7778442caae8527a241443b690dd209deef806a"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-classvar-check-family-native-workspace.json",
+            "sha256": "f76b41f0c228d622c9b6d8fede59bb32d7a0ccf6aae86fe52f7455f778b0ce0c"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-classvar-complete-finalfc6.json.gz",
+            "sha256": "d4792647d50a3567370ed84d319af64c89198a928160e8b74ca0613682fe103f"
+          }
+        ],
+        "supplemental": {
+          "casesPerAPI": {
+            "public": 82,
+            "components": 36,
+            "cli": 40,
+            "production": 17,
+            "original": 8,
+            "positive": 5,
+            "updates": 19,
+            "controls": 9
+          },
+          "nativeExecutions": 1198,
+          "check": "classvar_check"
+        },
+        "scope": "All owned original assertions, public APIs, plugin and AST facts, supplied facts, CLI, production, persistent updates and removal controls through both native interfaces."
+      },
+      "migrationProgress": {
+        "status": "full-contract-passed",
+        "verifiedNativeExecutions": 1198
+      }
     },
     {
       "check": "type_safety_patterns",
@@ -4643,7 +4694,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
-    "status": "Final fc6c1e0d9 merged and root CLI rebuilt. Dynamic loading retains 314 of 315 original assertions per API; ClassVar retains 63 contract cases and 8 dedicated original assertions per API. Both remain drafts.",
+    "status": "Final fc6c1e0d9 merged and root CLI rebuilt. ClassVar admitted after 1,198 native executions and all eight original assertions through both APIs. Dynamic loading remains a draft.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [

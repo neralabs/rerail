@@ -1,0 +1,543 @@
+{
+  "api": "snapshot-cli",
+  "assertionTranslations": [],
+  "calls": [],
+  "cases": {
+    "scripts/tests/test_lint_classvar_check.py::test_allows_canonical_helper": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_classvar_check.py::test_allows_other_origin_comparison": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[!=]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[==]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[is not]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[is]": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_classvar_check.py::test_flags_qualified_typing_forms": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ],
+    "scripts/tests/test_lint_classvar_check.py::test_invalid_python_is_tolerated": [
+      {
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ]
+  },
+  "casesWithoutNativeCalls": [],
+  "collected": [
+    "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[is]",
+    "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[==]",
+    "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[is not]",
+    "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[!=]",
+    "scripts/tests/test_lint_classvar_check.py::test_flags_qualified_typing_forms",
+    "scripts/tests/test_lint_classvar_check.py::test_allows_canonical_helper",
+    "scripts/tests/test_lint_classvar_check.py::test_allows_other_origin_comparison",
+    "scripts/tests/test_lint_classvar_check.py::test_invalid_python_is_tolerated"
+  ],
+  "configurationBindings": {
+    "classvar_check": {
+      "names": [
+        "__doc__",
+        "CLASSVAR_CHECK_EXTRACTOR"
+      ],
+      "nativeCall": 0
+    }
+  },
+  "detectorObservations": [
+    {
+      "actual": [
+        {
+          "code": "CLASSVAR001",
+          "column": 11,
+          "is_fallback": false,
+          "line": 3,
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "path": "module.py",
+          "severity": null,
+          "tag": null
+        }
+      ],
+      "actualSourceResult": [
+        {
+          "items": [
+            {
+              "kind": "path",
+              "value": "module.py"
+            },
+            3,
+            11,
+            "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+            "CLASSVAR001"
+          ],
+          "kind": "tuple"
+        }
+      ],
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "expected": [
+        {
+          "code": "CLASSVAR001",
+          "column": 11,
+          "is_fallback": false,
+          "line": 3,
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "path": "module.py",
+          "severity": null,
+          "tag": null
+        }
+      ],
+      "expectedSourceResult": [
+        {
+          "items": [
+            {
+              "kind": "path",
+              "value": "module.py"
+            },
+            3,
+            11,
+            "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+            "CLASSVAR001"
+          ],
+          "kind": "tuple"
+        }
+      ],
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "status": "passed",
+      "test": "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[is]"
+    },
+    {
+      "actual": [
+        {
+          "code": "CLASSVAR001",
+          "column": 11,
+          "is_fallback": false,
+          "line": 3,
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "path": "module.py",
+          "severity": null,
+          "tag": null
+        }
+      ],
+      "actualSourceResult": [
+        {
+          "items": [
+            {
+              "kind": "path",
+              "value": "module.py"
+            },
+            3,
+            11,
+            "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+            "CLASSVAR001"
+          ],
+          "kind": "tuple"
+        }
+      ],
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "expected": [
+        {
+          "code": "CLASSVAR001",
+          "column": 11,
+          "is_fallback": false,
+          "line": 3,
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "path": "module.py",
+          "severity": null,
+          "tag": null
+        }
+      ],
+      "expectedSourceResult": [
+        {
+          "items": [
+            {
+              "kind": "path",
+              "value": "module.py"
+            },
+            3,
+            11,
+            "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+            "CLASSVAR001"
+          ],
+          "kind": "tuple"
+        }
+      ],
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "status": "passed",
+      "test": "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[==]"
+    },
+    {
+      "actual": [
+        {
+          "code": "CLASSVAR001",
+          "column": 11,
+          "is_fallback": false,
+          "line": 3,
+          "message": "Direct get_origin(...) is not/!= ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "path": "module.py",
+          "severity": null,
+          "tag": null
+        }
+      ],
+      "actualSourceResult": [
+        {
+          "items": [
+            {
+              "kind": "path",
+              "value": "module.py"
+            },
+            3,
+            11,
+            "Direct get_origin(...) is not/!= ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+            "CLASSVAR001"
+          ],
+          "kind": "tuple"
+        }
+      ],
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "expected": [
+        {
+          "code": "CLASSVAR001",
+          "column": 11,
+          "is_fallback": false,
+          "line": 3,
+          "message": "Direct get_origin(...) is not/!= ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "path": "module.py",
+          "severity": null,
+          "tag": null
+        }
+      ],
+      "expectedSourceResult": [
+        {
+          "items": [
+            {
+              "kind": "path",
+              "value": "module.py"
+            },
+            3,
+            11,
+            "Direct get_origin(...) is not/!= ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+            "CLASSVAR001"
+          ],
+          "kind": "tuple"
+        }
+      ],
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "status": "passed",
+      "test": "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[is not]"
+    },
+    {
+      "actual": [
+        {
+          "code": "CLASSVAR001",
+          "column": 11,
+          "is_fallback": false,
+          "line": 3,
+          "message": "Direct get_origin(...) is not/!= ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "path": "module.py",
+          "severity": null,
+          "tag": null
+        }
+      ],
+      "actualSourceResult": [
+        {
+          "items": [
+            {
+              "kind": "path",
+              "value": "module.py"
+            },
+            3,
+            11,
+            "Direct get_origin(...) is not/!= ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+            "CLASSVAR001"
+          ],
+          "kind": "tuple"
+        }
+      ],
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "expected": [
+        {
+          "code": "CLASSVAR001",
+          "column": 11,
+          "is_fallback": false,
+          "line": 3,
+          "message": "Direct get_origin(...) is not/!= ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "path": "module.py",
+          "severity": null,
+          "tag": null
+        }
+      ],
+      "expectedSourceResult": [
+        {
+          "items": [
+            {
+              "kind": "path",
+              "value": "module.py"
+            },
+            3,
+            11,
+            "Direct get_origin(...) is not/!= ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+            "CLASSVAR001"
+          ],
+          "kind": "tuple"
+        }
+      ],
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "status": "passed",
+      "test": "scripts/tests/test_lint_classvar_check.py::test_flags_direct_get_origin_classvar_comparison[!=]"
+    },
+    {
+      "actual": [
+        {
+          "code": "CLASSVAR001",
+          "column": 11,
+          "is_fallback": false,
+          "line": 3,
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "path": "module.py",
+          "severity": null,
+          "tag": null
+        }
+      ],
+      "actualSourceResult": [
+        {
+          "items": [
+            {
+              "kind": "path",
+              "value": "module.py"
+            },
+            3,
+            11,
+            "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+            "CLASSVAR001"
+          ],
+          "kind": "tuple"
+        }
+      ],
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "expected": [
+        {
+          "code": "CLASSVAR001",
+          "column": 11,
+          "is_fallback": false,
+          "line": 3,
+          "message": "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+          "path": "module.py",
+          "severity": null,
+          "tag": null
+        }
+      ],
+      "expectedSourceResult": [
+        {
+          "items": [
+            {
+              "kind": "path",
+              "value": "module.py"
+            },
+            3,
+            11,
+            "Direct get_origin(...) is/== ClassVar check. This fails for string annotations (PEP 563). Use is_classvar_annotation() from l1000_schema.type_utils instead.",
+            "CLASSVAR001"
+          ],
+          "kind": "tuple"
+        }
+      ],
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "status": "passed",
+      "test": "scripts/tests/test_lint_classvar_check.py::test_flags_qualified_typing_forms"
+    },
+    {
+      "actual": [],
+      "actualSourceResult": [],
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "expected": [],
+      "expectedSourceResult": [],
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "status": "passed",
+      "test": "scripts/tests/test_lint_classvar_check.py::test_allows_canonical_helper"
+    },
+    {
+      "actual": [],
+      "actualSourceResult": [],
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "expected": [],
+      "expectedSourceResult": [],
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "status": "passed",
+      "test": "scripts/tests/test_lint_classvar_check.py::test_allows_other_origin_comparison"
+    },
+    {
+      "actual": [],
+      "actualSourceResult": [],
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "expected": [],
+      "expectedSourceResult": [],
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "status": "passed",
+      "test": "scripts/tests/test_lint_classvar_check.py::test_invalid_python_is_tolerated"
+    }
+  ],
+  "engineSha256": "63278a96b660a897b54396e66b40ba3fff50035da44f9250b1907d307a50e66f",
+  "executionIsolation": "One owned persistent cache per assertion shard; shared-cache concurrency is tested separately",
+  "exitCode": 0,
+  "format": "rerail.rr-original-assertions/v1",
+  "harnessFiles": {
+    "scripts/dsl/data_layer_audit/native_guard.py": "9de4f513c0855f77870f14a3de6723cc0f65ca933cb6df28a7f49c8ed53f68b8",
+    "scripts/dsl/data_layer_batch_eight.py": "b0aa06282577557f293ab4493adbca1d36eb7c3cd72bc32f11b98f5c706684d9",
+    "scripts/dsl/data_layer_batch_five.py": "c4bd8edcb10c65ddbac6eea03eca11bad9389a0ec727d77889334a554010d34d",
+    "scripts/dsl/data_layer_batch_four.py": "af190011454ce4c136164cb31813375f607f765ced3a13393fd0cbfebb816ef1",
+    "scripts/dsl/data_layer_batch_seven.py": "06b95e9a6d34683f68b15a67bc65bdac95cc532ba0e3f2ab282cddc6ee7f0951",
+    "scripts/dsl/data_layer_batch_six.py": "ca98314fd0b9a79f67124f2aded3fc64ceff920117c2e098049c7ab6214d4ef4",
+    "scripts/dsl/data_layer_batch_three.py": "bb528abe50676159a06c3bfc071fdbeca0aae200db90945d187cccb412c9b7e8",
+    "scripts/dsl/data_layer_batch_two.py": "04835aa6befc2229b7d7de6c6d23f6cb17ee7dd546d90bc731f0377313b17df9",
+    "scripts/dsl/data_layer_probe_record.py": "24c6a5d37b67e2d7569224523b046bb64617179dfa1d881804a4694ce7fbb1db",
+    "scripts/dsl/data_layer_probe_three.py": "e46fa55d33f3888b97a694e81a3c370eb0cf2362d723bbfb65cb7095d9ed3f8c",
+    "scripts/dsl/data_layer_record.py": "7d32c79a7eda75b2c40e2be6bcae2dee08f3b02f8fa0a2226bf504b5e568af9e",
+    "scripts/dsl/data_layer_rr/ast_transport.py": "30b3c597ff7570dab6ebacaf806767ab268dc90adf3950fe0555fc9643781c8a",
+    "scripts/dsl/data_layer_rr/classvar_cli_port.py": "975728294d0fe37829f50bf5893e26c700e073135ecf8cf98fc520a9b4104d7f",
+    "scripts/dsl/data_layer_rr/classvar_port.py": "f538b929cbe4f03f4d686f9c1293059d08e05537fa7d96e53d24c6fa0ebabec2",
+    "scripts/dsl/data_layer_rr/dto.py": "a94d1342fe9900ba05f972d613089a07fe58a472f3faac1c6a5112931cf6e262",
+    "scripts/dsl/data_layer_rr/fact_transport.py": "ed88c12a4c01ab4c475dde76901f4d4a18c04d0af7e887b611324192fa4cddfa",
+    "scripts/dsl/data_layer_rr/framework_fixtures.py": "01eb634cc14db618cca8f837a62cd42477805af4eb4cb11428cb248fd4cc4bc1",
+    "scripts/dsl/data_layer_rr/migration.py": "9a8cc4f0825ca9dfa08efac664fb4154506c6f71bc971ff3d3825abbae049e8b",
+    "scripts/dsl/data_layer_rr/policy_routes.py": "5767c9271ad584361308bab249e7d84afb34421ccba2fc0f26c9dc9911f6e999",
+    "scripts/dsl/data_layer_rr/python_value_transport.py": "91e260760d5a586f4d0fb4076cfb3f10401bdc8d982f9834ab931451ab8e80ed",
+    "scripts/dsl/data_layer_rr/replay.py": "c1d4bbd11057736c7883c90660df690768302cd475cdb06b0a5ec649c129249b",
+    "scripts/dsl/data_layer_rr/suite.py": "5beac7d984d770de10b245b786c541ec4e56b52ff624e4f60f32d383afba3859",
+    "scripts/dsl/data_layer_rule_audit.py": "9a87c1d158f1f621f3a7b32bf46ff43228f4bf2c2e186894dcf160f16d1e80ef"
+  },
+  "hostProtocolCalls": [],
+  "hostTransfers": [],
+  "missingResults": [],
+  "mode": "snapshot",
+  "oracle": false,
+  "originalRecordingSha256": "bf1b0570cc5938b4e80aa262eeff3668883a0583df7cd9ab12b2498724785d58",
+  "part": 0,
+  "parts": 1,
+  "policySha256": {
+    "classvar_check": "acbbfe4655cc9892d15b404465a905ce0ddf94fe713a13a73600cc72b31485c0"
+  },
+  "pythonHashSeed": "0",
+  "ruleRoot": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr",
+  "semanticFallbacks": [],
+  "sourceFiles": {
+    "scripts/lint_classvar_check.py": "badb6ea64b48dc5eadf888b5a5efa106157f3a77976316f7e5492ace53127266",
+    "scripts/tests/test_lint_classvar_check.py": "8ea9724a17dda1bc1e98cdd20424f9e05960ee32592a082144483df40b054997"
+  },
+  "sourceFilesChecked": 1466,
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "testTargets": [
+    "scripts/tests/test_lint_classvar_check.py"
+  ],
+  "checkpoint": {
+    "path": "gate/data-layer/fixtures/host/data-layer-port/rr-classvar-complete-finalfc6.json.gz",
+    "sha256": "d4792647d50a3567370ed84d319af64c89198a928160e8b74ca0613682fe103f"
+  }
+}

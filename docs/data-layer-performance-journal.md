@@ -11417,3 +11417,7 @@ Each API also passes 19 update steps and nine removal controls. The controls che
 Six supplemental cases finish before a detector query. These cover file-read errors, parser exits, and framework inputs that do not reach the collector.
 Those cases execute and match the source. Every original assertion submits native work.
 The admission regression rejects a missing positive, missing native work, an altered DTO, a skipped test, and an ineffective control.
+
+The final tooling run passes 409 tests. The shared reporter also passes 32 recorded PermissionError and backend-type cases on the current engine.
+The inventory admits ClassVar with no failed, skipped, or delegated original assertions. Global admission is now 13 of 100 ports.
+The other entries remain 83 drafts and four absent translations. No full-repository cold benchmark ran, and no Linear ticket was created.
