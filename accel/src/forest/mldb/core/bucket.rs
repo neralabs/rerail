@@ -142,6 +142,29 @@ impl BucketList {
     pub fn row_count(&self) -> usize {
         self.num_entries
     }
+
+    /// The list as a view of its words (`storagePtr`).
+    pub fn as_ref(&self) -> BucketListRef<'_> {
+        BucketListRef { storage: self.storage.data(), entry_bits: self.entry_bits as u32, num_entries: self.num_entries }
+    }
+}
+
+/// A bucket list over words it does not own: upstream's `BucketList` with only its `storagePtr` set, as the
+/// kernels build one over a feature's slice of all the bucket data.
+#[derive(Clone, Copy, Debug)]
+pub struct BucketListRef<'a> {
+    pub storage: &'a [u32],
+    pub entry_bits: u32,
+    pub num_entries: usize,
+}
+
+impl BucketListRef<'_> {
+    #[inline(always)]
+    pub fn get(&self, i: u32) -> u32 {
+        let mut extractor = BitExtractor::new(self.storage);
+        extractor.advance(i as isize * self.entry_bits as isize);
+        extractor.extract_fast(self.entry_bits)
+    }
 }
 
 /// Writable version of the above.

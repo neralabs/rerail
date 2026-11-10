@@ -384,7 +384,9 @@ impl<'a> RowIterator<'a> {
     pub fn skip_to(&mut self, new_row_number: usize) {
         assert!(new_row_number >= self.row_number as usize);
         self.extractor.advance(self.total_bits as isize * (new_row_number as isize - self.row_number as isize));
-        // As upstream: the row number is not moved.
+        // Upstream leaves the row number behind, so a second skip (or a row with sequential example numbers) after
+        // a skip from a fresh iterator reads the wrong row; it is moved here.
+        self.row_number = new_row_number as u32;
     }
 }
 

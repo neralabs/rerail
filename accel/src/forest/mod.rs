@@ -30,6 +30,10 @@ pub mod jml {
 pub mod dataset_feature_space;
 #[path = "mldb/plugins/jml/randomforest_types.rs"]
 pub mod randomforest_types;
+#[path = "mldb/plugins/jml/randomforest_kernels.rs"]
+pub mod randomforest_kernels;
+#[path = "mldb/plugins/jml/randomforest_recursive.rs"]
+pub mod randomforest_recursive;
 #[cfg(test)]
 #[path = "mldb/plugins/jml/testing/rf_kernel_test.rs"]
 mod rf_kernel_test;
