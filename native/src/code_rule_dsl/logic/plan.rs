@@ -5521,8 +5521,17 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let kept = run.model.inputs.kept.clone();
     outcome.kept = kept.iter().filter(|r| run.native_rels.contains(*r)).cloned().collect();
     let written: Vec<String> = prog.outputs.iter().filter(|r| !outcome.kept.contains(*r) && !handed.contains(*r)).cloned().collect();
-    run.materialize(&written)?;
-    let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms, &kept)?;
+    // An output the native engine holds is read where it is: writing it to a table to read it back is a wait on
+    // SQLite between this run and its reader (the guests' requests start the next wave). `finding` joins the nodes'
+    // and documents' inputs, in SQL.
+    let native_out: BTreeSet<String> = if atoms {
+        written.iter().filter(|r| *r != "finding" && run.native_rels.contains(*r) && !run.inputs.contains(r.as_str()) && super::native::component::held(db, r).is_some()).cloned().collect()
+    } else {
+        BTreeSet::new()
+    };
+    let to_sql: Vec<String> = written.iter().filter(|r| !native_out.contains(*r)).cloned().collect();
+    run.materialize(&to_sql)?;
+    let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms, &kept, &native_out)?;
     let mut outputs=outputs;let mut nodes=nodes;
     for rel in &sentinels {
         if let Some(rows)=outputs.get_mut(rel){for row in rows { *row=row.split_once('\t').map_or(String::new(),|(_,rest)|rest.into()); }}
@@ -5656,6 +5665,7 @@ fn decoded_outputs(
     facts: &str,
     atoms: bool,
     kept: &BTreeSet<String>,
+    native: &BTreeSet<String>,
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
     let (mut outputs, mut all_nodes) = (BTreeMap::new(), BTreeMap::new());
     let text = |e: &str| if atoms { format!("sym_text({e})") } else { e.to_owned() };
@@ -5697,25 +5707,32 @@ fn decoded_outputs(
                 _ => None,
             }
         };
-        let mut st = db.prepare(&sql)?;
-        let width = st.column_count();
-        let mut rows: Vec<String> = st
-            .query_map([], |r| {
-                (0..width)
-                    .map(|i| {
-                        Ok(match r.get::<_, SqlValue>(i)? {
-                            SqlValue::Integer(v) => decode(i, v).unwrap_or_else(|| v.to_string()),
-                            SqlValue::Real(f) => format!("{f:?}"),
-                            SqlValue::Text(s) => s,
-                            SqlValue::Null => "None".to_owned(),
-                            SqlValue::Blob(b) => format!("{b:?}"),
-                        })
-                    })
-                    .collect::<rusqlite::Result<Vec<_>>>()
-                    .map(|v| v.join("\t"))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
+        let show = |i: usize, v: SqlValue| match v {
+            SqlValue::Integer(v) => decode(i, v).unwrap_or_else(|| v.to_string()),
+            SqlValue::Real(f) => format!("{f:?}"),
+            SqlValue::Text(s) => s,
+            SqlValue::Null => "None".to_owned(),
+            SqlValue::Blob(b) => format!("{b:?}"),
+        };
+        let held = if native.contains(rel) {
+            let text: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
+            super::native::component::output_rows(db, rel, &text)?
+        } else {
+            None
+        };
+        let mut rows: Vec<String> = match held {
+            Some(held) => held.into_iter().map(|r| r.into_iter().enumerate().map(|(i, v)| show(i, v)).collect::<Vec<_>>().join("\t")).collect(),
+            None => {
+                let mut st = db.prepare(&sql)?;
+                let width = st.column_count();
+                st.query_map([], |r| (0..width).map(|i| Ok(show(i, r.get::<_, SqlValue>(i)?))).collect::<rusqlite::Result<Vec<_>>>().map(|v| v.join("\t")))?
+                    .collect::<rusqlite::Result<_>>()?
+            }
+        };
+
         rows.sort();
+        // A table's rows are a set. The engine's are too, but a row seeded from SQL may also be one it derived.
+        rows.dedup();
         let nodes = domains.iter().enumerate().filter(|(_, d)| **d == lower::Domain::Node).map(|(i, _)| i).collect();
         all_nodes.insert(name.clone(), nodes);
         outputs.insert(name, rows);

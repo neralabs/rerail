@@ -3291,7 +3291,8 @@ fn run_observed(
             // export goes from the engine to `x` in one statement and is measured in place; one a SQL stratum
             // derived is in its table.
             let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
-            if kept.contains(rel) {
+            // A relation the engine holds is read from it (an output is not written to a table to be read back).
+            if kept.contains(rel) || crate::code_rule_dsl::logic::native::component::derived(&db, rel).is_some() {
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                 let inserted = { let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the export".into()); exports.borrow_mut().add(rel, types.len(), rows.as_ref()) };
                 { let _s = crate::code_rule_dsl::logic::profile::span(|| "totals".into()); totals.add_rows(rel, inserted, rows.as_ref(), &types); }
@@ -4954,8 +4955,11 @@ fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::
 
 fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<Vec<Vec<i64>>> {
     use crate::code_rule_dsl::logic::native::component;
-    let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
-        component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?
+    // What the engine holds is read from it; only a SQL stratum's relation is in a table.
+    let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if let Some(held) = component::derived(db, rel) {
+        held
+    } else if got.kept.contains(rel) {
+        return Err(Error::Plan(format!("{rel} is not held")));
     } else {
         Arc::new(Rows::read(db, &crate::code_rule_dsl::logic::sql::ident(rel))?)
     };
@@ -5011,8 +5015,10 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
         let mut sources: Vec<(&String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::with_capacity(hops.len());
         for rel in hops {
             let width = types(rel).len();
-            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if got.kept.contains(rel) {
-                component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?
+            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if let Some(held) = component::derived(db, rel) {
+                held
+            } else if got.kept.contains(rel) {
+                return Err(Error::Plan(format!("{rel} is not held")));
             } else {
                 Arc::new(Rows::read(db, &crate::code_rule_dsl::logic::sql::ident(rel))?)
             };
