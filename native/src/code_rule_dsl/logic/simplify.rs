@@ -1400,12 +1400,46 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     };
     let bodies: BTreeMap<&str, Vec<Rule>> = cands.iter().map(|&r| (r, rules_of.get(r).into_iter().flatten().map(|x| abstracted(x)).collect())).collect();
     let mut classes = class.values().collect::<BTreeSet<_>>().len();
+    // Each rule's canonical text is fixed but for the labels of the relations it reads: it is made once, with every
+    // relation a placeholder (its template), and the relations read kept in the order it labels them. A round's
+    // signature of a rule is its template and those relations' labels, equal exactly when the texts `canonical`
+    // gives under the round's labels are (a relation's name has no character of the text around it).
+    let mut templates: HashMap<String, usize> = HashMap::new();
+    let shapes: BTreeMap<&str, Vec<(usize, Vec<String>)>> = cands
+        .iter()
+        .map(|&r| {
+            let shaped = bodies[r]
+                .iter()
+                .map(|rule| {
+                    let read = std::cell::RefCell::new(Vec::new());
+                    let text = canonical(rule, &|rel: &str| {
+                        read.borrow_mut().push(rel.to_owned());
+                        "\u{1}".to_owned()
+                    });
+                    let n = templates.len();
+                    let mut read = read.into_inner();
+                    // The head's label is replaced by `@`.
+                    read.remove(0);
+                    (*templates.entry(text).or_insert(n), read)
+                })
+                .collect();
+            (r, shaped)
+        })
+        .collect();
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    enum Label<'a> {
+        Class(usize),
+        Name(&'a str),
+    }
     loop {
-        let label = |rel: &str| class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"));
-        let mut ids: HashMap<(usize, Vec<String>), usize> = HashMap::new();
+        let label = |rel: &'_ str| -> Option<usize> { class.get(rel).copied() };
+        let mut ids: HashMap<(usize, Vec<(usize, Vec<Label>)>), usize> = HashMap::new();
         let mut next: HashMap<&str, usize> = HashMap::new();
         for &r in &cands {
-            let mut sig: Vec<String> = bodies[r].iter().map(|rule| canonical(rule, &label)).collect();
+            let mut sig: Vec<(usize, Vec<Label>)> = shapes[r]
+                .iter()
+                .map(|(t, read)| (*t, read.iter().map(|rel| label(rel).map_or(Label::Name(rel.as_str()), Label::Class)).collect()))
+                .collect();
             sig.sort();
             let n = ids.len();
             next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
@@ -1464,13 +1498,24 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
 fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
     let Ok((sccs, _)) = super::front::strata(prog) else { return Vec::new() };
     let mut done = Vec::new();
+    // Each relation's rules, by place: made again only when a component is rewritten.
+    let index = |prog: &Program| -> HashMap<String, Vec<usize>> {
+        let mut by: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, r) in prog.rules.iter().enumerate() {
+            by.entry(r.head.rel.clone()).or_default().push(i);
+        }
+        by
+    };
+    let mut by_head = index(prog);
     for scc in sccs {
         let members: BTreeSet<String> = scc.into_iter().collect();
         let unary_node = |r: &str| prog.decls.get(r).is_some_and(|c| c.len() == 1 && c[0].1 == "node");
         if !members.iter().all(|r| unary_node(r) && !kept(prog, r)) {
             continue;
         }
-        let rules: Vec<&Rule> = prog.rules.iter().filter(|r| members.contains(&r.head.rel)).collect();
+        let mut places: Vec<usize> = members.iter().flat_map(|m| by_head.get(m).into_iter().flatten().copied()).collect();
+        places.sort_unstable();
+        let rules: Vec<&Rule> = places.iter().map(|&i| &prog.rules[i]).collect();
         // (from, to, step) edges and (relation, base rule) pairs.
         let mut edges: Vec<(String, String, bool)> = Vec::new();
         let mut bases: Vec<(String, Rule)> = Vec::new();
@@ -1585,6 +1630,7 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
         }
         prog.rules.retain(|r| !members.contains(&r.head.rel));
         prog.rules.extend(new_rules);
+        by_head = index(prog);
         if !prog.decls.contains_key(WITHIN) {
             prog.decls.insert(WITHIN.to_owned(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
         }

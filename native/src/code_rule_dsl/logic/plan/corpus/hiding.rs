@@ -22,7 +22,7 @@
 //! (`"sql:select"`, `plan::lower::Constants`), so a Python policy can name SQL kinds inside its SQL guests.
 
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// The relations a rule enters a guest through, and their columns that are the guest's: (relation, guest location
 /// columns, grammar column, tape column).
@@ -68,16 +68,23 @@ struct Fact {
 
 impl Fact {
     fn join(&mut self, other: &Fact) -> bool {
-        let before = self.clone();
+        let mut changed = (other.scoped && !self.scoped) || (other.definite && !self.definite);
         self.scoped |= other.scoped;
         self.definite |= other.definite;
-        self.grammar = match (self.grammar.take(), &other.grammar) {
-            (None, g) => g.clone(),
-            (g, None) => g,
-            (Some(a), Some(b)) if a == *b => Some(a),
-            _ => Some(String::new()),
-        };
-        *self != before
+        // Two grammars join to none known (`""`).
+        match (&self.grammar, &other.grammar) {
+            (_, None) => {}
+            (None, Some(b)) => {
+                self.grammar = Some(b.clone());
+                changed = true;
+            }
+            (Some(a), Some(b)) if a == b || a.is_empty() => {}
+            (Some(_), Some(_)) => {
+                self.grammar = Some(String::new());
+                changed = true;
+            }
+        }
+        changed
     }
 }
 
@@ -104,7 +111,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
         cols
     };
-    let base_locations: BTreeMap<String, Vec<usize>> = base.iter().map(|r| (r.clone(), locations(r))).collect();
+    let base_locations: HashMap<String, Vec<usize>> = base.iter().map(|r| (r.clone(), locations(r))).collect();
     // Each rule's seeds: a specialized copy's head column, scoped in its grammar.
     let mut seeds: Vec<BTreeMap<String, Fact>> = vec![BTreeMap::new(); prog.rules.len()];
     // A derived relation read with a scoped variable of a known grammar is specialized to it (decision 0058 §2, O98):
@@ -309,12 +316,12 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
 }
 
 /// What each derived relation's columns carry, to a fixpoint over the rules.
-fn carry(prog: &Program, base: &BTreeMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool) -> BTreeMap<String, Vec<Fact>> {
-    let mut carried: BTreeMap<String, Vec<Fact>> =
+fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool) -> HashMap<String, Vec<Fact>> {
+    let mut carried: HashMap<String, Vec<Fact>> =
         prog.rules.iter().map(|r| r.head.rel.clone()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(&r).map_or(0, Vec::len); (r, vec![Fact::default(); n]) }).collect();
     // A rule's analysis reads its positive atoms' carried columns: it is analysed again only when one of them changed
     // (a worklist, not every rule each round: a combined pack has tens of thousands, O111).
-    let mut readers: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut readers: HashMap<&str, Vec<usize>> = HashMap::new();
     for (i, rule) in prog.rules.iter().enumerate() {
         for l in &rule.body {
             if let Literal::Atom(a) = l
@@ -327,7 +334,7 @@ fn carry(prog: &Program, base: &BTreeMap<String, Vec<usize>>, seeds: &[BTreeMap<
             }
         }
     }
-    let fixpoint = |carried: &mut BTreeMap<String, Vec<Fact>>, step: &dyn Fn(&BTreeMap<String, Fact>, &Term, &mut Fact) -> bool| {
+    let fixpoint = |carried: &mut HashMap<String, Vec<Fact>>, step: &dyn Fn(&BTreeMap<String, Fact>, &Term, &mut Fact) -> bool| {
         let mut queued = vec![true; prog.rules.len()];
         let mut work: std::collections::VecDeque<usize> = (0..prog.rules.len()).collect();
         while let Some(i) = work.pop_front() {
@@ -375,7 +382,7 @@ fn carry(prog: &Program, base: &BTreeMap<String, Vec<usize>>, seeds: &[BTreeMap<
 }
 
 /// A rule's variables that are scoped, and their grammars; `seed` holds what a specialized copy's head is.
-fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &BTreeMap<String, Vec<usize>>, carried: &BTreeMap<String, Vec<Fact>>, seed: &BTreeMap<String, Fact>) -> BTreeMap<String, Fact> {
+fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &HashMap<String, Vec<usize>>, carried: &HashMap<String, Vec<Fact>>, seed: &BTreeMap<String, Fact>) -> BTreeMap<String, Fact> {
     let mut facts: BTreeMap<String, Fact> = seed.clone();
     let var = |t: Option<&Term>| match t {
         Some(Term::Var(v)) => Some(v.clone()),

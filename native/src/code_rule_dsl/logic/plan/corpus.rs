@@ -730,9 +730,22 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         Ok(prog)
     };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
+    // Each text read once, for its modules and its program, when the two are of the same text (no `extra`).
+    let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 && extra.is_empty() {
+        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::read_text(text).map(Some)).collect::<std::result::Result<_, _>>()?
+    } else {
+        programs.iter().map(|_| None).collect()
+    };
     // Each program's library modules (decision 0089), when it names them by `#include`.
     let modular: Vec<Option<crate::code_rule_dsl::logic::rr::Modules>> = if programs.len() > 1 {
-        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::modules(text)).collect::<std::result::Result<_, _>>()?
+        programs
+            .iter()
+            .zip(&texts)
+            .map(|(text, read)| match read {
+                Some(read) => Ok(read.modules()),
+                None => crate::code_rule_dsl::logic::rr::modules(text),
+            })
+            .collect::<std::result::Result<_, _>>()?
     } else {
         vec![None]
     };
@@ -747,7 +760,13 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     let mut parsed = programs
         .iter()
         .zip(&own_only)
-        .map(|(text, &own_only)| {
+        .zip(texts.iter_mut())
+        .map(|((text, &own_only), read)| {
+            if let Some(read) = read.take() {
+                let prog = read.lower(!own_only)?;
+                front::declared(&prog)?;
+                return Ok(prog);
+            }
             if !own_only {
                 return parse(text);
             }
