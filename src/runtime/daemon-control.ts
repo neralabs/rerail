@@ -704,9 +704,10 @@ export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRo
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
  * another package, which is how a hook keeps an older daemon from receiving fields it predates; a client that
  * outlives an update passes false after its first event so it keeps using the newer daemon instead of displacing
- * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon.
+ * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon. A daemon that is alive but busy is waited for
+ * (`patientLookup`), until `deadline` (epoch ms) when the caller names one, as a hook does.
  */
-export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promise<EngineEndpoint> {
+export async function daemonEngineEndpoint(replaceOtherPackage: boolean, deadline?: number): Promise<EngineEndpoint> {
   const home = defaultRerailHome();
   const packageRoot = PACKAGE_ROOT;
   const control = { home, packageRoot };
@@ -714,7 +715,7 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
   let daemon: RunningDaemon | undefined;
   try {
     if (process.env.RERAIL_AUTOSTART === "0") {
-      const lookup = await patientLookup(home);
+      const lookup = await patientLookup(home, undefined, deadline);
       if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
       daemon = lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
     } else {
@@ -722,7 +723,7 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
     }
   } catch (error) {
     if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
-    const answered = await patientLookup(home, error.lookup);
+    const answered = await patientLookup(home, error.lookup, deadline);
     if (answered.status !== "running") throw error;
     daemon = { state: answered.state, health: answered.health };
   }
@@ -749,7 +750,7 @@ export type HookDaemon = { status: "running"; endpoint: EngineEndpoint } | Exclu
 export async function runningDaemonEngineEndpoint(deadline?: number): Promise<HookDaemon> {
   const lookup = await patientLookup(defaultRerailHome(), undefined, deadline);
   if (lookup.status !== "running") return lookup;
-  const endpoint = await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT) ? engineEndpointOf(lookup.state) : await daemonEngineEndpoint(true);
+  const endpoint = await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT) ? engineEndpointOf(lookup.state) : await daemonEngineEndpoint(true, deadline);
   return { status: "running", endpoint };
 }
 

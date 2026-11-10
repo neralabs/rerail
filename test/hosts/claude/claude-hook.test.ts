@@ -168,6 +168,24 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     // The start check waited 2 s for the daemon, then the endpoint lookup waited its own 2 s and 10 s: about 14.3 s.
     expect(performance.now() - started).toBeLessThan(13_000);
   });
+
+  // RERAIL_AUTOSTART=1 is a person's session, where the start finds the daemon alive and waits for it; 0 starts none.
+  it.each(["1", "0"])("gives up on a silent daemon at a session's start 12 s after the event arrives (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", autostart);
+    await startNativeTestDaemon(root);
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const started = performance.now();
+    await expect(runClaudeHook({ session_id: "silent-start", cwd: root, hook_event_name: "SessionStart", source: "startup" }, daemonPath))
+      .rejects.toThrow(/is alive but not answering/u);
+    // The start check waited 2 s for the daemon, then the start's lookup waited its own 2 s and 10 s: about 14 s, and
+    // 24 s with RERAIL_AUTOSTART=0, whose lookup waited the 10 s twice.
+    expect(performance.now() - started).toBeLessThan(13_000);
+  });
 });
 
 describe("Claude Code one-shot hook", () => {

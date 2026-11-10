@@ -182,7 +182,9 @@ async function hookDaemon(options: HookOptions, startsSession: boolean): Promise
   try {
     const named = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET;
     if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named) };
-    return startsSession ? { status: "running", endpoint: await daemonEngineEndpoint(true) } : await runningDaemonEngineEndpoint(options.daemonDeadline);
+    const { daemonDeadline } = options;
+    if (startsSession) return { status: "running", endpoint: await daemonEngineEndpoint(true, daemonDeadline) };
+    return await runningDaemonEngineEndpoint(daemonDeadline);
   } catch (error) {
     throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error });
   }
