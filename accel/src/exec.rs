@@ -18,7 +18,7 @@
 //! **Placement.** Each launch, largest first, goes to the lane [`Prices::choose_open`] picks: the least energy among
 //! the lanes that would finish within the parity band of the first to finish. What a lane has to do is what the
 //! scoreboard says is outstanding on it (every batch begun and not finished), plus what this batch has placed on it.
-//! A launch may be pinned to a lane.
+//! A launch may be pinned to a lane, and `RERAIL_LANE_PIN` pins every launch a lane can run to it, to measure.
 //!
 //! **The scoreboard** ([`crate::score`]) counts every job: queued, running, finished, its wait and its time, and the
 //! price's estimate against it, by lane and by form. [`Executor::score`] reads it; `RERAIL_SCOREBOARD=<file>` traces
@@ -52,6 +52,16 @@ pub fn pool() -> &'static rayon::ThreadPool {
             .thread_name(|i| format!("rerail-cpu {i}"))
             .build()
             .expect("the executor's thread pool")
+    })
+}
+
+/// `RERAIL_LANE_PIN=<cpu|sme|gpu|ane>`: a measurement, not a setting. Every launch the named lane can run, and that
+/// its caller did not pin, is placed there, so one run's launches can be measured on each lane in turn.
+pub fn measured_lane() -> Option<Lane> {
+    static PIN: OnceLock<Option<Lane>> = OnceLock::new();
+    *PIN.get_or_init(|| {
+        let v = std::env::var("RERAIL_LANE_PIN").ok()?;
+        Lane::ALL.into_iter().find(|l| l.name() == v.trim())
     })
 }
 
@@ -297,7 +307,9 @@ impl Executor {
         let mut placed = vec![(Lane::Cpu, 0.0, 0.0); batch.0.len()];
         for i in order {
             let l = &batch.0[i];
-            let able: Vec<Lane> = self.backends.iter().filter(|b| l.pin.is_none_or(|p| p == b.lane()) && b.can(&l.kernel)).map(|b| b.lane()).collect();
+            // A launch the caller did not pin goes to the measurement's lane when that lane can run it.
+            let pin = l.pin.or_else(|| measured_lane().filter(|&m| self.backends.iter().any(|b| b.lane() == m && b.can(&l.kernel))));
+            let able: Vec<Lane> = self.backends.iter().filter(|b| pin.is_none_or(|p| p == b.lane()) && b.can(&l.kernel)).map(|b| b.lane()).collect();
             let fastest = able.iter().filter_map(|&x| self.prices.wall(&l.kernel, x)).fold(f64::INFINITY, f64::min);
             let (lane, est) = self.prices.choose_open(&l.kernel, &able, &queued, &open).ok_or_else(|| {
                 format!("no lane can run launch {i} ({}, {:.3e} units){}", l.kernel.form().name(), l.kernel.units(), l.pin.map_or(String::new(), |p| format!(" on {}", p.name())))

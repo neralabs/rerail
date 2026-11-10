@@ -129,7 +129,7 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
     space.batch += 1;
     let queue = queue()?;
     let command = queue.new_command_buffer();
-    let pass = Pass::new(command);
+    let pass = crate::score::phase("encode", || Pass::new(command));
     let mut jobs = Vec::with_capacity(ks.len());
     // The columns the sorts read: they must outlive the first command buffer.
     let mut reads: Vec<Column> = Vec::new();
@@ -151,7 +151,8 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
                 let right = match kept {
                     Some(Entry::Sorted(r)) => r,
                     _ => {
-                        let (keyed, read) = Keyed::encode(&pass, upload(right)?)?;
+                        let cols = crate::score::phase("upload", || upload(right))?;
+                        let (keyed, read) = crate::score::phase("encode", || Keyed::encode(&pass, cols))?;
                         reads.extend(read);
                         let keyed = Arc::new(keyed);
                         if let Some(id) = right_id {
@@ -160,74 +161,77 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
                         keyed
                     }
                 };
-                let left = upload(left)?;
-                let job = ProbeJob::encode(&pass, &left, &right, 0)?;
+                let left = crate::score::phase("upload", || upload(left))?;
+                let job = crate::score::phase("encode", || ProbeJob::encode(&pass, &left, &right, 0))?;
                 Job::Probe { left, right, job }
             }
             JoinBy::Tile => {
                 let right = match kept {
                     Some(Entry::Grouped(r)) => r,
                     _ => {
-                        let r = Arc::new(group(right)?);
+                        let r = Arc::new(crate::score::phase("group (host)", || group(right))?);
                         if let Some(id) = right_id {
                             built.push((*id, *by, nr, r.bytes, Entry::Grouped(Arc::clone(&r))));
                         }
                         r
                     }
                 };
-                let left = group(left)?;
+                let left = crate::score::phase("group (host)", || group(left))?;
                 let keys: Vec<usize> = (0..k_len(k)).collect();
-                let job = TileJob::count(&pass, &left, &keys, &right, &keys)?;
+                let job = crate::score::phase("encode", || TileJob::count(&pass, &left, &keys, &right, &keys))?;
                 Job::Tile { left, right, job }
             }
         };
         jobs.push(job);
     }
-    pass.end();
+    crate::score::phase("encode", || pass.end());
     commit_wait(command)?;
     drop(reads);
     // The second pass: the tiles' scatters and the probes that overflowed.
     let command = queue.new_command_buffer();
-    let pass = Pass::new(command);
+    let pass = crate::score::phase("encode", || Pass::new(command));
     let mut second = false;
     let mut done = Vec::with_capacity(ks.len());
     for j in jobs {
         done.push(match j {
             Job::Probe { left, right, job } if job.overflowed() => {
                 second = true;
-                let job = job.rescatter(&pass, &left, &right)?;
+                let job = crate::score::phase("encode", || job.rescatter(&pass, &left, &right))?;
                 Job::Probe { left, right, job }
             }
             Job::Tile { left, right, job } => {
                 let keys: Vec<usize> = (0..left.columns.len()).collect();
-                let job = job.scatter(&pass, &left, &keys, &right, &keys)?;
+                let job = crate::score::phase("encode", || job.scatter(&pass, &left, &keys, &right, &keys))?;
                 second |= job.total > 0;
                 Job::Tile { left, right, job }
             }
             other => other,
         });
     }
-    pass.end();
+    crate::score::phase("encode", || pass.end());
     if second {
         commit_wait(command)?;
     }
-    for (id, by, rows, bytes, entry) in built {
-        if let Entry::Sorted(k) = &entry {
-            k.settle();
-        }
-        space.put(id, by, rows, bytes, entry);
-    }
-    Ok(done
-        .into_iter()
-        .map(|j| match j {
-            Job::Probe { job, .. } => Output::Pairs(job.pairs()),
-            Job::Tile { job, .. } => {
-                let mut p = job.pairs();
-                p.sort_unstable();
-                Output::Pairs(p)
+    crate::score::phase("keep", || {
+        for (id, by, rows, bytes, entry) in built {
+            if let Entry::Sorted(k) = &entry {
+                k.settle();
             }
-        })
-        .collect())
+            space.put(id, by, rows, bytes, entry);
+        }
+    });
+    Ok(crate::score::phase("read pairs", || {
+        done.into_iter()
+            .map(|j| match j {
+                Job::Probe { job, .. } => Output::Pairs(job.pairs()),
+                Job::Tile { job, .. } => {
+                    let mut p = job.pairs();
+                    p.sort_unstable();
+                    Output::Pairs(p)
+                }
+            })
+            .collect()
+    }))
 }
 
 fn k_len(k: &Kernel) -> usize {
