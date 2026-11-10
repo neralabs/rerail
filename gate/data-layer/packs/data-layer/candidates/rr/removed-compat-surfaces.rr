@@ -73,9 +73,9 @@ removed_hit(d, l, x, i) :- removed_symbol(n, x), docof(n, d), removed_selected(d
 // scan_file deduplicates by line and name, retaining the first semantic visit.
 .decl removed_first(d: number, l: number, name: symbol, ordinal: number)
 removed_first(d, l, x, first) :- removed_hit(d, l, x, _), first = min i : { removed_hit(d, l, x, i) }.
-.violation RemovedAPI(at: span, name: symbol, ordinal: number) code "RCS001"
+.violation RemovedAPI(at: span, name: symbol, ordinal: number, result_path: symbol) code "RCS001"
     "removed compatibility surface '{name}' must not be reintroduced"
-RemovedAPI(@place(p, l), x, i) :- removed_first(d, l, x, i), pp_doc(d,p), option("entryPoint", "scan_file").
+RemovedAPI(@place(p, l), x, i, result) :- removed_first(d, l, x, i), pp_doc(d,p), rcs_result_path(p,result), option("entryPoint", "scan_file").
 // The configured reporter preserves each collector event, including repeated names on one line.
 .violation Removed(at: node, name: symbol, ordinal: number, collector_order0: number, collector_order1: number, collector_order2: number) code "RCS001" "removed compatibility surface '{name}' must not be reintroduced"
 ppe_Removed(ppe_path,ppe_line,i,0,0,x,i,n) :- removed_symbol(n, x), docof(n, d), removed_selected(d), visit_index(n, i),
@@ -158,3 +158,52 @@ sf_config("message","removed").
 sf_config("code","RCS001").
 sf_config("order","input").
 sf_default("name","removed compatibility surface").
+
+.decl rcs_config(key: symbol, ordinal: number, value: symbol)
+rcs_config("description",0,"Reject compatibility surfaces removed by architecture-driven merges.").
+rcs_config("names",0,"AdvisoryLockCoordinator").
+rcs_config("names",1,"ApplicationTickProvider").
+rcs_config("names",2,"ApplyClaimedTimersConfig").
+rcs_config("names",3,"ClaimDueTimersConfig").
+rcs_config("names",4,"CypherLeaseCoordinator").
+rcs_config("names",5,"FileLockCoordinator").
+rcs_config("names",6,"LeaseDocumentCoordinator").
+rcs_config("names",7,"RowLockCoordinator").
+rcs_config("names",8,"SchedulerTick").
+rcs_config("names",9,"SupersedeTimerConfig").
+rcs_config("names",10,"TickCoordinator").
+rcs_config("names",11,"TimerClaim").
+rcs_config("names",12,"TimerScanConfig").
+rcs_config("names",13,"_apply_claimed_timers_runtime").
+rcs_config("names",14,"_claim_due_timers_runtime").
+rcs_config("names",15,"_claimed_queue_prefix_rows_query_spec").
+rcs_config("names",16,"_claimed_queue_rows_query_spec").
+rcs_config("names",17,"_coalesce_branch_tip_materialization_alias").
+rcs_config("names",18,"_reconcile_due_timers_runtime").
+rcs_config("names",19,"_recover_abandoned_timer_claims_runtime").
+rcs_config("names",20,"_schedule_timer_runtime").
+rcs_config("names",21,"_supersede_timer_runtime").
+rcs_config("names",22,"apply_claimed_timers").
+rcs_config("names",23,"apply_claimed_timers_async").
+rcs_config("names",24,"apply_timer_driver_claims").
+rcs_config("names",25,"apply_timer_driver_claims_async").
+rcs_config("names",26,"claim_due_timer").
+rcs_config("names",27,"claim_due_timer_async").
+rcs_config("names",28,"claim_due_timers").
+rcs_config("names",29,"claim_due_timers_async").
+rcs_config("names",30,"claim_local_timer_responsibilities").
+rcs_config("names",31,"claim_local_timer_responsibilities_async").
+rcs_config("names",32,"dispatch_due_jobs").
+rcs_config("names",33,"dispatch_due_jobs_lazy").
+rcs_config("names",34,"recover_abandoned_timer_claims").
+rcs_config("names",35,"recover_abandoned_timer_claims_async").
+rcs_config("roots",0,"data_layer").
+rcs_config("roots",1,"impl").
+rcs_config("roots",2,"l4100_queue").
+rcs_config("roots",3,"l4400_scheduler").
+rcs_config("roots",4,"l4250_timers").
+rcs_config("roots",5,"l4300_timers").
+rcs_config("roots",6,"l4350_timer_driver").
+rcs_config("roots",7,"l7000_versioned_schema").
+rcs_config("extractor",0,"{\"extractor_id\": \"removed_compat_surfaces.violations\", \"schema_version\": \"1\", \"implementation_version\": \"removed-compat-surfaces-v1\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"AdvisoryLockCoordinator\", \"ApplicationTickProvider\", \"ApplyClaimedTimersConfig\", \"ClaimDueTimersConfig\", \"CypherLeaseCoordinator\", \"FileLockCoordinator\", \"LeaseDocumentCoordinator\", \"RowLockCoordinator\", \"SchedulerTick\", \"SupersedeTimerConfig\", \"TickCoordinator\", \"TimerClaim\", \"TimerScanConfig\", \"_apply_claimed_timers_runtime\", \"_claim_due_timers_runtime\", \"_claimed_queue_prefix_rows_query_spec\", \"_claimed_queue_rows_query_spec\", \"_coalesce_branch_tip_materialization_alias\", \"_reconcile_due_timers_runtime\", \"_recover_abandoned_timer_claims_runtime\", \"_schedule_timer_runtime\", \"_supersede_timer_runtime\", \"apply_claimed_timers\", \"apply_claimed_timers_async\", \"apply_timer_driver_claims\", \"apply_timer_driver_claims_async\", \"claim_due_timer\", \"claim_due_timer_async\", \"claim_due_timers\", \"claim_due_timers_async\", \"claim_local_timer_responsibilities\", \"claim_local_timer_responsibilities_async\", \"dispatch_due_jobs\", \"dispatch_due_jobs_lazy\", \"recover_abandoned_timer_claims\", \"recover_abandoned_timer_claims_async\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"f75e90baacbbabd0\", \"node_kinds\": [\"Name\", \"Attribute\", \"FunctionDef\", \"AsyncFunctionDef\", \"ClassDef\"]}").
+#include "data-layer/removed-compat-api.rr"

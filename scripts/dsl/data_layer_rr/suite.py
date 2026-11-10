@@ -494,21 +494,15 @@ class Suite:
         if check == 'permission_error':
             from permission_port import scan_file
             return scan_file(self, module, entry, path, arguments.get('source'), arguments.get('tree'))
-        if check in {'removed_compat_surfaces', 'versioned_lifecycle_legacy_surfaces'}:
+        if check == 'removed_compat_surfaces':
+            from removed_port import scan_batch
+            return scan_batch(self,module,[path])
+        if check == 'versioned_lifecycle_legacy_surfaces':
             if 'source' in arguments:
                 source = arguments['source']
-            elif check == 'removed_compat_surfaces':
-                try:
-                    source = path.read_text(encoding='utf-8')
-                except OSError:
-                    return ()
             else:
                 source = path.read_text()
             rows = self.native(check, entry, [dict(path=path.name, source=source)])
-            if check == 'removed_compat_surfaces':
-                rows.sort(key=lambda r: r['parameters']['ordinal'])
-                location = path.relative_to(module._REPO_ROOT).as_posix() if path.is_relative_to(module._REPO_ROOT) else path.as_posix()
-                return tuple(module.Violation(location, r['line'], r['code'], r['message']) for r in rows)
             rows.sort(key=lambda r: (r['line'], r['message']))
             return [module.Violation(path, r['parameters']['cls'], r['parameters']['method'], r['line']) for r in rows]
 
@@ -566,6 +560,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'removed_compat_surfaces':
+                from removed_port import install
+                install(self,module)
             if check == 'permission_error':
                 from permission_port import install
                 install(self, module)

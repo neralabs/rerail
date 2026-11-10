@@ -1,0 +1,48 @@
+// Caller path spellings enter as typed columns; relative_to is lexical.
+.decl rcs_owner(document: symbol, path: symbol)
+rcs_owner(d,p) :- option_item("ownerDocs",i,d), option_item("ownerPaths",i,p).
+rcs_owner(p,p) :- pp_doc(_,p), !option_item("ownerDocs",_,_).
+.decl rcs_relative(document: symbol, path: symbol)
+rcs_relative(d,".") :- rcs_owner(d,p), option("sourceRepoRoot",p).
+rcs_relative(d,@slice(p,strlen(root)+1,strlen(p))) :- rcs_owner(d,p), option("sourceRepoRoot",root), root != ".", root != "/", root != "//", prefix(cat(root,"/"),p).
+rcs_relative(d,@slice(p,1,strlen(p))) :- rcs_owner(d,p), option("sourceRepoRoot","/"), p != "/", prefix("/",p), !prefix("//",p).
+rcs_relative(d,@slice(p,2,strlen(p))) :- rcs_owner(d,p), option("sourceRepoRoot","//"), p != "//", prefix("//",p).
+rcs_relative(d,p) :- rcs_owner(d,p), option("sourceRepoRoot","."), !prefix("/",p).
+.decl rcs_result_path(document: symbol, path: symbol)
+rcs_result_path(d,p) :- rcs_relative(d,p).
+rcs_result_path(d,p) :- rcs_owner(d,p), !rcs_relative(d,_).
+
+.violation RemovedConfig(at: span, key: symbol, ordinal: number, value: symbol) code "RCS_CONFIG" "native configuration"
+RemovedConfig(@place("",0),k,i,v) :- option("entryPoint","_rcs_configuration"), rcs_config(k,i,v).
+.decl rcs_requested(i: number, path: symbol)
+rcs_requested(i,p) :- option("entryPoint","_rcs_roots"), option_item("requestedRoots",i,p).
+.decl rcs_root(i: number, path: symbol)
+rcs_root(i,p) :- rcs_requested(i,p).
+rcs_root(i,p) :- option("entryPoint","_rcs_roots"), !rcs_requested(_,_), rcs_config("roots",i,p).
+.violation RemovedRoot(at: span, ordinal: number, value: symbol) code "RCS_ROOT" "scan root"
+RemovedRoot(@place("",0),i,p) :- rcs_root(i,p), prefix("/",p).
+RemovedRoot(@place("",0),i,cat(root,"/",p)) :- rcs_root(i,p), !prefix("/",p), option("sourceRepoRoot",root).
+.decl rcs_file(path: symbol, key: symbol)
+rcs_file(p,@replace_all(p,"/","\u0000")) :- option("entryPoint","_rcs_files"), option_item("candidatePaths",_,p), suffix(".py",p).
+.violation RemovedFile(at: span, order_key: symbol, value: symbol) code "RCS_FILE" "selected file"
+RemovedFile(@place("",0),key,p) :- rcs_file(p,key).
+
+// Source CLI order is scan order; identical rows keep their input ordinals.
+.decl rcs_cli_count(n: number)
+rcs_cli_count(n) :- option("entryPoint","_rcs_cli_report"), n = count : { option_item("cliPath",_,_) }.
+.decl rcs_json()
+rcs_json() :- rcs_cli_count(_), option("jsonMode","true").
+rcs_json() :- rcs_cli_count(_), option("jsonDetailsMode","true").
+.decl rcs_cli_row(i: number, path: symbol, line: symbol, code: symbol, message: symbol)
+rcs_cli_row(i,p,l,c,m) :- rcs_cli_count(_), option_item("cliPath",i,p), option_item("cliLine",i,l), option_item("cliCode",i,c), option_item("cliMessage",i,m).
+.decl rcs_cli_json(i: number, value: symbol)
+rcs_cli_json(i,cat("  {\n    \"path\": ",@json_str(p),",\n    \"line\": ",l,",\n    \"code\": ",@json_str(c),",\n    \"message\": ",@json_str(m),"\n  }")) :- rcs_cli_row(i,p,_,c,m), option_item("cliLineJson",i,l).
+.violation RemovedCliOutput(at: span, phase: number, ordinal: number, stdout: symbol) code "RCS_OUTPUT" "CLI output"
+RemovedCliOutput(@place("",0),0,i,cat(p,":",l,": ",c," ",m,"\n")) :- rcs_cli_row(i,p,l,c,m), !rcs_json().
+RemovedCliOutput(@place("",0),1,0,cat("removed_compat_surfaces: ",to_string(n)," violation(s)\n")) :- rcs_cli_count(n), !rcs_json().
+RemovedCliOutput(@place("",0),0,0,"[]\n") :- rcs_cli_count(0), rcs_json().
+RemovedCliOutput(@place("",0),0,0,cat("[\n",body,"\n]\n")) :- rcs_cli_count(n), n > 0, rcs_json(), body = join s by i sep ",\n" : { rcs_cli_json(i,s) }.
+.violation RemovedCliExit(at: span, value: number) code "RCS_EXIT" "CLI status"
+RemovedCliExit(@place("",0),0) :- rcs_cli_count(0).
+RemovedCliExit(@place("",0),0) :- rcs_cli_count(n), n > 0, option("checkMode","false").
+RemovedCliExit(@place("",0),1) :- rcs_cli_count(n), n > 0, option("checkMode","true").

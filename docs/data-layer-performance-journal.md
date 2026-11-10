@@ -1,5 +1,48 @@
 # Data-layer performance journal
 
+## RemovedCompat native public contracts: 2026-11-10
+
+The source corpus now contains 239 cases.
+It covers all 36 forbidden names as names, attributes, functions, async functions, and classes.
+It also covers exact CLI JSON/text output, duplicate rows, discovery, relative paths, metadata, syntax errors, and decoding errors.
+The native frontend performs I/O, argparse processing, and passive DTO construction.
+Discovery and scans submit whole batches. The rule formats reports and chooses results.
+Discovery exports a path-order key. It does not compute pairwise ranks across candidate files.
+
+The initial Unicode probe was based on an incorrect assumption.
+`materialize_source_facts` bypasses source-trigger filtering for the direct scanner API.
+The production FactEngine applies those triggers before collection.
+The recorded source corpus caught false negatives from adding that gate to the API.
+The gate was removed from the API. Production retains its existing gate.
+The [initial probe](../gate/data-layer/fixtures/host/data-layer-port/rr-removed-trigger-red.json.gz) is marked as a rejected assumption.
+The [failing regression receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-removed-api-trigger-regression-red.json.gz) retains the source/native mismatch.
+Two additional production cases test the Unicode trigger boundary directly.
+
+Sixteen concurrent acceptance shards hit the 115-second limit.
+All corresponding process handles terminated. No native engine process remained.
+The final refresh uses four shards at a time. Each command retains the same time limit and nice value.
+
+PermissionError and RemovedCompat now share an admission auditor.
+Each rule declares its own fixed coverage and disabled-behavior controls.
+The auditor preserves the original-test inventory gate and checks complete observations, hashes, and API coverage.
+The existing PermissionError admission tests continue to pass after this extraction.
+
+The [complete admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-removed-complete-finalec3.json.gz) verifies 641 native executions on Final `ec3cfe1b7`.
+All four original tests pass through both APIs. Three tests produce findings.
+All 239 public cases pass through each API.
+Nineteen production cases include both Unicode trigger cases. Sixteen supplied-fact cases and 14 persistent steps also pass.
+Eight controls cover scanner families, API trigger bypass, deduplication, suffix selection, CLI formatting, and reporting.
+The receipt retains complete source/native observations, program snapshots, harness snapshots, and engine provenance.
+All 264 tooling tests pass, including rejection tests for missing positives and incorrect API/production gating.
+The fixed original-test inventory gate admits RemovedCompat. The global migration remains incomplete: five accepted ports, 90 drafts, and five absent translations.
+
+A bounded discovery check submits 11,000 path rows, including 1,000 duplicates, in one native query.
+It returns the exact 10,000 unique files in Path component order.
+Cold child CPU is 0.934 seconds; wall time is 1.049 seconds. Maximum child RSS is 758.4 MiB.
+This includes provenance subprocesses. It excludes filesystem enumeration and AST scanning.
+The [measurement](../gate/data-layer/fixtures/host/data-layer-port/rr-removed-discovery-10000-finalec3.json.gz) retains the complete execution and program hashes.
+There is no pre-change timing comparison. These numbers do not establish a speedup.
+
 ## PermissionError full recorded-contract admission: 2026-11-10
 
 The [complete receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-permission-complete-finalec3.json.gz) verifies 337 native executions on Final `ec3cfe1b7`.

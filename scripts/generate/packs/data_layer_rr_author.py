@@ -71,15 +71,28 @@ removed_hit(d, l, x, i) :- removed_symbol(n, x), docof(n, d), removed_selected(d
 // scan_file deduplicates by line and name, retaining the first semantic visit.
 .decl removed_first(d: number, l: number, name: symbol, ordinal: number)
 removed_first(d, l, x, first) :- removed_hit(d, l, x, _), first = min i : { removed_hit(d, l, x, i) }.
-.violation RemovedAPI(at: span, name: symbol, ordinal: number) code "RCS001"
+.violation RemovedAPI(at: span, name: symbol, ordinal: number, result_path: symbol) code "RCS001"
     "removed compatibility surface '{name}' must not be reintroduced"
-RemovedAPI(@place(p, l), x, i) :- removed_first(d, l, x, i), doc(d, p, _), option("entryPoint", "scan_file").
+RemovedAPI(@place(p, l), x, i, result) :- removed_first(d, l, x, i), doc(d, p, _), rcs_result_path(p,result), option("entryPoint", "scan_file").
 // The configured reporter preserves each collector event, including repeated names on one line.
 .violation Removed(at: node, name: symbol, ordinal: number) code "RCS001"
     "removed compatibility surface '{name}' must not be reintroduced"
 Removed(n, x, i) :- removed_symbol(n, x), docof(n, d), removed_selected(d), visit_index(n, i),
     !option("entryPoint", _), !syntax_error(d, _, _).
-'''))
+''')) + removed_api_suffix(source)
+
+
+def removed_api_suffix(source):
+    from dataclasses import asdict
+    from data_layer_rr_text import module
+    original = module(source, 'removed_compat_surfaces')
+    settings = dict(description=[original.__doc__], names=sorted(original._FORBIDDEN_NAMES),
+                    roots=list(original._DEFAULT_ROOTS), extractor=[json.dumps(asdict(original.REMOVED_COMPAT_SURFACES_EXTRACTOR))])
+    text = '\n.decl rcs_config(key: symbol, ordinal: number, value: symbol)\n'
+    for key, values in settings.items():
+        for i, value in enumerate(values):
+            text += f'rcs_config({json.dumps(key)},{i},{json.dumps(value)}).\n'
+    return text + '#include "data-layer/removed-compat-api.rr"\n'
 
 
 def lifecycle(source, target):

@@ -1,0 +1,82 @@
+{
+  "format": "rerail.recorded-original-admission/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "mode": "workspace",
+  "exitCode": 0,
+  "engineSha256": "82179e5e6ef15dec415e7929d508e826a6dfebef2b1a8843547b668081ec7476",
+  "policySha256": {
+    "removed_compat_surfaces": "cdea7824f4627ecaac9fad77bee84ee6e362a3a14a001818845efe63a46fa226"
+  },
+  "cases": {
+    "scripts/tests/test_lint_removed_compat_surfaces.py::test_removed_compatibility_surface_is_rejected": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_removed_compat_surfaces.py::test_removed_timer_runtime_surface_is_rejected": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_removed_compat_surfaces.py::test_removed_timer_claim_and_scheduler_tick_surfaces_are_rejected": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_removed_compat_surfaces.py::test_unrelated_symbols_are_accepted": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "collected": [
+    "scripts/tests/test_lint_removed_compat_surfaces.py::test_removed_compatibility_surface_is_rejected",
+    "scripts/tests/test_lint_removed_compat_surfaces.py::test_removed_timer_runtime_surface_is_rejected",
+    "scripts/tests/test_lint_removed_compat_surfaces.py::test_removed_timer_claim_and_scheduler_tick_surfaces_are_rejected",
+    "scripts/tests/test_lint_removed_compat_surfaces.py::test_unrelated_symbols_are_accepted"
+  ],
+  "semanticFallbacks": [],
+  "missingResults": [],
+  "retainedCaseIds": [],
+  "checkpoint": {
+    "path": "gate/data-layer/fixtures/host/data-layer-port/rr-removed-complete-finalec3.json.gz",
+    "sha256": "89c198e70c2994e02e070d1bb3b369f65bb342b9e6afd687a7f00573bd450c12"
+  }
+}
