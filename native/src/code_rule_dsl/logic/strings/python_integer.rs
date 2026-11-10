@@ -25,7 +25,9 @@ fn digit(c: char) -> Option<u32> {
 
 /// Canonical decimal text, with Python's default 4300-digit conversion limit.
 pub(super) fn canonical(text: &str) -> Result<String, String> {
-    let invalid = || format!("invalid literal for int() with base 10: {}", crate::code_rule_dsl::facts::vtab::syntax::python_print::string_repr(text));
+    // CPython's %.200R limits the representation, including its quotes and
+    // escapes, by Unicode characters. It does not truncate the input value.
+    let invalid = || format!("invalid literal for int() with base 10: {}", crate::code_rule_dsl::facts::vtab::syntax::python_print::string_repr(text).chars().take(200).collect::<String>());
     let trimmed = text.trim_matches(whitespace);
     let (negative, digits) = if let Some(rest) = trimmed.strip_prefix('-') { (true, rest) }
         else { (false, trimmed.strip_prefix('+').unwrap_or(trimmed)) };
