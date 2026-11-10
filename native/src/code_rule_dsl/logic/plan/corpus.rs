@@ -5504,6 +5504,15 @@ uses(n, f) :- imp(n, q), def(f, q).
         let back = program("uses back", ".decl back(f: node, n: node)\nback(f, n) :- uses(n, f).\n.output back");
         let err = run(&back).err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("back") && err.contains("outside its import closure"), "{err}");
+        // A memoised relation is stored, though inlining would unfold it into its readers (decision 0099): its derived
+        // rows are read from its table to be recorded ("no such table: near" before).
+        let near = program("uses near", ".decl near(n: node, f: node)\nnear(n, f) :- uses(n, f).\n.decl far(n: node)\nfar(n) :- near(n, _).\n.output far");
+        // SAFETY: only this test reads RERAIL_INLINE_ONLY while it is set (the others declare no pragma).
+        unsafe { std::env::set_var("RERAIL_INLINE_ONLY", "near") };
+        let stored = run(&near);
+        unsafe { std::env::remove_var("RERAIL_INLINE_ONLY") };
+        stored.unwrap();
+        assert_eq!(std::fs::read_to_string(out.join("far.csv")).unwrap().lines().count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
