@@ -272,7 +272,9 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let mut dirty: BTreeSet<String> = changed.iter().cloned().collect();
     let mut clean = BTreeSet::new();
     // Gates decide on the whole program. Reuse it only when every input and derived relation survived unchanged.
-    let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.rels.contains_key(r)));
+    // A view of one input is never kept (decision 0090): its rule stays, and it is planned as a view, at no cost.
+    let views = super::maintain::input_views(prog);
+    let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.rels.contains_key(r) || views.contains_key(r)));
     let whole = kept.is_none() || (!prog.gates.is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
     for scc in &sccs {
@@ -280,6 +282,8 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
         if stale {
             ran += 1;
             dirty.extend(scc.iter().cloned());
+        } else if scc.iter().all(|r| views.contains_key(r)) {
+            // A view of unchanged reads: not run, and not clean (no rows of it are kept to bind).
         } else if !scc.iter().all(|r| kept.is_some_and(|k| k.rels.contains_key(r))) {
             // Not kept (past the budget, or recomputed in its readers, decision 0099) but of unchanged reads: run
             // again, its rows as before, so its readers stay clean.
@@ -698,6 +702,9 @@ impl Source for Renamed {
     }
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         self.0.sorted_rows(column, value)
+    }
+    fn sorts_rows(&self, column: usize) -> bool {
+        self.0.sorts_rows(column)
     }
     fn prepare_lookup(&self, columns: &[usize]) {
         self.0.prepare_lookup(columns)

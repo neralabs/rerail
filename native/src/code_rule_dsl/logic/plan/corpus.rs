@@ -4773,9 +4773,10 @@ fn run_observed(
                     // (decision 0099) has neither: it is not kept, as one past the budget, and the next run derives it.
                     // The relations of the strata the native engine ran this run (each a key `a/b/…`).
                     let ran_native: BTreeSet<&str> = got.native.iter().flat_map(|k| k.split('/')).collect();
+                    // A view of one input is not kept (decision 0090): the next run reads it over the input's rows.
                     let rows = derived
                         .iter()
-                        .filter(|rel| !got.inlined.contains(rel.as_str()))
+                        .filter(|rel| !got.inlined.contains(rel.as_str()) && !maintained.views.contains(rel.as_str()))
                         .map(|rel| (rel, part.program.decls[rel].len()))
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| {

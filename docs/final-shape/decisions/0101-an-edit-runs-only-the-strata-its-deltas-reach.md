@@ -395,6 +395,68 @@ samples), and one worker running the file-local part's strata, which the run's t
 | sorted again | 1.50 s | 1.30 s | 0.97 s |
 | carried | 0.94 s | 0.60 s | 0.55 s |
 
+## Built: a plan asks a source's sort without building it (2026-11-10)
+
+**Where the fixed cost was.** O125 step 07, θ off, by own time in "plan and evaluate" (9.0 s):
+
+| span | CPU | count |
+| --- | ---: | ---: |
+| engine runs | 2.42 s | 3,479 |
+| opens | 2.09 s | 24,784 |
+| └ index of a base input | 1.06 s | 868 |
+| └ survivors | 0.54 s | 445 |
+| `native` (the stratum's set-up) | 0.84 s | 4,260 |
+| the strata's own | 0.50 s | 4,265 |
+| search, re-price, plan, spec, explain | 1.37 s | |
+
+A session step built more base-input indexes than the cold run did (420–1,090 against 383), at 0.9–1.1 s a step.
+Their CPU did not follow their size: 38 builds over one row took 97 ms. A sample showed why. For a key of several
+columns over an input held in memory (`Stored`), the open picks the most selective column to lead with
+(`InRel::lead`). To ask whether a column is sorted it called `sorted_rows(c, 0)`, and to ask its selectivity,
+`distinct(c)`. On a `Stored` source both build the column's sorted index. So every key column of every changed
+input was sorted, though only one leads. An unchanged input keeps last run's source, with its sorts
+(`retain::kept_source`). A changed one is new each step, so the sorts came back each step.
+
+**The fix.** A source says whether it serves sorted rows without building them (`Source::sorts_rows`; `Stored`:
+always). And `Stored::distinct` reads the count from the statistics kept with the rows, when it has them, before
+it sorts. Only the column a step probes by is sorted, when it first probes.
+
+**Measured.** Steps 06–08, both modes run at the same time, load 80–110. Work and engine calls are unchanged, so
+the plans are the same.
+
+| | base-input index CPU, 06 / 07 / 08 | cross CPU, 06 / 07 / 08 |
+| --- | --- | --- |
+| counting, before | 1.15 / 0.95 / 0.92 s | 15.0 / 11.7 / 12.0 s |
+| counting, after | 0.21 / 0.16 / 0.12 s | 14.2 / 8.2 / 7.7 s |
+| DRed, before | 0.97 / 0.97 / 0.94 s | 10.9 / 8.7 / 8.7 s |
+| DRed, after | 0.19 / 0.22 / 0.13 s | 10.7 / 8.4 / 6.9 s |
+
+The cold run's cross part was 6.9–8.8 s in the same runs, so an edit now costs about what a cold derive does,
+not twice it.
+
+**Where step 07's cross part goes now** (counting, 7.8 s of own time):
+
+| span | CPU | count |
+| --- | ---: | ---: |
+| engine runs | 3.45 s | 2,601 |
+| `native` | 0.38 s | 3,083 |
+| planning (`plan`, search, re-price) | 0.84 s | |
+| strata's own | 0.28 s | 3,320 |
+| survivors opened | 0.28 s | 304 |
+| input delta from the changed documents | 0.26 s | 119 |
+| engine live statistics | 0.22 s | 2,601 |
+| base-input indexes | 0.16 s | 801 |
+
+**What this says about §3.** An engine call's own cost is small now: counting's 2,601 calls took 3.4 s of joins
+and DRed's 958 took 4.1 s, for the same work. So merging a stratum's pieces into one component (§3) would save
+part of the 0.4 s of `native` and the 0.3 s of strata's own, not seconds. Work is what is left:
+
+- Step 07 does 6.4 M work units against the cold run's 7.8 M. Of it, 3.9 M is in maintained strata and 2.5 M in
+  strata derived again (θ).
+- Some maintained joins are misordered by skew. The four `ifn__ins` rules take `fv__ins` (526 rows), probe `pv` by
+  `k` (201,000 rows), then filter by `icall` to nothing. That is 0.53 M work, 8% of the step. What `icall`
+  first would read is not measured yet.
+
 ## Open
 
 - Whether §2's base-program form keeps demand's choices identical on the rewritten program. If it does not, the
@@ -403,3 +465,5 @@ samples), and one worker running the file-local part's strata, which the run's t
   (0100's batches).
 - Recursive components are maintained by delete-and-rederive under counting (0090, "Built: counting the
   default"). §1 applies to them unchanged.
+- §3 (one component per base stratum) is worth at most ≈ 0.7 s a step at O125 after the sort fix (above). The
+  larger lever is work: the skew-misordered maintained joins, and the strata θ derives again.
