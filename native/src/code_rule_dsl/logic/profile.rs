@@ -67,8 +67,19 @@ pub(in crate::code_rule_dsl) fn set_directory(dir: &Path) {
 }
 
 fn cpu() -> f64 {
-    let (u, s) = super::plan::corpus::thread_usage();
-    u + s
+    // macOS: the thread's CPU by `clock_gettime`, a quarter of `thread_info`'s cost (every span reads it twice).
+    #[cfg(target_os = "macos")]
+    {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: fills `t` with the calling thread's CPU time.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let (u, s) = super::plan::corpus::thread_usage();
+        u + s
+    }
 }
 
 #[derive(Default, Clone)]
@@ -323,7 +334,7 @@ pub(in crate::code_rule_dsl) fn span(name: impl FnOnce() -> String) -> Span {
             None => name,
         };
         let alloc = s.counters.read();
-        s.opens.push(Open { path, start: cpu(), children: 0.0, alloc, peak: memory::footprint().1, children_alloc: 0, children_rise: 0 });
+        s.opens.push(Open { path, start: cpu(), children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0 });
     });
     Span(true)
 }
@@ -334,7 +345,7 @@ impl Drop for Span {
             return;
         }
         let now = cpu();
-        let peak = memory::footprint().1;
+        let peak = memory::peak_sampled();
         STACK.with(|s| {
             let mut s = s.lock();
             let (allocated, freed) = s.counters.read();

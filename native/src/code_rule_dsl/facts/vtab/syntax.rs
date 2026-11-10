@@ -363,7 +363,7 @@ pub(crate) fn numbering(doc: &Document) -> StoreResult<Numbering> {
         return Ok(Numbering { nodes: Vec::new(), back: None });
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
-    let dialect = Dialect::new(tag)?;
+    let dialect = Dialect::kept(tag)?;
     // A guest's nodes are its root's subtree.
     let guest = doc.guest.as_deref().map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), &dialect, Shape::Core, false, guest);
@@ -453,6 +453,20 @@ struct Dialect {
     codes: HashMap<u16, Vec<u16>>,
 }
 impl Dialect {
+    /// The dialect of `tag`, made once per thread: making one walks the grammar's kinds (a millisecond in a debug
+    /// build), and a chunk's guests number every host they are made in (`numbering`).
+    fn kept(tag: u8) -> StoreResult<std::rc::Rc<Self>> {
+        thread_local! {
+            static KEPT: std::cell::RefCell<HashMap<u8, std::rc::Rc<Dialect>>> = std::cell::RefCell::new(HashMap::new());
+        }
+        if let Some(d) = KEPT.with(|k| k.borrow().get(&tag).cloned()) {
+            return Ok(d);
+        }
+        let d = std::rc::Rc::new(Self::new(tag)?);
+        KEPT.with(|k| k.borrow_mut().insert(tag, std::rc::Rc::clone(&d)));
+        Ok(d)
+    }
+
     fn new(tag: u8) -> StoreResult<Self> {
         let catalog = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?.kinds();
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
