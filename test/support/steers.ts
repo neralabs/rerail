@@ -1,4 +1,4 @@
-import { steerBlock, type RerailHost, type SteerRule, type SteerTrigger } from "../../src/engine/index.js";
+import { ADAPTER_CAPABILITIES, steerBlock, type RerailHost, type SteerRule, type SteerTrigger } from "../../src/engine/index.js";
 
 /** An edit's steer for one finding of `ruleId`, as the code-rule enforcer renders it. */
 export function editSteer(ruleId: string, message: string, location?: string): string {
@@ -18,11 +18,11 @@ type SteerShell = NonNullable<Parameters<typeof steerBlock>[2]>;
 
 /**
  * The shell `host`'s agent runs the commands a steer names in, on the machine the test runs on: sh off Windows; on
- * Windows PowerShell for Codex and Cursor, and Git Bash for the others.
+ * Windows the shell its capability profile names (`windowsCommandShell`), PowerShell or else Git Bash.
  */
 export function hostShell(host: RerailHost): SteerShell {
   if (process.platform !== "win32") return "posix";
-  return host === "codex" || host === "cursor" ? "powershell" : "git-bash";
+  return ADAPTER_CAPABILITIES[host].windowsCommandShell === "powershell" ? "powershell" : "git-bash";
 }
 
 /**
