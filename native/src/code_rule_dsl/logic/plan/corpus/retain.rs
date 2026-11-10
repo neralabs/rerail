@@ -275,14 +275,8 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.rels.contains_key(r)));
     let whole = kept.is_none() || (!prog.gates.is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
-    // A cache (decision 0103) is stale only when its key is: nothing else its output rule reads is looked at.
-    let caches = front::caches::caches_here(prog).unwrap_or_default();
     for scc in &sccs {
-        let cache = caches.iter().find(|c| scc.len() == 1 && scc.contains(&c.out));
-        let stale = whole || match cache {
-            Some(c) => dirty.contains(&c.key),
-            None => reads(prog, scc).iter().any(|r| dirty.contains(r)),
-        };
+        let stale = whole || reads(prog, scc).iter().any(|r| dirty.contains(r));
         if stale {
             ran += 1;
             dirty.extend(scc.iter().cloned());

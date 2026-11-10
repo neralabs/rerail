@@ -48,9 +48,6 @@ pub(in crate::code_rule_dsl) fn caches(prog: &Program) -> Result<Vec<Cache>, Err
         if prog.inputs.contains(&c) || prog.lattice.contains_key(&c) || prog.natives.contains_key(&c) {
             return Err(bad(format!("{c} is an input, a lattice or made natively: its rows must be its output rules'")));
         }
-        if !prog.rules.iter().any(|r| r.head.rel == k) {
-            return Err(bad(format!("{k} has no key rule: derive it from the input facts")));
-        }
         let rules: Vec<&Rule> = prog.rules.iter().filter(|r| r.head.rel == c).collect();
         if rules.is_empty() {
             return Err(bad(format!("{c} has no output rule")));

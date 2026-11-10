@@ -4389,7 +4389,7 @@ fn run_observed(
                             given.insert(rel.clone(), (atoms_source(&store, decl.len(), plus.iter())?, atoms_source(&store, decl.len(), minus.iter())?));
                         }
                     }
-                    let mut cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
                     let s = span("bind unchanged inputs");
                     let same = cell.as_ref().map(|kept| kept.same_inputs(ckey, &digests)).unwrap_or_default();

@@ -1,6 +1,5 @@
 //! A cache is two rules (decision 0103): its output rule runs only for keys that are new, in a run with no session
-//! (the store's rows by key), in a session (maintenance) and in the file-local part; a gone key's rows go; a fact
-//! the key leaves out is not seen.
+//! (the kept strata) and in a session (maintenance); a gone key's rows go; a fact the key leaves out is not seen.
 
 use crate::code_rule_dsl::typing::file_local::Binding;
 use std::path::Path;
@@ -22,17 +21,6 @@ info(q, b) :- key(q), body(q, b).
 .output info
 "#;
 
-/// A cache of the file-local part: the key is each function name a file defines, the cache its body's text, by the
-/// name alone. Both are made per file, in the chunks.
-const LOCAL: &str = r#"
-.decl fname(d: number, x: symbol)
-fname(d, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d).
-.cache info by fname
-.decl info(d: number, q: symbol, b: symbol)
-info(d, x, b) :- fname(d, x), kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), field(n, "body", bn), text(bn, b).
-.output info
-"#;
-
 struct Corpus {
     dir: std::path::PathBuf,
     marker: String,
@@ -41,13 +29,10 @@ struct Corpus {
 
 impl Corpus {
     fn new(name: &str) -> Corpus {
-        Corpus::of(name, PROGRAM)
-    }
-    fn of(name: &str, program: &str) -> Corpus {
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
         std::fs::create_dir_all(dir.join("ws")).unwrap();
         let rule = dir.join("cache.rr");
-        std::fs::write(&rule, program).unwrap();
+        std::fs::write(&rule, PROGRAM).unwrap();
         let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
         Corpus { dir, marker: format!("# {:?}\n", std::time::SystemTime::now()), text }
     }
@@ -80,8 +65,8 @@ fn has(rows: &[String], q: &str, body: &str) -> bool {
     rows.iter().any(|r| r.contains(q) && r.contains(body))
 }
 
-/// Decision 0103 §2-3, a run with no session: a key the store has takes its stored rows, the output rule runs for
-/// the new keys only, and a run whose key stands runs none of the cache's strata (the kept strata).
+/// Decision 0103 §2-3, a run with no session: the cache's rows come from the kept strata, and the output rule runs
+/// for the new keys only.
 #[test]
 #[ignore = "decision 0103: without a session a cache runs as its plain rules until its previous rows are read where every relation is kept (kept strata, per-file memo); no cache store"]
 fn a_cache_runs_its_output_rule_only_for_new_keys() {

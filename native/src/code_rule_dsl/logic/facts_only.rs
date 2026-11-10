@@ -162,6 +162,8 @@ const NOT_YET_TABLES_PIN: usize = 66;
 const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
     ("code_rule_dsl/logic/costs.rs", "WRITER"),
+    // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
+    ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
