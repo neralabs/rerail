@@ -492,6 +492,46 @@ fn implied(moves: &[FxHashMap<Label, u32>], accepting: &[bool]) -> Implied {
     implied
 }
 
+/// What the automata say about where tokens are implied, for the census of rules that test
+/// tokens (`token_readers`).
+#[cfg(test)]
+impl TokenGrammar {
+    /// Per kind: the (token, field) pairs some implied word of its automaton holds. `""` is no
+    /// field.
+    pub(in crate::code_rule_dsl) fn implied_tokens(&self) -> BTreeMap<String, BTreeSet<(String, String)>> {
+        let mut out: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+        for (kind, automaton) in &self.kinds {
+            let words = automaton.implied.to.values().chain(automaton.implied.end.iter().flatten());
+            let entry = out.entry(self.texts[*kind as usize].clone()).or_default();
+            for label in words.flatten() {
+                entry.insert((self.texts[label.name as usize].clone(), self.texts[label.field as usize].clone()));
+            }
+        }
+        out
+    }
+
+    /// Per kind: the kinds whose automata have it as a named child.
+    pub(in crate::code_rule_dsl) fn parents(&self) -> BTreeMap<String, BTreeSet<String>> {
+        let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for (kind, automaton) in &self.kinds {
+            for label in automaton.moves.iter().flat_map(|moves| moves.keys()).filter(|label| !label.token) {
+                out.entry(self.texts[label.name as usize].clone()).or_default().insert(self.texts[*kind as usize].clone());
+            }
+        }
+        out
+    }
+
+    /// Every token text some automaton moves on.
+    pub(in crate::code_rule_dsl) fn token_texts(&self) -> BTreeSet<String> {
+        self.kinds
+            .values()
+            .flat_map(|automaton| automaton.moves.iter().flat_map(|moves| moves.keys()))
+            .filter(|label| label.token)
+            .map(|label| self.texts[label.name as usize].clone())
+            .collect()
+    }
+}
+
 /// The `grammar.json` a dialect's parser was generated from, built into the engine (the vendored
 /// grammars, and byte-identical copies of the Rust and PHP crates' under `grammars/token-grammars`);
 /// `None` for a dialect whose tapes keep all their tokens.

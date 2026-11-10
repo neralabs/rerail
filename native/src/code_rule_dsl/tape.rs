@@ -93,6 +93,8 @@ mod wire;
 pub(in crate::code_rule_dsl) mod tokens;
 #[cfg(test)]
 mod tokens_tests;
+#[cfg(test)]
+mod token_readers;
 pub(in crate::code_rule_dsl) mod resident;
 pub(super) use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
