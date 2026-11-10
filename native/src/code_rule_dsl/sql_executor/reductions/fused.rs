@@ -124,6 +124,23 @@ fn append_using(
         } else {
             let mut removed = vec![];
             let mut added = vec![];
+            let total_context = super::super::plan::acyclic::total(&rule.context_query.body);
+            let covering = rule.atoms.iter().filter_map(|atom| {
+                let delta = changes.get(&atom.relation).filter(|d| d.inserted > 0)?;
+                let input = store.available(&atom.relation)?;
+                let plus = store.available(&delta.plus)?;
+                let proof = super::super::super::logic::analysis::deltas::complete_positive_input(
+                    total_context, input.shares_rows(&plus),
+                );
+                proof.proven.then_some((atom.at, delta.inserted, proof))
+            }).min_by_key(|(at, rows, _)| (*rows, *at));
+            if let Some((at, _, proof)) = &covering {
+                if w.profiler.is_some() {
+                    phase.analyses.push(json!({"operation":"positive context insertion coverage",
+                        "rule":rule.step,"anchor":at,"decision":proof,
+                        "scope":"Insertion branches only; deletions and scalar invalidations remain"}));
+                }
+            }
             for atom in &rule.atoms {
                 let Some(delta) = changes.get(&atom.relation) else {
                     continue;
@@ -139,7 +156,7 @@ fn append_using(
                         quote(&rule.contexts)
                     ));
                 }
-                if delta.inserted > 0 {
+                if delta.inserted > 0 && covering.as_ref().is_none_or(|(at, _, _)| *at == atom.at) {
                     let mut query = rule.context_query.clone();
                     query.body.from[atom.at].relation = source(&delta.plus, &atom.columns);
                     maintenance::anchor(&mut query, atom.at);

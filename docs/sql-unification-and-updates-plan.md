@@ -3093,3 +3093,31 @@ Sparse cycle retraction also has a VM-work bound.
 This consolidates retained state; it does not yet move production feedback into one recursive SQL statement.
 The component transition must still preserve contexts, supports, and maintenance cursors when it adopts the SQL loop.
 Complete corpus and mixed-producer replays will measure the resulting execution shape before a submission or CPU claim.
+
+#### Complete-input coverage for positive context changes
+
+The immediate-parent runtime comparison uses `df4ec32d6`, including the merged integration and its SQL preparation bounds.
+It records 133 workload submissions, 415 call-analysis submissions, and 135 mixed-session submissions.
+These are the relevant controls for this change. Earlier 120/350 totals predate integration and cannot serve as matched controls.
+
+Cache consolidation removes three generated variants from workload and eighty-three from call analysis.
+The two large call components remove forty-seven and twenty-four variants.
+Without additional coverage analysis, submissions remain 133/421/135 across workload, calls, and the mixed session.
+All logical relations still match the independent cold oracle at seven checkpoints.
+However, workload fused-phase VM instructions increase from 362,438,134 to 441,134,399, mainly during recovery from empty input.
+This increase prevents a performance improvement claim for cache consolidation alone.
+
+The context transition generated an insertion branch for every changed positive atom.
+When one insertion set equals its complete current input, that branch already covers every current positive join witness.
+Other insertion branches repeat the same context work, sometimes with a much worse join order over accumulated recursive inputs.
+
+Shared delta analysis now proves this complete-input coverage independently of either executor.
+SQL applies the proof only to total context expressions and identical immutable row roots.
+It selects one complete insertion input and preserves all deletion and scalar-invalidation processing.
+Public explain reports the conditional proof. SQL phase profiles report each actual covering anchor and its proof.
+Unknown or partial coverage retains the general transition.
+
+Debug verification passes 176 SQL-executor tests, sixteen shared-analysis tests, and twelve SQL-profiler tests.
+The new analysis test exhaustively checks 4,096 small input transitions, including simultaneous insertions and deletions.
+The profiling integration test verifies an actual covering anchor and the public explanation without SQL execution.
+Complete-session replays remain required before accepting the combined performance result.

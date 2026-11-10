@@ -31,6 +31,7 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
     let mut files = 0;
     let mut logical = false;
     let mut component_loop=false;
+    let mut insertion_coverage = false;
     for entry in std::fs::read_dir(directory.path().join("sql")).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().is_none_or(|s| s != "json") {
@@ -84,6 +85,10 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
                 .as_array()
                 .is_some_and(|a| !a.is_empty())
                 || event["context"]["logicalAnalysis"].is_object();
+            insertion_coverage |= event["context"]["logicalAnalyses"].as_array().is_some_and(|analyses| {
+                analyses.iter().any(|a| a["operation"] == "positive context insertion coverage"
+                    && a["decision"]["proven"] == true && a["anchor"].is_u64())
+            });
             let stage = event["context"]["stage"].as_str().unwrap_or("");
             cold |= stage == "cold rule";
             recursive |= event["context"].get("frame").is_some();
@@ -129,6 +134,7 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             && sparse_batch
             && logical
             && component_loop
+            && insertion_coverage
     );
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let output = std::process::Command::new("node")
@@ -201,6 +207,11 @@ fn profiled_session_child() {
         totals,
         "explain must not execute SQL"
     );
+    assert!(explanation["executions"][0]["retained"].as_array().unwrap().iter().any(|state| {
+        state["rules"].as_array().unwrap().iter().any(|rule| {
+            rule["context_insertion_coverage"]["if_insertions_equal_current_input"]["proven"] == true
+        })
+    }));
     let patch = json!([{"name":"edge","delete":[[2,1,1]]}]).to_string();
     e.set_limits(json!({"max_steps":1}).to_string()).unwrap();
     assert!(e.apply_changes(patch.clone(), None).is_err());
@@ -216,6 +227,8 @@ fn profiled_session_child() {
     )
     .unwrap();
     assert_eq!(result["rows"], json!([[1, 5]]));
+    e.apply_changes(json!([{"name":"root","delete":[[0]]}]).to_string(), None).unwrap();
+    e.apply_changes(json!([{"name":"root","insert":[[0]]}]).to_string(), None).unwrap();
     e.reset().unwrap();
     let versions = versions::Store::default();
     versions
