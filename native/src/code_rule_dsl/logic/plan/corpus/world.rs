@@ -92,6 +92,8 @@ pub(super) struct World {
     dir_requests: BTreeSet<String>,
     metadata_requests: BTreeSet<String>,
     files: BTreeMap<String, Vec<String>>,
+    file_errors: BTreeMap<String, super::inputs::Failure>,
+    read_errors: bool,
     host: BTreeMap<String, Option<String>>,
     loads: BTreeMap<String, Loaded>,
     load_targets: BTreeMap<String, String>,
@@ -131,7 +133,8 @@ impl World {
             }
         }
         let snapshot_metadata = prog.rules.iter().any(|r| r.head.rel == "rr_dir_metadata_req");
-        World { roots, root: root.to_path_buf(), budget, snapshot_metadata, ..World::default() }
+        let read_errors = prog.rules.iter().any(|r| r.head.rel == "rr_file_error_req") || prog.facts.contains_key("rr_file_error_req");
+        World { roots, root: root.to_path_buf(), budget, snapshot_metadata, read_errors, ..World::default() }
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
@@ -191,14 +194,36 @@ impl World {
         if let Some(lines) = self.files.get(asked) {
             return lines.clone();
         }
-        let Some(text) = self.allowed(asked).and_then(|p| super::observe(|o| o.read(&p))).and_then(|(bytes, _)| String::from_utf8(bytes).ok()) else {
+        let Some(path) = self.allowed(asked) else {
             self.refused.insert(asked.to_owned());
+            self.files.insert(asked.to_owned(), Vec::new());
             return Vec::new();
+        };
+        // Retain phase-0's shared bytes. Only a failed observer read needs an OS
+        // read to recover its error code; successful files are not read twice.
+        let result = match super::observe(|o| o.read(&path)) {
+            Some((bytes, _)) => super::inputs::decode_repository_bytes(bytes, self.read_errors),
+            None => super::inputs::read_repository_file(&self.root, path.to_str().unwrap_or(asked), self.read_errors),
+        };
+        let text = match result {
+            Ok(text) => text,
+            Err(error) => {
+                self.file_errors.insert(asked.to_owned(), error);
+                self.files.insert(asked.to_owned(), Vec::new());
+                self.refused.insert(asked.to_owned());
+                return Vec::new();
+            }
         };
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         let lines: Vec<String> = text.split_terminator('\n').map(str::to_owned).collect();
         self.files.insert(asked.to_owned(), lines.clone());
         lines
+    }
+
+    /// Typed failures share the requested file's read and dependency snapshot.
+    pub(super) fn file_error(&mut self, asked: &str) -> Option<Vec<front::Value>> {
+        self.file(asked);
+        self.file_errors.get(asked).and_then(|error| super::inputs::read_error_row(asked, error))
     }
 
     /// A load's document: the file's canonical path, when it is new, allowed, in the run's grammar and within the
@@ -388,6 +413,25 @@ pub(super) fn bytes_digest(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_error_and_file_lines_share_one_snapshot_and_keep_error_bytes() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-file-error");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("bad.txt"), [b'a',0xff]).unwrap();
+        let program=front::parse(".decl rr_file_error_req(p: symbol)\nrr_file_error_req(\"bad.txt\").").unwrap();
+        let mut world=World::new(&root,&program);
+        assert!(world.file("bad.txt").is_empty());
+        std::fs::write(root.join("bad.txt"),"changed\n").unwrap();
+        let row=world.file_error("bad.txt").unwrap();
+        assert_eq!((&row[1],&row[4],&row[5],&row[6]),(&front::Value::Str("InvalidUtf8".into()),&front::Value::Str("61ff".into()),&front::Value::Int(1),&front::Value::Int(2)));
+        assert!(world.file("bad.txt").is_empty());
+        assert!(world.file_error("missing").is_none());
+        std::fs::create_dir(root.join("folder")).unwrap();
+        let error=world.file_error("folder").unwrap();
+        assert!(matches!(error[2],front::Value::Int(n) if n>0));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn every_logical_load_answers_while_one_physical_document_is_admitted() {

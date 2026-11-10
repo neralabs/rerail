@@ -2654,8 +2654,9 @@ const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
 
 /// The relations of the file system a rule may read (t21 E1), each with the request its reads make: a directory's
 /// entries, `dir_entry(dir, name, is_dir)`, and a file's lines, `file_line(path, i, text)` (from 1).
-pub(in crate::code_rule_dsl) const WORLD: [(&str, &str); 4] = [
+pub(in crate::code_rule_dsl) const WORLD: [(&str, &str); 5] = [
     ("dir_entry", "rr_dir_req"), ("dir_metadata", "rr_dir_metadata_req"), ("file_line", "rr_file_req"),
+    ("file_error", "rr_file_error_req"),
     ("host_info", "rr_host_req"),
 ];
 

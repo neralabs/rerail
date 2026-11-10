@@ -6,13 +6,37 @@ use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
-#[derive(Clone, Debug)]
-struct Failure {
+#[derive(Clone, Debug, Default)]
+pub(super) struct Failure {
     kind: &'static str,
     detail: String,
+    read: Option<std::sync::Arc<ReadError>>,
+}
+#[derive(Debug)]
+struct ReadError {
+    kind: String,
+    errno: i64,
+    bytes: Vec<u8>,
+    start: i64,
+    end: i64,
+    reason: &'static str,
 }
 type ReadResult<T> = std::result::Result<T, Failure>;
-fn malformed(detail: impl Into<String>) -> Failure { Failure { kind: "malformed", detail: detail.into() } }
+fn malformed(detail: impl Into<String>) -> Failure { Failure { kind: "malformed", detail: detail.into(), ..Default::default() } }
+
+fn read_errors_wanted(program: &front::Program) -> bool {
+    program.outputs.iter().any(|r| r == "input_read_error") || program.rules.iter()
+        .flat_map(|r| &r.body).filter_map(front::Literal::atom).any(|a| a.rel == "input_read_error")
+}
+
+pub(super) fn read_error_row(path: &str, failure: &Failure) -> Option<Vec<Value>> {
+    use std::fmt::Write;
+    let error = failure.read.as_ref()?;
+    let mut bytes = String::with_capacity(error.bytes.len() * 2);
+    for byte in &error.bytes { write!(&mut bytes, "{byte:02x}").unwrap(); }
+    Some(vec![Value::Str(path.into()), Value::Str(error.kind.clone()), Value::Int(error.errno),
+        Value::Str(failure.detail.clone()), Value::Str(bytes), Value::Int(error.start), Value::Int(error.end), Value::Str(error.reason.into())])
+}
 
 pub(in crate::code_rule_dsl) fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
     let mut parts = Vec::new();
@@ -306,7 +330,7 @@ pub(in crate::code_rule_dsl) fn set_base(rev: String) -> std::result::Result<(),
     BASE.set(rev).map_err(|_| "the base revision is already set".to_owned())
 }
 
-fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unreadable", detail: detail.to_string() } }
+fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unreadable", detail: detail.to_string(), ..Default::default() } }
 
 /// The tree of `rev` in the repository that holds `root`, and `root`'s path inside it.
 fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::ObjectId, PathBuf)> {
@@ -330,10 +354,10 @@ fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::Object
 fn base_reader<'a>(root: &'a Path, rev: Option<&'a str>) -> impl FnMut(&str) -> ReadResult<String> + 'a {
     let mut tree: Option<ReadResult<(gix::Repository, gix::ObjectId, PathBuf)>> = None;
     move |path| {
-        let rev = rev.ok_or_else(|| Failure { kind: "missing", detail: "no base revision: run with --base REV".into() })?;
+        let rev = rev.ok_or_else(|| Failure { kind: "missing", detail: "no base revision: run with --base REV".into(), ..Default::default() })?;
         let (repo, id, prefix) = tree.get_or_insert_with(|| base_tree(root, rev)).as_ref().map_err(Clone::clone)?;
         let entry = repo.find_tree(*id).map_err(unreadable)?.lookup_entry_by_path(prefix.join(path)).map_err(unreadable)?
-            .ok_or_else(|| Failure { kind: "missing", detail: format!("{path} is not in {rev}") })?;
+            .ok_or_else(|| Failure { kind: "missing", detail: format!("{path} is not in {rev}"), ..Default::default() })?;
         let blob = entry.object().map_err(unreadable)?;
         String::from_utf8(blob.data.clone()).map_err(|e| malformed(format!("{path} at {rev}: {e}")))
     }
@@ -462,11 +486,11 @@ fn artifact_data(name: &str, text: &str, digest: &str) -> ReadResult<Json> {
     }
     let Some(stamped) = field("inputs") else { return Err(malformed("no inputs digest")) };
     if stamped != digest {
-        return Err(Failure { kind: "stale", detail: format!("its inputs changed since it was stamped ({stamped}, now {digest})") });
+        return Err(Failure { kind: "stale", detail: format!("its inputs changed since it was stamped ({stamped}, now {digest})"), ..Default::default() });
     }
     match field("status") {
         Some("ok") => envelope.get("data").cloned().ok_or_else(|| malformed("status ok with no data")),
-        Some("failed") => Err(Failure { kind: "failed", detail: field("error").unwrap_or("the producer failed").to_owned() }),
+        Some("failed") => Err(Failure { kind: "failed", detail: field("error").unwrap_or("the producer failed").to_owned(), ..Default::default() }),
         other => Err(malformed(format!("status {other:?}"))),
     }
 }
@@ -533,12 +557,35 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn of_result(result: &ReadResult<String>) -> String {
-    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => format!("{}", f.kind) }
+    match result {
+        Ok(text) => sha256_hex(text.as_bytes()),
+        Err(f) => match &f.read {
+            Some(e) => format!("{}:{}:{}:{}:{}", f.kind, e.kind, e.errno, sha256_hex(f.detail.as_bytes()), sha256_hex(&e.bytes)),
+            None => f.kind.to_owned(),
+        },
+    }
 }
 
-fn read_repository_file(root: &Path, name: &str) -> ReadResult<String> {
-    std::fs::read_to_string(root.join(name)).map_err(|e| Failure {
+pub(super) fn read_repository_file(root: &Path, name: &str, detailed: bool) -> ReadResult<String> {
+    let bytes = std::fs::read(root.join(name)).map_err(|e| Failure {
         kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string(),
+        read: detailed.then(|| std::sync::Arc::new(ReadError { kind: format!("{:?}", e.kind()), errno: e.raw_os_error().unwrap_or(0).into(), bytes: Vec::new(), start: 0, end: 0, reason: "" })),
+    })?;
+    decode_repository_bytes(bytes, detailed)
+}
+
+pub(super) fn decode_repository_bytes(bytes: Vec<u8>, detailed: bool) -> ReadResult<String> {
+    String::from_utf8(bytes).map_err(|e| {
+        let read = detailed.then(|| {
+            let error = e.utf8_error();
+            let bytes = e.into_bytes();
+            let start = error.valid_up_to();
+            let end = error.error_len().map_or(bytes.len(), |len| start + len);
+            let reason = if error.error_len().is_none() { "unexpected-end" }
+                else if matches!(bytes[start], 0xc2..=0xf4) { "invalid-continuation" } else { "invalid-start" };
+            std::sync::Arc::new(ReadError { kind: "InvalidUtf8".into(), errno: 0, bytes, start: start as i64, end: end as i64, reason })
+        });
+        Failure { kind: "unreadable", detail: "stream did not contain valid UTF-8".into(), read }
     })
 }
 
@@ -547,9 +594,10 @@ fn read_artifact(root: &Path, declared: &BTreeMap<String, Vec<String>>, name: &s
     let text = std::fs::read_to_string(facts_dir(root).join(format!("{name}.json"))).map_err(|e| Failure {
         kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "malformed" },
         detail: format!("{}: {e}", facts_dir(root).join(format!("{name}.json")).display()),
+        ..Default::default()
     });
-    let digest = declared.get(name).ok_or_else(|| Failure { kind: "malformed", detail: format!("no .artifact {name:?} declares its inputs") })
-        .and_then(|globs| inputs_digest(root, globs).map_err(|detail| Failure { kind: "malformed", detail }));
+    let digest = declared.get(name).ok_or_else(|| Failure { kind: "malformed", detail: format!("no .artifact {name:?} declares its inputs"), ..Default::default() })
+        .and_then(|globs| inputs_digest(root, globs).map_err(|detail| Failure { kind: "malformed", detail, ..Default::default() }));
     (text, digest)
 }
 
@@ -558,6 +606,7 @@ fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> Str
 }
 
 pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> {
+    let detailed = read_errors_wanted(program);
     let declared = artifacts(&program.settings)?;
     let base = BASE.get().map(String::as_str);
     let mut consulted = Vec::new();
@@ -567,7 +616,7 @@ pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> 
         program,
         root,
         &mut |name| {
-            let result = read_repository_file(root, name);
+            let result = read_repository_file(root, name, detailed);
             seen.borrow_mut().push(("input".to_owned(), name.to_owned(), of_result(&result)));
             result
         },
@@ -632,7 +681,7 @@ pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String,
     let Ok(declared) = artifacts(&program.settings) else { return false };
     consulted.iter().all(|(what, path, digest)| {
         let now = match what.as_str() {
-            "input" => of_result(&read_repository_file(root, path)),
+            "input" => of_result(&read_repository_file(root, path, read_errors_wanted(program))),
             "input_dir" => listing(root, path),
             "artifact" => {
                 let (text, inputs) = read_artifact(root, &declared, path);
@@ -684,6 +733,8 @@ fn populate_with(
     let mut base_readers = Readers::default();
     let mut artifacts: BTreeMap<String, ReadResult<Json>> = BTreeMap::new();
     let mut errors: Vec<Vec<Value>> = Vec::new();
+    let detailed = read_errors_wanted(program);
+    let mut read_errors: Vec<Vec<Value>> = Vec::new();
     // Relations an artifact left without rows, and why (FINDINGS-LAYER.md section 2).
     let mut incomplete: BTreeMap<String, String> = BTreeMap::new();
     for setting in settings {
@@ -748,7 +799,7 @@ fn populate_with(
             if io != "lines" { return Err(Error::Plan(format!("{rel}: dir is supported only by IO=lines"))); }
             consulted.push(("input_dir".to_owned(), path.clone(), listing(root, path)));
             match std::fs::read_dir(root.join(path)) {
-                Err(e) => Err(Failure { kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string() }),
+                Err(e) => Err(Failure { kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string(), ..Default::default() }),
                 Ok(entries) => {
                     let mut paths = entries.map(|entry| entry.map(|e| e.path())).collect::<std::io::Result<Vec<_>>>()
                         .map_err(|e| Error::Plan(format!("{rel}: listing {path}: {e}")))?;
@@ -778,7 +829,10 @@ fn populate_with(
                 }
                 incomplete.insert(rel.to_owned(), format!("{path}@base {}", error.kind));
             }
-            Err(error) => errors.push(vec![Value::Str(path.clone()), Value::Str(error.kind.to_owned()), Value::Str(error.detail)]),
+            Err(error) => {
+                if detailed && let Some(row) = read_error_row(path, &error) && !read_errors.contains(&row) { read_errors.push(row); }
+                errors.push(vec![Value::Str(path.clone()), Value::Str(error.kind.to_owned()), Value::Str(error.detail)]);
+            },
         }
     }
     // This reader owns the declared error relation even after successful reads. Leaving it as an
@@ -786,6 +840,10 @@ fn populate_with(
     if program.decls.contains_key("input_error") || !errors.is_empty() {
         program.inputs.retain(|name| name != "input_error");
         program.facts.entry("input_error".to_owned()).or_default().extend(errors);
+    }
+    if program.decls.contains_key("input_read_error") {
+        program.inputs.retain(|name| name != "input_read_error");
+        program.facts.entry("input_read_error".to_owned()).or_default().extend(read_errors);
     }
     if !incomplete.is_empty() {
         let withheld = withhold(program, &incomplete);
@@ -875,6 +933,59 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn typed_read_errors_share_one_read_and_preserve_utf8_bytes_and_offsets() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("typed-read-error");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("bad.txt"), [0xc3,0xa9,b'a',0xe2,0x82]).unwrap();
+        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
+.decl lines(i: number, t: symbol)
+.input lines(IO=lines, filename="bad.txt")
+.decl json(t: symbol)
+.input json(IO=json, filename="bad.txt")
+.decl input_read_error(p: symbol,k: symbol,n: number,d: symbol,b: symbol,s: number,e: number,r: symbol)
+.input input_read_error
+.decl error_bytes(b: symbol)
+error_bytes(b) :- input_read_error(_,_,_,_,b,_,_,_).
+"#).unwrap();
+        let mut reads = 0;
+        populate_with(&mut program, &root, &mut |p| { reads += 1; read_repository_file(&root,p,true) }, &mut |_| panic!("artifact"), &mut |_| panic!("base"), &mut Vec::new()).unwrap();
+        assert_eq!(reads,1);
+        assert!(program.facts.get("lines").is_none_or(Vec::is_empty));
+        assert_eq!(program.facts["input_read_error"], vec![vec![Value::Str("bad.txt".into()),Value::Str("InvalidUtf8".into()),Value::Int(0),
+            Value::Str("stream did not contain valid UTF-8".into()),Value::Str("c3a961e282".into()),Value::Int(3),Value::Int(5),Value::Str("unexpected-end".into())]]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn changed_invalid_bytes_invalidate_typed_read_errors_without_changing_the_error_kind() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("read-error-digest");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("bad"), [0xff]).unwrap();
+        let first = of_result(&read_repository_file(&root,"bad",true));
+        std::fs::write(root.join("bad"), [0xfe]).unwrap();
+        assert_ne!(first,of_result(&read_repository_file(&root,"bad",true)));
+        assert!(read_repository_file(&root,"bad",false).unwrap_err().read.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn utf8_error_categories_and_lengths_cover_invalid_prefixes_and_continuations() {
+        for (bytes,start,end,reason) in [
+            (vec![b'a',0xff],1,2,"invalid-start"),
+            (vec![0xc0,0x80],0,1,"invalid-start"),
+            (vec![0xe2,0x28,0xa1],0,1,"invalid-continuation"),
+            (vec![0xe2,0x82,b'x'],0,2,"invalid-continuation"),
+            (vec![0xed,0xa0,0x80],0,1,"invalid-continuation"),
+            (vec![0xf4,0x90,0x80,0x80],0,1,"invalid-continuation"),
+            (vec![0xf0,0x9f,0x92],0,3,"unexpected-end"),
+        ] {
+            let failure=decode_repository_bytes(bytes,true).unwrap_err();
+            let row=read_error_row("file",&failure).unwrap();
+            assert_eq!((&row[5],&row[6],&row[7]),(&Value::Int(start),&Value::Int(end),&Value::Str(reason.into())));
+        }
+    }
+
     #[test]
     fn python_string_projection_preserves_nested_values_float_repr_and_one_read() {
         let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
@@ -1082,7 +1193,7 @@ grew(e) :- now_entry(e), !was(_, e).
     /// Without a base, the comparison is withheld rather than reporting every entry as new.
     #[test]
     fn an_unreadable_base_gives_an_input_error_and_withholds_the_comparison() {
-        let program = burn_down(&mut |_| Err(Failure { kind: "missing", detail: "no base revision".into() }));
+        let program = burn_down(&mut |_| Err(Failure { kind: "missing", detail: "no base revision".into(), ..Default::default() }));
         assert_eq!(error_kinds(&program), [r#"Str("allow.txt@base") Str("missing")"#]);
         assert!(!program.rules.iter().any(|r| r.head.rel == "grew"), "a rule reading the base through ! is withheld");
         assert!(program.rules.iter().any(|r| r.head.rel == "now_entry"));
@@ -1196,7 +1307,7 @@ quiet() :- ceiling(_), !over(_).
         populate_with(&mut program, Path::new("."), &mut |_| panic!("no repository file is read"), &mut |name| {
             assert_eq!(name, "collection");
             match &text {
-                None => Err(Failure { kind: "missing", detail: "collection.json".into() }),
+                None => Err(Failure { kind: "missing", detail: "collection.json".into(), ..Default::default() }),
                 Some(t) => artifact_data(name, t, "sha256:now"),
             }
         }, &mut no_base, &mut Vec::new())

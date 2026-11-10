@@ -3604,6 +3604,19 @@ fn run_observed(
                     let symbols = atoms(&values.iter().map(|(_, value)| value.as_str()).collect::<Vec<_>>())?;
                     return Ok(vec![(produced.to_string(), values.into_iter().zip(symbols).map(|((key, _), value)| vec![key, value]).collect())]);
                 }
+                if *produced == "file_error" {
+                    let mut values = Vec::new();
+                    for row in rows {
+                        if let Some(error) = world.file_error(&text(row[0])?) { values.push(error); }
+                    }
+                    // One vocabulary operation for the complete demand batch.
+                    let symbols: Vec<&str> = values.iter().flatten().filter_map(|v| if let front::Value::Str(s) = v { Some(s.as_str()) } else { None }).collect();
+                    let mut ids = atoms(&symbols)?.into_iter();
+                    let answer = values.iter().map(|row| row.iter().map(|v| match v {
+                        front::Value::Str(_) => ids.next().unwrap(), front::Value::Int(n) => *n,
+                    }).collect()).collect();
+                    return Ok(vec![(produced.to_string(), answer)]);
+                }
                 for row in rows {
                     let asked = text(row[0])?;
                     if *produced == "dir_entry" {

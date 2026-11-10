@@ -234,6 +234,10 @@
 // is_symlink describes the entry itself. Missing link targets have zero bytes.
 .decl dir_metadata(dir: symbol, name: symbol, is_file: number, is_symlink: number, bytes: number)
 .decl file_line(path: symbol, i: number, text: symbol)
+// A demanded file's read failure; shares file_line's cached read. Missing or
+// refused paths have no row. UTF-8 offsets count bytes; bytes_hex retains the
+// complete failed input only when a rule consumes this relation.
+.decl file_error(path: symbol, io_kind: symbol, errno: number, detail: symbol, bytes_hex: symbol, start: number, end: number, reason: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol)
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
 // spread(n) for `*args` in `f(*args)` and `...xs` in `[...xs]`: positions after a spread are not fixed, so
@@ -579,6 +583,11 @@
 // (data-layer/FINDINGS-LAYER.md, section 2). The format and the CI steps: data-layer/RUN-FACTS.md.
 .decl input_error(path: symbol, kind: symbol, detail: symbol)  // missing, unreadable, malformed, signature, stale, failed
 .input input_error
+// Typed OS and UTF-8 failures for repository .input readers. OS kinds use Rust's
+// ErrorKind names. InvalidUtf8 reasons are invalid-start, invalid-continuation,
+// or unexpected-end. Successful reads leave this relation known and empty.
+.decl input_read_error(path: symbol, io_kind: symbol, errno: number, detail: symbol, bytes_hex: symbol, start: number, end: number, reason: symbol)
+.input input_read_error
 
 // ---- embedded languages (proposed) ------------------------------------------------------------------------------
 // Code inside code (SQL in a Python string, a template's expressions, a string annotation) is to be a guest
