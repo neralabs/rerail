@@ -229,14 +229,31 @@ async function reclaimDeadOwner(path: string): Promise<boolean> {
   }
 }
 
-async function acquireLock(path: string, serializedOwner: string, deadline: number, label: string): Promise<void> {
+/** How long a hook waits for its session's lock before it gives up on its event. */
+const LOCK_WAIT_MS = 30_000;
+
+/**
+ * What creating a lock file raises on Windows while another hook of the session deletes that file: the file is still
+ * there, pending its delete, and Windows answers access denied (EPERM or EACCES) or busy, not EEXIST.
+ */
+const HELD_ON_WINDOWS: ReadonlySet<string> = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+/** Whether `error`, from creating the lock file, means another hook holds or is letting go of the lock. */
+function lockTaken(error: unknown, platform: NodeJS.Platform): boolean {
+  if (errno(error, "EEXIST")) return true;
+  const code = error instanceof Error && "code" in error ? error.code : undefined;
+  return platform === "win32" && typeof code === "string" && HELD_ON_WINDOWS.has(code);
+}
+
+async function acquireLock(path: string, serializedOwner: string, label: string, platform: NodeJS.Platform): Promise<void> {
+  const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     try {
       await writeFile(path, serializedOwner, { flag: "wx", mode: 0o600 });
       return;
     } catch (error) {
-      if (!errno(error, "EEXIST")) throw error;
-      if (await reclaimDeadOwner(path)) continue;
+      if (!lockTaken(error, platform)) throw error;
+      if (errno(error, "EEXIST") && await reclaimDeadOwner(path)) continue;
       if (Date.now() >= deadline) throw new Error(`Timed out waiting for session lock: ${label}`);
       await delay(10);
     }
@@ -251,13 +268,30 @@ async function releaseLock(path: string, serializedOwner: string): Promise<void>
   }
 }
 
+/**
+ * The lock a hook holds for its session, which guards the session's files: its held steers, and Cursor's transcript
+ * sidecar. `released` lets go of it while `work` runs, for work that touches no session file, such as waiting for the
+ * daemon's answer, and takes it again after. `kept` holds it while `work` runs, through every `released` within: for
+ * work that reads a session file before such a wait and writes it after, as Cursor's transcript ingest does.
+ */
+export interface SessionLock {
+  released<T>(work: () => Promise<T>): Promise<T>;
+  kept<T>(work: () => Promise<T>): Promise<T>;
+}
+
+export interface SessionLockOptions {
+  /** The platform whose errors for a lock file being deleted count as the lock being taken; this process's by default. */
+  platform?: NodeJS.Platform;
+}
+
 export async function withSessionLock<T>(
   storageRoot: string,
   host: HookHost,
   sessionId: string,
-  operation: () => Promise<T>,
+  operation: (lock: SessionLock) => Promise<T>,
+  options: SessionLockOptions = {},
 ): Promise<T> {
-  return withLockFile(sessionFile(storageRoot, host, "locks", sessionId, "lock"), sessionId, operation);
+  return withLockFile(sessionFile(storageRoot, host, "locks", sessionId, "lock"), sessionId, operation, options.platform ?? process.platform);
 }
 
 /**
@@ -270,21 +304,49 @@ export async function withPendingFileLock<T>(pendingFile: string, operation: () 
   const host = /^(.+)-pending$/.exec(folder)?.[1];
   const digest = /^([0-9a-f]{64})\.json$/.exec(basename(pendingFile))?.[1];
   if (host === undefined || digest === undefined) throw new Error(`Not a pending steer file: ${pendingFile}`);
-  return withLockFile(join(dirname(dirname(pendingFile)), `${host}-locks`, `${digest}.lock`), digest, operation);
+  return withLockFile(join(dirname(dirname(pendingFile)), `${host}-locks`, `${digest}.lock`), digest, operation, process.platform);
 }
 
-async function withLockFile<T>(path: string, label: string, operation: () => Promise<T>): Promise<T> {
+async function withLockFile<T>(
+  path: string,
+  label: string,
+  operation: (lock: SessionLock) => Promise<T>,
+  platform: NodeJS.Platform,
+): Promise<T> {
   await makeLedgerFolder(dirname(path));
   const owner: LockOwner = { pid: process.pid, token: randomUUID() };
   const serializedOwner = JSON.stringify(owner);
-  await acquireLock(path, serializedOwner, Date.now() + 30_000, label);
+  await acquireLock(path, serializedOwner, label, platform);
+  let held = true;
+  let keeping = 0;
+  const lock: SessionLock = {
+    async kept(work) {
+      keeping += 1;
+      try {
+        return await work();
+      } finally {
+        keeping -= 1;
+      }
+    },
+    async released(work) {
+      if (!held || keeping > 0) return await work();
+      await releaseLock(path, serializedOwner);
+      held = false;
+      try {
+        return await work();
+      } finally {
+        await acquireLock(path, serializedOwner, label, platform);
+        held = true;
+      }
+    },
+  };
   try {
-    const result = await operation();
-    await releaseLock(path, serializedOwner);
+    const result = await operation(lock);
+    if (held) await releaseLock(path, serializedOwner);
     return result;
   } catch (error) {
     try {
-      await releaseLock(path, serializedOwner);
+      if (held) await releaseLock(path, serializedOwner);
     } catch {
       // Preserve the operation failure; a stale lock is reclaimable by the next process.
     }

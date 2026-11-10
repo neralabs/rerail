@@ -194,7 +194,8 @@ async function ingestCompleteLines(
 
 /**
  * Recovers Cursor's append-only JSONL transcript when the CLI does not supply text hooks.
- * The caller holds Cursor's per-session hook lock, so the cursor sidecar is single-writer.
+ * The caller keeps Cursor's per-session hook lock through the whole ingest, its checks included (`SessionLock.kept`),
+ * so the cursor sidecar is single-writer.
  */
 export async function ingestCursorTranscript(
   input: HookInput,
