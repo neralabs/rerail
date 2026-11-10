@@ -19,9 +19,9 @@
 
 use std::collections::HashMap;
 
-use super::block::ClassTable;
-use super::native_cpu_block::{Sym, bitmask};
-use super::native_ir::{BlockInst, BlockNative};
+use crate::block::ClassTable;
+use crate::native_cpu_block::{Sym, bitmask};
+use crate::block_native::{BlockInst, BlockNative};
 use cranelift_codegen::ir::{ConstantData, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::FunctionBuilder;
 
@@ -30,11 +30,11 @@ const MAX_LAG: u8 = 16;
 
 /// Which instructions are computed on the byte vectors, and what is known of them.
 #[derive(Debug)]
-pub(super) struct Plan {
+pub struct Plan {
     /// Computed on the byte vectors.
-    pub(super) lanes: Vec<bool>,
+    pub lanes: Vec<bool>,
     /// Made a 64-bit mask too: read outside the vectors, an output, or a carried field's value.
-    pub(super) mask: Vec<bool>,
+    pub mask: Vec<bool>,
     /// How far back a byte-local value reads: its leaves' bytes at most `lag` before its own
     /// (a `prev` adds its shift, a `pair` and a `plane_before` one). On the vectors it is
     /// computed at a lag (`Lanes::get_at`): each leaf from the bytes that far back, loaded so.
@@ -42,18 +42,18 @@ pub(super) struct Plan {
     /// May be set on a byte of 0x00 (the zeros before a file), for a shiftable value.
     at_zero: Vec<bool>,
     /// Its value on every window of ASCII bytes, when it is the same on all of them.
-    pub(super) ascii: Vec<Option<bool>>,
+    pub ascii: Vec<Option<bool>>,
     /// Some value reads the 16 bytes before the block.
-    pub(super) before: bool,
+    pub before: bool,
     /// The full-block body has an ASCII twin: some value is known on ASCII windows.
-    pub(super) ascii_branch: bool,
+    pub ascii_branch: bool,
     /// Each value's word in a full block, when it is the same in every one: made of constants
     /// and `within` only (all ones there), `prev`s of such values included.
-    pub(super) full: Vec<Option<u64>>,
+    pub full: Vec<Option<u64>>,
     /// The gated regions of the full body (`Region`), in the order they were chosen.
-    pub(super) regions: Vec<Region>,
+    pub regions: Vec<Region>,
     /// Each value's region, if it is in one.
-    pub(super) region_of: Vec<Option<usize>>,
+    pub region_of: Vec<Option<usize>>,
 }
 
 /// A gated region: values that are zero in a block where the gate is zero and their own carried
@@ -61,20 +61,20 @@ pub(super) struct Plan {
 /// so a block with nothing for them (a block without numbers, for a number check) skips them,
 /// their class masks and their `prev`s included.
 #[derive(Debug)]
-pub(super) struct Region {
-    pub(super) gate: usize,
+pub struct Region {
+    pub gate: usize,
     /// A test before the gate's: the gate's other operand, when the gate's byte class is made a
     /// mask for the gate alone. A block where it has no bit skips the class's mask too, and one
     /// where it has bits makes the class and tests the gate (the class and the gate are then
     /// members). An escape's `u`, say: most blocks have no escape.
-    pub(super) pre: Option<usize>,
+    pub pre: Option<usize>,
     /// The values provably zero with the gate (the gate itself not among them).
-    pub(super) zero: Vec<usize>,
+    pub zero: Vec<usize>,
     /// Every value the region computes, in order: `zero`, and values only the region reads.
-    pub(super) members: Vec<usize>,
+    pub members: Vec<usize>,
     /// The values on the vectors only the members read: made on demand inside the branch, and
     /// never in a block it skips.
-    pub(super) vectors: Vec<usize>,
+    pub vectors: Vec<usize>,
 }
 
 /// What one operation costs, roughly, in instructions: for choosing the regions worth a branch.
@@ -213,7 +213,7 @@ impl Plan {
     /// go deep (`lane_plan`) only where a gate skips them: the regions are found with them deep,
     /// the values those regions skip keep them, every other value takes the shallow plan, and the
     /// regions are found again.
-    pub(super) fn of(native: &BlockNative) -> Plan {
+    pub fn of(native: &BlockNative) -> Plan {
         let n = native.insts.len();
         let mut users: Vec<Vec<usize>> = vec![Vec::new(); n];
         for (at, inst) in native.insts.iter().enumerate() {
@@ -283,7 +283,7 @@ impl Plan {
     }
 
     /// Whether `prev` instruction `at` reads a carried word (it is not on the vectors).
-    pub(super) fn carries(&self, at: usize) -> bool {
+    pub fn carries(&self, at: usize) -> bool {
         !self.lanes[at]
     }
 }
@@ -524,13 +524,13 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
 /// Anything else stays stored once and loaded at its reader: remade, a byte check would be held
 /// across the later pass's body, a register cost a load does not have. A remade value's
 /// operands are remade too.
-pub(super) fn remade(native: &BlockNative) -> Vec<bool> {
+pub fn remade(native: &BlockNative) -> Vec<bool> {
     let pure = native.pure();
     let n = native.insts.len();
     let mut remade: Vec<bool> = (0..n).map(|x| pure[x] && matches!(native.insts[x], BlockInst::Const(_) | BlockInst::Within(_))).collect();
     let trial = native.passes_with(&pure);
     for (k, pass) in trial.passes.iter().enumerate().skip(1) {
-        let super::native_ir::Pass::Forward { body, .. } = pass else { continue };
+        let crate::block_native::Pass::Forward { body, .. } = pass else { continue };
         let plan = Plan::of(body);
         for r in &plan.regions {
             for &m in r.members.iter().chain(&r.vectors) {
@@ -570,7 +570,7 @@ fn exclusive_vectors(lanes: &[bool], users: &[Vec<usize>], output: &[bool], memb
 /// A value's 16 bytes: known (all zero or all ones), or a vector, complemented or not (a
 /// compare gives the complement free; `and` with one is a `bic`).
 #[derive(Clone, Copy)]
-pub(super) enum Lane {
+pub enum Lane {
     Known(bool),
     V(Value, bool),
 }
@@ -609,7 +609,7 @@ impl Lane {
 /// `prev(a, k)` at lag `L` is `a` at lag `L + k`, simdjson's `prev<N>` on the input, for any
 /// depth of `prev`s within `MAX_LAG`.
 #[derive(Clone)]
-pub(super) struct Lanes<'a> {
+pub struct Lanes<'a> {
     native: &'a BlockNative,
     plan: &'a Plan,
     /// The ASCII body: values known on ASCII windows are folded.
@@ -635,7 +635,7 @@ pub(super) struct Lanes<'a> {
 impl<'a> Lanes<'a> {
     /// `bytes`: the block's chunks at lag 0 (index 0: the 16 bytes before it), when already
     /// loaded. `general`: the body may run on a file's first or last block.
-    pub(super) fn new(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, i: Value, len: Value, general: bool, ascii: bool, bytes: Option<[Option<Value>; 5]>, nibble: Value) -> Self {
+    pub fn new(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, i: Value, len: Value, general: bool, ascii: bool, bytes: Option<[Option<Value>; 5]>, nibble: Value) -> Self {
         let c = f.ins().iconst(types::I8, 0);
         let zero16 = f.ins().splat(types::I8X16, c);
         let mut loaded = HashMap::new();
@@ -663,7 +663,7 @@ impl<'a> Lanes<'a> {
     }
 
     /// The block's first byte.
-    pub(super) fn base(&self) -> Value {
+    pub fn base(&self) -> Value {
         self.base
     }
 
@@ -746,7 +746,7 @@ impl<'a> Lanes<'a> {
     }
 
     /// Instruction `at`'s chunk `c`.
-    pub(super) fn get(&mut self, f: &mut FunctionBuilder<'_>, at: usize, c: usize) -> Lane {
+    pub fn get(&mut self, f: &mut FunctionBuilder<'_>, at: usize, c: usize) -> Lane {
         self.get_at(f, at, c, 0)
     }
 
@@ -902,7 +902,7 @@ impl<'a> Lanes<'a> {
     }
 
     /// The block's four chunks of a value as a 64-bit mask, complemented as they are.
-    pub(super) fn mask(&mut self, f: &mut FunctionBuilder<'_>, parts: &[Lane], weights: Value) -> Sym {
+    pub fn mask(&mut self, f: &mut FunctionBuilder<'_>, parts: &[Lane], weights: Value) -> Sym {
         if let Some(Lane::Known(b)) = parts.first().copied()
             && parts.iter().all(|p| matches!(p, Lane::Known(x) if *x == b))
         {
@@ -917,7 +917,7 @@ impl<'a> Lanes<'a> {
 
 /// Whether the block's bytes, and the 16 before it when a value reads them, are all ASCII: the
 /// full body's one branch. Gives the test and the chunks it loaded, for the bodies after it.
-pub(super) fn all_ascii(f: &mut FunctionBuilder<'_>, native: &BlockNative, plan: &Plan, base: Value) -> (Value, [Option<Value>; 5]) {
+pub fn all_ascii(f: &mut FunctionBuilder<'_>, native: &BlockNative, plan: &Plan, base: Value) -> (Value, [Option<Value>; 5]) {
     let back = plan.before || native.insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
     let mut bytes = [None; 5];
     let mut any: Option<Value> = None;
