@@ -64,6 +64,11 @@ export interface RepositoryStatus {
   readonly startedBy: "checkout" | "parent" | "repository";
 }
 
+/** Whether Rerail is started in a checkout in `state`, set up or not: what `isRerailStarted` decides, for a state in hand. */
+export function isStartedState(state: RepositoryStartState): boolean {
+  return state !== "stopped";
+}
+
 export const RULE_SOURCE_KINDS = ["pack", "rerail_rule", "library_rule"] as const;
 export type RuleSourceKind = (typeof RULE_SOURCE_KINDS)[number];
 
