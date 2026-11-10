@@ -4,7 +4,6 @@ import { withinCheckout } from "./checkout-control.js";
 import { readTomlStringLists } from "./lint-config-formats.js";
 import { IGNORED_DIRECTORIES } from "../code-rule/code-rule-enforcer.js";
 import { GitUnavailableError, runGit } from "../git.js";
-import { globPattern } from "../glob-pattern.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 
 /**
@@ -244,6 +243,48 @@ export function scanRepository(root: string): RepositoryScan {
     for (const name of new Set(manifestDependencies(root, path, ecosystem))) byName.set(name, [...(byName.get(name) ?? []), path]);
   }
   return { files, dependencies };
+}
+
+/** How many characters the glob token at `index` spans: `**\/`, `**`, a whole `{…}` group, or one character. */
+function globTokenLength(glob: string, index: number): number {
+  if (glob.startsWith("**/", index)) return 3;
+  if (glob.startsWith("**", index)) return 2;
+  if (glob[index] !== "{") return 1;
+  const close = glob.indexOf("}", index);
+  if (close === -1) throw new Error(`Unclosed { in glob ${glob}`);
+  const nested = glob.indexOf("{", index + 1);
+  if (nested !== -1 && nested < close) throw new Error(`Nested { in glob ${glob}: braces do not nest`);
+  return close + 1 - index;
+}
+
+function translateGlobToken(token: string, index: number, glob: string): string {
+  const segmentStart = index === 0 || glob[index - 1] === "/";
+  if (token === "**/") return segmentStart ? "(?:[^/]*/)*" : "[^/]*/";
+  if (token === "**") return segmentStart && index + token.length === glob.length ? ".*" : "[^/]*";
+  if (token === "*") return "[^/]*";
+  if (token === "?") return "[^/]";
+  if (token.startsWith("{")) return `(?:${token.slice(1, -1).split(",").map(translateGlob).join("|")})`;
+  return token.replace(/[.+^$(){}|[\]\\]/gu, String.raw`\$&`);
+}
+
+function translateGlob(glob: string): string {
+  let pattern = "";
+  let index = 0;
+  while (index < glob.length) {
+    const length = globTokenLength(glob, index);
+    pattern += translateGlobToken(glob.slice(index, index + length), index, glob);
+    index += length;
+  }
+  return pattern;
+}
+
+/**
+ * One expression matching any of `globs`: `**` spans directories when it is a whole segment (`**\/x` also matches
+ * `x`) and acts as `*` otherwise (`**.ts` matches `a.ts`, not `src/a.ts`), as in minimatch; `*` and `?` stay inside
+ * one segment; `{a,b}` alternates, without nesting. A malformed glob throws.
+ */
+export function globPattern(globs: readonly string[]): RegExp {
+  return new RegExp(`^(?:${globs.map(translateGlob).join("|")})$`, "u");
 }
 
 function commonDirectory(paths: readonly string[]): string {

@@ -5,13 +5,13 @@ import { loadRuleCatalog } from "./rule-catalog.js";
 import { parseRuleDocument, readJsonDocument } from "./rule-documents.js";
 import {
   DEPENDENCY_ECOSYSTEMS,
+  globPattern,
   matchFolder,
   matchReason,
   scanRepository,
   type RulePackMatch,
   type RulePackSignal,
 } from "./rule-pack-matcher.js";
-import { globPattern } from "../glob-pattern.js";
 import type { RuleDocument } from "./rule-store.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 

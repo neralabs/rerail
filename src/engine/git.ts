@@ -108,8 +108,6 @@ export interface GitResult {
 export interface RunGitOptions {
   maxBuffer?: number;
   timeout?: number;
-  /** Written to Git's stdin (`hash-object --stdin`, `mktree`). */
-  input?: string;
 }
 
 /** A repository's own config can't run programs through Rerail's git calls: no fsmonitor, no hooks. */

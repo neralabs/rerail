@@ -8,9 +8,7 @@ target/
 /native/index.d.ts
 coverage/
 .DS_Store
-# Rerail's own working files; Merge Assist candidates are meant to be committed (docs/merge-assist-prd.md).
-.rerail/*
-!.rerail/candidates/
+.rerail/
 /tmp/
 
 # Local secrets, such as the Bedrock API key for model testing. An example file stays committable.
