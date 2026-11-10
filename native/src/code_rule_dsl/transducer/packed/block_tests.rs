@@ -343,7 +343,7 @@ fn interpreters_have_no_byte_loops() {
     // The Metal interpreter's `interpret_file`: one loop over operations, and loops over the
     // program's outputs and extracts (sizes); a lane's chunks are a loop over `sizeof(M) / 2`.
     // Its only branches leave the group unfinished when a look-back has to wait.
-    let metal = include_str!("metal_block_program.metal");
+    let metal = include_str!("../../../../crates/metal/src/block_program.metal");
     let run = &metal[metal.find("static bool interpret_file(").expect("interpret_file")..];
     let run = &run[..run.find("\n}\n").expect("its end")];
     let loops: Vec<&str> = run.lines().filter(|l| l.contains("for (")).map(str::trim).collect();
@@ -362,7 +362,7 @@ fn interpreters_have_no_byte_loops() {
         let code = &code[..code.find("\n}\n").expect("its end")];
         assert!(code.contains("for (uint c = 0u; c < uint(sizeof(M)) / 2u; c++)"), "{helper} loops over chunks only");
     }
-    let carry = include_str!("metal_block_carry.metal");
+    let carry = include_str!("../../../../crates/metal/src/block_carry.metal");
     for word in ["for (", "while", "if (", "?"] {
         assert!(!carry.contains(word), "the carry helpers have `{word}`");
     }
@@ -606,7 +606,7 @@ fn class_planes_form_equals_reference() {
     for bytes in inputs() {
         assert_eq!(compiled.run(&bytes), simdjson_want(&bytes), "{} bytes", bytes.len());
     }
-    let metal = include_str!("metal_block_program.metal");
+    let metal = include_str!("../../../../crates/metal/src/block_program.metal");
     assert!(!metal.contains("constant uchar") && !metal.contains("tables"), "the Metal interpreter reads a table");
 }
 

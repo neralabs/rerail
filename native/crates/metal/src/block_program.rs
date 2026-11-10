@@ -16,41 +16,45 @@
 //! file's groups by decoupled look-back with bounded polls (`13-tape-on-the-gpu.md` §5.3). Groups
 //! take their numbers in launch order from persistent workers; a group waits only on earlier groups
 //! of its file. A poll that runs out leaves the group unfinished, and the host launches again.
-use super::*;
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::block::BatchFile;
-use crate::code_rule_dsl::transducer::packed::block::BlockRun;
-use crate::code_rule_dsl::transducer::packed::native_ir::{BlockInst, BlockNative};
+#[allow(unused_imports)]
+use crate::Error;
+use crate::METAL_DEVICE;
+use crate::launch::{CheckedComputeEncoder, commit_checked, wait_checked};
+use crate::runtime::pipeline_named;
+pub use rerail_compiler::block::BatchFile;
+use rerail_compiler::block::BlockRun;
+use rerail_compiler::block_native::{BlockInst, BlockNative};
 use metal::MTLSize;
 
 /// The same programs in the CPU's shape: a thread a segment of blocks, the carry forward by
-/// speculation (`metal_block_serial.rs`).
-#[path = "metal_block_serial.rs"]
-pub(in crate::code_rule_dsl) mod serial;
+/// speculation (`block_serial.rs`).
+#[path = "block_serial.rs"]
+pub mod serial;
 
-/// The carries' helpers (`metal_block_carry.metal`), shared by the interpreter and generated MSL.
-const CARRY: &str = include_str!("metal_block_carry.metal");
-/// The sinks: outputs at their delays, extracts and totals (`metal_block_sinks.metal`), shared
+/// The carries' helpers (`block_carry.metal`), shared by the interpreter and generated MSL.
+const CARRY: &str = include_str!("block_carry.metal");
+/// The sinks: outputs at their delays, extracts and totals (`block_sinks.metal`), shared
 /// likewise.
-const SINKS: &str = include_str!("metal_block_sinks.metal");
+const SINKS: &str = include_str!("block_sinks.metal");
 /// The interpreter's source: the shared helpers, then its kernels.
 static INTERPRETER: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    format!("{CARRY}\n{}\n{}", batch_helpers(), include_str!("metal_block_program.metal"))
+    format!("{CARRY}\n{}\n{}", batch_helpers(), include_str!("block_program.metal"))
 });
 /// Lanes per threadgroup: one SIMD group.
 const GROUP: usize = 32;
 
 /// The bytes each lane owns, and so the width of its mask words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum LaneWidth {
+pub enum LaneWidth {
     W16,
     W32,
     W64,
 }
 
 impl LaneWidth {
-    pub(in crate::code_rule_dsl) const ALL: [LaneWidth; 3] = [LaneWidth::W16, LaneWidth::W32, LaneWidth::W64];
+    pub const ALL: [LaneWidth; 3] = [LaneWidth::W16, LaneWidth::W32, LaneWidth::W64];
 
-    pub(in crate::code_rule_dsl) fn bytes(self) -> usize {
+    pub fn bytes(self) -> usize {
         match self {
             LaneWidth::W16 => 16,
             LaneWidth::W32 => 32,
@@ -132,7 +136,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         }
         // The period in `a` (`k | r << 8`, never read as a slot: it is clamped), its bits in `b` and `imm`.
         BlockInst::Phase(k, r) => {
-            let bits = super::block::period_bits(k);
+            let bits = rerail_compiler::block::period_bits(k);
             [15, u32::from(k) | u32::from(r) << 8, bits as u32, (bits >> 32) as u32]
         }
         BlockInst::Class { .. } | BlockInst::Pair { .. } => unreachable!("the planes form has no class or pair"),
@@ -142,7 +146,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
 
 /// Which Metal executor runs a batch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Executor {
+pub enum Executor {
     Interpreter,
     Generated(ClassStrategy),
 }
@@ -150,10 +154,10 @@ pub(in crate::code_rule_dsl) enum Executor {
 
 /// A batch's results: each file's outputs and extract positions, the launches it took, and their
 /// GPU seconds.
-pub(in crate::code_rule_dsl) struct BatchRun {
-    pub(in crate::code_rule_dsl) files: Vec<BlockRun>,
-    pub(in crate::code_rule_dsl) launches: usize,
-    pub(in crate::code_rule_dsl) seconds: f64,
+pub struct BatchRun {
+    pub files: Vec<BlockRun>,
+    pub launches: usize,
+    pub seconds: f64,
 }
 
 /// Workers of the persistent dispatch: SIMD groups that take the batch's tickets in order. Every
@@ -165,7 +169,7 @@ const WORKERS: usize = 768;
 /// `run_batch`, split while the device refuses it for capacity (lessons ledger #26: a batch over
 /// a budget is split, never refused). Halves run one after another, in the files' order; a file
 /// alone that does not fit is the error. `launches` and `seconds` are the halves' sums.
-pub(in crate::code_rule_dsl) fn run_split(
+pub fn run_split(
     programs: &[&BlockNative],
     files: &[BatchFile<'_>],
     width: LaneWidth,
@@ -187,14 +191,14 @@ pub(in crate::code_rule_dsl) fn run_split(
 }
 
 /// The bindings of a batch's slabs (`MAX_SLABS`): 0, then past the interpreter's 12–15.
-const SLAB_BUFFERS: [u64; crate::code_rule_dsl::residency::slabs::MAX_SLABS] = [0, 16, 17, 18];
+const SLAB_BUFFERS: [u64; crate::slabs::MAX_SLABS] = [0, 16, 17, 18];
 
 /// Launches repeated because a look-back ran out of polls.
-pub(in crate::code_rule_dsl) static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Run `files` in one launch, each under `programs[file.program]` (decision 0066). `spins` is the
 /// polls of a predecessor after the first; 0 tests the repeated launch.
-pub(in crate::code_rule_dsl) fn run_batch(
+pub fn run_batch(
     programs: &[&BlockNative],
     files: &[BatchFile<'_>],
     width: LaneWidth,
@@ -224,14 +228,14 @@ pub(in crate::code_rule_dsl) fn run_batch(
     // The files' bytes, resident in slabs (decision 0067): read in place, at most `MAX_SLABS`
     // slabs a batch; past that the caller splits the batch.
     let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
-    let sources = crate::code_rule_dsl::residency::slabs::admit_sources(&bytes)?;
-    let (slabs, slab_of) = crate::code_rule_dsl::residency::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
+    let sources = crate::slabs::admit_sources(&bytes)?;
+    let (slabs, slab_of) = crate::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
     if files.is_empty() {
         return Ok(BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 });
     }
     // The file table, and each base after the files before.
     let (mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base, mut tot_base) = (0, 0, 0, 0, 0, 0, 0);
-    let counted: Vec<Vec<usize>> = forms.iter().map(super::native_cpu_block::counted).collect();
+    let counted: Vec<Vec<usize>> = forms.iter().map(rerail_compiler::native_cpu_block::counted).collect();
     let mut rows = Vec::with_capacity(files.len());
     let mut group_file: Vec<u32> = Vec::new();
     for (i, file) in files.iter().enumerate() {
@@ -270,21 +274,21 @@ pub(in crate::code_rule_dsl) fn run_batch(
         tot_base += counted[file.program].len();
     }
     let total = group0;
-    let table = super::blocks::upload(&rows)?;
+    let table = crate::pool::upload(&rows)?;
     // Generated MSL takes the groups round robin over the files (`ticket_order`): a (file, group)
     // per ticket. The interpreter takes them file by file.
     let group_file = match executor {
-        Executor::Interpreter => super::blocks::upload(&group_file)?,
-        Executor::Generated(_) => super::blocks::upload(&ticket_order(&rows.iter().map(|r| r.groups as usize).collect::<Vec<_>>()))?,
+        Executor::Interpreter => crate::pool::upload(&group_file)?,
+        Executor::Generated(_) => crate::pool::upload(&ticket_order(&rows.iter().map(|r| r.groups as usize).collect::<Vec<_>>()))?,
     };
-    let out = super::blocks::zeroed::<u8>(out_base.max(1) * word)?;
-    let states = super::blocks::zeroed::<u32>(state_base.max(1))?;
-    let halos = super::blocks::zeroed::<u32>(halo_base.max(1))?;
-    let ext_states = super::blocks::zeroed::<u32>(ext_base.max(1))?;
-    let counts = super::blocks::zeroed::<u32>(tot_base.max(1))?;
-    let positions = super::blocks::zeroed::<u32>(pos_base.max(1))?;
-    let tickets = super::blocks::zeroed::<u32>(2)?;
-    let done = super::blocks::zeroed::<u32>(total)?;
+    let out = crate::pool::zeroed::<u8>(out_base.max(1) * word)?;
+    let states = crate::pool::zeroed::<u32>(state_base.max(1))?;
+    let halos = crate::pool::zeroed::<u32>(halo_base.max(1))?;
+    let ext_states = crate::pool::zeroed::<u32>(ext_base.max(1))?;
+    let counts = crate::pool::zeroed::<u32>(tot_base.max(1))?;
+    let positions = crate::pool::zeroed::<u32>(pos_base.max(1))?;
+    let tickets = crate::pool::zeroed::<u32>(2)?;
+    let done = crate::pool::zeroed::<u32>(total)?;
     let workers = workers(total);
     let most = forms.iter().map(|n| n.insts.len()).max().unwrap_or(0);
     let params = [fit(total)?, spins, fit(most)?, 0];
@@ -330,18 +334,18 @@ pub(in crate::code_rule_dsl) fn run_batch(
                     out0,
                     outs: fit(n.outputs.len())?,
                     ext0,
-                    exts: fit(super::native_cpu_block::counted(n).len())?,
+                    exts: fit(rerail_compiler::native_cpu_block::counted(n).len())?,
                     pad: [0; 2],
                 });
             }
             steps.push([0; 4]);
             outs.push(0);
             interpreter = [
-                super::blocks::upload(&table)?,
-                super::blocks::upload(&steps)?,
-                super::blocks::upload(&outs)?,
+                crate::pool::upload(&table)?,
+                crate::pool::upload(&steps)?,
+                crate::pool::upload(&outs)?,
                 // Each worker's values: a slot of 32 lane words per step (decision 0034).
-                super::blocks::zeroed::<u8>((workers * most * GROUP * word).max(1))?,
+                crate::pool::zeroed::<u8>((workers * most * GROUP * word).max(1))?,
             ];
             for (k, block) in interpreter.iter().enumerate() {
                 buffers.push((12 + k as u64, block.buffer(), 0));
@@ -404,8 +408,8 @@ pub(in crate::code_rule_dsl) fn run_batch(
 }
 
 /// The interpreter: every output's words over `bytes`, as 64-bit words of the stream.
-pub(in crate::code_rule_dsl) fn interpret(
-    program: &super::block::BlockProgram,
+pub fn interpret(
+    program: &rerail_compiler::block::BlockProgram,
     bytes: &[u8],
     width: LaneWidth,
 ) -> Result<Vec<Vec<u64>>, Error> {
@@ -413,8 +417,8 @@ pub(in crate::code_rule_dsl) fn interpret(
 }
 
 /// The interpreter with the extract pass: a batch of one file.
-pub(in crate::code_rule_dsl) fn interpret_extract(
-    program: &super::block::BlockProgram,
+pub fn interpret_extract(
+    program: &rerail_compiler::block::BlockProgram,
     bytes: &[u8],
     width: LaneWidth,
 ) -> Result<BlockRun, Error> {
@@ -443,13 +447,13 @@ const EQ16: &str = "static inline uint eq16(uint4 v, uint c4) {
 ///   function of the low four planes and one of the high four, each written out by Shannon
 ///   expansion. Only word operations; no memory but the bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum ClassStrategy {
+pub enum ClassStrategy {
     Lookup,
     Planes,
 }
 
 impl ClassStrategy {
-    pub(in crate::code_rule_dsl) const ALL: [ClassStrategy; 2] = [ClassStrategy::Lookup, ClassStrategy::Planes];
+    pub const ALL: [ClassStrategy; 2] = [ClassStrategy::Lookup, ClassStrategy::Planes];
 }
 
 /// SWAR nonzero bytes: 16 bytes that are not zero as 16 bits.
@@ -472,7 +476,7 @@ const TRANSPOSE8: &str = "static inline ulong transpose8(ulong x) {
 ";
 
 /// The native IR as generated MSL for lanes of `width`, `class` by bit-planes.
-pub(in crate::code_rule_dsl) fn generate(native: &BlockNative, width: LaneWidth) -> String {
+pub fn generate(native: &BlockNative, width: LaneWidth) -> String {
     generate_with(native, width, ClassStrategy::Planes)
 }
 
@@ -518,7 +522,7 @@ fn planes(width: LaneWidth) -> String {
 }
 
 /// One table's class bytes of a `uint4` by lookups: byte `j`'s `lo[b & 15] & hi[b >> 4]`.
-fn lookup_helper(p: usize, t: usize, table: &super::block::ClassTable) -> String {
+fn lookup_helper(p: usize, t: usize, table: &rerail_compiler::block::ClassTable) -> String {
     let hex = |xs: &[u8]| xs.iter().map(|x| format!("{x:#04x}")).collect::<Vec<_>>().join(", ");
     let mut out = format!(
         "constant uchar T{p}_{t}[32] = {{{}, {}}};\nstatic inline uint4 classes_p{p}_t{t}(uint4 v) {{\n  uint4 k;\n",
@@ -540,7 +544,7 @@ fn lookup_helper(p: usize, t: usize, table: &super::block::ClassTable) -> String
 
 /// The native IR as MSL for lanes of `width`, `class` by `strategy`: a batch's kernel for one
 /// program.
-pub(in crate::code_rule_dsl) fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStrategy) -> String {
+pub fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStrategy) -> String {
     let form = match strategy {
         ClassStrategy::Lookup => native.clone(),
         ClassStrategy::Planes => native.planes_form(),
@@ -660,8 +664,9 @@ static inline uint file_byte_before(device const uint4* bytes, FileRow f, uint c
 /// Polls of a predecessor's state after the first: bounded, so a launch whose predecessors never
 /// publish ends and is repeated. 64 polls ran out on full batches: the launch was repeated while
 /// the predecessor was only slow.
-pub(in crate::code_rule_dsl) const SPINS: u32 = 65536;
+pub const SPINS: u32 = 65536;
 /// The extract look-back's polls per predecessor, as a multiple of the carries'.
+#[allow(dead_code)]
 const EXTRACT_POLLS: u32 = 64;
 
 
@@ -851,7 +856,7 @@ impl Plan {
 /// one's halos and scans), its record, the lines of MSL, and the pipeline's limits. Metal reports
 /// no register count; a pipeline whose threads use many registers allows fewer than 1,024
 /// threads a threadgroup.
-pub(in crate::code_rule_dsl) fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, Error> {
+pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, Error> {
     let form = native.planes_form();
     let plan = Plan::new(&form).at(&form, width);
     let exchanges: Vec<String> = plan.exchanges().iter().map(|(h, s)| format!("{}h+{}s", h.len(), s.len())).collect();
@@ -890,7 +895,7 @@ fn workers(groups: usize) -> usize {
 }
 
 /// The words per group generated MSL keeps of a program's exchanges (`Plan::exchanges`).
-pub(in crate::code_rule_dsl) fn record_words(native: &BlockNative) -> usize {
+pub fn record_words(native: &BlockNative) -> usize {
     Plan::new(native).record_words(native)
 }
 
@@ -999,6 +1004,7 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
 /// An exchange of `words` (MSL expressions, the same in every lane) at word `offset` of the
 /// group's record of `record` words: the first `halo_words` are halo words, the rest scan
 /// tables. Gives each word's result as an expression read by every lane.
+#[allow(dead_code)]
 fn exchange(out: &mut String, name: &str, words: &[String], halo_words: usize, offset: usize, record: usize) -> Vec<String> {
     exchange_kinds(out, name, words, |j| if j < halo_words { "0u".to_owned() } else { "1u".to_owned() }, offset, record)
 }
@@ -1111,7 +1117,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         }
         offset += words.len();
     }
-    // The sinks (`metal_block_sinks.metal`): each output at its delay, cut to the stream; then
+    // The sinks (`block_sinks.metal`): each output at its delay, cut to the stream; then
     // the counted outputs' counts, exchanged together, their positions and their totals.
     for (k, v) in native.outputs.iter().enumerate() {
         match native.output_delays[k] {
@@ -1153,7 +1159,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
 /// narrower than a block, and a constant of both kinds is the same at every width. A carry
 /// (`toggle`, `escaped`, `fill`) is never folded: its look-back is the same in every body.
 fn full_form(native: &BlockNative) -> BlockNative {
-    let plan = super::native_cpu_lanes::Plan::of(native);
+    let plan = rerail_compiler::native_cpu_lanes::Plan::of(native);
     let mut form = native.clone();
     let members = group_members(native);
     for (at, inst) in form.insts.iter_mut().enumerate() {
@@ -1187,7 +1193,7 @@ fn group_members(native: &BlockNative) -> Vec<bool> {
 /// A program's form in a full group of ASCII bytes: `full_form`, with each byte-local value known
 /// on ASCII bytes (`native_cpu_lanes::Plan::ascii`) a constant: a UTF-8 check's, say.
 fn ascii_form(native: &BlockNative) -> BlockNative {
-    let plan = super::native_cpu_lanes::Plan::of(native);
+    let plan = rerail_compiler::native_cpu_lanes::Plan::of(native);
     let mut form = full_form(native);
     let members = group_members(native);
     for (at, inst) in form.insts.iter_mut().enumerate() {
@@ -1313,7 +1319,7 @@ fn emit(
             BlockInst::Within(d) => format!("{m}(within_lane<{m}>(len + {d}u, {offset}) & ~within_lane<{m}>({d}u, {offset}))"),
             // The period's bits shifted up to the word's first byte of the residue.
             BlockInst::Phase(k, r) => {
-                let bits = super::block::period_bits(k);
+                let bits = rerail_compiler::block::period_bits(k);
                 format!("{m}({bits:#018x}ul << (({r}u + {k}u - (({offset}) % {k}u)) % {k}u))")
             }
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => unreachable!(),
@@ -1426,7 +1432,7 @@ fn group_loop(native: &BlockNative, g: usize, m: &str, one: &mut dyn FnMut(usize
         let BlockInst::Carry(init) = native.insts[c] else { unreachable!("a carry") };
         out.push_str(&format!("  {m} gc{g}_{k} = v{init};\n"));
     }
-    let bound = super::block::MAX_ROUNDS * GROUP;
+    let bound = rerail_compiler::block::MAX_ROUNDS * GROUP;
     out.push_str(&format!("  for (uint r{g} = 0u; r{g} < {bound}u; r{g}++) {{\n"));
     for (k, &(c, _)) in group.carries.iter().enumerate() {
         out.push_str(&format!("    v{c} = gc{g}_{k};\n"));
@@ -1456,7 +1462,7 @@ fn group_loop(native: &BlockNative, g: usize, m: &str, one: &mut dyn FnMut(usize
 }
 
 /// Generated MSL run: every output's words over `bytes`, as 64-bit words of the stream.
-pub(in crate::code_rule_dsl) fn run_generated(
+pub fn run_generated(
     native: &BlockNative,
     bytes: &[u8],
     width: LaneWidth,
@@ -1466,7 +1472,7 @@ pub(in crate::code_rule_dsl) fn run_generated(
 
 /// Generated MSL run with `class` by `strategy`: the outputs, and the GPU seconds of its
 /// launches.
-pub(in crate::code_rule_dsl) fn run_generated_with(
+pub fn run_generated_with(
     native: &BlockNative,
     bytes: &[u8],
     width: LaneWidth,
@@ -1477,7 +1483,7 @@ pub(in crate::code_rule_dsl) fn run_generated_with(
 
 /// Generated MSL with the extract pass, a batch of one file: the outputs and each extract's
 /// positions, and the GPU seconds of its launches.
-pub(in crate::code_rule_dsl) fn run_generated_extract(
+pub fn run_generated_extract(
     native: &BlockNative,
     bytes: &[u8],
     width: LaneWidth,
@@ -1526,9 +1532,9 @@ fn bytes_of<T: Copy>(value: &T) -> Vec<u8> {
 /// The passes in order, one encoder each, in one command buffer; returns its GPU seconds.
 fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let _scope = super::metal_backend::launch::LaunchScope::enter();
+    let _scope = crate::launch::LaunchScope::enter();
     // The one kept queue of device solves (decision 0039).
-    let queue = super::blocks::queue(device)?;
+    let queue = crate::pool::queue(device)?;
     let command = queue.new_command_buffer();
     command.set_label("Rerail block program");
     for pass in passes {
@@ -1550,13 +1556,11 @@ fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
     }
     if let Err(refused) = commit_checked(command) {
         // The budget refused a dispatch: the command buffer still holds a place in the shared
-        // queue until it completes, and a queue holds 64. Commit what was encoded (the results
-        // are not read) so the place is freed.
-        command.commit();
-        command.wait_until_completed();
+        // queue until it completes, and a queue holds 64 (`release_refused` frees it).
+        crate::launch::release_refused(command);
         return Err(refused);
     }
     wait_checked(command).inspect_err(|_| eprintln!("block program: command buffer {:?}: {}", command.status(), command_error(command)))?;
-    Ok(super::metal_backend::launch::gpu_seconds(command))
+    Ok(crate::launch::gpu_seconds(command))
 }
 

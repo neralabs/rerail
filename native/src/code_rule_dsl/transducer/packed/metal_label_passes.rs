@@ -23,6 +23,7 @@ use super::*;
 use super::super::metal_batch_abi::MetalEvaluation;
 use metal::{Buffer, CommandBuffer};
 use std::collections::HashMap;
+use crate::code_rule_dsl::residency::slabs::ResidentParts as _;
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
 
 /// A pass writes the label `target` (an index, not a class); labels it reads are its classes.

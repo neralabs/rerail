@@ -28,23 +28,23 @@ use super::*;
 /// How a batch runs in segments: the blocks a segment holds, and the blocks before it it warms
 /// up on.
 #[derive(Clone, Copy, Debug)]
-pub(in crate::code_rule_dsl) struct Segments {
-    pub(in crate::code_rule_dsl) blocks: usize,
-    pub(in crate::code_rule_dsl) warm: usize,
+pub struct Segments {
+    pub blocks: usize,
+    pub warm: usize,
 }
 
 /// A serial batch's results: the files', and how the speculation went.
-pub(in crate::code_rule_dsl) struct SerialRun {
-    pub(in crate::code_rule_dsl) run: BatchRun,
+pub struct SerialRun {
+    pub run: BatchRun,
     /// Segments in the batch, and segments run again in all.
-    pub(in crate::code_rule_dsl) segments: usize,
-    pub(in crate::code_rule_dsl) reruns: usize,
+    pub segments: usize,
+    pub reruns: usize,
     /// Checks until every start agreed (1 when the speculation was right everywhere).
-    pub(in crate::code_rule_dsl) rounds: usize,
+    pub rounds: usize,
     /// GPU seconds of the first pass, of the runs again with their checks, and of the positions.
-    pub(in crate::code_rule_dsl) first_seconds: f64,
-    pub(in crate::code_rule_dsl) rerun_seconds: f64,
-    pub(in crate::code_rule_dsl) sink_seconds: f64,
+    pub first_seconds: f64,
+    pub rerun_seconds: f64,
+    pub sink_seconds: f64,
 }
 
 /// The carried state of a program in serial form, as packed words: each `prev`'s operand by its
@@ -458,7 +458,7 @@ fn halos(native: &BlockNative, levels: &Levels, from: &str, limit: usize, own: &
         }
         // A way back to itself (through a carry) is unknown.
         memo[at] = Some((HBit::F, HBit::F));
-        let mut e = |x: u16, memo: &mut Vec<Option<(HBit, HBit)>>, decls: &mut String| go(native, levels, from, limit, own, usize::from(x), memo, decls);
+        let e = |x: u16, memo: &mut Vec<Option<(HBit, HBit)>>, decls: &mut String| go(native, levels, from, limit, own, usize::from(x), memo, decls);
         let unknown = (HBit::F, HBit::F);
         let owner = levels.groups.iter().enumerate().find(|(_, g)| g.scans.contains(&at));
         let (k, v) = match native.insts[at] {
@@ -1298,7 +1298,7 @@ const THREADS: usize = 64;
 
 /// `run_serial`, split while the device refuses it for capacity, as `run_split` does: halves in
 /// the files' order, their counts and seconds summed.
-pub(in crate::code_rule_dsl) fn run_serial_split(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
+pub fn run_serial_split(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
     match run_serial(programs, files, segments) {
         Err(Error::BackendCapacity) if files.len() > 1 => {
             let (a, b) = files.split_at(files.len() / 2);
@@ -1321,13 +1321,13 @@ pub(in crate::code_rule_dsl) fn run_serial_split(programs: &[&BlockNative], file
 
 /// Run `files` in segments (each under `programs[file.program]`, in its planes form): one first
 /// pass, the checks and runs again until every start agrees, then the positions and totals.
-pub(in crate::code_rule_dsl) fn run_serial(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
+pub fn run_serial(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
     Ok(run_kept(programs, files, segments, true)?.0)
 }
 
 /// `run_serial` with tier 1's buffers left where the device wrote them (`Resident`): no copy of
 /// them back. The run's `files` are empty.
-pub(in crate::code_rule_dsl) fn run_resident(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<(SerialRun, Resident), Error> {
+pub fn run_resident(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<(SerialRun, Resident), Error> {
     let (run, kept) = run_kept(programs, files, segments, false)?;
     Ok((run, kept.ok_or(Error::BackendFailure)?))
 }
@@ -1344,38 +1344,38 @@ fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segmen
 /// its streams' positions (stream `e`'s from `pos_base + e * capacity`), and its counts (from
 /// `tot_base`: a stream's count, then the totals).
 #[derive(Clone, Copy, Debug)]
-pub(in crate::code_rule_dsl) struct ResidentFile {
-    pub(in crate::code_rule_dsl) out_base: usize,
-    pub(in crate::code_rule_dsl) blocks: usize,
-    pub(in crate::code_rule_dsl) pos_base: usize,
-    pub(in crate::code_rule_dsl) capacity: usize,
-    pub(in crate::code_rule_dsl) tot_base: usize,
+pub struct ResidentFile {
+    pub out_base: usize,
+    pub blocks: usize,
+    pub pos_base: usize,
+    pub capacity: usize,
+    pub tot_base: usize,
 }
 
 /// Tier 1's buffers after a run, in the device's shared memory, where tier 2 reads them: the
 /// output words, the positions (two readable slots past the last), the counts (32-bit, one
 /// readable past the last), each file's place in them, and the files' bytes as the device read
 /// them (`ResidentSource`: 64 readable bytes past each).
-pub(in crate::code_rule_dsl) struct Resident {
-    pub(in crate::code_rule_dsl) out: super::super::blocks::Block,
-    pub(in crate::code_rule_dsl) tot: super::super::blocks::Block,
-    pub(in crate::code_rule_dsl) positions: super::super::blocks::Block,
-    pub(in crate::code_rule_dsl) files: Vec<ResidentFile>,
-    pub(in crate::code_rule_dsl) sources: Vec<std::sync::Arc<crate::code_rule_dsl::residency::slabs::ResidentSource>>,
+pub struct Resident {
+    pub out: crate::pool::Block,
+    pub tot: crate::pool::Block,
+    pub positions: crate::pool::Block,
+    pub files: Vec<ResidentFile>,
+    pub sources: Vec<std::sync::Arc<crate::slabs::ResidentSource>>,
 }
 
 /// `Resident` before its output buffer is known (a pass of a program in passes writes to the
 /// buffer `run_passes` owns).
 struct Kept {
-    out: Option<super::super::blocks::Block>,
-    tot: super::super::blocks::Block,
-    positions: super::super::blocks::Block,
+    out: Option<crate::pool::Block>,
+    tot: crate::pool::Block,
+    positions: crate::pool::Block,
     files: Vec<ResidentFile>,
-    sources: Vec<std::sync::Arc<crate::code_rule_dsl::residency::slabs::ResidentSource>>,
+    sources: Vec<std::sync::Arc<crate::slabs::ResidentSource>>,
 }
 
 impl Kept {
-    fn with(self, out: Option<super::super::blocks::Block>) -> Resident {
+    fn with(self, out: Option<crate::pool::Block>) -> Resident {
         let out = self.out.or(out).expect("a run's output buffer");
         Resident { out, tot: self.tot, positions: self.positions, files: self.files, sources: self.sources }
     }
@@ -1385,7 +1385,7 @@ impl Kept {
 /// shares (each file's slot words first, then the outputs of the pass that runs, from
 /// `offset`), each file's slot base, the slots a block, and the pass's stores (none: the last).
 struct Io<'a> {
-    out: &'a super::super::blocks::Block,
+    out: &'a crate::pool::Block,
     offset: usize,
     slot_base: &'a [u32],
     slots: u16,
@@ -1420,12 +1420,12 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segm
         .passes
         .iter()
         .map(|p| match p {
-            super::super::native_ir::Pass::Forward { body, .. } => body.outputs.len(),
-            super::super::native_ir::Pass::Back(_) => 0,
+            rerail_compiler::block_native::Pass::Forward { body, .. } => body.outputs.len(),
+            rerail_compiler::block_native::Pass::Back(_) => 0,
         })
         .max()
         .unwrap_or(0);
-    let out = super::super::blocks::zeroed::<u64>((offset + widest * total_blocks).max(1))?;
+    let out = crate::pool::zeroed::<u64>((offset + widest * total_blocks).max(1))?;
     fit(offset + widest * total_blocks)?;
     // The segments, as `run_serial_io` cuts them: (file, first block, end, index in the file).
     let mut rows = Vec::with_capacity(files.len());
@@ -1442,7 +1442,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segm
     let last = passes.passes.len() - 1;
     for (i, pass) in passes.passes.iter().enumerate() {
         match pass {
-            super::super::native_ir::Pass::Forward { body, stores } => {
+            rerail_compiler::block_native::Pass::Forward { body, stores } => {
                 let io = Io { out: &out, offset, slot_base: &slot_base, slots: passes.slots, stores };
                 let (run, kept) = run_serial_io(&[body], files, segments, Some(&io), read && i == last)?;
                 seconds += run.run.seconds;
@@ -1457,14 +1457,14 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segm
                     return Ok((run, if read { None } else { kept.map(|k| k.with(Some(out))) }));
                 }
             }
-            super::super::native_ir::Pass::Back(fills) => {
+            rerail_compiler::block_native::Pass::Back(fills) => {
                 let source = back_kernels(fills, passes.slots);
                 let (tables_k, prefix_k, apply_k) = (pipeline_named(&source, "back_tables")?, pipeline_named(&source, "back_prefix")?, pipeline_named(&source, "back_apply")?);
-                let table = super::super::blocks::upload(&rows)?;
-                let seg_table = super::super::blocks::upload(&segs)?;
-                let tables = super::super::blocks::zeroed::<u32>((segs.len() * fills.len()).max(1))?;
-                let cins = super::super::blocks::zeroed::<u32>((segs.len() * fills.len()).max(1))?;
-                fn bufs<'b>(list: &[(u64, &'b super::super::blocks::Block)]) -> Vec<(u64, &'b metal::BufferRef, u64)> {
+                let table = crate::pool::upload(&rows)?;
+                let seg_table = crate::pool::upload(&segs)?;
+                let tables = crate::pool::zeroed::<u32>((segs.len() * fills.len()).max(1))?;
+                let cins = crate::pool::zeroed::<u32>((segs.len() * fills.len()).max(1))?;
+                fn bufs<'b>(list: &[(u64, &'b crate::pool::Block)]) -> Vec<(u64, &'b metal::BufferRef, u64)> {
                     list.iter().map(|&(at, b)| (at, b.buffer(), 0)).collect()
                 }
                 let n = |x: usize| vec![(7u64, bytes_of(&[fit(x).unwrap_or(0), 0u32, 0, 0]))];
@@ -1544,8 +1544,8 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: S
     let (source, sw, counted) = generate_serial(&refs, io.map(|io| (io.stores, io.slots)));
     let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
     let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
-    let sources = crate::code_rule_dsl::residency::slabs::admit_sources(&bytes)?;
-    let (slabs, slab_of) = crate::code_rule_dsl::residency::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
+    let sources = crate::slabs::admit_sources(&bytes)?;
+    let (slabs, slab_of) = crate::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
     if files.is_empty() {
         return Ok((SerialRun { run: BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 }, segments: 0, reruns: 0, rounds: 0, first_seconds: 0.0, rerun_seconds: 0.0, sink_seconds: 0.0 }, None));
     }
@@ -1578,40 +1578,40 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: S
         }
         out_base += n.outputs.len() * blocks;
         pos_base += n.extracts.len() * len.max(1);
-        tot_base += super::super::native_cpu_block::counted(n).len();
+        tot_base += rerail_compiler::native_cpu_block::counted(n).len();
     }
     let total = segs.len();
-    let table = super::super::blocks::upload(&rows)?;
-    let seg_table = super::super::blocks::upload(&segs)?;
+    let table = crate::pool::upload(&rows)?;
+    let seg_table = crate::pool::upload(&segs)?;
     let owned = match io {
         Some(_) => None,
-        None => Some(super::super::blocks::zeroed::<u64>(out_base.max(1))?),
+        None => Some(crate::pool::zeroed::<u64>(out_base.max(1))?),
     };
     let out = match (io, &owned) {
         (Some(io), _) => io.out,
         (None, Some(o)) => o,
         (None, None) => unreachable!("an output buffer, given or owned"),
     };
-    let records = super::super::blocks::zeroed::<u64>(total * 2 * sw)?;
-    let list = super::super::blocks::zeroed::<u32>(total)?;
-    let given = super::super::blocks::zeroed::<u64>(total * sw)?;
-    let listed = super::super::blocks::zeroed::<u32>(1)?;
-    let counts = super::super::blocks::zeroed::<u32>(total * counted)?;
-    let bases = super::super::blocks::zeroed::<u32>(total * counted)?;
+    let records = crate::pool::zeroed::<u64>(total * 2 * sw)?;
+    let list = crate::pool::zeroed::<u32>(total)?;
+    let given = crate::pool::zeroed::<u64>(total * sw)?;
+    let listed = crate::pool::zeroed::<u32>(1)?;
+    let counts = crate::pool::zeroed::<u32>(total * counted)?;
+    let bases = crate::pool::zeroed::<u32>(total * counted)?;
     // Slack for tier 2's reads in place: an 8-byte load at the last count, two slots past the
     // last position.
-    let tot = super::super::blocks::zeroed::<u32>(tot_base + 2)?;
-    let positions = super::super::blocks::zeroed::<u32>(pos_base + 2)?;
+    let tot = crate::pool::zeroed::<u32>(tot_base + 2)?;
+    let positions = crate::pool::zeroed::<u32>(pos_base + 2)?;
     let most = forms.iter().map(|n| Levels::of(n).scans.len()).max().unwrap_or(0).max(1);
     let depth = if cones_on() { forms.iter().map(|n| Levels::of(n).depth).max().unwrap_or(0) } else { 0 };
-    let tables = super::super::blocks::zeroed::<u32>(total * 2 * most)?;
-    let cins = super::super::blocks::zeroed::<u64>(total)?;
-    let cws = super::super::blocks::zeroed::<u64>(total)?;
-    let gtabs = super::super::blocks::zeroed::<u32>(total * group_stride(&refs))?;
+    let tables = crate::pool::zeroed::<u32>(total * 2 * most)?;
+    let cins = crate::pool::zeroed::<u64>(total)?;
+    let cws = crate::pool::zeroed::<u64>(total)?;
+    let gtabs = crate::pool::zeroed::<u32>(total * group_stride(&refs))?;
     let with_groups = group_levels(&refs);
-    let marks = super::super::blocks::zeroed::<u32>(total)?;
+    let marks = crate::pool::zeroed::<u32>(total)?;
     // Segments run again in all, and the most one thread ran.
-    let hopped = super::super::blocks::zeroed::<u32>(2)?;
+    let hopped = crate::pool::zeroed::<u32>(2)?;
     assert!(2 * segments.warm < segments.blocks, "a segment is longer than its two warm-ups");
     let cone = pipeline_named(&source, if lanes_on() { "lanes_cone" } else { "serial_cone" })?;
     let cone_prefix = pipeline_named(&source, "serial_cone_prefix")?;

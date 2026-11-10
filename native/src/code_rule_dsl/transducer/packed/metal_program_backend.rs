@@ -41,16 +41,16 @@ pub(super) mod label_passes;
 mod tape_tests;
 #[path = "metal_set_steps.rs"]
 pub(in crate::code_rule_dsl) mod set_steps;
-#[path = "metal_block_program.rs"]
-pub(in crate::code_rule_dsl) mod block_program;
+// Block programs on Metal: the Metal crate's.
+pub(in crate::code_rule_dsl) use rerail_metal::block_program;
 #[path = "metal_work_queue.rs"]
 pub(in crate::code_rule_dsl) mod work_queue;
 #[path = "metal_lattice.rs"]
 pub(in crate::code_rule_dsl) mod lattice;
 #[path = "metal_nearest.rs"]
 pub(in crate::code_rule_dsl) mod nearest;
-#[path = "metal_blocks.rs"]
-pub(in crate::code_rule_dsl) mod blocks;
+// Pre-pinned blocks: the Metal crate's.
+pub(in crate::code_rule_dsl) use rerail_metal::pool as blocks;
 
 const METAL_JIT_CACHE_LIMIT: usize = 32;
 pub(super) const EXECUTION_LANES: usize = 64;
@@ -66,7 +66,7 @@ pub(super) fn release_workspaces() -> bool {
     let released = METAL_WORKSPACE_POOL.lock().map(|mut pool| std::mem::take(&mut *pool)).unwrap_or_default();
     !released.is_empty()
 }
-pub(in crate::code_rule_dsl) static METAL_DEVICE: LazyLock<Option<Device>> = LazyLock::new(Device::system_default);
+pub(in crate::code_rule_dsl) use rerail_metal::METAL_DEVICE;
 
 struct MetalWorkspace {
     totals: WorkspaceTotals,

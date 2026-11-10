@@ -1,29 +1,34 @@
-//! The ladder's two JSON forms (`bitlex_ladder/14-json.bitlex`, `15-jsonc.bitlex`) against
-//! simdjson and tree-sitter-json (docs/parser-generators/21-json-against-simdjson.md).
-//!
-//! The ladder's own test checks them as it checks every step. These add what only JSON has:
-//! outside oracles, on files from outside.
-//!
-//! - **JSONTestSuite** (`RERAIL_JSON_SUITE`, its `test_parsing` directory): every `y_` file
-//!   (valid JSON) is accepted by both forms; every `n_` file (invalid) is refused by step 14;
-//!   step 15 refuses each too, unless it is valid once comments are allowed. Each file's
-//!   compiled nodes equal the reference's.
-//! - **A corpus** (`RERAIL_JSON_CORPUS`, simdjson's benchmark files): both forms accept each,
-//!   with the same nodes, equal to tree-sitter-json's where it finds no error.
-//! - **simdjson** (`RERAIL_SIMDJSON`, `tools/json-compare/simdjson_check`): its verdict on every
-//!   file above, against step 14's.
-//!
-//! And `json_bench`, CPU time per file of each tier and of tree-sitter-json.
-//!
-//! The files are not in the repository; each test runs by name with its variables set.
+//! The parsers on Metal, against the CPU: every ladder step's tier 1 as generated MSL equals the
+//! interpreter (`every_step_on_metal_equals_the_interpreter`), and the JSON forms' Metal
+//! measurements over a corpus (`json_metal_bench`, `json_metal_serial_bench`, run by name). The
+//! backend is the Metal crate's (`rerail_metal::block_program`).
 
-//!
-//! The suite's tests that need neither Metal nor the engine are the parser tests crate's
-//! (`rerail_parser_tests`); here are the Metal backend's measurements.
+use crate::json::{base, files_in, form};
+use rerail_compiler::ladder::*;
+use rerail_compiler::{block, block_native as native_ir};
+use rerail_metal::block_program;
 
-use rerail_parser_tests::json::{base, files_in, form};
-#[allow(unused_imports)]
-use super::*;
+/// Every step's tier 1 on Metal, generated MSL (one lane width, the class planes), equals the
+/// CPU interpreter on every document: outputs and extracted positions.
+#[test]
+fn every_step_on_metal_equals_the_interpreter() {
+    use block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+    let steps = steps_in(DIR);
+    let compiled: Vec<Compiled> = steps.iter().map(|(n, s)| compile_step(n, s)).collect();
+    let docs: Vec<Vec<Vec<u8>>> = compiled.iter().zip(&steps).map(|(c, (n, _))| documents(&Lang::of(&c.stmts), seed(n), &|b| reference(c, b).is_some()).0).collect();
+    let forms: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
+    let files: Vec<block::BatchFile<'_>> = docs.iter().enumerate().flat_map(|(p, ds)| ds.iter().map(move |b| block::BatchFile { bytes: b, program: p })).collect();
+    let run = run_split(&forms, &files, LaneWidth::W32, Executor::Generated(ClassStrategy::Planes), 64).unwrap_or_else(|e| panic!("metal: {e:?}"));
+    let mut differ = Vec::new();
+    for (f, got) in files.iter().zip(&run.files) {
+        let want = compiled[f.program].program.block_programs[0].run_files(&[f.bytes]).remove(0);
+        if got.outputs != want.outputs || got.positions != want.positions {
+            differ.push(format!("{}: {:?}", steps[f.program].0, String::from_utf8_lossy(f.bytes)));
+        }
+    }
+    eprintln!("{} files over {} steps on Metal", files.len(), steps.len());
+    assert!(differ.is_empty(), "{} files differ:\n{}", differ.len(), differ.join("\n"));
+}
 
 /// Tier 1 on Metal in segments (`block_program::serial`), over the corpus as one batch: GPU
 /// seconds (the fastest of `RERAIL_ITERS` runs, default 5), segments run again and checks, for
@@ -31,10 +36,9 @@ use super::*;
 /// outputs, positions and totals equal Cranelift's. `RERAIL_REPEAT` and `RERAIL_FORM` as in
 /// `json_metal_bench`.
 #[test]
-#[cfg(target_os = "macos")]
 #[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
 fn json_metal_serial_bench() {
-    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    use block_program::serial::{Segments, run_serial_split};
     let env = |k: &str, d: usize| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
     let iters = env("RERAIL_ITERS", 5);
     let mut paths = files_in("RERAIL_JSON_CORPUS");
@@ -54,7 +58,7 @@ fn json_metal_serial_bench() {
         let native = &c.native.block_programs[0];
         let want = c.parser.tier1.run_files(&refs);
         let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
-        let mut best: Option<metal_program_backend::block_program::serial::SerialRun> = None;
+        let mut best: Option<block_program::serial::SerialRun> = None;
         for _ in 0..iters {
             let run = run_serial_split(&[native], &batch, segments).unwrap_or_else(|e| panic!("metal: {e:?}"));
             for (k, (got, want)) in run.run.files.iter().zip(&want).enumerate() {
@@ -84,10 +88,9 @@ fn json_metal_serial_bench() {
 /// `RERAIL_ITERS` runs, default 5) and launches at each lane width, each form; the outputs and
 /// positions equal Cranelift's.
 #[test]
-#[cfg(target_os = "macos")]
 #[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
 fn json_metal_bench() {
-    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_split};
+    use block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_split};
     let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
     let mut paths = files_in("RERAIL_JSON_CORPUS");
     let mut files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
@@ -125,7 +128,7 @@ fn json_metal_bench() {
         let native = &c.native.block_programs[0];
         let want = c.parser.tier1.run_files(&refs);
         for &width in &widths {
-            eprintln!("{name}, {}-byte lanes: {}", width.bytes(), metal_program_backend::block_program::kernel_report(native, width).expect("compiles"));
+            eprintln!("{name}, {}-byte lanes: {}", width.bytes(), block_program::kernel_report(native, width).expect("compiles"));
         }
         let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
         for &width in &widths {

@@ -1,4 +1,4 @@
-// Block programs' Metal interpreter (metal_block_program.rs): a batch of files, each under its own
+// Block programs' Metal interpreter (block_program.rs): a batch of files, each under its own
 // program, in one launch (decision 0066). Each lane owns W consecutive bytes of a file (W = 16, 32
 // or 64) and its W-bit word of every value, so a 32-lane SIMD group works on 32 words at once. A
 // group's values are slots of lane words in its worker's scratch, in device memory (decision
@@ -126,7 +126,7 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
     }
     slots[at * 32u + l] = v;
   }
-  // The sinks (`metal_block_sinks.metal`): each output at its delay (its value and delay in
+  // The sinks (`block_sinks.metal`): each output at its delay (its value and delay in
   // `outs`), then each counted output: its output, its extract (0xff: a total only), its delay.
   for (uint k = 0u; k < pr.outs; k++) {
     const uint x = outs[pr.out0 + k];

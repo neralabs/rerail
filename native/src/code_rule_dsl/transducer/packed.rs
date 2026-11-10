@@ -60,8 +60,6 @@ pub(in crate::code_rule_dsl) use metal_program_backend::lattice as metal_lattice
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::nearest as metal_nearest;
 #[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) use metal_program_backend::blocks as metal_blocks;
-#[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::{RootJobs, RootsFound};
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::drop_pipelines as drop_label_pipelines;
@@ -302,10 +300,6 @@ mod gating_rr_tests;
 mod regex_relocation_tests;
 #[cfg(test)]
 mod bitlex_corpus_tests;
-#[cfg(test)]
-mod bitlex_ladder_tests;
-#[cfg(test)]
-mod bitlex_json_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
 mod block_monoid;
 mod block_plan;
