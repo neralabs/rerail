@@ -17,7 +17,10 @@
 //! A regex that matches a token without spanning it (`^[rub]*f`), or matches any name (`.`),
 //! tests a node's text and reached a token only by accident: `incidental`. A test whose token is never implied in its
 //! parents is `stored`: it reads a token the tape
-//! keeps, and needs nothing. `gap?` is a `gap` whose parent the rule does not say: its token is
+//! keeps, and needs nothing. A test under a `not` on the token's own node, reached as the node
+//! matched, a child or any earlier or later sibling, only kept tokens out of that set, and an
+//! implied token is in none: `excluder`, which needs nothing either. (A neighbour sibling is one
+//! node, which is now another one: it stays a `gap`.) `gap?` is a `gap` whose parent the rule does not say: its token is
 //! implied in some kind, maybe not the one the rule is under. A parent is known from the rule (`kind` on the node, or on its
 //! neighbour `inside`); otherwise every kind the grammar has the node under, or every kind.
 
@@ -67,7 +70,7 @@ enum Rel {
     /// The node matched (a rule's root, a constraint's capture, a `site`...): its tag.
     Root(&'static str),
     Has { end: bool, field: Option<String> },
-    Sibling { field: Option<String> },
+    Sibling { end: bool, field: Option<String> },
     Inside,
 }
 
@@ -122,7 +125,7 @@ impl Walk<'_> {
 
     fn object(&mut self, map: &Map<String, Value>, rel: &Rel, from: &Frame, frame: &Frame, negated: bool, path: &str) {
         let mut frame = frame.clone();
-        if let Some(kind) = node_kind(map) {
+        if let Some(kind) = node_kind(map, self.utils, 0) {
             frame.kind = Some(kind);
         }
         if let Some(inside) = map.get("inside").and_then(Value::as_object)
@@ -154,7 +157,7 @@ impl Walk<'_> {
                         "has" if end => (Rel::Has { end, field }, Frame::default()),
                         "has" => (Rel::Has { end, field }, Frame { kind: None, parent: frame.kind.clone() }),
                         "inside" => (Rel::Inside, Frame::default()),
-                        _ => (Rel::Sibling { field }, Frame { kind: None, parent: frame.parent.clone() }),
+                        _ => (Rel::Sibling { end, field }, Frame { kind: None, parent: frame.parent.clone() }),
                     };
                     self.rule(value, &next, &frame, &child, false, &here);
                 }
@@ -208,13 +211,19 @@ impl Walk<'_> {
                 let parents = from.kind.clone().map(|kind| BTreeSet::from([kind]));
                 (if parents.is_some() { "gap" } else { "gap?" }, "has".to_owned(), self.lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
             }
-            Rel::Sibling { field } => {
+            Rel::Sibling { end, field } => {
                 let parents = frame.parent.clone().map(|kind| BTreeSet::from([kind])).or_else(|| parents_of(&from.kind));
-                (if parents.is_some() { "gap" } else { "gap?" }, "sibling".to_owned(), self.lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
+                let relation = if *end { "sibling end" } else { "sibling" }.to_owned();
+                (if parents.is_some() { "gap" } else { "gap?" }, relation, self.lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
             }
         };
         let category = if category != "never" && implied.is_empty() {
             "stored"
+        } else if negated && (category == "root" || (category != "never" && !matches!(rel, Rel::Sibling { end: false, .. }))) {
+            // A `not` on the token's own node, over a set (the node matched, a node's children,
+            // its earlier or later siblings): it kept tokens out of the set, and an implied token
+            // is in none. Not a neighbour sibling, which is one node and now another one.
+            "excluder"
         } else if incidental && category != "never" {
             "incidental"
         } else {
@@ -232,16 +241,29 @@ impl Walk<'_> {
     }
 }
 
-/// The node's kind as the rule says it: its own `kind`, or one an `all` member gives.
-fn node_kind(map: &Map<String, Value>) -> Option<String> {
+/// The node's kind as the rule says it: its own `kind`, one an `all` member or a util it
+/// `matches` gives, or the first of an `any` whose every alternative gives one.
+fn node_kind(map: &Map<String, Value>, utils: &Map<String, Value>, depth: usize) -> Option<String> {
+    if depth > 8 {
+        return None;
+    }
     if let Some(kind) = map.get("kind").and_then(Value::as_str) {
         return Some(kind.to_owned());
     }
-    map.get("all")?.as_array()?.iter().filter_map(Value::as_object).find_map(node_kind)
+    let of = |value: &Value| value.as_object().and_then(|map| node_kind(map, utils, depth + 1));
+    if let Some(kind) = map.get("all").and_then(Value::as_array).and_then(|all| all.iter().find_map(of)) {
+        return Some(kind);
+    }
+    if let Some(kind) = map.get("matches").and_then(Value::as_str).and_then(|name| utils.get(name)).and_then(of) {
+        return Some(kind);
+    }
+    let any = map.get("any")?.as_array()?;
+    let kinds: Vec<String> = any.iter().filter_map(of).collect();
+    (!any.is_empty() && kinds.len() == any.len()).then(|| kinds[0].clone())
 }
 
 /// The worst category of a rule's tests, in the order they cost to fix.
-const ORDER: [&str; 8] = ["root", "below", "layout", "gap", "gap?", "incidental", "stored", "never"];
+const ORDER: [&str; 9] = ["root", "below", "layout", "gap", "gap?", "incidental", "excluder", "stored", "never"];
 
 /// RER-131 D (ignored): every token test of every pack rule, its category, and where its token is
 /// implied, to `RERAIL_TOKEN_READERS` (a TSV); a summary per pack and category on stderr.

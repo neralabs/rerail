@@ -41,6 +41,9 @@ pub(in crate::code_rule_dsl) enum Semantic {
     /// `importTarget`: the import or require target the node's constant value names, and what
     /// eslint-plugin-n reads of it.
     ImportTarget(Box<crate::code_rule_dsl::import_target::term::ImportTargetTest>),
+    /// A relation's bare token regex, where the token is implied (t31): asked of the gaps of the
+    /// parent's stored children, through the grammar's automaton.
+    Gap(Box<super::gap::GapTest>),
 }
 
 /// Emit predicate-local rows without executing a nested user rule. For N's catalog backend
@@ -105,6 +108,7 @@ impl Semantic {
             | Self::Value(_)
             | Self::Layout(_)
             | Self::FilePath(_)
+            | Self::Gap(_)
             | Self::Host(_)
             | Self::ImportTarget(_) => true,
             Self::Binding(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
@@ -139,7 +143,7 @@ impl Semantic {
             Self::Embedded(test) => test.rules().any(|rule| super::reads_values(rule, seen)),
             // PHP's run-time fallback of a function or constant name may be unknown.
             Self::Resolves(resolves) => flow(resolves.language),
-            Self::Capture(_) | Self::Layout(_) | Self::FilePath(_) | Self::ImportTarget(_) => false,
+            Self::Capture(_) | Self::Layout(_) | Self::Gap(_) | Self::FilePath(_) | Self::ImportTarget(_) => false,
             // PHP's flow may leave a read's binding, `latest` and `outer` unknown.
             Self::Binding(test) => {
                 test.filter.reads_usage()
@@ -177,6 +181,7 @@ impl Semantic {
                 Some(node)
             }
             Self::Layout(layout) => layout.match_node(node, env),
+            Self::Gap(test) => test.holds(&node).then_some(node),
             Self::FilePath(condition) => super::resolve::file_path()
                 .filter(|path| condition.holds(path))
                 .map(|_| node),

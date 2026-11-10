@@ -217,3 +217,81 @@ fn pack_patterns_keep_no_token_under_an_error() {
     eprintln!("{} patterns; {} keep a token under an error", found.len(), bad.len());
     assert!(bad.is_empty(), "{bad:#?}");
 }
+
+/// The gaps of a tape's parent, interleaved with its stored children, are tree-sitter's children
+/// (extras aside), by kind: every token a gap test reads is the one tree-sitter has there (t31).
+/// The number of parents checked, or the first that differs.
+fn gaps_are_tree_sitters(lang: GrammarDialect, source: &str) -> Result<usize, String> {
+    use crate::code_rule_dsl::matcher::gap::stored_gaps;
+    use std::collections::HashMap;
+    let language = Grammar::new(lang).unwrap().kinds.grammar().unwrap().clone();
+    let grammar = TokenGrammar::of(lang, &language).unwrap();
+    let native = AstGrep::doc(ast_grep_core::tree_sitter::StrDoc::new(source, lang));
+    let mut by_place: HashMap<(usize, usize, String), Vec<Vec<String>>> = HashMap::new();
+    for node in native.root().dfs().filter(|node| node.is_named()) {
+        let children = node.children().filter(|child| !grammar.is_extra(&child.kind())).map(|child| child.kind().into_owned()).collect();
+        by_place.entry((node.range().start, node.range().end, node.kind().into_owned())).or_default().push(children);
+    }
+    let doc = AstGrep::doc(tape(lang, source));
+    let mut checked = 0;
+    for node in doc.root().dfs().filter(|node| node.is_named()) {
+        let Some((children, gaps)) = stored_gaps(&grammar, &node) else { continue };
+        let mut sequence = Vec::new();
+        for (child, before) in children.iter().zip(&gaps.before) {
+            if grammar.is_extra(&child.kind()) {
+                continue;
+            }
+            sequence.extend(before.iter().map(|(token, _)| (*token).to_owned()));
+            sequence.push(child.kind().into_owned());
+        }
+        sequence.extend(gaps.end.iter().map(|(token, _)| (*token).to_owned()));
+        let key = (node.range().start, node.range().end, node.kind().into_owned());
+        let candidates = by_place.get(&key).ok_or_else(|| format!("{lang:?}: no tree-sitter node {key:?}"))?;
+        if !candidates.contains(&sequence) {
+            return Err(format!("{lang:?}: {} {:?}: gaps give {sequence:?}, tree-sitter {:?}", key.2, &source[key.0..key.1.min(key.0 + 80)], candidates[0]));
+        }
+        checked += 1;
+    }
+    Ok(checked)
+}
+
+#[test]
+fn gaps_give_tree_sitters_tokens() {
+    for (lang, source) in [
+        (GrammarDialect::Python, "async def f(a, b=1, *c, **d) -> int:  # c\n    return a if a is not b else [x for x in b if x]\nimport os, sys\nfrom . import (x, y,)\nv = sys.version[:3]\ntry:\n    pass\nexcept (A, B) as e:\n    raise\nelse:\n    pass\nd = {'a': 1, **e}\nf(a, *b, k=v)\nlambda x: x\nwith a as b, c:\n    del a[1:2, ::3]\n"),
+        (GrammarDialect::JavaScript, "const f = async (a, b) => { let x = [1,,2]; return a?.b ?? 0; };\nfor (const k of o) if (!k) break;\nlet o = { a: 1, b, [c]: 2, get d() { return 1; } };\nnew C(a, b);\nexport default function () {}\n"),
+        (GrammarDialect::TypeScript, "const f = async (a, b?) => { let x = [1,,2]; return a?.b ?? 0; };\ninterface I { readonly a: string; m(x: number): void }\nclass C<T> extends B implements I { constructor(private x: T = 1) { super(); } }\ndeclare global { var g: number }\n"),
+        (GrammarDialect::Rust, "fn f(x: &[u8]) -> Option<u8> { if let Some(y) = x.first() { return Some(*y + 1); } None }\nstruct P { a: u8, b: u8 }\nfn g(P { a, b: c }: P) {}\n"),
+        (GrammarDialect::Php, "<?php\nFUNCTION f($a, $b = [1, 2,]) { return $a ?? $b; }\n$x = ['k' => 1, 2];\n"),
+    ] {
+        let checked = gaps_are_tree_sitters(lang, source).unwrap_or_else(|error| panic!("{error}"));
+        assert!(checked > 10, "{lang:?}: {checked}");
+    }
+}
+
+/// The same over corpora (ignored): `RERAIL_GAP_CORPUS=<dialect>=<file list>[:<max>];...`.
+#[test]
+#[ignore = "corpora: RERAIL_GAP_CORPUS"]
+fn gaps_give_tree_sitters_tokens_on_corpora() {
+    let spec = std::env::var("RERAIL_GAP_CORPUS").expect("RERAIL_GAP_CORPUS");
+    let mut failures = Vec::new();
+    for entry in spec.split(';').filter(|entry| !entry.trim().is_empty()) {
+        let (label, list) = entry.split_once('=').expect("<dialect>=<list>");
+        let (list, most) = list.split_once(':').map_or((list, usize::MAX), |(list, most)| (list, most.parse().expect("a count")));
+        let lang = crate::code_rule_dsl::language::dialect_by_label(label.trim()).expect("a dialect");
+        let (mut files, mut parents) = (0, 0);
+        for path in std::fs::read_to_string(list).expect("a file list").lines().take(most) {
+            let Ok(source) = std::fs::read_to_string(path) else { continue };
+            match gaps_are_tree_sitters(lang, &source) {
+                Ok(checked) => parents += checked,
+                Err(error) => failures.push(format!("{path}: {error}")),
+            }
+            files += 1;
+        }
+        eprintln!("{label}: {files} files, {parents} parents checked");
+    }
+    for failure in failures.iter().take(20) {
+        eprintln!("{failure}");
+    }
+    assert!(failures.is_empty(), "{} files differ", failures.len());
+}

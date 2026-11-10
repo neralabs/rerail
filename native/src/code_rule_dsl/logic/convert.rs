@@ -1186,6 +1186,7 @@ fn semantic_name(s: &Semantic) -> &'static str {
         Semantic::Capture(_) => "capture",
         Semantic::FormatArgs(_) => "formatArgs",
         Semantic::Layout(_) => "layout",
+        Semantic::Gap(_) => "gap",
         Semantic::FilePath(_) => "file path",
         Semantic::Calls(_) => "calls",
         Semantic::ImportTarget(_) => "importTarget",

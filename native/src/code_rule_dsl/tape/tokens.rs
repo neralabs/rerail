@@ -12,7 +12,9 @@
 //! tree-sitter has it. So `f(a, b)` stores none of its punctuation, `f(a, b,)` stores its trailing
 //! `,` and `)`, and `a + b` stores its `+` (as short as `-`).
 //!
-//! Nothing reads an implied token: no reader rebuilds one, from the source or the grammar. A node
+//! No reader rebuilds an implied token as a node. A rule that asks about one asks the grammar
+//! instead: [`TokenGrammar::gaps`] walks a parent's stored children through its automaton and says
+//! which word each gap holds, from the kinds and fields alone (the gap test, t31). A node
 //! the automaton cannot walk (an ERROR, a contextual alias, a grammar the tree disagrees with)
 //! keeps all of its tokens. Nothing here is chosen by hand: a new grammar version is a new
 //! automaton, never a reclassification.
@@ -59,6 +61,17 @@ pub(in crate::code_rule_dsl) struct TokenGrammar {
     /// Per tree-sitter field id: its symbol (0 where the grammar has none).
     field_sym: Vec<Sym>,
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
+    /// The grammar's extras (comments and the like): in no automaton, anywhere among children.
+    extras: BTreeSet<String>,
+}
+
+/// A parent's gaps ([`TokenGrammar::gaps`]): per stored child, the implied word just before it
+/// (empty where the gap is empty, stored, or before a token or an extra), and the word after the
+/// last child. Each token is its text and its field (`""` for none).
+#[derive(Debug, Default)]
+pub(in crate::code_rule_dsl) struct Gaps<'g> {
+    pub(in crate::code_rule_dsl) before: Vec<Vec<(&'g str, &'g str)>>,
+    pub(in crate::code_rule_dsl) end: Vec<(&'g str, &'g str)>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -332,11 +345,12 @@ impl TokenGrammar {
             let sym = builder.sym(name);
             kinds.insert(sym, Automaton { moves, accepting, implied });
         }
+        let extras = grammar["extras"].as_array().into_iter().flatten().filter_map(|extra| extra["name"].as_str().map(str::to_owned)).collect();
         let Builder { names, texts, .. } = builder;
         let field_sym = (0..=language.field_count() as u16)
             .map(|id| language.field_name_for_id(id).and_then(|name| names.get(name).copied()).unwrap_or(0))
             .collect();
-        Ok(Self { names, texts, kinds, field_sym, unsupported })
+        Ok(Self { names, texts, kinds, field_sym, unsupported, extras })
     }
 
     pub(in crate::code_rule_dsl) fn kind_count(&self) -> usize {
@@ -397,6 +411,67 @@ impl TokenGrammar {
             stored[position] = true;
         }
         Some(stored)
+    }
+}
+
+impl TokenGrammar {
+    /// Whether `kind` is one of the grammar's extras (a comment and the like).
+    pub(in crate::code_rule_dsl) fn is_extra(&self, kind: &str) -> bool {
+        self.extras.contains(kind)
+    }
+
+    /// The field names `kind`'s automaton labels its children with.
+    pub(in crate::code_rule_dsl) fn fields_of(&self, kind: &str) -> Vec<&str> {
+        let Some(automaton) = self.names.get(kind).and_then(|sym| self.kinds.get(sym)) else { return Vec::new() };
+        let fields: BTreeSet<Sym> = automaton.moves.iter().flat_map(|moves| moves.keys()).map(|label| label.field).filter(|&field| field != 0).collect();
+        fields.into_iter().map(|field| self.texts[field as usize].as_str()).collect()
+    }
+
+    /// The gaps of a `kind` node whose stored children are `children` (named, kind, field; `""`
+    /// for no field), in order, as the tape holds them: walked through the kind's automaton, a gap
+    /// with no stored token holds the implied word to the next named child (or to the end).
+    /// `None` where the kind has no automaton or the automaton refuses the children.
+    pub(in crate::code_rule_dsl) fn gaps<'c>(&self, kind: &str, children: impl IntoIterator<Item = (bool, &'c str, &'c str)>) -> Option<Gaps<'_>> {
+        let automaton = self.kinds.get(self.names.get(kind)?)?;
+        let word = |labels: &[Label]| labels.iter().map(|label| (self.texts[label.name as usize].as_str(), self.texts[label.field as usize].as_str())).collect::<Vec<_>>();
+        let walk = |mut state: u32, labels: &[Label]| -> Option<u32> {
+            for label in labels {
+                state = *automaton.moves[state as usize].get(label)?;
+            }
+            Some(state)
+        };
+        let mut gaps = Gaps::default();
+        let (mut state, mut pending) = (0u32, Vec::<Label>::new());
+        for (named, child, field) in children {
+            gaps.before.push(Vec::new());
+            if self.extras.contains(child) {
+                continue;
+            }
+            let label = Label { token: !named, name: *self.names.get(child)?, field: if field.is_empty() { 0 } else { *self.names.get(field)? } };
+            if !named {
+                pending.push(label);
+                continue;
+            }
+            if pending.is_empty() {
+                // An empty gap: the implied word, which is empty where the child follows directly.
+                match automaton.implied.to.get(&(state, label)) {
+                    Some(implied) => {
+                        *gaps.before.last_mut()? = word(implied);
+                        state = walk(state, implied)?;
+                    }
+                    None if automaton.moves[state as usize].contains_key(&label) => {}
+                    None => return None,
+                }
+            } else {
+                state = walk(state, &pending)?;
+                pending.clear();
+            }
+            state = *automaton.moves[state as usize].get(&label)?;
+        }
+        if pending.is_empty() {
+            gaps.end = automaton.implied.end[state as usize].as_deref().map(word).unwrap_or_default();
+        }
+        Some(gaps)
     }
 }
 

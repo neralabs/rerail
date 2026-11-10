@@ -44,6 +44,7 @@ pub(super) fn collect_binds(
         | Semantic::Value(_)
         | Semantic::Layout(_)
         | Semantic::FilePath(_)
+        | Semantic::Gap(_)
         | Semantic::Host(_)
         | Semantic::ImportTarget(_) => {}
     }
@@ -94,6 +95,7 @@ pub(super) fn reads(
         | Semantic::Embedded(_)
         | Semantic::Capture(_)
         | Semantic::FilePath(_)
+        | Semantic::Gap(_)
         | Semantic::ImportTarget(_) => Names::new(),
     }
 }
@@ -145,6 +147,7 @@ pub(super) fn collect_mentions(
         Semantic::Resolves(_)
         | Semantic::Value(_)
         | Semantic::FilePath(_)
+        | Semantic::Gap(_)
         | Semantic::Host(_)
         | Semantic::ImportTarget(_) => {}
     }
@@ -161,6 +164,7 @@ pub(super) fn collect_in(
         Semantic::Resolves(_)
         | Semantic::Layout(_)
         | Semantic::FilePath(_)
+        | Semantic::Gap(_)
         | Semantic::Host(_)
         | Semantic::Value(_)
         | Semantic::ImportTarget(_) => {}

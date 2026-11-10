@@ -1301,6 +1301,8 @@ impl Builder {
             | Semantic::Embedded(_)
 
             | Semantic::FilePath(_)
+
+            | Semantic::Gap(_)
             | Semantic::ImportTarget(_) => {
                 self.unsupported.push(format!(
                     "{at}: semantic fact family belongs to a later phase"
@@ -1408,6 +1410,8 @@ impl Builder {
             | Semantic::Embedded(_)
 
             | Semantic::FilePath(_)
+
+            | Semantic::Gap(_)
             | Semantic::ImportTarget(_) => {
                 unreachable!("unsupported semantic families returned before descriptor creation")
             }

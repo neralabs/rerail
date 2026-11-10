@@ -514,7 +514,7 @@ impl Lowering {
             Semantic::Resolves(resolves) => !super::semantic::flow(resolves.language),
             // A label's view has no host path to read.
             Semantic::FilePath(_) => return Err(Unsupported(name)),
-            Semantic::Value(_) | Semantic::Layout(_) | Semantic::Arguments(_) => false,
+            Semantic::Value(_) | Semantic::Layout(_) | Semantic::Gap(_) | Semantic::Arguments(_) => false,
             Semantic::Binding(test) => {
                 if test.occurrence.is_some() {
                     return Err(Unsupported("resolves.binding occurrence"));
@@ -579,6 +579,7 @@ fn semantic_name(semantic: &super::Semantic) -> &'static str {
         Semantic::Capture(_) => "capture",
         Semantic::FormatArgs(_) => "formatArgs",
         Semantic::Layout(_) => "layout",
+        Semantic::Gap(_) => "gap",
         Semantic::FilePath(_) => "file path",
         Semantic::Calls(_) => "calls",
         Semantic::ImportTarget(_) => "importTarget",
