@@ -298,6 +298,73 @@ fn a_file_set_without_a_root_resolves_among_its_own_files() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_root_is_read_at_its_own_path() {
+    assert_eq!(
+        on_disk(Path::new("/home/me/./repo/")).base(),
+        "/home/me/repo"
+    );
+    // The file system's own root and a relative path are no root: files are read at /workspace.
+    assert_eq!(on_disk(Path::new("/")).base(), "/workspace");
+    assert_eq!(on_disk(Path::new("repo")).base(), "/workspace");
+    // A root at /workspace is still a root on disk: the view's folder there is what disk has.
+    let root = Path::new("/workspace");
+    assert_eq!(on_disk(root).is_directory("/workspace"), root.is_dir());
+}
+
+/// A Windows root, as `set_root` takes one (an absolute path the platform accepts), is read at its
+/// path with `/` separators below a `/`, a verbatim prefix dropped.
+#[cfg(windows)]
+#[test]
+fn a_windows_root_is_read_at_a_slash_separated_path() {
+    for (root, base) in [
+        (r"C:\Users\me\repo\", "/C:/Users/me/repo"),
+        ("C:/Users/me/repo", "/C:/Users/me/repo"),
+        (r"\\?\C:\Users\me\repo", "/C:/Users/me/repo"),
+        (r"\\server\share\repo", "/server/share/repo"),
+        (r"\\?\UNC\server\share\repo", "/server/share/repo"),
+        (r"C:\", "/C:"),
+        // Not absolute on Windows, so no root: files are read at /workspace.
+        (r"\Users\me\repo", "/workspace"),
+        (r"C:repo", "/workspace"),
+    ] {
+        assert_eq!(on_disk(Path::new(root)).base(), base, "{root}");
+    }
+}
+
+/// Below a Windows root, a drive path or the verbatim path `canonicalize` gives, a relative file
+/// and an installed package resolve on disk.
+#[cfg(windows)]
+#[test]
+fn a_windows_root_resolves_the_files_on_disk_below_it() {
+    let directory = TempDir::new("windows-root");
+    for (path, text) in [
+        ("b.mjs", ""),
+        ("lib/c.js", ""),
+        ("node_modules/pkg/package.json", r#"{ "main": "main.js" }"#),
+        ("node_modules/pkg/main.js", ""),
+    ] {
+        directory.write(path, text);
+    }
+    let verbatim = directory.0.clone();
+    let drive = PathBuf::from(verbatim.to_str().unwrap().strip_prefix(r"\\?\").unwrap());
+    for root in [&drive, &verbatim] {
+        let view = on_disk(root);
+        for specifier in ["./b.mjs", "./lib/c.js", "pkg"] {
+            assert_eq!(
+                outcome(&view, "a.mjs", specifier, Style::Import),
+                (true, false),
+                "{specifier} below {root:?}"
+            );
+        }
+        assert_eq!(
+            outcome(&view, "a.mjs", "./missing.mjs", Style::Import),
+            (true, true)
+        );
+    }
+}
+
 #[test]
 fn holding_a_file_changes_resolution_only_where_disk_below_the_root_differs() {
     let directory = TempDir::new("held");

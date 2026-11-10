@@ -1,12 +1,13 @@
 //! The files an import target's resolution reads: the ones a workspace or snapshot holds, and,
-//! below the workspace's root on disk, the ones there. Paths are absolute: the root's own path
-//! (`View::base`), or `/` for a file set without a root on disk.
+//! below the workspace's root on disk, the ones there. Paths are absolute and `/`-separated: below
+//! the root's own path (`View::base`, a Windows root's in the same form), or below
+//! `VIRTUAL_BASE` for a file set without a root on disk.
 
 use super::json::Json as Parsed;
 use super::path;
 use parking_lot::Mutex;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::Arc;
 
 /// A file a resolution reads the text of is read only up to this size; a larger one is absent.
@@ -19,6 +20,35 @@ const MAX_HELD_JSON_BYTES: usize = 64 * 1024;
 const VIRTUAL_BASE: &str = "/workspace";
 /// A view's caches are dropped whole beyond this many entries.
 const MAX_CACHED: usize = 200_000;
+
+/// The absolute path a root on disk is read at (`View::base`): its names joined by `/` below a
+/// `/`, where a Windows root's drive, or server and share, is the first name (`C:\repo` and its
+/// verbatim form `\\?\C:\repo` are `/C:/repo`, `\\server\share\repo` is `/server/share/repo`).
+/// `None` where `root` is no root: a path the platform does not read as absolute, the rule
+/// `set_root` holds a root to, or `/` itself, which leaves no folder name to read files below.
+fn base_of(root: &Path) -> Option<String> {
+    if !root.is_absolute() {
+        return None;
+    }
+    let mut names = Vec::new();
+    for component in root.components() {
+        match component {
+            Component::Prefix(prefix) => names.push(match prefix.kind() {
+                Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => {
+                    format!("{}:", char::from(drive))
+                }
+                Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                    format!("{}/{}", server.to_str()?, share.to_str()?)
+                }
+                Prefix::Verbatim(name) | Prefix::DeviceNS(name) => name.to_str()?.to_owned(),
+            }),
+            Component::RootDir => {}
+            component => names.push(component.as_os_str().to_str()?.to_owned()),
+        }
+    }
+    let base = path::normalize(&format!("/{}", names.join("/")));
+    (base != "/").then_some(base)
+}
 
 /// Whether the text of a held file at `path` (workspace-relative) is kept: what a resolution
 /// reads besides the files' existence (manifests, project configurations and their bases, the
@@ -147,7 +177,7 @@ pub(crate) struct View {
     /// `root` with its symlinks resolved: a path on disk is read only where its own resolved path
     /// lies below it.
     canonical_root: Option<PathBuf>,
-    /// The absolute path of the root: `root` as given, or `VIRTUAL_BASE` without one.
+    /// The absolute path of the root (`base_of`), or `VIRTUAL_BASE` without one.
     base: String,
     cache: Mutex<Cache>,
     /// Whether each folder (workspace-relative) resolves inside the root (`directory_inside`).
@@ -157,18 +187,12 @@ pub(crate) struct View {
 }
 
 impl View {
+    /// The view of `held` over the files on disk below `root`, where it is a root (`base_of`).
     pub(crate) fn new(held: Arc<HeldFiles>, root: Option<&Path>) -> Self {
-        let root = root.map(Path::to_path_buf).filter(|root| {
-            root.to_str()
-                .is_some_and(|root| path::normalize(root) != "/")
-        });
-        let base = root
-            .as_ref()
-            .and_then(|root| root.to_str())
-            .filter(|root| root.starts_with('/'))
-            .map(|root| path::normalize(root).trim_end_matches('/').to_owned())
-            .unwrap_or_else(|| VIRTUAL_BASE.to_owned());
-        let root = root.filter(|_| base != VIRTUAL_BASE);
+        let (base, root) = match root.and_then(|root| Some((base_of(root)?, root))) {
+            Some((base, root)) => (base, Some(root.to_path_buf())),
+            None => (VIRTUAL_BASE.to_owned(), None),
+        };
         Self {
             canonical_root: root.as_ref().and_then(|root| root.canonicalize().ok()),
             held,
