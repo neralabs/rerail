@@ -89,4 +89,5 @@ RootExample(@place(path, l), rank, piece, pattern, occurrence) :- nari_text(n, p
     nari_part_rank(n, piece, rank), docof(n, d), doc(d, path, _).
 '''
     from data_layer_rr_cli import api_scope
-    return api_scope(text.replace('__DIGITS__', json.dumps(digits)[1:-1]))
+    from data_layer_rr_production import production
+    return production(source, 'no_api_root_imports', (api_scope(text.replace('__DIGITS__', json.dumps(digits)[1:-1]))))

@@ -142,7 +142,12 @@ def _execute(engine, rule, files, options, sources, workspace_name):
         corpus.mkdir()
         write_fixture(corpus,files,sources)
         option_file = root / 'options.json'
-        write_json(option_file, options(corpus) if callable(options) else options)
+        arguments = options(corpus) if callable(options) else options
+        # The load-request cone consumes exports, not post-load option tables.
+        # Mark direct APIs before loading, as the existing IDE adapter does.
+        if arguments.get('entryPoint') not in {None, '_production_contract'}:
+            arguments = dict(arguments, env=[*arguments.get('env', []), 'data-layer.api=true'])
+        write_json(option_file, arguments)
         command = [str(engine), 'run-rr', str(rule), str(corpus), str(root / 'out'), str(option_file)]
         run = subprocess.run(command, text=True, capture_output=True, timeout=100)
         if run.returncode:

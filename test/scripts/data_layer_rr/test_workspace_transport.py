@@ -30,11 +30,12 @@ class WorkspaceTransportTests(unittest.TestCase):
             with self.subTest(item=item),tempfile.TemporaryDirectory() as temporary:
                 with self.assertRaises(ValueError):replay.write_fixture(Path(temporary),[item])
 
-    def execute(self,runner):
+    def execute(self,runner,options=None):
         seen={}
         files=[dict(path='impl/a.py',source='class Primary: pass\n'),
                dict(path='data_layer/api.py',source='class Facade: pass\n')]
-        options=dict(marker='preserved')
+        options=dict(marker='preserved') if options is None else options
+        original=json.loads(json.dumps(options))
         def native(command,**kwargs):
             seen['options']=json.loads(Path(command[-1]).read_text())
             corpus=Path(command[3])
@@ -43,7 +44,7 @@ class WorkspaceTransportTests(unittest.TestCase):
         with patch.object(migration,'verify_source_cohort'),patch.object(migration,'verify_engine_artifact'), \
              patch.object(replay.subprocess,'run',side_effect=native):
             runner(Path('/frozen-engine'),Path('/policy.rr'),files,options)
-        self.assertEqual(options,dict(marker='preserved'))
+        self.assertEqual(options,original)
         self.assertEqual(seen['files'],{file['path']:file['source'] for file in files})
         return seen['options']
 
@@ -52,6 +53,15 @@ class WorkspaceTransportTests(unittest.TestCase):
 
     def test_workspace_api_leaves_scope_and_loading_to_the_engine(self):
         self.assertEqual(self.execute(replay.execute_workspace),dict(marker='preserved'))
+
+    def test_named_api_marks_the_preload_phase_and_preserves_caller_environment(self):
+        options=dict(entryPoint='check_file',env=['caller=value'])
+        actual=self.execute(replay.execute_workspace,options)
+        self.assertEqual(actual,dict(entryPoint='check_file',env=['caller=value','data-layer.api=true']))
+
+    def test_production_contract_keeps_native_discovery_enabled(self):
+        options=dict(entryPoint='_production_contract',env=['caller=value'])
+        self.assertEqual(self.execute(replay.execute_workspace,options),options)
 
     def test_callers_cannot_smuggle_an_input_override_into_workspace_acceptance(self):
         with patch.object(replay.subprocess,'run') as native:

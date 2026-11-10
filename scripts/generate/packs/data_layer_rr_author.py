@@ -46,7 +46,8 @@ def removed(source, target):
     text += ''.join(f'removed_name({json.dumps(x)}).\n' for x in sorted(values))
     text += '.decl removed_root(x: symbol)\n'
     text += ''.join(f'removed_root({json.dumps(x)}).\n' for x in constants(source / 'scripts/lint_removed_compat_surfaces.py')['_DEFAULT_ROOTS'])
-    return text + '''
+    from data_layer_rr_production import production
+    return production(source, 'removed_compat_surfaces', (text + '''
 .decl removed_symbol(n: node, x: symbol)
 removed_symbol(n, @nfkc(raw)) :- ast_name(n, raw), removed_name(@nfkc(raw)).
 removed_symbol(n, @nfkc(raw)) :- kind(n, "attribute"), field(n, "attribute", a), text(a, raw), removed_name(@nfkc(raw)).
@@ -78,7 +79,7 @@ RemovedAPI(@place(p, l), x, i) :- removed_first(d, l, x, i), doc(d, p, _), optio
     "removed compatibility surface '{name}' must not be reintroduced"
 Removed(n, x, i) :- removed_symbol(n, x), docof(n, d), removed_selected(d), visit_index(n, i),
     !option("entryPoint", _), !syntax_error(d, _, _).
-'''
+'''))
 
 
 def lifecycle(source, target):
@@ -88,7 +89,8 @@ def lifecycle(source, target):
     text = logical_scope(text, 'lifecycle_selected')
     text += '.decl lifecycle_method(x: symbol)\n'
     text += ''.join(f'lifecycle_method({json.dumps(x)}).\n' for x in sorted(values))
-    return text + '''
+    from data_layer_rr_production import production
+    return production(source, 'versioned_lifecycle_legacy_surfaces', (text + '''
 .decl lifecycle_class(c: node, x: symbol)
 lifecycle_class(c, x) :- kind(c, "class_definition"), def_name(c, x),
     (suffix("VersionedWriteTransaction", x) ; suffix("LazyVersionedWriteTransactionSparse", x)).
@@ -96,7 +98,7 @@ lifecycle_class(c, x) :- kind(c, "class_definition"), def_name(c, x),
     "{cls}.{method} shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering."
 Lifecycle(f, cls, name) :- lifecycle_class(c, cls), field(c, "body", b), body_stmt(b, st, _), defstmt(f, st),
     kind(f, "function_definition"), def_name(f, name), lifecycle_method(name), docof(c, d), lifecycle_selected(d), !syntax_error(d, _, _).
-'''
+'''))
 
 
 def permission_error(source, target):
@@ -130,7 +132,8 @@ permission_trigger(d) :- split_line(d, _, t), contains("PermissionError", t).
 BuiltinPermission(r) :- permission_raise(r), docof(r, d), permission_selected(d), permission_trigger(d), line(r, l),
     !permission_authorized(r), !permission_suppressed(d, l), !permission_suppressed(d, l - 1), !syntax_error(d, _, _).
 '''
-    return text
+    from data_layer_rr_production import production
+    return production(source, 'permission_error', (text))
 
 
 def main():

@@ -18,7 +18,8 @@ def serverplan_grammar_surface(source, target, header):
                           ('trigger', original.SERVERPLAN_SURFACE_EXTRACTOR.source_triggers)]:
         for value in sorted(values):
             text += f'sgp_name({json.dumps(group)}, {json.dumps(value)}).\n'
-    return text + r'''
+    from data_layer_rr_production import production
+    return production(source, 'serverplan_grammar_surface', (text + r'''
 .decl sgp_hidden(d: number)
 sgp_hidden(d) :- path_part(d, p),
     (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
@@ -88,4 +89,4 @@ sgp_framework_hidden(i) :- sgp_candidate(i, path),
 .violation FileSelection(at: span, ordinal: number, result: symbol) code "SPG_PATH" "{result}"
 FileSelection(@place("inventory", 1), i, path) :- sgp_candidate(i, path),
     option_item("regularFiles", _, path), !sgp_framework_hidden(i), option("entryPoint", "collector_paths").
-''' + __import__('data_layer_rr_cli').cli_suffix(source, 'serverplan_grammar_surface')
+''' + __import__('data_layer_rr_cli').cli_suffix(source, 'serverplan_grammar_surface')))

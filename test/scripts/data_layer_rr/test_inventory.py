@@ -83,6 +83,31 @@ class InventoryTests(unittest.TestCase):
         text = 'checks = ["permission_error"]\nfor check in checks:\n    importlib.import_module(f"scripts.lint_{check}")'
         self.assertEqual(['permission_error'], inventory.references(text, owners, ['permission_error'])['detectors'])
 
+    def test_shared_framework_and_workflow_associations_are_preserved(self):
+        owners = {'scripts.lint_a': {'a'}}
+        for text, scripts in [('from scripts.lint_lib import strict_allowlist\nname = "a"', ()),
+                              ('import monitor_pr_status\nname = "a"', {'monitor_pr_status'}),
+                              ('command = "scripts/verify_acceptance.py"\nchecks = ["a"]', ())]:
+            with self.subTest(text=text):
+                self.assertEqual(['a'], inventory.references(text, owners, ['a'], scripts)['detectors'])
+
+    def test_ownership_review_keeps_every_unchanged_case_and_rejects_uncollected_files(self):
+        prior = inventory.assemble(self.manifest, self.shards)
+        discovery = copy.deepcopy(self.manifest)
+        discovery['files'].pop('tests/test_b.py')
+        result = inventory.reclassify(prior, discovery)
+        self.assertEqual(result['cases'], {k:v for k,v in prior['cases'].items() if k.startswith('tests/test_a.py::')})
+        self.assertEqual(result['ownershipReview'][0]['file'], 'tests/test_b.py')
+        discovery['files']['tests/new.py'] = self.manifest['files']['tests/test_a.py']
+        with self.assertRaisesRegex(ValueError, 'fresh pytest collection'):
+            inventory.reclassify(prior, discovery)
+
+    def test_ownership_review_rejects_changed_source(self):
+        prior = inventory.assemble(self.manifest, self.shards)
+        discovery = copy.deepcopy(self.manifest); discovery['files']['tests/test_a.py']['sha256'] = 'changed'
+        with self.assertRaisesRegex(ValueError, 'module changed'):
+            inventory.reclassify(prior, discovery)
+
 
 if __name__ == '__main__':
     unittest.main()

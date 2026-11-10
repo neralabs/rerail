@@ -1331,7 +1331,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
-      "sha256": "1db5ea3e799279507387f5326c74d184b3d9f19ee54e07753f0ede5d77facdaa",
+      "sha256": "e3839772f571891bbf838b4a2502eed0e1f5b93610d63eda5a9dcd30f88be84e",
       "origin": "authored",
       "upstreamPath": "scripts/lint_removed_compat_surfaces.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1345,12 +1345,17 @@
           "before": "0e7fc867b0b77d2c90e9adbba7ed4904456f358c5dadf1955db11ef340b39ae6",
           "after": "1db5ea3e799279507387f5326c74d184b3d9f19ee54e07753f0ede5d77facdaa",
           "reason": "Admit direct API documents in workspace mode; preserve production filtering in relations after 15 positive test failures"
+        },
+        {
+          "before": "1db5ea3e799279507387f5326c74d184b3d9f19ee54e07753f0ede5d77facdaa",
+          "after": "e984abd25727a79ecef534ff7fe474f3720f3fcbd717aa9de87755b343675c5d",
+          "reason": "Use scoped production discovery, preserve physical parse sharing with file aliases, and expose typed source collector and report contracts"
         }
       ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
-      "sha256": "b1034642a77b74d6cb18a5eec20b485c723eb216ad6cfe639726b16323d07807",
+      "sha256": "c9944d4c5db22fba90545f77947306bf68c3530c7a883c1b24839b2c3952578b",
       "origin": "authored",
       "upstreamPath": "scripts/lint_versioned_lifecycle_legacy_surfaces.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1359,12 +1364,17 @@
           "before": "1a7cd837c201cb4daa6f8ff15484c794be5cc80f5da7fa778ee7251f849a2514",
           "after": "b1034642a77b74d6cb18a5eec20b485c723eb216ad6cfe639726b16323d07807",
           "reason": "Admit direct API documents in workspace mode; preserve production filtering in relations after 15 positive test failures"
+        },
+        {
+          "before": "b1034642a77b74d6cb18a5eec20b485c723eb216ad6cfe639726b16323d07807",
+          "after": "1d53bee1e7f427e8510936a6d76395d3866c7a9e47fb505f677b7a3a01cbe998",
+          "reason": "Use scoped production discovery, preserve physical parse sharing with file aliases, and expose typed source collector and report contracts"
         }
       ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
-      "sha256": "e82050a7d65b89cb07fb7b770971bab3c4a22e61a7bd59b0af2bac336d6e30b5",
+      "sha256": "7bf76003720f04ade1d90663283a5a3cefd14891894055f135cd7c667a94bd70",
       "origin": "authored",
       "upstreamPath": "scripts/lint_permission_error.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1373,12 +1383,17 @@
           "before": "879eb5309ccf547e9696f406e0f892c50645b5d8b3160c7cc65535b7778b0433",
           "after": "e82050a7d65b89cb07fb7b770971bab3c4a22e61a7bd59b0af2bac336d6e30b5",
           "reason": "Admit direct API documents in workspace mode; preserve production filtering in relations after 15 positive test failures"
+        },
+        {
+          "before": "e82050a7d65b89cb07fb7b770971bab3c4a22e61a7bd59b0af2bac336d6e30b5",
+          "after": "dfad96672db7fbe30f2749cc8097fccde12870e099ea37e01439f20edcfa2666",
+          "reason": "Use scoped production discovery, preserve physical parse sharing with file aliases, and expose typed source collector and report contracts"
         }
       ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "sha256": "52edbc4b29626f7055ebd439659fd7a9233028ee6f8532632ab295e06f1b2a82",
+      "sha256": "901cfb2e8295bbf066e0010b34733c696d2373d52949b7b65b20837f7d6c03a7",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_source_inspection.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1397,12 +1412,17 @@
           "before": "1b54d907613519564f73a226a7e3139247840a60beeb0dcc9c93c964df44e470",
           "after": "52edbc4b29626f7055ebd439659fd7a9233028ee6f8532632ab295e06f1b2a82",
           "reason": "Bind all regex spelling, flag, label and exclusion assertions to a native configuration batch"
+        },
+        {
+          "before": "52edbc4b29626f7055ebd439659fd7a9233028ee6f8532632ab295e06f1b2a82",
+          "after": "81c6220b4cada81c6572e8b7e809b6fb2637c6f6650f8be129b15a6705833061",
+          "reason": "Use scoped production discovery, preserve physical parse sharing with file aliases, and expose typed source collector and report contracts"
         }
       ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
-      "sha256": "46a3b12986be60218a8bb5fdc9f2dab2db3f256741c3467331187c340aa9f995",
+      "sha256": "627e2f92794ef259152dd4bf561eb7cedde5b640b81179865c68ed3ca63e3d7f",
       "origin": "authored",
       "upstreamPath": "scripts/lint_hasattr_async.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1426,12 +1446,17 @@
           "before": "67c37f810fc327449cf7257260d55fc2260e0c526e00683dab4c8b0ff82f39f6",
           "after": "46a3b12986be60218a8bb5fdc9f2dab2db3f256741c3467331187c340aa9f995",
           "reason": "Match the layer-directory name, rather than letting a child path complete an invalid l9999_ root"
+        },
+        {
+          "before": "46a3b12986be60218a8bb5fdc9f2dab2db3f256741c3467331187c340aa9f995",
+          "after": "713df8115842e43f51f3751588de06a880c9770671b89f18796c92506000db87",
+          "reason": "Use scoped production discovery, preserve physical parse sharing with file aliases, and expose typed source collector and report contracts"
         }
       ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
-      "sha256": "b44fcc557114ba503462646a872f424e28a64e67d60c1cf292eadab2c6df2165",
+      "sha256": "e86df430fbc60bd7964e3ccbbb56a02ace7bcd9a92af23090b3aed7556c0ab15",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_blanket_grammar_bypass.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1445,6 +1470,11 @@
           "before": "edc33856746f02df79a8e7e4adacede85504e25590641b943ef6230f8ecf1cc2",
           "after": "b44fcc557114ba503462646a872f424e28a64e67d60c1cf292eadab2c6df2165",
           "reason": "Preserve broad public API scopes and native CLI library while filtering production roots in logic"
+        },
+        {
+          "before": "b44fcc557114ba503462646a872f424e28a64e67d60c1cf292eadab2c6df2165",
+          "after": "a02bc0e02a679854835807ccbc123d483c303a58bc99f78fa4b692d150a74ce8",
+          "reason": "Use scoped production discovery, preserve physical parse sharing with file aliases, and expose typed source collector and report contracts"
         }
       ]
     },
@@ -1534,7 +1564,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-api-root-imports.rr",
-      "sha256": "00068380538c7836d2bfbc63d45c941277a064afc78f1ef11c68e9ae9058f3b5",
+      "sha256": "4bd1469c1c7154553dd43fe41fc2de95e5ca24d99be6eb43544d933a34178801",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_api_root_imports.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1543,6 +1573,11 @@
           "before": "6ffc0dcfcb1929261cb1fe6f5c7b941ed9eaff582111d1e6ad3f87b930852675",
           "after": "00068380538c7836d2bfbc63d45c941277a064afc78f1ef11c68e9ae9058f3b5",
           "reason": "Admit direct API documents in workspace mode; preserve production filtering in relations after 15 positive test failures"
+        },
+        {
+          "before": "00068380538c7836d2bfbc63d45c941277a064afc78f1ef11c68e9ae9058f3b5",
+          "after": "3f4c036c9da338d4ea1226d156c25a1eb02c5197014806f4ac6ddaeee1c673c2",
+          "reason": "Use scoped production discovery, preserve physical parse sharing with file aliases, and expose typed source collector and report contracts"
         }
       ]
     },
@@ -1563,7 +1598,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr",
-      "sha256": "3883a3db4e9ff8ea82942f15dd13ef7354be80bdca3686de47989b91c2ab0005",
+      "sha256": "0f72787976c21fff647d39038242e0652821bca709d4b6f57e6bd2a8a007ebf1",
       "origin": "authored",
       "upstreamPath": "scripts/lint_backend_type_strings.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1583,12 +1618,17 @@
           "before": "67a7f3be7fe6a4997332e05c4c86792d2bbfb8a2487add55b0a16f4804b0b2db",
           "after": "3883a3db4e9ff8ea82942f15dd13ef7354be80bdca3686de47989b91c2ab0005",
           "reason": "Separate API document admission from logical production scope; workspace red corpus has 60 failures"
+        },
+        {
+          "before": "3883a3db4e9ff8ea82942f15dd13ef7354be80bdca3686de47989b91c2ab0005",
+          "after": "72a7eb7752cc01f8e6c78999764e91d04f1816a06a4284c05a19c11c7fcd579a",
+          "reason": "Use scoped production discovery, preserve physical parse sharing with file aliases, and expose typed source collector and report contracts"
         }
       ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "sha256": "2cc0a891f13600d299b6d6a04d2e3b1f0909445e99eb29293d27b29eaada4d18",
+      "sha256": "be300ac3d3eef22652a386226404a21c7d266d0c5ac204b32da1b851c99a7ace",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_grammar_surface.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1597,6 +1637,11 @@
           "before": "19b3e6a210866b3d80c0edca7fe36275bf2e0d0be09102aa8c4e23cd9c7c7587",
           "after": "2cc0a891f13600d299b6d6a04d2e3b1f0909445e99eb29293d27b29eaada4d18",
           "reason": "Native complete ServerPlan CLI reporting"
+        },
+        {
+          "before": "2cc0a891f13600d299b6d6a04d2e3b1f0909445e99eb29293d27b29eaada4d18",
+          "after": "052d4d5fe16d98ef9afb5a16514b9660da95b4eeaeabc26fb4aab165c1d41974",
+          "reason": "Use scoped production discovery, preserve physical parse sharing with file aliases, and expose typed source collector and report contracts"
         }
       ]
     },
@@ -1693,7 +1738,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
-      "sha256": "f7e4a8b065226e2a9acae4cfbc025405f49c3bd93111f4373acb35aba322bad3",
+      "sha256": "f029975c6cfdd38efeb517c09b6e19ae0aa4c483b1f0c3a248128999e8cccbf4",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_name_inference.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1702,6 +1747,11 @@
           "before": "20b84712445c6356720bea256132a3c27c3c466e0d3a50551cb8e0d5bdbcf670",
           "after": "f7e4a8b065226e2a9acae4cfbc025405f49c3bd93111f4373acb35aba322bad3",
           "reason": "Admit direct API documents in workspace mode; preserve production filtering in relations after 15 positive test failures"
+        },
+        {
+          "before": "f7e4a8b065226e2a9acae4cfbc025405f49c3bd93111f4373acb35aba322bad3",
+          "after": "3328ad0bb862a39f6f0e437ca246261e466f936d7febc83dd58e81571eaab844",
+          "reason": "Use scoped production discovery, preserve physical parse sharing with file aliases, and expose typed source collector and report contracts"
         }
       ]
     },
@@ -2540,6 +2590,11 @@
           "reason": "Native relative-path validation preserves complete report prefix before the first exception"
         }
       ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+      "origin": "authored",
+      "sha256": "8ff95f7ba0580b611497016daf3481bad5e526562e267964c000a0f5138ae4dc"
     }
   ],
   "rules": [
@@ -2550,7 +2605,7 @@
       "legacySha256": "4c8214eb6c3e30bc6afd0f3d02d25cc2a522e0af1f0343e1e1c64242ead43d6e",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
-      "ruleSha256": "1db5ea3e799279507387f5326c74d184b3d9f19ee54e07753f0ede5d77facdaa"
+      "ruleSha256": "e3839772f571891bbf838b4a2502eed0e1f5b93610d63eda5a9dcd30f88be84e"
     },
     {
       "check": "versioned_lifecycle_legacy_surfaces",
@@ -2559,7 +2614,7 @@
       "legacySha256": "931b8c73be253bff264bf63ea46bd145f8d01fc7bc66290e367841b881465b97",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
-      "ruleSha256": "b1034642a77b74d6cb18a5eec20b485c723eb216ad6cfe639726b16323d07807"
+      "ruleSha256": "c9944d4c5db22fba90545f77947306bf68c3530c7a883c1b24839b2c3952578b"
     },
     {
       "check": "no_api_root_imports",
@@ -2568,7 +2623,7 @@
       "legacySha256": "48b8a8762bec65d2ac3a648893e8e745094ff84ef5906d6a1b5cd73f8034b377",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-api-root-imports.rr",
-      "ruleSha256": "00068380538c7836d2bfbc63d45c941277a064afc78f1ef11c68e9ae9058f3b5"
+      "ruleSha256": "4bd1469c1c7154553dd43fe41fc2de95e5ca24d99be6eb43544d933a34178801"
     },
     {
       "check": "backend_type_strings",
@@ -2577,7 +2632,7 @@
       "legacySha256": "0ecc6dab424746bfd6007dfd0684f460851d26361ea3a5c0b1a2734d8f9d190c",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr",
-      "ruleSha256": "3883a3db4e9ff8ea82942f15dd13ef7354be80bdca3686de47989b91c2ab0005"
+      "ruleSha256": "0f72787976c21fff647d39038242e0652821bca709d4b6f57e6bd2a8a007ebf1"
     },
     {
       "check": "hasattr_async",
@@ -2586,7 +2641,7 @@
       "legacySha256": "ca10f10fb53277ead5302d5b08e70696bd89d0c454ea8c328006c9148a461208",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
-      "ruleSha256": "46a3b12986be60218a8bb5fdc9f2dab2db3f256741c3467331187c340aa9f995"
+      "ruleSha256": "627e2f92794ef259152dd4bf561eb7cedde5b640b81179865c68ed3ca63e3d7f"
     },
     {
       "check": "no_source_inspection",
@@ -2595,7 +2650,7 @@
       "legacySha256": "89f2000f352654e02459f7e7bef1609b0e846a46c64bb1d6606169ef7872185f",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "ruleSha256": "52edbc4b29626f7055ebd439659fd7a9233028ee6f8532632ab295e06f1b2a82"
+      "ruleSha256": "901cfb2e8295bbf066e0010b34733c696d2373d52949b7b65b20837f7d6c03a7"
     },
     {
       "check": "serverplan_name_inference",
@@ -2604,7 +2659,7 @@
       "legacySha256": "c1326f54d9381d1efad6d898b9bb0c7d61cd801243d4cf7a9b5132499cef351c",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-name-inference.rr",
-      "ruleSha256": "f7e4a8b065226e2a9acae4cfbc025405f49c3bd93111f4373acb35aba322bad3"
+      "ruleSha256": "f029975c6cfdd38efeb517c09b6e19ae0aa4c483b1f0c3a248128999e8cccbf4"
     },
     {
       "check": "no_blanket_grammar_bypass",
@@ -2613,7 +2668,7 @@
       "legacySha256": "700460f3a9868afe3abd8254af2b39324ee22cc13ba4132867b8870a2d4d96da",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr",
-      "ruleSha256": "b44fcc557114ba503462646a872f424e28a64e67d60c1cf292eadab2c6df2165"
+      "ruleSha256": "e86df430fbc60bd7964e3ccbbb56a02ace7bcd9a92af23090b3aed7556c0ab15"
     },
     {
       "check": "serverplan_grammar_surface",
@@ -2622,7 +2677,7 @@
       "legacySha256": "f6dbbb2f93e3b973b8a6906c0197beb2207d06ea1c7634078e5441c2912f5c28",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "ruleSha256": "2cc0a891f13600d299b6d6a04d2e3b1f0909445e99eb29293d27b29eaada4d18"
+      "ruleSha256": "be300ac3d3eef22652a386226404a21c7d266d0c5ac204b32da1b851c99a7ace"
     },
     {
       "check": "permission_error",
@@ -2631,7 +2686,7 @@
       "legacySha256": "f95c0bc0626da3c96900d5bbe3aa72fd9709a3aad7557c0930e4d00db34de3f1",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
-      "ruleSha256": "e82050a7d65b89cb07fb7b770971bab3c4a22e61a7bd59b0af2bac336d6e30b5"
+      "ruleSha256": "7bf76003720f04ade1d90663283a5a3cefd14891894055f135cd7c667a94bd70"
     },
     {
       "check": "dynamic_module_loading",

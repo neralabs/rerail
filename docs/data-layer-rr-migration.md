@@ -102,6 +102,10 @@ The four remaining original CLI implementations have native reporting and status
 Their 33 exact CLI cases pass through both APIs. Fifty-seven assertion translations remain explicit, including replacements for three source skips.
 The [first-ten checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-first-ten-native-cli-final93-checkpoint.json.gz) records 1,391 validated native executions and five failing-behavior controls.
 This checkpoint does not admit those ten rules. Production discovery, persistent updates, and associated external suites remain open.
+Subsequent production work passes 370 FactEngine comparisons and 140 persistent steps across those ten rules.
+It compares complete typed fact payloads and ordinary production findings, including 258 finding-positive cases.
+The associated MCP module also passes its eight original cases through both APIs.
+Supplied-fact reporter inputs, final cohort refresh, and per-rule admission remain open.
 The 90th draft, `raw_execute_regression`, has native detector, CLI, and persistent-workspace contracts.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
 Production discovery, reporting, and lifecycle behavior remain open.

@@ -1,0 +1,65 @@
+// One scoped discovery and parse demand per policy. Equal program relations can
+// coalesce; different scope facts remain separate program namespaces.
+#include "project.rr"
+.decl pp_config(key: symbol, value: symbol)
+.decl pp_static_root(path: symbol)
+.decl pp_trigger(value: symbol)
+.decl pp_trigger_group(group: number, value: symbol)
+.decl pp_run()
+pp_run() :- !option("entryPoint",_).
+pp_run() :- option("entryPoint","_production_contract").
+.decl pp_api()
+pp_api() :- option("entryPoint",e), e != "_production_contract".
+.decl pp_layer(name: symbol)
+pp_layer(p) :- !env("data-layer.api","true"), dir_entry(".",p,1), pp_config("layer_regex",r), match(r,p).
+.decl pp_root(path: symbol)
+pp_root(p) :- !env("data-layer.api","true"), pp_static_root(p).
+pp_root(p) :- !env("data-layer.api","true"), pp_config("scope","production"), dir_entry(".",p,1), (p = "impl" ; p = "data_layer" ; p = "_internal").
+pp_root(p) :- !env("data-layer.api","true"), pp_config("scope",s), (s = "production" ; s = "async"), pp_layer(p).
+.decl pp_skip(name: symbol)
+pp_skip(".git"). pp_skip(".venv"). pp_skip("venv"). pp_skip("__pycache__"). pp_skip("tmp").
+pp_skip("tests") :- !pp_config("include_tests","true").
+pp_skip("test") :- !pp_config("include_tests","true").
+.decl pp_walk(root: symbol, path: symbol)
+pp_walk(p,p) :- pp_root(p).
+pp_walk(root,cat(p,"/",name)) :- pp_walk(root,p), dir_entry(p,name,1), dir_metadata(p,name,_,0,_), !pp_skip(name).
+.decl pp_file(path: symbol)
+pp_file(@replace_all(cat(p,"/",name),"\\A\\./","")) :- pp_walk(_,p), dir_entry(p,name,0), suffix(".py",name).
+load(p,cat("plugin-production:",p),"python") :- pp_file(p).
+.decl pp_target(path: symbol, canonical: symbol)
+pp_target(p,c) :- pp_file(p), loaded(c,cat("plugin-production:",p),"python").
+.decl pp_candidate(canonical: symbol, d: number)
+pp_candidate(c,d) :- pp_target(_,c), doc(d,c,_), doc_role(d,"primary").
+pp_candidate(c,d) :- pp_target(p,c), doc(d,p,_), doc_role(d,"primary").
+pp_candidate(c,d) :- pp_target(p,c), workspace_root(root), doc(d,r,_), doc_role(d,"primary"), p = cat(root,"/",r).
+.decl pp_physical(canonical: symbol, d: number)
+pp_physical(c,d) :- pp_candidate(c,d), d = min other : { pp_candidate(c,other) }.
+.decl pp_doc(d: number, path: symbol)
+pp_doc(d,p) :- pp_target(p,c), pp_physical(c,d).
+pp_doc(d,p) :- pp_api(), doc(d,p,_), doc_role(d,"primary").
+.decl pp_absolute(path: symbol, absolute: symbol)
+pp_absolute(p,cat(root,"/",p)) :- pp_file(p), workspace_root(root).
+.decl pp_triggered(d: number)
+pp_triggered(d) :- pp_doc(d,_), !pp_trigger(_).
+pp_triggered(d) :- pp_doc(d,_), pp_trigger(t), source(d,s), text(s,raw), contains(t,raw).
+.decl pp_group(group: number)
+pp_group(g) :- pp_trigger_group(g,_).
+.decl pp_group_matched(d: number, group: number)
+pp_group_matched(d,g) :- pp_doc(d,_), pp_trigger_group(g,t), source(d,s), text(s,raw), contains(t,raw).
+.decl pp_group_missing(d: number)
+pp_group_missing(d) :- pp_doc(d,_), pp_group(g), !pp_group_matched(d,g).
+.decl pp_fact_present(d: number)
+pp_fact_present(d) :- pp_doc(d,_), pp_triggered(d), !pp_group_missing(d), pp_config("parser","source").
+pp_fact_present(d) :- pp_doc(d,_), pp_triggered(d), !pp_group_missing(d), pp_config("parser","ast_collect"), !syntax_error(d,_,_).
+.decl pp_present(path: symbol)
+pp_present(p) :- pp_doc(d,p), pp_fact_present(d).
+.violation ProductionFile(at: span, path: symbol, path_order: symbol, fact_present: number, fact_kind: symbol) code "DL_FILE" "production file"
+ProductionFile(@place("",0),p,@replace_all(p,"/","\u0000"),1,k) :- option("entryPoint","_production_contract"), pp_file(p), pp_present(p), pp_config("fact_kind",k).
+ProductionFile(@place("",0),p,@replace_all(p,"/","\u0000"),0,k) :- option("entryPoint","_production_contract"), pp_file(p), !pp_present(p), pp_config("fact_kind",k).
+.violation ProductionMetadata(at: span, key: symbol, value: symbol) code "DL_META" "production metadata"
+ProductionMetadata(@place("",0),k,v) :- option("entryPoint","_production_contract"), pp_config(k,v).
+ProductionMetadata(@place("",0),"root",root) :- option("entryPoint","_production_contract"), workspace_root(root).
+.decl pp_report(path: symbol, line: number, code: symbol, message: symbol, order0: symbol, order1: number, order2: symbol, order3: number, source_order0: number, source_order1: number, source_order2: number)
+.violation ProductionReport(at: span, source_code: symbol, file: symbol, source_line: number, source_message: symbol, order0: symbol, order1: number, order2: symbol, order3: number, source_order0: number, source_order1: number, source_order2: number) code "DL_REPORT" "{source_message}"
+ProductionReport(@place(p,l),c,full,l,m,a,b,s,i,x,y,z) :- option("entryPoint","_production_contract"), pp_report(p,l,c,m,a,b,s,i,x,y,z), pp_absolute(p,full), !pp_config("relative_reports","true").
+ProductionReport(@place(p,l),c,p,l,m,a,b,s,i,x,y,z) :- option("entryPoint","_production_contract"), pp_report(p,l,c,m,a,b,s,i,x,y,z), pp_config("relative_reports","true").

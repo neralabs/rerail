@@ -39,7 +39,7 @@ def modules_for(source, checks):
     return {module: values & set(checks) for module, values in owners.items()}
 
 
-def references(text, owners, checks):
+def references(text, owners, checks, script_modules=()):
     tree = ast.parse(text)
     modules, strings = set(), []
     for node in ast.walk(tree):
@@ -57,7 +57,13 @@ def references(text, owners, checks):
             detectors.update(checks_for_module)
     named = set(checks) & set(strings)
     integration = named if 'scripts.lint_all' in modules else set()
-    detectors.update(named - integration)
+    # A bare status such as "permission_error" is ordinary application data.
+    # Named checks need an actual linter-module import template to own a suite.
+    dynamic_linter_import = any(value in {'scripts.lint_', 'lint_', 'scripts/lint_'} for value in strings)
+    framework_context = (dynamic_linter_import or any(m.startswith('scripts.') or m in script_modules for m in modules)
+                         or any(value == 'scripts' or value.startswith('scripts/') for value in strings))
+    if framework_context:
+        detectors.update(named - integration)
     adjacent = {check for check in checks if any(re.search(r'(?<!\w)(?:scripts/)?lint_' + re.escape(check) + r'\.py\b', value) for value in strings)}
     return dict(detectors=sorted(detectors), integrationReferences=sorted(integration - detectors),
                 workflowReferences=sorted(adjacent - detectors))
@@ -69,6 +75,13 @@ def discover(source):
     checks = [r['check'] for r in read_json(ROOT / MANIFEST)['rules']]
     owners = modules_for(source, checks)
     entries = subprocess.check_output(['git', '-C', str(source), 'ls-tree', '-rz', PIN]).split(b'\0')
+    script_modules = set()
+    for entry in entries:
+        if not entry: continue
+        name = entry.split(b'\t', 1)[1].decode()
+        if name.startswith('scripts/') and name.endswith('.py'):
+            script = '.'.join(Path(name).with_suffix('').parts)
+            script_modules.update({script, script.removeprefix('scripts.')})
     files, scanned = {}, 0
     for entry in entries:
         if not entry:
@@ -82,7 +95,7 @@ def discover(source):
         scanned += 1
         if hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() != meta.split()[2].decode():
             raise ValueError('Changed original module: ' + name)
-        found = references(raw.decode(), owners, checks)
+        found = references(raw.decode(), owners, checks, script_modules)
         if any(found.values()):
             files[name] = dict(**found, sha256=sha(raw))
     return dict(format='rerail.rr-original-suite-discovery/v1', sourcePin=PIN, checks=checks,
@@ -142,6 +155,38 @@ def assemble(manifest, shards):
                 adjacentWorkflowCases=adjacent, suiteIntegrationCases=integration,
                 discoverySha256=shards[0]['discoverySha256'], collectorSha256=shards[0]['collectorSha256'],
                 note='Independent whole-module collection. Counts and static assertion sites do not certify native execution.')
+
+
+def reclassify(prior, discovery):
+    """Reuse unchanged case collections after reviewing file ownership evidence."""
+    if prior['sourcePin'] != PIN or discovery['sourcePin'] != PIN or prior.get('unparsedTestFiles'):
+        raise ValueError('Ownership review requires a complete collection at the source pin')
+    if set(discovery['files']) - set(prior['files']):
+        raise ValueError('Newly discovered modules require fresh pytest collection')
+    all_cases = {}
+    for key in ['cases', 'suiteIntegrationCases', 'adjacentWorkflowCases']:
+        for identity, case in prior.get(key, {}).items():
+            if identity in all_cases: raise ValueError('Original case occurs in multiple categories')
+            all_cases[identity] = case
+    files, cases, integration, adjacent, review = {}, {}, {}, {}, []
+    for name, old in prior['files'].items():
+        new = discovery['files'].get(name)
+        if new is None or old['detectors'] != new['detectors']:
+            review.append(dict(file=name, before=old['detectors'], after=new['detectors'] if new else [],
+                cases=old['cases'], sourceSha256=old['sha256']))
+        if new is None: continue
+        if old['sha256'] != new['sha256']:
+            raise ValueError('Original module changed; collect it again: '+name)
+        selected = {identity: case for identity,case in all_cases.items() if identity.split('::',1)[0] == name}
+        if len(selected) != old['cases']: raise ValueError('Prior collection omitted cases: '+name)
+        files[name] = dict(new, cases=len(selected))
+        target = cases if new['detectors'] else integration if new['integrationReferences'] else adjacent
+        target.update(selected)
+    return dict(format=prior['format'], sourcePin=PIN, scannedTestFiles=discovery['scannedTestFiles'],
+        unparsedTestFiles=[], files=files, cases=cases, suiteIntegrationCases=integration,
+        adjacentWorkflowCases=adjacent, discoverySha256=sha(json.dumps(discovery,sort_keys=True).encode()),
+        collectorSha256=prior['collectorSha256'], ownershipReview=review,
+        note='Unchanged independent pytest collections; ownership now requires a module, script, or linter-framework context. Historical inventory is retained.')
 
 
 def main():

@@ -10136,3 +10136,57 @@ This closes the source-CLI gap in the first-ten direct suites. These rules remai
 Full production discovery, registry metadata, supplied-fact reporting, persistent updates, and associated external suites remain admission work.
 The inventory remains two historically accepted ports, 93 drafts, and five absent translations.
 No full-repository cold run or new Linear issue was added.
+
+### 2026-11-10 — First-ten production collectors and persistent execution
+
+The production corpus now compares the unchanged Python FactEngine with native rules.
+It checks selected files, complete per-file fact dictionaries, plugin metadata, and reporter order.
+Missing fact entries differ from present empty lists. The comparison preserves that distinction.
+An ordinary production run also checks every case, without the contract entry point or an `inputFiles` override.
+
+All 370 production cases pass on the frozen Final `93cadec37` cohort. There are 258 finding-positive cases.
+The corpus includes 245 distinct file inputs from the original direct suites.
+It also covers roots, Unicode layer names, malformed Python, links, hidden files, extensions, duplicates, and collector order.
+Ten disabled-collector controls fail parity as required. These checks perform 760 native executions.
+
+The shared `plugin-production.rr` library batches directory requests and exports typed file, fact, and report rows.
+Each policy supplies its scope and trigger facts. Program namespaces keep different scopes separate.
+File aliases retain their logical paths while syntax joins use a canonical document anchor.
+The collector event relations feed both ordinary findings and contract exports.
+Their ordinal columns preserve repeated findings at the same path and line.
+
+Production testing exposed a blanket-bypass defect: text findings survived syntax errors even though its AST collector produces no facts.
+Production selection now follows the extractor's parser mode and source triggers.
+The source inspection and backend text scanners still inspect malformed Python, as their source extractors do.
+The async collector retains facts for files that its reporter later excludes.
+Source plugin descriptions and finding severity values are now represented explicitly.
+
+The load-request cone cannot read the later `option()` table. Direct API transport therefore supplies `data-layer.api=true` through `env()`.
+That marker prevents directory loading for direct APIs. Production discovery remains enabled.
+Regression tests check both the marker and preservation of the caller's environment.
+No engine implementation or native detector was added.
+
+All 140 persistent steps pass across the ten policies, using one tape store per policy.
+They cover edits, clean transitions, aliases, removals, syntax errors, and an unchanged repeat.
+Both the typed contract and ordinary production query run after each step, for 280 native executions.
+
+The independent suite inventory incorrectly attributed 62 application tests to `permission_error`.
+Those files only use that business error string; they neither import nor invoke the linter.
+The ownership classifier now requires module, script, or linter-framework context for bare check names.
+TDD covers the false association and preserves dynamic imports, shared allowlist tests, and workflow references.
+The version-two inventory reuses only unchanged pytest collections and records the two ownership corrections.
+The historical inventory remains intact for earlier receipts.
+
+The actual associated MCP module passes all eight original tests through both native APIs.
+Its source-inspection case retains its positive finding. Other linter calls in that module remain test-host work for their separate ports.
+The first-ten direct suites pass all 567 cases through both APIs. The MCP module adds eight cases per API, for 575 total.
+Each direct run compares 399 complete original observations. The existing 57 mechanical assertion translations remain explicit.
+Workspace reruns used smaller shards after concurrent commands hit their 115-second limit. Completed results cover every case exactly once.
+The 33 exact CLI cases and ten blanket-bypass CLI cases pass through both APIs; all five CLI controls reject changed behavior.
+There are 215 passing tooling tests.
+
+The [production checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-first-ten-production-final93-checkpoint.json.gz) retains complete source/native observations and program bytes.
+Final advanced to `31523a5a3` during validation. This evidence remains bound to the registered `93cadec37` source/binary cohort.
+The next merge must retain that attribution. Supplied-fact reporter inputs and per-rule admission remain open.
+The global inventory remains two historically accepted ports, 93 drafts, and five absent translations.
+No full-repository cold benchmark or Linear issue was added.

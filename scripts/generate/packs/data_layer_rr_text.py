@@ -124,7 +124,8 @@ inspection_framework_hidden(d) :- path_part(d,p), (p = ".git" ; p = ".venv" ; p 
         text += f'\n.violation PatternProbe{index}(at: span, ordinal: number) code "NSI_PATTERN"\n    {quote(label)}\n'
         text += f'PatternProbe{index}(@place("input.py", 1), {index}) :- option("entryPoint", "pattern_search"), option("patternOrdinal", "{index}"), option("patternText", t), match({quote(search(pattern))}, t).\n'
     from data_layer_rr_cli import cli_suffix
-    return text + cli_suffix(source, 'no_source_inspection')
+    from data_layer_rr_production import production
+    return production(source, 'no_source_inspection', (text + cli_suffix(source, 'no_source_inspection')))
 
 
 def serverplan_name_inference(source, target, header):
@@ -147,7 +148,8 @@ def serverplan_name_inference(source, target, header):
         if index == 4:
             body += ', file_name(d, "sql_column_type_hints.py")'
         text += f'\n.violation NameInference{index}(at: span) code "SPNI00{index}"\n    {quote(message)}\nNameInference{index}(@place(p, l)) :- {body}.\n'
-    return text
+    from data_layer_rr_production import production
+    return production(source, 'serverplan_name_inference', (text))
 
 
 def hasattr_async(source, target, header):
@@ -190,7 +192,8 @@ async_production_hidden(d) :- doc(d,p,_), suffix("lint_hasattr_async.py",p).
         text += f'\n.violation Probe{kind}(at: span, method: symbol) code "ASYNC_PATTERN" "{{method}}"\n'
         text += f'Probe{kind}(@place("input.py", 1), method) :- option("entryPoint", "pattern_search"), option("patternOrdinal", {quote(kind)}), option("patternText", t), match({quote(regex)}, t).\n'
     from data_layer_rr_cli import cli_suffix
-    return text + cli_suffix(source, 'hasattr_async')
+    from data_layer_rr_production import production
+    return production(source, 'hasattr_async', (text + cli_suffix(source, 'hasattr_async')))
 
 
 def no_blanket_grammar_bypass(source, target, header):
@@ -232,7 +235,8 @@ bypass_method_trigger(d) :- split_line(d, _, t),
     text += '    !option("entryPoint", "check_no_bypass_references").\n'
     text += '\n.violation BypassMissing(at: span) code "NGB001" "file not found"\n'
     text += 'BypassMissing(@place(p, 0)) :- option("entryPoint", "check_no_public_grammar_methods"), bypass_sql_target(p), !file(p).\n'
-    return text + '\n#include "data-layer/blanket-bypass-cli.rr"\n'
+    from data_layer_rr_production import production
+    return production(source, 'no_blanket_grammar_bypass', (text + '\n#include "data-layer/blanket-bypass-cli.rr"\n'))
 
 
 def admin_async_purity(source, target, header):

@@ -23,11 +23,13 @@ ROOTS = ['api', 'impl', 'data_layer', '_internal', 'l1234_sample', 'l١٢٣٤_sa
 
 def cases(recording):
     result = []
+    defaults = {}
     for check in CHECKS:
         witness = next(e['files'][0]['source'] for e in recording['events']
                        if e['check'] == check and e.get('findings') and e.get('files'))
         directory = {'hasattr_async': 'data_layer', 'no_source_inspection': 'tests',
                      'serverplan_name_inference': 'l2070_batching'}.get(check, 'impl')
+        defaults[check] = directory
         def file(path, source=witness): return dict(path=path, source=source)
         groups = [
             ('empty', []),
@@ -47,6 +49,28 @@ def cases(recording):
                 file('impl/sqlite/sql_column_type_hints.py', 'if column.endswith("_id"): pass\n')]),
         ]
         result.extend(dict(id=check+':'+name, check=check, files=files) for name, files in groups)
+    seen = set()
+    for event in recording['events']:
+        if not event.get('files'): continue
+        key = (event['check'], json.dumps(event['files'], sort_keys=True))
+        if key in seen: continue
+        seen.add(key)
+        files = []
+        for file in event['files']:
+            path = Path(file['path']); assert not path.is_absolute() and '..' not in path.parts
+            if path.parts[0] not in ROOTS and not path.parts[0].startswith('l'):
+                path = Path(defaults[event['check']])/path
+            files.append(dict(file, path=path.as_posix()))
+        result.append(dict(id=event['check']+':original-'+str(len(seen)), check=event['check'], files=files,
+                           original=dict(test=event['test'], entry=event['entry'])))
+    for check, path, source in [
+        ('removed_compat_surfaces', 'impl/a.py', '_coalesce_branch_tip_materialization_alias(_coalesce_branch_tip_materialization_alias)\n'),
+        ('permission_error', 'impl/a.py', 'raise PermissionError(); raise PermissionError()\n'),
+        ('versioned_lifecycle_legacy_surfaces', 'impl/a.py', 'class OuterVersionedWriteTransaction:\n    def commit_branch(self):\n        class InnerVersionedWriteTransaction:\n            def commit_branch(self): pass\n    def rollback_branch(self): pass\n'),
+        ('serverplan_grammar_surface', 'impl/a.py', 'conn.grammar_execute.execute_grammar()\n'),
+        ('serverplan_name_inference', 'l2070_batching/sql_column_type_hints.py', 'if column.endswith("_id"): pass\n'),
+    ]:
+        result.append(dict(id=check+':collector-order', check=check, files=[dict(path=path, source=source)]))
     return result
 
 
@@ -62,7 +86,7 @@ def canonical_findings(check, rows):
     # Preserve every in-file element and duplicate; only whole groups may permute.
     if check != 'removed_compat_surfaces': return rows
     groups = {}
-    for row in rows: groups.setdefault(row['path'], []).append(row)
+    for row in rows: groups.setdefault(str(row['path']), []).append(row)
     return [row for path in sorted(groups) for row in groups[path]]
 
 
@@ -105,12 +129,24 @@ def native_case(engine, case):
         if isinstance(target, list): target.append(payload)
         else: target['grammar_surface_hits'].append(payload)
     findings = []
-    for row in sorted((r for r in rows if r['code'] == 'DL_REPORT'), key=lambda r: tuple(r['parameters'][k] for k in ['order0', 'order1', 'order2', 'order3'])):
+    for row in sorted((r for r in rows if r['code'] == 'DL_REPORT'), key=lambda r: tuple(r['parameters'][k] for k in ['order0', 'order1', 'order2', 'order3', 'source_order0', 'source_order1', 'source_order2'])):
         p = row['parameters']; findings.append(dict(linter_name=meta['name'], code=p['source_code'], path=p['file'],
             line=p['source_line'], message=p['source_message'], severity=meta['findingSeverity']))
     actual = dict(selectedFiles=[p['path'] for p in files], facts=facts, findings=canonical_findings(check, findings),
                   plugin={k: meta.get(k) for k in ['name', 'enforcement', 'description']})
-    return normalize(actual, meta.get('root', '<unbound-root>')), result
+    actual = normalize(actual, meta.get('root', '<unbound-root>'))
+    production = execute_workspace(engine, policy, case['files'], {})
+    public = [dict(linter_name=meta['name'], code=r['code'],
+        path=r['path'] if meta.get('relative_reports') == 'true' else '$ROOT/'+r['path'],
+        line=r['line'], message=r['message'], severity=meta['findingSeverity']) for r in production['diagnostics']]
+    # Rerail diagnostics are a set. The typed DL_REPORT stream above separately
+    # checks the source reporter's order, including order within each file.
+    compare(actual['findings'], public, unordered=True)
+    modes = [v for k,v in production['metadata']['settings'] if k == 'mode']
+    compare(modes, ['block'])
+    descriptions = [json.loads(v) for k,v in production['metadata']['settings'] if k == 'description']
+    compare(descriptions, [meta['description']])
+    return actual, dict(contract=result, production=production)
 
 
 def main():
@@ -149,6 +185,9 @@ def main():
                        passed=actual == baseline['cases'][index]['expected'])
         report['cases'].append(row); write_json(args.out, report)
     for path, digest in hashes.items(): compare(digest, sha((ROOT/path).read_bytes()))
+    if args.command == 'source':
+        from data_layer_probe_record import verify_sources
+        report['sourceFilesChecked'] = verify_sources(source, source, PIN)
     report['passed'] = all(row.get('passed', True) for row in report['cases']); write_json(args.out, report)
     print(dict(cases=len(report['cases']), passed=report['passed'])); raise SystemExit(0 if report['passed'] else 1)
 
