@@ -1333,7 +1333,7 @@ fn with_gap(term: AstMatcher, gap: Option<crate::code_rule_dsl::matcher::gap::Ga
 /// implies somewhere, beside other tests (`{regex: "^,$", follows: {matches: first-arg}}`). The
 /// relation is then also walked over the parent's parts, implied tokens among them
 /// (`matcher::gap::Walk`). `None` for anything else.
-fn walk_test(key: &str, relation: &Value, language: GrammarDialect, target: &AstMatcher, stop: &StopBy) -> Option<crate::code_rule_dsl::matcher::gap::GapTest> {
+pub(in crate::code_rule_dsl) fn walk_test(key: &str, relation: &Value, language: GrammarDialect, target: &AstMatcher, stop: &StopBy) -> Option<crate::code_rule_dsl::matcher::gap::GapTest> {
     use crate::code_rule_dsl::matcher::gap::{GapTest, Place, Relation, Walk};
     let object = relation.as_object()?;
     if object.contains_key("field") {

@@ -155,7 +155,10 @@ impl Walk<'_> {
             let here = format!("{path}/{key}");
             match key.as_str() {
                 "has" | "follows" | "precedes" | "inside" => {
-                    if crate::code_rule_dsl::compile::ast_rule::gap_test(key, value, self.lang.dialect, Some(Box::new(crate::code_rule_dsl::matcher::AstMatcher::Never))).is_some() {
+                    use crate::code_rule_dsl::compile::ast_rule::{gap_test, walk_test};
+                    use crate::code_rule_dsl::matcher::{AstMatcher, StopBy};
+                    let stop = if value.get("stopBy").is_none_or(|stop| stop == "neighbor") { StopBy::Neighbor } else { StopBy::End };
+                    if gap_test(key, value, self.lang.dialect, Some(Box::new(AstMatcher::Never))).is_some() || walk_test(key, value, self.lang.dialect, &AstMatcher::Never, &stop).is_some() {
                         self.lowered.insert(here.clone());
                     }
                     let field = value.get("field").and_then(Value::as_str).map(str::to_owned);
@@ -212,7 +215,8 @@ impl Walk<'_> {
         let parents_of = |kind: &Option<String>| kind.as_ref().and_then(|kind| self.lang.parents.get(kind)).cloned();
         let (category, relation, implied) = match rel {
             Rel::Inside => ("never", "inside".to_owned(), BTreeSet::new()),
-            Rel::Root(tag) => ("root", (*tag).to_owned(), self.lang.implied_in(None, &compiled, None)),
+            // The token matched itself: under the neighbour `inside` names, where one does.
+            Rel::Root(tag) => ("root", (*tag).to_owned(), self.lang.implied_in(frame.parent.clone().map(|kind| BTreeSet::from([kind])).as_ref(), &compiled, None)),
             Rel::Has { end: true, field } => ("below", "has end".to_owned(), self.lang.implied_in(None, &compiled, field.as_deref())),
             Rel::Has { end: false, field } => {
                 let parents = from.kind.clone().map(|kind| BTreeSet::from([kind]));
