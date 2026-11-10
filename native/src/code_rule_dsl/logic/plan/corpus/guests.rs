@@ -306,7 +306,7 @@ impl Guests {
         };
         let Some((text, place)) = placed else { return Ok(None) };
         let (text, place) = if wrap { wrapped(text, place) } else { (text, place) };
-        let Some((facts, root)) = parse(&host.path, label, wrap, text, cache)? else { return Ok(None) };
+        let Some((facts, root, digest)) = parse(&host.path, label, wrap, text, cache)? else { return Ok(None) };
         let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], label == self.run, &mut self.taken);
         self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
         let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
@@ -314,8 +314,8 @@ impl Guests {
             key,
             path: host.path.clone(),
             core: format!("{}#guest:{grammar_name}:{at}", host.core),
-            digest: core::digest(&facts),
-            facts: Arc::new(facts),
+            digest,
+            facts,
             guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
         }))
@@ -334,7 +334,7 @@ impl Guests {
         let path = files.first().and_then(|f| u32::try_from(*f).ok()).and_then(|f| by_key.get(&f)).map_or_else(String::new, |d| d.path.clone());
         let path = path.as_str();
         let (text, _) = if wrap { wrapped(text, Placement::At([0, 0])) } else { (text, Placement::At([0, 0])) };
-        let Some((facts, root)) = parse(path, label, wrap, text, cache)? else { return Ok(None) };
+        let Some((facts, root, digest)) = parse(path, label, wrap, text, cache)? else { return Ok(None) };
         let key = key(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], false, &mut self.taken);
         self.values.insert((known_as, identity), i64::from(key));
         self.files.insert(i64::from(key), files);
@@ -342,8 +342,8 @@ impl Guests {
             key,
             path: path.to_owned(),
             core: format!("#value:{grammar_name}:{key}"),
-            digest: core::digest(&facts),
-            facts: Arc::new(facts),
+            digest,
+            facts,
             guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
             // A value is no module's: its text is a rule's, not a file's.
             module: None,
@@ -399,10 +399,25 @@ fn wrapped(text: String, place: Placement) -> (String, Placement) {
     (format!("({text})"), place)
 }
 
-/// `text` parsed as `label` through the tape cache, and its root (a wrapped expression's); `None` when the parser
-/// gives no facts.
-fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&ContentStore>) -> Result<Option<(core::Facts, u32)>, String> {
-    let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(text), None, None, "guest").map_err(|e| format!("{path}: {e:?}"))?;
+/// A guest's or value's tree: its facts, its root (a wrapped expression's), and the facts' digest.
+type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
+
+/// `text` parsed as `label` through the tape cache, its root (a wrapped expression's) and its facts' digest; `None`
+/// when the parser gives no facts. Kept for the process by grammar and text: a pack's guests repeat their texts (one
+/// annotation string in many files, the same guests in every chunk and round), and the facts are a function of the
+/// two alone, so each distinct text is looked up in the store, restored and digested once.
+fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&ContentStore>) -> Result<Option<Parsed>, String> {
+    use std::sync::{Mutex, OnceLock};
+    /// The texts kept, in bytes, before the memo starts again (the facts kept are a small multiple of it).
+    const KEPT_BYTES: usize = 8 << 20;
+    static KEPT: OnceLock<Mutex<(usize, HashMap<(String, bool, String), Option<Parsed>>)>> = OnceLock::new();
+    let kept = KEPT.get_or_init(Default::default);
+    let key = (label.to_owned(), wrap, text);
+    if let Some(hit) = kept.lock().expect("the parsed guests").1.get(&key) {
+        crate::code_rule_dsl::prof::count("guests.parse_kept", 1);
+        return Ok(hit.clone());
+    }
+    let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(key.2.clone()), None, None, "guest").map_err(|e| format!("{path}: {e:?}"))?;
     // The cache is shared by every run on the machine: a store that refuses a write (full, or busy past its retries)
     // parses without it. A source collected under the run is stored again with its tape (O95).
     let built = match cache.map(|cache| core::build_cached(&file, cache)) {
@@ -414,9 +429,21 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
         None => core::build(&file),
     }
     .map_err(|e| format!("{path}: {e}"))?;
-    let Built::Facts(facts) = built else { return Ok(None) };
-    let root = if wrap { wrapped_root(&facts, label) } else { 0 };
-    Ok(Some((facts, root)))
+    let parsed = match built {
+        Built::Facts(facts) => {
+            let root = if wrap { wrapped_root(&facts, label) } else { 0 };
+            let digest = core::digest(&facts);
+            Some((Arc::new(facts), root, digest))
+        }
+        _ => None,
+    };
+    let mut kept = kept.lock().expect("the parsed guests");
+    if kept.0 + key.2.len() > KEPT_BYTES {
+        *kept = Default::default();
+    }
+    kept.0 += key.2.len();
+    kept.1.insert(key, parsed.clone());
+    Ok(parsed)
 }
 
 /// The root of a wrapped expression `( e )`: `e`, the one named child of the parenthesized expression the module's

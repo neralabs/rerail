@@ -78,6 +78,24 @@ bound each program to its documents (`hiding`), and merge.
 its own. A declared relation that no rule derives and that is not read in has no rows, so a `match_all` over it is
 empty rather than refused (decision 0081).
 
+### 5. What a span costs
+
+A run opens and closes millions of spans, most of them tiny (a native scalar fold, a tape lookup), and every open and
+close read the thread's CPU and the process's footprint by a system call each. On the Python pack's cold run those
+reads were about 5 s of the main thread's time charged to the spans that made them. Now:
+
+- **The footprint's high-water mark is read at most once a millisecond** (`memory::peak_sampled`); between reads a
+  span sees the last value. The mark can rise between two reads only by what a millisecond allocates, and the next
+  read charges that to the span open then, so the spans that set the peak are still the ones named.
+- **The thread's CPU is read by `clock_gettime(CLOCK_THREAD_CPUTIME_ID)`** on macOS, about a quarter of
+  `thread_info`'s cost and in nanoseconds rather than microseconds.
+- **Phase 0's run (`bootstrap.rr`, inside the run) does not measure the roofs.** Its profile is a part of the run's,
+  and the run's own report measures them after every phase. Measured inside phase 0, the loops (seconds in a debug
+  build, on a binary with no roof cache yet) were charged to the run's loading.
+
+On the pack's cold run the main thread's samples in `memory::footprint` fell from 2012 to 513 (`sample` at 1 ms,
+the first 400 s, load 60 to 120).
+
 ## Measured
 
 The Python pack (544 rules; `b005` and `perf403` refused and left out) over `fixtures/python/calls/project`, with

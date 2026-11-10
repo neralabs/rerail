@@ -30,3 +30,11 @@ pub enum Error {
     /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
     RefusedShape(String),
 }
+
+/// The executor's GPU lane reports its failures as messages; to the engine they are a backend failure, as the other
+/// device paths' (`metal_join`, `metal_rows`).
+impl From<String> for Error {
+    fn from(_: String) -> Error {
+        Error::BackendFailure
+    }
+}

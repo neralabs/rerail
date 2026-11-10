@@ -98,7 +98,7 @@ fn insert(rules: &mut Vec<Rule>, h: &str, args: &[Term], body: Vec<Literal>, gon
 }
 
 /// Whether recursive strata are maintained by levels (decision 0090), not delete-and-rederive.
-fn levels_wanted() -> bool {
+pub(in crate::code_rule_dsl) fn levels_wanted() -> bool {
     // The default (decision 0090, levels checked); `RERAIL_RECURSIVE=dred` keeps delete-and-rederive.
     std::env::var("RERAIL_RECURSIVE").map_or(true, |v| v != "dred")
 }

@@ -1,7 +1,7 @@
 # 0099: What a relation keeps: recompute in the reader, restrict by demand, or store, decided per relation
 
-Status: built (2026-11-09): items 1 to 3, with the constants from the relational lab below. Item 4 (the planner
-fix) and the factorized store are open.
+Status: built (2026-11-09): items 1 to 4, with the constants from the relational lab below; item 1 prices from
+observed step counts where an earlier chunk has them. The factorized store is analysed and designed, not built.
 
 ## Intro
 
@@ -128,6 +128,10 @@ memory.
   inlining makes at most 8 reader copies. A positive read becomes one reader copy per rule. A negated read is
   unfolded only into a negation of plain literals: a single atom whose own variables appear once (`!b(t, _)`), or
   literals over the head's variables alone (their disjunction, one copy per literal). Anything else stays stored.
+  A head that names a variable twice, or has a non-variable term, adds an equality to the copy. Only the head's side
+  of that equality is renamed apart; the read's side is the reader's own terms. Renaming both sides once turned
+  `expr_name(t, n, x)`, read against `expr_name(n, n, x)`, into `t = t`, which left `n` free. B007 then reported
+  15,289 rows on the fixtures instead of 82. The fix is tested by `a_head_variable_named_twice_equates_the_readers_terms`.
   Every choice is a profile line under "inline or store (decision 0099)", with the numbers.
   `RERAIL_INLINE=off` stores everything. `RERAIL_INLINE_ONLY=r,…` inlines only those, for the lab.
 
@@ -164,9 +168,237 @@ Demand then took 34 relations in the largest part, against 28 with the counts ke
 14.6 + 0.4 s on against 16.5 + 0.3 s off, at load 125 to 145. On the 12 it was 22.3 + 0.5 s against
 22.9 + 0.4 s, at load 50 to 100.
 
+**The planner fix (item 4).** An equality of a bound variable (or a constant) with an unbound one, `$s = $a` with
+`$s` bound, could only test: only an unbound *left* side was assigned. The typing-context library's string
+annotation, `typing_root(s) :- ann_root(a), (s = a ; within(s, a)), parsed(s, "annotation", _)`, lowers to a rule
+with `$s = $a`. Its file-local piece (`fl4317_typing_root` in the pack; `fl860_p0_typing_root` with PYI055 and UP035
+alone) was ordered `parsed($s, …), ann_root($a), $s = $a`: a cross product narrowed after. Now the equality assigns
+its right side (`binds_right`, read by the planner's `ready` and the SQL emitter; the native spec already put the
+bound side right), so it runs between the joins and `ann_root($a)` is a lookup:
+
+| `fl860_p0_typing_root`, first chunk | Steps (rows out) | Work |
+|---|---|---:|
+| before | 12,256 → 12,256 → 12,256 → **2,463,456** → 603 | 2,505,544 |
+| after | 12,256 → 12,256 → 12,256 → 12,256 → 603 | 49,028 |
+
+`RERAIL_EQUALITY_BINDS=off` restores the old reading. The test is
+`plan::tests::an_equality_binds_its_right_side_before_the_next_join`.
+
+**Observed step counts (item 1, "the estimates are the plan's on the first run").** The native strata record, per
+rule (its head and body), the rows into and out of every step of every probe of it; per step pattern (below), the
+same rows pooled over every rule; and per relation its rows and, per column, its distinct values and fanout when its
+stratum ends (`keeps::observe`, `observe_steps`). The record is kept on the thread for the corpus run, beside its
+plans, and read per node of the corpus. It is on by default; `RERAIL_OBSERVED_STEPS=off` keeps none, as the
+comparison.
+
+*The regression, profiled.* With observations first built, PYI055 + UP035 in 2 chunks did 29.4 M of native work
+against 26.0 M from estimates alone. All of it was `rr_agg56`, the one reader of `rr_ctx57(n, s, x) :- load_ref(n,
+x), look(n, x, s), rr_nearest_ks13(n, s), x != 8173, x != 8176`: inlined, its copies did 3.3 M a run where the stored
+reader did 0.2 M. `rr_ctx57` is planned under 1,024 rows, so the first parts of chunk 1 store it unpriced; it measured
+1,433 rows a chunk, so later parts price it, and the copies, which never ran, were priced by estimates that were
+wrong in opposite directions on the two sides:
+
+| Term | Step | Binding pattern | Estimated | Observed |
+|---|---|---|---:|---:|
+| stored reader | `binding($s, $x, $b, _)` after `rr_ctx57` | scope and name bound | 205 a probe | 3.0 a probe |
+| copy | `binding($s, $x, $b, _)` | scanned first | 3,288 rows | 2,870 a part |
+| copy | `$x != 8173`, `$x != 8176` | a name bound | 0.5 each | 1.0 each |
+| copy | `look($n, $x, $s)` | name and scope bound | 0.15 a probe | 4.1 a probe |
+| copy | `load_ref($n, $x)` | name bound | 1 a probe | many (a name is loaded in many places) |
+
+The first two rows are the cause. `binding` and `load_ref` are derived, and their columns' distinct values were
+guessed: the least of the body columns that bind each (4 for `binding`'s scope and name, from a column the typing
+library fills with few values), or the rows when none does (5,533 names in 5,533 `load_ref` rows). So the stored
+reader was priced 14 times high (450 k against 32 k observed) and the copies, ordered by a scan of `binding`, about
+100 times low. The old pricing then scaled the copies by the stored reader's observed over estimated (0.07), which
+made them 170 times low: inlining "saved" 100 k and cost 3.3 M. The multi-column probe (scope and name divided by
+each column's distinct values, as if independent) and the comparison's fixed one half are the planner's estimates
+everywhere; inlining only exposes them, because a copy's order is the planner's choice while a stored relation's
+reader is ordered by the relation it scans.
+
+*The scheduler.* Four parts, each a guard against one way the estimates miss:
+
+- **Measured columns.** A relation an earlier chunk or part stored keeps its measured distinct values and fanout
+  per column in the estimates (`estimate`), not guessed ones. `binding`'s scope and name then carry 1,003 and 734
+  distinct values, and fanouts of 21 and 75.
+- **Observed selectivities, per step pattern.** Every plan the choice prices (reader, copy, build) is re-priced step
+  by step in the native units (`calibrated`): the planner's order and first rows, and for each later step the share
+  of its bindings it kept, observed where an earlier chunk or part ran a step of that pattern (in that rule first,
+  else in any rule), else the planner's estimate. A pattern is an atom's relation, negation and bound columns
+  (constants by value, as the planner's `Stats::obs`), a comparison's operator, constants and bound sides, or a
+  `nearest`'s kinds and direction. A copy never ran, but its steps' patterns mostly did, in other rules.
+- **The side that ran is believed** (`weigh`). A side is observed when every term of it ran: the readers as they are
+  (stored), or the rules unfolded from each reader (inlined; the unfolding records each copy's reader and the
+  relations unfolded into it, so a copy's work is found though deeper inlining and its renaming changed its text).
+  Both observed: both are priced by what they did. Neither: both by the estimates. One: it is priced by what it did,
+  and the other by its estimate times the estimates' error on the side that ran (observed over estimated, or its
+  inverse, the larger).
+- **The estimates' choice stands unless the observations are evidence against it** (`settle`). Each candidate is
+  priced twice, by the estimates alone and with the observations. The observations change the choice in two cases
+  only: both sides ran, and the one that did less is taken (an inlining that did worse is taken back); or the
+  estimates inline a relation whose stored side ran, and its copies, priced as above and doubted, would cost more
+  than the stored side did (a veto). An alternative that never ran is never taken on estimates the estimates alone
+  would not take: with 2 chunks it would not run before the last chunk, and a wrong guess costs that chunk. Only the
+  relations whose stored side ran are priced the second time.
+
+The profile line says which side was observed and why it chose: `rr_ctx57: stored, readers would add 269299 work >=
+1 x (build 55263 + 4 x 1433 rows); stored observed (estimated 118882, did 161291), inlined estimated 276639 x 1.4`,
+or `p0_rr_ctx33: stored, …; stored observed (estimated 9590, did 31985), inlined estimated 12786 x 3.3; the estimates
+would inline it`. Calibrated, the stored reader is priced within 1.4 times of what it did (it was 14 times off) and
+the copies at 277 k (they were 10 k). Tests: `plan::keeps::tests::observed_selectivities_price_a_copy_that_never_ran`
+(the regression's shape: inlined by estimates, stored once the stored side ran and the copy's patterns were seen) and
+`plan::keeps::tests::the_side_that_ran_is_believed`.
+
+*The choice's own cost.* It estimated every derived relation, planning each of their rules (10.7 k rules on the
+pack's program), though it prices only candidates: now it estimates the cone its pricing reads (each candidate, what
+its readers read, and upstream of those every relation their rules read), plans each reader once however many of
+the relations it reads are priced, takes each build from that estimate, and gathers its refusal tests (outputs,
+inputs, demand, answers, recursion) once rather than scanning the program's lists per relation. Its span is
+"inline or store".
+
+The integration's statistics kept by delta (0096) are not read yet: they keep rows and distinct values, not step
+counts.
+
+**The factorized store across the chunk boundary (built).** The chunks hand the cross-file part each export's
+rows; moving them (holding them, attributing them to their files, writing the per-file memo) was 39 s of the
+pack's 284 s of CPU. Some exports are a product: `fl853_p4_outer(f, x) :- rr_inside_ks5(f, p), bound_in(p, x)`
+(every name bound in every scope a node is inside) held 771 k rows over the fixture files, though its two parts,
+joined only at the scope `p` the head drops, hold about 100 k. Such an export is now handed on as its parts, and
+the cross-file rules that read it join the parts.
+
+- **What changes.** After the file-local joins are pushed into the chunks, and before their rows are located
+  (`file_local::factorize_exports`, called from the corpus run's preparation). For each export whose every rule
+  splits at a variable its head projects away into parts that each name a head variable (`keeps::factors`; each
+  part keeps the comparisons and negations over its own variables, and a literal that reads two parts keeps them
+  one part), each part becomes a file-local relation of its head variables and the key, `fz892(x, p) :-
+  bound_in(p, x), …` and `fz894(f, p) :- rr_inside_ks5(f, p), …`. Each is reduced by the others' keys
+  (`fzk895(p) :- rr_inside_ks5(f, p), …` read in `fz892`'s rule), so every row stored joins and no part holds more
+  rows than the product it replaces. The export's rules go, and each cross-file read of it becomes its parts
+  joined at a fresh key: `p4_outer(f, x) :- p4_read(_, x, f, _), fz894(f, k), fz892(x, k)`. The parts' key is a
+  node, so they are located (0052) as the product was. If the split does not find a part file-local, that export
+  is left whole.
+- **When.** Only where the parts can be smaller and the readers stay cheap:
+  - at least two parts may hold many rows per key. A part holds one row per key when the key determines its head
+    variables through keys of the relations it reads. The keys are inferred from the program (`relation_keys`): a
+    node's attributes by the node, the tree's edges by the child and by the parent with the field or index, a
+    lattice by its key, and a derived relation by a column that determines the head in each of its rules, found to
+    a fixpoint. So `bound(p, x) :- …, field(a, "left", l), text(l, x)` split at the assignment `a` is left whole: its
+    second part is one row per key, and splitting it would double the rows. UP003's `p6_primitive(a, t)` is refused
+    the same way;
+  - every read of the export is positive, in a cross-file rule that binds a column of it (a constant, or a variable
+    another positive atom names), so the reader's join starts from a bound part and goes through the key;
+  - at most 4 rules and 8 reader copies.
+
+  An inferred key that is wrong costs rows, never findings: the test only decides whether a relation is split.
+- **The per-file memo.** The memo keys each file's entry by the plan, a digest of the file-local part as it was
+  lowered (`memo::program_digest`: its rules, declarations and outputs, which include the exports). Factorizing
+  changes that part (the parts are its exports in place of the product), so a run whose choice differs from the one
+  a warm memo was written under has another key: every file misses and is evaluated again. That is a miss, not a
+  wrong answer. For the miss to happen only when the choice changes, the choice is made from the program alone,
+  before the first chunk, never from a chunk's rows: the program's shape and the keys it shows. The prepared
+  program, which is kept across processes under the program text, the engine build and the run's additions
+  (decision 0073), now also names the setting: `RERAIL_FACTORIZE=off` (or a run's `factorize: off`) is another
+  prepared program, not a stale one. The statistics kept by delta (0096) are kept under the same digest, so they
+  follow the choice too. The test `corpus::tests::an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_the_memo`
+  runs one program four times over one store, off, off, on, on and back to off: the findings are identical every
+  time; each change is a miss for every file and each repeat a hit; the memo's entries hold the two parts, reduced
+  (every row joins), and no product, and the parts' join equals the product's rows the off run stored.
+  `file_local::tests::an_export_joined_at_a_projected_key_is_handed_on_as_its_parts` checks the rewrite, and that
+  a join whose second part is a node's attribute is left whole.
+- **The reader.** Nothing new runs in the cross part: the parts are inputs, and the planner orders the reader's
+  join. On the 8 programs it joins per key from the bound side: `p4_outer` reads `fz894` by `f` (899 bindings, 912
+  rows) and checks `fz892` by `(x, p)` (148 rows), where it checked the product by `(f, x)` (899 to 148).
+  `p7_names_class` reads `class_path`'s parts by the bound `p`, through the key, to its 22,659 rows, the same rows
+  it read from the product.
+- **The profile** names each relation factorized, with its parts, under "factorized store (decision 0099)", and the
+  rows each export handed on under "rows handed on to the cross-file part". Relations the analysis still names as
+  stored flat but smaller as parts (a finding, a part of one row a key, a reader that binds nothing) are listed
+  under "factorized store (decision 0099): stored flat, would shrink as parts".
+
+**Measured: the factorized store.** On the 8 programs (486 fixture files, 2 chunks, default threads), three
+paired runs of one binary, `RERAIL_FACTORIZE=off` then on, alternating. Instructions are the process's retired
+instructions (steadier than CPU time at this load); CPU is the profile's user + sys. Findings are byte-identical
+to the base binary's in every run.
+
+| Setting | Rows handed on | Instructions | Moving rows, CPU s | Local CPU s | Cross CPU s | Peak RSS | Load (1-min) |
+|---|---:|---:|---:|---:|---:|---:|---|
+| off | 986,114 | 237.3, 232.4 G (and 295.5 G) | 3.90, 4.02 (4.08) | 15.0, 15.3 (15.3) | 3.14, 3.09 (3.17) | 292, 294 MB (800 MB) | 35 to 45 |
+| factorized | 306,011 | 208.6, 208.4, 207.9 G | 2.66, 2.62, 2.65 | 13.6, 13.6, 13.8 | 2.63, 2.58, 2.57 | 257, 258, 256 MB | 34 to 40 |
+
+- `fl853_p4_outer`'s 771,152 rows are now 89,605 (`fz894`, `f` inside `p`) and fewer than 11 k (`fz892`). Rows
+  handed on fall 69%; moving them falls a third (1.3 s), local CPU 1.5 s (the product is no longer built), cross
+  CPU 0.5 s; 11 to 12% fewer instructions, 35 MB less peak RSS. On the slice it factorizes `class_path` and the two
+  `p4_outer` joins.
+- The run in parentheses is another mode of the engine, seen with and without the change (the base binary's first
+  run on the slice too: 329 G instructions, 798 MB): about 60 G more instructions and 500 MB more RSS. It is not
+  the factorized store's, and is not explained here.
+
+On the pack (534 programs, the same files; one run each: base binary, factorized, then the same binary with
+`RERAIL_FACTORIZE=off`; load 26 to 131, 89 to 97 and 117 to 145): findings byte-identical in all three. 115
+exports are handed on factorized, among them `p207_outer`'s two (the pack's `fl853_p4_outer`), `class_path`, and
+joins of the typing context (`ann_q`, `head_q`, `type_arg`, `version_cmp`, `typevar_name`, …).
+
+| Pack | Rows handed on | Moving rows, CPU s | Local CPU s | Cross CPU s | All CPU s | Instructions | Peak RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| base binary | (not counted) | 38.75 | 209.3 | 26.3 | 284.3 | 3,017 G | 1,097 MB |
+| off | 6,966,788 | 38.09 | 211.5 | 26.5 | 288.6 | 3,010 G | 1,547 MB |
+| factorized | 6,731,499 | 37.26 | 211.9 | 26.1 | 290.4 | 3,078 G | 1,579 MB |
+
+- Of the 39 s spent moving rows, the factorized store takes about 1 s: `p207_outer`'s 771 k rows go, but the pack
+  hands on 7 M rows of 1,769 exports, and its other large exports (`fl5237_p514_effect` 197 k, `precedes` 196 k,
+  `fl4196_doc_opener` 186 k) are not products of parts.
+- Instructions rose 2.3% (68 G) with it on, against falling 12% on the slice. One run each, and the slice shows a
+  mode worth 25% of its instructions, so this is not settled; the factorizing itself costs 1.4 s CPU of the run's
+  preparation (inferring keys and two splits over 13 k rules), which a prepared program kept in the store (0073)
+  pays once, and every run here started from an empty store.
+- Peak RSS is that of the setting's run, not the setting's: off and on peaked alike (1,547 and 1,579 MB); the base
+  run, at lower load, at 1,097 MB.
+
+**Measured.** 8 programs that read `bound_in` (slice8), and PYI055 + UP035 (which include the typing context), on
+the 486 fixture files, in 2 chunks (the default) and in 6 (`--chunk 20000`), estimates only
+(`RERAIL_OBSERVED_STEPS=off`, a comparison switch) against observations (the default). Findings are byte-identical
+to the base binary's in all eight runs. Native work is `native.tsv`'s summed work; CPU is the profile's user +
+system over all spans; instructions and cycles are the process's (retired, from the run's report). The runs were
+one at a time, off then observed, with the 1-minute load at start and end as shown: 26 to 144, so CPU differences
+under about 10% are noise; instructions are steadier.
+
+| Slice | Chunks | Setting | Native work | CPU s | G instructions | G cycles | Choose s | Load |
+|---|---:|---|---:|---:|---:|---:|---:|---|
+| slice8 | 2 | estimates | 7,073,676 | 23.0 | 232.09 | 72.7 | 0.52 | 88 to 141 |
+| | | observed | 7,064,858 | 22.0 | 231.90 | 70.8 | 0.49 | 141 to 109 |
+| PYI055 + UP035 | 2 | estimates | 25,959,388 | 56.4 | 527.17 | 175.1 | 1.97 | 109 to 144 |
+| | | observed | 25,951,656 | 56.0 | 527.72 | 174.1 | 1.99 | 144 to 134 |
+| slice8 | 6 | estimates | 6,960,993 | 23.0 | 239.35 | 77.4 | 1.47 | 134 to 118 |
+| | | observed | 6,954,967 | 20.5 | 240.23 | 74.4 | 1.36 | 118 to 95 |
+| PYI055 + UP035 | 6 | estimates | 25,705,589 | 51.4 | 590.31 | 184.3 | 4.81 | 95 to 46 |
+| | | observed | 25,705,470 | 49.5 | 592.46 | 182.6 | 4.64 | 46 to 26 |
+
+- Observed is never worse in native work: it does less in all four (by up to 0.12%), and the regression is gone
+  (29.4 M on the pair before the fix, 25.95 M now; estimates 25.96 M). The gains are small because the observations
+  change few choices: 2 vetoes on slice8 (`p0_rr_ctx33`, `rr_in_annotation_0_asg`), 6 on the pair (`exists_11` and
+  `rr_in_annotation_0_asg` in each part), 3 with 6 chunks on the pair; with 6 chunks on slice8 both sides of
+  `rr_in_annotation_0_target_form` ran and the inlining was confirmed (no revert anywhere).
+- Instructions are within 0.4% either way (observed 0.1% lower on slice8 in 2 chunks, 0.1 to 0.4% higher on the
+  others); cycles and CPU are lower in all four. Run-to-run spread of the instruction count on this loaded machine
+  was about 2% between batches (spin waits), so neither side is measurably ahead on instructions.
+- The choice's own cost (span "inline or store", summed over its calls): with observations it was 0.93 s on slice8
+  and 3.63 s on the pair before the cone, the overlay and the narrowed second pass; it is now 0.49 s and 1.99 s,
+  level with estimates only. The equality fix (above) is unchanged by any of this.
+- The whole pack (536 programs, 2 chunks), estimates then observed, findings byte-identical between the two:
+  native work 114.13 M against 113.12 M (-0.9%); 2,658.3 against 2,654.5 G instructions (-0.1%); 803.6 against
+  761.1 G cycles; CPU 222.8 against 192.9 s, with the load falling from 80 to 10 over the second run, so most of
+  the CPU difference is load. The observations vetoed 15 inlinings and confirmed 13 where both sides ran; none
+  were reverted. The choice took 8.9 s against 8.5 s of the 10.9 and 10.4 s planning spans ("demand"); its cost
+  before the cone was not measured on the pack.
+
 **Next.**
 
-- Take the observed step counts (`native.tsv`) in place of the first run's estimates.
-- Store a relation that crosses the chunk boundary factorized.
-- The planner fix of item 4.
+- Let an alternative that never ran win when the evidence for it is strong, not only veto or revert: today an
+  inlining the estimates would not choose is never tried, however the observations price it. A bounded trial (one
+  part inlined, kept if it did less) would find those; it needs a part small enough that a wrong trial costs little.
+- Use observed selectivities in the planner's own ordering, not only in the choice's pricing: a copy's order is still
+  the planner's from estimates, so a copy can be priced right and still run in a poor order.
+- Make the factorized store pay on the pack: its largest exports are not products of parts. The next step is the
+  size of each export, not its shape (projection, demand from the cross part).
+- Read the observations across runs, from the kept statistics (0096), not only across a run's chunks.
 - Have the converter write `inline` on the helpers it makes.

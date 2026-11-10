@@ -146,6 +146,14 @@ fn tiling(npa: usize, npb: usize, k32: usize, units: usize) -> (usize, usize) {
 impl Sme {
     /// The submission, and the BMOPAs it issued (for the timing test).
     fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, i64), String> {
+        self.run_timed(ks).map(|(o, ops, _)| (o, ops))
+    }
+
+    /// [`Sme::run`], with its phases: packing (encode), the streaming workers (device; the spawned workers' CPU as
+    /// `worker_cpu`), and the masks turned into pairs (decode).
+    fn run_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, i64, crate::exec::Phases), String> {
+        let mut ph = crate::exec::Phases::default();
+        let t = std::time::Instant::now();
         // Validate and pack every distinct operand once.
         let mut packed: HashMap<(usize, usize, usize), Packed> = HashMap::new();
         for (n, k) in ks.iter().enumerate() {
@@ -238,6 +246,8 @@ impl Sme {
 
         // The workers: one per unit, one streaming block each. The calling thread (the executor's thread for this
         // lane) is one of them, so a submission of one tile starts no thread.
+        ph.encode = t.elapsed().as_secs_f64();
+        let t = std::time::Instant::now();
         let tiles = Tiles(tiles);
         let next = AtomicI64::new(0);
         let workers = self.units.min(tiles.0.len());
@@ -246,12 +256,22 @@ impl Sme {
             rr_sme_worker_init();
             rr_sme_run(tiles.0.as_ptr(), tiles.0.len() as i64, next.as_ptr())
         };
-        let ops: i64 = std::thread::scope(|s| {
-            let hs: Vec<_> = (1..workers).map(|_| s.spawn(work)).collect();
+        let (ops, worker_cpu): (i64, f64) = std::thread::scope(|s| {
+            let hs: Vec<_> = (1..workers)
+                .map(|_| {
+                    s.spawn(move || {
+                        let c = crate::exec::thread_cpu();
+                        let n = work();
+                        (n, crate::exec::thread_cpu() - c)
+                    })
+                })
+                .collect();
             let mine = if workers > 0 { work() } else { 0 };
-            mine + hs.into_iter().map(|h| h.join().expect("an SME worker panicked")).sum::<i64>()
+            hs.into_iter().map(|h| h.join().expect("an SME worker panicked")).fold((mine, 0.0), |(a, c), (n, d)| (a + n, c + d))
         });
         drop(packed);
+        (ph.device, ph.worker_cpu) = (Some(t.elapsed().as_secs_f64()), worker_cpu);
+        let t = std::time::Instant::now();
 
         let outs = outs
             .into_iter()
@@ -261,7 +281,8 @@ impl Sme {
                 Out::Mask { rows, npb, masks, .. } => Output::Pairs(pairs(rows, npb, &masks)),
             })
             .collect();
-        Ok((outs, ops))
+        ph.decode = t.elapsed().as_secs_f64();
+        Ok((outs, ops, ph))
     }
 }
 
@@ -280,5 +301,8 @@ impl Backend for Sme {
 
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
         self.run(ks).map(|(o, _)| o)
+    }
+    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, crate::exec::Phases), String> {
+        self.run_timed(ks).map(|(o, _, p)| (o, p))
     }
 }

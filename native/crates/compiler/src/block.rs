@@ -1077,6 +1077,16 @@ impl BlockProgram {
         Ok(program)
     }
 
+    /// A row program's operations, in order (an interpreter of them elsewhere: the device's `metal_join`).
+    pub fn ops(&self) -> &[BlockOp] {
+        &self.ops
+    }
+
+    /// A program's outputs: the operations whose values it gives.
+    pub fn outputs(&self) -> &[u16] {
+        &self.outputs
+    }
+
     /// A row program on the CPU JIT (`native_cpu_rows`).
     pub fn compile_rows(&self) -> Result<crate::native_cpu_rows::CompiledRows, Error> {
         self.verify()?;

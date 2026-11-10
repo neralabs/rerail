@@ -169,6 +169,30 @@ That is O125's ratio, 2.3–3.2x a cold part, on a program with no typing at all
 copies and diffs that §1 removes: copying old rows in and indexing them, diffing whole relations, and measuring
 kept rows. The joins over the deltas cost almost nothing (`reach__del`'s joins: 0.000 s).
 
+## Measured: whole-program choices kept by the program's digest (2026-11-09)
+
+The plan's whole-program choices are which relations are inlined or stored (0099) and which negations are demanded
+(0048). They are made once per program and scale, before any stratum runs. A corpus run now keeps them
+(`plan::choices`). It keeps them in the process, and in the tape cache under the program's digest (the engine build,
+the switches that change them, and the program). With them it keeps the node count they were chosen at. A run of
+the same program at that scale or less takes them, and the program as they rewrote it, without choosing again. Such
+runs are an edit's one-file chunk, a later chunk, and the cross part again. A run past twice that scale chooses
+again. The tape cache's run manifest names the kept choices, so collection keeps them.
+
+Pack one-edit run, debug build, load 90–155 (the same runs as 0077 §4):
+
+| span | before | after |
+|---|---:|---:|
+| local `statistics and plan` | 4.12 s | 0.73 s |
+| local `demand` | 4.05 s | 0.66 s |
+| cross `statistics and plan` | 2.30 s | 0.64 s |
+| cross `demand` | 2.26 s | 0.60 s, 0.57 s of it reading the choices back |
+| local `memo replay` | 5.20 s | 2.41 s |
+
+Reading the choices back is mostly parsing the rewritten program. The memo replay is a separate change. A file's
+own rows of an export are appended to the export unchecked: no other file's entry can hold them. Only rows that
+name another document are checked against the export's set (`exports::append_own`). The findings are identical.
+
 ## Measured: step 5's memoised rewrites and plans
 
 Measured 2026-11-08 on the tree with every branch merged. O125's replay, `calls.rr` over the data layer:

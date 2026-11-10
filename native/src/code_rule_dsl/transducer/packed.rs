@@ -51,6 +51,9 @@ pub(in crate::code_rule_dsl) mod metal_rows;
 // Relations sorted by a key on the device, and the joins that probe them (decision 0095).
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) mod metal_sort;
+// A stratum's join plan on the device: binding tables and their stages (decision 0095, step 4).
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) mod metal_join;
 #[cfg(target_os = "macos")]
 mod metal_program_backend;
 #[cfg(target_os = "macos")]
