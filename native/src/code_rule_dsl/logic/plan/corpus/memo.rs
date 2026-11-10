@@ -235,6 +235,20 @@ fn queued(source: SourceId, path: &str, program: &[u8; 32]) -> crate::content_st
     crate::content_store::write_back::Key::of(&[b"facts_memo/corpus", &source.raw().to_le_bytes(), path.as_bytes(), program])
 }
 
+/// `queued`, for a content the store does not hold yet: by its digest.
+fn queued_unstored(digest: &[u8; 32], path: &str, program: &[u8; 32]) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"facts_memo/corpus/unstored", digest, path.as_bytes(), program])
+}
+
+/// What an entry is queued under, by its content.
+fn queued_content(content: Content, path: &str, program: &[u8; 32]) -> Option<crate::content_store::write_back::Key> {
+    match content {
+        Content::Stored(id) => Some(queued(id, path, program)),
+        Content::Unstored(d) => Some(queued_unstored(&d, path, program)),
+        Content::Held(_) => None,
+    }
+}
+
 /// `source` of many texts, in their order: the stored ones found (and pinned) in one statement, the others stored.
 pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<SourceId>> {
     off();
@@ -259,21 +273,27 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
 /// Memoises many documents' entries at once, each `(source, path, key, entry)` under `program`: one transaction of
 /// a few statements (`put_facts_results`), not one per document. Queued behind the run (decision 0102): encoded and
 /// written by the store's writer, each entry read from memory until it is written.
-pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(SourceId, String, i64, Entry)>) {
+/// A content the store does not hold yet is written under the source its tape's write stored, queued before.
+pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) {
     off();
     let set = plan(program);
     if crate::code_rule_dsl::logic::profile::on() {
         tally(entries.iter().map(|e| &e.3));
     }
-    let held: Vec<(SourceId, String, std::sync::Arc<Entry>)> = entries.into_iter().map(|(source, path, key, entry)| (source, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
+    let held: Vec<(Content, String, std::sync::Arc<Entry>)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
     let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
-    let keys = held.iter().map(|(source, path, e)| (queued(*source, path, program), Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>))).collect();
+    let keys = held.iter().filter_map(|(content, path, e)| Some((queued_content(*content, path, program)?, Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>)))).collect();
     store.write_back(
         "the memo's entries",
         bytes,
         keys,
         Box::new(move |store| {
-            let results: Vec<(SourceId, &str, FactsResult)> = held.iter().map(|(source, path, e)| (*source, path.as_str(), FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(e) })).collect();
+            let mut results: Vec<(SourceId, &str, FactsResult)> = Vec::with_capacity(held.len());
+            for (content, path, e) in &held {
+                // A source not stored (its tape's write failed) leaves the entry unwritten: the next run misses it.
+                let Some(source) = content.resolve(store)? else { continue };
+                results.push((source, path.as_str(), FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(e) }));
+            }
             store.put_facts_results(SCHEMA, &set, &results).map(drop)
         }),
     );
@@ -318,10 +338,12 @@ pub(super) enum Memo<'a> {
 /// A session's memo: each entry under its content's digest, its path and the file-local program's digest.
 pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), Entry>>;
 
-/// A file's content as the memo knows it: its stored source, or (held) its digest.
+/// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
+/// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Content {
     Stored(SourceId),
+    Unstored([u8; 32]),
     Held([u8; 32]),
 }
 
@@ -330,7 +352,21 @@ impl Content {
     pub(super) fn stored(self) -> Option<SourceId> {
         match self {
             Content::Stored(id) => Some(id),
-            Content::Held(_) => None,
+            Content::Unstored(_) | Content::Held(_) => None,
+        }
+    }
+
+    /// Whether the store holds the content or will (its source is queued): a stored memo's content.
+    fn in_store(self) -> bool {
+        matches!(self, Content::Stored(_) | Content::Unstored(_))
+    }
+
+    /// The source on the store's writer, where a content queued before is written by now.
+    pub(super) fn resolve(self, store: &ContentStore) -> StoreResult<Option<SourceId>> {
+        match self {
+            Content::Stored(id) => Ok(Some(id)),
+            Content::Unstored(d) => store.source_by_hash(HashKey::from_sha256_digest(d)),
+            Content::Held(_) => Ok(None),
         }
     }
 }
@@ -389,6 +425,12 @@ impl Memo<'_> {
                 for (i, e) in at.into_iter().zip(found_all(store, program, &stored)?) {
                     out[i] = e;
                 }
+                // A content not stored yet has no stored entry: only one this process queued.
+                for (i, (c, p)) in docs.iter().enumerate() {
+                    if let Content::Unstored(d) = c {
+                        out[i] = store.pending::<Entry>(&queued_unstored(d, p, program)).map(Found::Held);
+                    }
+                }
                 Ok(out)
             }
             Memo::Held(held) => {
@@ -397,7 +439,7 @@ impl Memo<'_> {
                     .iter()
                     .map(|(c, p)| match c {
                         Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), *program)).map(|e| Found::Held(std::sync::Arc::new(e.clone()))),
-                        Content::Stored(_) => None,
+                        Content::Stored(_) | Content::Unstored(_) => None,
                     })
                     .collect())
             }
@@ -407,6 +449,7 @@ impl Memo<'_> {
     pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
         match (self, content) {
             (Memo::Stored(store), Content::Stored(id)) => lookup(store, id, path, key, program),
+            (Memo::Stored(store), Content::Unstored(d)) => Ok(store.pending::<Entry>(&queued_unstored(&d, path, program)).map(|e| (*e).clone()).filter(|e| e.key == key)),
             (Memo::Held(held), Content::Held(digest)) => {
                 Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), *program)).filter(|e| e.key == key).cloned())
             }
@@ -418,7 +461,7 @@ impl Memo<'_> {
     pub(super) fn remember_all(self, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
         match self {
             Memo::Stored(store) => {
-                remember_all(store, program, entries.into_iter().filter_map(|(c, p, k, e)| c.stored().map(|id| (id, p, k, e))).collect());
+                remember_all(store, program, entries);
                 Ok(())
             }
             Memo::Held(_) => {
@@ -432,8 +475,8 @@ impl Memo<'_> {
 
     pub(super) fn remember(self, content: Content, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
         match (self, content) {
-            (Memo::Stored(store), Content::Stored(id)) => {
-                remember_all(store, program, vec![(id, path.to_owned(), key, entry.clone())]);
+            (Memo::Stored(store), c @ (Content::Stored(_) | Content::Unstored(_))) => {
+                remember_all(store, program, vec![(c, path.to_owned(), key, entry.clone())]);
                 Ok(())
             }
             (Memo::Held(held), Content::Held(digest)) => {

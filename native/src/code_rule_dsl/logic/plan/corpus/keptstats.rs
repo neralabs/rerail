@@ -236,16 +236,27 @@ impl Keeper {
     /// The keeper as a run of the tape cache keeps it (decision 0096 §2): one blob, the files' contents it counts
     /// and each relation's statistics. Only stored contents are kept (a session's are its memory's).
     pub(super) fn encode(&self) -> Vec<u8> {
-        let mut out = vec![2u8];
+        let mut out = vec![3u8];
         let int = |out: &mut Vec<u8>, v: i64| out.extend_from_slice(&v.to_le_bytes());
-        let mut docs: Vec<(&String, i64, i64)> = self.docs.iter().filter_map(|(p, (c, k))| match c { memo::Content::Stored(id) => Some((p, id.raw(), *k)), memo::Content::Held(_) => None }).collect();
+        // A content the store does not hold yet is kept by its digest: the next run finds its source (`resolve`).
+        let mut docs: Vec<(&String, memo::Content, i64)> = self.docs.iter().filter(|(_, (c, _))| !matches!(c, memo::Content::Held(_))).map(|(p, (c, k))| (p, *c, *k)).collect();
         // In path order: the same keeper is the same blob.
-        docs.sort();
+        docs.sort_by(|a, b| a.0.cmp(b.0));
         int(&mut out, docs.len() as i64);
-        for (p, id, k) in docs {
+        for (p, c, k) in docs {
             int(&mut out, p.len() as i64);
             out.extend_from_slice(p.as_bytes());
-            int(&mut out, id);
+            match c {
+                memo::Content::Stored(id) => {
+                    out.push(0);
+                    int(&mut out, id.raw());
+                }
+                memo::Content::Unstored(d) => {
+                    out.push(1);
+                    out.extend_from_slice(&d);
+                }
+                memo::Content::Held(_) => unreachable!("not kept"),
+            }
             int(&mut out, k);
         }
         int(&mut out, self.rels.len() as i64);
@@ -255,6 +266,21 @@ impl Keeper {
             stats.encode(&mut out);
         }
         out
+    }
+
+    /// The contents kept by digest (a run's new sources, written after its blob was made), as the store holds them
+    /// now: `found` gives each digest's source, in one read before the run's first wave.
+    pub(super) fn resolve(&mut self, found: impl FnOnce(&[[u8; 32]]) -> Vec<Option<crate::content_store::SourceId>>) {
+        let unstored: Vec<(String, [u8; 32])> = self.docs.iter().filter_map(|(p, (c, _))| match c { memo::Content::Unstored(d) => Some((p.clone(), *d)), _ => None }).collect();
+        if unstored.is_empty() {
+            return;
+        }
+        let ids = found(&unstored.iter().map(|(_, d)| *d).collect::<Vec<_>>());
+        for ((path, _), id) in unstored.into_iter().zip(ids) {
+            if let (Some(id), Some(at)) = (id, self.docs.get_mut(&path)) {
+                at.0 = memo::Content::Stored(id);
+            }
+        }
     }
 
     /// `encode`'s keeper back, `None` if the bytes are not one.
@@ -270,14 +296,18 @@ impl Keeper {
             let n = usize::try_from(int(at)?).ok()?;
             String::from_utf8(take(at, n)?.to_vec()).ok()
         };
-        if bytes.first() != Some(&2) {
+        if bytes.first() != Some(&3) {
             return None;
         }
         let mut k = Keeper::default();
         for _ in 0..int(&mut at)? {
             let path = text(&mut at)?;
-            let id = crate::content_store::SourceId::from_raw(int(&mut at)?);
-            k.docs.insert(path, (memo::Content::Stored(id), int(&mut at)?));
+            let content = match take(&mut at, 1)?[0] {
+                0 => memo::Content::Stored(crate::content_store::SourceId::from_raw(int(&mut at)?)),
+                1 => memo::Content::Unstored(take(&mut at, 32)?.try_into().ok()?),
+                _ => return None,
+            };
+            k.docs.insert(path, (content, int(&mut at)?));
         }
         for _ in 0..int(&mut at)? {
             let rel = text(&mut at)?;
@@ -291,7 +321,7 @@ fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
     a.1 == b.1
         && match (a.0, b.0) {
             (memo::Content::Stored(x), memo::Content::Stored(y)) => x == y,
-            (memo::Content::Held(x), memo::Content::Held(y)) => x == y,
+            (memo::Content::Unstored(x), memo::Content::Unstored(y)) | (memo::Content::Held(x), memo::Content::Held(y)) => x == y,
             _ => false,
         }
 }

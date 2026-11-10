@@ -2507,7 +2507,10 @@ fn run_observed(
         (Some(s), _) => Some(s.stats.lock().expect("the session's statistics").remove(&memo_program).unwrap_or_default()),
         (None, Some(memo::Memo::Stored(store))) => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "read the kept statistics".into());
-            Some(store.stat_blob(memo_program).ok().flatten().and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default())
+            let mut k = store.stat_blob(memo_program).ok().flatten().and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default();
+            // The contents its last run had not stored yet, by their sources now.
+            k.resolve(|digests| store.sources_by_hashes(&digests.iter().map(|d| crate::content_store::HashKey::from_sha256_digest(*d)).collect::<Vec<_>>()).unwrap_or_else(|_| vec![None; digests.len()]));
+            Some(k)
         }
         _ => None,
     };
@@ -2584,6 +2587,11 @@ fn run_observed(
         content: Option<memo::Content>,
         found: Option<memo::Found>,
         text: Option<String>,
+        /// The content's SHA-256, when it was read to look it up.
+        digest: Option<[u8; 32]>,
+        /// Its tape, when the memo has no entry for it and the store has the tape (decision 0104): read before the
+        /// first wave, decompressed in the file's wave.
+        tape: Option<crate::content_store::TapeFrame>,
     }
     // Files looked up together: stat each, find the entries of those the stat index knows in one statement, read and
     // hash the others, find their contents in one statement and their entries in one more. A few statements for any
@@ -2606,6 +2614,7 @@ fn run_observed(
         let known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
         let mut content: Vec<Option<memo::Content>> = known.iter().map(|k| k.map(memo::Content::Stored)).collect();
         let mut found: Vec<Option<memo::Found>> = (0..window.len()).map(|_| None).collect();
+        let mut digest: Vec<Option<[u8; 32]>> = vec![None; window.len()];
         if let (true, Some(memo)) = (memoised, memo) {
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
             let asked: Vec<usize> = (0..window.len()).filter(|i| known[*i].is_some()).collect();
@@ -2630,12 +2639,15 @@ fn run_observed(
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, texts.iter().map(|t| t.len() as u64).sum());
             let digests: Vec<[u8; 32]> = texts.par_iter().map(|t| Sha256::digest(t.as_bytes()).into()).collect();
-            let contents = memo.found(&digests).map_err(|e| Error::Plan(e.to_string()))?;
-            for (i, c) in rest.iter().zip(&contents) {
-                if let (Some(stat), Some(id)) = (stats[*i], c.and_then(memo::Content::stored))
-                    && known[*i] != Some(id)
+            // A content the store does not hold is new: its source is written with its tape, behind the run.
+            let contents: Vec<Option<memo::Content>> = memo.found(&digests).map_err(|e| Error::Plan(e.to_string()))?.into_iter().zip(&digests).map(|(c, d)| c.or(Some(memo::Content::Unstored(*d)))).collect();
+            for ((i, c), d) in rest.iter().zip(&contents).zip(&digests) {
+                digest[*i] = Some(*d);
+                if let (Some(stat), Some(c)) = (stats[*i], c)
+                    && !matches!(c, memo::Content::Held(_))
+                    && known[*i].map(memo::Content::Stored) != Some(*c)
                 {
-                    stats_read.lock().push((world::store_path(&window[*i].1).to_owned(), stat, id));
+                    stats_read.lock().push((world::store_path(&window[*i].1).to_owned(), stat, *c));
                 }
             }
             // A file the index knew, read again because its entry was missing, is not looked up a second time.
@@ -2650,8 +2662,31 @@ fn run_observed(
                 content[*i] = c;
             }
         }
+        // The tapes of the files the memo has no entry for, of those whose sources the store holds: one read.
+        let mut tape: Vec<Option<crate::content_store::TapeFrame>> = vec![None; window.len()];
+        if let (Some(cache), Some(lang)) = (tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")), crate::code_rule_dsl::language::dialect_by_label(label)) {
+            let asked: Vec<usize> = (0..window.len()).filter(|i| found[*i].is_none() && matches!(content[*i], Some(memo::Content::Stored(_)))).collect();
+            if let (false, Some(tag)) = (asked.is_empty(), crate::code_rule_dsl::language::tape_tag(lang)) {
+                let _tapes = crate::code_rule_dsl::logic::profile::span(|| "tapes, by their sources".into());
+                let ids: Vec<crate::content_store::SourceId> = asked.iter().map(|i| content[*i].and_then(memo::Content::stored).expect("stored")).collect();
+                let frames = cache
+                    .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::workspace::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION))
+                    .map_err(|e| Error::Plan(e.to_string()))?;
+                for (i, f) in asked.into_iter().zip(frames) {
+                    tape[i] = f;
+                }
+            }
+        }
         let mut texts: HashMap<usize, String> = if keep { rest.into_iter().zip(texts).collect() } else { HashMap::new() };
-        Ok(stats.into_iter().zip(content).zip(found).enumerate().map(|(i, ((stat, content), found))| Before { stat, content, found, text: texts.remove(&i) }).collect())
+        Ok(stats
+            .into_iter()
+            .zip(content)
+            .zip(found)
+            .zip(digest)
+            .zip(tape)
+            .enumerate()
+            .map(|(i, ((((stat, content), found), digest), tape))| Before { stat, content, found, text: texts.remove(&i), digest, tape })
+            .collect())
     };
     // The corpus's files are looked up before the first wave: a wave reads no memo from SQLite, and writes none
     // (decision 0104). A session's memo is in memory, so it is looked up where it is read. A load's files are
@@ -2736,7 +2771,16 @@ fn run_observed(
     let has_base = |e: &memo::Entry| e.rows.contains_key(OWN_DOCS) && stored.iter().all(|(rel, _)| e.rows.contains_key(&memo::base_key(rel)));
     // A window's files resolved together: as found before the first wave, or (a load's) looked up now. A hit's
     // entry is decoded here; a miss's file is read here, and is a new content if it changed since it was found.
-    let resolve = |window: &[(i64, String, Option<Arc<str>>)]| -> Result<Vec<(Option<memo::Content>, std::result::Result<memo::Entry, (String, Option<memo::Content>)>)>> {
+    /// A file to build: its text, its content as the memo knows it, the text's digest and its tape, when they are
+    /// known.
+    struct Unbuilt {
+        text: String,
+        content: Option<memo::Content>,
+        digest: Option<[u8; 32]>,
+        tape: Option<crate::content_store::TapeFrame>,
+    }
+    type Resolved = (Option<memo::Content>, std::result::Result<memo::Entry, Unbuilt>);
+    let resolve = |window: &[(i64, String, Option<Arc<str>>)]| -> Result<Vec<Resolved>> {
         let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
         let mut taken: Vec<Option<Before>> = {
             let mut before = before.lock();
@@ -2760,24 +2804,35 @@ fn run_observed(
                         return Ok((b.content, Ok(entry)));
                     }
                 }
-                let (text, content) = match b.text {
-                    Some(text) => (text, b.content),
+                let (text, content, digest, tape) = match b.text {
+                    Some(text) => (text, b.content, b.digest, b.tape),
                     None => {
                         let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
                         let text = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
                         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, text.len() as u64);
                         let now = if looking { std::fs::metadata(root.join(path)).ok().map(|m| crate::content_store::FileStat::of(&m)) } else { None };
-                        // Changed since it was found: the content found is not this text's.
-                        let content = if now.is_some() && now == b.stat { b.content } else { None };
-                        (text, content)
+                        if now.is_some() && now == b.stat {
+                            (text, b.content, b.digest, b.tape)
+                        } else {
+                            // Changed since it was found: a new content, by this text's digest.
+                            use sha2::{Digest as _, Sha256};
+                            let d: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+                            let content = match memo {
+                                Some(memo::Memo::Stored(_)) if looking => Some(memo::Content::Unstored(d)),
+                                Some(memo::Memo::Held(_)) if looking => Some(memo::Content::Held(d)),
+                                _ => None,
+                            };
+                            (text, content, Some(d), None)
+                        }
                     }
                 };
-                Ok((content, Err((text, content))))
+                Ok((content, Err(Unbuilt { text, content, digest, tape })))
             })
             .collect()
     };
     // A file's document, built from its source.
-    let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, source: String, mut source_id: Option<memo::Content>| -> Result<(Option<memo::Content>, syntax::Document)> {
+    let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, unbuilt: Unbuilt| -> Result<(Option<memo::Content>, syntax::Document)> {
+        let Unbuilt { text: source, content: source_id, digest, tape } = unbuilt;
         let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
         // Its own work: the file's input made from its source (the build's parts charge their own).
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
@@ -2791,14 +2846,10 @@ fn run_observed(
         let built = match &tapes {
             // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
             // tape and source frames are not linked.
-            // A source collected since it was read is stored again with its tape (O95), under the id it has now.
-            Some(cache) if cfg!(feature = "tape-cache") => core::build_cached_source(&file, cache, source_id.and_then(memo::Content::stored)).map(|(built, id)| {
-                // A new source is stored with its tape: its id is the one the memo is written under.
-                if recording && !matches!(source_id, Some(memo::Content::Held(_))) {
-                    source_id = id.map(memo::Content::Stored);
-                }
-                built
-            }),
+            // In the waves no SQL is read or written (decision 0104): the tape was found before the first wave, or the
+            // file is parsed and its source and tape are the writer's, behind the run; the manifest names the sources
+            // it stores (`late_sources`).
+            Some(cache) if cfg!(feature = "tape-cache") => core::build_in_wave(&file, cache, digest, tape.as_ref(), Some(&late_sources)),
             Some(_) => unreachable!("no tape cache without `tape-cache`"),
             None => core::build(&file),
         };
@@ -2815,7 +2866,7 @@ fn run_observed(
     // window at a time, in order, each a job of its own, and each file's tree and facts then built as a job.
     const WINDOW: usize = 256;
     let resolver = parking_lot::Mutex::new(resolve);
-    type Resolved = (Option<memo::Content>, std::result::Result<memo::Entry, (String, Option<memo::Content>)>);
+
     // A document: a memo hit, or built from its source.
     type Made = Result<(Option<memo::Content>, std::result::Result<memo::Entry, syntax::Document>)>;
     type Sources = Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>;
@@ -2827,7 +2878,7 @@ fn run_observed(
         let (d, path, module) = &docs.asked[i];
         match outcome {
             Ok(entry) => Ok((content, Ok(entry))),
-            Err((source, source_id)) => build_doc(d, path, module.clone(), source, source_id).map(|(c, doc)| (c, Err(doc))),
+            Err(u) => build_doc(d, path, module.clone(), u).map(|(c, doc)| (c, Err(doc))),
         }
     };
     let project = |docs: Vec<syntax::Document>| -> (Result<Sources>, (f64, f64)) {
@@ -3040,7 +3091,7 @@ fn run_observed(
                 let (resolved, built) = (docs.resolved.lock(), docs.built.lock());
                 (c.spawned..horizon.min(to).max(c.spawned))
                     .filter(|i| !built.contains_key(i))
-                    .map(|i| (resolved.get(&i).map_or(0, |(_, r)| r.as_ref().err().map_or(0, |(source, _)| source.len())), i))
+                    .map(|i| (resolved.get(&i).map_or(0, |(_, r)| r.as_ref().err().map_or(0, |u| u.text.len())), i))
                     .collect()
             };
             c.spawned = c.spawned.max(horizon.min(to));
@@ -3190,7 +3241,7 @@ fn run_observed(
         doing: &worker_doing,
     };
     let builder = &builder;
-    let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, crate::content_store::SourceId)>)> {
+    let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, memo::Content)>)> {
     // The main thread's error or end stops the builder: no job it starts after is left running.
     let _stop = Stopper(&builder.stopped);
     // A chunk's file-local part: its memo hits replayed, its documents evaluated, its exports written to `x`.
@@ -4014,7 +4065,22 @@ fn run_observed(
     run_sources.extend(program_sources.iter().copied());
     if recording {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
-        store.record_corpus_stats(&canonical_root, &worker_cpu.3, started_ns).map_err(|e| Error::Plan(e.to_string()))?;
+        // Behind the run (decision 0104): a new content's source is written by then, by the tape's write queued before.
+        let (root, read) = (canonical_root.clone(), worker_cpu.3.clone());
+        store.write_back(
+            "the files' stats",
+            read.len() * 64,
+            Vec::new(),
+            Box::new(move |store| {
+                let mut ids = Vec::with_capacity(read.len());
+                for (path, stat, content) in read {
+                    if let Some(id) = content.resolve(store)? {
+                        ids.push((path, stat, id));
+                    }
+                }
+                store.record_corpus_stats(&root, &ids, started_ns)
+            }),
+        );
     }
     // Publish all source references before releasing the lease and starting collection (decision 0053).
     // The memo's relations, named and typed, so a SQL session can read the run's frames (docs/sql-access).
