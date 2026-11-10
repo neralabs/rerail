@@ -1836,8 +1836,6 @@ pub(super) struct TapeDoc {
     /// the fold kept, and the node API recognizes the other tokens from the source on demand
     /// (`tokens::TokenGrammar::sequence`). `None`: the records hold every node.
     tokens: Option<Arc<tokens::TokenGrammar>>,
-    /// Where `tokens` is set: the last records' children as recognized (`PartsCache`).
-    parts_cache: Arc<PartsCache>,
 }
 
 #[derive(Clone)]
@@ -2054,7 +2052,6 @@ impl TapeDoc {
             let mut doc = Self::restore_tree(source, grammar, &plain, lines, budget)?;
             doc.image = Arc::new(image.clone());
             doc.tokens = Some(automata);
-            doc.parts_cache = Arc::default();
             return Ok(doc);
         }
         let digest = source_digest(&source, budget)?;
@@ -2221,7 +2218,6 @@ impl TapeDoc {
             image: Arc::new(image.clone()),
             digest: Arc::default(),
             tokens: None,
-            parts_cache: Arc::default(),
         })
     }
 
@@ -2669,41 +2665,18 @@ pub(super) struct TapeNode<'a> {
     source: &'a str,
     /// Set where the records leave tokens out (`TapeDoc::tokens`).
     tokens: Option<&'a tokens::TokenGrammar>,
-    parts: &'a PartsCache,
     /// The record: this node's, or a token's parent's.
     index: u32,
     /// A token the records leave out, recognized from the source (RER-131 option B).
     token: Option<Tok>,
 }
 
-/// A named-only document's last records' children, as recognized (RER-131): a walk to a neighbour
-/// (`prev`, `next`, a leaf's descent) asks one parent again at every step, and recognizing its
-/// tokens each time made layout tests six times as costly as on the full tree. Shared by the
-/// document's clones; at most `PARTS_CACHED` records, the oldest replaced.
-#[derive(Default)]
-pub(super) struct PartsCache(parking_lot::Mutex<rustc_hash::FxHashMap<u32, Arc<Recognized>>>);
-const PARTS_CACHED: usize = 4096;
-
 /// A record's parts as recognized: in source order, and its stored children's places among them
-/// (by record, ascending).
+/// (by record, ascending). Recognized for each reader that asks and held only by it: nothing is
+/// cached (t30 §1); a walk among siblings holds its parent's (`Siblings`).
 pub(super) struct Recognized {
     items: Vec<tokens::Item>,
     children: Vec<(u32, u32)>,
-}
-
-impl PartsCache {
-    fn get(&self, record: u32) -> Option<Arc<Recognized>> {
-        self.0.lock().get(&record).cloned()
-    }
-    fn put(&self, record: u32, parts: Recognized) -> Arc<Recognized> {
-        let parts = Arc::new(parts);
-        let mut cached = self.0.lock();
-        if cached.len() == PARTS_CACHED {
-            cached.clear();
-        }
-        cached.insert(record, Arc::clone(&parts));
-        parts
-    }
 }
 
 /// A recognized token: its position among its parent's children, kind, field and span.
@@ -2810,13 +2783,10 @@ impl<'a> TapeNode<'a> {
             None => self.records().map(|child| tokens::Item::Child(child.index)).collect(),
         }
     }
-    /// A record's children with its recognized tokens, from the document's cache; `None` where
-    /// the record does not recognize (its stored children are all its children).
+    /// A record's children with its recognized tokens; `None` where the record does not
+    /// recognize (its stored children are all its children).
     fn recognized(&self) -> Option<Arc<Recognized>> {
         let grammar = self.tokens.filter(|_| self.recognizes())?;
-        if let Some(parts) = self.parts.get(self.index) {
-            return Some(parts);
-        }
         let kids: Vec<u32> = self.records().map(|child| child.index).collect();
         let described: Vec<_> = kids.iter().map(|&kid| self.describe(kid)).collect();
         let mut items = Vec::with_capacity(kids.len() * 2);
@@ -2839,7 +2809,7 @@ impl<'a> TapeNode<'a> {
                 tokens::Item::Token { .. } => None,
             })
             .collect();
-        Some(self.parts.put(self.index, Recognized { items, children }))
+        Some(Arc::new(Recognized { items, children }))
     }
     /// The part at `slot` of this record's children.
     fn part(&self, slot: usize, item: tokens::Item) -> Self {
@@ -2905,6 +2875,24 @@ impl<'a> TapeNode<'a> {
     /// start, or forward past zero-width ones that end at it. For a node with width, whose earlier
     /// siblings end at or before its start, that is one or two steps, not a scan from the
     /// parent's first child.
+    /// `walk_anchor`'s cursor where the parent (the root, for the root) recognizes tokens: its
+    /// parts, held while the walk lasts, and the anchor's slot among them. Sibling ends never
+    /// decrease, so the anchor (the first part that ends after this node's start) is found by
+    /// bisection.
+    fn siblings(&self) -> Option<Siblings<'a>> {
+        let holder = match self.parent() {
+            Some(parent) => parent,
+            None => *self,
+        };
+        let parts = holder.recognized()?;
+        let start = self.span().0;
+        let end = |item: &tokens::Item| match *item {
+            tokens::Item::Child(record) => holder.at(record).span().1,
+            tokens::Item::Token { end, .. } => end,
+        };
+        let anchor = parts.items.partition_point(|item| end(item) <= start);
+        (anchor < parts.items.len()).then_some(Siblings { holder, parts, at: anchor })
+    }
     fn walk_anchor(&self) -> Option<Self> {
         let start = self.span().0;
         let ends_after = |node: &Self| node.span().1 > start;
@@ -2924,6 +2912,21 @@ impl<'a> TapeNode<'a> {
                 return Some(anchor);
             }
         }
+    }
+}
+
+/// A walk among a recognizing parent's parts (`next_all`, `prev_all`): its parts, held by the
+/// walk, and the slot it is at.
+struct Siblings<'a> {
+    holder: TapeNode<'a>,
+    parts: Arc<Recognized>,
+    at: usize,
+}
+impl<'a> Siblings<'a> {
+    fn step(&mut self, step: isize) -> Option<TapeNode<'a>> {
+        self.at = self.at.checked_add_signed(step)?;
+        let item = *self.parts.items.get(self.at)?;
+        Some(self.holder.part(self.at, item))
     }
 }
 
@@ -3037,16 +3040,30 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.prev_sibling()
     }
     fn next_all(&self) -> impl Iterator<Item = Self> {
-        let mut next = self.walk_anchor().and_then(|anchor| anchor.next_sibling());
+        let mut siblings = self.siblings();
+        let mut next = match &siblings {
+            Some(_) => None,
+            None => self.walk_anchor().and_then(|anchor| anchor.next_sibling()),
+        };
         std::iter::from_fn(move || {
+            if let Some(siblings) = &mut siblings {
+                return siblings.step(1);
+            }
             let node = next?;
             next = node.next_sibling();
             Some(node)
         })
     }
     fn prev_all(&self) -> impl Iterator<Item = Self> {
-        let mut prev = self.walk_anchor().and_then(|anchor| anchor.prev_sibling());
+        let mut siblings = self.siblings();
+        let mut prev = match &siblings {
+            Some(_) => None,
+            None => self.walk_anchor().and_then(|anchor| anchor.prev_sibling()),
+        };
         std::iter::from_fn(move || {
+            if let Some(siblings) = &mut siblings {
+                return siblings.step(-1);
+            }
             let node = prev?;
             prev = node.prev_sibling();
             Some(node)
@@ -3158,7 +3175,6 @@ impl Doc for TapeDoc {
             kind_overrides: &self.kind_overrides,
             source: &self.source,
             tokens: self.tokens.as_deref(),
-            parts: &self.parts_cache,
             index: 0,
             token: None,
         }
