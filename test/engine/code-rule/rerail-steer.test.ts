@@ -1,6 +1,11 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ADAPTER_CAPABILITIES, RERAIL_HOSTS } from "../../../src/engine/adapter-contract.js";
+import { execFileSync } from "../../../src/engine/child-process.js";
+import { shellWord } from "../../../src/engine/command-line.js";
+import { gitBash } from "../../../src/engine/git.js";
 import {
   asLateSteer,
   headlineText,
@@ -15,6 +20,7 @@ import {
   STEER_MESSAGE_CHARS,
   STEER_NAME_CHARS,
   type SteerFinding,
+  type SteerShell,
 } from "../../../src/engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../../../src/engine/code-rule/steer-origin.js";
 import { installPack, installPackDirectory, thirdPartyPack } from "../../support/installed-packs.js";
@@ -64,11 +70,36 @@ describe("Rerail steer text", () => {
     expect(latitude({ kind: "edit" }, [finding({ mode: "log" })])).toBe("Recorded only.");
   });
 
-  it("on Windows has the declined line recorded through a pipe, which rerail.cmd's cmd.exe never parses", () => {
+  it("in Git Bash has the declined line recorded through a pipe, which Git Bash never rewrites as it does an argument", () => {
     const latitude = steerBlock({ kind: "edit" }, [finding()], "git-bash").split("\n").at(-1);
     expect(latitude).toBe("Fix it, or tell the user in one line why you won't and run `echo '<that line>' | rerail feedback ts:no-any -`.");
     expect(steerShell("claude-code", "win32")).toBe("git-bash");
     expect(steerShell("codex", "linux")).toBe("posix");
+  });
+
+  // Git Bash runs `rerail` as the sh launcher beside `rerail.cmd`, never the `.cmd` by its bare name. As that launcher
+  // starts node, Git Bash rewrites an argument that starts with `/` into a Windows path; a pipe it passes on as it is.
+  it.runIf(process.platform === "win32" && gitBash() !== undefined)("in Git Bash gets a line that starts with / to rerail as written, which the argument form does not", () => {
+    const folder = mkdtempSync(join(tmpdir(), "rerail-git-bash-"));
+    try {
+      // A stand-in for the sh launcher, which starts node with its words: what node got after `rerail`, and its stdin.
+      const report = 'let s = ""; process.stdin.on("data", d => { s += d; }).on("end", () => process.stdout.write(JSON.stringify([process.argv.slice(1), s])))';
+      writeFileSync(join(folder, "rerail"), `#!/bin/sh\nexec ${shellWord("posix", process.execPath)} -e '${report}' "$@"\n`);
+      const pathKey = Object.keys(process.env).find(key => key.toUpperCase() === "PATH") ?? "PATH";
+      const env = { ...process.env, [pathKey]: `${folder};${process.env[pathKey] ?? ""}`, MSYS_NO_PATHCONV: undefined, MSYS2_ARG_CONV_EXCL: undefined };
+      const line = "/v1 routes are exempt & stay";
+      const received = (shell: SteerShell): [string[], string] => {
+        const command = /run `(.*)`\.$/u.exec(steerBlock({ kind: "edit" }, [finding()], shell))![1]!.replace("<that line>", line);
+        // Test boundary: the stand-in's JSON report, asserted right after.
+        return JSON.parse(execFileSync(gitBash()!, ["-c", command], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })) as [string[], string];
+      };
+      expect(received("git-bash")).toEqual([["feedback", "ts:no-any", "-"], `${line}\n`]);
+      const [args] = received("posix");
+      expect(args.slice(0, 2)).toEqual(["feedback", "ts:no-any"]);
+      expect(args[2]).toMatch(/^[A-Za-z]:\/.+\/v1 routes are exempt & stay$/u);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
   });
 
   it("takes each coding agent's Windows shell from its capability profile, where Codex and Cursor name PowerShell", () => {

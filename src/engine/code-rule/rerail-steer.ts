@@ -106,9 +106,9 @@ export const FEEDBACK_COMMAND_HINT = "rerail feedback <rule-id> '<that line>'";
 export const FEEDBACK_STDIN_HINT = "rerail feedback <rule-id> - <<'LINE'";
 
 /**
- * The command in Git Bash on Windows, where `rerail` is `rerail.cmd` and cmd.exe parses its arguments again: a `&`, `|`,
- * `<` or `>` in the agent's sentence would split the command there. The line goes through a pipe instead, which cmd
- * never parses.
+ * The command in Git Bash on Windows. Git Bash runs `rerail` as the sh launcher, never `rerail.cmd`, and as the launcher
+ * starts node, Git Bash rewrites an argument that starts with `/` into a Windows path: the line `/v1 is exempt` would
+ * reach Rerail as `C:/Program Files/Git/v1 is exempt`. The line goes through a pipe instead, which it passes on as it is.
  */
 export const WINDOWS_FEEDBACK_COMMAND_HINT = "echo '<that line>' | rerail feedback <rule-id> -";
 
@@ -120,10 +120,11 @@ const POWERSHELL_UTF8 = "$OutputEncoding = [Text.UTF8Encoding]::new();";
 
 /**
  * How to record a declined line in PowerShell, which Codex and Cursor run on Windows: three lines, the agent's line in
- * a here-string between `@'` and `'@`, piped in as UTF-8, past cmd.exe as in Git Bash. A single-quoted line would end
- * at any quote in it, since PowerShell reads ' ‘ ’ ‚ ‛ all as single quotes, and the rest of the line would run as a
- * command. PowerShell reads nothing inside a here-string; it ends one only at a line that starts with a quote and `@`,
- * which the space before the line rules out. `rerail feedback` trims the space.
+ * a here-string between `@'` and `'@`, piped in as UTF-8 past `rerail.cmd`, whose arguments cmd.exe reads again and
+ * would split at a `&` or `|`. A single-quoted line would end at any quote in it, since PowerShell reads ' ‘ ’ ‚ ‛ all
+ * as single quotes, and the rest of the line would run as a command. PowerShell reads nothing inside a here-string; it
+ * ends one only at a line that starts with a quote and `@`, which the space before the line rules out. `rerail
+ * feedback` trims the space.
  */
 function powershellFeedback(rule: string): string {
   return `three PowerShell lines: \`${POWERSHELL_UTF8} @'\`, a space and the line, then \`'@ | rerail feedback ${rule} -\``;
@@ -132,7 +133,7 @@ function powershellFeedback(rule: string): string {
 /**
  * The shell a coding agent runs the commands a steer names in: sh or bash off Windows (`posix`); on Windows the one its
  * capability profile names (`windowsCommandShell`), Git Bash or PowerShell. Git Bash is set apart from `posix`
- * because there `rerail` is `rerail.cmd`, whose arguments cmd.exe parses again.
+ * because it rewrites an argument that starts with `/` into a Windows path before node reads it.
  */
 export type SteerShell = "posix" | "git-bash" | "powershell";
 

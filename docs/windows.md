@@ -322,13 +322,15 @@ OMP and Pi load Rerail as an extension and run no hook command; a steer writes t
 <details>
 <summary>The feedback command a steer names</summary>
 
-`rerail.cmd` passes its arguments through cmd.exe, which splits a command at a `&` or `|` in the agent's line, so on
-Windows the line goes on stdin. The steer takes the agent's shell from the session's coding agent's
-`windowsCommandShell` (`steerShell` in `src/engine/code-rule/rerail-steer.ts`):
+On Windows the agent's line goes on stdin in both shells, each for its own reason. The steer takes the agent's shell
+from the session's coding agent's `windowsCommandShell` (`steerShell` in `src/engine/code-rule/rerail-steer.ts`):
 
-- Git Bash: `echo '<that line>' | rerail feedback <rule-id> -`.
+- Git Bash: `echo '<that line>' | rerail feedback <rule-id> -`. Git Bash runs `rerail` as the sh launcher, never
+  `rerail.cmd`, and as the launcher starts node it rewrites an argument that starts with `/` into a Windows path: the
+  line `/v1 is exempt` would arrive as `C:/Program Files/Git/v1 is exempt`. It passes a pipe on as it is.
 - PowerShell: three lines, `$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, then a space and the line, then
-  `'@ | rerail feedback <rule-id> -`. PowerShell reads nothing inside the here-string, so no quote in the line has to
+  `'@ | rerail feedback <rule-id> -`. In PowerShell `rerail` is `rerail.cmd`, whose arguments cmd.exe reads again and
+  splits at a `&` or `|`. PowerShell reads nothing inside the here-string, so no quote in the line has to
   be written twice, though PowerShell reads all five quote characters as single quotes, and none can end the string
   early and run the rest as a command. The space keeps a line that starts with a quote and `@` from closing it, and
   `rerail feedback` trims it. The first line has Windows PowerShell 5.1, which every Windows 10 and 11 install ships,
