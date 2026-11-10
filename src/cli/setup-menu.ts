@@ -1,39 +1,47 @@
+import { readSync } from "node:fs";
 import type { ChoiceMenu } from "../runtime/repository-start.js";
 
 /**
  * Set-up's input at a real terminal: whole lines for the folder and pack prompts, single keys for a question's menu.
- * One reader owns stdin for the whole run, so switching between the two never leaves a second reader on it, and
- * what is typed ahead of a prompt waits in one buffer until the prompt reads it (the terminal holds what arrives
- * while stdin is paused).
+ * One reader owns stdin for the whole run, so switching between the two never leaves a second reader on it. A
+ * question takes only what is typed once it is on screen: what was typed while set-up was busy (the terminal holds
+ * it while stdin is paused) is dropped when the next question opens, so an Enter pressed early answers nothing.
  */
 
 /** A key the menu acts on; `other` is ignored. */
 export type MenuKey = "up" | "down" | "enter" | "interrupt" | "end" | "other" | { readonly digit: number };
 
+/** The keys an escape sequence's final character names; any other sequence is `other`. */
+const ESCAPE_KEYS: Readonly<Record<string, MenuKey>> = { A: "up", B: "down" };
+
+/** The keys one character is. Enter is CR in raw mode and LF in line mode. */
+const CHARACTER_KEYS: Readonly<Record<string, MenuKey>> = {
+  "\r": "enter",
+  "\n": "enter",
+  "\u0003": "interrupt",
+  "\u0004": "end",
+  k: "up",
+  j: "down",
+};
+
 /** The key at the start of `bytes`, and how many characters it takes; undefined while it may be incomplete. */
 export function readKey(bytes: string): { key: MenuKey; length: number } | undefined {
   if (bytes === "") return undefined;
-  if (bytes.startsWith("\u001b")) {
-    const sequence = /^\u001b[[O][0-9;]*[A-Za-z~]/u.exec(bytes);
-    if (sequence !== null) {
-      const final = sequence[0].at(-1);
-      return { key: final === "A" ? "up" : final === "B" ? "down" : "other", length: sequence[0].length };
-    }
-    // A lone Escape, or the start of a sequence whose rest has not arrived.
-    if (/^\u001b(?:[[O][0-9;]*)?$/u.test(bytes)) return undefined;
-    return { key: "other", length: 1 };
-  }
-  // Enter is CR in raw mode and LF when typed ahead in line mode; CRLF is one Enter.
+  if (bytes.startsWith("\u001b")) return readEscape(bytes);
+  // CRLF is one Enter.
   if (bytes.startsWith("\r\n")) return { key: "enter", length: 2 };
   const first = String.fromCodePoint(bytes.codePointAt(0) ?? 0);
-  const length = first.length;
-  if (first === "\r" || first === "\n") return { key: "enter", length };
-  if (first === "\u0003") return { key: "interrupt", length };
-  if (first === "\u0004") return { key: "end", length };
-  if (first === "k") return { key: "up", length };
-  if (first === "j") return { key: "down", length };
-  if (/^[1-9]$/u.test(first)) return { key: { digit: Number(first) }, length };
-  return { key: "other", length };
+  const key = /^[1-9]$/u.test(first) ? { digit: Number(first) } : CHARACTER_KEYS[first] ?? "other";
+  return { key, length: first.length };
+}
+
+/** The key at the start of `bytes`, which start with Escape; undefined while it may be incomplete. */
+function readEscape(bytes: string): { key: MenuKey; length: number } | undefined {
+  const sequence = /^\u001b[[O][0-9;]*[A-Za-z~]/u.exec(bytes)?.[0];
+  if (sequence !== undefined) return { key: ESCAPE_KEYS[sequence.at(-1) ?? ""] ?? "other", length: sequence.length };
+  // A lone Escape, or the start of a sequence whose rest has not arrived.
+  if (/^\u001b(?:[[O][0-9;]*)?$/u.test(bytes)) return undefined;
+  return { key: "other", length: 1 };
 }
 
 export type MenuAction =
@@ -97,6 +105,26 @@ function frameRows(frame: string, columns: number | undefined): number {
   return lines.reduce((rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line) / columns)), 0);
 }
 
+/** Node's TTY stdin as it is at run time: `_handle` is its libuv handle, which Node's types leave out. */
+type NodeTtyStream = TerminalInputStream & { readonly _handle?: { readonly fd?: unknown } };
+
+/**
+ * Reads and drops what the terminal holds for `input` until a read finds nothing (EAGAIN), the end, or an error,
+ * through the non-blocking descriptor Node reads a TTY stdin with. A stream without one holds nothing it can drop
+ * here: a stand-in, or a Windows console, whose handle has no descriptor.
+ */
+function dropHeldInput(input: TerminalInputStream): void {
+  const stream: NodeTtyStream = input;
+  const fd = stream._handle?.fd;
+  if (typeof fd !== "number" || fd < 0) return;
+  const chunk = Buffer.alloc(1024);
+  try {
+    while (readSync(fd, chunk) > 0);
+  } catch {
+    // EAGAIN: nothing left to read.
+  }
+}
+
 export class TerminalInput {
   private buffer = "";
   private ended = false;
@@ -112,6 +140,10 @@ export class TerminalInput {
     private readonly interrupt: () => void = () => process.kill(process.pid, "SIGINT"),
     /** The terminal's width, to count the rows a menu's wrapped lines take; undefined when unknown. */
     private readonly columns: () => number | undefined = () => undefined,
+    /** Drops what the terminal holds for stdin, with the terminal in raw mode: keys pressed while set-up was busy. */
+    private readonly dropHeld: () => void = () => {
+      dropHeldInput(input);
+    },
   ) {}
 
   /** Take `length` characters off the buffer. */
@@ -125,6 +157,17 @@ export class TerminalInput {
     if (!this.afterCr || this.buffer === "") return;
     this.afterCr = false;
     if (this.buffer.startsWith("\n")) this.buffer = this.buffer.slice(1);
+  }
+
+  /**
+   * Drops everything typed before a question is on screen: what is left of the last read, and what the terminal holds.
+   * Raw mode makes a line typed without Enter readable too, so the terminal is in it while it is drained.
+   */
+  private dropTypedAhead(raw: boolean): void {
+    this.buffer = "";
+    if (!raw) this.input.setRawMode(true);
+    this.dropHeld();
+    if (!raw) this.input.setRawMode(false);
   }
 
   private readonly onData = (chunk: string): void => {
@@ -158,6 +201,7 @@ export class TerminalInput {
    * undefined.
    */
   async line(prompt: string): Promise<string | undefined> {
+    this.dropTypedAhead(false);
     this.write(prompt);
     for (;;) {
       this.settle();
@@ -178,51 +222,66 @@ export class TerminalInput {
 
   /** The menu, in raw mode until an answer is taken: its index, or undefined on Ctrl-D or end of input. */
   async choose(menu: ChoiceMenu): Promise<number | undefined> {
-    let highlight = 0;
-    let frame = menu.frame(highlight);
-    this.write(frame);
     const restore = (): void => {
       this.input.setRawMode(false);
     };
     this.input.setRawMode(true);
+    this.dropTypedAhead(true);
     process.once("exit", restore);
     try {
-      for (;;) {
-        this.settle();
-        const read = readKey(this.buffer);
-        if (read === undefined) {
-          if (this.ended) {
-            this.write("\n");
-            return undefined;
-          }
-          await this.more();
-          continue;
-        }
-        this.consume(read.length);
-        const action = menuAction(read.key, highlight, menu.count);
-        if (action.type === "move" && action.highlight !== highlight) {
-          highlight = action.highlight;
-          // The cursor is on the frame's last row: up the rows above it, wrapped lines' included.
-          const rows = frameRows(frame, this.columns()) - 1;
-          frame = menu.frame(highlight);
-          this.write(`${redrawFrom(rows)}${frame}`);
-        } else if (action.type === "pick") {
-          this.write("\n");
-          return action.index;
-        } else if (action.type === "cancel") {
-          this.write("\n");
-          return undefined;
-        } else if (action.type === "interrupt") {
-          this.write("\n");
-          restore();
-          this.interrupt();
-          return undefined;
-        }
-      }
+      return await this.answer(menu, restore);
     } finally {
       restore();
       process.removeListener("exit", restore);
     }
+  }
+
+  /** Draws the menu and moves its cursor key by key until a key ends it; end of input cancels it. */
+  private async answer(menu: ChoiceMenu, restore: () => void): Promise<number | undefined> {
+    let highlight = 0;
+    let frame = menu.frame(highlight);
+    this.write(frame);
+    for (;;) {
+      const key = await this.nextKey();
+      const action: MenuAction = key === undefined ? { type: "cancel" } : menuAction(key, highlight, menu.count);
+      if (action.type === "none") continue;
+      if (action.type !== "move") return this.end(action, restore);
+      highlight = action.highlight;
+      frame = this.redraw(frame, menu.frame(highlight));
+    }
+  }
+
+  /** The next key, waiting for it; undefined at end of input. */
+  private async nextKey(): Promise<MenuKey | undefined> {
+    for (;;) {
+      this.settle();
+      const read = readKey(this.buffer);
+      if (read !== undefined) {
+        this.consume(read.length);
+        return read.key;
+      }
+      if (this.ended) return undefined;
+      await this.more();
+    }
+  }
+
+  /** Draws `next` over `shown` when they differ, and returns what is on screen. */
+  private redraw(shown: string, next: string): string {
+    if (next === shown) return shown;
+    // The cursor is on the frame's last row: up the rows above it, wrapped lines' included.
+    this.write(`${redrawFrom(frameRows(shown, this.columns()) - 1)}${next}`);
+    return next;
+  }
+
+  /** Ends the menu on its line: the answer taken, or undefined when cancelled or interrupted (terminal put back first). */
+  private end(action: Extract<MenuAction, { type: "pick" | "cancel" | "interrupt" }>, restore: () => void): number | undefined {
+    this.write("\n");
+    if (action.type === "pick") return action.index;
+    if (action.type === "interrupt") {
+      restore();
+      this.interrupt();
+    }
+    return undefined;
   }
 
   close(): void {
