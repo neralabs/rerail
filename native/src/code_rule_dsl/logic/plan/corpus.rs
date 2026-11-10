@@ -3885,8 +3885,21 @@ fn run_observed(
             match session.as_ref().map(|s| &s.cross) {
                 // A session's run evaluates the strata whose inputs changed, the others' rows kept (decision 0077).
                 Some(cell) => {
-                    // `RERAIL_MAINTAIN=count`: exact maintenance by counting, each rule's derivations held as its
-                    // support relation (`supports`), to compare with delete-and-rederive.
+                    // A session maintains its cross-file part from the rows the last run kept: each relation is
+                    // stored, not recomputed in its readers (decision 0099), so the next run has its old rows. An
+                    // inlined one left none, and every stratum over it was derived again (about 100 a step at O125,
+                    // against none stored). A relation the program declares `inline` stays so;
+                    // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare.
+                    let mut stored = cross.clone();
+                    let inline_too = std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on");
+                    for rel in cross.program.rules.iter().map(|r| r.head.rel.clone()).collect::<std::collections::BTreeSet<_>>() {
+                        if !inline_too && !cross.program.qualified(&rel, "inline") {
+                            stored.program.qualifiers.entry(rel).or_default().insert("no_inline".to_owned());
+                        }
+                    }
+                    let cross = stored;
+                    // Exact maintenance by counting (the default), each rule's derivations held as its support
+                    // relation (`supports`); `RERAIL_MAINTAIN=dred` compares with delete-and-rederive.
                     let counted;
                     let cross = if supports::counting() {
                         let (c, through, kept) = supports::supports(&cross);
@@ -4094,6 +4107,11 @@ fn run_observed(
                     let spike = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
                     let probes: Vec<String> = if spike { part.program.decls.keys().filter(|r| r.ends_with("__del") || r.ends_with("__ins")).cloned().collect() } else { Vec::new() };
                     keep.extend(probes.iter().cloned());
+                    // A delta made in the run: what a stratum's maintenance reads besides old rows.
+                    let in_run_delta = |r: &str| ["__plus", "__minus", "__del", "__ins", "__redo", "__lost", "__held"].iter().any(|x| r.ends_with(x)) || r.contains("__grp");
+                    if spike {
+                        keep.extend(part.program.decls.keys().filter(|r| in_run_delta(r)).cloned());
+                    }
                     step("bound; running");
                     if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() || std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
                         keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
@@ -4110,6 +4128,36 @@ fn run_observed(
                     if spike {
                         for (rel, why) in &maintained.again {
                             eprintln!("O125 derived-again {rel}: {why}");
+                        }
+                        // The strata an early cutoff would skip: every delta a stratum reads (`__plus`, `__minus`, its
+                        // own `__del`, `__ins`, an aggregate's groups, …) came out empty. "Given": a delta bound as an
+                        // input (an earlier phase's, or found by its documents). "No delta": derived again.
+                        let delta_rows: HashMap<&str, Option<usize>> = part
+                            .program
+                            .decls
+                            .keys()
+                            .filter(|r| in_run_delta(r))
+                            .map(|r| (r.as_str(), got.kept.contains(r.as_str()).then(|| held_rows(&db, &got, r, part.program.decls[r].len()).map(|v| v.len()).unwrap_or(0))))
+                            .collect();
+                        if let Ok((sccs, _)) = crate::code_rule_dsl::logic::front::strata(&part.program) {
+                            let (mut quiet, mut moving, mut none, mut given) = (0, 0, 0, 0);
+                            for scc in &sccs {
+                                let reads: BTreeSet<&str> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).flat_map(|r| r.body.iter().filter_map(|l| match l {
+                                    crate::code_rule_dsl::logic::front::Literal::Atom(a) | crate::code_rule_dsl::logic::front::Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
+                                    _ => None,
+                                })).filter(|r| delta_rows.contains_key(r)).collect();
+                                if reads.is_empty() {
+                                    none += 1;
+                                } else if reads.iter().any(|r| delta_rows[r].is_none()) {
+                                    given += 1;
+                                } else if reads.iter().all(|r| delta_rows[r] == Some(0)) {
+                                    quiet += 1;
+                                } else {
+                                    moving += 1;
+                                }
+                            }
+                            let empty = delta_rows.values().filter(|n| **n == Some(0)).count();
+                            eprintln!("O125 cutoff: {} strata: {quiet} read only empty deltas, {moving} a non-empty one, {given} a given delta, {none} no delta; {empty} of {} deltas empty", sccs.len(), delta_rows.len());
                         }
                         let (mut tdel, mut tins, mut tgone, mut tnew) = (0usize, 0usize, 0usize, 0usize);
                         let mut lines = Vec::new();

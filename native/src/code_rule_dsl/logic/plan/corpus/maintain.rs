@@ -119,8 +119,12 @@ fn unmaintainable(prog: &front::Program, scc: &BTreeSet<String>, rules: &[&Rule]
             return Some("its own old rows not kept");
         }
     }
-    // Counting (`supports`) has no witness of a row's level: a recursive stratum is derived again.
-    if super::supports::counting() && rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(&a.rel)))) {
+    // Counting (`supports`) has no witness of a row's level, so a recursive stratum keeps its rules and is maintained
+    // by delete-and-rederive below (`RERAIL_COUNT_RECURSIVE=again`: derived again, as the first comparison did).
+    if super::supports::counting()
+        && std::env::var("RERAIL_COUNT_RECURSIVE").is_ok_and(|v| v == "again")
+        && rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(&a.rel))))
+    {
         return Some("recursive, under counting");
     }
     for rule in rules {
@@ -185,6 +189,8 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut fresh: Vec<(String, String)> = Vec::new();
     // Relations of the strata maintained: their net deltas come from their own del, redo and ins.
     let mut maint: BTreeSet<String> = BTreeSet::new();
+    // Of those, the ones maintained exactly (counting): their deletes are final, nothing is derived again.
+    let mut exact_rels: BTreeSet<String> = BTreeSet::new();
     for scc in dirty {
         let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
         let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
@@ -206,6 +212,14 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
         maintained += 1;
         let exact = scc.iter().all(|r| super::supports::is_support(r));
+        // Under counting, a head whose every rule projects one of its supports (`h(x) :- h__sup0(x, _)`) is exact
+        // too: a row is gone when it lost a support and none is left in the new rows, a count reaching zero. Its
+        // rows that keep a support are neither deleted nor derived again, so they stay where they were.
+        let projection = !exact
+            && scc.len() == 1
+            && mine.iter().all(|r| matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && super::supports::is_support(&a.rel)));
+        // The rows that lost a derivation: deleted, or (a projection) checked for a support left first.
+        let lost = |h: &str| if projection { named(h, "lost") } else { named(h, "del") };
         if mine.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(&a.rel)))) {
             recursive += 1;
         }
@@ -288,7 +302,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                         other => old_lit(other),
                     })
                     .collect();
-                rules.push(Rule { head: Atom { rel: named(h, "del"), args: rule.head.args.clone(), neg: false, gated: false }, body: over });
+                rules.push(Rule { head: Atom { rel: lost(h), args: rule.head.args.clone(), neg: false, gated: false }, body: over });
                 // A negation's gain (`n__minus`) is a row gone, which makes `!n(..)` hold only when no other row
                 // matches: with a wildcard (`!found(c, a, _)`) another may. The negation is kept, over the new rows.
                 let ins: Vec<Literal> = rule
@@ -313,14 +327,30 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             if exact {
                 continue;
             }
+            // A projection's lost row is held while a support of it is left.
+            if projection {
+                let mut held = vec![atom(named(h, "lost"), rule.head.args.clone(), false)];
+                held.extend(rule.body.iter().cloned());
+                rules.push(Rule { head: Atom { rel: named(h, "held"), ..rule.head.clone() }, body: held });
+                continue;
+            }
             let mut red = vec![atom(named(h, "del"), rule.head.args.clone(), false)];
             red.extend(rule.body.iter().cloned());
             rules.push(Rule { head: Atom { rel: named(h, "redo"), ..rule.head.clone() }, body: red });
         }
+        let exact = exact || projection;
         for rel in scc {
             let width = part.program.decls[rel].len();
             let v = row(width);
             olds.insert(rel.clone());
+            if projection {
+                rules.push(Rule { head: Atom { rel: named(rel, "del"), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "lost"), v.clone(), false), atom(named(rel, "held"), v.clone(), true)] });
+                fresh.push((rel.clone(), named(rel, "lost")));
+                fresh.push((rel.clone(), named(rel, "held")));
+            }
+            if exact {
+                exact_rels.insert(rel.clone());
+            }
             rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "old"), v.clone(), false), atom(named(rel, "del"), v.clone(), true)] });
             rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "ins"), v.clone(), false)] });
             if !exact {
@@ -341,7 +371,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         let head = |suffix: &str| Atom { rel: named(rel, suffix), args: v.clone(), neg: false, gated: false };
         if maint.contains(rel) {
             // A maintained relation's net change, from its own overdeleted, rederived and inserted rows.
-            let body = if super::supports::is_support(rel) {
+            let body = if exact_rels.contains(rel) {
                 vec![atom(named(rel, "del"), v.clone(), false), atom(named(rel, "ins"), v.clone(), true)]
             } else {
                 vec![atom(named(rel, "del"), v.clone(), false), atom(named(rel, "redo"), v.clone(), true), atom(named(rel, "ins"), v.clone(), true)]
