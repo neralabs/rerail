@@ -1,4 +1,4 @@
-import { readSync } from "node:fs";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import type { ChoiceMenu } from "../runtime/repository-start.js";
 
 /**
@@ -105,26 +105,6 @@ function frameRows(frame: string, columns: number | undefined): number {
   return lines.reduce((rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line) / columns)), 0);
 }
 
-/** Node's TTY stdin as it is at run time: `_handle` is its libuv handle, which Node's types leave out. */
-type NodeTtyStream = TerminalInputStream & { readonly _handle?: { readonly fd?: unknown } };
-
-/**
- * Reads and drops what the terminal holds for `input` until a read finds nothing (EAGAIN), the end, or an error,
- * through the non-blocking descriptor Node reads a TTY stdin with. A stream without one holds nothing it can drop
- * here: a stand-in, or a Windows console, whose handle has no descriptor.
- */
-function dropHeldInput(input: TerminalInputStream): void {
-  const stream: NodeTtyStream = input;
-  const fd = stream._handle?.fd;
-  if (typeof fd !== "number" || fd < 0) return;
-  const chunk = Buffer.alloc(1024);
-  try {
-    while (readSync(fd, chunk) > 0);
-  } catch {
-    // EAGAIN: nothing left to read.
-  }
-}
-
 export class TerminalInput {
   private buffer = "";
   private ended = false;
@@ -140,10 +120,6 @@ export class TerminalInput {
     private readonly interrupt: () => void = () => process.kill(process.pid, "SIGINT"),
     /** The terminal's width, to count the rows a menu's wrapped lines take; undefined when unknown. */
     private readonly columns: () => number | undefined = () => undefined,
-    /** Drops what the terminal holds for stdin, with the terminal in raw mode: keys pressed while set-up was busy. */
-    private readonly dropHeld: () => void = () => {
-      dropHeldInput(input);
-    },
   ) {}
 
   /** Take `length` characters off the buffer. */
@@ -161,13 +137,25 @@ export class TerminalInput {
 
   /**
    * Drops everything typed before a question is on screen: what is left of the last read, and what the terminal holds.
-   * Raw mode makes a line typed without Enter readable too, so the terminal is in it while it is drained.
+   * The terminal hands over what it holds as soon as stdin reads, so stdin reads until a turn of the event loop brings
+   * nothing more. Reading through the stream never waits on a terminal that holds nothing, as a blocking read of a
+   * stdin libuv could not reopen would. Raw mode makes a line typed without Enter readable too.
    */
-  private dropTypedAhead(raw: boolean): void {
-    this.buffer = "";
+  private async dropTypedAhead(raw: boolean): Promise<void> {
+    this.listen();
     if (!raw) this.input.setRawMode(true);
-    this.dropHeld();
-    if (!raw) this.input.setRawMode(false);
+    try {
+      this.input.resume();
+      // The read starts on the next tick. Begun from an I/O callback, this turn ends before the terminal is polled.
+      await nextTurn();
+      do {
+        this.buffer = "";
+        await nextTurn();
+      } while (this.buffer !== "");
+    } finally {
+      this.input.pause();
+      if (!raw) this.input.setRawMode(false);
+    }
   }
 
   private readonly onData = (chunk: string): void => {
@@ -180,14 +168,17 @@ export class TerminalInput {
     this.wake?.();
   };
 
+  private listen(): void {
+    if (this.listening) return;
+    this.input.setEncoding("utf8");
+    this.input.on("data", this.onData);
+    this.input.on("end", this.onEnd);
+    this.listening = true;
+  }
+
   /** Waits for more input, reading stdin only meanwhile. */
   private async more(): Promise<void> {
-    if (!this.listening) {
-      this.input.setEncoding("utf8");
-      this.input.on("data", this.onData);
-      this.input.on("end", this.onEnd);
-      this.listening = true;
-    }
+    this.listen();
     await new Promise<void>(resolve => {
       this.wake = resolve;
       this.input.resume();
@@ -201,7 +192,7 @@ export class TerminalInput {
    * undefined.
    */
   async line(prompt: string): Promise<string | undefined> {
-    this.dropTypedAhead(false);
+    await this.dropTypedAhead(false);
     this.write(prompt);
     for (;;) {
       this.settle();
@@ -226,9 +217,9 @@ export class TerminalInput {
       this.input.setRawMode(false);
     };
     this.input.setRawMode(true);
-    this.dropTypedAhead(true);
     process.once("exit", restore);
     try {
+      await this.dropTypedAhead(true);
       return await this.answer(menu, restore);
     } finally {
       restore();
