@@ -84,3 +84,19 @@ class ExistingRepositoryTransportTests(unittest.TestCase):
                     replay.execute_repository(Path('/engine'),Path('/rule.rr'),root,dict(entryPoint='find_violations'),mode)
                 self.assertEqual(seen['root'],root)
                 self.assertEqual(seen['options'].get('inputFiles'),[] if mode=='snapshot' else None)
+
+class NativeInterpreterGuardTests(unittest.TestCase):
+    def test_even_a_swallowed_python_worker_attempt_fails_native_acceptance(self):
+        import os
+        def engine(command,**kwargs):
+            env=kwargs.get('env',os.environ)
+            worker=Path(env['PATH'].split(os.pathsep)[0])/'python3.13'
+            self.assertTrue(worker.is_file(),'Native execution must interpose the interpreter guard')
+            attempt=subprocess.Popen([str(worker),'-c','pass'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            attempt.communicate(timeout=5)
+            self.assertNotEqual(attempt.returncode,0)
+            # An engine that hides a failed worker must still fail the guard.
+            return subprocess.CompletedProcess(command,0,json.dumps(dict(diagnostics=[],programInputs=[])),'')
+        with patch.object(migration,'verify_source_cohort'),patch.object(migration,'verify_engine_artifact'),patch.object(replay.subprocess,'run',side_effect=engine):
+            with self.assertRaisesRegex(AssertionError,'Python'):
+                replay.execute_workspace(Path('/engine'),Path('/rule.rr'),[],dict(entryPoint='scan'))
