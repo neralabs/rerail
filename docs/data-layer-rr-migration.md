@@ -2851,3 +2851,27 @@ Caller-created Finding projections also remain open.
 
 The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
 The 100-port migration remains active. No Linear ticket was created.
+
+### Dispatch repository integration checkpoint, 2026-11-10
+
+The native repository contract now emits typed scope, metadata, facts, reporter, stream, and inventory rows.
+Its source corpus contains 43 temporary-repository cases. All 43 pass through the workspace API.
+The buffered snapshot replay passes 42 and fails one positive directory-root alias case.
+The failure remains visible in rr-dispatch-repository-progress-final0b7.json.gz. Dispatch remains a draft.
+
+Root cause: load answers use canonical filesystem paths, while existing snapshot documents retain their relative names.
+On this machine the caller root uses /var, and its canonical root uses /private/var.
+The loader correctly avoids reparsing the existing file, but its answer exposes no link to that document identity.
+The rule discovers the file and then loses its fact and positive finding.
+The next engine change will extend the existing batched load answer with the existing document key.
+It will retain caller paths and reuse the canonicalisation pass already needed to suppress duplicate loads.
+No path-prefix heuristic, duplicate parse, or per-node filesystem callback is proposed.
+
+Earlier failures also exposed directory requests whose demand key depended on the returned entry name,
+and an inventory text scope that had not also been included. A separate parent-key relation and an explicit include fixed these.
+The inventory tests now compare complete tuples, including duplicates, Unicode line breaks, NULs, and long entries.
+The snapshot harness now buffers every physical file and keeps directory descriptors as fixture metadata.
+Two transport tests verify that it retains out-of-scope files, aliases, ordering, and duplicates.
+
+Final has advanced to 883458148. This checkpoint precedes that merge and its native validation.
+The 100-port goal remains active. No new rule was admitted, and no Linear issue was created.

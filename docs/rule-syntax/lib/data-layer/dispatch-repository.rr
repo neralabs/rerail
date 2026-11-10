@@ -12,7 +12,7 @@ sdr_scope_parent(p) :- sdr_scope_site(p,_).
 // The demand key must not depend on the entry name returned by the reader.
 sdr_exists(p,n) :- sdr_scope_parent(p),sdr_scope_site(p,n),dir_entry(p,n,1).
 sdr_exists(p,n) :- sdr_scope_parent(p),sdr_scope_site(p,n),dir_metadata(p,n,1,_,_).
-pp_file(p) :- !env("data-layer.api","true"),sd_base(p),dir_metadata("impl/common/l2070_server_plan","base_server_plan.py",1,_,_).
+pp_file(p) :- sd_base(p),sdr_scope_parent(parent),sdr_scope_site(parent,"base_server_plan.py"),dir_metadata(parent,"base_server_plan.py",1,_,_).
 
 .violation DispatchRepositoryConfig(at: span,section: symbol,key: symbol,field_order: number,kind: symbol,value: symbol) code "SDR_CONFIG" "dispatch configuration"
 DispatchRepositoryConfig(@place("",0),s,k,o,t,v) :- option("entryPoint","_production_contract"),sdr_config(s,k,o,t,v).
@@ -38,6 +38,8 @@ DispatchProduction(@place(p,l),c,message) :- !option("entryPoint",_),sdr_report(
 .decl sdr_inventory_entry(ordinal: number,value: symbol)
 sdr_inventory_entry(i,e) :- pp_run(),doc(d,"scripts/allowlists/lint_serverplan_dispatch_architecture.txt",_),split_line(d,i,raw),sd_whitespace(w),
     e=@replace_all(raw,cat("^",w,"|",w,"$"),""),e!="",!prefix("#",e).
+.violation DispatchRepositoryInventory(at: span,ordinal: number,value: symbol) code "SDR_INVENTORY" "dispatch inventory entry"
+DispatchRepositoryInventory(@place("",0),i,e) :- option("entryPoint","_production_contract"),sdr_inventory_entry(i,e).
 .decl sdr_signature(value: symbol)
 sdr_signature(s) :- option("dispatchSignature",s).
 sdr_signature(s) :- !option("dispatchSignature",_),sdr_default_signature(s).

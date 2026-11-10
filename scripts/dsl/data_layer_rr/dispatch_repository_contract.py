@@ -141,6 +141,17 @@ def decode(module,native):
         inventory=canonical(inventory),stdout=stdout.replace(str(root),'$ROOT'),stderr=stderr.replace(str(root),'$ROOT'))
 
 
+def execute_case(engine,rule,files,options,mode):
+    from replay import execute_workspace,_execute
+    if mode=='workspace':return execute_workspace(engine,rule,files,options)
+    if mode!='snapshot':raise ValueError('Unknown execution mode')
+    def buffered(root):
+        # Directory entries describe the physical fixture. A snapshot contains
+        # file buffers; every file enters it, including files outside rule scope.
+        return dict(options,inputFiles=[f['path'] for f in files if (root/f['path']).is_file()])
+    return _execute(engine,rule,files,buffered,None,'corpus')
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command',choices=['source','native'],nargs='?',default='source')
@@ -159,9 +170,7 @@ def main():
     if args.command=='native':
         baseline=read_json(args.baseline);compare(baseline['sourcePin'],PIN);compare(baseline['passed'],True)
         compare(baseline['sourceSha256'],sha(path.read_bytes()));compare([r['input'] for r in baseline['cases']],corpus)
-        from replay import execute_native,execute_workspace
         from data_layer_audit.native_guard import codes
-        execute=execute_native if args.mode=='snapshot' else execute_workspace
         original_codes=codes({'serverplan_dispatch_architecture':module})
         def guard(frame,event,_arg):
             if event=='call' and frame.f_code in original_codes and not original_codes[frame.f_code][2]:
@@ -175,7 +184,7 @@ def main():
             try:
                 options=dict(entryPoint='_production_contract')
                 if 'signature' in case:options['dispatchSignature']=case['signature']
-                row['native']=execute(args.engine.absolute(),ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr',case['files'],options)
+                row['native']=execute_case(args.engine.absolute(),ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr',case['files'],options,args.mode)
                 row['actual']=decode(module,row['native']);row['passed']=row['actual']==row['expected']
             except Exception as error:row['error']=dict(type=type(error).__name__,detail=str(error))
             finally:sys.setprofile(None)
