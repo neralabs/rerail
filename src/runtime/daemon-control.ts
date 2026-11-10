@@ -724,29 +724,43 @@ export async function daemonEngineEndpoint(
 ): Promise<EngineEndpoint> {
   const home = defaultRerailHome(machine.env);
   const packageRoot = PACKAGE_ROOT;
-  const control = { home, packageRoot };
-  const options = { dev: false };
   let daemon: RunningDaemon | undefined;
-  try {
-    if (machine.env.RERAIL_AUTOSTART === "0") {
-      const lookup = await patientLookup(home, machine, deadline);
-      if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
-      daemon = lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
-    } else {
-      const start = replaceOtherPackage ? startDaemonForPackage : startDaemon;
-      daemon = (await start(control, options, machine)).daemon;
-    }
-  } catch (error) {
-    if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
-    const answered = await patientLookup(home, machine, deadline, error.lookup);
-    if (answered.status !== "running") throw error;
-    daemon = { state: answered.state, health: answered.health };
+  if (machine.env.RERAIL_AUTOSTART === "0") {
+    // The lookup has already waited out a busy daemon; one that still does not answer is not waited for again.
+    const lookup = await patientLookup(home, machine, deadline);
+    if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
+    daemon = lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
+  } else {
+    daemon = await startedDaemon({ home, packageRoot }, replaceOtherPackage, deadline, machine);
   }
   if (daemon === undefined) throw new Error("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, packageRoot))) {
     throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   }
   return engineEndpointOf(daemon.state);
+}
+
+/**
+ * The daemon a start brings up or finds running: this package's in place of another package's when
+ * `replaceOtherPackage` (`startDaemonForPackage`), else whichever runs (`startDaemon`). A start probes once and refuses
+ * to replace a daemon that is alive but busy; that one is waited for (`patientLookup`), and throws the start's refusal
+ * when it still does not answer.
+ */
+async function startedDaemon(
+  control: DaemonControl,
+  replaceOtherPackage: boolean,
+  deadline: number | undefined,
+  machine: DaemonMachine,
+): Promise<RunningDaemon> {
+  const start = replaceOtherPackage ? startDaemonForPackage : startDaemon;
+  try {
+    return (await start(control, { dev: false }, machine)).daemon;
+  } catch (error) {
+    if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
+    const answered = await patientLookup(control.home, machine, deadline, error.lookup);
+    if (answered.status !== "running") throw error;
+    return { state: answered.state, health: answered.health };
+  }
 }
 
 /**

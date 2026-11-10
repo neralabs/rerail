@@ -17,6 +17,7 @@ import {
   browserOpener,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
+  daemonEngineEndpoint,
   daemonMayHold,
   dashboardAccessLink,
   daemonUsesPackageRoot,
@@ -649,6 +650,35 @@ describe("a state file Windows left behind", () => {
     expect(daemonMayHold(DEAD_PID, windows(["other-pipe"]))).toBe(false);
     expect(daemonMayHold(DEAD_PID, windows([PIPE_NAME]))).toBe(true);
     expect(daemonMayHold(DEAD_PID, { ...windows([]), platform: "linux" })).toBe(true);
+  });
+});
+
+describe("the engine endpoint of a busy daemon", () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), "rerail-endpoint-"));
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  // RERAIL_AUTOSTART=1 starts a daemon, and the start finds this one alive; 0 starts none and looks it up.
+  it.each(["1", "0"])("waits for a daemon that is alive but not answering once (RERAIL_AUTOSTART=%s)", async autostart => {
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ url: "http://127.0.0.1:4791/" })));
+    const probes: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      probes.push(String(url));
+      throw new Error("connect ECONNREFUSED 127.0.0.1:4791");
+    }));
+    // A Linux daemon whose pid is alive and whose every health probe fails.
+    const machine = fakeMachine("linux", { env: { RERAIL_HOME: home, RERAIL_AUTOSTART: autostart }, kill: () => true });
+    await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(/alive but not answering/u);
+    // The first probe and the busy wait's: against a daemon that answers late they wait up to 2 s and 10 s, and a
+    // third probe would wait 10 s more.
+    expect(probes).toEqual(["http://127.0.0.1:4791/healthz", "http://127.0.0.1:4791/healthz"]);
   });
 });
 
