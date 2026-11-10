@@ -569,7 +569,11 @@ fn survivors(r: &Rule, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -
 /// empty and takes small batches from its first row, so the plan for a delta that is its whole relation (one that
 /// scans the other relations first) is never the right one for it.
 fn small_batches(rel: &str) -> bool {
-    ["__del", "__cand", "__chk", "__gone", "__held", "__lost", "__ins", "__redo"].iter().any(|s| rel.ends_with(s))
+    // `RERAIL_SMALL_WHOLE=dred`: DRed's and counting's relations take whole plans again, as before, to compare.
+    static DRED_WHOLE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_SMALL_WHOLE").is_ok_and(|v| v == "dred"));
+    let dred = ["__del", "__lost", "__ins", "__redo"];
+    let levels = ["__cand", "__chk", "__gone", "__held"];
+    levels.iter().any(|s| rel.ends_with(s)) || (!*DRED_WHOLE && dred.iter().any(|s| rel.ends_with(s)))
 }
 
 /// A levels stratum's relations of `h`, when `scc` has all five (`native::setfix::Levels`): cand, chk, held, gone,
@@ -2409,6 +2413,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) handed: BTreeSet<String>,
     /// The relations recomputed in their readers (decision 0099): no table and no engine rows hold them.
     pub(in crate::code_rule_dsl) inlined: BTreeSet<String>,
+    /// The maintained strata derived again by their input deltas' size (decision 0090 §4), chosen during the run.
+    pub(in crate::code_rule_dsl) again: usize,
 }
 
 /// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
@@ -4674,7 +4680,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
     let inlined;
     let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
-    let prog: &Program = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
+    let chose = super::profile::span(|| "inline or store".into());
+    let choice = if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None };
+    drop(chose);
+    let prog: &Program = match choice {
         Some((p, done)) => {
             super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
             inlined_rels = done.into_iter().collect();
@@ -4688,12 +4697,16 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                     }
                 }
             }
+            let _a = super::profile::span(|| "analysis of the inlined program".into());
             model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&inlined)).into();
             &inlined
         }
         None => prog,
     };
-    let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
+    let splitting = super::profile::span(|| "negation split".into());
+    let split_neg = if corpus { demand::split_negations(prog, &model) } else { None };
+    drop(splitting);
+    let prog: &Program = match split_neg {
         Some((p, demanded)) => {
             super::profile::decision("demand (decision 0048)", || {
                 format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
@@ -5213,6 +5226,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     outcome.nodes = nodes;
     outcome.handed = handed;
     outcome.inlined = inlined_rels;
+    outcome.again = again_chosen.iter().filter(|c| **c == Some(true)).count();
     Ok(outcome)
 }
 

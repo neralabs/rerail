@@ -446,9 +446,16 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     }
     // Each maintained stratum's form derived again (decision 0090 §4): its rules as given, and its deltas against
     // its old rows; what its maintained form makes (its pieces' heads, and its relations' deltas) is replaced.
-    let delta_heads: BTreeSet<String> = deltas.iter().filter(|r| maint.contains(*r)).flat_map(|r| [named(r, "minus"), named(r, "plus")]).collect();
+    // A maintained relation's minus and plus rules, by the relation: found once, not per stratum.
+    let delta_of: std::collections::HashMap<String, &str> = deltas.iter().filter(|r| maint.contains(*r)).flat_map(|r| [(named(r, "minus"), r.as_str()), (named(r, "plus"), r.as_str())]).collect();
+    let mut delta_rules: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    for (i, r) in rules.iter().enumerate() {
+        if let Some(&rel) = delta_of.get(&r.head.rel) {
+            delta_rules.entry(rel).or_default().push(i);
+        }
+    }
     for (scc, start, end, given) in groups {
-        let mine: Vec<&Rule> = rules[start..end].iter().chain(rules.iter().filter(|r| delta_heads.contains(&r.head.rel) && scc.iter().any(|s| r.head.rel == named(s, "minus") || r.head.rel == named(s, "plus")))).collect();
+        let mine: Vec<&Rule> = rules[start..end].iter().chain(scc.iter().filter_map(|s| delta_rules.get(s.as_str())).flatten().map(|&i| &rules[i])).collect();
         let owned: BTreeSet<String> = mine.iter().map(|r| r.head.rel.clone()).chain(scc.iter().cloned()).collect();
         let reads: BTreeSet<String> = mine
             .iter()
