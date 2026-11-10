@@ -742,11 +742,12 @@ export type HookDaemon = { status: "running"; endpoint: EngineEndpoint } | Exclu
 /**
  * The engine endpoint for a hook after a session's start, or why there is none. A daemon that is down is not started:
  * each tool call then costs one failed probe instead of an autostart that can outlast the coding agent's hook timeout
- * (design N11). A busy one is waited for (`patientLookup`). A healthy daemon from another package (an update installed
- * mid-session) is replaced as `daemonEngineEndpoint(true)` replaces it, so steering carries on with this package's engine.
+ * (design N11). A busy one is waited for (`patientLookup`), until `deadline` when the hook names one. A healthy daemon
+ * from another package (an update installed mid-session) is replaced as `daemonEngineEndpoint(true)` replaces it, so
+ * steering carries on with this package's engine.
  */
-export async function runningDaemonEngineEndpoint(): Promise<HookDaemon> {
-  const lookup = await patientLookup(defaultRerailHome());
+export async function runningDaemonEngineEndpoint(deadline?: number): Promise<HookDaemon> {
+  const lookup = await patientLookup(defaultRerailHome(), undefined, deadline);
   if (lookup.status !== "running") return lookup;
   const endpoint = await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT) ? engineEndpointOf(lookup.state) : await daemonEngineEndpoint(true);
   return { status: "running", endpoint };
@@ -754,18 +755,21 @@ export async function runningDaemonEngineEndpoint(): Promise<HookDaemon> {
 
 /** How long, in all, a hook's second health probe waits for a busy daemon to answer as itself. */
 const BUSY_DAEMON_WAIT_MS = 10_000;
-/** How long, in all, a hook waits for a busy daemon: the first probe and the busy wait after it. */
+/** How long, in all, a hook waits for a busy daemon from the event's arrival: the first probe and the busy wait after it. */
 export const HOOK_DAEMON_WAIT_MS = PROBE_TIMEOUT_MS + BUSY_DAEMON_WAIT_MS;
 
 /**
  * The daemon lookup a hook acts on. A daemon whose pid is alive but which missed the first probe's 2 s, as one does
- * while its one event loop runs an audit or a long garbage collection, is probed once more with up to
- * `BUSY_DAEMON_WAIT_MS`; only an answer from the recorded pid makes it running. Nothing, the capability included, goes
- * to its engine socket before that answer: a pid Windows reused, or a socket another process holds, is not the daemon.
+ * while its one event loop runs an audit or a long garbage collection, is probed once more, with up to
+ * `BUSY_DAEMON_WAIT_MS` or until `deadline` (epoch ms) when one is given; only an answer from the recorded pid makes it
+ * running. Nothing, the capability included, goes to its engine socket before that answer: a pid Windows reused, or a
+ * socket another process holds, is not the daemon.
  */
-async function patientLookup(home: string, first?: DaemonLookup): Promise<DaemonLookup> {
+async function patientLookup(home: string, first?: DaemonLookup, deadline?: number): Promise<DaemonLookup> {
   const lookup = first ?? await lookupDaemon(home);
-  return lookup.status === "unresponsive" ? await lookupDaemon(home, THIS_MACHINE, BUSY_DAEMON_WAIT_MS) : lookup;
+  if (lookup.status !== "unresponsive") return lookup;
+  const wait = deadline === undefined ? BUSY_DAEMON_WAIT_MS : deadline - Date.now();
+  return wait > 0 ? await lookupDaemon(home, THIS_MACHINE, wait) : lookup;
 }
 
 /**

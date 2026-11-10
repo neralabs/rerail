@@ -148,9 +148,25 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
       return performance.now() - started;
     };
     const finished = await Promise.all([toolCall("t1"), toolCall("t2"), toolCall("t3")]);
-    // One hook gives up on a silent daemon after about 14 s. Each waited under the session's lock, so the third
+    // One hook gives up on a silent daemon after about 12 s. Each waited under the session's lock, so the third
     // finished after about 38 s.
     expect(Math.max(...finished)).toBeLessThan(20_000);
+  });
+
+  it("gives up on a silent daemon 12 s after the event arrives, the start check's read of it included", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const common = { session_id: "silent-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const started = performance.now();
+    expect(await runClaudeHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "t1", tool_input: { file_path: "a.ts" } }, daemonPath)).toEqual({});
+    // The start check waited 2 s for the daemon, then the endpoint lookup waited its own 2 s and 10 s: about 14.3 s.
+    expect(performance.now() - started).toBeLessThan(13_000);
   });
 });
 

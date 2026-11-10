@@ -72,6 +72,20 @@ export interface HookOptions {
   kernelSocketPath?: string;
   /** Test seam: replaces the native model so hooks can run where the addon is absent. */
   embedder?: SemanticEmbedder;
+  /**
+   * Epoch ms at which the hook stops waiting for a busy daemon (`withDaemonDeadline`); without one it waits the 2 s probe
+   * and 10 s more from the endpoint lookup on.
+   */
+  daemonDeadline?: number;
+}
+
+/**
+ * `options` with the daemon deadline `HOOK_DAEMON_WAIT_MS` from now. A host's hook takes it as the event arrives, so the
+ * start check's read of the daemon (`hookRerailStarted`, up to 2 s) counts toward the one wait: a busy daemon held a
+ * hook 2 s for the start check and then 12 s more for the endpoint lookup.
+ */
+export function withDaemonDeadline(options: HookOptions): HookOptions {
+  return { daemonDeadline: Date.now() + HOOK_DAEMON_WAIT_MS, ...options };
 }
 
 /** No Rerail daemon could be reached: none answered and none could start, or its socket refused the hook. */
@@ -168,7 +182,7 @@ async function hookDaemon(options: HookOptions, startsSession: boolean): Promise
   try {
     const named = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET;
     if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named) };
-    return startsSession ? { status: "running", endpoint: await daemonEngineEndpoint(true) } : await runningDaemonEngineEndpoint();
+    return startsSession ? { status: "running", endpoint: await daemonEngineEndpoint(true) } : await runningDaemonEngineEndpoint(options.daemonDeadline);
   } catch (error) {
     throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error });
   }

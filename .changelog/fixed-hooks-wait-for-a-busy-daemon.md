@@ -1,1 +1,1 @@
-A hook no longer drops its event when the daemon is busy for a few seconds: it waits up to 10 seconds for the daemon to answer as itself, and sends nothing to a daemon that does not.
+A hook no longer drops its event when the daemon is busy for a few seconds: it waits up to 12 seconds for the daemon to answer as itself, and sends nothing to a daemon that does not. Hooks of one session that arrive together wait side by side, and a hook starts no second daemon beside a busy one.
