@@ -2715,3 +2715,18 @@ Next work for this ten-rule group:
 
 The global inventory remains two historically accepted ports, 93 drafts, and five absent translations.
 No full-repository cold benchmark was run. No Linear issues were created.
+
+### 2026-11-10 — Complete composition syntax exceptions on the current root engine
+
+Committed the pending syntax changes, then merged the fetched Final branch. It was already current at `ec3cfe1b7`.
+The registered root CLI is now `74bdcc6367bdc37c…`; its optimized build took 67.080 seconds.
+The native `syntax_exception` relation shares the cached parse used by `syntax_error`.
+Its separate Python library exposes exception kind, message, text, and start/end locations.
+Composition `.rr` constructs complete exception arguments. The host only decodes and constructs the passive exception.
+
+The [new progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-mcp-syntax-progress-finalec3.json.gz) validates 486 native executions.
+All 167 composition source cases and all 58 additional exception cases pass through both APIs.
+Five original composition source tests and seven shared MCP tests also pass through each API.
+The complete shared module still fails its application behavior probe; the receipt preserves that failure.
+All 29 syntax unit tests and 343 migration tooling tests pass.
+This closes the recorded syntax gap, without admitting composition or changing the nine accepted ports.

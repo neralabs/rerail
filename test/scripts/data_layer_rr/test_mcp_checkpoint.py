@@ -51,3 +51,33 @@ class McpCheckpointTests(unittest.TestCase):
     def test_new_progress_format_cannot_accept_the_old_syntax_failure(self):
         value=copy.deepcopy(self.value);value['format']='rerail.mcp-static-progress/v2'
         with self.assertRaisesRegex(ValueError,'Complete composition DTO differs'):validate(value)
+
+
+class McpSyntaxCheckpointTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with gzip.open(ROOT/'gate/data-layer/fixtures/host/data-layer-port/rr-mcp-syntax-progress-finalec3.json.gz','rt') as stream:cls.value=json.load(stream)
+
+    def test_syntax_complete_receipt_preserves_the_application_gap(self):
+        result=validate(self.value)
+        self.assertEqual((167,58,486),(result['compositionPassingPerAPI'],result['exceptionCasesPerAPI'],result['nativeExecutions']))
+        self.assertEqual(['Application behavior probe boundary'],result['pending'])
+        self.assertFalse(result['admitted'])
+
+    def test_exception_arguments_and_type_must_match(self):
+        for field in ['args','type']:
+            value=copy.deepcopy(self.value);case=value['exceptionReports'][0]['cases'][0]
+            case['actual']['error'][field]='different'
+            with self.assertRaisesRegex(ValueError,'Complete exception arguments differ'):validate(value)
+
+    def test_exception_cases_cannot_be_omitted(self):
+        value=copy.deepcopy(self.value);value['exceptionReports'][0]['cases'].pop()
+        with self.assertRaisesRegex(ValueError,'Exception cases omitted or repeated'):validate(value)
+
+    def test_exception_requires_native_execution(self):
+        value=copy.deepcopy(self.value);value['exceptionReports'][0]['cases'][0]['native']=[]
+        with self.assertRaisesRegex(ValueError,'Exception has no native execution'):validate(value)
+
+    def test_exception_cannot_use_another_engine(self):
+        value=copy.deepcopy(self.value);value['exceptionReports'][0]['engineSha256']='other'
+        with self.assertRaisesRegex(ValueError,'Mixed native cohort'):validate(value)

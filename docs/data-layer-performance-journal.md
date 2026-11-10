@@ -10688,3 +10688,28 @@ No port was admitted at this checkpoint.
 
 Fetched Final rerail shape: `ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2`.
 This commit is already an ancestor of the current branch. A merge follows this checkpoint.
+# Composition exception parity after the checkpoint, 2026-11-10
+
+Committed the pending native syntax work, then merged the fetched Final rerail shape branch.
+Git reported `Already up to date`; Final remains `ec3cfe1b7`.
+The new optimized root CLI is `74bdcc6367bdc37c…`, built from committed source in 67.080 seconds.
+Compilation is separate from the bounded acceptance runs.
+
+The composition rule now builds complete exception arguments in `.rr`, including the caller's filename.
+The host decodes those arguments and constructs the selected passive exception class.
+The new relation has its own Python library. Existing core declarations retain their previous bytes.
+This keeps existing admission receipts valid without weakening their consumed-program checks.
+
+All 167 composition source cases pass through snapshots and workspaces, including the formerly failing malformed parameter case.
+An additional 58 cases per API compare complete exception types and arguments with the pinned source linter.
+They cover the 54 native fixtures and four filenames with nesting, dollar signs, quotes, backslashes, and Unicode.
+All five original composition source tests and seven shared MCP tests pass through both APIs.
+The shared observer compares eight complete API results in each mode.
+All 29 syntax unit tests and all 343 migration tooling tests pass.
+
+The new `rr-mcp-syntax-progress-finalec3.json.gz` receipt validates 486 native executions.
+It preserves both full shared runs with the remaining application-probe rejection.
+The older receipt still records its actual syntax failure; the validator does not relabel that historical result.
+Composition remains a draft. The application behavior probe and the other unaccepted ports remain open.
+The inventory is still nine accepted ports, 86 drafts, and five absent translations.
+No full-repository cold benchmark ran. No Linear tickets were created.
