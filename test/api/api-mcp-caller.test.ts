@@ -24,6 +24,7 @@ import {
 } from "../../src/engine/index.js";
 import { MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { installPack } from "../support/installed-packs.js";
+import { shortSpelling } from "../engine/support/short-path.js";
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
 installPack("complexity");
@@ -56,7 +57,9 @@ describe("MCP callers and the agent guard", () => {
   let nestedKey: string;
 
   beforeEach(async () => {
-    root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-mcp-caller-")));
+    // Spelt as Rerail records a checkout: on Windows the native realpath gives each name's long form, where a temp
+    // folder can be spelt with 8.3 short names (`C:\Users\RUNNER~1\...`).
+    root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-mcp-caller-")));
     parent = gitRepository(join(root, "app"), "git@github.com:acme/app.git");
     mkdirSync(join(parent, "web", "src"), { recursive: true });
     // A repository inside another (a submodule's checkout) is its own repository.
@@ -128,6 +131,19 @@ describe("MCP callers and the agent guard", () => {
     const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
     const listed = await (await app.request("/api/repositories")).json() as { repositories: Array<{ repositoryKey: string }> };
     expect(listed.repositories.map(repository => repository.repositoryKey).sort()).toEqual([nestedKey, parentKey, "remote:github.com/acme/sibling"].sort());
+  });
+
+  it("resolves a caller folder spelt with 8.3 short names to the checkout and folder Rerail records", async context => {
+    const short = shortSpelling(join(parent, "web", "src"));
+    if (short === undefined) {
+      // Not Windows, or a volume with 8.3 names turned off: there is no short spelling to send.
+      context.skip();
+      return;
+    }
+    expect(await call("repository_context_get", {}, from(short))).toMatchObject({
+      status: 200,
+      result: { repository: { repositoryKey: parentKey }, checkout: { checkoutPath: parent, folder: "web/src" } },
+    });
   });
 
   it("resolves a caller folder to a nested checkout recorded after the folder was first seen", async () => {
