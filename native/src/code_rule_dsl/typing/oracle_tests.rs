@@ -777,6 +777,47 @@ fn the_analysis_phase_binds_a_library_generics_type_variables_fits_overloads_and
 }
 
 #[test]
+fn the_analysis_phase_fits_a_library_overload_by_its_keywords_and_its_literal_arguments_types() {
+    // calls_p3 over a miniature typeshed: `e.get("k", default=1)` is the overload with a `default` parameter, not the
+    // one that has room for its one positional argument; `conv(1)` is the overload declaring an `int`, `conv("s")`
+    // the one declaring a `str`; `wide(1)` fits `x: float`.
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-overloads");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\ntyping: 3.0-\nbox: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int: ...\nclass float: ...\nclass str: ...\n").unwrap();
+    std::fs::write(lib.join("typing.pyi"), "def overload(f: object) -> object: ...\n").unwrap();
+    std::fs::write(
+        lib.join("box.pyi"),
+        "from typing import overload\nclass A:\n    def run(self) -> int: ...\nclass B:\n    def run(self) -> int: ...\nclass Env:\n    @overload\n    def get(self, key: str, /) -> A: ...\n    @overload\n    def get(self, key: str, /, default: int) -> B: ...\n@overload\ndef conv(x: int) -> A: ...\n@overload\ndef conv(x: str) -> B: ...\n@overload\ndef wide(x: float) -> A: ...\n@overload\ndef wide(x: str) -> B: ...\n",
+    )
+    .unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "from box import Env, conv, wide\ndef f(e: Env) -> None:\n    e.get(\"k\", default=1).run()\n    conv(1).run()\n    conv(\"s\").run()\n    wide(1).run()\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    // The overloads each call fits (`lcfn`), by the call's line.
+    let text = format!("{}\n{JEDI_SPANS}\n.decl t_fit(c: node, f: symbol)\nt_fit(c, f) :- lcfn(c, _, f), struct__flag(f, \"overload\").\n.output t_fit\n", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
+    let starts: std::collections::HashMap<String, usize> =
+        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+    let mut fits: Vec<(u64, String)> = read("t_fit").lines().filter_map(|l| l.split_once('\t')).map(|(c, f)| (line(&src, starts[c]), f.to_owned())).collect();
+    fits.sort();
+    let want: Vec<(u64, String)> = [(3, "box.Env.get#1"), (4, "box.conv"), (5, "box.conv#1"), (6, "box.wide")].iter().map(|(l, f)| (*l, (*f).to_owned())).collect();
+    assert_eq!(fits, want, "{}", read("t_fit"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn the_analysis_phase_infers_a_library_constructors_type_variables_from_its_arguments() {
     // calls_p3 over a miniature typeshed: `Set(xs)`, where `__new__(cls, xs: Src[_T])` and `Lst(Src[_T])`, is a
     // `Set` of what xs holds. Of a workspace V (`xs: Lst[V]`), a loop over it binds V (`x.run()` targets V.run); of
@@ -974,6 +1015,44 @@ fn the_analysis_phase_gives_an_awaited_call_what_the_async_def_returns() {
 }
 
 #[test]
+fn the_analysis_phase_awaits_an_async_loops_next_value_and_an_async_withs_entered_value() {
+    // calls_p3 (t32 2.5): `async for x in s` binds x to the awaited `s.__aiter__().__anext__()`, `async with c as z` z
+    // to the awaited `c.__aenter__()`: the workspace's `async def`s' results, and a stub's `async def __aenter__(self)
+    // -> Self` the library instance itself. A plain `__anext__` that returns an awaitable leaves its target open.
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-async");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\nconn: 3.0-\ntyping: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int: ...\n").unwrap();
+    std::fs::write(lib.join("typing.pyi"), "class _SpecialForm: ...\nSelf: _SpecialForm\n").unwrap();
+    std::fs::write(lib.join("conn.pyi"), "from typing import Self\nclass Conn:\n    async def __aenter__(self) -> Self: ...\n    def close(self) -> None: ...\n").unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "from conn import Conn\nclass V:\n    def run(self) -> int: ...\nclass It:\n    async def __anext__(self) -> V: ...\nclass Seq:\n    def __aiter__(self) -> It: ...\nclass Cm:\n    async def __aenter__(self) -> V: ...\nclass Bare:\n    def __anext__(self): ...\nclass Raw:\n    def __aiter__(self) -> Bare: ...\nasync def f(s: Seq, c: Cm, k: Conn, r: Raw) -> None:\n    async for x in s:\n        x.run()\n    async with c as z:\n        z.run()\n    async with k as n:\n        n.close()\n    async for y in r:\n        y.run()\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
+    let starts: std::collections::HashMap<String, usize> =
+        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+    let at_line = |cell: &str| line(&src, starts[cell]);
+    let to: Vec<u64> = read("call_target").lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
+    let open: Vec<u64> = read("call_open").lines().map(|l| at_line(l.split('\t').next().unwrap())).collect();
+    assert!(to.contains(&16) && to.contains(&18), "x.run() and z.run() through the awaited values: {}", read("call_target"));
+    assert!(!open.contains(&16) && !open.contains(&18) && !open.contains(&20), "open at lines {open:?}");
+    assert!(open.contains(&22), "y's `__anext__` returns no declared class: {}", read("call_open"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_session_maintains_the_typing_phase_from_struct_s_delta() {
     // P2 (types.rr) in a session: an edit to one workspace file changes struct's rows for that file only, and the
     // typing phase's run takes that delta: it maintains the strata the delta reaches, not every stratum, and its
@@ -1016,36 +1095,35 @@ rtype(f, a, d) :- types__rtype(f, a, d).
             v
         }).collect()
     };
-    let types = |r: &corpus::Report| -> (Option<(usize, usize)>, (usize, usize, usize), Option<String>) {
+    let types = |r: &corpus::Report| -> (Option<(usize, usize)>, (usize, usize, usize)) {
         let p = r.phase_runs.iter().find(|p| p.name == "types").expect("the typing phase ran");
-        (p.report.cross_strata, p.report.cross_maintained, p.full_because.clone())
+        (p.report.cross_strata, p.report.cross_maintained)
     };
     session::start(&dir.join("session")).unwrap();
     let cold = run();
     println!("P2 cold: {:?}", types(&cold));
     std::fs::write(ws.join("b.py"), "from a import A\nclass B(A):\n    def go(self) -> str: ...\nclass C(B): ...\n").unwrap();
     let edited = run();
-    let (strata, maintained, why) = types(&edited);
-    println!("P2 edited: strata {strata:?}, maintained {maintained:?}, in full because {why:?}");
+    let (strata, maintained) = types(&edited);
+    println!("P2 edited: strata {strata:?}, maintained {maintained:?}");
     let kept = dump();
     assert!(kept[1].iter().any(|l| l == "b.C\ta.A"), "C's ancestors through the edit: {:?}", kept[1]);
-    // A second edit, then none: each run's exports are kept by the granules that changed (`keep_in_session`), and
-    // the unchanged run reads them back from the phase store.
+    // A second edit, then none: the phase's run keeps its relations as the session keeps any run's, so the
+    // unchanged run derives no stratum again.
     std::fs::write(ws.join("a.py"), "class A:\n    def run(self) -> int: ...\nclass Z: ...\n").unwrap();
     let _ = run();
     let second = dump();
     assert!(second[1].iter().any(|l| l == "b.C\ta.A") && second[0].iter().any(|l| l.starts_with("a\tZ\t")), "{second:?}");
     let unchanged = run();
-    let how: Vec<String> = unchanged.phase_runs.iter().map(|p| format!("{} {:?} {:?} {:?}", p.name, p.report.cross_strata, p.full_because, p.report.phases.iter().map(|x| x.0).collect::<Vec<_>>())).collect();
-    assert!(unchanged.phase_runs.iter().any(|p| p.name == "types" && p.report.cross_strata.is_none()), "the typing phase kept as it was: {how:?}");
-    assert_eq!(dump(), second, "read back from the phase store");
+    let how: Vec<String> = unchanged.phase_runs.iter().map(|p| format!("{} {:?} {:?}", p.name, p.report.cross_strata, p.report.phases.iter().map(|x| x.0).collect::<Vec<_>>())).collect();
+    assert!(unchanged.phase_runs.iter().any(|p| p.name == "types" && p.report.cross_strata.is_none_or(|(ran, _)| ran == 0)), "the typing phase kept as it was: {how:?}");
+    assert_eq!(dump(), second, "the unchanged run's exports");
     let full = session::full(run);
     assert_eq!(second, dump(), "the session's maintained typing phase against a full run");
     let _ = full;
     let (run_, all) = strata.expect("the typing phase's run is a session's");
     assert!(maintained.0 > 0, "strata maintained from struct's delta: {maintained:?}");
     assert!(run_ < all, "the edit runs the strata its delta reaches, {run_} of {all}");
-    assert_eq!(why, None, "maintained by the session, not run in full");
     let types_local = edited.phase_runs.iter().find(|p| p.name == "types").unwrap().report.phases.iter().find(|p| p.0 == "local").map_or(0.0, |p| p.1 + p.2);
     assert!(types_local < 0.05, "a phase reading no document has no file-local part: {types_local:.2} s");
     session::stop();
@@ -1501,10 +1579,8 @@ ats(s, p, l) :- struct__at(s, p, l).
         let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
         let rss = p.report.phases.iter().map(|x| x.3).fold(0.0, f64::max);
         println!("PHASE {what}: struct {cpu:.1} s CPU (main thread), peak RSS {rss:.0} MB, {} workspace files; modules {}, definitions {}, imports {}", p.report.files, count("modules"), count("defs"), count("imports"));
-        println!("PHASE {what}: freshness: definitions {} ({} changed, {} gone); granules {} ({} changed, frontier {}, unattributed {}); bookkeeping {:.2} s",
-            p.units.0, p.units.1, p.units.2, p.granules.0, p.granules.1, p.granules.2, p.granules.3, p.bookkeeping);
-        let changed: Vec<String> = p.exports.iter().filter(|e| e.2 + e.3 > 0).map(|(rel, n, add, gone)| format!("{rel} {n} (+{add} -{gone})")).collect();
-        println!("PHASE {what}: exports changed: {}; how: {}", if changed.is_empty() { "none".to_owned() } else { changed.join(", ") }, p.full_because.as_deref().map_or_else(|| p.report.phases.first().map_or("", |x| x.0).to_owned(), |w| format!("in full: {w}")));
+        let rows: Vec<String> = p.exports.iter().map(|(rel, n)| format!("{rel} {n}")).collect();
+        println!("PHASE {what}: exports: {}; strata {:?}, maintained {:?}", rows.join(", "), p.report.cross_strata, p.report.cross_maintained);
         let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
         println!("PHASE {what}: parts: {}", parts.join(", "));
         let outer: Vec<String> = r.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
@@ -1603,9 +1679,9 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         for p in &r.phase_runs {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
             let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
-            let changed: usize = p.exports.iter().map(|e| e.2 + e.3).sum();
-            println!("T28 {what}: {} {cpu:.2} s CPU, bookkeeping {:.2} s; strata {:?}, maintained {:?}; export rows changed {changed}; {}; parts: {}",
-                p.name, p.bookkeeping, p.report.cross_strata, p.report.cross_maintained, p.full_because.as_deref().map_or("kept or maintained".to_owned(), |w| format!("full run: {w}")), parts.join(", "));
+            let rows: usize = p.exports.iter().map(|e| e.1).sum();
+            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?}, maintained {:?}; export rows {rows}; parts: {}",
+                p.name, p.report.cross_strata, p.report.cross_maintained, parts.join(", "));
         }
         println!("T28 {what}: the reader's run: {:.2} s", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>());
     };

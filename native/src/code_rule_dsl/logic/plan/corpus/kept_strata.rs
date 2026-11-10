@@ -34,9 +34,14 @@ const FLUSH_VALUES: usize = 1 << 22;
 
 /// The cross-file fact space of the corpus at `root`.
 pub(in crate::code_rule_dsl) fn space(root: &Path) -> [u8; 32] {
+    part_space(root, "cross")
+}
+
+/// The fact space of a part of the run over `root` (`cross`, `cone`: the cone of requests answered in the fixpoint).
+pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] {
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let mut h = Sha256::new();
-    h.update(b"rerail.space/v1\0cross\0");
+    h.update(format!("rerail.space/v1\0{part}\0").as_bytes());
     h.update(root.to_string_lossy().as_bytes());
     h.finalize().into()
 }

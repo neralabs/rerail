@@ -66,21 +66,23 @@ exports against a full run; CPU and instructions retired, cold, warm and after t
 |---|---|---|
 | 2.1 | **P1 exports annotations as structure**, read off each annotation's own tree in the file: `struct__ann(m, e, a, h)` (annotation `e` in module `m` has alternative `a`, head `h`) and `struct__annarg(m, a, j, x)` (its j-th argument). P2's `alt`, `head_of`, `garg`, `galt`, `pbase`, `cbody` and `cfunc` join on them; no text is split. A quoted annotation's text is still split at `|` in P1 until its string is parsed (a cache by its text, 0103) | **done.** Over the 84-file corpus with typeshed: every row P2 lost was a misreading (an argument's union taken for an alternative: `Iterable[bytes \| bytearray]` gave `bytearray`); 52 rows gained (`pgen` +13, `rcarg` +35, `rgen` +4), 40 fewer open returns; workspace resolution unchanged (4438 of 4867). P1 +1.9 s CPU (6.8 to 8.7 s, load 44 on 18 cores), P2 unchanged (2.5 s) |
 | 2.2 | `__all__`: P1 exports a module's `__all__` (`=` and `+=`, not in a dead branch) as `struct__all(m, x)`; P2's `import *` binds what it lists, or with none the public names | **done.** `phase_tests::types_resolves_…`: a listed private name bound, an unlisted one not. P3 over the 84 files: 6,410 agree before and after (and after 2.1), 38–40 s CPU |
-| 2.3 | Overloads by keyword: `lfit` by the keyword names a call passes, against `struct__param`'s names | `os.environ.get(k, default=d)` picks its overload in a test |
-| 2.4 | Overloads by argument type, where the argument's class is known and the parameter declares one | a test; no answer worse on the corpus |
-| 2.5 | Async: P1 flags a library `async def`; `async for` and `async with` as implicit calls | tests for each |
-| 2.6 | Nested runs' profile: a rise on a phase's worker is charged to the phase's span | a profiled P3 run shows P2's workers under P2 |
+| 2.3 | Overloads by keyword: `lfit` by the keyword names a call passes, against `struct__param`'s names | **done** (with 2.4): a library overload whose parameters lack a keyword the call names, and take no `**kwargs`, is refused (`lkwbad`); P1 gives untyped defaults a `param` row. Oracle test `…fits_a_library_overload_by_its_keywords_and_its_literal_arguments_types` |
+| 2.4 | Overloads by argument type, where the argument's class is known and the parameter declares one | **done**, for literal arguments: a literal's class against a parameter that names only classes, none a protocol, with the numeric tower (`ltybad`). P3: 6,410 agree before and after; 47 calls no longer left open beside their answer. The lines counted as moved to "no edge" (2) each close a call jedi answers nothing for, beside a miss that was there before (`_build_cross_branch_base_spec`) |
+| 2.5 | Async: P1 flags a library `async def`; `async for` and `async with` as implicit calls | **done.** `async for x in s` binds x to the awaited `s.__aiter__().__anext__()`, `async with c as z` z to the awaited `c.__aenter__()` (`iawait`): a workspace `async def`'s result, a stub `async def`'s declared class or `Self`; a plain method returning an awaitable stays open. Oracle test `…awaits_an_async_loops_next_value_and_an_async_withs_entered_value` |
+| 2.6 | Nested runs' profile: a rise on a phase's worker is charged to the phase's span | **done.** The pool's jobs open their span under the span open where they were started (`threads`, `profile::span_at`); a phase's run is a span. A cold P3 run shows P1 11.1 s and P2 3.6 s CPU, their chunk jobs under them |
 
 ### Stage 3. A phase's state is relations (this branch)
 
 | Step | Change | Done when |
 |---|---|---|
-| 3.1 | **The run record goes.** A phase's nested run keeps its strata as any run does (the kept strata, or the session). An unchanged run is a run whose inputs have no change: every stratum clean, nothing derived | `phase_record`, `export_versions`, `store_epoch` and `unchanged_phase` gone; off the 0103 lists |
-| 3.2 | **A phase's per-document rows are a cache.** `.owner` and `phase_granules` become two rules in `struct.rr`: `doc_key(d, h)` from each document's content digest, and the per-document exports from it | `phase_granules` and `.owner` gone; P2 over the O125 edits gives the same exports |
-| 3.3 | `Session::phase_rows` (6afe7e79f) goes: the session's kept relations are the phase's exports | the field gone |
-| 3.4 | The cones (`phase_cones`) go with 3.1 | the table gone |
+| 3.1 | **The run record goes.** A phase's nested run keeps its strata as any run does (the kept strata, or the session). An unchanged run is a run whose inputs have no change: every stratum clean, nothing derived | **done.** The phase store is gone: a phase is its nested run, whose relations are kept as any run's (memo, kept strata, session); its exports are handed to the reader as input rows, whose delta the reader's run takes as any input's (by its documents, or the diff rules). Off the 0103 and 0104 lists |
+| 3.2 | **A phase's per-document rows are a cache.** `.owner` and `phase_granules` become two rules in `struct.rr`: `doc_key(d, h)` from each document's content digest, and the per-document exports from it | **done, without a cache:** struct's file-local rows are per document in its run's per-file memo already, so `.owner`, `.positions` and `phase_granules` go with no rule in their place |
+| 3.3 | `Session::phase_rows` (6afe7e79f) goes: the session's kept relations are the phase's exports | **done.** `phase_rows` and `phased` (the versions bound by the session) gone |
+| 3.4 | The cones (`phase_cones`) go with 3.1 | **done** |
 
-3.2 needs caches in the file-local part (5.1), since `struct.rr`'s exports are per document.
+What this costs until K4 (t33): a phase's export statistics are measured from its rows each run, no longer patched by
+version deltas (0096 §3), and an unchanged run runs the phase's nested run (all its parts kept) instead of reading a
+record.
 
 ### Stage 4. P2 maintained across processes
 

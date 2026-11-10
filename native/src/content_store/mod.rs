@@ -23,6 +23,7 @@ mod derivation;
 mod frames;
 mod facts_memo;
 mod objects;
+pub mod journal;
 pub mod observe;
 pub use objects::{ResidentFrames, TapeFrame};
 mod postings;
