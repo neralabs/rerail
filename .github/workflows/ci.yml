@@ -716,6 +716,17 @@ jobs:
           TMP: ${{ runner.temp }}
         run: npm test -- --shard=${{ matrix.shard }}/2
 
+      # The integration job runs on Linux only. This file replays a Claude Code session through the built hook as
+      # Claude Code runs it on Windows (dist/harness/hook-launcher.js), against a daemon of this build, including a
+      # session VS Code opens with a lower-case `c:`; it needs the engine and dist/ the steps above made, and takes
+      # about a minute, so one shard runs it.
+      - name: Claude Code hook integration test
+        if: matrix.shard == 1
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: npx vitest run integration/claude-hook-rules.test.ts
+
   # The dashboard in Chromium over seeded scenario databases (e2e/README.md). Each worker runs the daemon from source
   # (`--dev` serves ui/ as committed), which needs the build's native engine. Runs when the e2e filter matches.
   ui-e2e:
