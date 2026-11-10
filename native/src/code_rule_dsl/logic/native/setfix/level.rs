@@ -51,13 +51,13 @@ pub fn on() -> bool {
     *ON.get_or_init(|| std::env::var("RERAIL_LEVEL_JOINS").map_or(true, |v| v != "off"))
 }
 
-/// A level's batch, running until the first seed that reads it waits.
-struct Wave {
+/// A level's batch of seed joins, running until the first seed that reads it waits.
+struct LevelBatch {
     running: Mutex<Option<rerail_accel::exec::Running>>,
     outs: OnceLock<std::result::Result<Vec<Output>, String>>,
 }
 
-impl Wave {
+impl LevelBatch {
     fn out(&self, i: usize) -> Result<Vec<(u32, u32)>> {
         let outs = self.outs.get_or_init(|| {
             let running = self.running.lock().unwrap().take();
@@ -78,7 +78,7 @@ impl Wave {
 
 /// A seed's pairs, pending: the relations they were made from and its left rows.
 struct Pending {
-    wave: Arc<Wave>,
+    batch: Arc<LevelBatch>,
     at: usize,
     left: (u64, usize, usize),
     right: (u64, usize, usize),
@@ -144,6 +144,8 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
     let mut syms = Interner::for_loading(&symbols);
     let mut launches = Vec::new();
     let mut pending = Vec::new();
+    let (gate, opener) = rerail_accel::Gate::new();
+    let mut fills: Vec<Fill> = Vec::new();
     for spec in specs {
         // Every atom a native relation's: the spec reads nothing the level makes, nor an input not loaded yet.
         let atoms = spec.items.iter().filter_map(|i| match i {
@@ -171,44 +173,65 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
             continue;
         }
         let col_of = |s: usize| b0.iter().find(|&&(_, b)| b == s).map(|&(c, _)| c).expect("a slot the first atom binds");
-        let left: Keys = slot_keys
-            .iter()
-            .map(|&(_, s)| {
-                let c = col_of(s);
-                Arc::<[i64]>::from(lids.iter().map(|&id| r0.at(id as usize).read().at(c)).collect::<Vec<i64>>())
-            })
-            .collect::<Vec<_>>()
-            .into();
-        let right: Keys = slot_keys
-            .iter()
-            .map(|&(c, _)| Arc::<[i64]>::from((0..r1.len()).map(|id| r1.at(id).read().at(c)).collect::<Vec<i64>>()))
-            .collect::<Vec<_>>()
-            .into();
+        // Staged: the columns' sizes are known now, their values are written after the batch is begun (below).
+        let mut stage = |n: usize, cols: Vec<(Arc<InRel>, Option<Vec<u32>>, usize)>| -> Result<Keys> {
+            let mut out = Vec::with_capacity(cols.len());
+            for (rel, ids, c) in cols {
+                let (col, w) = gate.column(n).map_err(err)?;
+                fills.push(Fill { w, rel, ids, c });
+                out.push(col);
+            }
+            Ok(out.into())
+        };
+        let left: Keys = stage(lids.len(), slot_keys.iter().map(|&(_, s)| (Arc::clone(r0), Some(lids.clone()), col_of(s))).collect())?;
+        let right: Keys = stage(r1.len(), slot_keys.iter().map(|&(c, _)| (Arc::clone(r1), None, c)).collect())?;
         // The right's id in the space: the relation and its key columns.
         let right_id = fx(&format!("{} {:?}", r1.uid.0, slot_keys.iter().map(|&(c, _)| c).collect::<Vec<_>>()));
         launches.push(Launch::new(Kernel::Join { left, right, right_id: Some(right_id), by: JoinBy::Probe }));
-        pending.push((key, Pending { wave: Arc::new(Wave { running: Mutex::new(None), outs: OnceLock::new() }), at: launches.len() - 1, left: ident(r0), right: ident(r1), lids }));
+        pending.push((key, Pending { batch: Arc::new(LevelBatch { running: Mutex::new(None), outs: OnceLock::new() }), at: launches.len() - 1, left: ident(r0), right: ident(r1), lids }));
     }
     if launches.is_empty() {
         return Ok(0);
     }
     let n = launches.len();
     SENT.fetch_add(n as u64, Ordering::Relaxed);
-    let running = crate::code_rule_dsl::logic::lanes::executor().begin(Batch(launches)).map_err(err)?;
-    let wave = Arc::new(Wave { running: Mutex::new(Some(running)), outs: OnceLock::new() });
+    let ex = crate::code_rule_dsl::logic::lanes::executor();
+    let running = ex.begin_as("level joins", Batch(launches)).map_err(err)?;
+    // The values, while the lanes commit and schedule: then the gate opens, and the device starts (decision 0100
+    // §10). An error or a panic here opens it too (the opener's drop), so no lane waits for ever.
+    ex.phase(rerail_accel::Lane::Cpu, "level joins: fill (after begin)", || {
+        for f in &mut fills {
+            let v = f.w.values();
+            match &f.ids {
+                Some(ids) => ids.iter().zip(v.iter_mut()).for_each(|(&id, o)| *o = f.rel.at(id as usize).read().at(f.c)),
+                None => v.iter_mut().enumerate().for_each(|(id, o)| *o = f.rel.at(id).read().at(f.c)),
+            }
+        }
+    });
+    drop(fills);
+    opener.open();
+    let batch = Arc::new(LevelBatch { running: Mutex::new(Some(running)), outs: OnceLock::new() });
     let mut all = PENDING.lock().unwrap();
     for (key, mut p) in pending {
-        p.wave = Arc::clone(&wave);
+        p.batch = Arc::clone(&batch);
         all.insert(key, p);
     }
     Ok(n)
+}
+
+/// A staged column's values to write: rows `ids` of `rel` (all its rows when `None`), column `c`.
+struct Fill {
+    w: rerail_accel::col::Writer,
+    rel: Arc<InRel>,
+    ids: Option<Vec<u32>>,
+    c: usize,
 }
 
 /// The pairs of `j`, if a level's batch made them from the relations it reads now.
 pub fn take(j: &super::JoinRule) -> Result<Option<Paired>> {
     let Some(p) = PENDING.lock().unwrap().remove(&j.spec) else { return Ok(None) };
     let Some((r0, r1, ..)) = qualifies(j) else { return Ok(None) };
-    let pairs = p.wave.out(p.at)?;
+    let pairs = p.batch.out(p.at)?;
     if ident(r0) != p.left || ident(r1) != p.right {
         return Ok(None);
     }
@@ -220,7 +243,7 @@ pub fn clear() {
     let gone: Vec<Pending> = PENDING.lock().unwrap().drain().map(|(_, p)| p).collect();
     // A batch still running is waited for, so its lanes' buffers are not freed under it.
     for p in &gone {
-        let _ = p.wave.out(p.at);
+        let _ = p.batch.out(p.at);
     }
     crate::code_rule_dsl::logic::lanes::executor().clear();
 }

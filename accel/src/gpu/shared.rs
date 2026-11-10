@@ -60,7 +60,7 @@ pub fn pipeline<E>(key: &str, make: impl FnOnce() -> Result<ComputePipelineState
     if let Some(p) = pipelines().lock().expect("the pipelines").get(key) {
         return Ok(p.clone());
     }
-    let p = make()?;
+    let p = crate::score::phase("pipeline compile", make)?;
     pipelines().lock().expect("the pipelines").insert(key.to_owned(), p.clone());
     Ok(p)
 }
@@ -149,7 +149,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
     }
     p.made += 1;
     drop(p);
-    let b = objc::rc::autoreleasepool(|| shared.device.new_buffer(class as u64, MTLResourceOptions::StorageModeShared));
+    let b = crate::score::phase("new buffer", || objc::rc::autoreleasepool(|| shared.device.new_buffer(class as u64, MTLResourceOptions::StorageModeShared)));
     Ok(Pooled { buffer: Some(b), keep: true })
 }
 

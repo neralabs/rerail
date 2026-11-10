@@ -95,8 +95,9 @@ pub enum Kernel {
     Join { left: Keys, right: Keys, right_id: Option<u64>, by: JoinBy },
 }
 
-/// A relation's key columns, one per key, of equal length.
-pub type Keys = Arc<[Arc<[i64]>]>;
+/// A relation's key columns, one per key, of equal length: each the host's, or staged (written after the launch
+/// was begun, [`crate::col`]).
+pub type Keys = Arc<[crate::col::Col]>;
 
 /// How a join's pairs are found on a device (decision 0095 §4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

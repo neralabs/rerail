@@ -25,6 +25,33 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[1]["result"],vec!["1\t99\t3\t17\t3\t7","2\t99\t1\t-2\t-2\t-2","4\t99\t3\t9223372036854775807\t-1\t9223372036854775807"]);
 }
 
+/// A head that qualifies a bound name by a constant scope (`sym_at($e, @cat(1539, $x))`, the builtins' symbols)
+/// has a native step: the name is made into a slot before the head. A stratum the native engine declines runs in
+/// SQLite, a wait on SQL tables between waves that are otherwise in memory.
+#[test]
+fn a_head_that_qualifies_by_a_constant_scope_runs_natively() {
+    let p = parse(".decl p(e: number, x: symbol)\np(1, \"a\").\np(2, \"b\").\n.decl q(e: number, s: symbol)\nq(e, @dot(\"m\", x)) :- p(e, x).\n.output q\n").unwrap();
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        if !modes.is_empty() {
+            assert!(got.native.contains("q"), "q runs natively: {:?}", got.native);
+        }
+        let mut o = got.outputs["q"].clone();
+        o.sort();
+        outputs.push(o);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1].len(), 2, "{:?}", outputs[1]);
+}
+
 /// Device waves (decision 0095 §5): three closures of one level, each over a graph with a fork and a cycle, wait
 /// for their bit rows' launches, which run as one batch when the level ends; the rows are SQL's.
 #[test]
@@ -800,4 +827,41 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
     o.sort();
     assert_eq!(o.len(), 2, "{o:?}");
     assert_eq!(out.outputs["o2"].len(), 1);
+}
+
+/// A delta probe of a recursive component prices a lookup by the share of the binding's values the column holds
+/// (containment): `fbind`'s shape, where `fcall` by `$a` (a few hundred rows, few distinct `$a`) is probed by
+/// `pv`'s many `$a`. Priced as if every probe hit, `fcall` looked dearer than `tfix` by `$k`, and the plan read
+/// `tfix` and `fgp` first (19 M rows of work for 220 in calls_cx).
+#[test]
+fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
+    let p = parse(
+        ".decl pv(a:number, k:number, v:number)\n.decl fcall(c:number, f:number, i:number, a:number)\n.decl tfix(k:number, ka:number, w:number, x:number)\n\
+         .decl fgp(f:number, i:number, ka:number, w:number, y:number)\n.decl fbind(c:number, f:number, y:number, x:number)\n\
+         fbind(c, f, y, x) :- fcall(c, f, i, a), fgp(f, i, ka, w, y), pv(a, 1, k), tfix(k, ka, w, x).\n.output fbind\n",
+    )
+    .unwrap();
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut model = Model { analysis: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+    model.stats.nodes = 450_000.0;
+    // Live counts, as a wave leaves them: rows, then distinct values by column.
+    for (rel, rows, ndv) in [
+        ("pv", 400_000.0, vec![300_000.0, 3.0, 5_000.0]),
+        ("fcall", 400.0, vec![400.0, 50.0, 5.0, 100.0]),
+        ("tfix", 550.0, vec![350.0, 50.0, 10.0, 300.0]),
+        ("fgp", 100.0, vec![50.0, 5.0, 50.0, 10.0, 20.0]),
+        ("fbind", 1.0, vec![1.0; 4]),
+    ] {
+        model.stats.card.insert(rel.to_owned(), rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    model.stats.solve(["pv", "fcall", "tfix", "fgp", "fbind"].into_iter().map(str::to_owned).collect());
+    let r = &p.rules[0];
+    let ((order, _, _), _) = model.plan_rule_explained(&p, &r.head, &r.body, Some(2)).unwrap();
+    let order: Vec<&str> = order.iter().filter_map(|s| s.lit.atom()).map(|a| a.rel.as_str()).collect();
+    assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }

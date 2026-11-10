@@ -322,3 +322,26 @@ fn rr_census() {
         }
     }
 }
+
+/// How sparse `.rr`'s tier 1 values are: for each named value, the share of the corpus's
+/// 64-byte blocks where it has a bit, and, for each sparse one, the operations that are zero
+/// wherever it is (by `zero_with`). The measure of simdjson's skip-when-absent branches
+/// (doc 26); run by hand.
+#[test]
+#[ignore = "a census: run by hand"]
+fn rr_sparsity() {
+    let c = super::rr_parser::compiled().expect("compiles");
+    let p = &c.block;
+    let corpus = super::rr_parser::tests::corpus();
+    let files: Vec<&[u8]> = corpus.iter().map(|f| f.as_bytes()).collect();
+    let (values, spans) = p.all_values(&files);
+    let blocks: usize = spans.iter().map(|s| s.len()).sum();
+    let n = p.ops.len();
+    let busy: Vec<usize> = (0..n).map(|x| values[x].iter().filter(|&&w| w != 0).count()).collect();
+    let mut named: Vec<(&str, usize, u16)> = c.values.iter().filter(|v| !v.name.starts_with("token ")).map(|v| (v.name.as_str(), busy[usize::from(v.op)], v.op)).collect();
+    named.sort_by_key(|v| v.1);
+    eprintln!("{blocks} blocks; each named value's share of blocks with a bit, sparsest first:");
+    for (name, b, op) in &named {
+        eprintln!("  {:>6.2}%  {name} (%{op}, {:?})", 100.0 * *b as f64 / blocks as f64, p.ops[usize::from(*op)]);
+    }
+}

@@ -19,6 +19,7 @@
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
 mod setfix;
+#[cfg(test)]
 pub(crate) use setfix::DERIVATIONS;
 pub(in crate::code_rule_dsl) use setfix::forget_scope;
 pub(in crate::code_rule_dsl) mod aggregation;

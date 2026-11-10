@@ -1,7 +1,8 @@
 //! A component's spec as values. The planner hands these to the engine in process (`open_spec`, `reprobe_spec`),
 //! so a plan is not written as text and parsed again. The text (the module's spec lines, joins hex-encoded within)
-//! is kept for the SQL functions (`set_fixpoint_open(spec)`, T's extension), the lab's captures and the spikes'
-//! spec files: `to_text` writes what the planner wrote, and `parse` reads it back.
+//! is kept for the SQL functions (`set_fixpoint_open(spec)`: T's extension, a copy of the engine with its own
+//! components, over text symbols), the lab's capture files and the spikes' spec files: `to_text` writes what the
+//! planner wrote, and `parse` reads it back.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -98,13 +99,14 @@ pub struct JoinSpec {
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
-/// (`base`), plus its table's rows when `seeded`.
+/// (`base`), plus its table's rows when `seeded`. A `base` with no relation gone (`-`) is a copy of the kept
+/// relation, its levels with it (decision 0090's `h__live`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Start {
     Rows,
     Empty,
     From(String),
-    Base { old: String, gone: String, seeded: bool },
+    Base { old: String, gone: Option<String>, seeded: bool },
 }
 
 /// An edge rule (`rule …`): see the module's spec.
@@ -134,6 +136,8 @@ pub enum Line {
     Probe { head: usize, delta: usize, sql: String },
     Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize> },
     Edge(EdgeSpec),
+    /// A levels stratum's relations of one `h` (decision 0090, `setfix::Levels`): cand, chk, held, gone, live.
+    Levels([usize; 5]),
 }
 
 /// A component: its name, then its lines in order (relations are numbered in order, probes are numbered in order).
@@ -401,7 +405,7 @@ impl std::fmt::Display for Line {
                     Start::Rows => Ok(()),
                     Start::Empty => f.write_str(" empty"),
                     Start::From(sql) => write!(f, " from {}", hex(sql)),
-                    Start::Base { old, gone, seeded } => write!(f, " base {} {}{}", hex(old), hex(gone), if *seeded { " seeded" } else { "" }),
+                    Start::Base { old, gone, seeded } => write!(f, " base {} {}{}", hex(old), gone.as_deref().map_or("-".to_owned(), hex), if *seeded { " seeded" } else { "" }),
                 }
             }
             Line::NoWrite => f.write_str("nowrite"),
@@ -428,6 +432,7 @@ impl std::fmt::Display for Line {
                 };
                 write!(f, "rule {} {} {src} key {} ; ecols {} ; pat {} ; head {}", e.head, e.src, slots(&e.key), slots(&e.ecols), joined(&e.pat), joined(&e.out))
             }
+            Line::Levels([cand, chk, held, gone, live]) => write!(f, "levels {cand} {chk} {held} {gone} {live}"),
         }
     }
 }
@@ -468,7 +473,7 @@ impl ComponentSpec {
                             }
                             "base" => {
                                 let (old, gone) = (t.get(k + 1).ok_or("rel: base needs two tables")?, t.get(k + 2).ok_or("rel: base needs two tables")?);
-                                base = Some((unhex(old)?, unhex(gone)?));
+                                base = Some((unhex(old)?, if *gone == "-" { None } else { Some(unhex(gone)?) }));
                                 k += 3;
                             }
                             "from" => {
@@ -497,6 +502,7 @@ impl ComponentSpec {
                     join: join(at(3)?)?,
                     whole: t.get(4).map(|w| join(w)).transpose()?,
                 },
+                "levels" => Line::Levels([num(at(1)?)?, num(at(2)?)?, num(at(3)?)?, num(at(4)?)?, num(at(5)?)?]),
                 "probe" => Line::Probe { head: num(at(1)?)?, delta: num(at(2)?)?, sql: unhex(at(3)?)? },
                 "gate" => Line::Gate {
                     done: num(at(1)?)?,
@@ -529,7 +535,7 @@ impl ComponentSpec {
 }
 
 impl Reprobe {
-    /// The SQL function's `kind` and hex `body` (`set_fixpoint_reprobe`).
+    /// The SQL function's `kind` and hex `body` (`set_fixpoint_reprobe`), as a caller holding only text writes them.
     pub fn text(&self) -> (&'static str, String) {
         match self {
             Reprobe::Sql(sql) => ("sql", hex(sql)),

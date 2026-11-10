@@ -41,6 +41,7 @@ impl ContentStore {
 
     /// Each relation program `prog`'s last run kept: its digest, and whether its rows are kept.
     pub fn kept_strata(&self, prog: &[u8; 32]) -> StoreResult<HashMap<String, (u64, bool)>> {
+        self.settle(&kept_key(prog));
         if !self.kept_strata_table()? {
             return Ok(HashMap::new());
         }
@@ -52,6 +53,7 @@ impl ContentStore {
 
     /// Relation `rel`'s rows as program `prog`'s last run kept them.
     pub fn kept_strata_rows(&self, prog: &[u8; 32], rel: &str) -> StoreResult<Option<KeptRows>> {
+        self.settle(&kept_key(prog));
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let mut st = connection.prepare_cached("SELECT width, rows, types, data FROM kept_strata WHERE prog = ?1 AND rel = ?2 AND data IS NOT NULL")?;
         let found = st
@@ -65,6 +67,16 @@ impl ContentStore {
             flat.extend(cols.iter().map(|c| c[r]));
         }
         Ok(Some(KeptRows { types, rows: flat, n: rows }))
+    }
+
+    /// `keep_strata`, queued behind the run (decision 0102): encoded and written by the store's writer.
+    pub fn queue_keep_strata(&self, prog: [u8; 32], puts: Vec<KeptPut>, gone: Vec<String>) {
+        let bytes = puts.iter().filter_map(|p| p.rows.as_ref()).map(|k| k.rows.len() * 8).sum();
+        self.write_back("the strata's rows", bytes, vec![(kept_key(&prog), None)], Box::new(move |store| {
+            // Attempted once, as before the queue: a busy store leaves these strata unkept, and the next run evaluates them.
+            let _ = store.keep_strata(&prog, &puts, &gone);
+            Ok(())
+        }));
     }
 
     /// Keeps `puts` for program `prog` (each replacing the relation's row) and forgets `gone`; the programs past the
@@ -139,4 +151,9 @@ mod tests {
         assert!(store.kept_strata(&prog).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// What a write of program `prog`'s strata is queued under (`write_back`).
+fn kept_key(prog: &[u8; 32]) -> super::write_back::Key {
+    super::write_back::Key::of(&[b"kept_strata", prog])
 }

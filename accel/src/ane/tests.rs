@@ -242,12 +242,12 @@ fn overlapped_tiles_agree_with_serial() {
     let ks = [product(&a1, &b, None), product(&a2, &b, Some(thresholds(&mut rng, &b, 3)))];
     let refs: Vec<&Kernel> = ks.iter().collect();
     let want: Vec<Output> = refs.iter().map(|k| crate::cpu::run(k)).collect();
-    let (got, phases) = lane.submit_timed(&refs).unwrap();
+    let (got, split) = lane.submit_split(&refs).unwrap();
     assert_eq!(got, want);
     let s = lane.last_split();
     assert!(s.surfaces && s.overlap);
     assert_eq!((s.tiles, s.calls), (5, 5));
-    assert!(phases.encode > 0.0 && phases.decode > 0.0 && phases.device.is_some_and(|d| d > 0.0), "{phases:?}");
+    assert!(split.expand > 0.0 && split.sum > 0.0 && split.predict > 0.0, "{split:?}");
     let pooled = |l: &Ane| l.pool.lock().unwrap().values().map(Vec::len).sum::<usize>();
     assert_eq!(pooled(&lane), 2 * DEPTH * lane.prepared(&b).unwrap().pieces, "both sets went back to the pool");
     lane.set_overlap(false);

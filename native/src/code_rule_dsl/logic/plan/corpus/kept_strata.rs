@@ -81,8 +81,8 @@ impl<'s> Kept<'s> {
         let (puts, gone) = (std::mem::take(&mut self.puts), std::mem::take(&mut self.gone));
         self.values = 0;
         if !puts.is_empty() || !gone.is_empty() {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "keep the strata's rows".into());
-            let _ = self.store.keep_strata(&prog, &puts, &gone);
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "keep the strata's rows, queued".into());
+            self.store.queue_keep_strata(prog, puts, gone);
         }
     }
 

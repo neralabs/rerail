@@ -38,7 +38,8 @@ pub mod package;
 #[cfg(test)]
 mod tests;
 
-use crate::exec::{process_cpu, thread_cpu, Backend, Phases};
+use crate::exec::{process_cpu, Backend};
+use crate::score::thread_cpu;
 use crate::kernel::{Bits, Kernel, Output};
 use crate::lanes::Lane;
 use package::Template;
@@ -157,16 +158,15 @@ pub struct Prepared {
 
 /// Where the last submission's time went, in seconds, summed over its models:
 ///
-/// - `expand`: wall time expanding `a`'s bits to fp16 (the executor's [`Phases::encode`]);
-/// - `predict`: wall time of the prediction calls ([`Phases::device`]); with `overlap` they run while the host
+/// - `expand`: wall time expanding `a`'s bits to fp16 (the scoreboard's `expand` phase);
+/// - `predict`: wall time of the prediction calls (`predict`); with `overlap` they run while the host
 ///   expands and sums;
-/// - `sum`: wall time summing the partial counts, with the outputs' conversion and the thresholds
-///   ([`Phases::decode`]);
-/// - `wait`: wall time the lane's thread was blocked on a prediction with nothing else to do (not in [`Phases`]);
+/// - `sum`: wall time summing the partial counts, with the outputs' conversion and the thresholds (`sum`);
+/// - `wait`: wall time the lane's thread was blocked on a prediction with nothing else to do (no phase);
 /// - `expand_cpu`, `sum_cpu`: the lane's thread's CPU (user + sys) over `expand` and `sum` (on IOSurfaces only:
 ///   the plain-array path expands on the rayon pool and leaves them zero);
 /// - `predict_cpu`: Core ML's host work: on IOSurfaces, the process's CPU over the tiles less the lane's thread's
-///   (so the predictor thread's and Core ML's own threads': [`Phases::worker_cpu`]); on plain arrays, the process's CPU over the calls;
+///   (so the predictor thread's and Core ML's own threads', the `predict` phase's CPU); on plain arrays, the process's CPU over the calls;
 /// - `surfaces`: whether every model's tiles ran on IOSurfaces; `overlap`: whether any ran pipelined.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Split {
@@ -184,9 +184,11 @@ pub struct Split {
 }
 
 impl Split {
-    /// The executor's phases ([`Backend::submit_timed`]).
-    pub fn phases(&self) -> Phases {
-        Phases { encode: self.expand, device: Some(self.predict), decode: self.sum, worker_cpu: self.predict_cpu }
+    /// Its phases on the executor's scoreboard.
+    fn score(&self) {
+        crate::score::add("expand", self.expand_cpu, self.expand);
+        crate::score::add("predict", self.predict_cpu, self.predict);
+        crate::score::add("sum", self.sum_cpu, self.sum);
     }
 }
 
@@ -823,10 +825,16 @@ impl Backend for Ane {
     }
 
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
-        self.submit_timed(ks).map(|(o, _)| o)
+        self.submit_split(ks).map(|(o, split)| {
+            split.score();
+            o
+        })
     }
+}
 
-    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Phases), String> {
+impl Ane {
+    /// `submit`, with where its time went.
+    pub fn submit_split(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Split), String> {
         // Group the launches by model, keeping each one's place.
         let mut groups: Vec<([u8; 32], Arc<Model>, Vec<usize>)> = Vec::new();
         let mut outs: Vec<Option<Output>> = vec![None; ks.len()];
@@ -857,7 +865,7 @@ impl Backend for Ane {
             }
         }
         *self.last.lock().unwrap() = split;
-        Ok((outs.into_iter().map(|o| o.expect("every launch ran")).collect(), split.phases()))
+        Ok((outs.into_iter().map(|o| o.expect("every launch ran")).collect(), split))
     }
 }
 
