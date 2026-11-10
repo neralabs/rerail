@@ -774,22 +774,26 @@ export async function daemonEngineEndpoint(
   deadline?: number,
   machine: DaemonMachine = THIS_MACHINE,
 ): Promise<EngineEndpoint> {
-  const home = defaultRerailHome(machine.env);
-  const packageRoot = PACKAGE_ROOT;
-  let daemon: RunningDaemon | undefined;
-  if (autostartOff(machine.env)) {
-    // The lookup has already waited out a busy daemon; one that still does not answer is not waited for again.
-    const lookup = await patientLookup(home, machine, deadline);
-    if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
-    daemon = lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
-  } else {
-    daemon = await startedDaemon({ home, packageRoot }, replaceOtherPackage, deadline, machine);
-  }
+  const control = { home: defaultRerailHome(machine.env), packageRoot: PACKAGE_ROOT };
+  const daemon = autostartOff(machine.env)
+    ? await runningDaemon(control.home, deadline, machine)
+    : await startedDaemon(control, replaceOtherPackage, deadline, machine);
   if (daemon === undefined) throw new AutostartOffError("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
-  if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, packageRoot))) {
+  if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, control.packageRoot))) {
     throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   }
   return engineEndpointOf(daemon.state);
+}
+
+/**
+ * With `RERAIL_AUTOSTART=0`, the daemon running in `home`, if any. The lookup has already waited out a busy daemon
+ * (`patientLookup`); one that still does not answer, or refuses the capability, throws `LiveDaemonError` and is not
+ * waited for again.
+ */
+async function runningDaemon(home: string, deadline: number | undefined, machine: DaemonMachine): Promise<RunningDaemon | undefined> {
+  const lookup = await patientLookup(home, machine, deadline);
+  if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
+  return lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
 }
 
 /**
