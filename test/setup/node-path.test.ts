@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
-import { linkFolder, symlinkOrSkip } from "../support/links.js";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
 
 const directories: string[] = [];
 

@@ -13,7 +13,7 @@ import {
   readRepositoryLintConfig,
   ruffSelects,
 } from "../../../src/engine/catalog/lint-config/repository-lint-config.js";
-import { symlinkOrSkip } from "../../support/links.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
 
 const TYPE_DEFINITIONS = "typescript-eslint-consistent-type-definitions";
 const TSLINT_COMMENT = "typescript-eslint-ban-tslint-comment";

@@ -26,8 +26,8 @@ import {
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { openRerailDatabase, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
-import { linkFolder } from "../support/links.js";
-import { removeFolder } from "../support/remove-folder.js";
+import { linkFolder } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
 

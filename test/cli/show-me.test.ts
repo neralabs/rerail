@@ -29,7 +29,7 @@ import {
 } from "../../src/cli/show-me.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { startTestRepository } from "../support/started-repository.js";
-import { symlinkOrSkip } from "../support/links.js";
+import { symlinkOrSkip } from "../support/platform/links.js";
 
 const directories: string[] = [];
 const fileRerailHome = process.env.RERAIL_HOME;

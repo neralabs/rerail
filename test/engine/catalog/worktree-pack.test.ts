@@ -24,7 +24,7 @@ import {
   temporaryDirectory,
   testBundle,
 } from "../../support/rule-configuration-builders.js";
-import { symlinkOrSkip } from "../../support/links.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {

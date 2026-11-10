@@ -21,7 +21,7 @@ import {
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { installPack } from "../support/installed-packs.js";
-import { linkFolder, symlinkOrSkip } from "../support/links.js";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
 installPack("complexity");

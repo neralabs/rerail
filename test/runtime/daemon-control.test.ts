@@ -61,7 +61,7 @@ import {
   stopDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
-import { holdEngineEndpoint, testEngineEndpoint } from "../support/engine-endpoint.js";
+import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */

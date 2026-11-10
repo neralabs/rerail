@@ -9,7 +9,7 @@ import {
   readRemoteAddress,
   resolveCloneId,
 } from "../../../src/engine/catalog/repository-identity.js";
-import { linkFolder, symlinkOrSkip } from "../../support/links.js";
+import { linkFolder, symlinkOrSkip } from "../../support/platform/links.js";
 
 /** When set, the next `mkdirSync` of a `.rerail` folder loses a race: another process creates it first. */
 const race = vi.hoisted(() => ({ armed: false }));

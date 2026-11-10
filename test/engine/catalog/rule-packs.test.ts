@@ -27,7 +27,7 @@ import { recordCheckout } from "../../../src/engine/catalog/repository-registry.
 import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
 import { installPack, removeInstalledPacks } from "../../support/installed-packs.js";
 import { repositoryPath } from "../../support/oracles.js";
-import { symlinkOrSkip } from "../../support/links.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {

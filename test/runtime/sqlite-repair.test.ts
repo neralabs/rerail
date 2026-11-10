@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { NpmOptions, NpmRunner } from "../../src/runtime/npm.js";
 import { ensureSqlite, sqliteInstallPrefix } from "../../src/runtime/sqlite-repair.js";
-import { linkFolder } from "../support/links.js";
-import { removeFolder } from "../support/remove-folder.js";
-import { literal } from "../support/text-patterns.js";
+import { linkFolder } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+import { literal } from "../support/platform/text-patterns.js";
 
 const WORKING_BINDING = "module.exports = function Database() { this.close = () => {}; };";
 const ABI_MISMATCH =

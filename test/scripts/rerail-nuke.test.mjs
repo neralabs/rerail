@@ -20,7 +20,7 @@ import {
   stripPiSettings,
 } from "../../scripts/dev/rerail-nuke.mjs";
 import { launcherPath, loadSqlite, timestamp } from "../../scripts/dev/rerail-restore.mjs";
-import { linkFolder } from "../support/links.ts";
+import { linkFolder } from "../support/platform/links.ts";
 
 const NUKE_SCRIPT = fileURLToPath(new URL("../../scripts/dev/rerail-nuke.mjs", import.meta.url));
 const { DatabaseSync } = await loadSqlite();

@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { rewriteAppendedFile, runScrubCommand, scrubHintOnce } from "../../src/cli/scrub-cli.js";
 import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { withPendingFileLock } from "../../src/harness/index.js";
-import { linkFolder } from "../support/links.js";
+import { linkFolder } from "../support/platform/links.js";
 
 /** Set to make `eraseFreedPages` fail as a busy database or a full disk makes it fail. */
 const erase = vi.hoisted(() => ({ failure: undefined as Error | undefined }));

@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService } from "../../src/runtime/engine-service.js";
-import { testEngineEndpoint } from "../support/engine-endpoint.js";
+import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { testEmbedder } from "../support/hook-events.js";
-import { removeFolder } from "../support/remove-folder.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 

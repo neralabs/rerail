@@ -56,7 +56,7 @@ import { SAMPLE_ID } from "../../scripts/samples/format.ts";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, readArchive, sha256 } from "../../scripts/s3/test-data-archive.mjs";
 import { provenanceFiles, restaged } from "./support/provenance.mjs";
 import { cacheLicence } from "../support/samples.ts";
-import { linkFolder, symlinkOrSkip } from "../support/links.ts";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.ts";
 
 /** A tool's UPSTREAM.md listing `files` (pack-relative) as Rerail's. */
 const record = (files) => `# cases Rerail wrote\n\n| File | Origin |\n|---|---|\n${files.map((file) => `| \`${file}\` | written by Rerail |\n`).join("")}`;

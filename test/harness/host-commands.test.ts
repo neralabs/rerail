@@ -20,7 +20,7 @@ import {
   type HostCommandOptions,
 } from "../../src/harness/host-commands.js";
 import { SETUP_CANCELLED } from "../../src/harness/setup-picker.js";
-import { posixShell } from "../support/posix-shell.js";
+import { posixShell } from "../support/platform/posix-shell.js";
 
 const temporaryDirectories: string[] = [];
 

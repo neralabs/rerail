@@ -20,7 +20,7 @@ import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../../src/e
 import { editSteer } from "../support/steers.js";
 import { encodeRerailEventResult, RERAIL_EVENT_PROTOCOL_PREFACE } from "../../src/runtime/index.js";
 import { runRerailEventStream, serveRerailEventStream } from "../../src/harness/event-stream.js";
-import { testEngineEndpoint } from "../support/engine-endpoint.js";
+import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 const cleanups: Array<() => Promise<void>> = [];

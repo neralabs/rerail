@@ -14,7 +14,7 @@ import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionData
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
-import { testEngineEndpoint } from "../../support/engine-endpoint.js";
+import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
 

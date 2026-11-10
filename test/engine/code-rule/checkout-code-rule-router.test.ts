@@ -21,7 +21,7 @@ import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import { checkouts, repositoryAudits } from "../../../src/engine/storage/schema.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { stopTestRepository } from "../../support/started-repository.js";
-import { symlinkOrSkip } from "../../support/links.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {

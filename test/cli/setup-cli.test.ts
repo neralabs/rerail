@@ -34,7 +34,7 @@ import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
 import { INSTALLED_PACKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
 import { mainContentStoreDirectory } from "../../src/engine/native/rerail-build.js";
-import { POSIX_MODES } from "../support/file-mode.js";
+import { POSIX_MODES } from "../support/platform/file-mode.js";
 import { stubUserHome } from "../support/user-home.js";
 
 const temporaryDirectories: string[] = [];

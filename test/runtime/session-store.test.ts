@@ -33,8 +33,8 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native
 import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { approve, currentSubject } from "../../src/engine/index.js";
-import { NO_POSIX_MODES, POSIX_MODES } from "../support/file-mode.js";
-import { removeFolder } from "../support/remove-folder.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];

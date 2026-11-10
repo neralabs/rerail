@@ -6,8 +6,8 @@ import { PassThrough, Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE } from "../../src/runtime/index.js";
 import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
-import { testEngineEndpoint } from "../support/engine-endpoint.js";
-import { linkFolder } from "../support/links.js";
+import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { linkFolder } from "../support/platform/links.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
 /** The Rerail home and which daemon pid answers on each local port; a step may change either to stage a restart. */

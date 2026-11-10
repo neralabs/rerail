@@ -26,7 +26,7 @@ import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS, readRepoQuestion, renderQuestion
 import { runInstallCommand, setupAnswerCommand } from "../../src/cli/index.js";
 import { ManagedUpdater } from "../../src/setup/updater.js";
 import { stubUserHome } from "../support/user-home.js";
-import { linkFolder, symlinkOrSkip } from "../support/links.js";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {

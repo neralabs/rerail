@@ -23,8 +23,8 @@ import {
 } from "../../src/runtime/index.js";
 import { runAuditCommand } from "../../src/cli/audit-cli.js";
 import { registerHostCommands, type HostCommandHost } from "../../src/harness/index.js";
-import { testEngineEndpoint } from "../support/engine-endpoint.js";
-import { removeFolder } from "../support/remove-folder.js";
+import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 import { setUpTestRepository, testCodeRuleCatalog } from "../support/repository-rules.js";
 import { startRerail } from "../../src/cli/index.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, type TestContext } from "vitest";
 import {
   checkoutPathBoundary, deniedByPathBoundary, SENSITIVE_FOLDER_NAMES, sensitiveByName,
 } from "../../src/engine/path-boundary.js";
-import { symlinkOrSkip } from "../support/links.js";
+import { symlinkOrSkip } from "../support/platform/links.js";
 
 const roots: string[] = [];
 afterEach(() => {

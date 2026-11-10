@@ -9,7 +9,7 @@ import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-
 import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
-import { removeFolder } from "../../support/remove-folder.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(removeFolder)); });

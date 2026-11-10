@@ -18,7 +18,7 @@ import { type AdapterDelivery, type RepositoryStartState, sessionStartNote } fro
 import type { presentationResponseSchema, sessionResponseSchema } from "../../src/api/index.js";
 import { hookRerailStarted } from "../../src/harness/index.js";
 import type { z } from "zod";
-import { testEngineEndpoint } from "../support/engine-endpoint.js";
+import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 let home: string;

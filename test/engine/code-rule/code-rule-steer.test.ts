@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildSteer, type CodeRuleViolation, renderSteer, SECRET_FILE_FINDING_MESSAGE, STEER_FIX_CHARS } from "../../../src/engine/code-rule/code-rule.js";
 import { checkoutPathBoundary } from "../../../src/engine/path-boundary.js";
-import { symlinkOrSkip } from "../../support/links.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
 
 const span = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({
   startByte: 0, endByte: 0, startLine, startColumn, endLine, endColumn,

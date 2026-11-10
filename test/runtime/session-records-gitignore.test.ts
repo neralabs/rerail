@@ -6,8 +6,8 @@ import { RerailRuntime } from "../../src/runtime/index.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { resolveSessionPaths } from "../../src/runtime/session-paths.js";
-import { NO_POSIX_MODES, POSIX_MODES } from "../support/file-mode.js";
-import { symlinkOrSkip } from "../support/links.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
+import { symlinkOrSkip } from "../support/platform/links.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-session-records-gitignore-");
 

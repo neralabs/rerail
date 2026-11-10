@@ -11,7 +11,7 @@ import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schem
 import type { CodeRule } from "../../../../src/engine/code-rule/code-rule-schema.js";
 import { loadNativeBinding } from "../../../../src/engine/native/native.js";
 import { testCodeRuleCatalog } from "../../../support/repository-rules.js";
-import { linkFolder } from "../../../support/links.js";
+import { linkFolder } from "../../../support/platform/links.js";
 
 // What an ECMA file's nearest package.json gives it: the module system a query that leaves `languageOptions.sourceType`
 // unset reads (its `type`), and what `file.package` and `file.jsxRuntime` read. Repository audits (native index and host

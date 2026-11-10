@@ -6,7 +6,7 @@ import { z } from "zod";
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import { RerailRuntime, SqliteSessionReader } from "../../src/runtime/index.js";
 import { CodeRuleBridge, SqliteAuditStore } from "../../src/engine/index.js";
-import { removeFolder } from "../support/remove-folder.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
 describe("NativeSessionServer request boundary", () => {

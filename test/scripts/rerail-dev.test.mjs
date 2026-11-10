@@ -19,7 +19,7 @@ import {
   stopDevCheckout,
   validateDevInstance,
 } from "../../scripts/dev/rerail-dev.mjs";
-import { linkFolder } from "../support/links.ts";
+import { linkFolder } from "../support/platform/links.ts";
 
 const cleanups = [];
 afterEach(async () => {

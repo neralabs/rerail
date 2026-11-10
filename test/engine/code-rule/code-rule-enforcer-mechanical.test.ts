@@ -26,7 +26,7 @@ import type {
   NativeCodeRuleDslWorkspace,
   NativeRepositoryIndexOptions,
 } from "../../../src/engine/native/native.js";
-import { linkFolder } from "../../support/links.js";
+import { linkFolder } from "../../support/platform/links.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";

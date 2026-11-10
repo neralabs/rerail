@@ -7,7 +7,7 @@ import { afterEach } from "vitest";
 import type { AdapterDelivery, AdapterEvent, RerailEventLoop, SemanticEmbedder } from "../../src/engine/index.js";
 import { serveHook, type HookInput, type HookOptions, type HookOutput } from "../../src/harness/index.js";
 import { startTestRepository } from "./started-repository.js";
-import { removeFolder } from "./remove-folder.js";
+import { removeFolder } from "./platform/remove-folder.js";
 
 /** Replaces the native model so hooks and runtimes run where the addon is absent. */
 export const testEmbedder: SemanticEmbedder = {

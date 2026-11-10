@@ -17,7 +17,7 @@ import {
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
-import { removeFolder } from "../support/remove-folder.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 import { steerLatitude } from "../support/steers.js";
 
 const directories: string[] = [];

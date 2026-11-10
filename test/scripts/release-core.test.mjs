@@ -14,7 +14,7 @@ import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRet
 import { CHANGE_TYPES, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, newChangelogEntries, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
-import { linkFolder } from "../support/links.ts";
+import { linkFolder } from "../support/platform/links.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 

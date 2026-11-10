@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { defaultRerailDatabasePath, events, openRerailDatabase, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
 import { runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
 import { startTestRepository } from "../support/started-repository.js";
-import { NO_POSIX_MODES, POSIX_MODES } from "../support/file-mode.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 
 const directories: string[] = [];
 const fileRerailHome = process.env.RERAIL_HOME;

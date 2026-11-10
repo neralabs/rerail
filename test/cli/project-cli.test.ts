@@ -10,7 +10,7 @@ import { preUpdateSnapshotPath, runResetCommand, runRulesCommand, type SnapshotU
 import type { UpdateResult, UpdateStatus } from "../../src/setup/index.js";
 import { defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, recordCheckout, upsertLibraryRule } from "../../src/engine/index.js";
 import { MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { POSIX_MODES } from "../support/file-mode.js";
+import { POSIX_MODES } from "../support/platform/file-mode.js";
 
 /** Set to make `eraseFreedPages` fail as a busy database or a full disk makes it fail. */
 const erase = vi.hoisted(() => ({ failure: undefined as Error | undefined }));

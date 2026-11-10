@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   agentTranscriptPayload, callNamesDeniedPath, callNamesSecretPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD,
 } from "../../src/engine/transcript-boundary.js";
-import { linkFolder, symlinkOrSkip } from "../support/links.js";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
 
 const roots: string[] = [];
 afterEach(() => {
