@@ -444,9 +444,9 @@ const RETIRED_PROMPT_COMMANDS: readonly string[] = ["rerail-session", "rerail-di
 const RETIRED_CODEX_SKILLS: readonly string[] = RENAMED_COMMANDS;
 
 /**
- * The launcher for command files. On Windows Codex and Cursor run commands in PowerShell, which takes a line that starts
- * with a quoted path for a string, so they get the call operator form (`powershellCli`); Claude Code runs them in Git
- * Bash, where `&` would put the command in the background.
+ * The launcher for command files. On Windows an agent whose profile names PowerShell (`windowsCommandShell`) gets the
+ * call operator form (`powershellCli`), since PowerShell takes a line that starts with a quoted path for a string; one
+ * that runs Git Bash gets the plain form, since `&` there would put the command in the background.
  */
 function commandContext(context: Context): CommandFileContext {
   return {

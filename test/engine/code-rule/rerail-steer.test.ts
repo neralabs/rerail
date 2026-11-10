@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ADAPTER_CAPABILITIES, RERAIL_HOSTS } from "../../../src/engine/adapter-contract.js";
 import {
   asLateSteer,
   headlineText,
@@ -68,6 +69,14 @@ describe("Rerail steer text", () => {
     expect(latitude).toBe("Fix it, or tell the user in one line why you won't and run `echo '<that line>' | rerail feedback ts:no-any -`.");
     expect(steerShell("claude-code", "win32")).toBe("git-bash");
     expect(steerShell("codex", "linux")).toBe("posix");
+  });
+
+  it("takes each coding agent's Windows shell from its capability profile, where Codex and Cursor name PowerShell", () => {
+    expect(RERAIL_HOSTS.filter(host => ADAPTER_CAPABILITIES[host].windowsCommandShell === "powershell")).toEqual(["codex", "cursor"]);
+    for (const host of RERAIL_HOSTS) {
+      expect(steerShell(host, "win32")).toBe(ADAPTER_CAPABILITIES[host].windowsCommandShell === "powershell" ? "powershell" : "git-bash");
+    }
+    expect(steerShell(undefined, "win32")).toBe("git-bash");
   });
 
   it("in PowerShell pipes the line in as UTF-8 from a here-string, so Windows PowerShell 5.1 keeps every character", () => {

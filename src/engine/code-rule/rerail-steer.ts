@@ -130,15 +130,16 @@ function powershellFeedback(rule: string): string {
 }
 
 /**
- * The shell a coding agent runs the commands a steer names in: sh or bash off Windows (`posix`); on Windows Git Bash for
- * Claude Code, OMP and Pi, and PowerShell for Codex and Cursor.
+ * The shell a coding agent runs the commands a steer names in: sh or bash off Windows (`posix`); on Windows the one its
+ * capability profile names (`windowsCommandShell`), Git Bash or PowerShell. Git Bash is set apart from `posix`
+ * because there `rerail` is `rerail.cmd`, whose arguments cmd.exe parses again.
  */
 export type SteerShell = "posix" | "git-bash" | "powershell";
 
 /** The shell `host` runs commands in on `platform`; on Windows a host that is not known is taken to run Git Bash. */
 export function steerShell(host: RerailHost | undefined, platform: NodeJS.Platform = process.platform): SteerShell {
   if (platform !== "win32") return "posix";
-  return host === "codex" || host === "cursor" ? "powershell" : "git-bash";
+  return host !== undefined && ADAPTER_CAPABILITIES[host].windowsCommandShell === "powershell" ? "powershell" : "git-bash";
 }
 
 /**

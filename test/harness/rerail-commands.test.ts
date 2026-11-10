@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { ADAPTER_CAPABILITIES } from "../../src/engine/adapter-contract.js";
+import { commandFileText } from "../../src/harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, rerailCommandList, showMeInstructions } from "../../src/harness/rerail-commands.js";
 
 const TERMINAL_LINE = "In a terminal: rerail status · rerail version · rerail update · rerail daemon stop";
@@ -20,6 +22,18 @@ describe("the command catalog", () => {
   it.each(RERAIL_COMMANDS.map(command => [command.name, command.description]))("keeps %s's description valid in front matter", (_name, description) => {
     expect(description).not.toContain(": ");
     expect(description).not.toContain(" #");
+  });
+});
+
+describe("the shell a command file is written for", () => {
+  // `powershellCli` is set on Windows only; the agent's capability profile decides whether its files use it.
+  const context = { cli: "'node' 'cli.js'", packageRoot: "/package", setupLauncher: "'rerail'", powershellCli: "& 'node' 'cli.js'" };
+
+  it.each(["claude-code", "cursor", "codex"] as const)("follows the Windows shell in %s's capability profile", agent => {
+    const start = commandFileText(agent, "rerail-start", context);
+    const powershell = ADAPTER_CAPABILITIES[agent].windowsCommandShell === "powershell";
+    expect(start.includes("& 'node' 'cli.js' start --relay --powershell\n")).toBe(powershell);
+    expect(start.includes("\n'node' 'cli.js' start --relay\n")).toBe(!powershell);
   });
 });
 
