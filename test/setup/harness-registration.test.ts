@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, win32 } from "node:path";
 import { promisify } from "node:util";
 import ignore from "ignore";
 import { sql } from "drizzle-orm";
@@ -181,7 +181,7 @@ describe("detectHarnesses", () => {
     await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
     const nodePath = String.raw`C:\Users\José O'Brien\AppData\Local\nvm\v24.9.0\node.exe`;
     const path = join(home, ".codex", "hooks.json");
-    const hookPath = join(root, "dist", "hosts", "codex", "codex-hook.js");
+    const hookPath = win32.join(root, "dist", "hosts", "codex", "codex-hook.js");
     // The `cmd` form earlier set-ups wrote, `%` doubled for cmd; registering replaces it.
     const [cmdNode, cmdHook] = [nodePath, hookPath].map(value => `"${value.replaceAll("%", "%%")}"`);
     const cmdForm = `cmd /d /c "if exist ${cmdNode} (${cmdNode} ${cmdHook}) else (node ${cmdHook})"`;
@@ -301,8 +301,8 @@ describe("Claude Code settings.json", () => {
   it("registers Windows hooks through the exec-form launcher and replaces the cmd wrapper Git Bash mangles", async () => {
     const { home, root } = await fixture();
     const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
-    const hookPath = join(root, "dist", "hosts", "claude", "claude-hook.js");
-    const launcherPath = join(root, "dist", "harness", "hook-launcher.js");
+    const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
     // Claude Code passes shell-form hooks to Git Bash, which turns `/d /c` into drive paths so cmd reads the event JSON as commands.
     const cmdWrapper = `cmd /d /c "if exist "${nodePath}" ("${nodePath}" "${hookPath}") else (node "${hookPath}")"`;
@@ -983,7 +983,7 @@ describe("Claude Code commands", () => {
     const { home, root } = await fixture();
     const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
     await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code", "cursor", "codex"] });
-    const cli = join(root, "dist", "cli", "cli.js");
+    const cli = win32.join(root, "dist", "cli", "cli.js");
     // PowerShell's call operator, then each path quoted where PowerShell would read it: a space, and `@neralabs`.
     const powershell = `& '${nodePath}' '${cli}'`;
     const codexManage = await readFile(join(home, ".codex", "skills", "rerail-manage", "SKILL.md"), "utf8");

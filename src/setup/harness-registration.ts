@@ -16,7 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import {
   isClaudeStatusLine,
   readClaudeStatusRegistration,
@@ -210,20 +210,43 @@ function hookWord(value: string, quoting: HookQuoting): string {
   return /^[\w./:@+=-]+$/.test(value) ? value : `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
+/**
+ * The path rules of `platform`, whatever the host runs: Windows' on win32, POSIX's elsewhere. Hook commands are built
+ * and read with them, so a test on one host covers the commands written for another.
+ */
+function pathsOf(platform: NodeJS.Platform): typeof win32 {
+  return platform === "win32" ? win32 : posix;
+}
+
+/** `<root>/<executable>` by the path rules of the platform the hook is for. */
+function hookScript(context: HookCommandContext, executable: string): string {
+  return pathsOf(context.platform).join(context.root, executable);
+}
+
 /** `<recorded node> <root>/<executable>`, both quoted for the platform's hooks; `executable` is an `ENTRY_POINTS` path. */
 function directCommand(context: HookCommandContext, executable: string): string {
   const quoting = hookQuoting(context.platform);
-  return `${hookWord(context.nodePath, quoting)} ${hookWord(join(context.root, executable), quoting)}`;
+  return `${hookWord(context.nodePath, quoting)} ${hookWord(hookScript(context, executable), quoting)}`;
 }
 
-/** The package root of a registered `script` when it is that package's `executable`; undefined for any other script. */
-function registeredRoot(script: string, executable: string): string | undefined {
-  const tail = `${sep}${normalize(executable)}`;
+/**
+ * The package root of a registered `script` when it is that package's `executable`, by `platform`'s path rules;
+ * undefined for any other script.
+ */
+function registeredRoot(script: string, executable: string, platform: NodeJS.Platform): string | undefined {
+  const paths = pathsOf(platform);
+  const tail = `${paths.sep}${paths.normalize(executable)}`;
   return script.endsWith(tail) ? script.slice(0, -tail.length) : undefined;
 }
 
+/** Whether `a` and `b` name the same path by `platform`'s rules, such as `C:/x` and `C:\x` on Windows. */
+function samePath(a: string, b: string, platform: NodeJS.Platform): boolean {
+  const paths = pathsOf(platform);
+  return paths.normalize(a) === paths.normalize(b);
+}
+
 async function isRerailPackageRoot(context: Context, root: string): Promise<boolean> {
-  if (root === context.root || root === join(context.home, ".rerail", "current")) return true;
+  if ([context.root, join(context.home, ".rerail", "current")].some(own => samePath(root, own, context.platform))) return true;
   let verified = context.packageRoots.get(root);
   if (verified === undefined) {
     verified = readFile(join(root, "package.json"), "utf8").then(text => {
@@ -252,10 +275,10 @@ async function pathExists(path: string): Promise<boolean> {
  * package.json is that package's, whether or not its script is there. A script of any other shape is never replaced.
  */
 async function isReplaceableScript(context: Context, script: string, executable: string): Promise<boolean> {
-  const root = registeredRoot(script, executable);
+  const root = registeredRoot(script, executable, context.platform);
   if (root === undefined) return false;
   if (await isRerailPackageRoot(context, root)) return true;
-  return !(await pathExists(script)) && !(await pathExists(join(root, "package.json")));
+  return !(await pathExists(script)) && !(await pathExists(pathsOf(context.platform).join(root, "package.json")));
 }
 
 /** Whether `path` resolves to something on disk, following symlinks: a dangling link does not. */
@@ -301,13 +324,33 @@ interface HookTarget {
 type HookCommandContext = Pick<Context, "platform" | "nodePath" | "root">;
 
 /** The Windows `cmd` fallback releases before this one wrote: a bare `node`, which cmd looks for in the current folder first. */
-const LEGACY_WINDOWS_FALLBACK = /^cmd \/d \/c "if exist ("[^"]+") \(\1 ("[^"]+")\) else \(node \2\)"$/u;
-const WINDOWS_FALLBACK = /^cmd \/d \/c "if exist ("[^"]+") \(\1 ("[^"]+")\) else \(for %I in \(node\.exe\) do @"%~\$PATH:I" \2\)"$/u;
+function legacyWindowsCmdHookCommand(node: string, hook: string): string {
+  return `cmd /d /c "if exist ${node} (${node} ${hook}) else (node ${hook})"`;
+}
+
+/**
+ * A pattern for every command `template` writes, capturing its two double-quoted words as `node` and `hook`. It is
+ * built from the template itself, so what registration recognises is what it writes.
+ */
+function cmdFallbackPattern(template: (node: string, hook: string) => string): RegExp {
+  const seen = new Set<string>();
+  const source = template("\u0000node\u0000", "\u0000hook\u0000")
+    .replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")
+    .replace(/\u0000(node|hook)\u0000/gu, (_slot, name: string) => {
+      if (seen.has(name)) return `\\k<${name}>`;
+      seen.add(name);
+      return `(?<${name}>"[^"]+")`;
+    });
+  return new RegExp(`^${source}$`, "u");
+}
+
+/** The Windows `cmd` fallbacks Rerail has written: this release's, then the earlier bare `node` form. */
+const WINDOWS_FALLBACKS: readonly RegExp[] = [cmdFallbackPattern(windowsCmdHookCommand), cmdFallbackPattern(legacyWindowsCmdHookCommand)];
 
 /** `command` as the two words `"<node>" "<hook>"` a Windows `cmd` fallback runs, or undefined when it is none. */
 function windowsFallbackWords(command: string): string | undefined {
-  const fallback = WINDOWS_FALLBACK.exec(command) ?? LEGACY_WINDOWS_FALLBACK.exec(command);
-  return fallback === null ? undefined : `${fallback[1]} ${fallback[2]}`;
+  const words = WINDOWS_FALLBACKS.map(pattern => pattern.exec(command)?.groups).find(groups => groups !== undefined);
+  return words === undefined ? undefined : `${words.node} ${words.hook}`;
 }
 
 /**
@@ -319,8 +362,8 @@ function generatedHookCommands(recorded: HookCommandContext, executable: string)
   if (recorded.platform !== "win32") return commands;
   for (const word of [(value: string) => `"${value}"`, (value: string) => `"${value.replaceAll("%", "%%")}"`]) {
     const node = word(recorded.nodePath);
-    const hook = word(join(recorded.root, executable));
-    commands.push(`cmd /d /c "if exist ${node} (${node} ${hook}) else (node ${hook})"`, `${node} ${hook}`);
+    const hook = word(hookScript(recorded, executable));
+    commands.push(legacyWindowsCmdHookCommand(node, hook), `${node} ${hook}`);
   }
   return commands;
 }
@@ -352,7 +395,7 @@ function shellHookTarget(context: Pick<Context, "platform">, command: string, ex
     ? [{ nodePath: written.nodePath.replaceAll("%%", "%"), script: written.script.replaceAll("%%", "%") }, written]
     : [written];
   return targets.find(target => {
-    const root = registeredRoot(target.script, executable);
+    const root = registeredRoot(target.script, executable, context.platform);
     return root !== undefined
       && generatedHookCommands({ platform: context.platform, root, nodePath: target.nodePath }, executable).includes(command);
   });
@@ -369,11 +412,11 @@ function isNodeExecutable(path: string): boolean {
 }
 
 /** Node and hook script of a generated exec-form entry: `node <root>/<hook launcher> <recorded node> <root>/<hook>`. */
-function execHookTarget(command: string, args: unknown, executable: string): HookTarget | undefined {
+function execHookTarget(context: Pick<Context, "platform">, command: string, args: unknown, executable: string): HookTarget | undefined {
   if (command !== "node" || !Array.isArray(args) || args.length !== 3 || !args.every(arg => typeof arg === "string")) return undefined;
   const [launcher, nodePath, script] = args as [string, string, string];
-  const root = registeredRoot(script, executable);
-  return root !== undefined && launcher === join(root, ENTRY_POINTS.hookLauncher) ? { nodePath, script } : undefined;
+  const root = registeredRoot(script, executable, context.platform);
+  return root !== undefined && launcher === pathsOf(context.platform).join(root, ENTRY_POINTS.hookLauncher) ? { nodePath, script } : undefined;
 }
 
 /**
@@ -383,12 +426,12 @@ function execHookTarget(command: string, args: unknown, executable: string): Hoo
 async function isRerailHookEntry(context: Context, entry: JsonObject, executable: string): Promise<boolean> {
   const { command, args } = entry;
   if (typeof command !== "string") return false;
-  const target = args === undefined ? shellHookTarget(context, command, executable) : execHookTarget(command, args, executable);
+  const target = args === undefined ? shellHookTarget(context, command, executable) : execHookTarget(context, command, args, executable);
   if (target === undefined) return false;
   const { nodePath, script } = target;
-  const root = registeredRoot(script, executable);
-  if (!isNodeExecutable(nodePath) || !isAbsolute(script) || root === undefined) return false;
-  return context.mode === "unregister" ? root === context.root : isReplaceableScript(context, script, executable);
+  const root = registeredRoot(script, executable, context.platform);
+  if (!isNodeExecutable(nodePath) || !pathsOf(context.platform).isAbsolute(script) || root === undefined) return false;
+  return context.mode === "unregister" ? samePath(root, context.root, context.platform) : isReplaceableScript(context, script, executable);
 }
 
 /**
@@ -401,7 +444,7 @@ async function isRerailHookEntry(context: Context, entry: JsonObject, executable
 export function hookCommand(context: HookCommandContext, executable: string): string {
   const quoting = hookQuoting(context.platform);
   const node = hookWord(context.nodePath, quoting);
-  const hook = hookWord(join(context.root, executable), quoting);
+  const hook = hookWord(hookScript(context, executable), quoting);
   if (context.platform === "win32") return windowsCmdHookCommand(node, hook);
   return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`;
 }
@@ -425,7 +468,7 @@ export function windowsCmdHookCommand(node: string, hook: string): string {
  */
 function powershellHookCommand(context: HookCommandContext, executable: string): string {
   const node = powershellLiteral(context.nodePath);
-  const hook = powershellLiteral(join(context.root, executable));
+  const hook = powershellLiteral(hookScript(context, executable));
   return `$LASTEXITCODE = 1; if (Test-Path -LiteralPath ${node}) { & ${node} ${hook} } else { node ${hook} }; exit $LASTEXITCODE`;
 }
 
@@ -437,7 +480,7 @@ function hookExecEntry(context: Context, executable: string): JsonObject {
   return {
     type: "command",
     command: "node",
-    args: [join(context.root, ENTRY_POINTS.hookLauncher), context.nodePath, join(context.root, executable)],
+    args: [hookScript(context, ENTRY_POINTS.hookLauncher), context.nodePath, hookScript(context, executable)],
   };
 }
 
@@ -463,7 +506,7 @@ function commandContext(context: Context): CommandFileContext {
     cli: directCommand(context, ENTRY_POINTS.cli),
     packageRoot: context.root,
     setupLauncher: setupLauncher(context),
-    ...(context.platform === "win32" ? { powershellCli: commandLine("powershell", [context.nodePath, join(context.root, ENTRY_POINTS.cli)]) } : {}),
+    ...(context.platform === "win32" ? { powershellCli: commandLine("powershell", [context.nodePath, hookScript(context, ENTRY_POINTS.cli)]) } : {}),
   };
 }
 
@@ -688,7 +731,7 @@ function claudeStatusCommand(context: Context, path: string): string {
   // A POSIX word on every platform: Git Bash reads it on Windows, and keeps each backslash it escapes.
   const word = (value: string): string => hookWord(value, "posix");
   const settings = path === join(context.home, ".claude", "settings.json") ? "" : ` ${word(path)}`;
-  return `${CLAUDE_STATUS_FALLBACK}${word(context.nodePath)} ${word(join(context.root, ENTRY_POINTS.claudeStatus))}${settings}`;
+  return `${CLAUDE_STATUS_FALLBACK}${word(context.nodePath)} ${word(hookScript(context, ENTRY_POINTS.claudeStatus))}${settings}`;
 }
 
 function composedClaudeStatus(previous: ClaudeStatusLine | null | undefined, command: string): ClaudeStatusLine {
@@ -1013,7 +1056,7 @@ function claudeStatusScript(command: string, platform: NodeJS.Platform): string 
 /** A status line generated by any install of this package, or by one that is gone, identified as hooks are (`isReplaceableScript`). */
 async function isPackageClaudeStatus(context: Context, statusLine: ClaudeStatusLine | undefined): Promise<boolean> {
   const script = statusLine === undefined ? undefined : claudeStatusScript(statusLine.command, context.platform);
-  return script !== undefined && isAbsolute(script) && await isReplaceableScript(context, script, ENTRY_POINTS.claudeStatus);
+  return script !== undefined && pathsOf(context.platform).isAbsolute(script) && await isReplaceableScript(context, script, ENTRY_POINTS.claudeStatus);
 }
 
 /** Claude uses the safe main-checkout root for local settings, but shared settings stay at cwd. */
@@ -1383,11 +1426,11 @@ function promptCommandPath(context: Context, harness: PromptCommandHarness, name
  * under its own install root. A generated file names exactly one `<root>/dist/cli/cli.js` (`ENTRY_POINTS.cli`).
  */
 async function runsPackageCli(context: Context, text: string): Promise<boolean> {
-  if (text.includes(join(context.root, ENTRY_POINTS.cli))) return true;
+  if (text.includes(hookScript(context, ENTRY_POINTS.cli))) return true;
   if (context.mode === "unregister") return false;
   const windows = context.platform === "win32";
   const scripts = new Set(shellWords(text, windows).map(word => unquoteShellWord(word, windows))
-    .filter(word => isAbsolute(word) && registeredRoot(word, ENTRY_POINTS.cli) !== undefined));
+    .filter(word => pathsOf(context.platform).isAbsolute(word) && registeredRoot(word, ENTRY_POINTS.cli, context.platform) !== undefined));
   const [script] = scripts;
   return scripts.size === 1 && await isReplaceableScript(context, script!, ENTRY_POINTS.cli);
 }
