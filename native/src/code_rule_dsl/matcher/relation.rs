@@ -625,7 +625,6 @@ impl Related {
         })
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::code_rule_dsl) fn rule(&self) -> &AstMatcher {
         &self.rule
     }

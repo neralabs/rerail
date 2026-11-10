@@ -18,22 +18,62 @@
           "language": "python",
           "utils": {
             "line-ends-after": {
-              "layout": { "after": { "to": "token", "breaks": { "min": 1 }, "edge": true } }
+              "layout": {
+                "after": {
+                  "to": "token",
+                  "breaks": {
+                    "min": 1
+                  },
+                  "edge": true
+                }
+              }
             },
             "ends-line": {
               "any": [
-                { "matches": "line-ends-after" },
-                { "precedes": { "kind": "line_continuation", "matches": "ends-line" } }
+                {
+                  "matches": "line-ends-after"
+                },
+                {
+                  "precedes": {
+                    "kind": "line_continuation",
+                    "matches": "ends-line"
+                  }
+                }
               ]
             }
           },
           "rule": {
             "regex": "(?P<COMMA>,)\\z",
-            "not": { "kind": "comment" },
-            "inside": { "any": [{ "kind": "module" }, { "kind": "block" }], "stopBy": "neighbor" },
+            "not": {
+              "kind": "comment"
+            },
+            "inside": {
+              "any": [
+                {
+                  "kind": "module"
+                },
+                {
+                  "kind": "block"
+                }
+              ],
+              "stopBy": "neighbor"
+            },
             "any": [
-              { "matches": "line-ends-after", "not": { "has": { "kind": "block", "stopBy": "end" } } },
-              { "precedes": { "kind": "line_continuation", "matches": "ends-line" } }
+              {
+                "matches": "line-ends-after",
+                "not": {
+                  "has": {
+                    "kind": "block",
+                    "stopBy": "end"
+                  }
+                }
+              },
+              {
+                "precedes": {
+                  "kind": "line_continuation",
+                  "matches": "ends-line"
+                }
+              }
             ]
           }
         }
@@ -82,12 +122,27 @@
           "language": "python",
           "utils": {
             "line-ends-after": {
-              "layout": { "after": { "to": "token", "breaks": { "min": 1 }, "edge": true } }
+              "layout": {
+                "after": {
+                  "to": "token",
+                  "breaks": {
+                    "min": 1
+                  },
+                  "edge": true
+                }
+              }
             },
             "ends-line": {
               "any": [
-                { "matches": "line-ends-after" },
-                { "precedes": { "kind": "line_continuation", "matches": "ends-line" } }
+                {
+                  "matches": "line-ends-after"
+                },
+                {
+                  "precedes": {
+                    "kind": "line_continuation",
+                    "matches": "ends-line"
+                  }
+                }
               ]
             }
           },
@@ -97,13 +152,129 @@
             "inside": {
               "kind": "pattern_list",
               "stopBy": "neighbor",
-              "inside": { "any": [{ "kind": "assignment" }, { "kind": "augmented_assignment" }], "stopBy": "neighbor" }
+              "inside": {
+                "any": [
+                  {
+                    "kind": "assignment"
+                  },
+                  {
+                    "kind": "augmented_assignment"
+                  }
+                ],
+                "stopBy": "neighbor"
+              }
             }
           }
         }
       },
       "violation": {
         "anchor": "witness.span",
+        "code": "COM818",
+        "message": "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "COM818"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "trailing-comma-before-assignment-line-between",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "line-ends-after": {
+              "layout": {
+                "after": {
+                  "to": "token",
+                  "breaks": {
+                    "min": 1
+                  },
+                  "edge": true
+                }
+              }
+            },
+            "ends-line": {
+              "any": [
+                {
+                  "matches": "line-ends-after"
+                },
+                {
+                  "precedes": {
+                    "kind": "line_continuation",
+                    "matches": "ends-line"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "precedes": {
+                  "regex": "^,$"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "pattern_list",
+                  "stopBy": "neighbor",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "kind": "augmented_assignment"
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      }
+                    ]
+                  },
+                  "layout": {
+                    "before": {
+                      "to": "token",
+                      "breaks": {
+                        "min": 1
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.end",
         "code": "COM818",
         "message": "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`.",
         "suppress": {

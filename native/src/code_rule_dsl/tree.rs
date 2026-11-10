@@ -109,6 +109,15 @@ impl<'r, D: Doc> Part<'r, D> {
             Self::Token(_) => None,
         }
     }
+    /// The node a part is, if the tree holds it: a named node or a stored token (not an implied
+    /// one).
+    pub(crate) fn node(&self) -> Option<Node<'r, D>> {
+        match self {
+            Self::Named(node) => Some(node.clone()),
+            Self::Token(Token { held: Held::Stored(node) }) => Some(node.clone()),
+            Self::Token(_) => None,
+        }
+    }
     /// The token, if the part is one.
     fn into_token(self) -> Option<Token<'r, D>> {
         match self {

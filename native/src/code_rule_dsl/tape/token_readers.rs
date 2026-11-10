@@ -224,7 +224,9 @@ impl Walk<'_> {
                 (if parents.is_some() { "gap" } else { "gap?" }, relation, self.lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
             }
         };
-        let target = path.rsplit_once("/any/").filter(|(_, at)| at.parse::<usize>().is_ok()).map_or(path, |(relation, _)| relation);
+        // A token test that is a lowered relation's target, or an `any` alternative or `all` item
+        // of it.
+        let target = ["/any/", "/all/"].iter().find_map(|sep| path.rsplit_once(sep).filter(|(_, at)| at.parse::<usize>().is_ok()).map(|(relation, _)| relation)).unwrap_or(path);
         let category = if category != "never" && implied.is_empty() {
             "stored"
         } else if self.lowered.contains(path) || self.lowered.contains(target) {
