@@ -3363,3 +3363,28 @@ on the next run, with the same code. Suspect: the shared default tape cache (O14
 After the merges of 2026-11-08 (`0078ba091`, with the collection rules), 2026-11-09 00:15: `3988 303 298 0`, 55.6 s
 CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 **Closure:** the cause found, or twenty runs on an isolated store all `3988 303 298 0`.
+
+## O-metal-fact-rows. Metal tests facts the host found
+
+**Status:** open (2026-11-09, RER-131; deferred by the user). On Metal, a clause's facts are found on the host before
+any pass (`fact_rows` in `transducer/packed/compile/matcher.rs`'s `metal`: `Fact::found` per tape, the `tokens` facts'
+regexes over each token text included), and the device only tests the rows it is handed (`Pass::Fact`, the pattern
+kernel's `FACT` case). That is host evaluation on the Metal path, which is not allowed: what Metal's kernels answer,
+the device computes. It is the one entry `metal_host_guard_tests::REMAINING` still lists.
+**Why it matters:** the host's facts run single-file on the CPU before the command buffer, in the Metal run's critical
+path; and a fact Metal cannot find is a fact Metal does not own.
+**Closure:** facts found by kernels (their text tests by chunked DFA, as string matching is everywhere else), `fact_rows`
+gone from `metal`, and the entry removed from `REMAINING`; S7's keys equal on all four backends, full and named-only.
+
+## O-metal-root-programs. After Metal labels a batch, the wave runs the root programs on the host
+
+**Status:** open (2026-11-09, RER-131; deferred by the user). `LoweredWave::labelled_metal` hands the wave the labels
+as views of its tapes, and `demand(batch)` then runs each clause's root program on the host for its results
+(captures, spans), which a label keeps only as bits. The root walks Metal does run (`root_records_*`, `RootsFound`)
+cover a program that is a micro walk of at most 32 frames; any other, a walk that overflowed, or records past the
+buffer, the host walks too. The guard does not see this yet: it is in the wave, not the Metal entry points.
+**Why it matters:** same rule as O-metal-fact-rows, and the host's root runs are the rest of the CPU a Metal audit
+spends after the device.
+**Closure:** every root program's results made on the device (captures and spans in the root records, every depth
+by a device stack, overflow as a rerun on the device), `demand` on Metal reading them only; the wave's Metal path
+added to `metal_host_guard_tests`' scan.
