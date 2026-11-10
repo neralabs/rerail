@@ -39,7 +39,7 @@ def main(check,format,build_cases,exercise,install,dependencies):
         def guard(frame,event,_arg):
             if event=='call' and frame.f_code in original_codes and not original_codes[frame.f_code][2]:
                 fallbacks.append(frame.f_code.co_qualname);raise AssertionError('Original semantics executed: '+frame.f_code.co_qualname)
-    paths=[Path(__file__),*[Path(__file__).with_name(n) for n in ['migration.py','replay.py','dto.py','policy_routes.py',*dependencies]]]
+    paths=[Path(__file__),*[(Path(__file__).parent/n).resolve() for n in ['migration.py','replay.py','dto.py','policy_routes.py',*dependencies]]]
     hashes={p.relative_to(ROOT).as_posix():sha(p.read_bytes()) for p in paths if p.exists()}
     report=dict(format=format,sourcePin=PIN,sourceSha256=sha(path.read_bytes()),mode=a.command,executionMode=a.mode,
         passed=False,fullMigrationAcceptance=False,harnessFiles=hashes,totalCases=len(corpus),part=a.part,parts=a.parts,cases=[])
