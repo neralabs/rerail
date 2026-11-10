@@ -1,4 +1,4 @@
-//! JSON's parser: the ladder's JSONC grammar (`bitlex_ladder/15-jsonc.bitlex`, JSON with `//` and
+//! JSON's parser: the ladder's JSONC grammar (`crates/compiler/bitlex_ladder/15-jsonc.bitlex`, JSON with `//` and
 //! `/* */` comments, as tree-sitter-json reads it), compiled once per process through the Bitlex
 //! compiler to tier 1 and tier 2 on Cranelift, and shared by every thread.
 //!
@@ -7,14 +7,11 @@
 //! encoded from it (`tape::TapeImage::parse`). A file the grammar refuses (invalid JSON, an empty
 //! file, a comment holding a quote) goes to tree-sitter-json.
 
-pub(in crate::code_rule_dsl) use super::native_cpu_stream::Columns;
+pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_stream::{Columns, NO_PARENT};
 use super::{bitlex_compile, native_cpu_stream, native_ir, rir};
 
-/// A root's parent in [`Columns::parent`].
-pub(in crate::code_rule_dsl) const NO_PARENT: u32 = native_cpu_stream::NO_PARENT;
-
 /// The grammar: the ladder's JSONC step.
-const GRAMMAR: &str = include_str!("bitlex_ladder/15-jsonc.bitlex");
+const GRAMMAR: &str = include_str!("../../../../crates/compiler/bitlex_ladder/15-jsonc.bitlex");
 
 /// The compiled parser.
 struct Compiled {

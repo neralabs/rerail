@@ -718,48 +718,49 @@ pub(in crate::code_rule_dsl) fn document_facts(text: &str) -> Result<Facts, Stri
 
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
 pub(in crate::code_rule_dsl) fn encode(facts: &Facts) -> Vec<u8> {
-    let mut strings: BTreeMap<&str, u32> = BTreeMap::new();
-    for (rel, rows) in facts {
-        let next = strings.len() as u32;
-        strings.entry(rel).or_insert(next);
-        for v in rows.iter().flatten() {
-            if let Value::Str(x) = v {
-                let next = strings.len() as u32;
-                strings.entry(x).or_insert(next);
-            }
-        }
-    }
-    let mut table: Vec<&str> = vec![""; strings.len()];
-    for (x, k) in &strings {
-        table[*k as usize] = x;
-    }
-    let mut out = Vec::new();
+    // One pass: each string's id by first use (relation, then its rows' values, in order), the rows written as they
+    // are met; the table, which comes first, written after.
+    let mut strings: rustc_hash::FxHashMap<&str, u32> = Default::default();
+    let mut table: Vec<&str> = Vec::new();
+    let mut body = Vec::new();
     let u = |out: &mut Vec<u8>, x: u64| out.extend_from_slice(&x.to_le_bytes());
-    u(&mut out, table.len() as u64);
-    for x in &table {
-        u(&mut out, x.len() as u64);
-        out.extend_from_slice(x.as_bytes());
-    }
-    u(&mut out, facts.len() as u64);
+    u(&mut body, facts.len() as u64);
     for (rel, rows) in facts {
-        u(&mut out, u64::from(strings[rel.as_str()]));
-        u(&mut out, rows.len() as u64);
+        let next = table.len() as u32;
+        let k = *strings.entry(rel.as_str()).or_insert_with(|| {
+            table.push(rel.as_str());
+            next
+        });
+        u(&mut body, u64::from(k));
+        u(&mut body, rows.len() as u64);
         for row in rows {
-            u(&mut out, row.len() as u64);
+            u(&mut body, row.len() as u64);
             for v in row {
                 match v {
                     Value::Int(i) => {
-                        out.push(0);
-                        out.extend_from_slice(&i.to_le_bytes());
+                        body.push(0);
+                        body.extend_from_slice(&i.to_le_bytes());
                     }
                     Value::Str(x) => {
-                        out.push(1);
-                        u(&mut out, u64::from(strings[x.as_str()]));
+                        let next = table.len() as u32;
+                        let k = *strings.entry(x.as_str()).or_insert_with(|| {
+                            table.push(x.as_str());
+                            next
+                        });
+                        body.push(1);
+                        u(&mut body, u64::from(k));
                     }
                 }
             }
         }
     }
+    let mut out = Vec::with_capacity(body.len() + 8 + table.iter().map(|x| x.len() + 8).sum::<usize>());
+    u(&mut out, table.len() as u64);
+    for x in &table {
+        u(&mut out, x.len() as u64);
+        out.extend_from_slice(x.as_bytes());
+    }
+    out.extend_from_slice(&body);
     out
 }
 
@@ -853,6 +854,49 @@ picked(n) :- ast_match("$O[:-$K]", n, "", _).
         facts.remove("ast_pattern");
         let legacy = super::program(&facts, "p").unwrap();
         assert_eq!(legacy.ast_patterns, program.ast_patterns);
+    }
+
+    /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
+    /// (strings counted, then the rows written), and they decode to the facts.
+    #[test]
+    fn facts_encode_as_two_passes_did_and_decode_back() {
+        use super::{Facts, Value};
+        let mut facts = Facts::new();
+        facts.insert("b".into(), vec![vec![Value::Str("x".into()), Value::Int(-3)], vec![Value::Str("b".into()), Value::Str("y".into())]]);
+        facts.insert("a".into(), vec![vec![Value::Str("y".into()), Value::Str("z".into()), Value::Int(7)]]);
+        let mut want = Vec::new();
+        let u = |out: &mut Vec<u8>, x: u64| out.extend_from_slice(&x.to_le_bytes());
+        // Strings by first use: a, y, z, b, x.
+        let table = ["a", "y", "z", "b", "x"];
+        u(&mut want, 5);
+        for x in table {
+            u(&mut want, x.len() as u64);
+            want.extend_from_slice(x.as_bytes());
+        }
+        u(&mut want, 2);
+        let id = |x: &str| table.iter().position(|t| *t == x).unwrap() as u64;
+        for (rel, rows) in &facts {
+            u(&mut want, id(rel));
+            u(&mut want, rows.len() as u64);
+            for row in rows {
+                u(&mut want, row.len() as u64);
+                for v in row {
+                    match v {
+                        Value::Int(i) => {
+                            want.push(0);
+                            want.extend_from_slice(&i.to_le_bytes());
+                        }
+                        Value::Str(x) => {
+                            want.push(1);
+                            u(&mut want, id(x));
+                        }
+                    }
+                }
+            }
+        }
+        let got = super::encode(&facts);
+        assert_eq!(got, want);
+        assert_eq!(super::decode(&got).unwrap(), facts);
     }
 
     /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same

@@ -1,0 +1,25 @@
+[package]
+name = "rerail-compiler"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The transducer's parser compiler: Bitlex to tier 1 and tier 2, and their Cranelift lowering."
+
+[features]
+# The relocations' recording (`native_cpu_codegen::relocations`), for the engine's tests.
+test-hooks = []
+
+[dependencies]
+# Bitlex's parser, for the masks' lowering (`bitlex_masks`). No dependencies of its own.
+bitlex = { path = "../../../tools/bitlex", default-features = false }
+cranelift-codegen = "=0.125.4"
+cranelift-frontend = "=0.125.4"
+cranelift-module = "=0.125.4"
+libc = "0.2.189"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
+
+# The browser build: a page has no executable memory (the engine's `wasm/README.md`).
+[target.'cfg(target_family = "wasm")'.dependencies]
+cranelift-jit-wasm = { path = "../../wasm/cranelift-jit" }

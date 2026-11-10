@@ -120,6 +120,9 @@ pub struct GpuBackend {
 pub struct Stats {
     /// Device seconds, `GPUEndTime - GPUStartTime`, summed over the command buffers.
     pub device: f64,
+    /// Host seconds making the jobs' buffers (copies in), and reading the outputs back (copies out).
+    pub encode: f64,
+    pub decode: f64,
     /// Command buffers: 1, or 2 when a pairs output outgrew its first buffer.
     pub command_buffers: usize,
     pub dispatches: usize,
@@ -177,29 +180,42 @@ impl Backend for GpuBackend {
     }
 
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
-        // Programs submit their own command buffers on the one queue (`Program::run`), the joins theirs
-        // (`space::run`), the other forms one together.
+        self.submit_timed(ks).map(|(o, _)| o)
+    }
+
+    /// Programs submit their own command buffers on the one queue (`Program::run`), the joins theirs
+    /// (`space::run`), the other forms one together (`run`, which times its phases); the programs' and joins' wall
+    /// time counts as the device's.
+    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, crate::exec::Phases), String> {
         let (programs, rest): (Vec<usize>, Vec<usize>) = (0..ks.len()).partition(|&i| matches!(ks[i], Kernel::Program(_)));
         let (joins, others): (Vec<usize>, Vec<usize>) = rest.into_iter().partition(|&i| matches!(ks[i], Kernel::Join { .. }));
         let mut outs: Vec<Option<Output>> = vec![None; ks.len()];
-        for &i in &programs {
-            let Kernel::Program(p) = ks[i] else { unreachable!("a program") };
-            let r = objc::rc::autoreleasepool(|| p.0.run(crate::lanes::Lane::Gpu)).map_err(|e| format!("program {}: {e}", p.0.name()))?;
-            outs[i] = Some(Output::Program(crate::kernel::ProgramResult(r)));
+        let mut phases = crate::exec::Phases::default();
+        if !programs.is_empty() {
+            let t = std::time::Instant::now();
+            for &i in &programs {
+                let Kernel::Program(p) = ks[i] else { unreachable!("a program") };
+                let r = objc::rc::autoreleasepool(|| p.0.run(crate::lanes::Lane::Gpu)).map_err(|e| format!("program {}: {e}", p.0.name()))?;
+                outs[i] = Some(Output::Program(crate::kernel::ProgramResult(r)));
+            }
+            phases.device = Some(t.elapsed().as_secs_f64());
         }
         if !others.is_empty() {
-            let (o, _) = self.run(&others.iter().map(|&i| ks[i]).collect::<Vec<_>>())?;
+            let (o, s) = self.run(&others.iter().map(|&i| ks[i]).collect::<Vec<_>>())?;
+            phases = crate::exec::Phases { encode: s.encode, device: Some(phases.device.unwrap_or(0.0) + s.device), decode: s.decode, worker_cpu: 0.0 };
             for (&i, o) in others.iter().zip(o) {
                 outs[i] = Some(o);
             }
         }
         if !joins.is_empty() {
+            let t = std::time::Instant::now();
             let o = objc::rc::autoreleasepool(|| space::run(&self.space, &joins.iter().map(|&i| ks[i]).collect::<Vec<_>>()))?;
+            phases.device = Some(phases.device.unwrap_or(0.0) + t.elapsed().as_secs_f64());
             for (&i, o) in joins.iter().zip(o) {
                 outs[i] = Some(o);
             }
         }
-        Ok(outs.into_iter().map(|o| o.expect("every launch ran")).collect())
+        Ok((outs.into_iter().map(|o| o.expect("every launch ran")).collect(), phases))
     }
 
     /// A batch of joins only: its first command buffer committed, and read by `finish` (the worker begins its next
@@ -250,8 +266,9 @@ impl GpuBackend {
     pub fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Stats), String> {
         objc::rc::autoreleasepool(|| {
             let mut plan = Planner { gpu: self.gpu, inputs: HashMap::new(), leases: Default::default() };
+            let t = std::time::Instant::now();
             let jobs: Vec<Job> = crate::score::phase("upload", || ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>())?;
-            let mut stats = Stats::default();
+            let mut stats = Stats { encode: t.elapsed().as_secs_f64(), ..Stats::default() };
             self.execute(jobs.iter().map(|j| j.stages.as_slice()), &mut stats)?;
             // Pairs that outgrew their first buffer: their scatter again, into the exact size.
             let mut rerun: Vec<Dispatch> = Vec::new();
@@ -278,6 +295,7 @@ impl GpuBackend {
                 self.execute(std::iter::once(&stage[..]), &mut stats)?;
             }
             let _read = ReadPhase(crate::score::thread_cpu(), std::time::Instant::now());
+            let t = std::time::Instant::now();
             let mut outs = Vec::with_capacity(jobs.len());
             for (i, j) in jobs.into_iter().enumerate() {
                 if let Some(bad) = &j.bad {
@@ -297,6 +315,7 @@ impl GpuBackend {
                     }
                 });
             }
+            stats.decode = t.elapsed().as_secs_f64();
             Ok((outs, stats))
         })
     }

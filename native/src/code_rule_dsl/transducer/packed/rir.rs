@@ -37,94 +37,17 @@
 //!   program); otherwise the assembled program's digest must equal it, and a stated `caps` must
 //!   be the program's.
 
+// The assembler's reader and the word program's rows, the compiler crate's (`rerail_compiler::rir_asm`).
+use rerail_compiler::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
+pub(in crate::code_rule_dsl) use rerail_compiler::rir_asm::IR;
 use super::*;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
 use std::collections::HashMap as Map;
 
-/// The format's version: the program digest's (`tempo-program-v7`).
-pub(in crate::code_rule_dsl) const IR: u32 = 7;
 
-/// The opcodes' mnemonics.
-const OPCODES: &[(u8, &str)] = &[
-    (STOP, "STOP"),
-    (KIND, "KIND"),
-    (FIELD, "FIELD"),
-    (FLAGS, "FLAGS"),
-    (TEXT, "TEXT"),
-    (SIZE, "SIZE"),
-    (ASSERT, "ASSERT"),
-    (FIRST, "FIRST"),
-    (LAST, "LAST"),
-    (ABSENT_FIELD, "ABSENT_FIELD"),
-    (SUPERTYPE, "SUPERTYPE"),
-    (CHILD, "CHILD"),
-    (NEXT, "NEXT"),
-    (PARENT, "PARENT"),
-    (DESCEND, "DESCEND"),
-    (FOLLOWING, "FOLLOWING"),
-    (SAVE_CURSOR, "SAVE_CURSOR"),
-    (RESTORE_CURSOR, "RESTORE_CURSOR"),
-    (CAPTURE, "CAPTURE"),
-    (REPEAT_BEGIN, "REPEAT_BEGIN"),
-    (REPEAT_BUMP, "REPEAT_BUMP"),
-    (REPEAT_END, "REPEAT_END"),
-    (FORK, "FORK"),
-    (GOTO, "GOTO"),
-    (EMIT, "EMIT"),
-    (TOKEN, "TOKEN"),
-    (SWITCH, "SWITCH"),
-    (WORD_IS, "WORD"),
-    (OPEN, "OPEN"),
-    (CLOSE, "CLOSE"),
-    (LEAF, "LEAF"),
-    (NODE_FIELD, "NODE_FIELD"),
-    (NODE_SUPER, "NODE_SUPER"),
-    (PUSH, "PUSH"),
-    (RETURN, "RETURN"),
-    (ACCEPT, "ACCEPT"),
-    (SPAN, "SPAN"),
-    (EMPTY, "EMPTY"),
-    (MARK, "MARK"),
-    (ROW, "ROW"),
-    (RETAG, "RETAG"),
-    (MERGE, "MERGE"),
-    (WRAP, "WRAP"),
-];
 
-/// How an opcode's operand prints.
-#[derive(Clone, Copy, PartialEq)]
-enum Operand {
-    Number,
-    Target,
-    Label,
-    Predicate,
-    Assert,
-    Kind,
-    Field,
-    /// A string: `sN`.
-    String,
-    /// A switch table: `TN`.
-    Switch,
-}
 
-/// An operand's shape by opcode and mode: `RETAG m=3`'s is a reading's index.
-fn operand(opcode: u8, mode: u8) -> Operand {
-    match opcode {
-        RETAG if mode == 3 => Operand::Number,
-        FORK | GOTO | PUSH => Operand::Target,
-        WORD_IS => Operand::String,
-        SWITCH => Operand::Switch,
-        OPEN | LEAF | NODE_SUPER | RETAG | MERGE | WRAP => Operand::Kind,
-        NODE_FIELD => Operand::Field,
-        CAPTURE | EMIT => Operand::Label,
-        TEXT => Operand::Predicate,
-        ASSERT => Operand::Assert,
-        KIND | SUPERTYPE => Operand::Kind,
-        FIELD | ABSENT_FIELD => Operand::Field,
-        _ => Operand::Number,
-    }
-}
 
 /// A grammar's kind and field names, as `rir` prints and reads them.
 pub(in crate::code_rule_dsl) struct Names {
@@ -138,6 +61,16 @@ pub(in crate::code_rule_dsl) struct Names {
 /// A dialect's name in a header: its file label.
 fn dialect_name(dialect: GrammarDialect) -> String {
     crate::code_rule_dsl::language::label(dialect).map_or_else(|| format!("{dialect:?}").to_lowercase(), str::to_owned)
+}
+
+impl NameTable for Names {
+    fn kind_id(&self, name: &str, named: bool) -> Result<u16, String> {
+        self.kinds.get(&(name, named)).copied().ok_or_else(|| format!("no {} kind `{name}` in {}", if named { "named" } else { "anonymous" }, self.header()))
+    }
+
+    fn field_id(&self, name: &str) -> Result<u16, String> {
+        self.catalog.field_id(name).ok_or_else(|| format!("no field `{name}` in {}", self.header()))
+    }
 }
 
 impl Names {
@@ -213,23 +146,6 @@ pub(in crate::code_rule_dsl) fn kinds(names: Option<&Names>, ids: &[u16]) -> Str
     format!("[{}]", ids.iter().map(|&id| kind(names, id)).collect::<Vec<_>>().join(" "))
 }
 
-/// `bytes` as a quoted string: printable ASCII as itself, `"` and `\` escaped, the rest `\xNN`.
-pub(in crate::code_rule_dsl) fn quote(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() + 2);
-    out.push('"');
-    for &byte in bytes {
-        match byte {
-            b'"' => out.push_str("\\\""),
-            b'\\' => out.push_str("\\\\"),
-            0x20..=0x7e => out.push(byte as char),
-            _ => {
-                let _ = write!(out, "\\x{byte:02x}");
-            }
-        }
-    }
-    out.push('"');
-    out
-}
 
 fn flag(value: bool) -> u8 {
     u8::from(value)
@@ -275,27 +191,17 @@ fn pattern(out: &mut String, node: &PackedPattern, names: Option<&Names>) {
     }
 }
 
-// A block program's rows, tier 1's (`rerail_tier1::block::block_rows`).
+// A block program's rows, tier 1's (`rerail_compiler::block::block_rows`).
+// Tier 2's rows and quoted strings, the compiler's (`rerail_compiler::rir_text`).
+pub(in crate::code_rule_dsl) use rerail_compiler::rir_text::quote;
+pub(super) use rerail_compiler::rir_text::{reading_rows, switch_rows};
 pub(super) use super::block::block_rows;
 
 pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Names>) -> String {
     let mut out = String::new();
     let grammar = names.map_or("none".to_owned(), Names::header);
     let _ = writeln!(out, "program sha256:{} ir={IR} grammar={grammar} caps={}", program.plain_digest(), caps(program));
-    let _ = writeln!(out, "  mode set={} query={}", flag(program.set_mode), flag(program.tree_sitter_query));
-    for (at, string) in program.strings.iter().enumerate() {
-        let _ = writeln!(out, "  string {at} {}", quote(string));
-    }
-    for (at, label) in program.labels.iter().enumerate() {
-        let _ = writeln!(out, "  label {at} s{label}");
-    }
-    for (at, long) in program.longs.iter().enumerate() {
-        let _ = writeln!(out, "  long {at} {long}");
-    }
-    for (at, s) in program.switches.iter().enumerate() {
-        switch_rows(&mut out, at, s);
-    }
-    reading_rows(&mut out, &program.readings);
+    head_rows(&mut out, program);
     for (at, predicate) in program.predicates.iter().enumerate() {
         let (kind, source) = match predicate {
             TextPredicate::Equal(source) => ("equal", source),
@@ -305,9 +211,7 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         };
         let _ = writeln!(out, "  predicate {at} {kind} s{source}");
     }
-    for (at, block) in program.block_programs.iter().enumerate() {
-        block_rows(&mut out, at, block);
-    }
+    block_programs_rows(&mut out, program);
     for (at, predicate) in program.capture_predicates.iter().enumerate() {
         let body = match predicate {
             CapturePredicate::Equal { left, right, negated, any } => {
@@ -353,215 +257,13 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         pattern(&mut out, node, names);
         out.push('\n');
     }
-    for (pc, &instruction) in program.words.iter().enumerate() {
-        let (opcode, mode, arg) = split(instruction);
-        let name = OPCODES.iter().find(|(code, _)| *code == opcode).map(|(_, name)| (*name).to_owned());
-        let name = name.unwrap_or_else(|| format!("OP_{opcode:02x}"));
-        let _ = write!(out, "  {pc:04} {name}");
-        if mode != 0 {
-            let _ = write!(out, " m={mode}");
-        }
-        let _ = match operand(opcode, mode) {
-            Operand::Target => write!(out, " @{arg:04}"),
-            Operand::Label => write!(out, " L{arg}"),
-            Operand::Predicate => write!(out, " P{arg}"),
-            Operand::Assert => write!(out, " A{arg}"),
-            Operand::Kind => write!(out, " {}", kind(names, arg)),
-            Operand::Field => write!(out, " {}", field(names, arg)),
-            Operand::Number => write!(out, " {arg}"),
-            Operand::String => write!(out, " s{arg}"),
-            Operand::Switch => write!(out, " T{arg}"),
-        };
-        if operand(opcode, mode) == Operand::Label
-            && let Some(name) = program.label_name(arg)
-        {
-            let _ = write!(out, "  ; {name}");
-        }
-        out.push('\n');
-    }
+    word_rows(&mut out, program, &|id| kind(names, id), &|id| field(names, id));
     out
 }
 
-/// A token of a `rir` line: a word, a quoted string, a parenthesis or a bracket.
-#[derive(Debug, Clone, PartialEq)]
-enum Token {
-    Word(String),
-    Quoted(Vec<u8>),
-    Open,
-    Close,
-    OpenList,
-    CloseList,
-}
 
-fn tokens(line: &str) -> Result<Vec<Token>, String> {
-    let bytes = line.as_bytes();
-    let (mut out, mut at) = (Vec::new(), 0);
-    while at < bytes.len() {
-        let single = match bytes[at] {
-            b';' => break,
-            b' ' | b'\t' => {
-                at += 1;
-                continue;
-            }
-            b'(' => Some(Token::Open),
-            b')' => Some(Token::Close),
-            b'[' => Some(Token::OpenList),
-            b']' => Some(Token::CloseList),
-            _ => None,
-        };
-        if let Some(token) = single {
-            out.push(token);
-            at += 1;
-            continue;
-        }
-        if bytes[at] == b'"' {
-            at += 1;
-            let mut text = Vec::new();
-            loop {
-                match bytes.get(at) {
-                    None => return Err("an unterminated string".into()),
-                    Some(b'"') => {
-                        at += 1;
-                        break;
-                    }
-                    Some(b'\\') => {
-                        match bytes.get(at + 1) {
-                            Some(b'"') => text.push(b'"'),
-                            Some(b'\\') => text.push(b'\\'),
-                            Some(b'x') => {
-                                let hex = line.get(at + 2..at + 4).ok_or("a short \\x escape")?;
-                                text.push(u8::from_str_radix(hex, 16).map_err(|_| "a bad \\x escape")?);
-                                at += 2;
-                            }
-                            _ => return Err("an unknown escape".into()),
-                        }
-                        at += 2;
-                    }
-                    Some(&byte) => {
-                        text.push(byte);
-                        at += 1;
-                    }
-                }
-            }
-            out.push(Token::Quoted(text));
-            continue;
-        }
-        let start = at;
-        while at < bytes.len() && !matches!(bytes[at], b' ' | b'\t' | b'(' | b')' | b'[' | b']' | b'"' | b';') {
-            at += 1;
-        }
-        out.push(Token::Word(line.get(start..at).ok_or("a word splits a character")?.to_owned()));
-    }
-    Ok(out)
-}
 
-/// A line's tokens, read in order, with the grammar's names.
-struct Line<'a> {
-    tokens: std::iter::Peekable<std::vec::IntoIter<Token>>,
-    names: Option<&'a Names>,
-}
 
-impl Line<'_> {
-    fn next(&mut self) -> Result<Token, String> {
-        self.tokens.next().ok_or_else(|| "a missing operand".to_owned())
-    }
-
-    /// The next token, if it is a word, without reading it.
-    fn peek_word(&mut self) -> Option<String> {
-        match self.tokens.peek() {
-            Some(Token::Word(word)) => Some(word.clone()),
-            _ => None,
-        }
-    }
-
-    fn word(&mut self) -> Result<String, String> {
-        match self.next()? {
-            Token::Word(word) => Ok(word),
-            other => Err(format!("expected a word, found {other:?}")),
-        }
-    }
-
-    fn quoted(&mut self) -> Result<Vec<u8>, String> {
-        match self.next()? {
-            Token::Quoted(text) => Ok(text),
-            other => Err(format!("expected a string, found {other:?}")),
-        }
-    }
-
-    fn number<T: std::str::FromStr>(&mut self, prefix: &str) -> Result<T, String> {
-        let word = self.word()?;
-        word.strip_prefix(prefix).ok_or_else(|| format!("expected `{prefix}…`, found `{word}`"))?.parse().map_err(|_| format!("a bad number `{word}`"))
-    }
-
-    fn keyed(&mut self, key: &str) -> Result<bool, String> {
-        match self.number::<u8>(&format!("{key}="))? {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(format!("`{key}=` is 0 or 1")),
-        }
-    }
-
-    fn optional(&mut self, prefix: &str) -> Result<Option<u16>, String> {
-        let word = self.word()?;
-        if word == "-" {
-            return Ok(None);
-        }
-        word.strip_prefix(prefix).and_then(|number| number.parse().ok()).map(Some).ok_or_else(|| format!("a bad operand `{word}`"))
-    }
-
-    /// A kind: `#id`, a named kind's name, or an anonymous kind's quoted name.
-    fn kind(&mut self) -> Result<u16, String> {
-        match self.next()? {
-            Token::Word(word) if word.starts_with('#') => word[1..].parse().map_err(|_| format!("a bad kind `{word}`")),
-            Token::Word(word) => self.lookup(&word, true),
-            Token::Quoted(text) => self.lookup(&String::from_utf8(text).map_err(|_| "a kind's name is UTF-8")?, false),
-            other => Err(format!("expected a kind, found {other:?}")),
-        }
-    }
-
-    fn lookup(&self, name: &str, named: bool) -> Result<u16, String> {
-        let names = self.names.ok_or_else(|| format!("kind `{name}` without a grammar"))?;
-        names.kinds.get(&(name, named)).copied().ok_or_else(|| format!("no {} kind `{name}` in {}", if named { "named" } else { "anonymous" }, names.header()))
-    }
-
-    fn field(&mut self) -> Result<u16, String> {
-        let word = self.word()?;
-        if let Some(id) = word.strip_prefix('#') {
-            return id.parse().map_err(|_| format!("a bad field `{word}`"));
-        }
-        let names = self.names.ok_or_else(|| format!("field `{word}` without a grammar"))?;
-        names.catalog.field_id(&word).ok_or_else(|| format!("no field `{word}` in {}", names.header()))
-    }
-
-    /// A bracketed list of items read by `item`.
-    fn list(&mut self, mut item: impl FnMut(&mut Self) -> Result<u16, String>) -> Result<Vec<u16>, String> {
-        if self.next()? != Token::OpenList {
-            return Err("a list opens with `[`".into());
-        }
-        let mut out = Vec::new();
-        while self.tokens.peek() != Some(&Token::CloseList) {
-            if self.tokens.peek().is_none() {
-                return Err("a list closes with `]`".into());
-            }
-            out.push(item(self)?);
-        }
-        self.next()?;
-        Ok(out)
-    }
-
-    /// The next word, which must be `key`.
-    fn want(&mut self, key: &str) -> Result<(), String> {
-        let word = self.word()?;
-        if word == key { Ok(()) } else { Err(format!("expected `{key}`, found `{word}`")) }
-    }
-
-    fn end(&mut self) -> Result<(), String> {
-        match self.tokens.next() {
-            None => Ok(()),
-            Some(extra) => Err(format!("unexpected {extra:?}")),
-        }
-    }
-}
 
 fn parse_pattern(line: &mut Line<'_>, depth: usize) -> Result<PackedPattern, String> {
     if depth > 256 {
@@ -621,59 +323,18 @@ fn parse_pattern(line: &mut Line<'_>, depth: usize) -> Result<PackedPattern, Str
 struct Parts {
     digest: Option<String>,
     caps: Option<String>,
-    set_mode: bool,
-    query: bool,
-    strings: Vec<Vec<u8>>,
-    labels: Vec<u16>,
-    longs: Vec<u64>,
+    /// The words and the tables they index, as `word_row` reads them.
+    ir: Words,
     predicates: Vec<(String, u16)>,
     capture_predicates: Vec<CapturePredicate>,
     directives: Vec<(String, u16, u16, Option<u16>, [i32; 4])>,
     pattern: Option<PackedPattern>,
-    block_programs: Vec<block::BlockProgram>,
-    switches: Vec<stream::ByteSwitch>,
-    readings: stream::Readings,
-    words: Vec<u32>,
 }
 
-/// Checks a table row's index: the rows are in order from 0.
-fn index(line: &mut Line<'_>, count: usize, what: &str) -> Result<(), String> {
-    let at: usize = line.number("")?;
-    if at != count {
-        return Err(format!("{what} {at} out of order (expected {count})"));
-    }
-    Ok(())
-}
 
 fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), String> {
     let string = |line: &mut Line<'_>| line.number::<u16>("s");
     match keyword {
-        "mode" => {
-            parts.set_mode = line.keyed("set")?;
-            parts.query = line.keyed("query")?;
-        }
-        "string" => {
-            index(line, parts.strings.len(), "string")?;
-            parts.strings.push(line.quoted()?);
-        }
-        "label" => {
-            index(line, parts.labels.len(), "label")?;
-            parts.labels.push(line.number("s")?);
-        }
-        "switch" => switch_row(parts, line)?,
-        "reading" => reading_row(parts, line)?,
-        "provisional" => {
-            let f: u16 = line.number("#")?;
-            parts.readings.provisional.push(f);
-        }
-        "extra" => {
-            let k: u16 = line.number("#")?;
-            parts.readings.extras.push(k);
-        }
-        "long" => {
-            index(line, parts.longs.len(), "long")?;
-            parts.longs.push(line.number("")?);
-        }
         "predicate" => {
             index(line, parts.predicates.len(), "predicate")?;
             let kind = line.word()?;
@@ -724,134 +385,14 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             };
             parts.directives.push(directive);
         }
-        "block" => {
-            // `block N %i = op …`, `block N output %v` or `block N extract %v`: program N's rows
-            // in order (tables, operations, outputs, extracts), a new
-            // program at the next index.
-            let at: usize = line.number("")?;
-            if at == parts.block_programs.len() {
-                parts.block_programs.push(block::BlockProgram::default());
-            } else if at + 1 != parts.block_programs.len() {
-                return Err(format!("block {at} out of order (expected {})", parts.block_programs.len()));
-            }
-            let program = parts.block_programs.last_mut().expect("pushed");
-            let first = line.word()?;
-            if first == "output" {
-                if !program.extracts.is_empty() || !program.totals.is_empty() || !program.masks.is_empty() {
-                    return Err(format!("block {at} output after an extract or a total"));
-                }
-                program.outputs.push(line.number("%")?);
-                // `output %v delay d`: its own delay; recorded for every output once one has one
-                // (`u8::MAX` until the program's delay is read).
-                let own = if line.peek_word().as_deref() == Some("delay") {
-                    line.word()?;
-                    let d: u64 = line.number("")?;
-                    Some(u8::try_from(d).map_err(|_| format!("block {at} output delay {d} is more than 63"))?)
-                } else {
-                    None
-                };
-                if own.is_some() || !program.output_delays.is_empty() {
-                    let k = program.outputs.len() - 1;
-                    program.output_delays.resize(k, u8::MAX);
-                    program.output_delays.push(own.unwrap_or(u8::MAX));
-                }
-            } else if first == "rows" {
-                // `block N rows C P S`: a row program, before its operations.
-                if !program.ops.is_empty() || program.rows.is_some() {
-                    return Err(format!("block {at} rows after the operations"));
-                }
-                let (columns, params, sets): (u16, u16, u16) = (line.number("")?, line.number("")?, line.number("")?);
-                program.rows = Some(block::RowShape { columns, params, sets });
-            } else if first == "delay" {
-                // `block N delay D`: the outputs are D bytes late (`block::BlockProgram::delay`).
-                let d: u64 = line.number("")?;
-                program.delay = u8::try_from(d).map_err(|_| format!("block {at} delay {d} is more than 63"))?;
-            } else if first == "rounds" {
-                // `block N rounds %c %n …`: a fixed point's carries, each with its next, after
-                // the operations.
-                if !program.outputs.is_empty() {
-                    return Err(format!("block {at} rounds after an output"));
-                }
-                let mut group = Vec::new();
-                while line.peek_word().is_some() {
-                    let c: u64 = line.number("%")?;
-                    let x: u64 = line.number("%")?;
-                    let value = |v: u64| u16::try_from(v).map_err(|_| format!("block {at} rounds value %{v} too large"));
-                    group.push((value(c)?, value(x)?));
-                }
-                if group.is_empty() {
-                    return Err(format!("block {at} rounds with no carry"));
-                }
-                program.rounds.push(group);
-            } else if first == "extract" {
-                program.extracts.push(line.number("%")?);
-            } else if first == "total" {
-                program.totals.push(line.number("%")?);
-            } else if first == "mask" {
-                program.masks.push(line.number("%")?);
-            } else if first == "table" {
-                let t: usize = line.number("")?;
-                if t != program.tables.len() || !program.ops.is_empty() {
-                    return Err(format!("block {at} table {t} out of order (expected {}, before the operations)", program.tables.len()));
-                }
-                let lo = table_half(line, "lo=")?;
-                let hi = table_half(line, "hi=")?;
-                program.tables.push(block::ClassTable { lo, hi });
-            } else {
-                let value: usize = first.strip_prefix('%').and_then(|v| v.parse().ok()).ok_or_else(|| format!("a bad value `{first}`"))?;
-                if value != program.ops.len() || !program.outputs.is_empty() || !program.rounds.is_empty() {
-                    return Err(format!("block {at} value %{value} out of order (expected %{})", program.ops.len()));
-                }
-                if line.word()? != "=" {
-                    return Err("a block row is `%i = op …`".into());
-                }
-                let mut words = Vec::new();
-                while line.tokens.peek().is_some() {
-                    words.push(line.word()?);
-                }
-                program.ops.push(block::BlockOp::parse(&words)?);
-            }
-        }
         "pattern" => {
             if parts.pattern.is_some() {
                 return Err("a second pattern".into());
             }
             parts.pattern = Some(parse_pattern(line, 0)?);
         }
-        pc => {
-            let pc: usize = pc.parse().map_err(|_| format!("an unknown row `{pc}`"))?;
-            if pc != parts.words.len() {
-                return Err(format!("word {pc} out of order (expected {})", parts.words.len()));
-            }
-            let name = line.word()?;
-            let opcode = match OPCODES.iter().find(|(_, mnemonic)| *mnemonic == name) {
-                Some((opcode, _)) => *opcode,
-                None => name
-                    .strip_prefix("OP_")
-                    .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-                    .ok_or_else(|| format!("an unknown opcode `{name}`"))?,
-            };
-            let mut mode = 0_u8;
-            if let Some(Token::Word(word)) = line.tokens.peek()
-                && let Some(value) = word.strip_prefix("m=")
-            {
-                mode = value.parse().map_err(|_| format!("a bad mode `{word}`"))?;
-                line.next()?;
-            }
-            let prefixed = |line: &mut Line<'_>, prefix: &str| line.number::<u16>(prefix);
-            let arg = match operand(opcode, mode) {
-                Operand::Target => prefixed(line, "@")?,
-                Operand::Label => prefixed(line, "L")?,
-                Operand::Predicate => prefixed(line, "P")?,
-                Operand::Assert => prefixed(line, "A")?,
-                Operand::Kind => line.kind()?,
-                Operand::Field => line.field()?,
-                Operand::Number => prefixed(line, "")?,
-                Operand::String => prefixed(line, "s")?,
-                Operand::Switch => prefixed(line, "T")?,
-            };
-            parts.words.push(word(opcode, mode, arg));
-        }
+        // The words and the tables they index: the compiler crate's rows (`rir_asm::word_row`).
+        _ => word_row(&mut parts.ir, line, keyword)?,
     }
     line.end()
 }
@@ -883,7 +424,7 @@ pub(in crate::code_rule_dsl) fn assemble_named(text: &str) -> Result<(Program, O
     for (number, raw) in text.lines().enumerate() {
         let context = |error: String| format!("line {}: {error}", number + 1);
         let tokens = tokens(raw).map_err(context)?;
-        let mut line = Line { tokens: tokens.into_iter().peekable(), names: names.as_ref() };
+        let mut line = Line { tokens: tokens.into_iter().peekable(), names: names.as_ref().map(|n| n as &dyn NameTable) };
         let Some(first) = line.tokens.next() else { continue };
         let Token::Word(keyword) = first else { return Err(context("a row starts with a word".into())) };
         if !header {
@@ -921,7 +462,7 @@ pub(in crate::code_rule_dsl) fn assemble_named(text: &str) -> Result<(Program, O
 
 fn build(parts: Parts) -> Result<Program, String> {
     let verifier = |error: Error| format!("the verifier refused it: {error:?}");
-    let source = |at: u16| parts.strings.get(usize::from(at)).ok_or_else(|| format!("string s{at} is missing"));
+    let source = |at: u16| parts.ir.strings.get(usize::from(at)).ok_or_else(|| format!("string s{at} is missing"));
     let regex = |at: u16| -> Result<Regex, String> {
         let text = std::str::from_utf8(source(at)?).map_err(|_| "a regex is UTF-8")?;
         Regex::new(text).map_err(|error| format!("a bad regex: {error}"))
@@ -959,28 +500,20 @@ fn build(parts: Parts) -> Result<Program, String> {
         .collect::<Result<Vec<_>, String>>()?;
     let value_programs = predicates
         .iter()
-        .map(|predicate| value::ValueProgram::lower(predicate, &parts.strings))
+        .map(|predicate| value::ValueProgram::lower(predicate, &parts.ir.strings))
         .collect::<Result<Vec<_>, _>>()
         .map_err(verifier)?;
     let capture_programs = parts.capture_predicates.iter().map(value::CaptureProgram::lower).collect();
-    let output_program = output::OutputProgram::lower(&directives, &parts.strings).map_err(verifier)?;
+    let output_program = output::OutputProgram::lower(&directives, &parts.ir.strings).map_err(verifier)?;
     let program = Program {
-        words: parts.words,
-        strings: parts.strings,
+        ir: parts.ir,
         predicates,
         value_programs,
         capture_predicates: parts.capture_predicates,
         capture_programs,
-        labels: parts.labels,
-        longs: parts.longs,
         directives,
         output_program,
-        tree_sitter_query: parts.query,
-        set_mode: parts.set_mode,
         ast_pattern: parts.pattern,
-        block_programs: parts.block_programs,
-        switches: parts.switches,
-        readings: parts.readings,
         digest: DigestMemo::default(),
     };
     program.validate().map_err(verifier)?;
@@ -1047,148 +580,8 @@ pub(in crate::code_rule_dsl) fn fused(pack: &super::fusion::Fused, members: &[&P
 #[path = "rir_tests.rs"]
 mod tests;
 
-/// A class table's half, `lo=HEX` or `hi=HEX`: 16 bytes of hex.
-fn table_half(line: &mut Line<'_>, key: &str) -> Result<[u8; 16], String> {
-    let word = line.word()?;
-    let hex = word.strip_prefix(key).ok_or_else(|| format!("expected `{key}…`, found `{word}`"))?;
-    let mut out = [0u8; 16];
-    if hex.len() != 32 {
-        return Err(format!("a table half is 16 bytes of hex, not `{hex}`"));
-    }
-    for (i, o) in out.iter_mut().enumerate() {
-        *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("bad hex `{hex}`"))?;
-    }
-    Ok(out)
-}
 
-/// A target of a switch: `@PC`, or `refuse`.
-fn switch_target(t: u16) -> String {
-    if t == stream::REFUSE { "refuse".to_owned() } else { format!("@{t:04}") }
-}
 
-/// Switch table `at` (decision 0087): `switch N at OFFSET end TARGET`, then a row per run of
-/// bytes with one target, `switch N 0xLO-0xHI TARGET`; bytes in no row refuse.
-pub(super) fn switch_rows(out: &mut String, at: usize, s: &stream::ByteSwitch) {
-    let _ = writeln!(out, "  switch {at} at {} end {}", s.offset, switch_target(s.end));
-    let mut b = 0usize;
-    while b < 256 {
-        let t = s.targets[b];
-        let mut e = b;
-        while e + 1 < 256 && s.targets[e + 1] == t {
-            e += 1;
-        }
-        if t != stream::REFUSE {
-            let _ = writeln!(out, "  switch {at} {b:#04x}-{e:#04x} {}", switch_target(t));
-        }
-        b = e + 1;
-    }
-}
 
-/// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,
-/// `reading N field #F as #G`; then `provisional #F`; then `extra #K`, the extras' kinds.
-pub(super) fn reading_rows(out: &mut String, readings: &stream::Readings) {
-    use std::fmt::Write as _;
-    for (at, r) in readings.maps.iter().enumerate() {
-        // A reading with no row would be lost: a kind row each has one (the compiler's).
-        for &(k, m) in &r.kinds {
-            let _ = match m {
-                stream::KEEP => writeln!(out, "  reading {at} #{k} keep"),
-                stream::GONE => writeln!(out, "  reading {at} #{k} gone"),
-                m => writeln!(out, "  reading {at} #{k} as #{m}"),
-            };
-        }
-        for &(f, g) in &r.fields {
-            let _ = writeln!(out, "  reading {at} field #{f} as #{g}");
-        }
-        let _ = match r.root {
-            None => Ok(()),
-            Some(stream::GONE) => writeln!(out, "  reading {at} root gone"),
-            Some(m) => writeln!(out, "  reading {at} root as #{m}"),
-        };
-    }
-    for f in &readings.provisional {
-        let _ = writeln!(out, "  provisional #{f}");
-    }
-    for k in &readings.extras {
-        let _ = writeln!(out, "  extra #{k}");
-    }
-}
 
-fn reading_row(parts: &mut Parts, line: &mut Line<'_>) -> Result<(), String> {
-    let at: usize = line.number("")?;
-    let maps = &mut parts.readings.maps;
-    if at == maps.len() {
-        maps.push(stream::Reading::default());
-    } else if at + 1 != maps.len() {
-        return Err(format!("reading {at} out of order (expected {})", maps.len()));
-    }
-    let r = &mut maps[at];
-    if line.peek_word().as_deref() == Some("root") {
-        line.next()?;
-        if r.root.is_some() {
-            return Err(format!("reading {at}: two roots"));
-        }
-        r.root = Some(match line.word()?.as_str() {
-            "gone" => stream::GONE,
-            "as" => line.number("#")?,
-            w => return Err(format!("a reading's root row is `reading N root gone` or `root as #M`, not `{w}`")),
-        });
-        return Ok(());
-    }
-    if line.peek_word().as_deref() == Some("field") {
-        line.next()?;
-        let f: u16 = line.number("#")?;
-        if line.word()? != "as" {
-            return Err("a reading's field row is `reading N field #F as #G`".into());
-        }
-        r.fields.push((f, line.number("#")?));
-        return Ok(());
-    }
-    let k: u16 = line.number("#")?;
-    let m = match line.word()?.as_str() {
-        "keep" => stream::KEEP,
-        "gone" => stream::GONE,
-        "as" => line.number("#")?,
-        w => return Err(format!("a reading's row is `#K as #M`, `#K gone` or `#K keep`, not `{w}`")),
-    };
-    r.kinds.push((k, m));
-    Ok(())
-}
 
-fn switch_row(parts: &mut Parts, line: &mut Line<'_>) -> Result<(), String> {
-    let at: usize = line.number("")?;
-    let target = |line: &mut Line<'_>| -> Result<u16, String> {
-        match line.peek_word().as_deref() {
-            Some("refuse") => {
-                line.next()?;
-                Ok(stream::REFUSE)
-            }
-            _ => line.number("@"),
-        }
-    };
-    if line.peek_word().as_deref() == Some("at") {
-        if at != parts.switches.len() {
-            return Err(format!("switch {at} out of order (expected {})", parts.switches.len()));
-        }
-        line.next()?;
-        let offset: u8 = line.number("")?;
-        if line.word()? != "end" {
-            return Err("a switch is `switch N at OFFSET end TARGET`".into());
-        }
-        let end = target(line)?;
-        parts.switches.push(stream::ByteSwitch { end, ..stream::ByteSwitch::refusing(offset) });
-        return Ok(());
-    }
-    if at + 1 != parts.switches.len() {
-        return Err(format!("switch {at}'s bytes before its header"));
-    }
-    let range = line.word()?;
-    let (lo, hi) = range.split_once('-').ok_or_else(|| format!("a byte range is `0xLO-0xHI`, not `{range}`"))?;
-    let byte = |x: &str| x.strip_prefix("0x").and_then(|h| u8::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad byte `{x}`"));
-    let (lo, hi) = (byte(lo)?, byte(hi)?);
-    let t = target(line)?;
-    for b in lo..=hi {
-        parts.switches[at].targets[usize::from(b)] = t;
-    }
-    Ok(())
-}

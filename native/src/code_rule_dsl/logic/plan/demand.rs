@@ -85,6 +85,13 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
     if WHOLE.with(|w| w.get()) {
         return None;
     }
+    // Relations a rule derives from a `<rel>__cross` copy (below), found once rather than per relation.
+    let from_cross: BTreeSet<&str> = prog
+        .rules
+        .iter()
+        .filter(|r| r.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.ends_with("__cross"))))
+        .map(|r| r.head.rel.as_str())
+        .collect();
     let kept = |rel: &str| {
         prog.outputs.iter().any(|o| o == rel)
             || prog.inputs.iter().any(|i| i == rel)
@@ -97,7 +104,7 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
             || prog.qualified(rel, "no_magic")
             // A relation memoised per import component (decision 0076, its copy from `<rel>__cross`): its stored rows
             // must be all of a document's, not those a reader outside the closure asked for.
-            || prog.rules.iter().any(|r| r.head.rel == rel && r.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.ends_with("__cross"))))
+            || from_cross.contains(rel)
     };
     let mut by_rel: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
     for rule in &prog.rules {
@@ -174,9 +181,14 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
     // A candidate whose split fails (a variable of no known type, or a cycle through a negation) is left as it was,
     // and the rest are split again: one rule must not keep every other from its demand (in a combined program, one
     // component closing a cycle left all 100 rules without one).
+    let mut rounds = 0;
     loop {
+        rounds += 1;
         match split_with(prog, model, &candidates) {
-            Ok(split) => return Some(split),
+            Ok(split) => {
+                super::super::profile::decision("demand (decision 0048)", || format!("split in {rounds} rounds"));
+                return Some(split);
+            }
             Err(failed) => {
                 let before = candidates.len();
                 candidates.retain(|c| !failed.contains(*c));
@@ -235,6 +247,7 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
     // positive read's are checked below.
     let negated = |rule: &Rule, i: usize| matches!(&rule.body[i], Literal::Atom(a) if candidates.contains(a.rel.as_str()));
     let readers: Vec<usize> = (0..prog.rules.len()).filter(|&ri| (0..prog.rules[ri].body.len()).any(|i| negated(&prog.rules[ri], i))).collect();
+    let is_reader: BTreeSet<usize> = readers.iter().copied().collect();
     // A positive read is cut only where one kept anchor binds all its variables (the module's guard). Every reader is
     // checked before any is split, so one round drops every candidate a guard refuses.
     let mut refused = BTreeSet::new();
@@ -282,10 +295,13 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         return Err(refused);
     }
     let mut out = prog.clone();
+    // Every rule whose split has a variable of no known type, found in one pass (one round each made 126 rounds of
+    // the whole program's split and strata on the Python pack).
+    let mut untyped: BTreeSet<String> = BTreeSet::new();
     let mut rules: Vec<Rule> = Vec::new();
     let mut demand_rules: Vec<Rule> = Vec::new();
     for (ri, rule) in prog.rules.iter().enumerate() {
-        if !readers.contains(&ri) {
+        if !is_reader.contains(&ri) {
             rules.push(rule.clone());
             continue;
         }
@@ -329,7 +345,8 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         let Some(types) = vars.iter().map(|v| var_type(prog, &kept, v)).collect::<Option<Vec<String>>>() else {
             // A variable of no known type (bound by a comparison alone): nothing is split.
             super::super::profile::decision("demand (decision 0048)", || format!("not demanded: a variable of a rule for {} has no known type", rule.head.rel));
-            return Err(cut.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect());
+            untyped.extend(cut.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()));
+            continue;
         };
         let pre = format!("pre_{ri}");
         let mut cols: Vec<(String, String)> = vars.iter().zip(&types).map(|(v, t)| (v.clone(), t.clone())).collect();
@@ -355,6 +372,9 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         }
         rules.push(Rule { head: rule.head.clone(), body });
     }
+    if !untyped.is_empty() {
+        return Err(untyped);
+    }
     let demanded: Vec<String> = candidates.iter().map(|r| (*r).to_owned()).collect();
     for rel in &demanded {
         let name = format!("demand_{rel}");
@@ -367,23 +387,27 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
     out.rules = rules;
     // A split that closes a cycle through a negation (a reader's body reading what the negated relation depends on)
     // leaves the program as it was.
-    match super::super::front::strata(&out) {
-        Ok(_) => Ok((out, demanded)),
-        Err(e) => {
-            // The candidates in the failing component (a `demand_<c>` there names `c`).
-            let failed: BTreeSet<String> = match &e {
-                super::super::front::Error::NotStratifiable { component, .. } | super::super::front::Error::AggregationInRecursion { component, .. } => component
-                    .iter()
-                    .map(|r| r.strip_prefix("demand_").unwrap_or(r))
-                    .filter(|r| candidates.contains(r))
-                    .map(str::to_owned)
-                    .collect(),
-                _ => BTreeSet::new(),
-            };
-            super::super::profile::decision("demand (decision 0048)", || format!("not demanded: {} (their split closes a cycle through a negation or an aggregate)", failed.iter().cloned().collect::<Vec<_>>().join(", ")));
-            Err(failed)
-        }
+    // Every failing component at once, not the first: a round per component was a split and strata per round.
+    let errors = super::super::front::unstratified(&out);
+    if errors.is_empty() {
+        return Ok((out, demanded));
     }
+    let mut failed: BTreeSet<String> = BTreeSet::new();
+    for e in &errors {
+        // The candidates in the failing component (a `demand_<c>` there names `c`).
+        let mine: BTreeSet<String> = match e {
+            super::super::front::Error::NotStratifiable { component, .. } | super::super::front::Error::AggregationInRecursion { component, .. } => component
+                .iter()
+                .map(|r| r.strip_prefix("demand_").unwrap_or(r))
+                .filter(|r| candidates.contains(r))
+                .map(str::to_owned)
+                .collect(),
+            _ => BTreeSet::new(),
+        };
+        super::super::profile::decision("demand (decision 0048)", || format!("not demanded: {} (their split closes a cycle through a negation or an aggregate)", mine.iter().cloned().collect::<Vec<_>>().join(", ")));
+        failed.extend(mine);
+    }
+    Err(failed)
 }
 
 /// Whether the body of `rule` less its demanded reads (`cut(j)`) is small: every kept positive literal is reached

@@ -3090,3 +3090,25 @@ first(l) :- m = min k : { xs(k) }, line(m, l).
     assert_eq!(read("first"), "1\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A text read once (`read_text`) gives the modules `modules` gives and the programs `parse` and `parse_own` give.
+#[test]
+fn a_text_read_once_is_read_as_each_reader_reads_it() {
+    let text = "#include \"python/ast.rr\"\n#include \"python/calls.rr\"\n.decl hit(c: node)\nhit(c) :- kind(c, \"call\").\n.output hit\n";
+    let shown = |p: &super::Program| -> Vec<String> { p.rules.iter().map(ToString::to_string).collect() };
+    let modules = super::modules(text).unwrap().expect("modules");
+    let once = super::read_text(text).unwrap().modules().expect("modules");
+    assert_eq!((once.files, once.heads, once.declared), (modules.files, modules.heads, modules.declared));
+    let (whole, own) = (super::parse(text).unwrap(), super::parse_own(text).unwrap());
+    assert_eq!(shown(&super::read_text(text).unwrap().lower(true).unwrap()), shown(&whole));
+    let read_own = super::read_text(text).unwrap().lower(false).unwrap();
+    assert_eq!((shown(&read_own), read_own.decls.clone()), (shown(&own), own.decls.clone()));
+    assert!(own.rules.len() < whole.rules.len(), "own reads the libraries' declarations, not their rules");
+}
+
+/// A string with nothing to escape is quoted whole; one with something, char by char, as before.
+#[test]
+fn quoting_escapes_only_what_needs_it() {
+    assert_eq!(super::quote("plain text é"), "\"plain text é\"");
+    assert_eq!(super::quote("a\"b\\c\nd\te\u{1}"), "\"a\\\"b\\\\c\\nd\\te\\u{1}\"");
+}

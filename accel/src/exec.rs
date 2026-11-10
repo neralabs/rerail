@@ -325,6 +325,11 @@ pub trait Backend: Send + Sync {
     fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn Pending + 'a>, String> {
         Ok(Box::new(Ready(self.submit(ks))))
     }
+    /// [`Backend::submit`], with where the submission's time went ([`Phases`]); a lane that does not split its work
+    /// reports the default.
+    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Phases), String> {
+        self.submit(ks).map(|o| (o, Phases::default()))
+    }
     /// Drops what the lane keeps for the join id `id` (decision 0100 §4).
     fn forget(&self, _id: u64) {}
     /// Drops everything the lane keeps (a chunk's end).
@@ -345,6 +350,25 @@ pub struct SpaceCounts {
     pub misses: u64,
     /// Entries dropped for the limit.
     pub evicted: u64,
+}
+
+/// Where one lane's submission went, in seconds, each phase summed over the submission. A lane that overlaps its
+/// host work with the device (the Neural Engine, tile by tile) has phases that run at the same time, so they sum
+/// to more than its wall time.
+///
+/// - `encode`: wall time writing inputs in the device's form (the Neural Engine: `a`'s bits expanded to fp16 in
+///   place into IOSurfaces);
+/// - `device`: wall time on the device, where the lane can see it (the Neural Engine: its prediction calls);
+/// - `decode`: wall time reading outputs back (the Neural Engine: fp16 partial counts summed, each launch's share
+///   and thresholds);
+/// - `worker_cpu`: CPU (user + sys) spent for the submission off the lane's own thread (the Neural Engine: its
+///   predictor thread and Core ML's threads).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Phases {
+    pub encode: f64,
+    pub device: Option<f64>,
+    pub decode: f64,
+    pub worker_cpu: f64,
 }
 
 /// One kernel to run, optionally pinned to a lane.
@@ -392,8 +416,24 @@ pub struct Report {
     pub cpu_freed: f64,
     /// Estimated seconds lost against the fastest lane, summed over launches placed elsewhere.
     pub lost: f64,
-    /// The process's CPU time (user + sys) over the batch.
+    /// The process's CPU time (user + sys) over the batch. Other threads' work counts too: a profile reads
+    /// `lane_cpu` and `phases` instead.
     pub cpu: f64,
+    /// Wall seconds of [`Executor::run`] as a whole (from `begin` to `wait`'s return), and of its placement.
+    pub total: f64,
+    pub place: f64,
+    /// Per lane: CPU seconds of the lane's worker thread over its submission (`CLOCK_THREAD_CPUTIME_ID`), and what
+    /// the backend says of its phases.
+    pub lane_cpu: [f64; 4],
+    pub phases: [Phases; 4],
+}
+
+impl Report {
+    /// Wall seconds of the run that were neither placement nor the slowest lane's submission: handing the shares to
+    /// the lanes' workers, the caller's work meanwhile (`begin` to `wait`), and gathering the outputs.
+    pub fn overhead(&self) -> f64 {
+        (self.total - self.place - self.wall.iter().copied().fold(0.0, f64::max)).max(0.0)
+    }
 }
 
 /// A job's outputs, and when it started and ended.
@@ -893,6 +933,7 @@ impl Executor {
         let cpu0 = process_cpu();
         let begun = Instant::now();
         let (costs, load) = self.place(tag, &batch)?;
+        let place = begun.elapsed().as_secs_f64();
         self.board.placed(tag, &costs, load.slack);
         let prices = self.measured_prices();
         let n = batch.0.len();
@@ -976,7 +1017,7 @@ impl Executor {
                 }
             }
         }
-        Ok(Running { claims, take, cpu, tag, report: Report::default(), cpu0 })
+        Ok(Running { claims, take, cpu, tag, report: Report { place, ..Report::default() }, cpu0 })
     }
 
 
@@ -1099,6 +1140,7 @@ impl Running {
             }
             done.push(Done { out, lane, estimate: c.wall, fastest: fastest.wall, host: c.host });
         }
+        report.total = claims.begun.elapsed().as_secs_f64();
         claims.board.collected(tag, asked.duration_since(claims.begun).as_secs_f64(), asked.elapsed().as_secs_f64(), on, moved, helped);
         Ok((done, report))
     }
@@ -1176,8 +1218,28 @@ impl Backend for CpuBackend {
         }
     }
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
+        self.submit_timed(ks).map(|(o, _)| o)
+    }
+    /// One launch runs on the calling thread; several on the rayon pool, each worker's CPU counted.
+    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Phases), String> {
         use rayon::prelude::*;
-        ks.par_iter().map(|k| self.join(k)).collect()
+        if ks.len() == 1 {
+            // The kernel parallelizes inside, on the pool; its workers' CPU is the scoreboard's (each job timed on its
+            // thread). A `broadcast` to read the pool's threads waits for every one of them, the main thread's slot
+            // too (`threads`: the main thread is one of the pool's), which never takes it: the run hung.
+            return Ok((vec![self.join(ks[0])?], Phases::default()));
+        }
+        let me = std::thread::current().id();
+        let ran: Vec<(Output, f64)> = ks
+            .par_iter()
+            .map(|k| {
+                let c = thread_cpu();
+                let o = self.join(k)?;
+                Ok((o, if std::thread::current().id() == me { 0.0 } else { thread_cpu() - c }))
+            })
+            .collect::<Result<_, String>>()?;
+        let worker_cpu = ran.iter().map(|r| r.1).sum();
+        Ok((ran.into_iter().map(|r| r.0).collect(), Phases { worker_cpu, ..Phases::default() }))
     }
     fn forget(&self, id: u64) {
         if let Ok(mut s) = self.space.lock() {
@@ -1194,6 +1256,23 @@ impl Backend for CpuBackend {
     }
     fn space(&self) -> SpaceCounts {
         self.space.lock().map(|s| SpaceCounts { entries: s.sorted.len(), bytes: s.bytes, ..s.counts }).unwrap_or_default()
+    }
+}
+
+/// The rayon pool's CPU seconds: every worker's thread clock, summed.
+/// This thread's CPU seconds (`CLOCK_THREAD_CPUTIME_ID`; 0 where there is none).
+pub fn thread_cpu() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut t: libc::timespec = unsafe { std::mem::zeroed() };
+        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) } != 0 {
+            return 0.0;
+        }
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
     }
 }
 

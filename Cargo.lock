@@ -3151,6 +3151,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-compiler"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-jit-wasm",
+ "cranelift-module",
+ "libc",
+]
+
+[[package]]
 name = "rerail-engine"
 version = "0.1.0"
 dependencies = [
@@ -3192,8 +3205,10 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-compiler",
+ "rerail-parser-tests",
+ "rerail-rr-syntax",
  "rerail-store",
- "rerail-tier1",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -3219,6 +3234,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-parser-tests"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-compiler",
+ "rerail-rr-syntax",
+ "tree-sitter",
+ "tree-sitter-json",
+]
+
+[[package]]
+name = "rerail-rr-syntax"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "rerail-store"
 version = "0.1.0"
 dependencies = [
@@ -3238,19 +3271,6 @@ dependencies = [
  "tempfile",
  "tikv-jemalloc-sys",
  "zstd",
-]
-
-[[package]]
-name = "rerail-tier1"
-version = "0.1.0"
-dependencies = [
- "bitlex",
- "cranelift-codegen",
- "cranelift-frontend",
- "cranelift-jit",
- "cranelift-jit-wasm",
- "cranelift-module",
- "libc",
 ]
 
 [[package]]
