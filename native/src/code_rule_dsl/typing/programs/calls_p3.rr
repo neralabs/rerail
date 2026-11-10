@@ -317,13 +317,18 @@ base(c, b) :- basex(c, e), pv(e, "cls", b), !special_base(e).
 asks(n, c, a) :- alook(n, c, a).
 asks(k, c, "__init__") :- callee(k, e), pv(e, "cls", c).
 asks(k, c, "__call__") :- callee(k, e), pv(e, "inst", c).
-// need_name(a): an attribute name some lookup reads. Every reader of `found` asks with a name of need_attr's or
-// alook's, or with __init__, __call__ or __new__.
-// Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance), for the names
-// lookups read only: a stub's class binds many names no code reads.
+// Attribute lookup through the bases, as a search (decision 0106): `mro_ask(c, a)` is a lookup of a on class c,
+// asked by a reader (`asks`, a class call's `__new__`, a metaclass's `__call__`) or by the search on a base where c
+// does not bind a; `found` answers asked pairs only, the class itself else its bases (union over bases for multiple
+// inheritance). Every reader of `found` reads it with a pair `mro_ask` asks.
+.decl mro_ask(c: node, a: symbol)
+mro_ask(c, a) :- asks(_, c, a).
+mro_ask(k, "__new__") :- callee(_, e), pv(e, "cls", k).
+mro_ask(mc, "__call__") :- callee(_, e), pv(e, "cls", k), anc(k, b), metacls(b, mc).
+mro_ask(b, a) :- mro_ask(c, a), base(c, b), !bound_in(c, a).
 .decl found(c: node, a: symbol, at: node)
-found(c, a, c) :- bound_in(c, a).
-found(c, a, x) :- base(c, b), !bound_in(c, a), found(b, a, x).
+found(c, a, c) :- mro_ask(c, a), bound_in(c, a).
+found(c, a, x) :- mro_ask(c, a), base(c, b), !bound_in(c, a), found(b, a, x).
 .decl anc(c: node, b: node)
 anc(c, c) :- kind(c, "class_definition").
 anc(c, b) :- anc(c, m), base(m, b).
