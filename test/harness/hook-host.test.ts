@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { basename, join } from "node:path";
@@ -32,6 +32,45 @@ const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
 
 function delivery(content: string, ruleIds: readonly string[] = []): AdapterDelivery {
   return { sessionId: "session-1", requested: "steer", mechanism: "deferred-context", content, ruleIds, rules: [] };
+}
+
+interface HeldEngine {
+  socketPath: string;
+  /** The ids of the events that reached it, in the order they came. */
+  received: string[];
+  firstArrived: Promise<void>;
+  answerFirst(): void;
+  close(): Promise<void>;
+}
+
+/**
+ * A daemon's engine socket that answers the first event only once `answerFirst` is called, as a busy daemon checking an
+ * edit does, and every later event at once.
+ */
+async function heldEngine(root: string): Promise<HeldEngine> {
+  const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-held-engine-${randomUUID()}` : join(root, "engine.sock");
+  const received: string[] = [];
+  const firstArrived = Promise.withResolvers<void>();
+  const first = Promise.withResolvers<void>();
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += String(chunk);
+    const { event } = JSON.parse(body) as { event: { eventId: string } };
+    received.push(event.eventId);
+    if (received.length === 1) {
+      firstArrived.resolve();
+      await first.promise;
+    }
+    response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [] }));
+  });
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  return {
+    socketPath,
+    received,
+    firstArrived: firstArrived.promise,
+    answerFirst: () => first.resolve(),
+    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+  };
 }
 
 function receiptCount(root: string): number {
@@ -252,23 +291,7 @@ describe("hook host durable state", () => {
 
   it("lets the session's other hooks reach the daemon while one waits for the daemon's answer, as parallel subagents' hooks do", { timeout: 20_000 }, async () => {
     const root = await temporaryDirectory();
-    // A daemon's engine socket that answers the first event only when the test says so: a busy daemon checking an edit.
-    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-parallel-hooks-${process.pid}-${Date.now()}` : join(root, "engine.sock");
-    const received: string[] = [];
-    const firstArrived = Promise.withResolvers<void>();
-    const answerFirst = Promise.withResolvers<void>();
-    const engine = createServer(async (request, response) => {
-      let body = "";
-      for await (const chunk of request) body += String(chunk);
-      const { event } = JSON.parse(body) as { event: { eventId: string } };
-      received.push(event.eventId);
-      if (received.length === 1) {
-        firstArrived.resolve();
-        await answerFirst.promise;
-      }
-      response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [] }));
-    });
-    await new Promise<void>(resolve => engine.listen(socketPath, resolve));
+    const engine = await heldEngine(root);
     const hooks: Promise<unknown>[] = [];
     try {
       const { embedder: _embedder, ...options } = hookOptions(root);
@@ -276,17 +299,17 @@ describe("hook host durable state", () => {
       const toolCall = (agent: string) => runClaudeHook({
         session_id: "parent-session", cwd: root, hook_event_name: "PreToolUse", agent_id: agent, agent_type: "general-purpose",
         tool_name: "Write", tool_use_id: `${agent}-write`, tool_input: { file_path: join(root, `${agent}.py`), content: "x = 1\n" },
-      }, { ...options, kernelSocketPath: socketPath });
+      }, { ...options, kernelSocketPath: engine.socketPath });
       hooks.push(toolCall("agent-a"));
-      await firstArrived.promise;
+      await engine.firstArrived;
       hooks.push(toolCall("agent-b"));
-      await vi.waitFor(() => expect(received).toEqual(["parent-session:tool-call:agent-a-write", "parent-session:tool-call:agent-b-write"]), { timeout: 5_000 });
-      answerFirst.resolve();
+      await vi.waitFor(() => expect(engine.received).toEqual(["parent-session:tool-call:agent-a-write", "parent-session:tool-call:agent-b-write"]), { timeout: 5_000 });
+      engine.answerFirst();
       await expect(Promise.all(hooks)).resolves.toEqual([{}, {}]);
     } finally {
-      answerFirst.resolve();
+      engine.answerFirst();
       await Promise.allSettled(hooks);
-      await new Promise<void>(resolve => engine.close(() => resolve()));
+      await engine.close();
     }
   });
 
