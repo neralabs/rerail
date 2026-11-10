@@ -84,7 +84,12 @@ def install(suite, module, check):
         if check == 'backend_type_strings':
             # argparse supplies [] for an absent nargs='*' positional, as upstream does.
             files = module.find_python_files(args.paths)
-            rows = [v for path in files for v in module.check_file(path)]
+            if getattr(module.check_file,'_rerail_native_check',None)==check:
+                from backend_types_port import check_files
+                rows=check_files(suite,module,files)
+            else:
+                # Caller-provided callbacks remain inputs to the original CLI protocol.
+                rows = [v for path in files for v in module.check_file(path)]
             options = columns([(v.file, v.line, v.column, v.code, v.message, v.snippet) for v in rows],
                               ['File', 'Line', 'Column', 'Code', 'Message', 'Snippet'])
             options['checkMode'] = str(int(args.check))

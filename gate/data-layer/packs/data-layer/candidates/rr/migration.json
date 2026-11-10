@@ -1598,7 +1598,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr",
-      "sha256": "4137de7ca18edd97b40d46a521739c46ac47814f7bcdf0a3f91da135c6c78082",
+      "sha256": "b12b735fcc8bea692af03778e79b7ed6c172039339daf9913965c91415876656",
       "origin": "authored",
       "upstreamPath": "scripts/lint_backend_type_strings.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2812,7 +2812,7 @@
       "legacySha256": "0ecc6dab424746bfd6007dfd0684f460851d26361ea3a5c0b1a2734d8f9d190c",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/backend-type-strings.rr",
-      "ruleSha256": "4137de7ca18edd97b40d46a521739c46ac47814f7bcdf0a3f91da135c6c78082"
+      "ruleSha256": "b12b735fcc8bea692af03778e79b7ed6c172039339daf9913965c91415876656"
     },
     {
       "check": "hasattr_async",

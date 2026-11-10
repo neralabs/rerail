@@ -20,7 +20,7 @@ class BackendBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             paths=[Path(temporary)/p for p in ['a.py','b.py']]
             for p in paths:p.write_text('backend_type == "sqlite"')
-            module=SimpleNamespace(should_skip_file=lambda p:False)
+            module=SimpleNamespace(__name__='source_linter',should_skip_file=lambda p:False)
             self.assertEqual(scan_batch(Backend(),module,paths)[0],[])
         self.assertEqual([c[0] for c in calls],['_bts_prepare','check_file'])
         self.assertEqual(len(calls[1][1]),2)

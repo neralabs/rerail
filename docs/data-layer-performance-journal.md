@@ -10537,3 +10537,12 @@ The global inventory remains three accepted ports, 92 drafts, and five absent tr
 The target-architecture survey also found executable application probes. They cannot be replaced with fixed findings or AST approximations.
 Continue with actual rule and helper translations, preserving each port's complete source observations and positive tests.
 
+# Backend migration checkpoint, 2026-11-10
+
+Committed the backend scanner changes before refreshing Final. This port is still a draft.
+The adapter now batches the CLI read plan and scan. Native rules serialize facts and distinguish direct files from directory discoveries.
+The direct-file regression rejects `.py`, as the pinned source does. Directory discovery can still include that name.
+Four shard-merger tests and the batch-query test pass. One original snapshot shard passes all 37 selected cases.
+The scanner probe passes 38 cases. The helper probe retains one configuration mismatch: regex alternatives have a different order.
+These partial results do not certify the full 144-case corpus or all 148 original tests.
+

@@ -1,0 +1,33 @@
+.decl bts_candidate(path: symbol)
+bts_candidate(p) :- option("entryPoint","find_python_files"), option_item("candidates",i,p), option_item("candidateKinds",i,"walk"), suffix(".py",p).
+bts_candidate(p) :- option("entryPoint","find_python_files"), option_item("candidates",i,p), option_item("candidateKinds",i,"direct"), suffix(".py",p), strlen(@replace_all(p,".*/","")) > 3.
+.decl bts_batch_path(i: number, path: symbol)
+bts_batch_path(i,p) :- option_item("batchPaths",i,p).
+.decl bts_batch_override(i: number, value: symbol)
+bts_batch_override(i,v) :- option_item("batchSkipOverrides",i,v), (v="true" ; v="false").
+.decl bts_batch_skip(i: number)
+bts_batch_skip(i) :- bts_batch_override(i,"true").
+bts_batch_skip(i) :- bts_batch_path(i,p), !bts_batch_override(i,_), bts_skip(p).
+.violation BatchRead(at: span, ordinal: number, path: symbol) code "BTS_READ" "read source"
+BatchRead(@place("",0),i,p) :- option("entryPoint","_bts_prepare"), bts_batch_path(i,p), !bts_batch_skip(i).
+.violation BatchSkipped(at: span, ordinal: number, path: symbol) code "BTS_SKIPPED" "Path skipped"
+BatchSkipped(@place("",0),i,p) :- option("entryPoint","_bts_prepare"), bts_batch_path(i,p), bts_batch_skip(i).
+.decl bts_batch_doc(d: number)
+bts_batch_doc(d) :- option("btsBatch","true"), option("entryPoint","check_file"), option_item("batchDocs",j,p),
+    option_item("batchDocIndices",j,s), i=to_number(s), bts_batch_path(i,_), !bts_batch_skip(i), pp_doc(d,p).
+
+.decl btf_file(i: number, value: symbol)
+.input btf_file(IO=json,filename="backend-values.json",path="/values/*/file")
+.decl btf_line(i: number, value: symbol)
+.input btf_line(IO=json,filename="backend-values.json",path="/values/*/line",projection="json")
+.decl btf_column(i: number, value: symbol)
+.input btf_column(IO=json,filename="backend-values.json",path="/values/*/column",projection="json")
+.decl btf_message(i: number, value: symbol)
+.input btf_message(IO=json,filename="backend-values.json",path="/values/*/message",projection="json")
+.decl btf_code(i: number, value: symbol)
+.input btf_code(IO=json,filename="backend-values.json",path="/values/*/code",projection="json")
+.decl btf_snippet(i: number, value: symbol)
+.input btf_snippet(IO=json,filename="backend-values.json",path="/values/*/snippet",projection="json")
+.violation BackendFact(at: span, ordinal: number, value_json: symbol) code "BTS_FACT" "fact value"
+BackendFact(@place("",0),i,cat("{\"file\":",@json_str(p),",\"line\":",l,",\"column\":",c,",\"message\":",m,",\"code\":",code,",\"snippet\":",snippet,"}")) :-
+    option("entryPoint","_bts_fact"), btf_file(i,p), btf_line(i,l), btf_column(i,c), btf_message(i,m), btf_code(i,code), btf_snippet(i,snippet).

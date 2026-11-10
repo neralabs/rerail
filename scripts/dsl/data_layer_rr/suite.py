@@ -146,7 +146,7 @@ class Suite:
                     programInputs=result['programInputs'], phases=result['phases'])
         return rows
 
-    def compare_original(self, check, entry, module, args, kwargs, result):
+    def compare_original(self, check, entry, module, args, kwargs, result, native_diagnostics=None):
         key = (self.item.nodeid, check, entry)
         records = [r for r in self.baseline['events'] if (r['test'], r['check'], r['entry']) == key]
         if not records:
@@ -214,7 +214,8 @@ class Suite:
         if original.get('retained_reason'):
             observation['status'] = 'source-result-passed; legacy normalized DTO unavailable'
             return
-        if check == 'backend_type_strings' and any(row['code'] == 'BTS_SKIPPED' for row in self.calls[-1]['diagnostics']):
+        if check == 'backend_type_strings' and any(row['code'] == 'BTS_SKIPPED' for row in
+                (self.calls[-1]['diagnostics'] if native_diagnostics is None else native_diagnostics)):
             scope = dict(include=[], exclude=[])
         compare_inputs(original, files, scope)
         from data_layer_batch_two import normalize as normalize_two
@@ -617,6 +618,7 @@ class Suite:
                         result = self.scan(check, entry, module, values)
                         self.compare_original(check, entry, module, args, kwargs, result)
                         return result
+                    if check=='backend_type_strings' and entry=='check_file':run._rerail_native_check=check
                     return run
                 self.replace(owner, parts[-1], wrapper(check, entry, module, original, signature))
 

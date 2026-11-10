@@ -1,6 +1,7 @@
 """Port the raw backend-comparison scanner with exact Python regex word semantics."""
 import json
 import re
+from dataclasses import asdict
 from data_layer_rr_text import module, classes, character_class
 
 MESSAGES = {
@@ -27,11 +28,12 @@ def backend_type_strings(source, target, header):
     text += '.decl bts_config(key: symbol, ordinal: number, value: symbol)\n'
     for key, values in [('BACKEND_STRINGS', sorted(original.BACKEND_STRINGS)),
                         ('SKIP_PATTERNS', original.SKIP_PATTERNS),
-                        ('COMPARISON_PATTERNS', [p.pattern for p in original.COMPARISON_PATTERNS])]:
+                        ('COMPARISON_PATTERNS', [p.pattern for p in original.COMPARISON_PATTERNS]),
+                        ('EXTRACTOR', [json.dumps(asdict(original.BACKEND_TYPE_STRINGS_EXTRACTOR))])]:
         for i, value in enumerate(values):
             text += f'bts_config({q(key)}, {i}, {q(value)}).\n'
     text += '.decl bts_skip(path: symbol)\nbts_skip(path) :- bts_path(path), bts_config("SKIP_PATTERNS", _, part), contains(part, path).\n'
-    text += '.decl bts_path(path: symbol)\nbts_path(path) :- option("path", path).\nbts_path(path) :- option("sourcePath", path).\nbts_path(path) :- doc(_, path, _).\n'
+    text += '.decl bts_path(path: symbol)\nbts_path(path) :- option("path", path).\nbts_path(path) :- option("sourcePath", path).\nbts_path(path) :- doc(_, path, _).\nbts_path(path) :- option_item("batchPaths",_,path).\n'
     text += '.decl bts_trigger(value: symbol)\n'
     for trigger in original.BACKEND_TYPE_STRINGS_EXTRACTOR.source_triggers:
         text += f'bts_trigger({q(trigger)}).\n'
@@ -44,7 +46,8 @@ bts_framework_skip(d) :- path_part(d, p),
     (p = "tests" ; p = "test" ; p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
 .decl bts_doc(d: number)
 bts_doc(d) :- doc(d, _, _), option("entryPoint", entry),
-    (entry = "check_file" ; entry = "check_file_content"), !bts_api_skip().
+    (entry = "check_file" ; entry = "check_file_content"), !option("btsBatch","true"), !bts_api_skip().
+bts_doc(d) :- bts_batch_doc(d).
 bts_doc(d) :- doc(d, path, _), !option("entryPoint", _), file_name(d, file), suffix(".py", file),
     !bts_framework_skip(d), !bts_skip(path),
     (prefix("impl/", path) ; prefix("data_layer/", path) ; prefix("_internal/", path) ; match(__LAYER__, path)),
@@ -94,8 +97,8 @@ Skip(@place("backend-policy", 1)) :- option("entryPoint", "should_skip_file"), o
 .violation Skipped(at: span) code "BTS_SKIPPED" "Path skipped"
 Skipped(@place("backend-policy", 1)) :- option("entryPoint", entry),
     (entry = "check_file" ; entry = "check_file_content"), bts_api_skip().
-.violation File(at: span, result: symbol) code "BTS_FILE" "{result}"
-File(@place("backend-policy", 1), path) :- option("entryPoint", "find_python_files"), option_item("candidates", _, path), suffix(".py", path).
+.violation File(at: span, result: symbol, order_key: symbol) code "BTS_FILE" "{result}"
+File(@place("backend-policy", 1), path, @replace_all(path,"/","\u0000")) :- bts_candidate(path).
 .violation Configuration(at: span, key: symbol, ordinal: number, value: symbol) code "BTS_CONFIG" "{value}"
 Configuration(@place("backend-policy", 1), key, i, value) :- option("entryPoint", "configuration"), bts_config(key, i, value).
-''' + cli_suffix(source, 'backend_type_strings')))
+''' + cli_suffix(source, 'backend_type_strings'))) + '#include "data-layer/backend-types-api.rr"\n'
