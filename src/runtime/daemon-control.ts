@@ -272,6 +272,13 @@ const KILL_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 const PROBE_TIMEOUT_MS = 2_000;
 const START_LOCK_LEASE_MS = 60_000;
+/**
+ * How long a start lock folder may have no lease before it counts as left by a start that died between making the
+ * folder and writing its lease. A live start writes the lease just after the folder, and on Windows the rename that puts
+ * it in place retries for up to 2 s while antivirus or a reader holds the file: 5 s is more than twice that, and a start
+ * waiting on an abandoned folder still takes it over well inside START_TIMEOUT_MS.
+ */
+const START_LOCK_UNLEASED_MS = 5_000;
 const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 103;
 
 export interface RunningDaemon {
@@ -599,6 +606,8 @@ interface StartLockLease {
 export interface StartLockOptions {
   leaseMs: number;
   renewMs: number;
+  /** Waits between tries while another start holds the lock. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_START_LOCK_OPTIONS: StartLockOptions = { leaseMs: START_LOCK_LEASE_MS, renewMs: START_LOCK_LEASE_MS / 3 };
@@ -613,8 +622,21 @@ function isLiveLease(lease: StartLockLease | undefined, machine: DaemonMachine):
 }
 
 /**
+ * Whether the start lock at `lockPath` was left by a start that is gone: its lease names a dead process or has expired,
+ * or the folder has had no lease for longer than a live start takes to write one. A folder with no lease is being made:
+ * removing it would let this start run beside the one that made it, and both would launch a daemon.
+ */
+async function startLockStale(lockPath: string, lease: StartLockLease | undefined, machine: DaemonMachine): Promise<boolean> {
+  if (lease !== undefined) return !isLiveLease(lease, machine);
+  // Writing the lease changes the folder, so its time is when it was made or last given a lease. No folder: let go
+  // since the try, and the next try takes it.
+  const changedAt = await stat(lockPath).then(info => info.mtimeMs, () => undefined);
+  return changedAt !== undefined && Date.now() - changedAt > START_LOCK_UNLEASED_MS;
+}
+
+/**
  * Removes a start lock taken for stale; false when Windows refuses because another start is deleting that folder
- * already. A folder being deleted has no lease left to read, so it looks stale; the caller waits for that delete.
+ * already. A folder being deleted has no lease left to read, so an old one looks stale; the caller waits for that delete.
  */
 async function removeStaleLock(lockPath: string, platform: NodeJS.Platform): Promise<boolean> {
   try {
@@ -627,10 +649,11 @@ async function removeStaleLock(lockPath: string, platform: NodeJS.Platform): Pro
 }
 
 /**
- * Makes the start lock's folder at `lockPath`: a stale lock in the way is removed, a held one waited for. On the
- * machine's Windows, a folder another start is still deleting counts as held.
+ * Makes the start lock's folder at `lockPath`: a stale lock in the way is removed, a held one or one being made waited
+ * for. On the machine's Windows, a folder another start is still deleting counts as held.
  */
-async function takeStartLock(lockPath: string, leasePath: string, machine: DaemonMachine): Promise<void> {
+async function takeStartLock(lockPath: string, leasePath: string, options: StartLockOptions, machine: DaemonMachine): Promise<void> {
+  const wait = options.sleep ?? sleep;
   const deadline = Date.now() + START_TIMEOUT_MS;
   for (;;) {
     try {
@@ -640,9 +663,9 @@ async function takeStartLock(lockPath: string, leasePath: string, machine: Daemo
       // Another start holds the lock, or on Windows is still deleting its folder as it lets go.
       if (!nameTaken(error, machine.platform)) throw error;
       const lease = await readStartLockLease(leasePath);
-      if (!isLiveLease(lease, machine) && await removeStaleLock(lockPath, machine.platform)) continue;
+      if (await startLockStale(lockPath, lease, machine) && await removeStaleLock(lockPath, machine.platform)) continue;
       if (Date.now() > deadline) throw new Error(`Another Rerail start (${lease === undefined ? "starting" : `pid ${lease.pid}`}) is still in progress`);
-      await sleep(POLL_INTERVAL_MS);
+      await wait(POLL_INTERVAL_MS);
     }
   }
 }
@@ -655,7 +678,7 @@ export async function withStartLock<T>(
 ): Promise<T> {
   const lockPath = join(home, START_LOCK_DIR);
   const leasePath = join(lockPath, "lease.json");
-  await takeStartLock(lockPath, leasePath, machine);
+  await takeStartLock(lockPath, leasePath, options, machine);
   // Replaced whole, never rewritten in place: a rewrite truncates first, and a starter that read the empty file
   // between would take the lease for stale and remove the lock this start still holds.
   const writeLease = async (): Promise<void> => {
