@@ -5,6 +5,7 @@ use std::sync::{Arc, atomic::AtomicUsize};
 
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Reachability {
+    pub(super) ordered_first: Option<super::ordered_first::Spec>,
     pub(in crate::code_rule_dsl) roots: String,
     pub(in crate::code_rule_dsl) edges: String,
     pub(in crate::code_rule_dsl) batch_size: usize,
@@ -19,6 +20,13 @@ pub(in crate::code_rule_dsl) fn create(
     spec: &Reachability,
     work: &Arc<AtomicUsize>,
 ) -> Result<()> {
+    if let Some(ordered) = &spec.ordered_first {
+        db.storage
+            .borrow_mut()
+            .discard(db, &stage.name)
+            .map_err(sql_error)?;
+        return super::ordered_first::create(db, stage, spec, ordered, work);
+    }
     // Internal names cannot be authored as stage/input identifiers or read by policies.
     let name = |suffix: &str| quote(&format!("__reach_{}_{}", stage.name, suffix));
     let (roots, edges, keys, compact, requests, batch, pairs) = (
@@ -174,6 +182,7 @@ mod tests {
         db.execute_batch("CREATE TABLE roots(__path,id);CREATE TABLE edges(__path,src,dst)")
             .unwrap();
         let spec = Reachability {
+            ordered_first: None,
             roots: "SELECT * FROM roots".into(),
             edges: "SELECT * FROM edges".into(),
             batch_size: 16,
@@ -185,6 +194,7 @@ mod tests {
             name: "reachable".into(),
             query: String::new(),
             indexes: vec![],
+            python_ast: None,
             reachability: Some(spec.clone()),
             deferred: Default::default(),
             stored_columns: vec![],

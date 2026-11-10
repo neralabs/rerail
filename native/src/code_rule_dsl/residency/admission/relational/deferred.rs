@@ -130,7 +130,7 @@ pub(in crate::code_rule_dsl) fn release(db: &Connection, name: &str, stages: &[S
             if stage
                 .reachability
                 .as_ref()
-                .is_some_and(|s| s.syntax.is_none()) =>
+                .is_some_and(|s| s.syntax.is_none() && s.ordered_first.is_none()) =>
         {
             let forest = stage.reachability.as_ref().unwrap().forest;
             db.execute_batch(&format!(

@@ -508,6 +508,95 @@ impl Retained {
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         self.rels.values().map(Kept::bytes).sum()
     }
+    /// The index-cost spike (`RERAIL_INDEX_REPORT`): each kept relation's dedup set and indexes now, the key-column
+    /// sets its probes bound (`probes`, by relation name: a stratum's own table, `+delta` for a delta probe, and its
+    /// `__` forms), and what one index per probed key set would hold: a row id a row (4 B) and a directory (0.5 B),
+    /// the dedup riding on the first such index (sorted by key hash then row), or a set of row ids (6 B) when none is
+    /// probed; per-column statistics from sketches (256 B a column).
+    pub(in crate::code_rule_dsl) fn index_report(&self, probes: &HashMap<(String, Vec<usize>), u64>) -> String {
+        let base = |name: &str| -> String {
+            let n = name.split(" [").next().unwrap_or(name).trim_end_matches("+delta");
+            let n = ["__old", "__new", "__plus", "__minus", "__ins", "__del", "__kept"].iter().fold(n, |n, s| n.strip_suffix(s).unwrap_or(n));
+            n.to_owned()
+        };
+        let mut shapes: HashMap<String, BTreeMap<Vec<usize>, u64>> = HashMap::new();
+        let mut reads: HashMap<String, BTreeMap<String, u64>> = HashMap::new();
+        for ((name, cols), n) in probes {
+            if let Some((_, kind)) = name.split_once(" [") {
+                *reads.entry(base(name)).or_default().entry(kind.trim_end_matches(']').to_owned()).or_default() += n;
+            } else if !cols.is_empty() {
+                *shapes.entry(base(name)).or_default().entry(cols.clone()).or_default() += n;
+            }
+        }
+        let mut lines = Vec::new();
+        let mut totals = [("supports", 0usize, 0usize, 0usize, 0usize), ("other", 0, 0, 0, 0)];
+        let mut by_size: Vec<(&String, &Kept)> = self.rels.iter().collect();
+        by_size.sort_by_key(|(_, k)| std::cmp::Reverse(k.rel.held_bytes().2));
+        for (rel, kept) in by_size {
+            let (k, set, chains, csr) = kept.rel.index_detail();
+            let n = kept.rel.rows();
+            let now = set + chains.iter().map(|c| c.2).sum::<usize>() + csr.iter().map(|c| c.1).sum::<usize>();
+            let probed = shapes.get(rel.as_str());
+            let sets = probed.map_or(0, BTreeMap::len);
+            let proposed = sets * n * 9 / 2 + if sets == 0 { n * 6 } else { 0 } + k * 256;
+            let t = &mut totals[usize::from(!super::supports::is_support(rel))];
+            t.1 += n;
+            t.2 += now;
+            t.3 += proposed;
+            t.4 += sets;
+            if lines.len() < 30 {
+                let shown: Vec<String> = probed.map(|m| m.iter().map(|(c, x)| format!("{c:?}x{x}")).collect()).unwrap_or_default();
+                let chain_cols: Vec<String> = chains.iter().map(|c| format!("{:?}:{}k", c.0, c.1 / 1000)).collect();
+                lines.push(format!(
+                    "  {rel}: {n} rows, k {k}; now {:.2} MB (set {:.2}, chains {}, lazy {}); probed {}; reads {:?}; proposed {:.2} MB ({:.1} B/row now, {:.1} proposed)",
+                    now as f64 / 1e6,
+                    set as f64 / 1e6,
+                    chain_cols.join(" "),
+                    csr.len(),
+                    if shown.is_empty() { "none".to_owned() } else { shown.join(" ") },
+                    reads.get(rel.as_str()),
+                    proposed as f64 / 1e6,
+                    now as f64 / n.max(1) as f64,
+                    proposed as f64 / n.max(1) as f64
+                ));
+            }
+        }
+        let mut out: Vec<String> = totals
+            .iter()
+            .map(|(kind, n, now, proposed, sets)| {
+                format!("INDEX {kind}: {n} rows; sets and indexes now {:.1} MB ({:.1} B/row), proposed {:.1} MB ({:.1} B/row); {sets} probed key sets", *now as f64 / 1e6, *now as f64 / (*n).max(1) as f64, *proposed as f64 / 1e6, *proposed as f64 / (*n).max(1) as f64)
+            })
+            .collect();
+        out.extend(lines);
+        // RERAIL_INDEX_SPIKE: every kept relation's orders built and measured; the 30 largest printed.
+        if std::env::var_os("RERAIL_INDEX_SPIKE").is_some() {
+            let mut by_size: Vec<(&String, &Kept)> = self.rels.iter().collect();
+            by_size.sort_by_key(|(_, k)| std::cmp::Reverse(k.rel.held_bytes().2));
+            let (mut total, mut rows, mut now, mut shown) = (0usize, 0usize, 0usize, 0usize);
+            let mut weighted = (0.0f64, 0.0f64, 0.0f64);
+            for (rel, kept) in by_size {
+                let sets: Vec<Vec<usize>> = shapes.get(rel.as_str()).map(|m| m.keys().cloned().collect()).unwrap_or_default();
+                let counts: Vec<u64> = shapes.get(rel.as_str()).map(|m| m.values().copied().collect()).unwrap_or_default();
+                if let Some((line, bytes, w_now, w_new, w_hash)) = kept.rel.index_spike(rel, &sets, &counts) {
+                    weighted.0 += w_now;
+                    weighted.1 += w_new;
+                    weighted.2 += w_hash;
+                    total += bytes;
+                    rows += kept.rel.rows();
+                    now += kept.rel.held_bytes().2;
+                    if shown < 30 {
+                        out.push(line);
+                        shown += 1;
+                    }
+                }
+            }
+            out.push(format!("SPIKE all kept: {rows} rows; orders {:.1} MB ({:.1} B/row) vs sets and indexes {:.1} MB ({:.1} B/row); this step's probes of kept relations, at the measured costs: {:.1} ms by chains, {:.1} ms by fenced orders, {:.1} ms by hashed orders", total as f64 / 1e6, total as f64 / rows.max(1) as f64, now as f64 / 1e6, now as f64 / rows.max(1) as f64, weighted.0 / 1e6, weighted.1 / 1e6, weighted.2 / 1e6));
+        }
+        let mut top: Vec<(&(String, Vec<usize>), &u64)> = probes.iter().collect();
+        top.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+        out.push(format!("  top probes: {}", top.iter().take(20).map(|((r, c), n)| format!("{r}{c:?}x{n}")).collect::<Vec<_>>().join(" ")));
+        out.join("\n")
+    }
     /// What the kept relations hold, by kind of relation (a counting support, `h__sup…`, or any other): rows,
     /// values, levels, and indexes and sets, in bytes (`InRel::held_bytes`). `RERAIL_KEPT_BYTES` prints it.
     pub(in crate::code_rule_dsl) fn held(&self) -> [(&'static str, usize, usize, usize, usize); 2] {
