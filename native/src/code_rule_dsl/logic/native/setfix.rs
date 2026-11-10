@@ -1496,6 +1496,33 @@ pub fn hold_empty(conn: &Connection, table: &str, types: Vec<u8>) {
     DERIVED.lock().unwrap().insert((scope(conn), table.to_owned()), InRel::flat(&[], types));
 }
 
+/// Holds `table` in `conn`'s run as a relation of `rows` (flat, `types.len()` values each): one a run kept from an
+/// earlier run of the same stratum over the same inputs (decision 0077 §4), read as if this run had derived it.
+pub fn hold_rows(conn: &Connection, table: &str, types: Vec<u8>, rows: Vec<i64>, n: usize) {
+    let k = types.len();
+    let rel = Arc::new(InRel { k, n, rows, view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default() });
+    let _ = rel.name.set(table.to_owned());
+    DERIVED.lock().unwrap().insert((scope(conn), table.to_owned()), rel);
+}
+
+/// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live
+/// rows, flat.
+pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
+    let rel = DERIVED.lock().unwrap().get(&(scope(conn), table.to_owned())).cloned()?;
+    if rel.view.is_some() {
+        return None;
+    }
+    let k = rel.k;
+    let mut out = Vec::with_capacity(rel.rows() * k);
+    for id in 0..rel.len() as u32 {
+        if rel.ndead > 0 && is_dead(&rel.dead, id) {
+            continue;
+        }
+        out.extend_from_slice(&rel.rows[id as usize * k..id as usize * k + k]);
+    }
+    Some((rel.types.clone(), out, rel.rows()))
+}
+
 /// The relations `adopt`ed into `conn`'s next run, taken by its planner.
 pub fn adopted(conn: &Connection) -> std::collections::BTreeSet<String> {
     let at = scope(conn);

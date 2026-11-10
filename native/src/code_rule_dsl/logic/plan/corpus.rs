@@ -32,6 +32,7 @@ mod combined;
 mod scoping;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
+mod kept_strata;
 mod prepared;
 mod maintain;
 mod supports;
@@ -4005,9 +4006,16 @@ fn run_observed(
                 }
                 None => {
                     let exported: BTreeSet<&String> = split.exports.iter().collect();
+                    // Without a session, the strata are kept in the tape cache from run to run (decision 0077 §4).
+                    let mut kept_strata = (durable.is_some() && one_fixpoint).then(|| kept_strata::Kept::new(store, retain::key(&prepared_key, &cross.program), &cross_inputs));
+                    let loaded = kept_strata.as_ref().map(|k| std::rc::Rc::clone(&k.loaded));
                     let mut load = |rels: &[String]| -> Result<()> {
                         for rel in rels.iter().filter(|r| exported.contains(r)) {
-                            modules.bind(&db, rel, exports.borrow_mut().source(rel, lowered.program.decls[rel].len()))?;
+                            let src = exports.borrow_mut().source(rel, lowered.program.decls[rel].len());
+                            if let Some(loaded) = &loaded {
+                                loaded.borrow_mut().insert(rel.clone(), Arc::clone(&src));
+                            }
+                            modules.bind(&db, rel, src)?;
                         }
                         Ok(())
                     };
@@ -4020,8 +4028,14 @@ fn run_observed(
                         }
                         Ok(())
                     };
-                    let hooks = if one_fixpoint { super::Hooks { load: Some(&mut load), unload: Some(&mut unload), ..Default::default() } } else { super::Hooks::default() };
+                    let strata = kept_strata.as_mut().map(|k| k as &mut dyn super::KeptStrata);
+                    let hooks = if one_fixpoint { super::Hooks { load: Some(&mut load), unload: Some(&mut unload), strata, ..Default::default() } } else { super::Hooks::default() };
                     let got = super::run_atoms_native_hooked(&cross, &db, "main", cross_stats, wanted.clone(), modes, hooks)?;
+                    if let Some(k) = kept_strata {
+                        let written = k.written_rows;
+                        k.finish();
+                        crate::code_rule_dsl::logic::profile::decision("cross-file strata kept across runs (decision 0077 §4)", || format!("{written} rows of the relations whose rows changed written to the store"));
+                    }
                     collect(&db, &got, &cross.program)?;
                     if wanted.contains("returns") && got.kept.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
