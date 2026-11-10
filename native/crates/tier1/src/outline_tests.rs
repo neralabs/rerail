@@ -7,9 +7,9 @@
 //! a stack slot. A gated region (`native_cpu_lanes::Region`) runs only where its gate has a
 //! bit: its branch calls it, with what it reads and gives through a stack slot.
 
-use super::block_tests::{hot_loop, opcode};
-use super::gating_tests::{ESCAPES, LATE, many, small};
-use super::native_cpu_block;
+use crate::clif_text::{hot_loop, opcode};
+use crate::gating_tests::{ESCAPES, LATE, many, small};
+use crate::native_cpu_block;
 
 /// The instructions of a function's IR, as text lines.
 fn instructions(clif: &str) -> Vec<&str> {
@@ -57,22 +57,30 @@ fn the_called_general_body_equals_the_interpreter() {
     }
 }
 
+/// A region is called only where the call costs the hot loop nothing: no vector live across
+/// it (aarch64 keeps none across a call), and no more integers than the callee-saved
+/// registers. Elsewhere it is inlined, as before.
 #[test]
-fn a_gated_region_is_a_call() {
+fn a_gated_region_is_called_only_where_the_call_is_free() {
     for (name, text) in [("escapes", ESCAPES.to_owned()), ("late", LATE.to_owned()), ("many", many())] {
         let g = small(&text);
         let compiled = native_cpu_block::compile(&g.native).expect("compiles");
         let gated: Vec<_> = compiled.passes.iter().filter(|p| p.gate_branches > 0).collect();
         assert!(!gated.is_empty(), "{name}: no region");
         for pass in gated {
-            // Each region the body takes is a function of its own; its values are not in the
-            // hot loop.
-            assert!(pass.outlined.len() > 1, "{name}: the region is inline");
+            for &(ints, vecs) in &pass.region_calls {
+                assert!(vecs == 0 && ints <= 10, "{name}: a region called with {ints} integers and {vecs} vectors live across");
+            }
+            // Each region function made is called; an inlined region has none.
+            let called = pass.outlined.len() - 1;
+            assert!(called <= pass.region_calls.len(), "{name}: a region function no call reaches");
+            assert!(called + pass.inlined_regions > 0, "{name}: a region neither called nor inlined");
             let hot: Vec<String> = hot_loop(&pass.clif).into_iter().flat_map(|(_, l)| l).collect();
-            assert!(hot.iter().any(|l| opcode(l) == "call"), "{name}: the hot loop does not call its region");
+            assert_eq!(hot.iter().filter(|l| opcode(l) == "call").count(), pass.region_calls.len(), "{name}: the hot loop's calls are the regions'");
             for o in &pass.outlined[1..] {
                 let lines = instructions(&o.clif);
                 assert!(lines.iter().any(|l| l.contains("load.i8x16") || l.contains("load.i64")), "{name}: a region's function reads nothing");
+                assert!(lines.iter().all(|l| opcode(l) != "call"), "{name}: a region's function calls");
             }
         }
     }

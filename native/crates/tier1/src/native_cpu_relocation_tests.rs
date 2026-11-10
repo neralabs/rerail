@@ -18,7 +18,7 @@ thread_local! {
     static RELOCATIONS: RefCell<Option<Relocations>> = const { RefCell::new(None) };
 }
 
-pub(super) fn record(id: FuncId, context: &Context) {
+pub fn record(id: FuncId, context: &Context) {
     RELOCATIONS.with_borrow_mut(|records| {
         if let Some(records) = records {
             let relocations = context
@@ -34,10 +34,10 @@ pub(super) fn record(id: FuncId, context: &Context) {
     });
 }
 
-struct Recording;
+pub struct Recording;
 
 impl Recording {
-    fn start() -> Self {
+    pub fn start() -> Self {
         RELOCATIONS.with_borrow_mut(|records| {
             assert!(records.is_none());
             *records = Some(Vec::new());
@@ -144,13 +144,13 @@ impl Drop for SeparatedCode {
     }
 }
 
-fn separated_module() -> JITModule {
+pub fn separated_module() -> JITModule {
     let mut builder = JITBuilder::new(default_libcall_names()).unwrap();
     builder.memory_provider(Box::new(SeparatedCode::new()));
     JITModule::new(builder)
 }
 
-fn assert_targets(module: &JITModule) -> usize {
+pub fn assert_targets(module: &JITModule) -> usize {
     RELOCATIONS.with_borrow(|records| {
         let mut distant_calls = 0;
         for (id, relocations) in records.as_ref().unwrap() {
@@ -227,13 +227,4 @@ fn native_calls_reach_distant_callees_in_both_directions() {
         )
     };
     assert_eq!(unsafe { entry() }, 42);
-}
-
-#[test]
-fn production_regex_helpers_reach_distant_callees() {
-    let _recording = Recording::start();
-    let mut module = separated_module();
-    crate::code_rule_dsl::transducer::packed::native_cpu_regex::define_helpers(&mut module).unwrap();
-    module.finalize_definitions().unwrap();
-    assert!(assert_targets(&module) > 0);
 }

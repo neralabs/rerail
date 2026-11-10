@@ -234,6 +234,26 @@ pub(crate) fn run_constant(prog: &crate::code_rule_dsl::logic::front::Program, r
     option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.inputs.iter().any(|i| i == rel))
 }
 
+/// Whether no rule of `prog` reads a document: every relation a rule reads is derived, a fact, or an input with one
+/// value for the run (`run_constant`), and no rule matches an AST pattern or asks for the nearest of a node. Such a
+/// program reads an earlier phase's exports and the run's options at most, and reads at least one of them.
+pub(crate) fn reads_no_document(prog: &crate::code_rule_dsl::logic::front::Program) -> bool {
+    use crate::code_rule_dsl::logic::front::Literal;
+    let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    let mut phased = false;
+    let none = prog.natives.is_empty()
+        && prog.rules.iter().flat_map(|r| &r.body).all(|l| match l {
+            Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
+                let constant = run_constant(prog, &a.rel);
+                phased |= constant && !option_input(&a.rel);
+                derived.contains(a.rel.as_str()) || constant || (prog.facts.contains_key(&a.rel) && !prog.inputs.contains(&a.rel))
+            }
+            Literal::Cmp { .. } => true,
+            _ => false,
+        });
+    none && phased
+}
+
 /// Derived relations made from the program's constants alone (`la_side_queue(x) :- la_set("…", x)`): every rule
 /// reads only facts, the run's options (`option_input`), other such relations and comparisons. They are constants to
 /// the split, like facts: a rule reading one joins no document by it, and both parts derive them.
@@ -680,7 +700,15 @@ pub(crate) struct Programs {
 pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
     use crate::code_rule_dsl::logic::front::Literal;
     use std::collections::BTreeSet;
-    let (local, locations, same_doc) = split_located(prog);
+    let (mut local, locations, same_doc) = split_located(prog);
+    // A program that reads no document (a later phase over an earlier one's exports, `corpus::phases`) has no
+    // file-local part: its relations made from those exports alone would be constants, derived again whole in the
+    // file-local part each run and handed to the cross part as changed inputs. In the cross part a session maintains
+    // them from the exports' delta (t28 step 7).
+    let no_document = reads_no_document(prog);
+    if no_document {
+        local.clear();
+    }
     let is_local = |rel: &str| local.contains(rel);
     let read = |rules: &mut dyn Iterator<Item = &crate::code_rule_dsl::logic::front::Rule>| -> BTreeSet<String> {
         rules
@@ -717,8 +745,9 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
         }
     }
     let mut l = prog.clone();
-    // A relation of constants is derived in both parts (`constant_relations`).
-    let constants = constant_relations(prog);
+    // A relation of constants is derived in both parts (`constant_relations`), but where no document is read: the
+    // file-local part then has nothing to give them to.
+    let constants = if no_document { Default::default() } else { constant_relations(prog) };
     l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(&r.head.rel));
     l.lattice.retain(|rel, _| is_local(rel));
     l.gates.retain(|(rel, _)| is_local(rel));
