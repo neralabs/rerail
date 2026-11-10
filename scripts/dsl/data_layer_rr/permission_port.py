@@ -1,5 +1,6 @@
 """PermissionError I/O and passive DTO transport; native rules own decisions."""
 from pathlib import Path
+import json
 
 
 def scan_file(suite, module, entry, file_path, source=None, tree=None):
@@ -16,6 +17,27 @@ def install_detectors(suite, module):
     suite.replace(module, 'check_file', lambda file_path: scan_file(suite, module, 'check_file', file_path))
     suite.replace(module, 'check_file_content', lambda file_path, source, tree=None:
                   scan_file(suite, module, 'check_file_content', file_path, source, tree))
+
+
+def install_fact_helpers(suite, module):
+    def convert(entry, values):
+        rows = suite.native('permission_error', entry, [dict(path='permission-facts.json',
+                            source=json.dumps(dict(rows=values), ensure_ascii=False))])
+        if any(r['code'] != 'PERMISSION_FACT' for r in rows): raise AssertionError('Unexpected native fact conversion')
+        rows.sort(key=lambda r: r['parameters']['ordinal'])
+        if [r['parameters']['ordinal'] for r in rows] != list(range(len(values))):
+            raise AssertionError('Native fact conversion lost an input')
+        return [json.loads(r['parameters']['value_json']) for r in rows]
+    def from_fact(raw_fact, root):
+        value = convert('_permission_from_fact', [dict(raw=raw_fact, root=str(root))])[0]
+        if value is None: return None
+        if type(value['line_number']) is not int: raise AssertionError('Native integer conversion is missing')
+        return module.Violation(Path(value['file_path']), value['line_number'], value['message'])
+    def to_fact(violation, root):
+        return convert('_permission_to_fact', [dict(root=str(root), raw=dict(file_path=str(violation.file_path),
+                       line_number=violation.line_number, message=violation.message))])[0]
+    suite.replace(module, '_violation_from_fact', from_fact)
+    suite.replace(module, '_violation_to_fact', to_fact)
 
 
 def install(suite, module, detectors=False):
@@ -56,4 +78,5 @@ def install(suite, module, detectors=False):
     suite.replace(module, 'find_python_files', find_python_files)
     suite.replace(module, '_violations_for_files', violations_for_files)
     suite.replace(module, 'cli_main', cli_main)
+    install_fact_helpers(suite, module)
     if detectors: install_detectors(suite, module)

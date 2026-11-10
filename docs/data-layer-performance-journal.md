@@ -23,6 +23,12 @@ The new transport regression failed before implementation and passes after it.
 Fact-conversion helpers, disabled-behavior controls, and the admission audit remain open.
 This checkpoint does not admit PermissionError or complete the migration.
 
+The next TDD step ports both legacy fact-conversion helpers through the shared typed JSON decoder.
+The [expanded snapshot receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-permission-fact-helpers-finalec3-snapshot.json.gz) passes all 92 cases.
+It includes missing fields, invalid integers, Unicode decimal strings, large integers, Python string conversions, and lexical root handling.
+The helper transport regression failed before the implementation and then passed.
+The audit also found untested explicit-file scope and duplicate-file behavior. Those checks are the next step.
+
 The [incremental SQL preparation design](sql-preparation-architecture.md) and its
 [implementation spikes](sql-preparation-spikes.md) distinguish accepted changes from rejected retention experiments.
 
