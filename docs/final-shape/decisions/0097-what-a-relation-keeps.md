@@ -247,31 +247,45 @@ the cross-file rules that read it join the parts.
   stored flat but smaller as parts (a finding, a part of one row a key, a reader that binds nothing) are listed
   under "factorized store (decision 0097): stored flat, would shrink as parts".
 
-**Measured: the factorized store.** On the 8 programs (486 fixture files, 2 chunks, default threads). CPU is the
-profile's user + sys. Two runs of each, against the base binary and the same binary with `RERAIL_FACTORIZE=off`.
-Findings are byte-identical in every run.
+**Measured: the factorized store.** On the 8 programs (486 fixture files, 2 chunks, default threads), three
+paired runs of one binary, `RERAIL_FACTORIZE=off` then on, alternating. Instructions are the process's retired
+instructions (steadier than CPU time at this load); CPU is the profile's user + sys. Findings are byte-identical
+to the base binary's in every run.
 
-| Setting | Rows handed on | Moving rows, CPU s | Local CPU s | Cross CPU s | Peak RSS | Load (1-min) |
-|---|---:|---:|---:|---:|---:|---|
-| base binary | (not counted) | 4.28, 4.45 | 17.4, 17.6 | 3.14, 3.21 | 308, 314 MB | 24 to 50 |
-| `RERAIL_FACTORIZE=off` | 986,114 | 4.51, 4.61 | 18.3, 18.5 | 3.84, 3.23 | 308, 307 MB | 35 to 37 |
-| factorized | 307,743, 306,011 | 2.73, 3.08 | 14.5, 16.6 | 2.52, 2.73 | 278 MB (and one 801 MB) | 28 to 99 |
+| Setting | Rows handed on | Instructions | Moving rows, CPU s | Local CPU s | Cross CPU s | Peak RSS | Load (1-min) |
+|---|---:|---:|---:|---:|---:|---:|---|
+| off | 986,114 | 237.3, 232.4 G (and 295.5 G) | 3.90, 4.02 (4.08) | 15.0, 15.3 (15.3) | 3.14, 3.09 (3.17) | 292, 294 MB (800 MB) | 35 to 45 |
+| factorized | 306,011 | 208.6, 208.4, 207.9 G | 2.66, 2.62, 2.65 | 13.6, 13.6, 13.8 | 2.63, 2.58, 2.57 | 257, 258, 256 MB | 34 to 40 |
 
 - `fl853_p4_outer`'s 771,152 rows are now 89,605 (`fz894`, `f` inside `p`) and fewer than 11 k (`fz892`). Rows
-  handed on fall 69%; moving them falls about a third (1.4 to 1.6 s); local CPU falls 1 to 4 s (the product is no
-  longer built), cross CPU 0.5 s. On the slice it factorizes `class_path` and the two `p4_outer` joins.
-- Peak RSS varies between runs far more than with the change: the base binary also peaked at 798 MB once on the
-  same slice, so the single 801 MB run is that variation, not the change.
+  handed on fall 69%; moving them falls a third (1.3 s), local CPU 1.5 s (the product is no longer built), cross
+  CPU 0.5 s; 11 to 12% fewer instructions, 35 MB less peak RSS. On the slice it factorizes `class_path` and the two
+  `p4_outer` joins.
+- The run in parentheses is another mode of the engine, seen with and without the change (the base binary's first
+  run on the slice too: 329 G instructions, 798 MB): about 60 G more instructions and 500 MB more RSS. It is not
+  the factorized store's, and is not explained here.
 
-On the pack (534 programs, the same files, one run each, base then factorized, load 26 to 131 and 89 to 97):
-findings byte-identical. 115 exports are handed on factorized, among them `p207_outer`'s two (the pack's
-`fl853_p4_outer`), `class_path`, and joins of the typing context (`ann_q`, `head_q`, `type_arg`, `version_cmp`,
-`typevar_name`, …). Moving rows to the cross-file part went from 38.75 to 37.26 s, about 4%, within the noise:
-the pack hands on 6.7 M rows of 1,843 exports, and its largest exports (`fl5237_p514_effect` 197 k, `precedes`
-196 k, `fl4196_doc_opener` 186 k) are not products of parts. In all, 284.3 s against 290.4 s of CPU (local 209.3
-against 211.9 s, cross 26.3 against 26.1 s), within the noise of that load; the factorizing itself costs 1.4 s of
-the run's preparation, which the prepared program kept in the store (0073) pays once. Peak RSS was 1,097 MB against
-1,579 MB (see below).
+On the pack (534 programs, the same files; one run each: base binary, factorized, then the same binary with
+`RERAIL_FACTORIZE=off`; load 26 to 131, 89 to 97 and 117 to 145): findings byte-identical in all three. 115
+exports are handed on factorized, among them `p207_outer`'s two (the pack's `fl853_p4_outer`), `class_path`, and
+joins of the typing context (`ann_q`, `head_q`, `type_arg`, `version_cmp`, `typevar_name`, …).
+
+| Pack | Rows handed on | Moving rows, CPU s | Local CPU s | Cross CPU s | All CPU s | Instructions | Peak RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| base binary | (not counted) | 38.75 | 209.3 | 26.3 | 284.3 | 3,017 G | 1,097 MB |
+| off | 6,966,788 | 38.09 | 211.5 | 26.5 | 288.6 | 3,010 G | 1,547 MB |
+| factorized | 6,731,499 | 37.26 | 211.9 | 26.1 | 290.4 | 3,078 G | 1,579 MB |
+
+- Of the 39 s spent moving rows, the factorized store takes about 1 s: `p207_outer`'s 771 k rows go, but the pack
+  hands on 7 M rows of 1,769 exports, and its other large exports (`fl5237_p514_effect` 197 k, `precedes` 196 k,
+  `fl4196_doc_opener` 186 k) are not products of parts.
+- Instructions rose 2.3% (68 G) with it on, against falling 12% on the slice. One run each, and the slice shows a
+  mode worth 25% of its instructions, so this is not settled; the factorizing itself costs 1.4 s CPU of the run's
+  preparation (inferring keys and two splits over 13 k rules), which a prepared program kept in the store (0073)
+  pays once, and every run here started from an empty store.
+- Peak RSS is that of the setting's run, not the setting's: off and on peaked alike (1,547 and 1,579 MB); the base
+  run, at lower load, at 1,097 MB.
+
 **Measured.** 8 programs that read `bound_in`, and PYI055 + UP035 (which include the typing context), on the 486
 fixture files in 2 chunks. Each pair's findings are byte-identical in all four settings. CPU is the profile's
 user + sys of the run; native work is `native.tsv`'s summed work. Load (1-minute) was 30 to 115 throughout, so
