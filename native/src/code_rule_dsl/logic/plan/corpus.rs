@@ -4768,7 +4768,22 @@ fn run_observed(
                     for rel in unchanged_outputs.keys() {
                         outputs.entry(rel.clone()).or_default();
                     }
-                    let clean_outputs = cell.as_ref().map(|kept| cut.outputs(kept, &read_back)).unwrap_or_default();
+                    let mut clean_outputs = cell.as_ref().map(|kept| cut.outputs(kept, &read_back)).unwrap_or_default();
+                    // A clean output read back from the store has its rows, not its lines: decoded from the rows.
+                    if let Some(kept) = cell.as_ref().filter(|_| kept_part.is_some()) {
+                        let rows: Vec<(String, Arc<crate::code_rule_dsl::logic::native::component::InRel>)> = read_back
+                            .iter()
+                            .filter(|o| cut.clean.contains(*o) && !clean_outputs.iter().any(|(r, _, _)| r == *o))
+                            .filter_map(|o| kept.kept(o).map(|(h, _)| (o.clone(), Arc::clone(h))))
+                            .collect();
+                        if !rows.is_empty() {
+                            let (lines, nodes) = super::decode_kept(&db, &cross, rows)?;
+                            clean_outputs.extend(lines.into_iter().map(|(rel, l)| {
+                                let n = nodes.get(&rel).cloned().unwrap_or_default();
+                                (rel, l, n)
+                            }));
+                        }
+                    }
                     native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
                     for (rel, lines, nodes) in clean_outputs {
                         if outputs_of(&rel) {

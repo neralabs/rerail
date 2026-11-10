@@ -6255,6 +6255,23 @@ fn last_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>
     last
 }
 
+/// Kept relations `rels` (outputs of `lowered`, read back from the store, t32 4.1) as `decoded_outputs` gives an
+/// output: held in `db`'s run as the engine's relations and decoded from there. Not `finding`, which SQL decodes.
+#[allow(clippy::type_complexity)]
+pub(in crate::code_rule_dsl) fn decode_kept(
+    db: &Connection,
+    lowered: &lower::Lowered,
+    rels: Vec<(String, std::sync::Arc<super::native::component::InRel>)>,
+) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
+    let names: BTreeSet<String> = rels.iter().map(|(r, _)| r.clone()).filter(|r| r != "finding").collect();
+    for (rel, held) in rels.into_iter().filter(|(r, _)| names.contains(r)) {
+        super::native::component::hold_as(db, &rel, held);
+    }
+    let mut prog = lowered.program.clone();
+    prog.outputs = names.iter().cloned().collect();
+    decoded_outputs(&prog, db, Some(lowered), "", true, &BTreeSet::new(), &names)
+}
+
 /// The program's outputs as text rows, sorted (symbols as text, kinds and fields by name), and per
 /// output the columns that hold nodes.
 #[allow(clippy::type_complexity)]

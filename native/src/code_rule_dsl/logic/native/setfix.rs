@@ -2199,20 +2199,52 @@ pub fn derived(conn: &Connection, table: &str) -> Option<Arc<dyn crate::code_rul
     let rel = DERIVED.lock().unwrap().get(&(scope(conn), table.to_owned())).cloned()?;
     Some(Derived::new(rel, None))
 }
-/// A native relation's rows as a source; `live`, a relation with dead rows' live row ids (dense, as a source's are).
-struct Derived(Arc<InRel>, Option<Vec<String>>, Option<Vec<u32>>);
+/// A native relation's rows as a source; `live`, a relation with dead rows' live row ids (dense, as a source's are);
+/// `orders`, each column's rows (the source's) sorted by value, built on first probe: SQL that reads a kept relation
+/// (a session's, or one a new process read back, t32 4.1) probes it as it probes any held source, not by a scan.
+struct Derived(Arc<InRel>, Option<Vec<String>>, Option<Vec<u32>>, Vec<std::sync::OnceLock<Vec<u32>>>);
 impl Derived {
     fn new(rel: Arc<InRel>, names: Option<Vec<String>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
         let live = (rel.ndead > 0).then(|| (0..rel.len() as u32).filter(|&id| !is_dead(&rel.dead, id)).collect());
-        Arc::new(Derived(rel, names, live))
+        let orders = (0..rel.k).map(|_| std::sync::OnceLock::new()).collect();
+        Arc::new(Derived(rel, names, live, orders))
+    }
+    /// Column `c`'s rows, sorted by value.
+    fn order(&self, c: usize) -> &[u32] {
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        self.3[c].get_or_init(|| {
+            let mut rows: Vec<u32> = (0..self.len() as u32).collect();
+            rows.sort_by_key(|&r| self.value(r as usize, c));
+            rows
+        })
+    }
+    /// The rows whose column `c` is `v`, as a slice of its order.
+    fn rows_of(&self, c: usize, v: i64) -> &[u32] {
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        let order = self.order(c);
+        let lo = order.partition_point(|&r| self.value(r as usize, c) < v);
+        let hi = order.partition_point(|&r| self.value(r as usize, c) <= v);
+        &order[lo..hi.max(lo)]
     }
 }
 impl crate::code_rule_dsl::facts::vtab::Source for Derived {
     fn columns(&self) -> Vec<String> { self.1.clone().unwrap_or_else(|| (0..self.0.k).map(|i| format!("c{i}")).collect()) }
     fn len(&self) -> usize { self.2.as_ref().map_or_else(|| self.0.len(), Vec::len) }
-    fn estimated_matches(&self, _: usize, _: bool) -> usize { 1 }
-    fn indexed(&self, _: usize) -> bool { false }
-    fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> { None }
+    fn estimated_matches(&self, c: usize, batch: bool) -> usize {
+        let ndv = self.statistics().and_then(|s| s.get(c).map(|x| x.2)).unwrap_or(1).max(1) as usize;
+        let one = self.len().div_ceil(ndv);
+        if batch { one * 8 } else { one }
+    }
+    fn indexed(&self, c: usize) -> bool { c < self.0.k }
+    fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+        if c >= self.0.k {
+            return None;
+        }
+        let mut out: Vec<usize> = values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect();
+        out.sort_unstable();
+        Some(out)
+    }
+    fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { (c < self.0.k).then(|| self.rows_of(c, v)) }
     fn value(&self, row: usize, column: usize) -> i64 { self.0.at(self.2.as_ref().map_or(row, |l| l[row] as usize)).at(column) }
     fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
         let mut counted = self.0.counted.lock().unwrap();

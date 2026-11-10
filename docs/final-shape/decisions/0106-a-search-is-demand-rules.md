@@ -64,7 +64,28 @@ Nothing new. Two things it already does matter:
 | Generic instantiation (`gpar`, `gbind`, `wbind`, `lgpar`, `lcbind`) | `inst_ask(f, targs)` | a call of a generic function or method |
 | "Not overridden", closed-world `self` | `sub_ask(c)` | a `self` whose class is asked |
 
-## 5. Order
+## 5. Measured: `found` is not a search in P3
 
-1. `found` in P3 (t32 7.2): the agree count stays 6,410; `found`'s rows and its strata's work measured.
-2. `lfound`, then `inst` for the library generics (t32 7.3).
+P3's `found` was written as §1's demand rules and measured against its eager form on 54 of the corpus's files
+(`_internal`, `l1100_exceptions`, `l2055_lazy_result`), each run with a fresh store and no kept part, 2026-11-10:
+
+| | eager `found` | demand (`mro_ask`) |
+|---|---|---|
+| answers (agree with jedi) | 4,815 | 4,815 |
+| `found`'s own join work | 279 | 3,976, and `mro_ask` 10,644 |
+| the `pv` component | 99 relations, 1.81 M work, 1.56 s | 105 relations, 2.05 M work, 1.64 s |
+
+The eager `found` was never the cost: it is in `pv`'s component too, but its join work is 279 units of 1.81 M.
+The demand form's requests read `asks`, which reads `pv`, and that pulls six more relations (`mro_ask`, `metacls`, and the
+annotation phase's `bv`, `anc`, `uinst` and `gleaf`) into the component, each derived again on every wave: 13.5% more work there. So P3
+keeps the eager `found`.
+
+The rule this gives: **write a search only where the eager relation is the cost** (measured), and only when the
+requests do not pull the answer into a larger recursion than it was in. A request that reads a value (`pv`) makes
+the answer part of that value's fixpoint.
+
+## 6. Order
+
+1. Measure the eager relations 0083 §4 names as searches before writing any: `wbind`, `gpar`, `lgpar`, `lcbind`
+   (t27: `wbind` was 2.7 M join work for 23 rows) first.
+2. Write as demand rules only those that are the cost, and measure again.

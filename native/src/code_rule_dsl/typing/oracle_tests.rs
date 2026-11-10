@@ -1319,7 +1319,13 @@ fn benchmark_python_calls_program_corpus() {
     // `RERAIL_PYTHON_REUSE=on`: phase 0's cutoff, as the command line's runs have it (`corpus::reuse`).
     // `RERAIL_PYTHON_TYPESHED`: a typeshed checkout, so calls.rr loads the standard library's stubs (t21).
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
-    let mut text = format!("{}\n{JEDI_SPANS}", program(&calls_name()));
+    // `RERAIL_PYTHON_PROGRAM_FILE`: the program read from that file, in place of `RERAIL_PYTHON_PROGRAM`'s (to compare a
+    // rule's earlier form).
+    let source = match std::env::var("RERAIL_PYTHON_PROGRAM_FILE") {
+        Ok(f) => crate::code_rule_dsl::tools::program_text(Path::new(&f)).unwrap(),
+        Err(_) => program(&calls_name()),
+    };
+    let mut text = format!("{source}\n{JEDI_SPANS}");
     // `RERAIL_PYTHON_ROUNDS`: the rounds' bound k, for measuring what more rounds decide.
     if let Ok(k) = std::env::var("RERAIL_PYTHON_ROUNDS") {
         text = text.replace(".pragma \"cross-rounds\" \"4\"", &format!(".pragma \"cross-rounds\" \"{k}\""));
@@ -1691,7 +1697,17 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
     if in_session {
         session::start(&base.join("session")).unwrap();
     }
+    // `RERAIL_PROFILE`: each run's profile in a directory of its own, named as its line is.
+    let profile_as = |what: &str| {
+        if let Some(d) = std::env::var_os("RERAIL_PROFILE") {
+            let dir = Path::new(&d).join(what.replace(' ', "-"));
+            std::fs::create_dir_all(&dir).unwrap();
+            crate::code_rule_dsl::logic::profile::set_directory(&dir);
+        }
+    };
+    profile_as("cold");
     show("cold", &run());
+    profile_as("unchanged");
     show("unchanged", &run());
     let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
     for edit in edits.split(',') {
@@ -1709,6 +1725,7 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         let path = root.join(file);
         let before = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, change(&before)).unwrap();
+        profile_as(edit);
         show(edit, &run());
         let kept = dump();
         // The full run: no session, a phase store of its own.
@@ -1718,6 +1735,7 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
         // Its cross-file part derived, not maintained from what its store kept (t32 4.1).
         unsafe { std::env::set_var("RERAIL_KEPT_PART", "off") };
+        profile_as(&format!("{edit} full"));
         let full = session::full(run);
         unsafe { std::env::remove_var("RERAIL_KEPT_PART") };
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &store) };

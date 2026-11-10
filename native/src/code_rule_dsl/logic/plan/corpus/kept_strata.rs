@@ -167,8 +167,8 @@ impl KeptStrata for Kept<'_> {
 /// A relation's frame records the digest of each input its rows were derived from (the inputs its stratum reads, and
 /// theirs, down to the program's inputs). Frames are shared by identity, so a relation another program kept may be
 /// of other inputs than the inputs' frames hold now: it is read back only when every input it records has the
-/// digest the input's frame holds. A program output's rows are not read back: its decoded lines are not kept, so
-/// its stratum runs again (`cut`: not kept, its readers clean when its rows come out the same).
+/// digest the input's frame holds. A program output's rows are kept as any relation's, and its lines decoded from
+/// them when its stratum is clean (`plan::decode_kept`); but `finding`, which SQL decodes, runs again.
 pub(in crate::code_rule_dsl) struct Part {
     space: [u8; 32],
     /// Each relation and input of the program, as its frame names it, and what the store holds of it.
@@ -235,7 +235,7 @@ pub(in crate::code_rule_dsl) fn load(
     let cones = cones(prog, &sccs, &input_names);
     let mut frames: HashMap<String, (FrameRel, Option<FrameStored>)> = crate::code_rule_dsl::logic::plan::identities(prog, &sccs, &by_stratum)
         .into_iter()
-        .filter(|(name, _)| !prog.outputs.contains(name) && !input_names.contains(name.as_str()))
+        .filter(|(name, _)| name != "finding" && !input_names.contains(name.as_str()))
         .map(|(name, ident)| (name.clone(), (FrameRel { name, ident }, None)))
         .collect();
     for (rel, _) in inputs {
