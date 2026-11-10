@@ -28,6 +28,11 @@ pub mod jml {
 }
 #[path = "mldb/plugins/jml/dataset_feature_space.rs"]
 pub mod dataset_feature_space;
+#[path = "mldb/plugins/jml/randomforest_types.rs"]
+pub mod randomforest_types;
+#[cfg(test)]
+#[path = "mldb/plugins/jml/testing/rf_kernel_test.rs"]
+mod rf_kernel_test;
 
 use metal::{ComputePipelineState, Library};
 use std::sync::OnceLock;
