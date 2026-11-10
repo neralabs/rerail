@@ -4392,6 +4392,8 @@ pub(in crate::code_rule_dsl) trait KeptStrata {
     fn rows(&mut self, rel: &str) -> Option<(Vec<u8>, Vec<i64>, usize)>;
     /// This run derived `rel`: its digest, and its rows (types, flat, count), or `None` when SQL derived it.
     fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Vec<i64>, usize)>);
+    /// The run's end: the strata it evaluated, of all.
+    fn counted(&mut self, evaluated: usize, of: usize);
 }
 
 /// The relations a stratum's rules read: atoms (an aggregate's too), `node` and `child` for a `nearest` climb, a
@@ -5129,6 +5131,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             deferred.remove(&r);
             held_again += 1;
         }
+        ks.counted(sccs.len() - clean_strata, sccs.len());
         super::profile::decision("cross-file strata kept across runs (decision 0077 §4)", || {
             format!("{clean_strata} of {} strata not run: their reads had the rows they had; {held_again} of their relations held again ({held_rows} rows)", sccs.len())
         });

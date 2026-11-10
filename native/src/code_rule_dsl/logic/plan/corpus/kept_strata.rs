@@ -48,6 +48,8 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     /// Whether this run has written (the last run's input digests are dropped first).
     wrote: bool,
     pub(in crate::code_rule_dsl) written_rows: usize,
+    /// The strata the run evaluated, of all (`KeptStrata::counted`).
+    pub(in crate::code_rule_dsl) strata: Option<(usize, usize)>,
 }
 
 impl<'s> Kept<'s> {
@@ -65,6 +67,7 @@ impl<'s> Kept<'s> {
             gone: Vec::new(),
             wrote: false,
             written_rows: 0,
+            strata: None,
         }
     }
 
@@ -136,6 +139,10 @@ impl KeptStrata for Kept<'_> {
     fn rows(&mut self, rel: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
         let prog = self.prog?;
         self.store.kept_strata_rows(&prog, rel).ok().flatten().map(|k| (k.types, k.rows, k.n))
+    }
+
+    fn counted(&mut self, evaluated: usize, of: usize) {
+        self.strata = Some((evaluated, of));
     }
 
     fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Vec<i64>, usize)>) {
