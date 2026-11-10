@@ -45,7 +45,41 @@ own_line(c) :- kind(c, "comment"), !token_before(c, _).
 own_line(c) :- kind(c, "comment"), token_before(c, t), end_line(t, l), line(c, m), l < m.
 // in_expr(c): c sits in an expression, brackets or a statement's header, not between statements.
 .decl in_expr(c: node)
-in_expr(c) :- kind(c, "comment"), child(p, c, _), kind(p, k), !stmt_level(k).
-.decl stmt_level(k: symbol)
-stmt_level(k) :- kind(_, k), (k = "module" ; k = "block" ; k = "decorator" ; k = "decorated_definition" ;
-    match("[a-z_]+(_statement|_clause|_definition)", k)), k != "for_in_clause", k != "if_clause", k != "with_clause".
+in_expr(c) :- kind(c, "comment"), child(p, c, _), !stmt_level(p).
+.decl stmt_level(p: node)
+stmt_level(p) :- kind(p, "module").
+stmt_level(p) :- kind(p, "block").
+stmt_level(p) :- kind(p, "decorator").
+stmt_level(p) :- kind(p, "decorated_definition").
+stmt_level(p) :- kind(p, "_compound_statement").
+stmt_level(p) :- kind(p, "_simple_statement").
+stmt_level(p) :- kind(p, "assert_statement").
+stmt_level(p) :- kind(p, "break_statement").
+stmt_level(p) :- kind(p, "case_clause").
+stmt_level(p) :- kind(p, "class_definition").
+stmt_level(p) :- kind(p, "continue_statement").
+stmt_level(p) :- kind(p, "delete_statement").
+stmt_level(p) :- kind(p, "elif_clause").
+stmt_level(p) :- kind(p, "else_clause").
+stmt_level(p) :- kind(p, "except_clause").
+stmt_level(p) :- kind(p, "exec_statement").
+stmt_level(p) :- kind(p, "expression_statement").
+stmt_level(p) :- kind(p, "finally_clause").
+stmt_level(p) :- kind(p, "for_statement").
+stmt_level(p) :- kind(p, "function_definition").
+stmt_level(p) :- kind(p, "future_import_statement").
+stmt_level(p) :- kind(p, "global_statement").
+stmt_level(p) :- kind(p, "if_statement").
+stmt_level(p) :- kind(p, "import_from_statement").
+stmt_level(p) :- kind(p, "import_statement").
+stmt_level(p) :- kind(p, "match_statement").
+stmt_level(p) :- kind(p, "nonlocal_statement").
+stmt_level(p) :- kind(p, "pass_statement").
+stmt_level(p) :- kind(p, "print_statement").
+stmt_level(p) :- kind(p, "raise_statement").
+stmt_level(p) :- kind(p, "return_statement").
+stmt_level(p) :- kind(p, "try_statement").
+stmt_level(p) :- kind(p, "type_alias_statement").
+stmt_level(p) :- kind(p, "while_statement").
+stmt_level(p) :- kind(p, "with_statement").
+

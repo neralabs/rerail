@@ -199,6 +199,67 @@ union of each rule's run alone. That is how serverplan's 66-rule pack was checke
    - Measured: a second run after adding one rule to the pack. Every unchanged file's library rows should be read,
      not made. Measure its CPU against a cold run's.
 
+## Measured: the host's part of a cold run
+
+Reading and combining the programs, the guests and preparing the combined program are the work of a cold run that
+is not joins. On the Python pack (534 programs over ruff's 486 fixture files) they were 58 s of CPU. They are now
+34 s, with the same findings:
+
+- **Each program's text is read once** (`rr::read_text`). A run asked every text for its modules and then for its
+  program, and each ask made the text's tape and resolved its includes again. The text read once answers both. The
+  library files' statements are kept shared, and a program read with only its libraries' declarations copies just
+  those, not every clause to drop it after.
+- **Congruence signs a rule by a template made once** (`simplify::congruence`). Each round of refining the classes
+  of identical relations printed every rule's canonical text under that round's labels. A rule's text is fixed but
+  for the labels of the relations it reads. So the text is made once with each relation a placeholder, and a round
+  compares the template with those labels. `congruence_by_templates_is_congruence_by_texts` checks the partition
+  against the texts. This is used three times: the fact spaces, `simplify` and the merge after the joins are pushed.
+- **No pass scans every rule once per relation.** That held in lowering's span patterns, in the climbs rewritten as
+  `within`, in locating the chunks' rows (a target's readers are counted once and kept as rules move to `<rel>_at`)
+  and in the scope guards (one pass, each rule's groups in order).
+- **A cycle summary of a component that reads no member of itself settles in one round** (`front::cycles`). Its
+  rules read only relations below it, so a second round only repeated the first.
+- **A guest's tree is kept by grammar and text** (`guests::parse`). A pack's guests repeat their texts (one
+  annotation in many files, the same guests in every chunk). Store lookups fell from 40088 to 1536, and each
+  distinct text is restored and digested once. The facts are a function of the grammar and the text alone. The
+  memo starts again past 8 MB of texts.
+- **A dialect is made once per thread** for the hosts' numberings. Making one walks the grammar's kinds, and every
+  host a guest is made in made its own.
+- **Hiding's maps are hashed, and the facts encoding is one pass.** A string with nothing to escape is quoted whole.
+  Storing the prepared program has a span of its own; it was unnamed CPU in `stats` before.
+
+Paired cold runs, the base binary (`final-rerail-shape-matrix-offload` at 1e51c1f19) against this one (CPU is
+user + system; load 60 to 120, so CPU differences under 15% are noise; the instruction counts are steadier):
+
+```
+                                                     base      now   (s CPU)
+combine phase                                       27.77    15.87
+stats phase                                         29.94    18.58
+  parse each program (534)                          12.63     6.91
+  the libraries, once                                1.65     1.09
+  bound the combined program (hiding)                6.67     4.00
+  fact spaces                                        3.06     1.33
+  keep the combined program in the store             2.56     1.56
+  prune, simplify, demand                            4.77     1.85
+  push the file-local joins into the chunks          6.53     5.37
+  locate the chunks' rows                            4.27     1.04
+  merge identical relations again                    2.52     0.87
+  keep the prepared program in the store         (unnamed)    4.84
+  stats, own                                         6.98     0.23
+guests, own                                          7.88     0.96
+  tape cache lookups                         40088 calls   1536 calls
+process instructions                             2680 G    2425 G   (both sampled; 2377 G unsampled)
+```
+
+A warm run is the run kept whole: 41.0 G instructions before, 40.3 G now, and none of the above is paid. A one-file
+edit reads the combined and prepared programs from the store: 622 G instructions before, 611 G now (combine 2.2 to
+2.0 s, stats 6.2 to 5.9 s, guests 2.5 to 2.1 s CPU). The edit's cost is elsewhere (cross, local), not in this list.
+
+Left as they were: the file-local split (`typing::file_local::split_explained`, run by the pushed joins, `locate`,
+`programs` and the guards; work another change is making), phase 0's run of `bootstrap.rr` (its worker parsing the
+library's tapes and the statistics of its documents, about 2 to 4 s of a cold run; the graphs are kept and checked by
+a `stat` later), the lowering of each program's own rules, and printing the prepared program's parts as documents.
+
 ## What this does not do
 
 - **It does not change what a rule means.** A program sees the same relations with the same rows. Only the number

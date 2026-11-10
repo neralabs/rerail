@@ -97,6 +97,10 @@ pub(in crate::code_rule_dsl) fn emit(
     emit_inputs(&lowered.program,db,name,counts,inputs)
 }
 
+/// The positions table an emitted program's setup makes first (a script run on its own, outside a run's waves; a run's
+/// SQL reads the same integers as a series in the statement).
+const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT INTO rdl_int WITH RECURSIVE i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM i WHERE i < 4096) SELECT i FROM i;";
+
 pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTreeMap<String,u64>>, inputs:Inputs)->Result<Emitted>{
     let atoms=inputs.atoms.is_some();
     let mut model = make_plan(prog, db, inputs)?;
@@ -352,5 +356,5 @@ pub(in crate::code_rule_dsl) fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
-    decoded_outputs(&lowered.program, db, Some(lowered), "main.", true, &BTreeSet::new())
+    decoded_outputs(&lowered.program, db, Some(lowered), "main.", true, &BTreeSet::new(), &BTreeSet::new())
 }

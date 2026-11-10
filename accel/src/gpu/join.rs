@@ -78,7 +78,7 @@ pub struct Column {
     pub rows: usize,
 }
 
-fn device() -> Result<&'static metal::Device, String> {
+pub fn device() -> Result<&'static metal::Device, String> {
     shared::get().map(|s| &s.device).ok_or_else(|| "no Metal device".to_owned())
 }
 
@@ -106,15 +106,59 @@ pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String>
 }
 
 thread_local! {
-    /// This thread's scratch buffers, by slot: a sort's or probe's intermediates, kept for the next (each call
-    /// completes its command buffers before it returns, so no two calls share one in flight).
-    static SCRATCH: RefCell<Vec<Option<shared::Pooled>>> = const { RefCell::new(Vec::new()) };
+    /// This thread's scratch buffers, two sets by slot: a sort's or probe's intermediates, kept for the next. A
+    /// submission uses one set (`scratch_set`); the lane has at most two in flight, each on its own set, and starts
+    /// a third only once the first completed, so no two in flight share one.
+    static SCRATCH: RefCell<[Vec<Option<shared::Pooled>>; 2]> = const { RefCell::new([Vec::new(), Vec::new()]) };
+    static SET: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Makes `set` (0 or 1) this thread's scratch set; the previous one.
+pub fn scratch_set(set: usize) -> usize {
+    SET.with(|c| c.replace(set & 1))
 }
 
 /// The pipeline `name` of the variant `variant`, its source made by `source` the first time: kept by the one
 /// manager (decision 0100 §2), so every thread finds it compiled.
-fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, String> {
-    shared::pipeline(&format!("join {variant} {name}"), || compile(&source(), name))
+///
+/// A variant's source is compiled once, into one library, and each of its kernels is made from that library: a
+/// sort's five kernels cost one compile, not five.
+pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, String> {
+    shared::pipeline(&format!("join {variant} {name}"), || {
+        let library = library(variant, source)?;
+        let device = device()?;
+        objc::rc::autoreleasepool(|| {
+            let f = library.get_function(name, None).map_err(|e| format!("{name}: {e}"))?;
+            device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("{name}: {e}"))
+        })
+    })
+}
+
+/// The library of a variant's source, compiled the first time (a thread that asks meanwhile waits for it).
+fn library(variant: &str, source: impl FnOnce() -> String) -> Result<metal::Library, String> {
+    type Lib = std::sync::Arc<std::sync::Mutex<Option<metal::Library>>>;
+    static LIBS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Lib>>> = std::sync::OnceLock::new();
+    let slot = std::sync::Arc::clone(LIBS.get_or_init(Default::default).lock().expect("the libraries").entry(variant.to_owned()).or_default());
+    let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(l) = &*s {
+        return Ok(l.clone());
+    }
+    let device = device()?;
+    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).map_err(|e| format!("compiling {variant}: {e}")))?;
+    *s = Some(l.clone());
+    Ok(l)
+}
+
+/// The radix sort's kernels of a lead column of `width`, and the gather of a column of `width`.
+fn sort_pipes(width: Width) -> Result<[ComputePipelineState; 5], String> {
+    let key = width.key();
+    let variant = format!("sort {width:?} {key:?}");
+    let pipe = |name: &str| pipeline(&variant, name, || sort_source(width, key));
+    Ok([pipe("sort_init")?, pipe("sort_hist")?, pipe("sort_scatter")?, pipe("run_heads")?, pipe("run_compact")?])
+}
+
+fn gather_pipe(width: Width) -> Result<ComputePipelineState, String> {
+    pipeline(&format!("gather {width:?}"), "gather", || gather_source(width))
 }
 
 /// How a call waits for its command buffer: Metal's `waitUntilCompleted`, or a completion handler the thread
@@ -137,11 +181,12 @@ pub fn set_wait(w: Wait) -> Wait {
 /// A committed command buffer, to wait for, and the pooled buffers it reads that nothing else holds: a pooled
 /// buffer is written by the host when handed out again, and Metal orders no host write after a GPU read, so they
 /// return to the pool only once it completes.
-struct Submitted {
+pub struct Submitted {
     command: metal::CommandBuffer,
     done: Option<std::sync::mpsc::Receiver<()>>,
     reads: Vec<Column>,
-    /// The host clock at its commit (`host_clock`).
+    /// The host clock at its commit (`host_clock`); NaN for a second watcher of a command buffer another waits
+    /// for (`watch`), which adds no timeline.
     committed: f64,
 }
 
@@ -184,7 +229,7 @@ pub fn add_timeline(command: &CommandBufferRef, committed: f64, returned: f64) {
 
 impl Submitted {
     /// Commits `command` (checked against the launch budget), with a completion handler when this thread waits on one.
-    fn commit(command: &CommandBufferRef) -> Result<Submitted, String> {
+    pub fn commit(command: &CommandBufferRef) -> Result<Submitted, String> {
         let done = (WAIT.with(Cell::get) == Wait::Handler).then(|| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
             let block = block::ConcreteBlock::new(move |_: &CommandBufferRef| {
@@ -202,8 +247,13 @@ impl Submitted {
         Ok(Submitted { command: command.to_owned(), done, reads: Vec::new(), committed: host_clock() })
     }
 
+    /// Another wait for a committed command buffer: what a sort encoded into it waits for (`Keyed::settle`).
+    pub(super) fn watch(&self) -> Submitted {
+        Submitted { command: self.command.clone(), done: None, reads: Vec::new(), committed: f64::NAN }
+    }
+
     /// Waits for it; its GPU seconds. The buffers it read return to the pool after.
-    fn wait(self) -> f64 {
+    pub fn wait(self) -> f64 {
         crate::score::phase("gpu wait", || match &self.done {
             Some(rx) if self.command.status() != metal::MTLCommandBufferStatus::Completed => {
                 let _ = rx.recv();
@@ -212,7 +262,9 @@ impl Submitted {
             }
             _ => self.command.wait_until_completed(),
         });
-        add_timeline(&self.command, self.committed, host_clock());
+        if !self.committed.is_nan() {
+            add_timeline(&self.command, self.committed, host_clock());
+        }
         gpu_seconds(&self.command)
     }
 }
@@ -225,10 +277,14 @@ const HIST: usize = 3;
 const HEADS: usize = 4;
 /// A scan's levels: slots `SCAN..`.
 const SCAN: usize = 5;
+/// The first slot free for other modules' scratch (the engine's device stages): past the scan's levels.
+pub const FREE: usize = 16;
 
 /// Scratch slot `slot`, at least `bytes` long (grown to a power of two when it is shorter).
-fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
-    SCRATCH.with_borrow_mut(|s| {
+pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
+    let set = SET.with(Cell::get);
+    SCRATCH.with_borrow_mut(|sets| {
+        let s = &mut sets[set];
         if s.len() <= slot {
             s.resize_with(slot + 1, || None);
         }
@@ -295,11 +351,33 @@ impl Held {
 /// writes.
 pub struct Pass<'a> {
     encoder: &'a ComputeCommandEncoderRef,
+    /// The dispatches encoded so far (a command buffer's launch budget counts them).
+    dispatches: Cell<usize>,
 }
 
 impl<'a> Pass<'a> {
     pub fn new(command: &'a CommandBufferRef) -> Pass<'a> {
-        Pass { encoder: command.new_compute_command_encoder() }
+        let encoder = command.new_compute_command_encoder();
+        // Named: the launch budget's record reads the encoder's label, and an unnamed one's is nil.
+        encoder.set_label("rows");
+        Pass { encoder, dispatches: Cell::new(0) }
+    }
+
+    /// The dispatches encoded so far.
+    pub fn dispatches(&self) -> usize {
+        self.dispatches.get()
+    }
+
+    /// `groups` threadgroups of 256 threads over `buffers`, then `bytes` (a parameter block, as `constant T&`) after
+    /// them.
+    pub fn run_bytes(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], bytes: &[u8], groups: usize) {
+        self.encoder.set_compute_pipeline_state(pipeline);
+        for (i, b) in buffers.iter().enumerate() {
+            self.encoder.set_buffer(i as u64, Some(b), 0);
+        }
+        self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
+        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
     }
 
     /// `groups` threadgroups of 256 threads over `buffers`, then `params` as `constant uint*` and `longs` as
@@ -315,6 +393,7 @@ impl<'a> Pass<'a> {
             self.encoder.set_bytes(at + 1, std::mem::size_of_val(longs) as u64, longs.as_ptr().cast());
         }
         self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
     }
 
     pub fn end(self) {
@@ -369,7 +448,7 @@ impl Column {
 
 /// A multi-level exclusive scan of `count` `uint`s in place, its levels' sums in scratch; the total after it in
 /// `total()`.
-struct Scan {
+pub struct Scan {
     count: usize,
     /// Each level's threadgroups and their sums.
     levels: Vec<(usize, Buffer)>,
@@ -411,7 +490,7 @@ kernel void scan_add(device uint* data [[buffer(0)]], device const uint* sums [[
 "#;
 
 impl Scan {
-    fn new(count: usize) -> Result<Scan, String> {
+    pub fn new(count: usize) -> Result<Scan, String> {
         let mut levels = Vec::new();
         let mut size = count;
         loop {
@@ -442,7 +521,12 @@ impl Scan {
         Ok(Scan { count, levels, _owned: owned })
     }
 
-    fn encode(&self, pass: &Pass<'_>, data: &BufferRef) -> Result<(), String> {
+    /// An owned scan's buffers, to keep until its command buffer completes.
+    fn into_held(self) -> Vec<Held> {
+        self._owned
+    }
+
+    pub fn encode(&self, pass: &Pass<'_>, data: &BufferRef) -> Result<(), String> {
         let block = pipeline("scan", "scan_block", || SCAN_SOURCE.to_owned())?;
         let add = pipeline("scan", "scan_add", || SCAN_SOURCE.to_owned())?;
         let mut inputs: Vec<(&BufferRef, usize)> = vec![(data, self.count)];
@@ -584,7 +668,7 @@ pub struct Keyed {
     pub bytes: usize,
 }
 
-fn groups(n: usize) -> usize {
+pub fn groups(n: usize) -> usize {
     n.div_ceil(256).max(1)
 }
 
@@ -596,6 +680,11 @@ impl Drop for Keyed {
 }
 
 impl Keyed {
+    /// The command buffer this sort was encoded into, committed and not waited for: `settle` waits for it.
+    pub(super) fn pending_on(&self, s: &Submitted) {
+        *self.pending.lock().expect("a sort's pending command buffer") = Some(s.watch());
+    }
+
     /// Waits for the sort, once (a sort encoded into a caller's command buffer is the caller's to wait for).
     pub fn settle(&self) {
         use std::sync::atomic::Ordering::Relaxed;
@@ -645,58 +734,136 @@ impl Keyed {
         let mut columns = columns.into_iter();
         let lead = columns.next().ok_or("a sort of no columns")?;
         let n = lead.rows;
-        let key = lead.width.key();
-        let variant = format!("sort {:?} {key:?}", lead.width);
-        let pipe = |name: &str| pipeline(&variant, name, || sort_source(lead.width, key));
-        let (init, hist, scatter, heads, compact) = (pipe("sort_init")?, pipe("sort_hist")?, pipe("sort_scatter")?, pipe("run_heads")?, pipe("run_compact")?);
-        let kb = key.bytes();
-        let (keys_a, keys_b) = (scratch(KEYS_A, kb * n)?, scratch(KEYS_B, kb * n)?);
-        // The order ends in `idx_a` after an even number of passes: that one is the relation's own, the other scratch.
-        let passes = lead.bits.div_ceil(8);
-        let perm = Held::new(4 * n)?;
-        let other = scratch(IDX, 4 * n)?;
-        let (idx_a, idx_b): (&BufferRef, &BufferRef) = if passes % 2 == 0 { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
-        let tiles = n.div_ceil(TILE).max(1);
-        let histogram = scratch(HIST, 4 * 256 * tiles)?;
-        let hscan = Scan::new(256 * tiles)?;
-        let heads_buf = scratch(HEADS, 4 * n)?;
-        let rscan = Scan::new(n)?;
-        let starts = Held::new(4 * (n + 1))?;
-        let rkeys = Held::new(kb * n)?;
-        let nruns = Held::new(4)?;
+        let parts = encode_sort(pass, &lead.buffer.buffer, lead.width, lead.bits, n)?;
         let mut others = Vec::new();
         let mut reads = Vec::new();
-        if n > 0 {
-            let nn = n as u32;
-            pass.run(&init, &[&lead.buffer.buffer, &keys_a, idx_a], &[nn], &[], groups(n));
-            for p in 0..passes {
-                let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, idx_a, &keys_b, idx_b) } else { (&keys_b, idx_b, &keys_a, idx_a) };
-                pass.run(&hist, &[ki, &histogram], &[nn, 8 * p], &[], tiles);
-                hscan.encode(pass, &histogram)?;
-                pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p], &[], tiles);
-            }
-            let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
-            // The heads' scan after the histograms': the two share scratch, one after the other.
-            pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
-            rscan.encode(pass, &heads_buf)?;
-            pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
-        }
         for c in columns {
             let w = c.width;
-            let gather = pipeline(&format!("gather {w:?}"), "gather", || gather_source(w))?;
+            let gather = gather_pipe(w)?;
             let out = Held::new(n * w.bytes())?;
             if n > 0 {
-                pass.run(&gather, &[&c.buffer.buffer, &perm.buffer, &out.buffer], &[n as u32], &[], groups(n));
+                pass.run(&gather, &[&c.buffer.buffer, &parts.perm.buffer, &out.buffer], &[n as u32], &[], groups(n));
             }
             others.push(Column { buffer: out, width: w, base: c.base, bits: c.bits, rows: c.rows });
             reads.push(c);
         }
         let base = lead.base;
         reads.push(lead);
+        let kb = parts.key.bytes();
         let bytes = 4 * n + (n + 1) * (4 + kb) + others.iter().map(Column::bytes).sum::<usize>();
+        let SortParts { perm, starts, rkeys, nruns, key } = parts;
         let keyed = Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, pending: std::sync::Mutex::new(None), runs: std::sync::atomic::AtomicUsize::new(usize::MAX), gpu: std::sync::atomic::AtomicU64::new(0), bytes };
         Ok((keyed, reads))
     }
+}
+
+/// `n` pairs of 32-bit words (`pairs`, as `[first, second]`) sorted by (first, second), encoded into `pass` (a
+/// serial encoder): `out` gets them in that order. The second word takes `second_bits` bits and the first
+/// `first_bits`, so the sort's key is `first << second_bits | second`, in 32 bits when they fit. The radix sort's
+/// passes alone, without runs: a tile join's pairs come out in the kernel's order (left row, then right row) with
+/// no host sort (decision 0100 §9). Its intermediates are kept in `keep` until the command buffer completes.
+pub fn encode_sorted_pairs(pass: &Pass<'_>, pairs: &Held, n: usize, first_bits: u32, second_bits: u32, out: &Held, keep: &mut Vec<Held>) -> Result<(), String> {
+    let (words, bits) = (pairs, first_bits + second_bits);
+    if n == 0 {
+        return Ok(());
+    }
+    let width = if bits <= 32 { Width::W32 } else { Width::W64 };
+    let [init, hist, scatter, ..] = sort_pipes(width)?;
+    let narrow = pipeline("pair keys", "pair_keys", || PAIR_KEYS_SOURCE.to_owned())?;
+    let gather = gather_pipe(Width::W64)?;
+    let kb = width.bytes();
+    let lead = Held::new(kb * n)?;
+    let (keys_a, keys_b) = (Held::new(kb * n)?, Held::new(kb * n)?);
+    let passes = bits.div_ceil(8);
+    let (idx_a, idx_b) = (Held::new(4 * n)?, Held::new(4 * n)?);
+    let tiles = n.div_ceil(TILE).max(1);
+    let histogram = Held::new(4 * 256 * tiles)?;
+    let hscan = Scan::owned(256 * tiles)?;
+    let nn = n as u32;
+    // The words as sort keys of the sort's width (a 32-bit key when the bits fit).
+    pass.run(&narrow, &[&words.buffer, &lead.buffer], &[nn, u32::from(width == Width::W64), second_bits], &[], groups(n));
+    pass.run(&init, &[&lead.buffer, &keys_a.buffer, &idx_a.buffer], &[nn], &[], groups(n));
+    for p in 0..passes {
+        let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, &idx_a, &keys_b, &idx_b) } else { (&keys_b, &idx_b, &keys_a, &idx_a) };
+        pass.run(&hist, &[&ki.buffer, &histogram.buffer], &[nn, 8 * p], &[], tiles);
+        hscan.encode(pass, &histogram.buffer)?;
+        pass.run(&scatter, &[&ki.buffer, &ii.buffer, &histogram.buffer, &ko.buffer, &io.buffer], &[nn, 8 * p], &[], tiles);
+    }
+    let order = if passes % 2 == 0 { &idx_a } else { &idx_b };
+    pass.run(&gather, &[&words.buffer, &order.buffer, &out.buffer], &[nn], &[], groups(n));
+    keep.extend([lead, keys_a, keys_b, idx_a, idx_b, histogram]);
+    keep.extend(hscan.into_held());
+    Ok(())
+}
+
+/// The pairs' sort's pipelines, compiled (`prewarm`).
+pub fn prewarm_pair_sort() -> Result<(), String> {
+    pipeline("pair keys", "pair_keys", || PAIR_KEYS_SOURCE.to_owned())?;
+    Ok(())
+}
+
+/// Pairs (two 32-bit words, the first in the low half) as sort keys: the first word above the second's `p[2]` bits,
+/// written as 64 bits when `p[1]`, else 32.
+const PAIR_KEYS_SOURCE: &str = r#"#include <metal_stdlib>
+using namespace metal;
+
+kernel void pair_keys(device const ulong* words [[buffer(0)]], device uint* out [[buffer(1)]], constant uint* p [[buffer(2)]],
+                      uint t [[thread_position_in_grid]]) {
+    if (t >= p[0]) return;
+    ulong w = words[t];
+    ulong key = (ulong(uint(w)) << p[2]) | (w >> 32);
+    if (p[1] != 0) { out[2 * t] = uint(key); out[2 * t + 1] = uint(key >> 32); }
+    else out[t] = uint(key);
+}
+"#;
+
+/// A sort's results on the device: each sorted place's row (`perm`), the key's runs (each one's first place in
+/// `starts`, with the end after the last; its key in `rkeys`, in the sort's word `key`) and their count (`nruns`).
+pub struct SortParts {
+    pub perm: Held,
+    pub starts: Held,
+    pub rkeys: Held,
+    pub nruns: Held,
+    pub key: Width,
+}
+
+/// Encodes into `pass` a stable LSD radix sort of the `n` values of `lead` (each `width` wide, their span `bits`
+/// bits) and the runs of equal values: the passes only its span needs. Intermediates are in scratch; the results are
+/// buffers of their own. `nruns` is not written when `n` is 0.
+pub fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n: usize) -> Result<SortParts, String> {
+    let key = width.key();
+    let [init, hist, scatter, heads, compact] = sort_pipes(width)?;
+    let kb = key.bytes();
+    let (keys_a, keys_b) = (scratch(KEYS_A, kb * n)?, scratch(KEYS_B, kb * n)?);
+    // The order ends in `idx_a` after an even number of passes: that one is the relation's own, the other scratch.
+    let passes = bits.div_ceil(8);
+    let perm = Held::new(4 * n)?;
+    let other = scratch(IDX, 4 * n)?;
+    let (idx_a, idx_b): (&BufferRef, &BufferRef) = if passes % 2 == 0 { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
+    let tiles = n.div_ceil(TILE).max(1);
+    let starts = Held::new(4 * (n + 1))?;
+    let rkeys = Held::new(kb * n)?;
+    let nruns = Held::new(4)?;
+    if n > 0 {
+        let histogram = scratch(HIST, 4 * 256 * tiles)?;
+        let hscan = Scan::new(256 * tiles)?;
+        let heads_buf = scratch(HEADS, 4 * n)?;
+        let nn = n as u32;
+        pass.run(&init, &[lead, &keys_a, idx_a], &[nn], &[], groups(n));
+        for p in 0..passes {
+            let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, idx_a, &keys_b, idx_b) } else { (&keys_b, idx_b, &keys_a, idx_a) };
+            pass.run(&hist, &[ki, &histogram], &[nn, 8 * p], &[], tiles);
+            hscan.encode(pass, &histogram)?;
+            pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p], &[], tiles);
+        }
+        let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
+        // The heads' scan after the histograms': the two share scratch, one after the other.
+        let rscan = Scan::new(n)?;
+        pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
+        rscan.encode(pass, &heads_buf)?;
+        pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
+    }
+    Ok(SortParts { perm, starts, rkeys, nruns, key })
 }
 
 /// A probe join's pairs, (left row, right host row), in left row order, and its GPU time.
@@ -889,97 +1056,6 @@ impl ProbeJob {
 /// threadgroup memory (20 KB: 2,048 `long` keys and `ushort` rows).
 pub const SMALL: usize = 2048;
 
-/// The one-dispatch probe: a thread per four left rows, unsorted, finds its key's run (a bounded binary search) and
-/// counts the run's rows whose other keys match; a scan over the threadgroup's rows; one atomic reserves the
-/// threadgroup's pairs in the batch's arena, and the threadgroup writes them there in its rows' order, each row's in
-/// the run's order. The threadgroup's place and count go to `blocks`, so the host reads a probe's pairs block by
-/// block, in left row order. When the arena is full, the threadgroup writes only its count and raises `flags`.
-/// Buffers: as `probe_source`'s inputs, then the arena, its head, the blocks and the flags; after them (left rows,
-/// the arena's capacity in pairs, the probe's first block), and the keys' bases.
-fn probe_one_source(left: &[Width], key: Width, right: &[Width]) -> String {
-    let k = left.len();
-    let kt = key.ty();
-    let lcols: String = left.iter().enumerate().map(|(i, w)| format!(", device const {}* l{i} [[buffer({})]]", w.ty(), 4 + i)).collect();
-    let rcols: String = right.iter().enumerate().map(|(i, w)| format!(", device const {}* r{} [[buffer({})]]", w.ty(), i + 1, 4 + k + i)).collect();
-    let n = 4 + k + right.len();
-    let mut test = String::from("true");
-    for i in 1..k {
-        test.push_str(&format!(" && ulong(l{i}[r]) + ulong(base[{i}]) == ulong(r{i}[q]) + ulong(base[{}])", k + i));
-    }
-    format!(
-        r#"#include <metal_stdlib>
-using namespace metal;
-
-static inline bool find(ulong key, device const {kt}* rkeys, uint runs, long rbase, thread uint& lo) {{
-    lo = 0;
-    uint hi = runs;
-    for (uint s = 0; s < 34 && lo < hi; s++) {{
-        uint mid = (lo + hi) / 2;
-        long v = long(ulong(rkeys[mid]) + ulong(rbase));
-        if (v < long(key)) lo = mid + 1; else hi = mid;
-    }}
-    return lo < runs && long(ulong(rkeys[lo]) + ulong(rbase)) == long(key);
-}}
-
-kernel void probe_one(device const {kt}* rkeys [[buffer(0)]], device const uint* starts [[buffer(1)]], device const uint* nruns [[buffer(2)]],
-                      device const uint* perm [[buffer(3)]]{lcols}{rcols},
-                      device uint* arena [[buffer({n})]], device atomic_uint* head [[buffer({n1})]], device uint* blocks [[buffer({n2})]],
-                      device atomic_uint* flags [[buffer({n3})]], constant uint* p [[buffer({n4})]], constant long* base [[buffer({n5})]],
-                      uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
-                      uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {{
-    threadgroup uint part[8];
-    threadgroup uint place[2];
-    uint nl = p[0];
-    uint runs = nruns[0];
-    uint at = tg * 1024 + t * 4;
-    uint run[4];
-    uint c[4];
-    uint mine = 0;
-    for (uint i = 0; i < 4; i++) {{
-        uint r = at + i;
-        c[i] = 0;
-        run[i] = 0xFFFFFFFFu;
-        uint lo;
-        if (r < nl && find(ulong(l0[r]) + ulong(base[0]), rkeys, runs, base[{k}], lo)) {{
-            run[i] = lo;
-            for (uint q = starts[lo]; q < starts[lo + 1]; q++) c[i] += uint({test});
-        }}
-        mine += c[i];
-    }}
-    uint inc = simd_prefix_inclusive_sum(mine);
-    if (lane == 31) part[sg] = inc;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint off = 0;
-    for (uint s = 0; s < sg; s++) off += part[s];
-    if (t == 255) {{
-        uint total = off + inc;
-        uint b = total > 0 ? atomic_fetch_add_explicit(head, total, memory_order_relaxed) : 0;
-        bool fits = ulong(b) + ulong(total) <= ulong(p[1]);
-        if (!fits) atomic_store_explicit(flags, 1, memory_order_relaxed);
-        blocks[2 * (p[2] + tg)] = fits ? b : 0xFFFFFFFFu;
-        blocks[2 * (p[2] + tg) + 1] = total;
-        place[0] = b;
-        place[1] = uint(fits);
-    }}
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (place[1] == 0) return;
-    uint o = place[0] + off + inc - mine;
-    for (uint i = 0; i < 4; i++) {{
-        if (run[i] == 0xFFFFFFFFu) continue;
-        uint r = at + i;
-        for (uint q = starts[run[i]]; q < starts[run[i] + 1]; q++) {{
-            if ({test}) {{ arena[2 * o] = r; arena[2 * o + 1] = perm[q]; o++; }}
-        }}
-    }}
-}}
-"#,
-        n1 = n + 1,
-        n2 = n + 2,
-        n3 = n + 3,
-        n4 = n + 4,
-        n5 = n + 5,
-    )
-}
 
 // ---- The small path (decision 0100 §9): a sort in one dispatch, a probe in one, raw columns, one arena. ----
 
@@ -999,28 +1075,34 @@ impl Column {
     }
 }
 
-fn probe_one_pipe(left: &[Width], key: Width, right: &[Width]) -> Result<ComputePipelineState, String> {
-    pipeline(&format!("probe one {left:?} {key:?} {right:?}"), "probe_one", || probe_one_source(left, key, right))
-}
 
-/// Compiles the small path's pipelines and the scans ahead of their first use, on a thread of its own: the first
-/// chunk's joins do not wait for Metal's compiler.
+/// Compiles every pipeline a batch's joins use ahead of their first use, as a job on the pool: the small path's,
+/// the scans', the radix sort's of each width with the gathers, and the tile pairs' sort. A job that needs one
+/// still being compiled waits for it (`pipeline wait`) rather than compiling it again. A panic leaves them to be
+/// compiled where they are needed (a job's panic would end the process).
 pub fn prewarm() {
-    let _ = std::thread::Builder::new().name("rerail-accel gpu prewarm".into()).spawn(|| {
-        objc::rc::autoreleasepool(|| {
+    crate::exec::configure(false);
+    rayon::spawn(|| crate::exec::as_job("the GPU's prewarm", || {
+        let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
             let _ = fused_pipe("sort_all");
             let _ = fused_pipe("probe_all");
             let _ = pipeline("scan", "scan_block", || SCAN_SOURCE.to_owned());
             let _ = pipeline("scan", "scan_add", || SCAN_SOURCE.to_owned());
-        })
-    });
+            for w in [Width::W64, Width::W32, Width::W16] {
+                let _ = sort_pipes(w);
+                let _ = gather_pipe(w);
+            }
+            super::tile::prewarm();
+        }));
+    }));
 }
 
 /// A batch's pairs: one buffer the probes reserve their threadgroups' pairs in with one atomic each, so no probe
 /// needs a second command buffer to learn its size. `cap` is what the host expects in all; a probe whose pairs do
 /// not fit raises the flag, and only it runs again, into space of its exact size.
 pub struct Arena {
-    pairs: Held,
+    /// Shared with the views of its probes' pairs, which keep it.
+    pairs: std::sync::Arc<Held>,
     head: Held,
     flags: Held,
     blocks: Held,
@@ -1033,7 +1115,7 @@ impl Arena {
     /// An arena for `cap` pairs, and `blocks` threadgroups in all.
     pub fn new(cap: usize, blocks: usize) -> Result<Arena, String> {
         let cap = cap.clamp(1, u32::MAX as usize / 2);
-        Ok(Arena { pairs: Held::new(8 * cap)?, head: Held::zeroed(4)?, flags: Held::zeroed(4)?, blocks: Held::new(8 * blocks.max(1))?, cap, used: 0 })
+        Ok(Arena { pairs: std::sync::Arc::new(Held::new(8 * cap)?), head: Held::zeroed(4)?, flags: Held::zeroed(4)?, blocks: Held::new(8 * blocks.max(1))?, cap, used: 0 })
     }
 
     /// Whether any probe's pairs did not fit (after the command buffer completed).
@@ -1056,37 +1138,6 @@ pub struct ProbeOne {
 }
 
 impl ProbeOne {
-    /// The probe of `right` by `left` (raw or narrowed columns), encoded after `pass`'s sort of `right`.
-    pub fn encode(pass: &Pass<'_>, left: &[Column], right: &Keyed, arena: &mut Arena) -> Result<ProbeOne, String> {
-        let k = left.len();
-        if k == 0 || k != 1 + right.others.len() {
-            return Err(format!("a probe of {k} keys against a sort of {}", 1 + right.others.len()));
-        }
-        let nl = left[0].rows;
-        let blocks = probe_blocks(nl);
-        let first = arena.used;
-        arena.used += blocks;
-        if nl == 0 || right.rows == 0 {
-            // No pairs: the blocks say so without a dispatch.
-            // SAFETY: the blocks' words for this probe, the host's alone before the command buffer is committed.
-            let b = unsafe { std::slice::from_raw_parts_mut(arena.blocks.buffer.contents().cast::<u32>(), 2 * arena.used) };
-            for i in first..first + blocks {
-                b[2 * i] = 0;
-                b[2 * i + 1] = 0;
-            }
-            return Ok(ProbeOne { nl, first, blocks });
-        }
-        let (lw, rw): (Vec<Width>, Vec<Width>) = (left.iter().map(|c| c.width).collect(), right.others.iter().map(|c| c.width).collect());
-        let pipe = probe_one_pipe(&lw, right.key, &rw)?;
-        let bases: Vec<i64> = left.iter().map(|c| c.base).chain([right.base]).chain(right.others.iter().map(|c| c.base)).collect();
-        let mut with: Vec<&BufferRef> = vec![&right.rkeys.buffer, &right.starts.buffer, &right.nruns.buffer, &right.perm.buffer];
-        with.extend(left.iter().map(|c| &*c.buffer.buffer));
-        with.extend(right.others.iter().map(|c| &*c.buffer.buffer));
-        with.extend([&*arena.pairs.buffer, &*arena.head.buffer, &*arena.blocks.buffer, &*arena.flags.buffer]);
-        pass.run(&pipe, &with, &[nl as u32, arena.cap as u32, first as u32], &bases, blocks);
-        Ok(ProbeOne { nl, first, blocks })
-    }
-
     /// Whether this probe's pairs did not all fit, and how many it found (after the command buffer completed).
     pub fn spilled(&self, arena: &Arena) -> (bool, usize) {
         let b = self.read_blocks(arena);
@@ -1098,6 +1149,29 @@ impl ProbeOne {
         // completed.
         let b = unsafe { std::slice::from_raw_parts(arena.blocks.buffer.contents().cast::<u32>(), 2 * (self.first + self.blocks)) };
         (self.first..self.first + self.blocks).map(|i| (b[2 * i], b[2 * i + 1])).collect()
+    }
+
+    /// The pairs read in place, in left row order (block by block), after the command buffer completed: a view of
+    /// the arena, which it keeps. `None` when they did not fit.
+    pub fn view(&self, arena: &Arena) -> Option<crate::kernel::PairView> {
+        let mut segs: Vec<(u32, u32)> = Vec::new();
+        for (at, n) in self.read_blocks(arena) {
+            if n == 0 {
+                continue;
+            }
+            if at == u32::MAX {
+                return None;
+            }
+            // Blocks the device placed one after the other are one segment.
+            match segs.last_mut() {
+                Some((a, m)) if *a + *m == at => *m += n,
+                _ => segs.push((at, n)),
+            }
+        }
+        let keep: std::sync::Arc<dyn std::any::Any + Send + Sync> = arena.pairs.clone();
+        // SAFETY: each segment is a block's pairs, inside the arena (the device checked the capacity), written by the
+        // completed command buffer and never written again: the arena is this batch's alone.
+        Some(unsafe { crate::kernel::PairView::new(keep, arena.pairs.buffer.contents().cast::<[u32; 2]>(), segs) })
     }
 
     /// The pairs, in left row order (block by block), after the command buffer completed. `None` when they did not
@@ -1494,6 +1568,32 @@ mod tests {
     fn read(b: &Held, n: usize) -> Vec<u32> {
         // SAFETY: the buffer holds at least `n` words, written by a completed command buffer.
         unsafe { std::slice::from_raw_parts(b.buffer.contents().cast::<u32>(), n) }.to_vec()
+    }
+
+    /// Pairs sorted on the device come out in (first, second) order: keys of 32 bits and of 64.
+    #[test]
+    fn pairs_sorted_on_the_device_are_in_row_order() {
+        if shared::get().is_none() {
+            return;
+        }
+        for (n, fb, sb) in [(5000usize, 12u32, 13u32), (70_000, 20, 30), (1, 0, 0), (3000, 32, 32)] {
+            let firsts = rows(n, 7 + n as u64, 1i64 << fb.min(31), 0);
+            let seconds = rows(n, 11 + n as u64, 1i64 << sb.min(31), 0);
+            let want_in: Vec<[u32; 2]> = firsts.iter().zip(&seconds).map(|(&a, &b)| [a as u32, b as u32]).collect();
+            let pairs = Held::of(want_in.iter().copied()).unwrap();
+            let out = Held::new(8 * n).unwrap();
+            let queue = queue().unwrap();
+            let command = queue.new_command_buffer();
+            let pass = Pass::new(command);
+            let mut keep = Vec::new();
+            encode_sorted_pairs(&pass, &pairs, n, fb, sb, &out, &mut keep).unwrap();
+            pass.end();
+            commit_wait(command).unwrap();
+            let got: Vec<(u32, u32)> = read(&out, 2 * n).chunks_exact(2).map(|p| (p[0], p[1])).collect();
+            let mut want: Vec<(u32, u32)> = want_in.iter().map(|p| (p[0], p[1])).collect();
+            want.sort_unstable();
+            assert_eq!(got, want, "{n} pairs of {fb} and {sb} bits");
+        }
     }
 
     #[test]

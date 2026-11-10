@@ -165,6 +165,10 @@ pub(in crate::code_rule_dsl) fn decode_frame(frame: &FactsFrame) -> StoreResult<
 /// The memoised entry of the document at `path` (key `key`, content `source`) under `program`.
 pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
     off();
+    // An entry still queued is read from memory (`write_back`): this process's writes are its reads.
+    if let Some(entry) = store.pending::<Entry>(&queued(source, path, program)) {
+        return Ok(Some((*entry).clone()).filter(|entry| entry.key == key));
+    }
     let set = plan(program);
     // This program's row only: the file's other programs' rows are not decoded.
     match store.facts_result(FactsMemoKey { source, fact_schema: SCHEMA, path }, set.plans[0])? {
@@ -177,9 +181,27 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i6
 pub(super) fn lookup_all(store: &ContentStore, program: &[u8; 32], docs: &[(SourceId, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
     off();
     let set = plan(program);
-    let keys: Vec<(SourceId, &str)> = docs.iter().map(|(s, p, _)| (*s, *p)).collect();
-    let found = store.facts_results_for(SCHEMA, set.plans[0], &keys)?;
-    docs.iter().zip(found).map(|((_, _, key), bytes)| Ok(match bytes { Some(b) => Some(decode(&b)?).filter(|e| e.key == *key), None => None })).collect()
+    // Entries still queued from memory; the others in one statement.
+    let held: Vec<Option<std::sync::Arc<Entry>>> = docs.iter().map(|(s, p, _)| store.pending::<Entry>(&queued(*s, p, program))).collect();
+    let keys: Vec<(SourceId, &str)> = docs.iter().zip(&held).filter(|(_, h)| h.is_none()).map(|((s, p, _), _)| (*s, *p)).collect();
+    let mut found = store.facts_results_for(SCHEMA, set.plans[0], &keys)?.into_iter();
+    docs.iter()
+        .zip(held)
+        .map(|((_, _, key), held)| {
+            Ok(match held {
+                Some(e) => Some((*e).clone()).filter(|e| e.key == *key),
+                None => match found.next().flatten() {
+                    Some(b) => Some(decode(&b)?).filter(|e| e.key == *key),
+                    None => None,
+                },
+            })
+        })
+        .collect()
+}
+
+/// What a memo entry's write is queued under (`write_back`): the row's source, path and program.
+fn queued(source: SourceId, path: &str, program: &[u8; 32]) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"facts_memo/corpus", &source.raw().to_le_bytes(), path.as_bytes(), program])
 }
 
 /// `source` of many texts, in their order: the stored ones found (and pinned) in one statement, the others stored.
@@ -190,28 +212,55 @@ pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<S
     texts.iter().zip(hashes).zip(found).map(|((text, hash), id)| match id { Some(id) => Ok(id), None => store.put_source_hashed(text.as_bytes(), hash, &[]) }).collect()
 }
 
-/// Memoises `entry` as the document's at `path`.
-pub(super) fn remember(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
+/// Memoises many documents' entries at once, each `(source, path, key, entry)` under `program`: one transaction of
+/// a few statements (`put_facts_results`), not one per document. Queued behind the run (decision 0102): encoded and
+/// written by the store's writer, each entry read from memory until it is written.
+pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(SourceId, String, i64, Entry)>) {
     off();
     let set = plan(program);
-    let result = FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(&Entry { key, ..entry.clone() }) };
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, result.entry.len() as u64);
-    store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path }, &set, &[result], &[])?;
-    Ok(())
+    if crate::code_rule_dsl::logic::profile::on() {
+        tally(entries.iter().map(|e| &e.3));
+    }
+    let held: Vec<(SourceId, String, std::sync::Arc<Entry>)> = entries.into_iter().map(|(source, path, key, entry)| (source, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
+    let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
+    let keys = held.iter().map(|(source, path, e)| (queued(*source, path, program), Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>))).collect();
+    store.write_back(
+        "the memo's entries",
+        bytes,
+        keys,
+        Box::new(move |store| {
+            let results: Vec<(SourceId, &str, FactsResult)> = held.iter().map(|(source, path, e)| (*source, path.as_str(), FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(e) })).collect();
+            store.put_facts_results(SCHEMA, &set, &results).map(drop)
+        }),
+    );
 }
 
-/// Memoises many documents' entries at once, each `(source, path, key, entry)` under `program`: one transaction of
-/// a few statements (`put_facts_results`), not one per document.
-pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: &[(SourceId, &str, i64, &Entry)]) -> StoreResult<()> {
-    off();
-    let set = plan(program);
-    let results: Vec<(SourceId, &str, FactsResult)> = entries
-        .iter()
-        .map(|(source, path, key, entry)| (*source, *path, FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(&Entry { key: *key, ..(*entry).clone() }) }))
-        .collect();
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, results.iter().map(|r| r.2.entry.len() as u64).sum());
-    store.put_facts_results(SCHEMA, &set, &results)?;
-    Ok(())
+impl Entry {
+    /// The bytes the entry holds (its rows and lines), about.
+    fn bytes(&self) -> usize {
+        self.rows.iter().map(|(r, (_, v))| r.len() + v.len() * 8).sum::<usize>() + self.lines.iter().map(|(r, (c, l))| r.len() + c.len() * 8 + l.iter().map(|t| t.len() + 24).sum::<usize>()).sum::<usize>()
+    }
+}
+
+/// What the run's memo entries held, by relation (rows, values), and the documents' nodes: counted when profiling,
+/// so the profile names what makes the memo large (t31 A2). Read and cleared by `sizes`.
+static SIZES: std::sync::Mutex<(u64, BTreeMap<String, (u64, u64)>)> = std::sync::Mutex::new((0, BTreeMap::new()));
+
+fn tally<'a>(entries: impl Iterator<Item = &'a Entry>) {
+    let mut sizes = SIZES.lock().expect("the memo's sizes");
+    for entry in entries {
+        sizes.0 += entry.nodes;
+        for (rel, (width, values)) in &entry.rows {
+            let at = sizes.1.entry(rel.clone()).or_default();
+            at.0 += (values.len() / (*width).max(1)) as u64;
+            at.1 += values.len() as u64;
+        }
+    }
+}
+
+/// The nodes of the documents remembered, and each relation's (rows, values) over their entries, since the last call.
+pub(super) fn sizes() -> (u64, BTreeMap<String, (u64, u64)>) {
+    std::mem::take(&mut *SIZES.lock().expect("the memo's sizes"))
 }
 
 /// Where a run's memo is: the tape cache's store (decision 0052), or a session's memory (`session::Session`), whose
@@ -287,15 +336,15 @@ impl Memo<'_> {
         }
     }
 
-    /// `remember` of many documents, stored ones written as one wave (`remember_all`).
-    pub(super) fn remember_all(self, program: &[u8; 32], entries: &[(Content, &str, i64, &Entry)]) -> StoreResult<()> {
+    /// `remember` of many documents, stored ones written as one wave (`remember_all`), behind the run.
+    pub(super) fn remember_all(self, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
         match self {
             Memo::Stored(store) => {
-                let stored: Vec<(SourceId, &str, i64, &Entry)> = entries.iter().filter_map(|(c, p, k, e)| c.stored().map(|id| (id, *p, *k, *e))).collect();
-                remember_all(store, program, &stored)
+                remember_all(store, program, entries.into_iter().filter_map(|(c, p, k, e)| c.stored().map(|id| (id, p, k, e))).collect());
+                Ok(())
             }
             Memo::Held(_) => {
-                for (content, path, key, entry) in entries {
+                for (content, path, key, entry) in &entries {
                     self.remember(*content, path, *key, program, entry)?;
                 }
                 Ok(())
@@ -305,7 +354,10 @@ impl Memo<'_> {
 
     pub(super) fn remember(self, content: Content, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
         match (self, content) {
-            (Memo::Stored(store), Content::Stored(id)) => remember(store, id, path, key, program, entry),
+            (Memo::Stored(store), Content::Stored(id)) => {
+                remember_all(store, program, vec![(id, path.to_owned(), key, entry.clone())]);
+                Ok(())
+            }
             (Memo::Held(held), Content::Held(digest)) => {
                 let mut held = held.lock().expect("the session memo");
                 if held.len() >= HELD_ENTRIES {

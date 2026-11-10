@@ -1,0 +1,122 @@
+{
+  "tests": [
+    {
+      "log": "definition-authored_rr_batched_positive_documents_preserve_all_four_labels.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "definition-definition_ids_keep_other_definitions_rows_across_a_body_edit.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "definition-projection_axes_and_token_spans_are_demanded_without_renumbering.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-authored_rr_batched_positive_documents_preserve_all_four_labels.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-facts__core__.log",
+      "passed": 6,
+      "ignored": 0
+    },
+    {
+      "log": "test-facts__vtab__syntax__.log",
+      "passed": 26,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__plan__compose__tests__.log",
+      "passed": 9,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__profile__analysis.log",
+      "passed": 14,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__combined_programs_see_guests_by_their_own_policy.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__guests_that_do_not_parse_follow_the_policy.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__kind_sets_over_a_guest_are_its_grammars.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__lf_lines_keep_other_separators_and_the_trailing_empty_line.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__match_all_captures_spans_over_a_nodes_text_and_over_captures.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__match_all_captures_spans_over_source_text_and_symbols_over_symbols.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__match_all_over_nodes_of_a_kind_and_over_captures_gives_spans.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__parse_splice_and_unparse_make_value_documents.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__python_split_lines_are_lossless_and_document_local.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__requested_source_and_line_text_remain_exact_without_copying_large_subtrees.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__scope_takes_option_dirs_text_documents_and_report_dirs.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__source_span_producers_retain_rows_through_local_planning.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-logic__rr__tests__string_annotations_are_guests_at_their_host_lines.log",
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "log": "test-tape__tests__.log",
+      "passed": 35,
+      "ignored": 3
+    }
+  ],
+  "focusedTestExecutions": 107,
+  "edgeFindings": 178,
+  "corpusFiles": 5725,
+  "corpusNodes": 19007630,
+  "fullCorpusRuns": 10,
+  "uncachedCpu": 13.012724,
+  "uncachedWall": 11.641482458,
+  "uncachedDirectAdmissions": 5725
+}

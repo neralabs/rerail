@@ -1731,7 +1731,7 @@ embed(d, s, "python", "code") :- kind(s, "string"), docof(s, d).
 embed_value(d, n, "python", "made", "import sys") :- kind(n, "integer"), docof(n, d).
 .decl imp(r: symbol, x: symbol, l: number)
 imp(r, x, l) :- doc_role(g, r), node(g, i, "import_statement", _, _), text(i, x), line(i, l).
-.decl tapes(t: symbol)
+.decl tapes(t: tape)
 tapes(t) :- kind(s, "string"), sub_tape(s, "python", t).
 .decl top(x: symbol, l: number)
 top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
@@ -1904,7 +1904,7 @@ result(r) :- context(n, _), parsed(n, "annotation", r).
 "#,r#"
 .decl context(n: node, x: symbol)
 .input context
-.decl result(t: symbol)
+.decl result(t: tape)
 result(t) :- context(n, x), t = @parse("sql", x).
 .output result
 "#] {
@@ -2324,8 +2324,72 @@ fn a_grammar_the_registry_does_not_have_is_refused() {
 fn a_nested_aggregate_keeps_the_rules_variables_it_reads() {
     let p = parse(".decl ident(x: symbol)\nident(\"a\").\n.decl fn(f: number)\n.decl ref(n: number, f: number, x: symbol)\n.input fn, ref\n.decl hit(f: number)\n.output hit\nhit(f) :- fn(f), count : { ident(x), count : { ref(n, f, x) } = 0 } > 0.\n").unwrap();
     let shown: Vec<String> = p.rules.iter().map(ToString::to_string).collect();
-    let helper = shown.iter().find(|r| r.contains("count { ref(")).expect("the inner count's rule");
-    assert!(helper.starts_with("rr_agg") && helper.contains("($f, $x) :- rr_ctx"), "{shown:#?}");
+    // The inner count-zero lowers to anti-existence. Its helper still carries both outer keys.
+    let helper = p.rules.iter().find(|r| r.body.iter().any(|l|
+        matches!(l, Literal::Atom(a) if a.neg && a.rel == "ref"))).expect("the inner anti-existence rule");
+    assert!(helper.head.rel.starts_with("rr_agg") && helper.head.vars() == BTreeSet::from(["f".into(), "x".into()]), "{shown:#?}");
+    assert!(helper.body.iter().filter_map(Literal::atom).any(|a| a.rel.starts_with("rr_ctx")), "{shown:#?}");
     let hit = shown.iter().find(|r| r.starts_with("hit(")).unwrap();
     assert!(hit.contains("($f, _)"), "the outer count groups by f: {hit}");
+}
+
+/// Rules that order nodes by id mean what they did under preorder ids (decision 0094 §2, `lower::order_nodes`):
+/// nodes in different granules (module statements, functions, classes) compare and aggregate by their preorder
+/// keys. Each pair `x` before `x` and the last `x` are by line, under either numbering.
+#[test]
+fn ordering_nodes_follows_preorder_across_granules() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("nodeorder");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\nprint(x)\ndef f():\n    return x\nclass C:\n    y = x\nz = [x]\nx = 2\ndef g():\n    return x\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.input node, text, line
+.decl xs(n: node)
+xs(n) :- node(_, n, "identifier", _, _), text(n, "x").
+.decl before(a: number, b: number)
+before(la, lb) :- xs(a), xs(b), a < b, line(a, la), line(b, lb).
+.decl last(l: number)
+last(l) :- m = max k : { xs(k) }, line(m, l).
+.decl first(l: number)
+first(l) :- m = min k : { xs(k) }, line(m, l).
+.output before, last, first
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let lines = [1, 2, 4, 6, 7, 8, 10];
+    let want: String = lines.iter().enumerate().flat_map(|(i, a)| lines[i + 1..].iter().map(move |b| format!("{a}\t{b}\n"))).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    let before = read("before");
+    let mut got: Vec<&str> = before.lines().collect::<Vec<_>>();
+    got.sort_unstable();
+    let mut want_sorted: Vec<&str> = want.lines().collect();
+    want_sorted.sort_unstable();
+    assert_eq!(got, want_sorted);
+    assert_eq!(read("last"), "10\n");
+    assert_eq!(read("first"), "1\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A text read once (`read_text`) gives the modules `modules` gives and the programs `parse` and `parse_own` give.
+#[test]
+fn a_text_read_once_is_read_as_each_reader_reads_it() {
+    let text = "#include \"python/ast.rr\"\n#include \"python/calls.rr\"\n.decl hit(c: node)\nhit(c) :- kind(c, \"call\").\n.output hit\n";
+    let shown = |p: &super::Program| -> Vec<String> { p.rules.iter().map(ToString::to_string).collect() };
+    let modules = super::modules(text).unwrap().expect("modules");
+    let once = super::read_text(text).unwrap().modules().expect("modules");
+    assert_eq!((once.files, once.heads, once.declared), (modules.files, modules.heads, modules.declared));
+    let (whole, own) = (super::parse(text).unwrap(), super::parse_own(text).unwrap());
+    assert_eq!(shown(&super::read_text(text).unwrap().lower(true).unwrap()), shown(&whole));
+    let read_own = super::read_text(text).unwrap().lower(false).unwrap();
+    assert_eq!((shown(&read_own), read_own.decls.clone()), (shown(&own), own.decls.clone()));
+    assert!(own.rules.len() < whole.rules.len(), "own reads the libraries' declarations, not their rules");
+}
+
+/// A string with nothing to escape is quoted whole; one with something, char by char, as before.
+#[test]
+fn quoting_escapes_only_what_needs_it() {
+    assert_eq!(super::quote("plain text é"), "\"plain text é\"");
+    assert_eq!(super::quote("a\"b\\c\nd\te\u{1}"), "\"a\\\"b\\\\c\\nd\\te\\u{1}\"");
 }

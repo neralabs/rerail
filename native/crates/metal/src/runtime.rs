@@ -55,6 +55,12 @@ pub fn buffer_limit() -> usize {
 }
 
 /// The bytes of the Metal buffer budget not reserved now.
+/// The bytes the device's buffers hold now, of `METAL_BUFFER_LIMIT`: a user of them that can wait (the logic
+/// engine's device joins) keeps within what is left.
+pub fn reserved() -> usize {
+    pool().load(Ordering::Acquire)
+}
+
 pub fn buffer_free() -> usize {
     METAL_BUFFER_LIMIT.saturating_sub(pool().load(Ordering::Acquire))
 }

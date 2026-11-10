@@ -147,7 +147,7 @@ pub(super) fn fuse(steps: &[Step]) -> Vec<Option<Box<Fused>>> {
     out
 }
 
-fn fused(binds: &[(usize, usize)], after: &[Step]) -> Option<Fused> {
+pub(super) fn fused(binds: &[(usize, usize)], after: &[Step]) -> Option<Fused> {
     let mut env: Vec<(usize, Val)> = binds.iter().map(|&(c, s)| (s, Val::Row(Word::Col(c)))).collect();
     let mut b = Build::default();
     let mut acc: Option<u16> = None;
@@ -265,6 +265,8 @@ pub(super) struct Scratch {
     pub(super) params: Vec<i64>,
     pub(super) values: Vec<u64>,
     pub(super) rows: usize,
+    /// The chunk's rows' ids in their relation, when the fused atom is the join's first step (`table`'s counts per row).
+    pub(super) ids: Vec<u32>,
 }
 
 impl Fused {

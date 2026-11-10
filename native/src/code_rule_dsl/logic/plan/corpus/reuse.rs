@@ -140,7 +140,7 @@ pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
     let now = super::thread_usage();
     report.phases.push(("unchanged: phase 0 checked every read, outputs kept", now.0 - checking.0, now.1 - checking.1, super::usage().2, 0));
     // The documents the run read: the workspace's and those its requests loaded.
-    report.files = rest.iter().filter(|c| c.0 == "doc" || c.0 == "load").count();
+    report.files = rest.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").count();
     report.consulted = rest;
     Ok(Some(report))
 }

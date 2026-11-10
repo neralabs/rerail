@@ -1,0 +1,15 @@
+
+running 1 test
+test code_rule_dsl::findings::async_reference::rr_comparison::authored_rr_batched_positive_documents_preserve_all_four_labels ... 
+thread 'code_rule_dsl::findings::async_reference::rr_comparison::authored_rr_batched_positive_documents_preserve_all_four_labels' (106558272) panicked at native/src/code_rule_dsl/findings/tests/rr_comparison.rs:35:56:
+called `Result::unwrap()` on an `Err` value: Plan("Python producer requires a syntax batch")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    code_rule_dsl::findings::async_reference::rr_comparison::authored_rr_batched_positive_documents_preserve_all_four_labels
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3148 filtered out; finished in 2.31s
+

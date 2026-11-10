@@ -67,8 +67,11 @@ pub struct Unit {
     pub cpu: f64,
     /// The price's estimate of the finished jobs, summed.
     pub estimated: f64,
-    /// The estimate of the jobs queued or running now.
+    /// The estimate of the jobs queued or running now, and of the launches planned on the lane and not yet
+    /// claimed.
     pub outstanding: f64,
+    /// Launches planned on the lane and not yet claimed (decision 0100 §11).
+    pub planned: usize,
     /// When the lane's first job started and its last ended (seconds from the epoch).
     pub first: Option<f64>,
     pub last: f64,
@@ -126,6 +129,11 @@ pub struct TagRow {
     pub max_stall: f64,
     /// Batches whose caller stalled more than 0.1 ms.
     pub stalled: u64,
+    /// Launches run on each lane, as claimed (decision 0100 §11); those run off the lane they were planned on,
+    /// and those the waiting caller ran itself.
+    pub ran: [u64; 4],
+    pub moved: u64,
+    pub helped: u64,
     /// The last overlaps (at most 32): the next batch's slack is their lower quartile, so a kind whose callers
     /// sometimes wait at once is not given the slack of its long overlaps.
     pub recent: std::collections::VecDeque<f64>,
@@ -236,16 +244,19 @@ impl std::fmt::Display for Score {
         if !self.tags.is_empty() {
             writeln!(
                 f,
-                "batch kind      batches  cpu/sme/gpu/ane launches  not fastest  host est ms  if fastest ms  later ms  slack ms  overlap ms  stall ms  stalled  max stall ms  slack now ms"
+                "batch kind      batches  planned c/s/g/a  ran c/s/g/a  moved  helped  not fastest  host est ms  if fastest ms  later ms  slack ms  overlap ms  stall ms  stalled  max stall ms  slack now ms"
             )?;
             for (tag, t) in &self.tags {
                 let l = t.launches;
                 writeln!(
                     f,
-                    "{:<14}  {:>7}  {:>24}  {:>11}  {:>11.3}  {:>13.3}  {:>8.3}  {:>8.3}  {:>10.3}  {:>8.3}  {:>7}  {:>12.3}  {:>12.3}",
+                    "{:<14}  {:>7}  {:>15}  {:>11}  {:>5}  {:>6}  {:>11}  {:>11.3}  {:>13.3}  {:>8.3}  {:>8.3}  {:>10.3}  {:>8.3}  {:>7}  {:>12.3}  {:>12.3}",
                     tag,
                     t.batches,
                     format!("{}/{}/{}/{}", l[0], l[1], l[2], l[3]),
+                    format!("{}/{}/{}/{}", t.ran[0], t.ran[1], t.ran[2], t.ran[3]),
+                    t.moved,
+                    t.helped,
                     t.not_fastest,
                     t.host * 1e3,
                     t.host_fastest * 1e3,
@@ -319,6 +330,49 @@ pub fn take_phases() -> Vec<(&'static str, u64, f64, f64)> {
     PHASES.with_borrow_mut(std::mem::take)
 }
 
+/// A finished job, for the cost statistics (decision 0100 §14): what it was, what the price expected, and what it
+/// cost. The engine keeps them ([`keep_samples`], [`take_samples`]) and writes them to a store, where they are fitted
+/// back into the prices ([`crate::price::learn_from`]); a regressor can be trained on them later.
+#[derive(Clone, Debug)]
+pub struct Sample {
+    pub lane: Lane,
+    /// Its launches' names ([`crate::Kernel::name`]), comma-joined in order.
+    pub forms: String,
+    pub launches: u32,
+    pub units: f64,
+    /// The price's wall and host CPU estimates.
+    pub estimate: f64,
+    pub host_estimate: f64,
+    /// Its wall from start to end, its thread's CPU, and its wait in the queue.
+    pub wall: f64,
+    pub cpu: f64,
+    pub waited: f64,
+    /// Its phases: `name=cpu/wall` in microseconds, comma-joined (a device's timeline among them).
+    pub phases: String,
+    /// It compiled a pipeline or made a buffer: not what the lane costs warm.
+    pub cold: bool,
+    pub ok: bool,
+    /// The cores' slowdown under the machine's load when it ended ([`crate::exec::cores_slowdown`]).
+    pub load: f64,
+}
+
+static KEEP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SAMPLES: Mutex<Vec<Sample>> = Mutex::new(Vec::new());
+/// The most samples held for the engine to take: past it, new ones are dropped (and counted).
+const HELD: usize = 100_000;
+static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Keeps every finished job's sample from now on, for [`take_samples`].
+pub fn keep_samples(on: bool) {
+    KEEP.store(on, Ordering::Relaxed);
+}
+
+/// The samples kept since the last take, and how many were dropped since (more than [`HELD`] waiting).
+pub fn take_samples() -> (Vec<Sample>, u64) {
+    let s = std::mem::take(&mut *SAMPLES.lock().unwrap_or_else(|p| p.into_inner()));
+    (s, DROPPED.swap(0, Ordering::Relaxed))
+}
+
 /// A launch of a job: its form's name, units and estimate.
 #[derive(Clone, Copy, Debug)]
 pub struct Item {
@@ -388,6 +442,24 @@ impl Scoreboard {
         f(&mut s)
     }
 
+    /// A launch planned on `lane` and not yet claimed (decision 0100 §11): its estimate counts as outstanding on
+    /// the lane, so a batch begun meanwhile sees it; `n` launches of `est` seconds in all, added or (negative)
+    /// released when a lane claims them.
+    pub fn plan(&self, lane: Lane, n: i64, est: f64) {
+        self.with(|s| {
+            let u = &mut s.units[lane.index()];
+            u.planned = (u.planned as i64 + n).max(0) as usize;
+            u.outstanding = (u.outstanding + est).max(0.0);
+        });
+    }
+
+    /// A job a lane claimed from a batch begun at `queued`: queued since then, started at once by the caller.
+    pub fn claimed(&self, lane: Lane, items: Vec<Item>, queued: Instant) -> Ticket {
+        let mut t = self.queue(lane, items);
+        t.queued = queued;
+        t
+    }
+
     /// A job queued on `lane`.
     pub fn queue(&self, lane: Lane, items: Vec<Item>) -> Ticket {
         let est: f64 = items.iter().map(|i| i.estimate).sum();
@@ -449,7 +521,7 @@ impl Scoreboard {
             // The lane's latency, from a device's own timeline; a device job's thread CPU.
             // A cold job (a pipeline compiled, a pool buffer made) is not what the lane costs warm: it stays out of
             // the averages.
-            let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "new buffer"));
+            let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
             let lat: f64 = phases.iter().filter(|p| matches!(p.0, "gpu submit" | "gpu schedule" | "gpu wake")).map(|p| p.3).sum();
             let u = &mut s.units[t.lane.index()];
             if lat > 0.0 && !cold {
@@ -469,6 +541,30 @@ impl Scoreboard {
                 p.wall += w;
             }
         });
+        if KEEP.load(Ordering::Relaxed) {
+            let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
+            let sample = Sample {
+                lane: t.lane,
+                forms: t.items.iter().map(|i| i.form).collect::<Vec<_>>().join(","),
+                launches: t.items.len() as u32,
+                units: t.items.iter().map(|i| i.units).sum(),
+                estimate: est,
+                host_estimate: host_est,
+                wall: ran,
+                cpu,
+                waited,
+                phases: phases.iter().map(|&(name, _, c, w)| format!("{name}={:.1}/{:.1}", c * 1e6, w * 1e6)).collect::<Vec<_>>().join(","),
+                cold,
+                ok,
+                load: crate::exec::cores_slowdown(),
+            };
+            let mut held = SAMPLES.lock().unwrap_or_else(|p| p.into_inner());
+            if held.len() < HELD {
+                held.push(sample);
+            } else {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
+        }
         if let Some(f) = trace() {
             let mut forms: Vec<&str> = t.items.iter().map(|i| i.form).collect();
             forms.dedup();
@@ -511,10 +607,16 @@ impl Scoreboard {
         });
     }
 
-    /// A batch of kind `tag` collected: its caller worked `overlap` seconds before it waited, then stalled `stall`.
-    pub fn collected(&self, tag: &'static str, overlap: f64, stall: f64) {
+    /// A batch of kind `tag` collected: its caller worked `overlap` seconds before it waited, then stalled `stall`;
+    /// its launches ran on `ran` per lane, `moved` of them off their planned lane and `helped` by the caller.
+    pub fn collected(&self, tag: &'static str, overlap: f64, stall: f64, ran: [u64; 4], moved: u64, helped: u64) {
         self.with(|s| {
             let t = s.tags.entry(tag).or_default();
+            for (a, b) in t.ran.iter_mut().zip(ran) {
+                *a += b;
+            }
+            t.moved += moved;
+            t.helped += helped;
             t.overlap += overlap;
             t.stall += stall;
             t.max_stall = t.max_stall.max(stall);
@@ -525,7 +627,12 @@ impl Scoreboard {
             t.recent.push_back(overlap);
         });
         if let Some(f) = trace() {
-            let line = format!("# batch\t{tag}\toverlap_us={:.1}\tstall_us={:.1}\n", overlap * 1e6, stall * 1e6);
+            let line = format!(
+                "# batch\t{tag}\toverlap_us={:.1}\tstall_us={:.1}\tran={}\tmoved={moved}\thelped={helped}\n",
+                overlap * 1e6,
+                stall * 1e6,
+                Lane::ALL.iter().filter(|l| ran[l.index()] > 0).map(|l| format!("{}:{}", l.name(), ran[l.index()])).collect::<Vec<_>>().join(",")
+            );
             let _ = f.lock().unwrap_or_else(|p| p.into_inner()).write_all(line.as_bytes());
         }
     }

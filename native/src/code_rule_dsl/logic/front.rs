@@ -19,6 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+pub(in crate::code_rule_dsl) mod caches;
 pub(in crate::code_rule_dsl) mod cycles;
 
 /// A token and the byte offset where it starts.
@@ -363,6 +364,9 @@ pub(in crate::code_rule_dsl) struct Program {
     /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
     /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
     pub(in crate::code_rule_dsl) qualifiers: BTreeMap<String, BTreeSet<String>>,
+    /// The columns declared `tape` (decision 0103 §3), by relation: stored as `sym`, checked before lowering
+    /// (`rr::tape_type`) and printed back as `tape`.
+    pub(in crate::code_rule_dsl) tapes: BTreeMap<String, BTreeSet<usize>>,
     /// A session's maintained strata, each with the rules that derive it again instead (decision 0090 §4,
     /// `maintain::rewrite`): the run chooses per stratum, once its input deltas are known (`plan::run`).
     pub(in crate::code_rule_dsl) again: Vec<Again>,
@@ -474,6 +478,9 @@ pub(in crate::code_rule_dsl) enum Native {
     /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
     /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
     Components { edge: String, own: String },
+    Python { kind: String, input: String, targets: Option<String> },
+    /// Conservative call candidates over demanded documents; exact semantic operators remain separate.
+    PythonCandidates { input: String, targets: String, context: String, member: String },
 }
 
 impl Native {
@@ -486,6 +493,8 @@ impl Native {
                 if let Some(roots) = roots { *roots = rename(roots); }
             }
             Native::MatchAll { input, .. } => *input = rename(input),
+            Native::PythonCandidates {input,targets,..} => { *input=rename(input); *targets=rename(targets); },
+            Native::Python {input,targets,..} => { *input=rename(input); if let Some(t)=targets {*t=rename(t);} },
             Native::Components { edge, own } => {
                 *edge = rename(edge);
                 *own = rename(own);
@@ -497,6 +506,8 @@ impl Native {
         match self {
             Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
             Native::MatchAll { input, .. } => vec![input.as_str()],
+            Native::PythonCandidates {input,targets,..} => vec![input.as_str(),targets.as_str()],
+            Native::Python {input,targets,..} => std::iter::once(input.as_str()).chain(targets.as_deref()).collect(),
             Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],
         }
     }
@@ -902,9 +913,126 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
     finish(prog)
 }
 
+/// The relation of each node's preorder key (`syntax`'s `node_order(n, k)`).
+const NODE_ORDER: &str = "node_order";
+
+/// Rules that order nodes, under node ids per definition (decision 0094 §2). An id follows preorder only inside its
+/// granule, so a comparison of two nodes (`b < n`: a binding before a use) and a `min`/`max` over nodes read the
+/// nodes' preorder keys instead (`node_order`): the order preorder ids gave, so the rule means what it did.
+/// - `x < y`, both nodes: `node_order(x, kx), node_order(y, ky), kx < ky` (`<=`, `>`, `>=` likewise);
+/// - `v = max x : { r(…x…) }`, `x` a node: `kv = max k : { r_ord(…x…, k) }, node_order(v, kv)`, where
+///   `r_ord(…x…, k) :- r(…x…), node_order(x, k)`.
+///
+/// A variable is a node when a column it fills is declared `node`: in the head or any atom of the body.
+fn order_nodes(prog: &mut Program) {
+    if !crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
+        return;
+    }
+    let decls = prog.decls.clone();
+    let typed = |a: &Atom, nodes: &mut BTreeSet<String>| {
+        for (t, (_, ty)) in a.args.iter().zip(decls.get(&a.rel).map_or(&[][..], Vec::as_slice)) {
+            if let Term::Var(v) = t
+                && ty == "node"
+            {
+                nodes.insert(v.clone());
+            }
+        }
+    };
+    let order = |n: &str, k: &str| Literal::Atom(Atom { rel: NODE_ORDER.to_owned(), args: vec![Term::Var(n.to_owned()), Term::Var(k.to_owned())], neg: false, gated: false });
+    let mut used = false;
+    let mut helpers: Vec<(Rule, Vec<(String, String)>)> = Vec::new();
+    let mut fresh = 0usize;
+    for r in &mut prog.rules {
+        let mut nodes = BTreeSet::new();
+        typed(&r.head, &mut nodes);
+        for l in &r.body {
+            match l {
+                Literal::Atom(a) => typed(a, &mut nodes),
+                Literal::Agg { atom, .. } => typed(atom, &mut nodes),
+                Literal::Nearest { n, a, .. } => {
+                    nodes.insert(n.clone());
+                    nodes.insert(a.clone());
+                }
+                _ => {}
+            }
+        }
+        // A min or max over nodes is a node.
+        for l in &r.body {
+            if let Literal::Agg { var, op: AggOp::Min | AggOp::Max, over: Some(o), atom } = l {
+                let mut inner = BTreeSet::new();
+                typed(atom, &mut inner);
+                if inner.contains(o) {
+                    nodes.insert(var.clone());
+                }
+            }
+        }
+        if nodes.is_empty() {
+            continue;
+        }
+        let mut body = Vec::with_capacity(r.body.len());
+        for l in std::mem::take(&mut r.body) {
+            match l {
+                Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } if matches!(op, "<" | "<=" | ">" | ">=") && nodes.contains(&x) && nodes.contains(&y) => {
+                    let (kx, ky) = (format!("rr_ord{fresh}"), format!("rr_ord{}", fresh + 1));
+                    fresh += 2;
+                    body.extend([order(&x, &kx), order(&y, &ky), Literal::Cmp { l: Term::Var(kx), op, r: Term::Var(ky) }]);
+                    used = true;
+                }
+                Literal::Agg { var, op: op @ (AggOp::Min | AggOp::Max), over: Some(o), atom } if {
+                    let mut inner = BTreeSet::new();
+                    typed(&atom, &mut inner);
+                    inner.contains(&o)
+                } =>
+                {
+                    // The rows aggregated, each with its node's key.
+                    let cols = decls.get(&atom.rel).cloned().unwrap_or_default();
+                    let mut head_args: Vec<Term> = Vec::new();
+                    let mut head_cols: Vec<(String, String)> = Vec::new();
+                    let mut agg_args: Vec<Term> = Vec::new();
+                    for (i, t) in atom.args.iter().enumerate() {
+                        // The node aggregated is the helper's own: only its key goes out.
+                        if let Term::Var(v) = t
+                            && *v != o
+                            && !head_args.contains(t)
+                        {
+                            head_args.push(t.clone());
+                            head_cols.push((format!("c{i}"), cols.get(i).map_or_else(|| "int".to_owned(), |(_, ty)| ty.clone())));
+                            agg_args.push(Term::Var(v.clone()));
+                        }
+                    }
+                    let k = format!("rr_ord{fresh}");
+                    let kv = format!("rr_ord{}", fresh + 1);
+                    fresh += 2;
+                    let name = format!("rr_ordered{}", helpers.len());
+                    head_args.push(Term::Var(k.clone()));
+                    agg_args.push(Term::Var(k.clone()));
+                    head_cols.push(("k".to_owned(), "int".to_owned()));
+                    helpers.push((Rule { head: Atom { rel: name.clone(), args: head_args, neg: false, gated: false }, body: vec![Literal::Atom(atom), order(&o, &k)] }, head_cols));
+                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name, args: agg_args, neg: false, gated: false } });
+                    body.push(order(&var, &kv));
+                    used = true;
+                }
+                other => body.push(other),
+            }
+        }
+        r.body = body;
+    }
+    for (rule, cols) in helpers {
+        prog.decls.insert(rule.head.rel.clone(), cols);
+        prog.rules.push(rule);
+    }
+    if used {
+        prog.decls.entry(NODE_ORDER.to_owned()).or_insert_with(|| vec![("n".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())]);
+        if !prog.inputs.iter().any(|i| i == NODE_ORDER) {
+            prog.inputs.push(NODE_ORDER.to_owned());
+        }
+    }
+}
+
 /// The checks and additions every program gets once parsed, whatever its syntax (this one or `.rr`, `logic::rr`):
 /// no computed term in a body atom, bounded lattices, the tree axes' input relations, bounded value cycles.
 pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Error> {
+    order_nodes(&mut prog);
     for rule in &prog.rules {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
         if let Some(a) = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None })
@@ -930,6 +1058,8 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
         }
     }
     cycles::check(&prog)?;
+    // A cache is two rules (decision 0103): a broken form refuses the program.
+    caches::caches(&prog)?;
     Ok(prog)
 }
 
@@ -982,6 +1112,50 @@ pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, boo
 /// recursion named apart from negation, and allowed into a lattice head it is monotone in (`count`/`max` into a
 /// `max` lattice, `min` into a `min` lattice).
 pub(in crate::code_rule_dsl) fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
+    let (sccs, edges, aggs) = components(prog);
+    match first_unstratified(&sccs, &edges, &aggs, true).into_iter().next() {
+        Some(e) => Err(e),
+        None => Ok((sccs, edges)),
+    }
+}
+
+/// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each (`strata` stops at
+/// the first): a caller that drops what made each cycle (demand's split, decision 0048) drops them all in one round.
+pub(in crate::code_rule_dsl) fn unstratified(prog: &Program) -> Vec<Error> {
+    let (sccs, edges, aggs) = components(prog);
+    first_unstratified(&sccs, &edges, &aggs, false)
+}
+
+/// The first error of each component a negative edge closes a cycle in (`first`: only the first component's).
+fn first_unstratified(sccs: &[BTreeSet<String>], edges: &Edges, aggs: &BTreeSet<(String, String)>, first: bool) -> Vec<Error> {
+    let mut out = Vec::new();
+    for scc in sccs {
+        'scc: for v in scc {
+            for (w, neg) in edges.get(v).into_iter().flatten() {
+                if !*neg || !scc.contains(w) {
+                    continue;
+                }
+                out.push(if aggs.contains(&(v.clone(), w.clone())) {
+                    Error::AggregationInRecursion { head: v.clone(), aggregated: w.clone(), component: scc.clone() }
+                } else {
+                    Error::NotStratifiable {
+                        message: format!("not stratifiable: {v} depends negatively on {w} in its own component"),
+                        component: scc.clone(),
+                        negated: w.clone(),
+                    }
+                });
+                if first {
+                    return out;
+                }
+                break 'scc;
+            }
+        }
+    }
+    out
+}
+
+/// The program's components (dependencies first), its dependency edges, and its non-monotone aggregation edges.
+fn components(prog: &Program) -> (Vec<BTreeSet<String>>, Edges, BTreeSet<(String, String)>) {
     let mut derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut edges = Edges::new();
     // An answer is an edge: each produced relation reads its request (decision 0065 §2a).
@@ -1017,24 +1191,7 @@ pub(in crate::code_rule_dsl) fn strata(prog: &Program) -> Result<(Vec<BTreeSet<S
         }
     }
     let sccs = tarjan(&derived, &edges);
-    for scc in &sccs {
-        for v in scc {
-            for (w, neg) in edges.get(v).into_iter().flatten() {
-                if !*neg || !scc.contains(w) {
-                    continue;
-                }
-                if aggs.contains(&(v.clone(), w.clone())) {
-                    return Err(Error::AggregationInRecursion { head: v.clone(), aggregated: w.clone(), component: scc.clone() });
-                }
-                return Err(Error::NotStratifiable {
-                    message: format!("not stratifiable: {v} depends negatively on {w} in its own component"),
-                    component: scc.clone(),
-                    negated: w.clone(),
-                });
-            }
-        }
-    }
-    Ok((sccs, edges))
+    (sccs, edges, aggs)
 }
 
 /// Strongly connected components of `nodes` under `edges`, dependencies first, in the same order every run.
@@ -1138,6 +1295,9 @@ pub(in crate::code_rule_dsl) fn prune(mut prog: Program) -> Program {
         }
     }
     prog.rules.retain(|r| need.contains(&r.head.rel));
+    // Native metadata owns real dependency edges. A dead producer must not keep its demands
+    // alive in the file-local split or cause them to be exported across every chunk.
+    prog.natives.retain(|rel, _| need.contains(rel));
     prog
 }
 

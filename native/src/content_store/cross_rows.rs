@@ -29,7 +29,7 @@ pub const CROSS_WIDTH: usize = 8;
 
 /// `values` (rows of `width`, flat) as a block: each column in turn, as zigzag varints of the difference from the row
 /// above.
-fn encode(width: usize, values: &[i64]) -> Vec<u8> {
+pub(super) fn encode(width: usize, values: &[i64]) -> Vec<u8> {
     let mut out = Vec::with_capacity(values.len() * 2);
     for c in 0..width {
         let mut last = 0i64;
@@ -48,7 +48,7 @@ fn encode(width: usize, values: &[i64]) -> Vec<u8> {
 }
 
 /// A block's columns: `rows` values each, `width` of them.
-fn decode(width: usize, rows: usize, data: &[u8], cols: &mut [Vec<i64>]) -> StoreResult<()> {
+pub(super) fn decode(width: usize, rows: usize, data: &[u8], cols: &mut [Vec<i64>]) -> StoreResult<()> {
     let bad = || super::StoreError::Invalid("a cross-file memo block ends early".to_owned());
     let mut at = 0;
     for col in cols.iter_mut().take(width) {
@@ -136,7 +136,7 @@ impl ContentStore {
 
 impl SourceId {
     /// The id as `cross_rows` returns it in a source column (`ContentStore::cross_rows` with `with_source`).
-    pub(crate) fn raw(self) -> i64 {
+    pub fn raw(self) -> i64 {
         self.0
     }
 }

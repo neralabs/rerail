@@ -29,4 +29,4 @@ sig_at(f, at) :- receiver(f, _, _), (field(f, "type_parameters", at) ; !field(f,
 // self_var(t, x): t is a type variable x, or a string annotation that parses to one.
 .decl self_var(t: node, x: symbol)
 self_var(t, x) :- typevar_name(t, x).
-self_var(t, x) :- parsed(t, "annotation", r0), type_bare(r0, r), typevar_name(r, x).
+self_var(t, x) :- str_node(t), parsed(t, "annotation", r0), type_bare(r0, r), typevar_name(r, x).

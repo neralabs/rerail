@@ -3375,6 +3375,9 @@ the wrapper's, in bytes, not the engine's.)
     one answer, 148 s and 35 s. Relations made from facts alone are left to the split (`constants::foldable` skips
     `constant_relations`), which derives them per chunk; cheap for small facts, not for a phase's exports.
   - The rest: per-file rules 477 s in all, projection 149 s, tape and facts 137 s, cross part 120 s.
+- `v_enum` and `rr_agg63`, constants of struct's exports, are derived once before the chunks and bound beside the
+  exports (`run_constants` in `corpus.rs`), no longer in every chunk: on 237 files each runs once in a few ms, and
+  `lens` is as it was (361 rows). Not yet measured over the workspace.
 - A main program over phase exports alone (`defs(q, k) :- struct__def(q, k)`) no longer builds documents
   (`58a5243a1`): 480 builds to 243 on 237 files for `struct`, 726 to 489 for `values`.
 - Spike (2026-11-09, `RERAIL_SPIKE_PROJECTION`, `syntax/stored_spike.rs`): each document's projected relations

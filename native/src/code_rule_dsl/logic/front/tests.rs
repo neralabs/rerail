@@ -15,7 +15,7 @@ fn program(name: &str) -> Program {
 fn t_programs_match_t_front_end() {
     type Expected = (usize, usize, usize, usize, &'static [&'static str], usize, usize, usize, usize, usize, usize, usize);
     let golden: [(&str, Expected); 5] = [
-        ("calls.rr", (98, 221, 160, 0, &[], 3, 7, 7, 76, 7, 221, 76)),
+        ("calls.rr", (99, 221, 160, 0, &[], 3, 8, 7, 76, 7, 221, 76)),
         ("calls_rust.rr", (61, 148, 9, 0, &[], 5, 6, 4, 45, 8, 147, 44)),
         ("workload.rr", (42, 63, 35, 1, &[], 1, 7, 3, 29, 2, 63, 29)),
         (
@@ -205,4 +205,29 @@ fn components_in_t_order() {
          pathk2 | tpname | generic | exttype | rext | call_open | owner | calls | crate_fn_name | macro_open | calls_open | \
          isasync | reaches_open"
     );
+}
+
+/// Two components each closed by a negation: `strata` names the first, `unstratified` both (demand's split drops
+/// both in one round).
+#[test]
+fn every_unstratified_component_is_named() {
+    let prog = super::parse(
+        "
+        .decl e(x: node)
+        .decl a(x: node)
+        .decl b(x: node)
+        .decl c(x: node)
+        .decl d(x: node)
+        .input e
+        .output a, c
+        a($x) :- e($x), !b($x).
+        b($x) :- e($x), a($x).
+        c($x) :- e($x), !d($x).
+        d($x) :- e($x), c($x).
+        ",
+    )
+    .unwrap();
+    assert!(strata(&prog).is_err());
+    let all = unstratified(&prog);
+    assert_eq!(all.len(), 2, "{all:?}");
 }

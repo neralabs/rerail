@@ -15,6 +15,11 @@ pub fn run(k: &Kernel) -> Output {
         Kernel::Histogram { off, codes, width } => histogram(off, codes, *width),
         Kernel::Closure { n, off, dst } => Output::Bits(closure(*n, off, dst)),
         Kernel::Join { left, right, .. } => Output::Pairs(join(left, right, None)),
+        // A program's cores' form: its own (`Program::run`), which does not fail but by panicking.
+        Kernel::Program(p) => match p.0.run(crate::lanes::Lane::Cpu) {
+            Ok(r) => Output::Program(crate::kernel::ProgramResult(r)),
+            Err(e) => panic!("program {}: {e}", p.0.name()),
+        },
     }
 }
 

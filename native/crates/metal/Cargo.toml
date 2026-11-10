@@ -10,6 +10,7 @@ description = "The engine's Metal runtime: device, buffer budget, mapped buffers
 test-hooks = []
 
 [dependencies]
+rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }
 rerail-prof = { path = "../prof" }
 libc = "0.2.189"

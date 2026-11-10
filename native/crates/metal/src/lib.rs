@@ -26,5 +26,6 @@ pub mod tier2_on;
 
 pub use rerail_compiler::Error;
 
-/// The system's default device, once.
-pub static METAL_DEVICE: std::sync::LazyLock<Option<metal::Device>> = std::sync::LazyLock::new(metal::Device::system_default);
+/// The process's one device (`rerail_accel::gpu::shared`, decision 0100 §2): the executor's lanes and the engine's
+/// own programs use the same.
+pub static METAL_DEVICE: std::sync::LazyLock<Option<metal::Device>> = std::sync::LazyLock::new(|| rerail_accel::gpu::shared::get().map(|s| s.device.clone()));

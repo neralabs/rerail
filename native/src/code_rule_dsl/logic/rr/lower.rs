@@ -70,7 +70,7 @@ fn test_of(rel: &str) -> Option<&'static str> {
 }
 
 /// The built-ins that take a relation, and its position.
-pub(super) const RELATION_ARG: [(&str, &[usize]); 8] = [
+pub(super) const RELATION_ARG: [(&str, &[usize]); 13] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
     ("precedes_stop", &[2]),
@@ -79,6 +79,11 @@ pub(super) const RELATION_ARG: [(&str, &[usize]); 8] = [
     ("dfs_first", &[3, 4]),
     ("dfs_first_memo", &[3, 4, 5]),
     ("components", &[3, 4]),
+    ("python_candidates", &[4,5]),
+    ("python_qualified", &[2,3]),
+    ("python_origins", &[2]),
+    ("python_assigned", &[2]),
+    ("python_arguments", &[5]),
 ];
 
 fn not_yet<T>(what: impl std::fmt::Display) -> Result<T, Error> {
@@ -89,7 +94,8 @@ fn not_yet<T>(what: impl std::fmt::Display) -> Result<T, Error> {
 fn ty(t: &str) -> String {
     match t {
         "number" | "unsigned" => "int".to_owned(),
-        "symbol" => "sym".to_owned(),
+        // A tape is stored as a symbol (its content key); `tape_type` checks it before lowering.
+        "symbol" | "tape" => "sym".to_owned(),
         "span" | "loc" => "node".to_owned(),
         // A float column holds floats' keys (`float_key`).
         "float" => "int".to_owned(),
@@ -236,6 +242,7 @@ fn scope_report_globs(settings: &[(String, String)]) -> Vec<String> {
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
+    super::tape_type::check(&statements)?;
     let mut l = Lowerer::default();
     let mut clauses = Vec::new();
     for (item, line) in statements {
@@ -321,7 +328,9 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     if l.prog.doc_scopes.is_none() {
         l.prog.doc_scopes = scope_globs(&l.prog.settings).map(|g| vec![g]);
     }
-    crate::code_rule_dsl::logic::front::finish(l.prog)
+    let mut program = crate::code_rule_dsl::logic::front::finish(l.prog)?;
+    super::aggregate_demand::optimize(&mut program);
+    Ok(program)
 }
 
 /// A nullary relation is a Boolean set: empty, or the single empty tuple. SQL tables need a column,
@@ -416,6 +425,9 @@ impl Lowerer {
         }
         let mut out = Vec::new();
         for (i, (c, t)) in cols.iter().enumerate() {
+            if t == "tape" {
+                self.prog.tapes.entry(name.clone()).or_default().insert(i);
+            }
             let Some(lattice) = t.strip_suffix("<>") else {
                 out.push((c.clone(), ty(t)));
                 continue;
@@ -933,6 +945,7 @@ impl Lowerer {
                 if !self.prog.inputs.iter().any(|i| i == rel) {
                     self.prog.inputs.push(rel.to_owned());
                     self.prog.decls.insert(rel.to_owned(), cols.iter().map(|(c, ty)| ((*c).to_owned(), (*ty).to_owned())).collect());
+                    self.prog.tapes.entry(rel.to_owned()).or_default().extend(super::tape_type::tape_columns(rel));
                 }
             }
             // `@tree_digest(n)` reads the tree: a variable bound by the engine's `tree_digest(n, h)`.
@@ -1419,9 +1432,13 @@ impl Lowerer {
                 let hit = vec![atom(&up, vec![v(&n), v(&s)]), atom(&set, vec![v(&s)])];
                 let none = self.negate(vec![hit.clone()], std::slice::from_ref(&n))?;
                 let mut out = Vec::new();
+                // The nearest stop is a, or a is below it: by the tree, not by comparing ids (ids follow preorder only
+                // inside a granule, decision 0094 §2).
+                let above = atom(crate::code_rule_dsl::facts::vtab::syntax::WITHIN, vec![v(&a), v(&s)]);
                 for b in below {
                     out.push(b.iter().cloned().chain([none.clone()]).collect());
-                    out.push(b.into_iter().chain(hit.iter().cloned()).chain([Literal::Cmp { l: v(&s), op: "<=", r: v(&a) }]).collect());
+                    out.push(b.iter().cloned().chain(hit.iter().cloned()).chain([Literal::Cmp { l: v(&s), op: "=", r: v(&a) }]).collect());
+                    out.push(b.into_iter().chain(hit.iter().cloned()).chain([above.clone()]).collect());
                 }
                 out
             }
@@ -1611,19 +1628,23 @@ impl Lowerer {
         // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too.
         {
             let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
+            let inputs: BTreeSet<&String> = self.prog.inputs.iter().collect();
             for (rel, cols) in &self.prog.decls {
-                if !heads.contains(rel) && !self.prog.inputs.iter().any(|i| i == rel) && !self.prog.natives.contains_key(rel) {
+                if !heads.contains(rel) && !inputs.contains(rel) && !self.prog.natives.contains_key(rel) {
                     for i in 0..cols.len() {
                         columns.insert((rel.clone(), i), BTreeSet::new());
                     }
                 }
             }
         }
+        // Each derived relation's rules, in order: one pass, not one over every rule per relation.
+        let mut by_head: BTreeMap<&String, Vec<&Rule>> = BTreeMap::new();
+        for r in &self.prog.rules {
+            by_head.entry(&r.head.rel).or_default().push(r);
+        }
         loop {
             let mut found = BTreeMap::new();
-            let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
-            for rel in heads {
-                let rules: Vec<&Rule> = self.prog.rules.iter().filter(|r| &r.head.rel == rel).collect();
+            for (&rel, rules) in &by_head {
                 for i in 0..rules[0].head.args.len() {
                     let each: Option<Vec<BTreeSet<SpanIn>>> = rules.iter().map(|r| match r.head.args.get(i) {
                         Some(Term::Var(x)) => binder(&r.body, x, &columns),
@@ -1914,6 +1935,40 @@ impl Lowerer {
                 let rel = self.dfs_first(&edge, &target, roots.as_deref());
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(r)?, self.term(hit)?, self.term(first)?], neg, gated: false }));
             }
+            ("python_candidates", [call,report,reference,receiver,input,targets,context,member]) => {
+                let name=|t:&STerm|match t{STerm::Var(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate inputs are relation names".into()))};
+                let literal=|t:&STerm|match t{STerm::Str(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate context and member must be string literals".into()))};
+                let (input,targets,context,member)=(name(input)?,name(targets)?,literal(context)?,literal(member)?);
+                if !crate::code_rule_dsl::facts::producers::python::families::CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
+                for name in [&input,&targets] {
+                    if !self.prog.decls.get(name).is_some_and(|cols|cols.len()==1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
+                }
+                let native=Native::PythonCandidates{input:input.clone(),targets:targets.clone(),context,member};
+                let rel=if let Some((name,_))=self.prog.natives.iter().find(|(_,n)|**n==native) {name.clone()}else {
+                    let mut serial=self.prog.natives.len();
+                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(&name){break name;}serial+=1;};
+                    let v=|s:&str|Term::Var(s.to_owned());
+                    let a=|r:&str,args:Vec<Term>|Literal::Atom(Atom{rel:r.into(),args,neg:false,gated:false});
+                    let mut body=vec![a(&input,vec![v("d")])];
+                    // Locality proof only: the native contract emits nodes from these documents.
+                    for n in ["c","f","r","o"] {body.push(a("node",vec![v("d"),v(n),Term::Wild,Term::Wild,Term::Wild]));}
+                    self.prog.decls.insert(rel.clone(),["c","f","r","o"].into_iter().map(|n|(n.into(),"node".into())).collect());
+                    self.prog.rules.push(Rule{head:Atom{rel:rel.clone(),args:["c","f","r","o"].into_iter().map(v).collect(),neg:false,gated:false},body});
+                    self.prog.natives.insert(rel.clone(),native);rel
+                };
+                return Ok(Literal::Atom(Atom{rel,args:[call,report,reference,receiver].into_iter().map(|a|self.term(a)).collect::<Result<Vec<_>,_>>()?,neg,gated:false}));
+            }
+            ("python_qualified" | "python_origins" | "python_assigned" | "python_arguments", _) => {
+                let kind=rel.strip_prefix("python_").unwrap();
+                let width=if kind=="arguments" {5}else{2};
+                let expected=width+1+usize::from(kind=="qualified");
+                if args.len()!=expected {return Err(Error::Syntax(format!("{rel}: expected {expected} arguments")));}
+                let name=|t:&STerm|match t{STerm::Var(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python producer inputs are relation names".into()))};
+                let input=name(&args[width])?;
+                let targets=if kind=="qualified" {Some(name(&args[width+1])?)}else{None};
+                let producer=self.python_producer(kind,&input,targets.as_deref());
+                return Ok(Literal::Atom(Atom{rel:producer,args:args[..width].iter().map(|a|self.term(a)).collect::<Result<Vec<_>,_>>()?,neg,gated:false}));
+            }
             ("components", [d, c, k, edge, own]) => {
                 let name = |t: &STerm| match t {
                     STerm::Var(v) => Ok(v.clone()),
@@ -1929,6 +1984,35 @@ impl Lowerer {
         }
         let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
         Ok(Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false }))
+    }
+
+    fn python_producer(&mut self, kind:&str, input:&str, targets:Option<&str>)->String {
+        let native = Native::Python {kind:kind.into(),input:input.into(),targets:targets.map(str::to_owned)};
+        let base = format!("rr_python_{kind}_{input}_{}",targets.unwrap_or(""));
+        let mut rel = base.clone();
+        let mut collision = 0;
+        while let Some(existing) = self.prog.natives.get(&rel) {
+            if existing == &native { return rel; }
+            collision += 1;
+            rel = format!("{base}__{collision}");
+        }
+        let vars=if kind=="arguments" {vec![("n","node"),("i","int"),("keyword","sym"),("spread","sym"),("value","node")]}else if kind=="qualified"{vec![("n","node"),("q","sym")]}else{vec![("n","node"),("value","node")]};
+        let v=|s:&str|Term::Var(s.to_owned());
+        let atom=|r:&str,args:Vec<Term>|Literal::Atom(Atom{rel:r.into(),args,neg:false,gated:false});
+        let mut body=vec![atom(input,vec![v("n")]),atom("node",vec![v("d"),v("n"),Term::Wild,Term::Wild,Term::Wild])];
+        if let Some(t)=targets {body.push(atom(t,vec![v("q")]));}
+        else {
+            body.push(atom("node",vec![v("d"),v("value"),Term::Wild,Term::Wild,Term::Wild]));
+            if kind=="arguments" {
+                for (name,value) in [("i",Term::Int(0)),("keyword",Term::Str(String::new())),("spread",Term::Str(String::new()))] {
+                    body.push(Literal::Cmp{l:v(name),op:"=",r:value});
+                }
+            }
+        }
+        self.prog.decls.insert(rel.clone(),vars.iter().map(|(n,t)|(n.to_string(),t.to_string())).collect());
+        self.prog.rules.push(Rule{head:Atom{rel:rel.clone(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body});
+        self.prog.natives.insert(rel.clone(),native);
+        rel
     }
 
     /// `dfs_first(_, _, _, edge, target)`'s relation `rr_dfs_<edge>_<target>` (`_<roots>` for `dfs_first_memo`):

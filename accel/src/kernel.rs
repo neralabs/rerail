@@ -7,6 +7,7 @@
 //! `nparts + 1` of them, ascending, the first 0 and the last the column's length. Partition `p` is
 //! `col[off[p]..off[p + 1]]`.
 
+use crate::lanes::Lane;
 use std::sync::Arc;
 
 /// Rows of bits, packed: row `r` is `data[r * words..(r + 1) * words]`, bit `c` of a row in word `c / 64`, bit
@@ -55,6 +56,40 @@ impl Bits {
     }
 }
 
+/// A kernel its caller makes (decision 0100 §13): a program of the caller's own, with a form per lane it runs on (a
+/// device's encoding, the cores' interpreter). It is a launch like any other: priced by its own per-unit seconds,
+/// placed, claimed by whichever lane reaches it, and scored. A device's form submits on the lane's worker, through the
+/// one device and queue (`gpu::shared`).
+pub trait Program: Send + Sync {
+    /// Its name, for the scoreboard and the profile.
+    fn name(&self) -> &'static str;
+    /// Its size, in the unit its prices are per (bytes, for a program over text).
+    fn units(&self) -> f64;
+    /// Seconds a unit on `lane`; `None` when it has no form there.
+    fn per_unit(&self, lane: Lane) -> Option<f64>;
+    /// Host CPU seconds a unit on `lane` (on the cores, all of it; on a device, its encoding and reads).
+    fn host_per_unit(&self, lane: Lane) -> Option<f64> {
+        let per = self.per_unit(lane)?;
+        Some(if matches!(lane, Lane::Gpu) { per.min(1e-10) } else { per })
+    }
+    /// Runs it on `lane`. A device's form that cannot take it (its capacity, a shape it lacks) runs the cores' form
+    /// instead, so the launch does not fail for it.
+    fn run(&self, lane: Lane) -> Result<ProgramOutput, String>;
+}
+
+/// A program's result, the caller's own type ([`Program`]).
+pub type ProgramOutput = Arc<dyn std::any::Any + Send + Sync>;
+
+/// A program's kernel ([`Kernel::Program`]).
+#[derive(Clone)]
+pub struct ProgramKernel(pub Arc<dyn Program>);
+
+impl std::fmt::Debug for ProgramKernel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Program({}, {} units)", self.0.name(), self.0.units())
+    }
+}
+
 /// A launch's work: one physical form over its columns.
 #[derive(Clone, Debug)]
 pub enum Kernel {
@@ -93,6 +128,9 @@ pub enum Kernel {
     /// grouping by document; the cores their sort) until the caller forgets the id ([`crate::exec::Executor::forget`]).
     /// One id always names the same columns: a lane refuses a kept entry whose row count differs.
     Join { left: Keys, right: Keys, right_id: Option<u64>, by: JoinBy },
+
+    /// **Program.** A kernel the caller made ([`Program`]): [`Output::Program`].
+    Program(ProgramKernel),
 }
 
 /// A relation's key columns, one per key, of equal length: each the host's, or staged (written after the launch
@@ -120,6 +158,15 @@ impl Kernel {
             Kernel::Closure { .. } => Form::Closure,
             Kernel::Join { by: JoinBy::Probe, .. } => Form::Probe,
             Kernel::Join { by: JoinBy::Tile, .. } => Form::Tile,
+            Kernel::Program(_) => Form::Program,
+        }
+    }
+
+    /// The name its prices, samples and the profile know it by: a program's own, else its form's.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Kernel::Program(p) => p.0.name(),
+            _ => self.form().name(),
         }
     }
 
@@ -147,6 +194,7 @@ impl Kernel {
             Kernel::Histogram { codes, .. } => codes.len() as f64,
             Kernel::Closure { n, dst, .. } => dst.len() as f64 * (*n as f64 / 64.0).ceil().max(1.0),
             Kernel::Join { left, right, .. } => (left.first().map_or(0, |c| c.len()) + right.first().map_or(0, |c| c.len())) as f64,
+            Kernel::Program(p) => p.0.units(),
         }
     }
 
@@ -180,6 +228,8 @@ pub enum Form {
     Probe,
     /// A join by document tiles.
     Tile,
+    /// A program of the caller's ([`Program`]): priced by itself, not by the table.
+    Program,
 }
 
 impl Form {
@@ -194,12 +244,16 @@ impl Form {
             Form::Closure => "closure",
             Form::Probe => "join (sort and probe)",
             Form::Tile => "join (tiles)",
+            Form::Program => "program",
         }
     }
 }
 
 /// A kernel's result.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Two outputs are equal when they hold the same values: pairs read in place ([`Output::View`]) equal the same
+/// pairs copied ([`Output::Pairs`]).
+#[derive(Clone, Debug)]
 pub enum Output {
     /// A matrix of counts, row-major.
     Counts { rows: usize, cols: usize, data: Vec<u32> },
@@ -207,6 +261,161 @@ pub enum Output {
     PerRow(Vec<u32>),
     /// Pairs of row indexes, in the order the kernel defines.
     Pairs(Vec<(u32, u32)>),
+    /// The same, read in place in a device's buffer: no copy.
+    View(PairView),
     /// Rows of bits.
     Bits(Bits),
+    /// A program's result ([`Kernel::Program`]).
+    Program(ProgramResult),
+}
+
+/// A program's result in an [`Output`]: equal only to itself.
+#[derive(Clone)]
+pub struct ProgramResult(pub ProgramOutput);
+
+impl std::fmt::Debug for ProgramResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ProgramResult")
+    }
+}
+
+impl Output {
+    /// The pairs of a join or a pair-emitting kernel, owned or in place.
+    pub fn into_pairs(self) -> Option<Pairs> {
+        match self {
+            Output::Pairs(p) => Some(Pairs::Owned(p)),
+            Output::View(v) => Some(Pairs::View(v)),
+            _ => None,
+        }
+    }
+
+    /// The pairs, copied (tests, reports).
+    pub fn pairs(&self) -> Option<Vec<(u32, u32)>> {
+        match self {
+            Output::Pairs(p) => Some(p.clone()),
+            Output::View(v) => Some(v.iter().collect()),
+            _ => None,
+        }
+    }
+}
+
+impl PartialEq for Output {
+    fn eq(&self, other: &Output) -> bool {
+        match (self, other) {
+            (Output::Counts { rows: a, cols: b, data: c }, Output::Counts { rows: x, cols: y, data: z }) => a == x && b == y && c == z,
+            (Output::PerRow(a), Output::PerRow(b)) => a == b,
+            (Output::Bits(a), Output::Bits(b)) => a == b,
+            (Output::Program(a), Output::Program(b)) => Arc::ptr_eq(&a.0, &b.0),
+            (Output::Pairs(a), Output::Pairs(b)) => a == b,
+            (Output::Pairs(_) | Output::View(_), Output::Pairs(_) | Output::View(_)) => {
+                let (a, b) = (self.clone().into_pairs().expect("pairs"), other.clone().into_pairs().expect("pairs"));
+                a.len() == b.len() && a.iter().eq(b.iter())
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Output {}
+
+/// Pairs read in place: segments of a device's buffer, in order, the buffer kept as long as the view (decision
+/// 0100 §9). A probe's pairs are its threadgroups' blocks of the batch's arena, block by block in left row order.
+#[derive(Clone)]
+pub struct PairView {
+    /// What keeps the memory: the buffer's lease.
+    _keep: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    base: *const [u32; 2],
+    /// (first pair, pairs) of each segment.
+    segs: std::sync::Arc<[(u32, u32)]>,
+    len: usize,
+}
+
+// SAFETY: the memory is the kept buffer's, written by the device before the view was made and only read after.
+unsafe impl Send for PairView {}
+unsafe impl Sync for PairView {}
+
+impl PairView {
+    /// A view of `segs` of the pairs at `base`, whose memory `keep` holds.
+    ///
+    /// # Safety
+    /// Every segment is inside the memory `keep` holds, written and not written again while the view lives.
+    pub unsafe fn new(keep: std::sync::Arc<dyn std::any::Any + Send + Sync>, base: *const [u32; 2], segs: Vec<(u32, u32)>) -> PairView {
+        let len = segs.iter().map(|&(_, n)| n as usize).sum();
+        PairView { _keep: keep, base, segs: segs.into(), len }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The segments, as slices.
+    pub fn segments(&self) -> impl Iterator<Item = &[[u32; 2]]> + '_ {
+        // SAFETY: each segment is inside the kept memory (`new`'s contract).
+        self.segs.iter().map(|&(at, n)| unsafe { std::slice::from_raw_parts(self.base.add(at as usize), n as usize) })
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.segments().flatten().map(|p| (p[0], p[1]))
+    }
+}
+
+impl std::fmt::Debug for PairView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+/// A join's pairs: owned, or read in place.
+#[derive(Clone, Debug)]
+pub enum Pairs {
+    Owned(Vec<(u32, u32)>),
+    View(PairView),
+}
+
+impl Pairs {
+    pub fn len(&self) -> usize {
+        match self {
+            Pairs::Owned(v) => v.len(),
+            Pairs::View(v) => v.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn iter(&self) -> PairsIter<'_> {
+        match self {
+            Pairs::Owned(v) => PairsIter { cur: &[], owned: v.iter(), segs: None },
+            Pairs::View(v) => PairsIter { cur: &[], owned: [].iter(), segs: Some(Box::new(v.segments())) },
+        }
+    }
+}
+
+/// The pairs of [`Pairs::iter`], in order.
+pub struct PairsIter<'a> {
+    owned: std::slice::Iter<'a, (u32, u32)>,
+    cur: &'a [[u32; 2]],
+    segs: Option<Box<dyn Iterator<Item = &'a [[u32; 2]]> + 'a>>,
+}
+
+impl Iterator for PairsIter<'_> {
+    type Item = (u32, u32);
+    #[inline]
+    fn next(&mut self) -> Option<(u32, u32)> {
+        if let Some(&p) = self.owned.next() {
+            return Some(p);
+        }
+        loop {
+            if let Some((p, rest)) = self.cur.split_first() {
+                self.cur = rest;
+                return Some((p[0], p[1]));
+            }
+            self.cur = self.segs.as_mut()?.next()?;
+        }
+    }
 }

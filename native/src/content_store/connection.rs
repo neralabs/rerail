@@ -23,29 +23,29 @@ const BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 /// SQLite's own delays between the checks of a busy lock (`sqliteDefaultBusyCallback`).
 const BUSY_POLL_DELAYS_MS: [u64; 12] = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 type AttemptHook = Box<dyn FnMut(Duration) -> Duration>;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 type WaitHook = Box<dyn FnMut(usize)>;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Replaces `BUSY_DEADLINE` for writes on this thread, so a test reaches the deadline fast.
-    pub(crate) static BUSY_DEADLINE_OVERRIDE: std::cell::Cell<Option<Duration>> =
+    pub static BUSY_DEADLINE_OVERRIDE: std::cell::Cell<Option<Duration>> =
         const { std::cell::Cell::new(None) };
     /// Replaces the busy timeout (one attempt's wait) of writes on this thread, so a test's
     /// deadline spans many attempts instead of one or two: a scheduler stall
     /// then cannot decide how many retries it sees.
-    pub(crate) static BUSY_TIMEOUT_OVERRIDE: std::cell::Cell<Option<Duration>> =
+    pub static BUSY_TIMEOUT_OVERRIDE: std::cell::Cell<Option<Duration>> =
         const { std::cell::Cell::new(None) };
 
     /// Runs on each of this thread's write attempts that found the store busy, with how long the
     /// operation's writes have waited so far, and returns time to add to that wait without
     /// sleeping it: a test spends a deadline without waiting for it.
-    pub(crate) static BUSY_ATTEMPT_HOOK: RefCell<Option<AttemptHook>> =
+    pub static BUSY_ATTEMPT_HOOK: RefCell<Option<AttemptHook>> =
         const { RefCell::new(None) };
     /// Runs on each check of a busy lock inside SQLite on this thread, with the number of checks
     /// so far in that wait: a test releases a writer once another is waiting on it.
-    pub(crate) static BUSY_WAIT_HOOK: RefCell<Option<WaitHook>> =
+    pub static BUSY_WAIT_HOOK: RefCell<Option<WaitHook>> =
         const { RefCell::new(None) };
 }
 
@@ -75,12 +75,12 @@ thread_local! {
 /// Once it is spent, a write makes a single attempt, and reports `Busy` if that finds the store
 /// held, without retrying; a free store is still written. Writes outside a deadline
 /// (maintenance) keep a deadline of their own. Entering one inside another joins the outer one.
-pub(crate) struct OperationDeadline {
+pub struct OperationDeadline {
     owned: bool,
 }
 
 impl OperationDeadline {
-    pub(crate) fn enter() -> Self {
+    pub fn enter() -> Self {
         let owned = OPERATION_WAITED.get().is_none();
         if owned {
             OPERATION_WAITED.set(Some(Duration::ZERO));
@@ -98,7 +98,7 @@ impl Drop for OperationDeadline {
 }
 
 fn busy_deadline() -> Duration {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(deadline) = BUSY_DEADLINE_OVERRIDE.get() {
         return deadline;
     }
@@ -133,7 +133,7 @@ pub(super) fn retry_busy<T>(
             Err(StoreError::Busy) => {
                 let attempted = attempt_started.elapsed();
                 waited = waited.saturating_add(attempted);
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 {
                     let spent = waited;
                     waited = waited.saturating_add(BUSY_ATTEMPT_HOOK.with(|hook| {
@@ -191,7 +191,7 @@ fn wait_for_writer(checks: i32) -> bool {
     else {
         return false;
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     BUSY_WAIT_HOOK.with(|hook| {
         if let Some(hook) = hook.borrow_mut().as_mut() {
             hook(usize::try_from(checks).unwrap_or_default());
@@ -209,7 +209,7 @@ fn wait_for_writer(checks: i32) -> bool {
 }
 
 fn busy_timeout() -> Duration {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(timeout) = BUSY_TIMEOUT_OVERRIDE.get() {
         return timeout;
     }
@@ -217,8 +217,8 @@ fn busy_timeout() -> Duration {
 }
 
 /// How long the writes under this thread's `OperationDeadline` have waited so far.
-#[cfg(test)]
-pub(crate) fn operation_waited() -> Option<Duration> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn operation_waited() -> Option<Duration> {
     OPERATION_WAITED.get()
 }
 
@@ -310,7 +310,36 @@ impl ThreadConnection {
 /// A connection's page cache at rest, in KiB.
 pub(super) const CACHE_KIB: i64 = 1_024;
 
+/// When profiling, each statement of a store connection is reported to the profile, which counts the ones a wave's
+/// thread runs while waves are under way as hazards (decision 0104: no wave waits for SQL).
+fn trace_for_hazards(connection: &Connection) {
+    use rusqlite::ffi;
+    unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
+        if event == ffi::SQLITE_TRACE_PROFILE as u32 {
+            // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
+            let (text, ns) = unsafe { (std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())).to_string_lossy(), *x.cast::<i64>() as u64) };
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            super::hazards::sql_in_wave("store", &text, ns);
+        }
+        0
+    }
+    if super::hazards::on() {
+        // SAFETY: the callback keeps no state; the connection is live.
+        unsafe { ffi::sqlite3_trace_v2(connection.handle(), ffi::SQLITE_TRACE_PROFILE as u32, Some(trace), std::ptr::null_mut()) };
+    }
+}
+
+/// SQL functions every connection gets, beside the store's own: the engine's, set as it loads.
+static CONNECTION_FUNCTIONS: std::sync::OnceLock<fn(&Connection) -> rusqlite::Result<()>> = std::sync::OnceLock::new();
+
+/// Sets the SQL functions every connection the store opens gets, beside its own; the first setting stays. The
+/// engine sets them as it loads, before it opens a store.
+pub fn set_connection_functions(install: fn(&Connection) -> rusqlite::Result<()>) {
+    let _ = CONNECTION_FUNCTIONS.set(install);
+}
+
 pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
+    trace_for_hazards(connection);
     connection.set_prepared_statement_cache_capacity(128);
     connection.busy_handler(Some(wait_for_writer))?;
     // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the
@@ -334,8 +363,10 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.pragma_update(None, "temp_store", "MEMORY")?;
     super::postings::install(connection)?;
     super::vocabulary::install(connection)?;
-    crate::code_rule_dsl::text::install(connection)?;
-    crate::code_rule_dsl::prefilter::tapes::install(connection)?;
+    // The engine's SQL functions (its text tests, the prefilter's tapes), handed over as it loads.
+    if let Some(install) = CONNECTION_FUNCTIONS.get() {
+        install(connection)?;
+    }
     // `atoms` over this process's arena, and the commit hook that keeps pending atoms out of
     // committed rows (decision 0049).
     super::atoms::Atoms::install(connection)?;
@@ -347,7 +378,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
 /// with the heap's (`purge_allocator_pages`) instead of staying fragmented in the system's zones:
 /// a slice's prefilter and ingest held ~140 MB there for ~30 MB live (O30).
 #[cfg(not(any(windows, target_family = "wasm")))]
-pub(crate) fn sqlite_on_jemalloc() {
+pub fn sqlite_on_jemalloc() {
     use std::ffi::{c_int, c_void};
     static ONCE: std::sync::Once = std::sync::Once::new();
     unsafe extern "C" fn allocate(bytes: c_int) -> *mut c_void {
@@ -418,12 +449,12 @@ impl Drop for NoBusyWait {
 impl ContentStore {
     /// A new connection to this store's file, configured as the store's own: for an owner that
     /// keeps its own temp schema and modules (the waves' SQL owner).
-    pub(crate) fn open_connection(&self) -> StoreResult<Connection> {
+    pub fn open_connection(&self) -> StoreResult<Connection> {
         open_runtime_connection(&self.database_path)
     }
 
     /// The store's file.
-    pub(crate) fn database_path(&self) -> &Path {
+    pub fn database_path(&self) -> &Path {
         &self.database_path
     }
 

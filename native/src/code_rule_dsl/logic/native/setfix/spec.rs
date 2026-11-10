@@ -101,7 +101,7 @@ pub struct JoinSpec {
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
 /// (`base`), plus its table's rows when `seeded`. A `base` with no relation gone (`-`) is a copy of the kept
 /// relation, its levels with it (decision 0090's `h__live`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Start {
     Rows,
     Empty,
@@ -111,7 +111,7 @@ pub enum Start {
 }
 
 /// An edge rule (`rule …`): see the module's spec.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EdgeSpec {
     pub head: usize,
     pub src: usize,
@@ -124,10 +124,15 @@ pub struct EdgeSpec {
 }
 
 /// One spec line, after `name`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Line {
     Rel { name: String, types: String, start: Start },
     NoWrite,
+    /// The placement put the stratum on the device (decision 0095 §7).
+    Device,
+    /// Its recursive relations keep each row's level (decision 0090): a session maintains them by levels. Without it
+    /// no row has one, and a closure may run on the device (bit rows give reach, not distance).
+    Leveled,
     Request(usize),
     Produced(usize),
     Seed { head: usize, join: Arc<JoinSpec> },
@@ -141,14 +146,14 @@ pub enum Line {
 }
 
 /// A component: its name, then its lines in order (relations are numbered in order, probes are numbered in order).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ComponentSpec {
     pub name: String,
     pub lines: Vec<Line>,
 }
 
 /// A probe's new body (`reprobe`): SQL, a join, or the join it runs in the wave whose delta is the whole relation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Reprobe {
     Sql(String),
     Join(Arc<JoinSpec>),
@@ -409,6 +414,8 @@ impl std::fmt::Display for Line {
                 }
             }
             Line::NoWrite => f.write_str("nowrite"),
+            Line::Device => f.write_str("device"),
+            Line::Leveled => f.write_str("leveled"),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
@@ -491,6 +498,8 @@ impl ComponentSpec {
                     Line::Rel { name: at(1)?.to_owned(), types: at(2)?.to_owned(), start }
                 }
                 "nowrite" => Line::NoWrite,
+                "device" => Line::Device,
+                "leveled" => Line::Leveled,
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },

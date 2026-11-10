@@ -105,6 +105,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "spread" => &["n"],
         "next_sibling" => &["a", "b"],
         "visit_index" => &["n", "i"],
+        "node_order" => &["n", "k"],
         "ast_depth" => &["n", "k"],
         "line_count" => &["d", "k"],
         "end_line" => &["n", "l"],
@@ -173,7 +174,8 @@ impl Relation {
             Self::Batch { source, .. } => source.render(),
             Self::Bound { table, .. } => table.clone(),
             Self::DocRange { schema } => format!("{schema}stat_docrange"),
-            Self::Integers => "rdl_int".to_owned(),
+            // A series in the statement, not a table: no table is made for it in a run (decision 0104).
+            Self::Integers => "(WITH RECURSIVE rdl_i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM rdl_i WHERE i < 4096) SELECT i FROM rdl_i)".to_owned(),
             Self::Cte(name) => name.clone(),
         }
     }
