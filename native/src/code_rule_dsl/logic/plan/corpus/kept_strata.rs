@@ -201,15 +201,6 @@ pub(in crate::code_rule_dsl) struct Part {
     cones: HashMap<String, std::collections::BTreeSet<String>>,
 }
 
-/// The fact space of the corpus at `root` that a maintained cross-file part is kept in.
-fn part_space(root: &Path) -> [u8; 32] {
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let mut h = Sha256::new();
-    h.update(b"rerail.space/v1\0cross-maintained\0");
-    h.update(root.to_string_lossy().as_bytes());
-    h.finalize().into()
-}
-
 /// Whether a new process maintains its cross-file part from the store (`RERAIL_KEPT_PART=off`: the per-stratum
 /// cut of `Kept` instead, to compare).
 pub(in crate::code_rule_dsl) fn part_wanted() -> bool {
@@ -253,7 +244,8 @@ pub(in crate::code_rule_dsl) fn load(
     now: &HashMap<String, u64>,
 ) -> super::Result<(Option<super::retain::Retained>, Part)> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part kept, from the store".into());
-    let space = part_space(root);
+    // The fact space of the corpus at `root` that a maintained cross-file part is kept in.
+    let space = part_space(root, "cross-maintained");
     let (sccs, _) = crate::code_rule_dsl::logic::front::strata(prog).map_err(|e| super::Error::Plan(e.to_string()))?;
     let by_stratum: Vec<Vec<&crate::code_rule_dsl::logic::front::Rule>> = sccs.iter().map(|scc| prog.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect()).collect();
     let input_names: std::collections::HashSet<&str> = inputs.iter().map(|(r, _)| r.as_str()).collect();

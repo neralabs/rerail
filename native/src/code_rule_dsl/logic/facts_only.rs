@@ -185,6 +185,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
+    ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
+    ("code_rule_dsl/logic/native/setfix.rs", "FANOUT"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
@@ -194,6 +196,11 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
+    // The build's Python grammar, and what follows from it and a matcher's text alone (its single-field answers, its
+    // lowered code): the process's code, as a compiled rule's, not a run's result.
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "GRAMMAR"),
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "KEPT"),
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "LOWERED"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),

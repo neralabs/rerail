@@ -230,7 +230,10 @@ pub(in crate::code_rule_dsl) fn lower(prog: &mut Program) -> Vec<(String, String
         }
         out.push((rel, text, names));
     }
-    if !out.is_empty() && !prog.inputs.iter().any(|r| r == "docof") && prog.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == "docof"))) {
+    // `docof` is an input unless the program derives it already (`hiding` writes it as a view where documents are
+    // hidden): then the rules read the view, and an input of the same name would have no statistics.
+    let derived = prog.rules.iter().any(|r| r.head.rel == "docof");
+    if !out.is_empty() && !derived && !prog.inputs.iter().any(|r| r == "docof") && prog.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == "docof"))) {
         prog.decls.entry("docof".to_owned()).or_insert_with(|| vec![("n".to_owned(), "loc".to_owned()), ("d".to_owned(), "number".to_owned())]);
         prog.inputs.push("docof".to_owned());
     }
