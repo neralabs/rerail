@@ -92,10 +92,10 @@ jobs:
     # Pinned to a release commit. `reviewer_ref` is where the called workflow loads the reviewer's own code
     # from, so it is the same commit: Dependabot moves `uses:` alone, and `npm run check:pins` fails until
     # `npm run deps:sync` brings `reviewer_ref` along (scripts/deps/sync-pins.mjs).
-    uses: neralabs/reviewer/.github/workflows/review.yml@8bbc1d0f29e189f771151527c98e0a657bf6f392 # v0.1.1
+    uses: neralabs/reviewer/.github/workflows/review.yml@fefb172ecf6f3a44f43aec97d34fb35b5295dd09 # v0.1.2
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
-      reviewer_ref: 8bbc1d0f29e189f771151527c98e0a657bf6f392
+      reviewer_ref: fefb172ecf6f3a44f43aec97d34fb35b5295dd09
       allow_approve: true
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
