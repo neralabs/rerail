@@ -19,7 +19,7 @@ pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, R
 pub(crate) use connection::sqlite_on_jemalloc;
 mod cross_rows;
 mod derivation;
-mod kept_strata;
+mod frames;
 mod facts_memo;
 mod objects;
 pub(crate) mod observe;
@@ -55,9 +55,10 @@ mod tree_result_segments;
 mod tests;
 mod workspaces;
 pub(crate) mod working_set;
+pub mod write_back;
 
 pub(crate) use compression::compress;
-pub use kept_strata::{KeptPut, KeptRows};
+pub use frames::{Put as FramePut, Rel as FrameRel, Rows as FrameRows, Stored as FrameStored};
 pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;
 pub use atoms::Sym;
@@ -621,6 +622,9 @@ pub struct ContentStore {
     working_set: working_set::WorkingSet,
     /// The owner and lease under which this handle pins each source it stores or finds (`hold_sources`, O95).
     holder: parking_lot::Mutex<Option<(String, i64)>>,
+    /// The store's writer, shared by its handles in this process (`write_back`, decision 0102); `None` for the
+    /// writer's own handle, which writes at once.
+    write_back: Option<std::sync::Arc<write_back::Writer>>,
     /// This handle's shared collection lease (`hold_collection`).
     lease: std::sync::Arc<collection_guard::SharedLease>,
     #[cfg(test)]
@@ -635,6 +639,8 @@ impl Drop for ContentStore {
     /// Appends the atoms still pending (decision 0049 §4.3); another handle or the next open
     /// writes them if this fails, and nothing durable names them meanwhile.
     fn drop(&mut self) {
+        // The queued writes first: they may name atoms this handle still holds.
+        self.end_writer();
         if self.atoms.pending()
             && let Err(error) = self.immediate_transaction(|_| Ok(()))
         {
@@ -644,6 +650,30 @@ impl Drop for ContentStore {
 }
 
 impl ContentStore {
+    /// A handle of the same store for the writer's thread (`write_back`): the same atoms, caches of its own, no writer
+    /// (it writes at once) and each job's holder.
+    fn sibling(&self) -> ContentStore {
+        ContentStore {
+            database_path: self.database_path.clone(),
+            connection: ThreadConnection { database_path: self.database_path.clone() },
+            compression_level: self.compression_level,
+            decompressed_cache: Mutex::new(DecompressedReadCache::new(DEFAULT_READ_CACHE_BYTES, DEFAULT_DECOMPRESSED_CACHE_TTL)),
+            local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
+            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
+            atoms: std::sync::Arc::clone(&self.atoms),
+            working_set: working_set::WorkingSet::default(),
+            holder: parking_lot::Mutex::new(None),
+            write_back: None,
+            lease: Default::default(),
+            #[cfg(test)]
+            git_tree_lookup_count: AtomicUsize::new(0),
+            #[cfg(test)]
+            git_tree_write_count: AtomicUsize::new(0),
+            #[cfg(test)]
+            git_tree_transactions: AtomicUsize::new(0),
+        }
+    }
+
     /// The store's RAM working set (`working_set`, decision 0024 §5).
     pub(crate) fn working_set(&self) -> &working_set::WorkingSet {
         &self.working_set
@@ -681,6 +711,7 @@ impl ContentStore {
             atoms: if created { atoms::Atoms::fresh(path) } else { atoms::Atoms::for_path(path) },
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
+            write_back: Some(write_back::register(path)),
             lease: Default::default(),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),
