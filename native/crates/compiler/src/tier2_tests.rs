@@ -98,3 +98,51 @@ fn the_crate_assembles_only_a_parsers_program() {
     assert!(rir_asm::assemble(matcher).is_err(), "a matcher's words");
     assert!(rir_asm::assemble("program sha256:00\n  0000 STOP 0\n").is_err(), "a digest");
 }
+
+/// Shared arms (`native_cpu_stream::shared_runs`) on every ladder step: each place of a body
+/// holds the body's words, runs do share, and refusals inside a place that is not its body's
+/// first say that place's word (the equality above checks the word; this, that it happens).
+#[test]
+fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
+    let mut steps: Vec<_> = std::fs::read_dir(DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
+    steps.sort();
+    let (mut runs, mut bodies, mut inside) = (0, 0, 0);
+    for path in steps {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(&path).expect("a step")).expect("parses");
+        let ids = Ids::default();
+        let kind = |n: &str| Some(ids.of(n));
+        let field = |n: &str| Some(ids.of(&format!("field {n}")));
+        let symbols = Symbols { kind: &kind, field: &field };
+        let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
+        let words = rir_asm::assemble(&compiled.text()).expect("assembles");
+        let structure = native_ir::lower(&words, 0, 0).expect("lowers");
+        let pushes: Vec<u16> = structure.structural.iter().filter_map(|w| if let native_ir::StructuralOperation::Push { target } = w.operation { Some(target) } else { None }).collect();
+        let shared = crate::native_cpu_stream::shared_runs(&structure, &pushes);
+        let ops = |a: usize, b: usize| structure.structural[a..b].iter().map(|w| w.operation).collect::<Vec<_>>();
+        for (&s, &(b, ti)) in &shared.at {
+            let body = &shared.bodies[b];
+            let len = body.end - body.start;
+            assert_eq!(ops(s, s + len), ops(body.start, body.end), "{name}: the place at {s} holds its body's words");
+            assert!(matches!(structure.structural[s + len].operation, native_ir::StructuralOperation::Goto { target } if target == body.targets[ti]), "{name}: the place at {s} goes on to its own target");
+        }
+        runs += shared.at.len();
+        bodies += shared.bodies.len();
+        // Every prefix of every document, each by the interpreters and the compiled code: the
+        // refusals inside shared places, counted, give the same word.
+        let parser = Parser::new(&structure).expect("Cranelift compiles");
+        let block = &words.block_programs[0];
+        for doc in DOCUMENTS {
+            for cut in 0..=doc.len() {
+                let bytes = &doc.as_bytes()[..cut];
+                let want = stream::run(&words, bytes, &block.run(bytes)).map_err(|r| r.pc);
+                assert_eq!(parser.parse(bytes).map_err(|r| r.pc), want, "{name}: {:?}", String::from_utf8_lossy(bytes));
+                if let Err(pc) = want {
+                    inside += usize::from([pc.wrapping_sub(1), pc].iter().any(|&pc| (pc as usize) < shared.skipped.len() && shared.skipped[pc as usize]));
+                }
+            }
+        }
+    }
+    assert!(bodies < runs, "{runs} runs, {bodies} bodies: none shared");
+    assert!(inside > 0, "no document refuses inside a shared place that is not its body's first");
+}

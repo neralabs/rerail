@@ -63,6 +63,23 @@ tree json {
   from 438 states to 284 and from 4,014 arms to 2,881. But tier 2's words do not change
   (12,915 either way): its words are merged where they act alike (`merge_words`), so those
   states were one copy of code already.
+
+- **Shared arms.** Tier 2's code also has one copy of each arm body. An arm is a run of
+  plain words (its span, keyword check and acts) ending in a `GOTO`. Runs with the same words
+  are one body, lowered once. Each place enters it with the index of its own target, and the
+  body ends in a jump table on that index. A refusal inside the body names the place's own
+  word: the place also sets how far its words are from the body's.
+
+  The shape check reads the control-flow graph, where a body's jump reaches every place's
+  target, not only its own. A cycle there that passes no `TOKEN` is refused, even though it
+  cannot happen. So places share only while the word graph, with each body's jump to all its
+  targets, has no such cycle; a place whose false edge closes one keeps its own body.
+
+  On `.rr`, 1,620 runs become 379 bodies: 6,090 words lowered as 1,900. Tier 2's machine
+  code goes from 261K to 246K instructions, while its stack loads and stores go from 66K to
+  98K. The words were not most of the code: tier 2 keeps about 20 state variables in SSA,
+  and each block where paths meet carries all of them. A shared body is such a block for
+  hundreds of places.
 - **Every token is a leaf node,** as before; `skip` bytes are in none.
 - The root spans the file from its first token to the file's end, as tree-sitter's does
   (trailing whitespace included).

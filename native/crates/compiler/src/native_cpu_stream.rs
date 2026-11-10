@@ -744,6 +744,176 @@ fn table(f: &mut FunctionBuilder<'_>, cols: [Value; 2], count: Value, stack: Val
     f.ins().return_(&[zero]);
 }
 
+/// A body of shared arms (`shared_runs`): its words, from `start` (its first place) to the
+/// `GOTO` that ends it, and the places its places go on to.
+pub struct SharedBody {
+    pub start: usize,
+    pub end: usize,
+    pub targets: Vec<u16>,
+}
+
+/// Runs of words lowered once for every place that has them (`shared_runs`).
+pub struct SharedRuns {
+    pub bodies: Vec<SharedBody>,
+    /// Each place a run starts at: its body, and its target's index in the body's `targets`.
+    pub at: std::collections::HashMap<usize, (usize, usize)>,
+    /// Each body's last word: its `GOTO`, at the body's first place.
+    pub ends: std::collections::HashMap<usize, usize>,
+    /// The words of a run that is not its body's first place: never lowered.
+    pub skipped: Vec<bool>,
+}
+
+/// A word that only goes on to the next, or refuses: an arm's span, keyword check and acts.
+fn plain(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. }
+    )
+}
+
+/// Arms that differ only in where they go on are one copy of code. A run is the plain words
+/// (`plain`) before a `GOTO`, none of them but the first entered from elsewhere; runs with the
+/// same words that go on to a `TOKEN` are one body, lowered at its first place. Each place enters the body with the
+/// index of its `GOTO`'s target, and the body's end jumps by it (a jump table): an indirect
+/// jump an arm, as simdjson's stage 2 takes one a token, for code the size of the distinct
+/// arms instead of every arm's.
+pub fn shared_runs(native: &Structure, pushes: &[u16]) -> SharedRuns {
+    let words = &native.structural;
+    let n = words.len();
+    // Entered other than by falling from a plain word before it.
+    let mut entered = vec![false; n + 1];
+    entered[0] = true;
+    for pc in 0..n {
+        let mut next = successors(native, pushes, pc);
+        if matches!(words[pc].operation, Op::Token { .. }) {
+            next.push(pc + 1);
+        }
+        for t in next {
+            if !(t == pc + 1 && plain(&words[pc].operation)) {
+                entered[t] = true;
+            }
+        }
+    }
+    // Each run: its first place, its `GOTO`, the target, and its words.
+    let mut occ: Vec<(usize, usize, u16, Vec<Op>)> = Vec::new();
+    for g in 0..n {
+        let Op::Goto { target } = words[g].operation else { continue };
+        if entered[g] {
+            continue;
+        }
+        let mut s = g;
+        while s > 0 && plain(&words[s - 1].operation) && !entered[s] {
+            s -= 1;
+        }
+        if s < g {
+            occ.push((s, g, target, words[s..g].iter().map(|w| w.operation).collect()));
+        }
+    }
+    // Runs alone: each its own body. Sharing makes a body's jump reach every place's target on
+    // the graph (not at run time: a place's index picks its own), and the shape check reads the
+    // graph: a cycle that passes no `TOKEN` there is refused. So runs share, and where a cycle
+    // appears that a shared jump closes, the run whose jump goes where its own does not is
+    // alone; again, until none is left.
+    let chains = bounds(native).chains;
+    let mut alone = vec![false; occ.len()];
+    let goto_of: std::collections::HashMap<usize, usize> = occ.iter().enumerate().map(|(i, o)| (o.1, i)).collect();
+    loop {
+        let mut keys: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut body_of = vec![0usize; occ.len()];
+        let mut targets: Vec<Vec<u16>> = Vec::new();
+        for (i, (_, _, t, ops)) in occ.iter().enumerate() {
+            let key = if alone[i] { format!("{ops:?} to {t}") } else { format!("{ops:?}") };
+            let b = *keys.entry(key).or_insert_with(|| {
+                targets.push(Vec::new());
+                targets.len() - 1
+            });
+            if !targets[b].contains(t) {
+                targets[b].push(*t);
+            }
+            body_of[i] = b;
+        }
+        // The graph: a word's ways on (`TOKEN` and, where returns chain, `RETURN` cut: the
+        // shape check's loop heads), a run's `GOTO` to each of its body's targets.
+        let next = |pc: usize| -> Vec<usize> {
+            if let Some(&i) = goto_of.get(&pc) {
+                return targets[body_of[i]].iter().map(|&t| usize::from(t)).filter(|&t| t < n).collect();
+            }
+            if chains && matches!(words[pc].operation, Op::Return { .. }) {
+                return Vec::new();
+            }
+            successors(native, pushes, pc)
+        };
+        // A depth-first search for a cycle: 1 on the path, 2 done.
+        let mut mark = vec![0u8; n];
+        let mut found: Option<Vec<usize>> = None;
+        'search: for root in 0..n {
+            if mark[root] != 0 {
+                continue;
+            }
+            let mut stack: Vec<(usize, Vec<usize>)> = vec![(root, next(root))];
+            mark[root] = 1;
+            while let Some((pc, rest)) = stack.last_mut() {
+                let pc = *pc;
+                match rest.pop() {
+                    Some(q) if mark[q] == 1 => {
+                        let from = stack.iter().position(|(w, _)| *w == q).unwrap_or(0);
+                        let mut cycle: Vec<usize> = stack[from..].iter().map(|(w, _)| *w).collect();
+                        cycle.push(q);
+                        found = Some(cycle);
+                        break 'search;
+                    }
+                    Some(q) if mark[q] == 0 => {
+                        mark[q] = 1;
+                        let nq = next(q);
+                        stack.push((q, nq));
+                    }
+                    Some(_) => {}
+                    None => {
+                        mark[pc] = 2;
+                        stack.pop();
+                    }
+                }
+            }
+        }
+        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() && found.is_none() {
+            let words_in: usize = occ.iter().map(|o| o.1 - o.0 + 1).sum();
+            let kept: usize = (0..targets.len()).map(|b| occ.iter().enumerate().find(|(i, _)| body_of[*i] == b).map_or(0, |(_, o)| o.1 - o.0 + 1)).sum();
+            eprintln!("shared runs: {} runs, {} alone, {} bodies; {words_in} words in runs, {kept} lowered", occ.len(), alone.iter().filter(|a| **a).count(), targets.len());
+        }
+        let Some(cycle) = found else {
+            let mut out = SharedRuns { bodies: Vec::new(), at: std::collections::HashMap::new(), ends: std::collections::HashMap::new(), skipped: vec![false; n] };
+            let mut first: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            for (i, (s, g, t, _)) in occ.iter().enumerate() {
+                let b = body_of[i];
+                let body = *first.entry(b).or_insert_with(|| {
+                    out.bodies.push(SharedBody { start: *s, end: *g, targets: targets[b].clone() });
+                    out.ends.insert(*g, out.bodies.len() - 1);
+                    out.bodies.len() - 1
+                });
+                let ti = out.bodies[body].targets.iter().position(|x| x == t).expect("a target of its body");
+                out.at.insert(*s, (body, ti));
+                if out.bodies[body].start != *s {
+                    for k in s + 1..=*g {
+                        out.skipped[k] = true;
+                    }
+                }
+            }
+            return out;
+        };
+        // The runs on the cycle whose jump goes on where their own `GOTO` does not: alone.
+        let mut split = false;
+        for w in cycle.windows(2) {
+            if let Some(&i) = goto_of.get(&w[0])
+                && usize::from(occ[i].2) != w[1]
+            {
+                alone[i] = true;
+                split = true;
+            }
+        }
+        assert!(split, "a cycle on the words' own graph: the shape check refuses the program");
+    }
+}
+
 pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
     let words = &native.structural;
     let pushes = push_targets(native);
@@ -847,6 +1017,9 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         f.def_var(v.need, one);
         let before_first = f.ins().iconst(types::I64, -1);
         f.def_var(v.lw, before_first);
+        let (sel, shift) = (f.declare_var(types::I64), f.declare_var(types::I64));
+        f.def_var(sel, zero);
+        f.def_var(shift, zero);
         match wb.first() {
             Some(&b) => f.ins().jump(b, &[]),
             None => f.ins().jump(off_end, &[]),
@@ -870,8 +1043,47 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
             f.ins().istore32(flags, x, at, 0);
         };
 
+        // Shared arms (`shared_runs`): each run's code is made once, at its first place; every
+        // place enters it with the run's next place (an index into its targets) and the shift
+        // of its words from the first place's, for a refusal's word.
+        let shared = shared_runs(native, &pushes);
+        let entries: Vec<Block> = shared.bodies.iter().map(|_| f.create_block()).collect();
         for (pc, w) in words.iter().enumerate() {
-            f.switch_to_block(wb[pc]);
+            if shared.skipped[pc] {
+                continue;
+            }
+            if let Some(&(body, ti)) = shared.at.get(&pc) {
+                let first = shared.bodies[body].start;
+                f.switch_to_block(wb[pc]);
+                let i = f.ins().iconst(types::I64, ti as i64);
+                f.def_var(sel, i);
+                let sh = f.ins().iconst(types::I64, pc as i64 - first as i64);
+                f.def_var(shift, sh);
+                f.ins().jump(entries[body], &[]);
+                if pc != first {
+                    continue;
+                }
+                f.switch_to_block(entries[body]);
+            } else {
+                f.switch_to_block(wb[pc]);
+            }
+            if let Some(&body) = shared.ends.get(&pc) {
+                // The run's end: its place's next word, by the index the place gave.
+                let zero = f.ins().iconst(types::I64, 0);
+                f.def_var(shift, zero);
+                let targets = &shared.bodies[body].targets;
+                if let [t] = targets.as_slice() {
+                    f.ins().jump(word(*t), &[]);
+                } else {
+                    let i = f.use_var(sel);
+                    let i = f.ins().ireduce(types::I32, i);
+                    let calls: Vec<_> = targets.iter().map(|&t| f.func.dfg.block_call(word(t), &[])).collect();
+                    let default = f.func.dfg.block_call(off_end, &[]);
+                    let jt = f.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
+                    f.ins().br_table(i, jt);
+                }
+                continue;
+            }
             let fall = wb.get(pc + 1).copied().unwrap_or(off_end);
             match w.operation {
                 Op::Token { .. } => {
@@ -1656,6 +1868,9 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         f.ins().jump(refuse, &[BlockArg::from(past)]);
         f.switch_to_block(refuse);
         let pc = f.block_params(refuse)[0];
+        // Inside a shared run, its words are the first place's: the shift makes them this one's.
+        let sh = f.use_var(shift);
+        let pc = f.ins().iadd(pc, sh);
         f.ins().return_(&[pc]);
         f.seal_all_blocks();
         f.finalize();
@@ -1665,7 +1880,12 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
     }
     shape.map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
     let mut clif = context.func.display().to_string();
-    crate::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
+    crate::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|e| {
+        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+            eprintln!("tier 2: {e:?}");
+        }
+        Error::BackendFailure
+    })?;
     let mut disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
     module.clear_context(&mut context);
     let calls = clif.lines().filter(|l| l.trim().starts_with("call ") || l.contains(" = call ")).count();
