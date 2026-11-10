@@ -19,6 +19,7 @@
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
 mod setfix;
+pub(crate) use setfix::DERIVATIONS;
 pub(in crate::code_rule_dsl) use setfix::forget_scope;
 pub(in crate::code_rule_dsl) mod aggregation;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
@@ -34,7 +35,8 @@ pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_b
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
     pub(in crate::code_rule_dsl) use super::setfix::lab;
-    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_empty, live, materialize, open, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe, run, step_counts, table_source, tables_built, unindex};
+    pub(in crate::code_rule_dsl) use super::setfix::spec;
+    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, cat_symbols, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, run, step_counts, table_source, tables_built, unindex};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};

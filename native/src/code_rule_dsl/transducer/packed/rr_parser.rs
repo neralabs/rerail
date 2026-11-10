@@ -28,6 +28,14 @@ pub(super) struct Compiled {
     pub(super) parser: native_cpu_stream::Parser,
     /// Tier 1's cost by grammar statement, for the profile.
     pub(super) costs: Vec<bitlex_compile::Cost>,
+    /// Each tier 1 operation's statement (`bitlex_compile::Compiled::origin`), for the profile.
+    pub(super) origin: Vec<String>,
+    /// Tier 1's named values (`bitlex_compile::Compiled::values`), for the analyses (`token_local`).
+    pub(super) values: Vec<bitlex_compile::Named>,
+    /// Tier 1's block program, as assembled.
+    pub(super) block: super::block::BlockProgram,
+    /// Each output's label (`bitlex_compile::Compiled::labels`).
+    pub(super) labels: Vec<(String, u16)>,
     /// Tier 1's program as lowered, for its other executors (Metal).
     pub(super) native: super::native_ir::BlockNative,
     /// Tier 1's block program as text, for the profile's operation mix.
@@ -69,7 +77,7 @@ fn compile() -> Result<Compiled, String> {
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program).map_err(|e| format!("lowers: {e:?}"))?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs()[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
 }
 
 /// `src`'s node table, as tier 2 writes it: from the compiled grammar, or, for a file the grammar
@@ -160,7 +168,7 @@ pub(super) fn compile_error() -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     /// The compiled grammar's tape is the engine's, node for node (extras and parents too), on
     /// documents it parses; the ones it leaves to the engine come back from there.
     #[test]
@@ -392,7 +400,7 @@ mod tests {
     }
 
     /// The repository's `.rr` files.
-    fn corpus() -> Vec<String> {
+    pub(in crate::code_rule_dsl::transducer::packed) fn corpus() -> Vec<String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("the repository").to_path_buf();
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
@@ -415,7 +423,10 @@ mod tests {
     /// per stage of `Parser::parse` and of the tape's conversion (each stage summed over the
     /// files, a pass's mean of `REPEAT`); tier 1 over the files as one batch (its speed without
     /// the per-file cost); then hazards in the machine code: its size, its stack spills and
-    /// reloads, its branches and fixed points' loops. `RERAIL_RR_PROF_DIR`: each function's
+    /// reloads, its branches and fixed points' loops; and why tier 1 spills: each pass's
+    /// register pressure in its hot loop before allocation, and the values most live while it
+    /// is over the registers, each named by its row and Bitlex statement
+    /// (`native_cpu_pressure`). `RERAIL_RR_PROF_DIR`: each function's
     /// Cranelift IR and machine code written there, for a closer look. Run alone, at nice 19.
     #[test]
     #[ignore = "a profile: run by hand"]
@@ -529,6 +540,85 @@ mod tests {
             eprintln!("  pass {k}: {:<8} {:>5} CLIF lines {n:>5} instructions {sp:>5} spills {br:>4} branches; gated {}, loops {}, ASCII branch {}", if pass.back { "backward" } else { "forward" }, pass.clif.lines().count(), pass.gate_branches, pass.round_branches, pass.ascii_branch);
         }
         eprintln!("tier 2 code: {n2} instructions, {sp2} stack loads/stores, {br2} conditional branches");
+        // Why tier 1 spills: what is live where, before register allocation
+        // (`native_cpu_pressure`). Each value is named by the operation that made it (its row
+        // in `tier1.rows`) and the Bitlex statement that made the operation.
+        let mut row_text: std::collections::HashMap<u32, String> = Default::default();
+        for line in c.rows.lines() {
+            if let Some((lhs, rhs)) = line.split_once(" = ")
+                && let Some(k) = lhs.split_whitespace().last().and_then(|v| v.strip_prefix('%')).and_then(|v| v.parse().ok())
+            {
+                row_text.insert(k, rhs.chars().take(28).collect());
+            }
+        }
+        let name = |o: Option<u32>, made: &str| match o {
+            None => format!("{made:<14} (unmarked: the loop's, not a value's)"),
+            Some(o) => {
+                let stmt = c.origin.get(o as usize).filter(|s| !s.is_empty()).map_or("(lowering)", String::as_str);
+                format!("{made:<14} %{o:<5} {:<28} {stmt}", row_text.get(&o).map_or("?", String::as_str))
+            }
+        };
+        use super::super::native_cpu_pressure::{INT_REGS, VEC_REGS};
+        eprintln!("tier 1 register pressure (before allocation; ~{INT_REGS} integer, ~{VEC_REGS} vector registers):");
+        let mut by_stmt: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+        for (k, pass) in p.tier1.passes.iter().enumerate().filter(|(_, pass)| !pass.back) {
+            let q = &pass.pressure;
+            let hp = q.hot_int.len().max(1) as f64;
+            eprintln!(
+                "  pass {k}: hot loop {} points, peak {} integer, {} vector; over the registers at {:.0}% of its points on integer, {:.0}% on vector (whole function {} points, peak {}/{})",
+                q.hot_int.len(),
+                q.hot_int.iter().max().unwrap_or(&0),
+                q.hot_vec.iter().max().unwrap_or(&0),
+                100.0 * q.hot_int_over as f64 / hp,
+                100.0 * q.hot_vec_over as f64 / hp,
+                q.points,
+                q.int_peak,
+                q.vec_peak
+            );
+            // Which statements' values are live at the peak.
+            let mut at: std::collections::BTreeMap<String, usize> = Default::default();
+            for (o, made) in &q.at_peak {
+                let o = *o;
+                let stmt = o.and_then(|o| c.origin.get(o as usize)).filter(|s| !s.is_empty()).cloned().unwrap_or_else(|| if o.is_some() { "(lowering)".into() } else { format!("(unmarked {})", made.split(" of ").next().unwrap_or("")) });
+                *at.entry(stmt).or_default() += 1;
+            }
+            let mut at: Vec<_> = at.into_iter().collect();
+            at.sort_by_key(|a| std::cmp::Reverse(a.1));
+            eprintln!("    live at the hot loop's peak, by statement: {}", at.iter().take(8).map(|(s, n)| format!("{n} {s}")).collect::<Vec<_>>().join("; "));
+            // The hot body's pressure, first to last, in 16 stretches (each its most live).
+            let curve = |v: &[usize]| -> String {
+                let n = v.len().max(1);
+                (0..16).map(|k| v[k * n / 16..((k + 1) * n / 16).max(k * n / 16 + 1).min(v.len())].iter().copied().max().unwrap_or(0).to_string()).collect::<Vec<_>>().join(" ")
+            };
+            if !q.hot_int.is_empty() {
+                eprintln!("    {} integer values live through the hot loop; integer live, first to last: {}", q.hot_through, curve(&q.hot_int));
+                if q.hot_vec.iter().any(|&v| v > 0) {
+                    eprintln!("      vector live, first to last: {}", curve(&q.hot_vec));
+                }
+            }
+            let loops: Vec<&super::super::native_cpu_pressure::Blame> = q.blame.iter().filter(|b| b.origin.is_none()).collect();
+            let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
+            for b in &loops {
+                *kinds.entry(if b.made.starts_with("param") { "parameters" } else { b.made.as_str() }).or_default() += 1;
+            }
+            eprintln!("    the loop's own values over the registers: {} ({})", loops.len(), kinds.iter().map(|(k, n)| format!("{n} {k}")).collect::<Vec<_>>().join(", "));
+            eprintln!("    most blamed of the body's values (points live while over the registers / points live):");
+            for b in q.blame.iter().filter(|b| b.origin.is_some()).take(15) {
+                eprintln!("    {:>6} / {:<6} {} {}", b.over, b.live, if b.vector { "v" } else { "x" }, name(b.origin, &b.made));
+            }
+            for b in &q.blame {
+                let stmt = b.origin.and_then(|o| c.origin.get(o as usize)).filter(|s| !s.is_empty()).cloned().unwrap_or_else(|| if b.origin.is_some() { "(lowering)".into() } else { format!("(unmarked {})", b.made.split(" of ").next().unwrap_or("")) });
+                let e = by_stmt.entry(stmt).or_default();
+                e.0 += b.over;
+                e.1 += 1;
+            }
+        }
+        let mut by_stmt: Vec<_> = by_stmt.into_iter().collect();
+        by_stmt.sort_by_key(|s| std::cmp::Reverse(s.1.0));
+        eprintln!("  blame by statement, the hot loops of all passes (points live while over the registers, values):");
+        for (s, (over, n)) in by_stmt.iter().take(15) {
+            eprintln!("    {over:>7} {n:>5}  {s}");
+        }
         if let Ok(dir) = std::env::var("RERAIL_RR_PROF_DIR") {
             let dir = std::path::PathBuf::from(dir);
             std::fs::create_dir_all(&dir).expect("the directory");

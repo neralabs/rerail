@@ -734,6 +734,49 @@ fn a_declared_generic_return_carries_the_receivers_binding() {
 }
 
 #[test]
+fn the_analysis_phase_binds_a_library_generics_type_variables_fits_overloads_and_leaves_async_calls_open() {
+    // calls_p3 over a miniature typeshed: `box.Box[V]`'s `get()` (the overload without a default) returns its `_T`,
+    // bound by the annotation to V; a loop over it calls `__iter__() -> It[_T]`, whose `__next__() -> _T` is then a V;
+    // an `async def`'s call holds a coroutine, so a method called on it is open.
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-generics");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\ntyping: 3.0-\nbox: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int:\n    def bit_length(self) -> int: ...\nclass str: ...\n").unwrap();
+    std::fs::write(lib.join("typing.pyi"), "class _SpecialForm: ...\nGeneric: _SpecialForm\ndef TypeVar(name: str) -> object: ...\ndef overload(f: object) -> object: ...\n").unwrap();
+    std::fs::write(
+        lib.join("box.pyi"),
+        "from typing import Generic, TypeVar, overload\n_T = TypeVar(\"_T\")\n_D = TypeVar(\"_D\")\nclass It(Generic[_T]):\n    def __next__(self) -> _T: ...\nclass Box(Generic[_T]):\n    def __iter__(self) -> It[_T]: ...\n    @overload\n    def get(self) -> _T: ...\n    @overload\n    def get(self, default: _D) -> _T | _D: ...\nasync def fetch() -> int: ...\n",
+    )
+    .unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "from box import Box, fetch\nclass V:\n    def run(self) -> int: ...\ndef f(b: Box[V]) -> None:\n    b.get().run()\n    for x in b:\n        x.run()\n    fetch().bit_length()\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
+    let starts: std::collections::HashMap<String, usize> =
+        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+    let at_line = |cell: &str| line(&src, starts[cell]);
+    let targets = read("call_target");
+    let mut to_v: Vec<u64> = targets.lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
+    to_v.sort();
+    assert_eq!(to_v, [5, 7], "V.run, through get()'s _T and the loop's __next__: {targets}");
+    let open: Vec<u64> = read("call_open").lines().map(|l| at_line(l.split('\t').next().unwrap())).collect();
+    assert_eq!(open, [8], "the method of an async call's coroutine: {}", read("call_open"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_class_decorator_declared_type_t_to_type_t_keeps_the_class() {
     // `deco(cls: type[T]) -> type[T]` gives back the class it decorates, whatever its body returns (an unknown
     // `wrap(cls)`): A stays A, so B's base is known and `b.m()` targets A.m. Only `wrap(cls)` is unknown.
@@ -936,6 +979,8 @@ fn benchmark_python_calls_program_corpus() {
     println!("cross-file memo: {} components found, {} derived", report.cross.0, report.cross.1);
     println!("phase 0: {}; {}", report.files_observed, report.phases.first().map_or("", |p| p.0));
     println!("calls.rr over {} files: rounds {:?}; {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.rounds, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
+    // The comparison below is the benchmark's, not the run's: its own span, for the memory sampler's peaks.
+    let compare = crate::code_rule_dsl::logic::profile::span(|| "benchmark: compare with Jedi".to_owned());
     let rows = |rel: &str| -> Vec<Vec<String>> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
@@ -1065,6 +1110,28 @@ fn benchmark_python_calls_program_corpus() {
             println!("    {e}");
         }
     }
+    drop(compare);
+    if crate::code_rule_dsl::logic::profile::on() {
+        println!("== Memory, the process's at the end\n{}", crate::code_rule_dsl::logic::profile::peaks());
+    }
+}
+
+/// A probe of the analysis phase: calls_p3 over `RERAIL_P3_PROBE_ROOT` (a small workspace, its `rerail.env` naming a
+/// typeshed), with `RERAIL_P3_PROBE_RULES` appended (rules over P3's own relations, each `.output` it adds printed).
+/// For asking why one call is open without the corpus's run.
+#[test]
+#[ignore = "a probe: set RERAIL_P3_PROBE_ROOT and RERAIL_P3_PROBE_RULES"]
+fn probe_the_analysis_phase() {
+    let root = PathBuf::from(std::env::var("RERAIL_P3_PROBE_ROOT").unwrap());
+    let rules = std::env::var("RERAIL_P3_PROBE_RULES").unwrap_or_default();
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-probe");
+    let text = format!("{}\n{JEDI_SPANS}\n{rules}\n", program("calls_p3"));
+    corpus::run(&text, &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let asked: Vec<String> = rules.lines().filter_map(|l| l.trim().strip_prefix(".output ")).flat_map(|l| l.split(',').map(|r| r.trim().to_owned())).collect();
+    for rel in ["call_target", "call_open", "call_lib"].into_iter().map(str::to_owned).chain(asked) {
+        println!("== {rel}\n{}", std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default());
+    }
+    let _ = std::fs::remove_dir_all(&out);
 }
 
 /// t26's first experiment: which rows of `calls_cx`'s run its outputs read. The liveness rules
@@ -1479,7 +1546,18 @@ fn spike_o125_replay() {
         }
     };
     session::start(&base.join("session")).unwrap();
+    // `O125_DERIVATIONS=<dir>` (with `RERAIL_SPIKE_DERIVATIONS`): each run's rows derived and rows new, by relation,
+    // `<dir>/<step>-<run>.tsv`: the derivations a counting scheme would keep a count of.
+    let derivations = |step: usize, what: &str| {
+        let taken = std::mem::take(&mut *crate::code_rule_dsl::logic::native::DERIVATIONS.lock().unwrap());
+        if let Some(dir) = std::env::var_os("O125_DERIVATIONS").map(PathBuf::from) {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("{step:02}-{what}.tsv")), taken.iter().map(|(r, (d, n))| format!("{r}\t{d}\t{n}\n")).collect::<String>()).unwrap();
+        }
+    };
+    derivations(0, "before");
     let cold = run();
+    derivations(a - 1, "cold");
     keep(a - 1, "cold");
     println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s; rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), outputs().iter().map(Vec::len).collect::<Vec<_>>());
     // `O125_FULL_ONLY`: each step a full run alone (to profile it apart from the session's runs).
@@ -1492,6 +1570,7 @@ fn spike_o125_replay() {
             continue;
         }
         let r = run();
+        derivations(step, "session");
         show_spans(step);
         keep(step, "session");
         let got = outputs();
@@ -1506,6 +1585,7 @@ fn spike_o125_replay() {
         }
         if std::env::var_os("O125_NO_FULL").is_none() && (each || step == b) {
             let f = session::full(run);
+            derivations(step, "full");
             keep(step, "full");
             let want = outputs();
             line += &format!("; full {:.1} s CPU, cross {:.1} s; same as full: {}", cpu(&f), phase(&f, "cross"), got == want);
