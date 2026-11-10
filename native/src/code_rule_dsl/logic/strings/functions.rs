@@ -90,6 +90,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("replace_all", &[Text, Text, Text], Text),
     ("convert", &[Text, Text, Text], Text),
     ("slice", &[Text, Number, Number], Text),
+    ("byte_slice", &[Text, Number, Number], Text),
     ("count_matches", &[Text, Text], Number),
     ("sha256", &[Text], Text),
     ("ed25519_ok", &[Text, Text, Text], Number),
@@ -264,6 +265,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "replace_all" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "convert" => Some(convert(t(0), t(1), t(2))),
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
+        "byte_slice" => byte_slice(t(0), numbers[0], numbers[1]),
         "rx_group" => super::group(t(0), t(1), t(2)),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
@@ -382,6 +384,12 @@ pub(in crate::code_rule_dsl) fn slice(s: &str, start: i64, end: i64) -> String {
     let at = |i: i64| (if i < 0 { n + i } else { i }).clamp(0, n) as usize;
     let (a, b) = (at(start), at(end));
     if a >= b { String::new() } else { chars[a..b].iter().collect() }
+}
+
+/// Half-open UTF-8 byte range, as stored on syntax nodes. Invalid ranges yield no value.
+pub(in crate::code_rule_dsl) fn byte_slice(s: &str, start: i64, end: i64) -> Option<String> {
+    let (start, end) = (usize::try_from(start).ok()?, usize::try_from(end).ok()?);
+    s.get(start..end).map(str::to_owned)
 }
 
 /// `@convert("max-age", "camelCase", "dash")` = `"maxAge"`. `seps` names the separators (`dash`, `underscore`,

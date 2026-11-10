@@ -1,0 +1,2 @@
+// Byte offsets are the syntax tape's coordinate system. Invalid UTF-8 boundaries yield no value.
+.functor byte_slice(source: symbol, start: number, end: number): symbol
