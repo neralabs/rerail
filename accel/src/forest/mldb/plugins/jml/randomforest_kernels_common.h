@@ -923,7 +923,13 @@ typedef struct TreeTrainingInfo {
     uint32_t numActiveBuckets;    ///< Number of buckets across all active features
     uint16_t featureSampling;     ///< Which feature sampling bag we belong to
     uint16_t featureVectorSampling; ///< Which feature vector sampling bag we belong to
+    uint32_t maxNumFinishedPartitions; ///< Length of the pool of every level's partition splits
 } TreeTrainingInfo;
+
+// TreeDepthInfo's status: 0 while the device trains; 1 when it has stopped (the next level is wider than its
+// partitions, or its splits would not fit the pool), leaving that level for the host, and every later kernel does
+// nothing; below 0 for an overflow (the tree is wrong).
+#define TREE_DEPTH_STATUS_STOPPED 1
 
 // [bucket, feature, partition]
 SYNC_FUNCTION(v1,
@@ -949,6 +955,10 @@ getPartitionSplitsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
                          uint16_t workerId, uint16_t workGroupSize,
                          uint16_t partitionWorkerId, uint16_t partitionWorkerSize)
 {
+    // The device has stopped: the host continues from this level.
+    if (treeDepthInfo->status != 0)
+        SYNC_RETURN();
+
     //using namespace std;
     //cerr << "getPartitionSplitsImpl: featureId " << featureId << " numActiveFeatures " << numActiveFeatures
     //    << " workerId " << workerId << " workGroupSize " << workGroupSize
@@ -1040,6 +1050,10 @@ bestPartitionSplitImpl)(CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
                        RWBUFFER(IndexedPartitionSplit) allPartitionSplitsOut,
                        uint16_t workerId, uint16_t numWorkers)
 {
+    // The device has stopped: the host continues from this level.
+    if (treeDepthInfo->status != 0)
+        return;
+
     const uint16_t numActiveFeatures = treeTrainingInfo->numActiveFeatures;
     const uint16_t numActivePartitions = treeDepthInfo->numActivePartitions;
     const uint16_t depth = treeDepthInfo->depth;
@@ -1170,6 +1184,10 @@ assignPartitionNumbersImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
     const uint16_t numActivePartitions = depth == 0 ? 1 : treeDepthInfo->numActivePartitions;
     const uint16_t maxNumActivePartitions = treeTrainingInfo->maxNumActivePartitions;
 
+    // A previous level stopped the device: nothing more to do.
+    if (depth != 0 && treeDepthInfo->status != 0)
+        SYNC_RETURN();
+
     allPartitionSplits += depth == 0 ? 0 : treeDepthInfo->numFinishedPartitions;
 
     if (workerId == 0) {
@@ -1230,6 +1248,24 @@ assignPartitionNumbersImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
     }
 
     ukl_threadgroup_barrier();
+
+    // Before writing anything for this level: each partition that goes on splitting needs a second number, from
+    // the stopped partitions' first and then past the active ones. When the next level would be wider than the
+    // partitions, or its splits would not fit the pool, the device stops here (the level's state is still the
+    // previous level's, which the host continues from); upstream dropped the partitions it had no number for.
+    {
+        uint32_t numInactive = atom_load(&localState->numInactivePartitions);
+        uint32_t numContinuing = numActivePartitions - numInactive;
+        uint32_t nextNumActive = numActivePartitions + (numContinuing > numInactive ? numContinuing - numInactive : 0);
+        uint32_t nextNumFinished = (depth == 0 ? 0 : treeDepthInfo->numFinishedPartitions) + numActivePartitions;
+        if (nextNumActive > maxNumActivePartitions
+            || nextNumFinished + nextNumActive > treeTrainingInfo->maxNumFinishedPartitions) {
+            ukl_threadgroup_barrier();
+            if (workerId == 0)
+                treeDepthInfo->status = TREE_DEPTH_STATUS_STOPPED;
+            SYNC_RETURN();
+        }
+    }
 
     //using namespace std;
     //cerr << "workerId = " << workerId << " numActivePartitions = " << numActivePartitions << endl;
@@ -1383,6 +1419,10 @@ clearBucketsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
                    uint16_t partitionWorkerId, uint16_t partitionWorkgroupSize,
                    uint32_t bucket)
 {
+    // The device has stopped: the host continues from this level.
+    if (treeDepthInfo->status != 0)
+        return;
+
     uint32_t numActiveBuckets = treeTrainingInfo->numActiveBuckets;
     uint16_t numActivePartitions = treeDepthInfo->numActivePartitions;
         
@@ -1452,6 +1492,10 @@ updatePartitionNumbersImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
                              uint32_t workerIdInGrid, uint32_t numWorkersInGrid,
                              uint16_t workerIdInWorkgroup, uint16_t numWorkersInWorkgroup)
 {
+    // The device has stopped: the host continues from this level.
+    if (treeDepthInfo->status != 0)
+        SYNC_RETURN();
+
     uint16_t depth = treeDepthInfo->depth - 1;
     uint32_t numRows = treeTrainingInfo->numRows;
     uint16_t numActivePartitions = treeDepthInfo->numActivePartitions;
@@ -1596,6 +1640,10 @@ updateBucketsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
                     uint16_t workerIdInWorkgroup, uint16_t numWorkersInWorkgroup,
                     uint16_t workerIdInGrid, uint16_t numWorkersInGrid)
 {
+    // The device has stopped: the host continues from this level.
+    if (treeDepthInfo->status != 0)
+        SYNC_RETURN();
+
     int16_t fidx = featureWorkerId - 1;  // -1 means wAll, otherwise it's the feature number
     const uint16_t numActivePartitions = treeDepthInfo[0].numActivePartitions;
     const uint32_t numActiveBuckets = treeTrainingInfo[0].numActiveBuckets;
@@ -1766,6 +1814,10 @@ fixupBucketsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
                    uint16_t partitionWorkerIdInGrid,
                    uint16_t partitionNumWorkersInGrid)
 {
+    // The device has stopped: the host continues from this level.
+    if (treeDepthInfo->status != 0)
+        return;
+
     uint32_t numActiveBuckets = treeTrainingInfo->numActiveBuckets;
     uint16_t numActivePartitions = treeDepthInfo->prevNumActivePartitions;
     uint32_t j = bucket;  // bucket number in partition

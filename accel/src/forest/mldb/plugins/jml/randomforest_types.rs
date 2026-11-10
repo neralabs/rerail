@@ -701,7 +701,13 @@ pub struct TreeTrainingInfo {
     pub feature_sampling: u16,
     /// Which feature vector sampling bag we belong to.
     pub feature_vector_sampling: u16,
+    /// Length of the pool of every level's partition splits (rerail's addition: the device stops before a level
+    /// whose splits would not fit).
+    pub max_num_finished_partitions: u32,
 }
+
+/// `TreeDepthInfo::status` once the device has stopped and left the rest of the tree to the host.
+pub const TREE_DEPTH_STATUS_STOPPED: u32 = 1;
 
 /// Sizing information for a depth iteration.
 #[repr(C)]
@@ -839,7 +845,7 @@ mod tests {
         assert_eq!(offset_of!(IndexedPartitionSplit, index), 32);
         // The kernels' own structs (randomforest_kernels_common.h).
         assert_eq!(size_of::<TreeDepthInfo>(), 28);
-        assert_eq!(size_of::<TreeTrainingInfo>(), 20);
+        assert_eq!(size_of::<TreeTrainingInfo>(), 24);
         assert_eq!(size_of::<UpdateWorkEntry>(), 12);
         assert_eq!(size_of::<PartitionInfo>(), 8);
         assert_eq!(size_of::<RowPartitionInfo>(), 2);
