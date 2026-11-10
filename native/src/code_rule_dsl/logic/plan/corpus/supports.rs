@@ -47,7 +47,7 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
         .collect();
     let mut n: BTreeMap<String, usize> = BTreeMap::new();
     // A cache (decision 0103) is maintained by its key, not by counting its derivations (`maintain::rewrite`).
-    let caches: BTreeSet<String> = front::caches::caches_here(prog).unwrap_or_default().into_iter().map(|c| c.out).collect();
+    let caches: BTreeSet<String> = front::caches::caches(prog).unwrap_or_default().into_iter().map(|c| c.out).collect();
     for rule in &prog.rules {
         let h = &rule.head.rel;
         let eligible = !recursive.contains(h) && !gated.contains(h) && !prog.natives.contains_key(h) && !prog.lattice.contains_key(h) && !prog.nullary.contains(h) && !caches.contains(h);

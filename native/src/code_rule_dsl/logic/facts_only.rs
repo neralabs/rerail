@@ -33,8 +33,6 @@ const FACT_STORE: &[&str] = &[
     "object_pins",
     "store_state",
     "push_pending",
-    // A `.cache`'s two relations between runs, by key (decision 0103 §2), written by the one writer.
-    "cache_rows",
     "rows",
     "git_alias",
     "git_trees",

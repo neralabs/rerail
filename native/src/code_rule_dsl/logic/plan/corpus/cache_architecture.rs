@@ -1,4 +1,4 @@
-//! Decision 0103 §7: a cache is two rules, and nothing else may be one. This test holds the stores' tables and the
+//! Decision 0103 §6: a cache is two rules, and nothing else may be one. This test holds the stores' tables and the
 //! freshness tests that were made before the decision. A table or a call that is not on its list fails, so a new
 //! cache cannot be made outside the form. An entry is removed when its cache moves to the two rules; none may be
 //! added.
@@ -38,9 +38,9 @@ const NOT_CACHES: &[&str] = &[
     "x", "rows", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 
-/// The relations' own storage between runs: a cache's rows by key (`cache_rows`, decision 0103 §2), and a cross
-/// part's derived relations (the kept strata).
-const RELATIONS: &[&str] = &["cache_rows", "kept_strata", "kept_strata_programs"];
+/// The relations' own storage between runs: what a cache's two rules are kept in (decision 0103 §2), as every
+/// relation is.
+const RELATIONS: &[&str] = &["kept_strata", "kept_strata_programs"];
 
 /// Caches made before decision 0103, each to move to the two rules (§7 lists each one's). This list may only shrink.
 const NOT_YET_MOVED: &[&str] = &[
@@ -113,7 +113,7 @@ fn no_cache_tests_its_own_freshness_but_those_not_yet_moved() {
         }
     }
     let extra: Vec<String> = found.iter().filter(|(file, needle)| !FRESHNESS_CALLS.iter().any(|(f, n, _)| f == file && n == needle)).map(|(f, n)| format!("{f}: {n}")).collect();
-    assert!(extra.is_empty(), "a cache tests its own freshness (decision 0103 §7: write its key rule instead): {extra:?}");
+    assert!(extra.is_empty(), "a cache tests its own freshness (decision 0103 §6: write its key rule instead): {extra:?}");
     for (file, needle, most) in FRESHNESS_CALLS {
         let calls = found.iter().filter(|(f, n)| f == file && n == needle).count();
         assert!(calls <= *most, "{file}: {calls} calls of {needle}, at most {most} while it is not yet moved");

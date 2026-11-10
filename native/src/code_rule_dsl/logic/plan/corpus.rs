@@ -33,7 +33,6 @@ mod scoping;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod kept_strata;
-mod cache_store;
 #[cfg(test)]
 mod cache_architecture;
 #[cfg(test)]
@@ -2117,19 +2116,6 @@ fn run_observed(
         .find(|o| !split.cross.rules.iter().filter(|r| &r.head.rel == *o).all(|r| matches!(r.body.as_slice(), [front::Literal::Atom(a)] if !a.neg && split.exports.contains(&a.rel))))
         .cloned();
     let (mut local, mut cross) = (part(split.local), part(split.cross));
-    // A cache (decision 0103) of the file-local part: each chunk reads the store's rows of its keys, and runs the
-    // output rule for the keys the store has not seen (`caches::kept_form`).
-    let local_caches = front::caches::caches_here(&local.program)?;
-    if !local_caches.is_empty() {
-        for (from, made) in front::caches::kept_form(&mut local.program, &local_caches) {
-            if let Some(d) = local.domains.get(&from).cloned() {
-                local.domains.insert(made, d);
-            }
-        }
-        crate::code_rule_dsl::logic::profile::decision("caches of the file-local part (decision 0103)", || {
-            local_caches.iter().map(|c| format!("{} by {}", c.out, c.key)).collect::<Vec<_>>().join(", ")
-        });
-    }
     // The run's constants made of earlier phases' exports (`v_enum(q, n) :- struct__base(q, _, b), …, n = count :
     // { struct__member(q, x, "") }`): one answer for the run, so derived once, before the chunks, by the same engine
     // over the bound exports, and bound beside them (`run_constants`). The split derives a constant in both parts
@@ -3286,8 +3272,7 @@ fn run_observed(
         // written to `x` and measured as soon as no later stratum reads it, and dropped: the chunk's exports are not
         // all held to its end.
         let got = if memoised {
-            let mut caches = cache_store::Store(store);
-            super::run_atoms_native_hooked(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes, super::Hooks { caches: Some(&mut caches), ..Default::default() })?
+            super::run_atoms_native_over(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes)?
         } else {
             let mut hand = |rel: &str| -> Result<()> {
                 if !split.exports.iter().any(|e| e == rel) {
@@ -3302,8 +3287,7 @@ fn run_observed(
                 }
                 Ok(())
             };
-            let mut caches = cache_store::Store(store);
-            super::run_atoms_native_hooked(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes, super::Hooks { hand_off: Some(&mut hand), caches: Some(&mut caches), ..Default::default() })?
+            super::run_atoms_native_hooked(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes, super::Hooks { hand_off: Some(&mut hand), ..Default::default() })?
         };
         drop(running);
         if chunk_nodes_built > 0 {
@@ -4224,7 +4208,7 @@ fn run_observed(
                             given.insert(rel.clone(), (atoms_source(&store, decl.len(), plus.iter())?, atoms_source(&store, decl.len(), minus.iter())?));
                         }
                     }
-                    let mut cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
                     let s = span("bind unchanged inputs");
                     let same = cell.as_ref().map(|kept| kept.same_inputs(ckey, &digests)).unwrap_or_default();
@@ -4319,8 +4303,6 @@ fn run_observed(
                         Some(delta)
                     };
                     let mut maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;
-                    // A cache whose key came out as it was is clean, kept as it was (decision 0103).
-                    cut.clean.extend(maintained.kept_as_is.iter().cloned());
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_entries} inputs' deltas read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
                         None => format!("no kept documents: {} inputs' deltas found by hashing their documents", hashed.len()),
@@ -4440,9 +4422,7 @@ fn run_observed(
                     let _whole = std::env::var_os("RERAIL_CROSS_DEMAND_SPLIT").is_none().then(super::demand::whole_relations);
                     let verify_stats = std::env::var_os("RERAIL_CROSS_VERIFY").map(|_| stats.clone());
                     let s = span("plan and evaluate");
-                    // A cache's new keys go to the store, as a run without a session writes them (decision 0103).
-                    let mut caches = cache_store::Store(store);
-                    let got = super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, super::Hooks { caches: Some(&mut caches), ..Default::default() })?;
+                    let got = super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?;
                     drop(s);
                     step("ran");
                     collect(&db, &got, &part.program)?;
@@ -4729,7 +4709,7 @@ fn run_observed(
                     // A cache (decision 0103) kept from run to run reads the last run's rows of its key and of itself,
                     // `K__kept` and `C__kept`, and runs its output rule for the new keys only (`caches::kept_form`).
                     let keeps = durable.is_some() && one_fixpoint;
-                    let caches = crate::code_rule_dsl::logic::front::caches::caches_here(&cross.program)?;
+                    let caches = if keeps { crate::code_rule_dsl::logic::front::caches::caches(&cross.program)? } else { Vec::new() };
                     let kept_cross;
                     let cross: &lower::Lowered = if caches.is_empty() {
                         &cross
@@ -4769,12 +4749,7 @@ fn run_observed(
                         Ok(())
                     };
                     let strata = kept_strata.as_mut().map(|k| k as &mut dyn super::KeptStrata);
-                    let mut cache_rows = cache_store::Store(store);
-                    let hooks = if one_fixpoint {
-                        super::Hooks { load: Some(&mut load), unload: Some(&mut unload), strata, caches: Some(&mut cache_rows), ..Default::default() }
-                    } else {
-                        super::Hooks { caches: Some(&mut cache_rows), ..Default::default() }
-                    };
+                    let hooks = if one_fixpoint { super::Hooks { load: Some(&mut load), unload: Some(&mut unload), strata, ..Default::default() } } else { super::Hooks::default() };
                     let got = super::run_atoms_native_hooked(&cross, &db, "main", cross_stats, wanted.clone(), modes, hooks)?;
                     if let Some(k) = kept_strata {
                         let written = k.written_rows;
