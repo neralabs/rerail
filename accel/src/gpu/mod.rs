@@ -164,6 +164,7 @@ impl Backend for GpuBackend {
                 let (n, words) = (*n as u64, (*n as u64).div_ceil(64).max(1));
                 off.len() as u64 == n + 1 && u32ok(n * words * 2) && fits(n * words * 8)
             }
+            Kernel::Program(p) => p.0.per_unit(crate::lanes::Lane::Gpu).is_some(),
             Kernel::Join { left, right, by, .. } => {
                 let Ok((nl, nr)) = Kernel::join_shape(left, right) else {
                     return false;
@@ -176,9 +177,16 @@ impl Backend for GpuBackend {
     }
 
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
-        // The joins in their own command buffers (`space::run`), the other forms in one.
-        let (joins, others): (Vec<usize>, Vec<usize>) = (0..ks.len()).partition(|&i| matches!(ks[i], Kernel::Join { .. }));
+        // Programs submit their own command buffers on the one queue (`Program::run`), the joins theirs
+        // (`space::run`), the other forms one together.
+        let (programs, rest): (Vec<usize>, Vec<usize>) = (0..ks.len()).partition(|&i| matches!(ks[i], Kernel::Program(_)));
+        let (joins, others): (Vec<usize>, Vec<usize>) = rest.into_iter().partition(|&i| matches!(ks[i], Kernel::Join { .. }));
         let mut outs: Vec<Option<Output>> = vec![None; ks.len()];
+        for &i in &programs {
+            let Kernel::Program(p) = ks[i] else { unreachable!("a program") };
+            let r = objc::rc::autoreleasepool(|| p.0.run(crate::lanes::Lane::Gpu)).map_err(|e| format!("program {}: {e}", p.0.name()))?;
+            outs[i] = Some(Output::Program(crate::kernel::ProgramResult(r)));
+        }
         if !others.is_empty() {
             let (o, _) = self.run(&others.iter().map(|&i| ks[i]).collect::<Vec<_>>())?;
             for (&i, o) in others.iter().zip(o) {
@@ -511,6 +519,7 @@ impl Planner {
             Kernel::Histogram { off, codes, width } => self.histogram(off, codes, *width),
             Kernel::Closure { n, off, dst } => self.closure(*n, off, dst),
             Kernel::Join { .. } => Err("a join runs in the space's own command buffers".into()),
+            Kernel::Program(_) => Err("a program submits its own command buffers".into()),
         }
     }
 

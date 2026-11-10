@@ -1037,7 +1037,7 @@ impl Column {
 /// compiled where they are needed (a job's panic would end the process).
 pub fn prewarm() {
     crate::exec::configure(false);
-    rayon::spawn(|| {
+    rayon::spawn(|| crate::exec::as_job("the GPU's prewarm", || {
         let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
             let _ = fused_pipe("sort_all");
             let _ = fused_pipe("probe_all");
@@ -1049,7 +1049,7 @@ pub fn prewarm() {
             }
             super::tile::prewarm();
         }));
-    });
+    }));
 }
 
 /// A batch's pairs: one buffer the probes reserve their threadgroups' pairs in with one atomic each, so no probe

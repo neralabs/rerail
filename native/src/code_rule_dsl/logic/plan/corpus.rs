@@ -1268,7 +1268,7 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
         return Ok(None);
     }
     let path = store.database_path().to_path_buf();
-    Ok(Some(crate::threads::beside(move || {
+    Ok(Some(crate::threads::beside("the store's collection", move || {
         let started = std::time::Instant::now();
         let mut passes = 0;
         let outcome = (|| -> std::result::Result<String, crate::content_store::StoreError> {
@@ -2659,7 +2659,7 @@ fn run_observed(
         where
             'a: 's,
         {
-            rerail_accel::exec::help_until(|| {
+            rerail_accel::exec::help_until_as("the main thread: its next chunk", || {
                 self.advance(jobs);
                 let mut c = self.cut.lock();
                 if let Some(r) = c.handed.pop_front() {
@@ -2738,7 +2738,7 @@ fn run_observed(
             let to = docs.resolved_to.load(Acquire);
             if to < horizon && !docs.resolving.swap(true, Acquire) {
                 let docs = Arc::clone(&docs);
-                jobs.spawn(move |jobs| {
+                jobs.spawn("a window of files resolved", move |jobs| {
                     let from = thread_usage();
                     let end = (to + WINDOW).min(docs.asked.len());
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (&mut *self.resolve.lock())(&docs.asked[to..end])));
@@ -2758,15 +2758,23 @@ fn run_observed(
                 });
                 progress = true;
             }
-            // Each document within `ahead` whose window is resolved, built as a job.
+            // Each document within `ahead` whose window is resolved, built as a job: the longest first (by its
+            // source's bytes; a memo hit is none). Other threads take a thread's jobs oldest first, and a wait takes
+            // its own thread's newest: the long builds start soonest, on other threads, and a waiting thread runs the
+            // short ones, so it is not held long past what it waits for (`rerail_accel::exec::waits`).
             let to = docs.resolved_to.load(Acquire);
-            while c.spawned < horizon.min(to) {
-                let (i, docs) = (c.spawned, Arc::clone(&docs));
-                c.spawned += 1;
-                if docs.built.lock().contains_key(&i) {
-                    continue;
-                }
-                jobs.spawn(move |jobs| {
+            let mut ready: Vec<(usize, usize)> = {
+                let (resolved, built) = (docs.resolved.lock(), docs.built.lock());
+                (c.spawned..horizon.min(to).max(c.spawned))
+                    .filter(|i| !built.contains_key(i))
+                    .map(|i| (resolved.get(&i).map_or(0, |(_, r)| r.as_ref().err().map_or(0, |(source, _)| source.len())), i))
+                    .collect()
+            };
+            c.spawned = c.spawned.max(horizon.min(to));
+            ready.sort_by(|a, b| b.cmp(a));
+            for (_, i) in ready {
+                let docs = Arc::clone(&docs);
+                jobs.spawn("a document built", move |jobs| {
                     let from = thread_usage();
                     let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.build)(&docs, i))).unwrap_or_else(|_| Err(Error::Plan("the chunk builder panicked".to_owned())));
                     Self::add(&mut self.jobs_cpu.lock(), from);
@@ -2855,7 +2863,7 @@ fn run_observed(
             let pending = std::mem::take(&mut c.pending);
             let id = c.posted;
             c.posted += 1;
-            jobs.spawn(move |jobs| {
+            jobs.spawn("a chunk projected", move |jobs| {
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.project)(pending)));
                 self.projected.lock().insert(id, r);
                 self.advance(jobs);
@@ -3541,7 +3549,7 @@ fn run_observed(
         let decls = load.decls.clone();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
         let modes = modes.to_owned();
-        let cone = crate::threads::beside(move || -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+        let cone = crate::threads::beside("the cone of requests", move || -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             let db2 = Connection::open(&db_path)?;
             db2.execute_batch("PRAGMA synchronous=OFF")?;
             db2.execute("ATTACH ?1 AS x", [x_path.to_string_lossy()])?;
@@ -3563,7 +3571,7 @@ fn run_observed(
             }
             let mut answer = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
                 ask_tx.send((rel.to_owned(), rows.to_vec())).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
-                rerail_accel::exec::help_until(|| match reply_rx.try_recv() {
+                rerail_accel::exec::help_until_as("the cone: an answer", || match reply_rx.try_recv() {
                     Ok(r) => Some(Ok(r)),
                     Err(std::sync::mpsc::TryRecvError::Empty) => None,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(Error::Plan("the answer channel closed".to_owned()))),
@@ -3678,7 +3686,7 @@ fn run_observed(
             }
             Ok(out)
         };
-        while let Some((rel, rows)) = cone.wait_for(|| match ask_rx.try_recv() {
+        while let Some((rel, rows)) = cone.wait_for("the main thread: the cone's requests", || match ask_rx.try_recv() {
             Ok(asked) => Some(Some(asked)),
             Err(std::sync::mpsc::TryRecvError::Empty) => None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
@@ -3714,7 +3722,7 @@ fn run_observed(
     drop(docs_out);
     main_doing.set("done");
     crate::code_rule_dsl::logic::profile::wait("the worker's end", &worker_doing, || {
-        rerail_accel::exec::help_until(|| {
+        rerail_accel::exec::help_until_as("the main thread: the builder's end", || {
             builder.advance(jobs);
             builder.cut.lock().ended.then_some(())
         })
@@ -4146,8 +4154,12 @@ fn run_observed(
                     // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare.
                     let mut stored = cross.clone();
                     let inline_too = std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on");
+                    // The relations the program declares `inline`: inlined in a session as in a full run. The session
+                    // keeps no rows of theirs (the run's `Outcome::inlined` names them), and the strata over them are
+                    // derived again each run: the cost the author chose by writing `inline`.
+                    let declared_inline: BTreeSet<String> = cross.program.decls.keys().filter(|r| cross.program.qualified(r, "inline")).cloned().collect();
                     for rel in cross.program.rules.iter().map(|r| r.head.rel.clone()).collect::<std::collections::BTreeSet<_>>() {
-                        if !inline_too && !cross.program.qualified(&rel, "inline") {
+                        if !inline_too && !declared_inline.contains(&rel) {
                             stored.program.qualifiers.entry(rel).or_default().insert("no_inline".to_owned());
                         }
                     }
@@ -4296,10 +4308,11 @@ fn run_observed(
                         eprintln!("O125 input deltas: {} documents changed ({read} rows in their entries), {from_entries} from entries ({from_entries_rows} rows), by hashing {hashed:?}", changes.as_ref().map_or(0, Vec::len));
                     }
                     drop(s);
-                    // What the session keeps for the next run is stored, never inlined into its readers (decision
-                    // 0099): its rows are read back to be kept, and maintained from next run as `r__old` ("no such
-                    // table: py_f", inlined into `py_true` and `py_false`). So are the measurement aids' deltas.
-                    // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare (as above).
+                    // What the session keeps for the next run is stored, not inlined into its readers (decision
+                    // 0099): its rows are read back to be kept, and maintained from next run as `r__old`. So are the
+                    // measurement aids' deltas. A relation the program declares `inline` is the exception (above): it
+                    // stays inlined, and is not read back (`Outcome::inlined`). `RERAIL_SESSION_INLINE=on` inlines as a
+                    // full run does, to compare (as above).
                     if !std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on") {
                         let aids = ["RERAIL_SPIKE_DELTA", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_CROSS_VERIFY"].iter().any(|v| std::env::var_os(v).is_some());
                         let program = &mut maintained.program.program;
@@ -4307,10 +4320,20 @@ fn run_observed(
                         if aids {
                             stored.extend(program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
                         }
-                        for rel in stored {
+                        for rel in stored.into_iter().filter(|r| !declared_inline.contains(r)) {
                             let q = program.qualifiers.entry(rel).or_default();
                             q.remove("inline");
                             q.insert("no_inline".to_owned());
+                        }
+                    }
+                    // RERAIL_DUMP_MAINTAINED=<file>: the maintained program's rules, appended each run (a debugging aid).
+                    if let Ok(path) = std::env::var("RERAIL_DUMP_MAINTAINED") {
+                        use std::io::Write as _;
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                            let _ = writeln!(f, "=== run");
+                            for r in &maintained.program.program.rules {
+                                let _ = writeln!(f, "{r}");
+                            }
                         }
                     }
                     let part = &maintained.program;
@@ -4400,7 +4423,7 @@ fn run_observed(
                     }
                     step("bound; running");
                     if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() || std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
-                        keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
+                        keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus", "__cand", "__chk", "__gone", "__held", "__redo"].iter().any(|x| r.ends_with(x))).cloned());
                     }
                     // `RERAIL_CROSS_DEMAND_SPLIT`: keep the demand split in a session (to measure what dropping it costs).
                     let _whole = std::env::var_os("RERAIL_CROSS_DEMAND_SPLIT").is_none().then(super::demand::whole_relations);
@@ -4481,6 +4504,8 @@ fn run_observed(
                     // A relation the engine holds is kept as it is, with its indexes (decision 0090 step 3); one the
                     // run left in a table (an output) is read from there. One the run recomputed in its readers
                     // (decision 0099) has neither: it is not kept, as one past the budget, and the next run derives it.
+                    // The relations of the strata the native engine ran this run (each a key `a/b/…`).
+                    let ran_native: BTreeSet<&str> = got.native.iter().flat_map(|k| k.split('/')).collect();
                     let rows = derived
                         .iter()
                         .filter(|rel| !got.inlined.contains(rel.as_str()))
@@ -4491,9 +4516,9 @@ fn run_observed(
                             // table does not keep: taken from the engine too.
                             let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten()
                                 .or_else(|| {
-                                    // Only a relation this run maintained by levels (it has `h__gone`): any other the engine
+                                    // Only one a native stratum of this run made (`Outcome::native`): any other the engine
                                     // holds may be a copy left by an earlier run (a stratum that ran in SQL this time).
-                                    part.program.decls.contains_key(&format!("{rel}__gone")).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten().filter(|h| h.has_levels())
+                                    ran_native.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten().filter(|h| h.has_levels())
                                 });
                             let held = match held {
                                 Some(h) => h,
@@ -4522,6 +4547,13 @@ fn run_observed(
                                 counts[3] += rows_of(rel).len();
                             } else if rel.ends_with("__ins") {
                                 counts[1] += rows_of(rel).len();
+                            } else if part.program.decls.contains_key(&format!("{rel}__gone")) && part.program.decls.contains_key(&format!("{rel}__cand")) {
+                                // Levels (decision 0090): candidates, those checked, gone, rederived and inserted.
+                                let n = |s: &str| rows_of(&format!("{rel}__{s}")).len();
+                                if std::env::var("RERAIL_CROSS_DELTA_COUNTS").is_ok_and(|v| v == "each") {
+                                    eprintln!("O125 levels rows {rel}: old {}, candidates {}, checked {}, gone {}, rederived {}, inserted {}", olds.get(format!("{rel}__old").as_str()).copied().unwrap_or(0), n("cand"), n("chk"), n("gone"), n("redo"), n("ins"));
+                                }
+                                counts[0] += n("gone");
                             } else if !rel.ends_with("__del") && part.program.decls.contains_key(&format!("{rel}__del")) {
                                 let after: std::collections::HashSet<Vec<i64>> = rows_of(rel).into_iter().collect();
                                 let del = rows_of(&format!("{rel}__del"));
@@ -4567,6 +4599,15 @@ fn run_observed(
                     // first relations, in stratum order, whose maintained rows differ (spike O125).
                     if let Some(vstats) = verify_stats.filter(|_| maintained.maintained > 0) {
                         let plain = cut.program(&cross);
+                        // `O125_VERIFY_RULES=<rel>`: the rules for `rel` the verifier derives with, and the maintained ones.
+                        if let Ok(r) = std::env::var("O125_VERIFY_RULES") {
+                            for x in plain.program.rules.iter().filter(|x| x.head.rel == r) {
+                                eprintln!("O125_VERIFY_RULES plain {x}");
+                            }
+                            for x in part.program.rules.iter().filter(|x| x.head.rel == r) {
+                                eprintln!("O125_VERIFY_RULES maintained {x}");
+                            }
+                        }
                         let mut vkeep = wanted.clone();
                         vkeep.extend(derived.iter().filter(|rel| !plain.program.outputs.contains(*rel)).cloned());
                         let again = super::run_atoms_native_over(&plain, &db, "main", vstats, vkeep, modes)?;
@@ -4673,6 +4714,11 @@ fn run_observed(
                             next.bytes() as f64 / 1e6
                         )
                     });
+                    if std::env::var_os("RERAIL_KEPT_BYTES").is_some() {
+                        for (kind, rows, values, levels, index) in next.held() {
+                            eprintln!("KEPT {kind}: {rows} rows, values {:.2} MB, levels {:.2} MB, sets and indexes {:.2} MB", values as f64 / 1e6, levels as f64 / 1e6, index as f64 / 1e6);
+                        }
+                    }
                     cross_strata = Some(cut.strata);
                     cross_maintained = maintained.maintained;
                     cross_recursive = maintained.recursive;

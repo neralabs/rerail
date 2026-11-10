@@ -73,7 +73,7 @@ pub struct Fixed {
 #[derive(Clone, Debug)]
 pub struct Prices {
     /// Seconds per unit, by form then lane; `None` where the lane has no kernel for the form.
-    per_unit: [[Option<f64>; 4]; 7],
+    per_unit: [[Option<f64>; 4]; FORMS],
     /// Per lane; for the CPU lane, wall seconds (the cores' time is `per_unit` divided by `cores`).
     pub fixed: [Fixed; 4],
     /// The cores the CPU lane spreads a launch over: the executor's pool (`RERAIL_THREADS`).
@@ -82,7 +82,7 @@ pub struct Prices {
     pub band: f64,
     /// Host CPU seconds per unit, by form then lane: what a launch costs the host's cores on that lane (the cores'
     /// own work; SME's stream on a core; a device lane's uploads and grouping).
-    host_per_unit: [[Option<f64>; 4]; 7],
+    host_per_unit: [[Option<f64>; 4]; FORMS],
     /// Host CPU per job (a batch's share of the lane: its submission) and per launch in it.
     pub host: [Fixed; 4],
     /// Seconds from a job's submission to its outputs beyond its work (the GPU's commit, scheduling and wake): the
@@ -120,9 +120,12 @@ fn form_index(f: Form) -> usize {
     f as usize
 }
 
+/// The forms the table prices, and a program's row (always empty: a program prices itself).
+const FORMS: usize = Form::ALL.len() + 1;
+
 impl Default for Prices {
     fn default() -> Self {
-        let mut per_unit = [[None; 4]; 7];
+        let mut per_unit = [[None; 4]; FORMS];
         let mut set = |f: Form, l: Lane, s: f64| per_unit[form_index(f)][l.index()] = Some(s);
         // Release builds, per unit at the largest workload of each form (see the module's comment).
         set(Form::BitProduct, Lane::Cpu, 4.1e-12);
@@ -150,7 +153,7 @@ impl Default for Prices {
         // column into a shared buffer (about 1 ns a row; a staged column is not copied), a tile side's grouping
         // (5 ns a row, measured with the join prices). The Neural Engine: its host expansion and sums are most of
         // its submission (the price's own comment), so its time counts as host time.
-        let mut host_per_unit = [[None; 4]; 7];
+        let mut host_per_unit = [[None; 4]; FORMS];
         for f in Form::ALL {
             let i = form_index(f);
             host_per_unit[i][Lane::Cpu.index()] = per_unit[i][Lane::Cpu.index()];
@@ -202,8 +205,13 @@ impl Prices {
 
     /// `k`'s wall time on `lane`, without the submission's cost; `None` when the lane has no kernel for it.
     pub fn wall(&self, k: &Kernel, lane: Lane) -> Option<f64> {
-        let busy = self.per_unit(k.form(), lane)? * k.units();
-        let busy = if lane == Lane::Cpu { busy / self.cores } else { busy };
+        let per = match k {
+            Kernel::Program(p) => p.0.per_unit(lane)?,
+            _ => self.per_unit(k.form(), lane)?,
+        };
+        let busy = per * k.units();
+        // A table form splits its work over the cores; a program's cores' form is one job, its price one thread's.
+        let busy = if lane == Lane::Cpu && !matches!(k, Kernel::Program(_)) { busy / self.cores } else { busy };
         Some(self.fixed[lane.index()].launch + busy)
     }
 
@@ -221,7 +229,10 @@ impl Prices {
 
     /// `k`'s host CPU seconds on `lane`, its job's share counted when the lane is not `open` for this batch yet.
     pub fn host(&self, k: &Kernel, lane: Lane, open: bool) -> Option<f64> {
-        let per = self.host_per_unit[form_index(k.form())][lane.index()]?;
+        let per = match k {
+            Kernel::Program(p) => p.0.host_per_unit(lane)?,
+            _ => self.host_per_unit[form_index(k.form())][lane.index()]?,
+        };
         let fixed = self.host[lane.index()];
         Some(per * k.units() + fixed.launch + if open { 0.0 } else { fixed.submission })
     }
