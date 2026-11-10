@@ -4872,13 +4872,7 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BT
 /// named by its name, its declaration and its facts. `sccs` in the order the strata run.
 pub(in crate::code_rule_dsl) fn identities(prog: &Program, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&Rule>]) -> HashMap<String, [u8; 32]> {
     use sha2::{Digest as _, Sha256};
-    let leaf = |rel: &str| -> [u8; 32] {
-        let mut h = Sha256::new();
-        h.update(b"rerail.relation/v1\0leaf\0");
-        h.update(rel.as_bytes());
-        h.update(format!("{:?}\n{:?}", prog.decls.get(rel), prog.facts.get(rel)).as_bytes());
-        h.finalize().into()
-    };
+    let leaf = |rel: &str| leaf_identity(prog, rel);
     let mut out: HashMap<String, [u8; 32]> = HashMap::new();
     for (scc, rules) in sccs.iter().zip(by_stratum) {
         let mut h = Sha256::new();
@@ -4910,6 +4904,17 @@ pub(in crate::code_rule_dsl) fn identities(prog: &Program, sccs: &[BTreeSet<Stri
         }
     }
     out
+}
+
+/// The identity of a relation no rule of `prog` derives (an input, the program's facts): its name, its declaration
+/// and its facts (`identities`).
+pub(in crate::code_rule_dsl) fn leaf_identity(prog: &Program, rel: &str) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.relation/v1\0leaf\0");
+    h.update(rel.as_bytes());
+    h.update(format!("{:?}\n{:?}", prog.decls.get(rel), prog.facts.get(rel)).as_bytes());
+    h.finalize().into()
 }
 
 /// Holds clean relation `rel` in the run as the earlier run kept it, with its statistics; its rows' count.

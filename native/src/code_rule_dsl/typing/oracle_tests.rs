@@ -1680,12 +1680,17 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
             let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
             let rows: usize = p.exports.iter().map(|e| e.1).sum();
-            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?}, maintained {:?}; export rows {rows}; parts: {}",
-                p.name, p.report.cross_strata, p.report.cross_maintained, parts.join(", "));
+            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?} (a new process's {:?}), maintained {:?}; export rows {rows}; parts: {}",
+                p.name, p.report.cross_strata, p.report.cross_kept, p.report.cross_maintained, parts.join(", "));
         }
         println!("T28 {what}: the reader's run: {:.2} s", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>());
     };
-    session::start(&base.join("session")).unwrap();
+    // `RERAIL_SPIKE_PROCESS`: no session; each run maintains from what the store kept, as a new process does
+    // (t32 4.1; the process's own caches of programs and files stay warm).
+    let in_session = std::env::var_os("RERAIL_SPIKE_PROCESS").is_none();
+    if in_session {
+        session::start(&base.join("session")).unwrap();
+    }
     show("cold", &run());
     show("unchanged", &run());
     let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
@@ -1709,17 +1714,21 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         // The full run: no session, a phase store of its own.
         let store = std::env::var("RERAIL_TAPE_CACHE").expect("RERAIL_TAPE_CACHE");
         let full_store = format!("{store}.full");
-        let _ = std::fs::remove_file(format!("{full_store}.phases"));
         // SAFETY: the spike's thread is the only one running between runs.
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
+        // Its cross-file part derived, not maintained from what its store kept (t32 4.1).
+        unsafe { std::env::set_var("RERAIL_KEPT_PART", "off") };
         let full = session::full(run);
+        unsafe { std::env::remove_var("RERAIL_KEPT_PART") };
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &store) };
         show(&format!("{edit} full"), &full);
         let derived = dump();
         let differ: Vec<String> = exports.iter().filter(|e| kept[*e] != derived[*e]).map(|e| format!("{e} ({} kept, {} derived)", kept[e].len(), derived[e].len())).collect();
         println!("T28 {edit}: maintained vs full: {}", if differ.is_empty() { "the same".to_owned() } else { format!("differ: {}", differ.join(", ")) });
     }
-    session::stop();
+    if in_session {
+        session::stop();
+    }
     let _ = std::fs::remove_dir_all(&base);
 }
 

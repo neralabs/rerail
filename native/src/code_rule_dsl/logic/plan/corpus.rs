@@ -4137,8 +4137,18 @@ fn run_observed(
     };
     // The import components (decision 0076) run before the cross part, with no hooks: what they read is bound now.
     let eager: BTreeSet<&str> = cross_plan.iter().flat_map(|p| p.components.rules.iter()).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
+    // A new process that maintains its cross-file part from the store (t32 4.1) runs it as a session does: its
+    // inputs bound before the run, not loaded as their first reader runs. Not a part whose requests the run answers
+    // as it goes (0065 §2a, phase 0's loads): their answers are the loader's, which no kept row stands for.
+    let kept_part_on = session.is_none()
+        && durable.is_some()
+        && one_fixpoint
+        && kept_strata::part_wanted()
+        && cross.program.answers.is_empty()
+        && crate::code_rule_dsl::logic::answers::produced(&cross.program).is_empty()
+        && !phase0::active();
     for rel in &split.exports {
-        if one_fixpoint && !eager.contains(rel.as_str()) {
+        if one_fixpoint && !kept_part_on && !eager.contains(rel.as_str()) {
             let width = lowered.program.decls[rel].len();
             let empty = crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| format!("c{c}")).collect(), vec![Some(Vec::new()); width]);
             modules.bind(&db, rel, empty)?;
@@ -4279,7 +4289,11 @@ fn run_observed(
         let k = declared.map(cross_rounds::k);
         if bounded.hops.is_empty() || k.is_none() {
             rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
-            match session.as_ref().map(|s| &s.cross) {
+            // A new process keeps its cross-file part in the store, and maintains it as a session does (t32 4.1):
+            // the session's branch, its kept part read from the store's frames and written back after the run.
+            let kept_part: Option<std::sync::Mutex<HashMap<[u8; 32], retain::Retained>>> =
+                kept_part_on.then(Default::default);
+            match session.as_ref().map(|s| &s.cross).or(kept_part.as_ref()) {
                 // A session's run evaluates the strata whose inputs changed, the others' rows kept (decision 0077).
                 Some(cell) => {
                     // A session maintains its cross-file part from the rows the last run kept: each relation is
@@ -4332,7 +4346,15 @@ fn run_observed(
                     let mut cells = cell.lock().expect("the session's cross-file part");
                     // Taken out while the run uses it; a run that fails leaves no kept part for this program.
                     let mut cell = cells.remove(&ckey);
+                    let mut kept_frames = None;
+                    if kept_part.is_some() {
+                        let (loaded, p) = kept_strata::load(store, root, ckey, &cross.program, &cross_inputs)?;
+                        (cell, kept_frames) = (loaded, Some(p));
+                    }
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    if kept_frames.is_some() {
+                        cross_kept = Some(cut.strata);
+                    }
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
                     let s = span("bind unchanged inputs");
                     let same = cell.as_ref().map(|kept| kept.same_inputs(ckey, &digests)).unwrap_or_default();
@@ -4852,7 +4874,10 @@ fn run_observed(
                             eprintln!("KEPT {kind}: {rows} rows, values {:.2} MB, levels {:.2} MB, sets and indexes {:.2} MB", values as f64 / 1e6, levels as f64 / 1e6, index as f64 / 1e6);
                         }
                     }
-                    cross_strata = Some(cut.strata);
+                    // A session's run reports its strata here; a new process's, as `cross_kept` (above).
+                    if kept_part.is_none() {
+                        cross_strata = Some(cut.strata);
+                    }
                     cross_maintained = maintained.maintained;
                     cross_recursive = maintained.recursive;
                     cross_derived_again = maintained.derived_again;
@@ -4867,6 +4892,9 @@ fn run_observed(
                     // Every program's kept part shares the one budget: past it, only this program's is kept.
                     if next.bytes() + cells.values().map(retain::Retained::bytes).sum::<usize>() > retain::budget() {
                         cells.clear();
+                    }
+                    if let Some(p) = kept_frames.take() {
+                        kept_strata::keep(store, p, &next);
                     }
                     cells.insert(ckey, next);
                 }
@@ -6319,6 +6347,57 @@ unused(f) :- def(f, _), !used(f).
         let (_, fresh) = run("fresh.sqlite");
         assert_eq!(rows, fresh);
         assert_ne!(rows, derived);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// t32 4.1: a new process maintains its cross-file part from the rows the last process kept, as a session does.
+    /// After an edit that changes a cross-file row, a changed stratum is maintained from its deltas, not derived
+    /// again, and the outputs are a run's with an empty store.
+    #[test]
+    fn a_new_process_maintains_the_cross_file_part_from_the_kept_rows() {
+        let marker = format!("# {:?}\n", std::time::SystemTime::now());
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("kept-part");
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+        write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
+        write("b.py", "from a import f\ndef g():\n    pass\n");
+        write("c.py", "from a import k\ndef h():\n    pass\n");
+        let rule = dir.join("uses.rr");
+        std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl used(f: node)
+used(f) :- uses(_, f).
+.decl unused(f: node)
+unused(f) :- def(f, _), !used(f).
+.output unused
+"#).unwrap();
+        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let out = dir.join("out");
+        let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let run = |store: &str| {
+            super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+            let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+            (report.cross_maintained.0, std::fs::read_to_string(out.join("unused.csv")).unwrap())
+        };
+        let (cold, derived) = run("kept.sqlite");
+        assert_eq!(cold, 0, "nothing kept: every stratum derived");
+        // c no longer imports k: k is unused; uses and used are maintained from their deltas.
+        write("c.py", "def h():\n    pass\n");
+        let (maintained, rows) = run("kept.sqlite");
+        let (_, fresh) = run("fresh.sqlite");
+        assert_eq!(rows, fresh);
+        assert_ne!(rows, derived);
+        assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
+        // And back: the next process maintains from what this one kept.
+        write("c.py", "from a import k\ndef h():\n    pass\n");
+        let (again, rows) = run("kept.sqlite");
+        assert_eq!(rows, derived);
+        assert!(again > 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

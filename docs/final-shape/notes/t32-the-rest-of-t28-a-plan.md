@@ -84,6 +84,9 @@ What this costs until K4 (t33): a phase's export statistics are measured from it
 version deltas (0096 §3), and an unchanged run runs the phase's nested run (all its parts kept) instead of reading a
 record.
 
+Measured after 2.5 and stage 3 (2026-11-10, load 36 to 76): P3 over the 84-file corpus agrees with jedi on 6,410
+calls, as before; 76.8 s user CPU, 91 s wall, peak RSS 1,292 MB.
+
 ### Stage 4. P2 maintained across processes
 
 t28's step 7 left one gap: a new process runs P2 in full after any struct change (3.8 s). The kept strata hold
@@ -92,7 +95,7 @@ maintains it from the deltas instead.
 
 | Step | Change | Done when |
 |---|---|---|
-| 4.1 | **A new process maintains from the kept rows**, as a session does: the kept strata's rows are the `__old` rows of `maintain::rewrite`, and an input's delta is its kept rows against its new ones | a new process after E1: P2 under 3 s, exports equal to a full run's; after E2 and E3 under 0.5 s |
+| 4.1 | **A new process maintains from the kept rows**, as a session does: the kept strata's rows are the `__old` rows of `maintain::rewrite`, and an input's delta is its kept rows against its new ones | **built** (`kept_strata::load`, `keep`): a run with no session takes the session's branch, its `Retained` read back from the store's frames (space `cross-maintained`, each relation under its identity) and written back after the run (only frames whose rows or inputs changed). A frame records the digests of the inputs it was derived from (its cone), and is read back only while those inputs' frames hold them: frames are shared by identity across programs. Not for a part whose requests the run answers (phase 0's loads). Test: `a_new_process_maintains_the_cross_file_part_from_the_kept_rows`. E1–E3's times: open (`RERAIL_SPIKE_PROCESS=1` on the t28 spike) |
 | 4.2 | Measure what reading the kept rows costs, against the 3.8 s full run; keep fewer relations (0099) or read lazily if it is more | a table, per edit |
 
 This is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's "column blocks" would be the
@@ -127,8 +130,8 @@ mro_found(c, x, d) :- mro_ask(c, x), <the search>.      // the output: where the
 
 | Step | Change | Done when |
 |---|---|---|
-| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | reviewed |
-| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | P3's agree count unchanged; the `found` strata's work measured |
+| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | **drafted as 0106**, for review: a search is demand rules (a request relation, answer rules that read it), no program kind and no `.cache` |
+| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | **`found` done** (`mro_ask`): P3 agrees on 6,410, unchanged. Its work is not measured yet: the run (load 110) was also the new process path's first, so its 116 s CPU is not comparable. `lfound` open |
 | 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | `wbind`/`gpar` work gone |
 
 ### Stage 8. P3 on symbols (this branch, after 2.1 and 7.2)
