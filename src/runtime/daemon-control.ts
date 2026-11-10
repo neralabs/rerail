@@ -679,9 +679,12 @@ export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRo
   return runningRoot === expectedRoot;
 }
 
-/** `RERAIL_AUTOSTART=0`: the person runs the daemon themselves, and hooks start none. */
+/**
+ * `RERAIL_AUTOSTART=0` or `RERAIL_AUTOSTART=false`: the person runs the daemon themselves, and neither a hook, a
+ * session's start nor set-up starts one. Every reader of the setting asks here, so each spelling means the same to all.
+ */
 export function autostartOff(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.RERAIL_AUTOSTART === "0";
+  return env.RERAIL_AUTOSTART === "0" || env.RERAIL_AUTOSTART === "false";
 }
 
 /** No daemon is running, and `RERAIL_AUTOSTART=0` kept the caller from starting one. */
@@ -695,7 +698,7 @@ export class AutostartOffError extends Error {
  */
 export function daemonNotRunningMessage(env: NodeJS.ProcessEnv = process.env): string {
   return autostartOff(env)
-    ? "The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded. Start it with rerail daemon start."
+    ? `The Rerail daemon is not running, and RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} keeps hooks from starting it, so nothing is recorded. Start it with rerail daemon start.`
     : "The Rerail daemon is not running. Start it with rerail daemon start.";
 }
 
@@ -962,7 +965,7 @@ let autostartAttempted = false;
 /**
  * Bring the daemon up from inside a host session so the browser view is
  * live without anyone running `rerail daemon start`. One attempt per process;
- * `RERAIL_AUTOSTART=0` disables it.
+ * `RERAIL_AUTOSTART=0` disables it ({@link autostartOff}).
  *
  * Truly fire-and-forget: the work is handed to a detached `rerail daemon start`
  * process and nothing here is awaited. Running `startDaemon` in-process
@@ -983,8 +986,7 @@ let autostartAttempted = false;
 export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
   if (autostartAttempted) return;
   autostartAttempted = true;
-  const setting = machine.env.RERAIL_AUTOSTART;
-  if (setting === "0" || setting === "false") return;
+  if (autostartOff(machine.env)) return;
   const home = defaultRerailHome(machine.env);
   try {
     makeRerailHome(home);

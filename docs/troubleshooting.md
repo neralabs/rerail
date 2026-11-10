@@ -410,8 +410,9 @@ another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a paylo
 shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home. Update Rerail with
 `rerail update`; if the line stays, report it with `rerail support-bundle`.
 
-With `RERAIL_AUTOSTART=0` hooks start no daemon, and a hook that finds none logs nothing, since that is what you asked
-for. `rerail status` then says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from starting it.
+With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
+what you asked for. `rerail status` then says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from
+starting it.
 
 If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
 that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.

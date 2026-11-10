@@ -13,7 +13,9 @@ import {
   type DaemonState,
   type NativeLaunch,
   type StartedChild,
+  AutostartOffError,
   autostartDaemon,
+  autostartOff,
   browserOpener,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
@@ -416,12 +418,32 @@ describe("stopping the daemon", () => {
   });
 });
 
+describe("RERAIL_AUTOSTART", () => {
+  // One reading for every caller: a hook's engine endpoint, the session-start autostart, set-up and `rerail status`.
+  it.each(["0", "false"])("reads %s as off, so a hook's engine endpoint starts no daemon and asks for a running one", async setting => {
+    expect(autostartOff({ RERAIL_AUTOSTART: setting })).toBe(true);
+    const home = await mkdtemp(join(tmpdir(), "rerail-autostart-off-"));
+    try {
+      // No state file, so no daemon runs; the fake machine's spawns fail the test, so a start would show.
+      const machine = fakeMachine("linux", { env: { RERAIL_HOME: home, RERAIL_AUTOSTART: setting } });
+      await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toBeInstanceOf(AutostartOffError);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reads anything else as on", () => {
+    for (const env of [{}, { RERAIL_AUTOSTART: "1" }, { RERAIL_AUTOSTART: "" }]) expect(autostartOff(env)).toBe(false);
+  });
+});
+
 describe("what rerail status says of a daemon that is not running", () => {
   it("says RERAIL_AUTOSTART=0 keeps hooks from starting it, since hooks log nothing about a daemon the person turned off", () => {
     expect(daemonNotRunningMessage({})).toBe("The Rerail daemon is not running. Start it with rerail daemon start.");
     expect(daemonNotRunningMessage({ RERAIL_AUTOSTART: "0" })).toBe(
       "The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded. Start it with rerail daemon start.",
     );
+    expect(daemonNotRunningMessage({ RERAIL_AUTOSTART: "false" })).toContain("and RERAIL_AUTOSTART=false keeps hooks from starting it");
   });
 });
 

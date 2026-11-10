@@ -26,6 +26,7 @@ import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
 import { contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
+  autostartOff,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
@@ -721,8 +722,8 @@ const DASHBOARD_ROUTES: Record<DashboardPage, string> = { rules: "rules" };
  * The daemon of the active install; it serves every repository. A running daemon from another package (an older
  * version), or on another port than `port` names, is replaced, on the port it had unless `port` names one. A daemon
  * that does not answer is never killed here; its pid may belong to another process by now, so `startDaemon`'s
- * refusal (with how to stop it) is the answer. `RERAIL_AUTOSTART=0` (the updater's health check) uses only a
- * daemon already running from this install, and starts or replaces none.
+ * refusal (with how to stop it) is the answer. `RERAIL_AUTOSTART=0` or `false` ({@link autostartOff}; the updater's
+ * health check sets `0`) uses only a daemon already running from this install, and starts or replaces none.
  */
 async function activeDaemon(context: SetupContext, port: number | undefined): Promise<DaemonState> {
   // The version directory, not the current link: the daemon and its SQLite binding belong to this install.
@@ -731,7 +732,7 @@ async function activeDaemon(context: SetupContext, port: number | undefined): Pr
   if (lookup.status === "running" && await daemonUsesPackageRoot(lookup.state, packageRoot) && (port === undefined || lookup.state.port === port)) {
     return lookup.state;
   }
-  if (process.env.RERAIL_AUTOSTART === "0") throw new Error("RERAIL_AUTOSTART=0 keeps set-up from starting it");
+  if (autostartOff()) throw new Error(`RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`);
   if (lookup.status === "running") await stopDaemon(context.home);
   const listen = port ?? (lookup.status === "running" ? lookup.state.port : undefined);
   return (await startDaemon({ home: context.home, packageRoot }, { dev: false, ...(listen === undefined ? {} : { port: listen }) })).daemon.state;
