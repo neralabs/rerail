@@ -48,6 +48,9 @@ mod metal_parallel;
 // Row programs on Metal: scan, count and scatter over the 16-bit layout (decision 0095).
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) mod metal_rows;
+// Relations sorted by a key on the device, and the joins that probe them (decision 0095).
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) mod metal_sort;
 #[cfg(target_os = "macos")]
 mod metal_program_backend;
 #[cfg(target_os = "macos")]
@@ -253,7 +256,10 @@ mod native_cpu_value;
 mod native_cpu_block;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2).
 pub(in crate::code_rule_dsl) mod native_cpu_rows;
+// Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
+pub(in crate::code_rule_dsl) mod rows_sort;
 mod native_cpu_lanes;
+mod native_cpu_pressure;
 mod native_cpu_shape;
 mod native_cpu_stream;
 mod native_ir;
@@ -287,6 +293,9 @@ mod bitlex_tier2;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
 mod bitlex_compile_tests;
+mod token_local;
+#[cfg(test)]
+mod token_local_tests;
 #[cfg(test)]
 mod bitlex_corpus_tests;
 #[cfg(test)]

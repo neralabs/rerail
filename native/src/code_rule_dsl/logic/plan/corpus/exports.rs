@@ -75,6 +75,11 @@ impl Exports {
         added
     }
 
+    /// How many rows export `rel` holds.
+    pub(super) fn len(&self, rel: &str) -> usize {
+        self.rels.get(rel).map_or(0, |h| h.source.as_ref().map_or_else(|| h.len(), |s| s.len()))
+    }
+
     /// Export `rel`'s rows so far, copied, as a source of columns `c0…`: for a reader that starts while chunks may
     /// still add (the cone of requests, decision 0065 §2a, whose loads go through the chunk path).
     pub(super) fn snapshot(&self, rel: &str, width: usize) -> Arc<dyn Source> {
@@ -146,6 +151,145 @@ impl Exports {
     }
 }
 
+impl Exports {
+    /// Export `rel`'s rows are `source` (a session's counted exports, `Counted`): what a chunk added this run is
+    /// dropped, as the counted rows hold it.
+    pub(super) fn install(&mut self, rel: &str, width: usize, source: Arc<dyn Source>) {
+        let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
+        held.columns = Vec::new();
+        held.set = HashTable::new();
+        held.source = Some(source);
+    }
+}
+
+/// Every export's rows with how many files hold each (decision 0096 step 3): kept by a session from run to run, a
+/// file's rows counted in when its content is new and out when it changes or leaves, so a run's exports are the
+/// rows counted, not every file's rows added again. A row is held while one file holds it.
+#[derive(Default)]
+pub(super) struct Counted {
+    rels: BTreeMap<String, CountedRel>,
+}
+
+struct CountedRel {
+    columns: Vec<Vec<i64>>,
+    counts: Vec<u32>,
+    set: HashTable<u32>,
+}
+
+impl Counted {
+    /// A file's rows of `rel` (`flat` row-major, `width` a row) in (`sign` 1) or out (−1). False when a row counted
+    /// out is not held: the counts no longer say what files hold.
+    pub(super) fn patch(&mut self, rel: &str, width: usize, flat: &[i64], sign: i64) -> bool {
+        if width == 0 || flat.is_empty() {
+            return true;
+        }
+        let held = self.rels.entry(rel.to_owned()).or_insert_with(|| CountedRel { columns: vec![Vec::new(); width], counts: Vec::new(), set: HashTable::new() });
+        if held.columns.len() != width {
+            return false;
+        }
+        for row in flat.chunks_exact(width) {
+            let h = Held::hash(row.iter().copied());
+            let columns = &held.columns;
+            let same = |&id: &u32| row.iter().enumerate().all(|(c, v)| columns[c][id as usize] == *v);
+            match (held.set.find(h, same).copied(), sign > 0) {
+                (Some(id), true) => held.counts[id as usize] += 1,
+                (None, true) => {
+                    let id = held.counts.len() as u32;
+                    for (c, v) in row.iter().enumerate() {
+                        held.columns[c].push(*v);
+                    }
+                    held.counts.push(1);
+                    let columns = &held.columns;
+                    held.set.insert_unique(h, id, |&i| Held::hash(columns.iter().map(|col| col[i as usize])));
+                }
+                (Some(id), false) if held.counts[id as usize] > 1 => held.counts[id as usize] -= 1,
+                (Some(id), false) => held.forget(id, h),
+                (None, false) => return false,
+            }
+        }
+        true
+    }
+
+    /// Export `rel`'s rows held, as a source of columns `c0…` (a copy: the counts stay for the next run).
+    pub(super) fn source(&self, rel: &str, width: usize) -> Arc<dyn Source> {
+        let names = (0..width).map(|c| format!("c{c}")).collect();
+        let values = match self.rels.get(rel) {
+            Some(held) if held.columns.len() == width => held.columns.iter().cloned().map(Some).collect(),
+            _ => vec![Some(Vec::new()); width],
+        };
+        crate::code_rule_dsl::logic::native::component::columns_source(names, values)
+    }
+
+    /// `source`, less the rows `minus` counts: a row held by more files than `minus` says.
+    pub(super) fn source_without(&self, rel: &str, width: usize, minus: &Counted) -> Arc<dyn Source> {
+        let (Some(held), Some(less)) = (self.rels.get(rel), minus.rels.get(rel)) else { return self.source(rel, width) };
+        let mut values: Vec<Vec<i64>> = vec![Vec::new(); width];
+        if held.columns.len() == width {
+            for id in 0..held.counts.len() {
+                let row = held.columns.iter().map(|col| col[id]);
+                let h = Held::hash(row.clone());
+                let gone = less.set.find(h, |&i| held.columns.iter().zip(&less.columns).all(|(a, b)| a[id] == b[i as usize])).map_or(0, |&i| less.counts[i as usize]);
+                if held.counts[id] > gone {
+                    for (c, v) in row.enumerate() {
+                        values[c].push(v);
+                    }
+                }
+            }
+        }
+        let names = (0..width).map(|c| format!("c{c}")).collect();
+        crate::code_rule_dsl::logic::native::component::columns_source(names, values.into_iter().map(Some).collect())
+    }
+
+    /// Export `rel`'s rows as columns, each row as many times as files hold it (a base relation's rows, which are
+    /// not kept once as an export's are).
+    pub(super) fn columns_each(&self, rel: &str, width: usize) -> Vec<Vec<i64>> {
+        let mut out = vec![Vec::new(); width];
+        if let Some(held) = self.rels.get(rel).filter(|h| h.columns.len() == width) {
+            // Mostly each row once: the columns as they are.
+            if held.counts.iter().all(|&n| n == 1) {
+                return held.columns.clone();
+            }
+            for (id, &n) in held.counts.iter().enumerate() {
+                for _ in 0..n {
+                    for (c, col) in out.iter_mut().enumerate() {
+                        col.push(held.columns[c][id]);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Rows held, over every export.
+    pub(super) fn rows(&self) -> usize {
+        self.rels.values().map(|r| r.counts.len()).sum()
+    }
+}
+
+impl CountedRel {
+    /// Row `id` (hashed `h`) no longer held: the last row moves into its place.
+    fn forget(&mut self, id: u32, h: u64) {
+        let last = (self.counts.len() - 1) as u32;
+        if let Ok(entry) = self.set.find_entry(h, |&i| i == id) {
+            entry.remove();
+        }
+        if id != last {
+            let moved = Held::hash(self.columns.iter().map(|col| col[last as usize]));
+            if let Ok(mut entry) = self.set.find_entry(moved, |&i| i == last) {
+                *entry.get_mut() = id;
+            }
+            for col in &mut self.columns {
+                col[id as usize] = col[last as usize];
+            }
+            self.counts[id as usize] = self.counts[last as usize];
+        }
+        for col in &mut self.columns {
+            col.pop();
+        }
+        self.counts.pop();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +308,29 @@ mod tests {
         assert_eq!(rows, vec![(1, 2), (3, 4), (5, 6)]);
         // An export no chunk had rows of is bound empty.
         assert_eq!(exports.source("none", 3).len(), 0);
+    }
+
+    /// Counted exports hold a row while one file holds it: a row two files hold stays when one counts it out, goes
+    /// when both have, and the rows held are those of the files counted in, whatever order they came and went in.
+    #[test]
+    fn counted_exports_hold_the_rows_of_the_files_counted_in() {
+        let mut c = Counted::default();
+        let (a, b) = ([1i64, 10, 2, 20, 3, 30], [2i64, 20, 4, 40]);
+        assert!(c.patch("r", 2, &a, 1) && c.patch("r", 2, &b, 1));
+        assert_eq!(c.rows(), 4);
+        assert!(c.patch("r", 2, &a, -1));
+        let rows = |c: &Counted| {
+            let s = c.source("r", 2);
+            let mut v: Vec<(i64, i64)> = (0..s.len()).map(|r| (s.value(r, 0), s.value(r, 1))).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(rows(&c), vec![(2, 20), (4, 40)]);
+        assert!(c.patch("r", 2, &[5, 50, 2, 20], 1) && c.patch("r", 2, &b, -1));
+        assert_eq!(rows(&c), vec![(2, 20), (5, 50)]);
+        assert!(!c.patch("r", 2, &[9, 90], -1), "a row not held cannot be counted out");
+        // Every row found again after the moves.
+        assert!(c.patch("r", 2, &[5, 50, 2, 20], -1));
+        assert_eq!(c.rows(), 0);
     }
 }

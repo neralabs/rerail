@@ -288,3 +288,26 @@ fn one_plans_result_is_the_memos_row_for_it() {
         assert_eq!(one.as_ref().map(|r| (&r.entry, r.path_dependent)), whole.results.get(&plan(p)).map(|r| (&r.entry, r.path_dependent)), "{} plan {p}", key.path);
     }
 }
+
+/// Many files' results read and written as one wave answer as `facts_memo` and `put_facts_memo` do one file at a
+/// time: in the keys' order, a path's own result over a content-pure one, nothing for a file without one; a source
+/// collected after it was resolved is not written; sources found by hash in the hashes' order.
+#[test]
+fn results_for_many_files_answer_as_one_file_at_a_time() {
+    let (_path, store) = store("batch");
+    let (a, b) = (b"a = 1\n".as_slice(), b"b = 2\n".as_slice());
+    let sa = store.put_facts_source(a, content(a), &[]).unwrap();
+    let sb = store.put_facts_source(b, content(b), &[]).unwrap();
+    let set = FactsPlanSet::new(vec![plan(1)]);
+    let gone = SourceId(sb.0 + 100);
+    let written = store
+        .put_facts_results(7, &set, &[(sa, "a.py", result(1, true, b"a at a")), (sb, "b.py", result(1, false, b"b pure")), (gone, "c.py", result(1, true, b"no source"))])
+        .unwrap();
+    assert_eq!(written, 2);
+    store.put_facts_results(7, &set, &[(sb, "b.py", result(1, true, b"b at b"))]).unwrap();
+    let found = store.facts_results_for(7, plan(1), &[(sb, "b.py"), (sa, "elsewhere.py"), (sa, "a.py"), (sb, "other.py"), (gone, "c.py")]).unwrap();
+    assert_eq!(found, vec![Some(b"b at b".to_vec()), None, Some(b"a at a".to_vec()), Some(b"b pure".to_vec()), None]);
+    assert_eq!(store.facts_results_for(8, plan(1), &[(sa, "a.py")]).unwrap(), vec![None]);
+    let hashes = [HashKey::sha256(b), HashKey::sha256(b"absent"), HashKey::sha256(a)];
+    assert_eq!(store.held_sources_by_hash(&hashes).unwrap(), vec![store.source_by_hash(hashes[0]).unwrap(), None, store.source_by_hash(hashes[2]).unwrap()]);
+}

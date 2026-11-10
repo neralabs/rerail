@@ -24,7 +24,7 @@
 #include "python/conditions.rr"
 
 .phase struct
-.export unit, def, binds, base, member, param, ret, vann, module_file, at
+.export unit, def, binds, base, member, param, ret, vann, alias, flag, shape, tvar, module_file, at
 // Where a definition is: kept, and handed on to the findings that cite it, but not part of its granule's digest.
 .positions at
 // Which document each definition is in: the store replaces a changed document's granules on their own.
@@ -114,6 +114,71 @@ ret(q, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "return_type", r), t
 .decl vann(s: symbol, a: symbol)
 vann(@dot(q, x), a) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), text(l, x), field(g, "type", t), text(t, w),
     nearest(g, s, scope), pscope(s), sym(s, q), !py_dead_at(g), a = @replace_all(w, "\\s+", " ").
+// alias(s, e): a module- or class-level name s assigned a name or a dotted name, as written (`local = _thread._local`
+// in a stub): s is what e names.
+.decl alias(s: symbol, e: symbol)
+alias(@dot(q, x), e) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), text(l, x), field(g, "right", r), text(r, e),
+    match("^[A-Za-z_][A-Za-z_0-9.]*$", e), nearest(g, s, scope), pscope(s), sym(s, q), !py_dead_at(g).
+// flag(f, k): function f is an `async def` (k "async"), or an `@overload` (k "overload"; `typing.overload` too).
+// A call of an async function holds a coroutine, not what it is declared to return; a stub's overloads are all the
+// name's, and a call is typed by those its positional arguments fit (`shape`).
+.decl flag(f: symbol, k: symbol)
+flag(q, "async") :- pdef(f, _, _, "function"), sym(f, q), op(f, "async").
+flag(q, "overload") :- povl(f), sym(f, q).
+.decl povl(f: node)
+povl(f) :- pdef(f, _, _, "function"), kind(st, "decorated_definition"), field(st, "definition", f), child(st, dc, _), kind(dc, "decorator"),
+    child(dc, e, 0), text(e, "overload").
+povl(f) :- pdef(f, _, _, "function"), kind(st, "decorated_definition"), field(st, "definition", f), child(st, dc, _), kind(dc, "decorator"),
+    child(dc, e, 0), kind(e, "attribute"), field(e, "attribute", a), text(a, "overload").
+// shape(f, need, cap, kw): overload f's positional parameters (`self` counted, `/` not): `need` of them required,
+// room for `cap` (9 with `*args`), and kw = 1 when a keyword-only parameter has no default. Positional parameters are
+// those before any `*`, `*args` or `**kw`; a call with n positional arguments and no keywords fits when need <= n <=
+// cap and kw = 0, one with keywords when n <= cap.
+.decl shape(f: symbol, need: number, cap: number, kw: number)
+shape(q, n, p, 1) :- povl(f), sym(f, q), fneed(f, n), fcap(f, p), fkwreq(f).
+shape(q, n, p, 0) :- povl(f), sym(f, q), fneed(f, n), fcap(f, p), !fkwreq(f).
+.decl pstar(f: node, k: number)
+pstar(f, k) :- povl(f), field(f, "parameters", ps), child(ps, p, k), kind(p, "keyword_separator").
+pstar(f, k) :- povl(f), field(f, "parameters", ps), child(ps, p, k), kind(p, "list_splat_pattern").
+pstar(f, k) :- povl(f), field(f, "parameters", ps), child(ps, p, k), kind(p, "dictionary_splat_pattern").
+pstar(f, k) :- povl(f), field(f, "parameters", ps), child(ps, p, k), kind(p, "typed_parameter"), child(p, s, 0), kind(s, "list_splat_pattern").
+pstar(f, k) :- povl(f), field(f, "parameters", ps), child(ps, p, k), kind(p, "typed_parameter"), child(p, s, 0), kind(s, "dictionary_splat_pattern").
+.decl pstar_before(f: node, k: number)
+pstar_before(f, k) :- pstar(f, s), field(f, "parameters", ps), child(ps, _, k), s <= k.
+.decl psep_before(f: node, k: number)
+psep_before(f, k) :- povl(f), field(f, "parameters", ps), child(ps, q, s), kind(q, "positional_separator"), child(ps, _, k), s < k.
+.decl ppos(f: node, i: number, p: node)
+ppos(f, k, p) :- povl(f), field(f, "parameters", ps), child(ps, p, k), !kind(p, "positional_separator"), !pstar_before(f, k),
+    !psep_before(f, k).
+ppos(f, i, p) :- povl(f), field(f, "parameters", ps), child(ps, p, k), !kind(p, "positional_separator"), !pstar_before(f, k),
+    psep_before(f, k), pred(k, i).
+.decl preq(f: node, i: number)
+preq(f, i) :- ppos(f, i, p), kind(p, "identifier").
+preq(f, i) :- ppos(f, i, p), kind(p, "typed_parameter").
+.decl fneed(f: node, n: number)
+fneed(f, 0) :- povl(f), !preq(f, _).
+fneed(f, n) :- preq(f, i), pred(n, i), !preq(f, n).
+.decl fkwreq(f: node)
+fkwreq(f) :- povl(f), field(f, "parameters", ps), child(ps, p, k), pstar_before(f, k), !pstar(f, k), kind(p, "identifier").
+fkwreq(f) :- povl(f), field(f, "parameters", ps), child(ps, p, k), pstar_before(f, k), !pstar(f, k), kind(p, "typed_parameter").
+.decl fstar(f: node)
+fstar(f) :- povl(f), field(f, "parameters", ps), child(ps, p, _), kind(p, "list_splat_pattern").
+fstar(f) :- povl(f), field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_parameter"), child(p, s, 0), kind(s, "list_splat_pattern").
+.decl fcap(f: node, n: number)
+fcap(f, 9) :- fstar(f).
+fcap(f, 0) :- povl(f), !fstar(f), !ppos(f, _, _).
+fcap(f, n) :- ppos(f, i, _), pred(n, i), !ppos(f, n, _), !fstar(f).
+// pred(i, j): j = i - 1.
+.decl pred(i: number, j: number)
+pred(1, 0). pred(2, 1). pred(3, 2). pred(4, 3). pred(5, 4). pred(6, 5). pred(7, 6). pred(8, 7). pred(9, 8).
+// tvar(s): module-level name s is assigned a type variable (`_T = TypeVar("_T")`, `typing.TypeVar(...)`): an
+// annotation naming it is what a generic's argument, or a call, binds.
+.decl tvar(s: symbol)
+tvar(@dot(q, x)) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), text(l, x), field(g, "right", r), kind(r, "call"),
+    field(r, "function", fn), tvfn(fn), nearest(g, s, scope), modname(s, q), !py_dead_at(g).
+.decl tvfn(e: node)
+tvfn(e) :- kind(e, "identifier"), text(e, "TypeVar").
+tvfn(e) :- kind(e, "attribute"), field(e, "attribute", a), text(a, "TypeVar").
 // module_file(m, p): the file module m was read from, a workspace file or the library file its import resolved to.
 .decl module_file(m: symbol, p: symbol)
 module_file(q, p) :- modnode(d, m), modname(m, q), doc(d, p, _).

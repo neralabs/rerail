@@ -309,6 +309,14 @@ input's delta only when a maintained stratum reads it, and the answer is taken i
 Step 2 is the one in the edit's size; step 3 covers the relations it leaves (`doc`, `exists_0`, a text test's
 strings).
 
+**Outside the cross-file part, after 0096's keeper and its exports (2026-11-09, load 90–120).** Merging
+Typing-support-final-shape brought the keeper of the base relations' statistics by file; it now keeps the exports'
+too (keyed by entry key, an export's rows by their first node column, as the chunks' totals read them). At step 07:
+measuring the held base rows 1.11 → 0.13 s, the memo replay 1.55 → 0.6 s (0.99 s of it was measuring every
+unchanged file's exports again). All 278 exports' statistics come from the keeper; against measuring them, every
+row count is equal, and 40 of 702 columns differ, by at most 1.5× in distinct values (sketched columns of a few
+hundred values). Every step equals a full run.
+
 **What is left, at step 07** (6 files, load about 10: session 14.3 s, cross-file part 9.2 s):
 - the joins, 2.6 s. Most of this is DRed's over-estimate: `pv` over-deletes 3,660 rows and 70 are truly gone.
   Counting against DRed is the open maintenance decision.
@@ -324,6 +332,147 @@ strings).
   rows (its step 2), then the per-file cross store, so an unchanged file is neither replayed nor counted (its
   step 3).
 - the key analysis is 0.28 s; its JSON `explain` (0.23 s) runs only while profiling.
+
+## Measured: DRed against counting, the data for the open choice (2026-11-09)
+
+O125 replay steps 06–08 (2, 6 and 6 files; every step equal to a full run), CPU time, load 25–45. Rows from
+`RERAIL_CROSS_DELTA_COUNTS=each`; derivations (every row a rule emitted, new or already held) from
+`RERAIL_SPIKE_DERIVATIONS` with `O125_DERIVATIONS=<dir>`; time from the strata's spans. A relation counts as
+recursive when it never ran as a stratum of its own; 79 of the 280 maintained relations are, nearly all in one
+component of 58 (`pv`, `bv`, `alook`, `cfn`, `found`, …).
+
+**Rows deleted by DRed against rows truly gone**
+
+| step | non-recursive: over-deleted / gone | recursive: over-deleted / gone |
+| --- | --- | --- |
+| 06 | 1,863 / 1,465 (1.3×) | 3,951 / 179 (22×) |
+| 07 | 6,148 / 3,914 (1.6×) | 8,785 / 658 (13×) |
+| 08 | 19,305 / 13,783 (1.4×) | 41,094 / 6,108 (6.7×) |
+
+The worst relation is `pv`: at step 08 it over-deletes 14,711 rows, and 448 are gone.
+
+**The cross-file part's strata, by kind (seconds)**
+
+| step | cross | non-recursive del / redo / ins | recursive del | recursive ins + redo | derived again, other |
+| --- | --- | --- | --- | --- | --- |
+| 06 | 9.3 | 0.40 / 0.32 / 0.93 | 0.57 | 3.76 | 0.54 |
+| 07 | 11.8 | 0.48 / 0.47 / 1.33 | 0.70 | 4.68 | 0.78 |
+| 08 | 14.7 | 0.53 / 0.46 / 1.38 | 1.54 | 6.63 | 0.69 |
+
+**Derivations emitted in the recursive component** (emitted / new rows)
+
+| step | del | redo | ins | the relations themselves |
+| --- | --- | --- | --- | --- |
+| 06 | 13,024 / 3,951 | 12,795 / 3,772 | 14,447 / 4,335 | 8,107 / 4,335 |
+| 07 | 24,100 / 8,785 | 23,160 / 8,127 | 60,135 / 17,624 | 25,751 / 18,047 |
+| 08 | 162,646 / 41,094 | 126,276 / 34,986 | 153,884 / 39,096 | 74,082 / 42,894 |
+
+A full run derives the recursive relations with 571,010 derivations, for 291,061 rows (1.96 a row); the other
+cross-file relations take 1.18 a row.
+
+What the data says:
+
+- **Non-recursive relations.** DRed already deletes close to what is gone (1.3–1.6×). Counting would save their
+  redo (about 0.3–0.5 s a step) and some of their del, and needs a count per row: about 1.1 M rows held, so 4–9 MB.
+  Small either way.
+- **Recursive relations.** This is where DRed costs: 13–22× over-deletion at small steps. Rederiving and
+  over-deleting is about 1.7 s of step 07's 11.8 s and about 3.9 s of step 08's 14.7 s (del, plus the redo share of
+  the ins + redo stratum by derivations). Plain counting is not exact here: rows in a cycle hold each other's counts
+  above zero. The choices are DRed, a counting scheme that holds across cycles (derivation depth, or
+  backward–forward), or deriving the component again.
+- **Deriving the component again.** At step 08 DRed emits 517 k derivations in the recursive component; deriving it
+  from scratch takes 571 k. At step 07 it is 133 k against 571 k. So by step 08's size, §4's threshold would derive
+  this component again.
+
+The caveats:
+- Emitted rows approximate derivations: a semi-naive wave with two delta literals can find one derivation twice.
+- Recursive versus not is taken from the strata's spans, not the program.
+- This is one replay over one 84-file repository.
+
+## Spiked: exact counting for recursive relations (2026-11-09)
+
+DRed stays for the non-recursive relations. For the recursive ones, the spike compares DRed with two schemes that
+are exact across cycles, and with deriving the component again. It is
+`logic/plan/corpus/recursive_spike.rs`, behind `RERAIL_SPIKE_RECURSIVE`.
+
+**How the spike runs.** It takes each recursive component from the replay: the kept rows, the inputs' old and new
+rows, and the rules. It then maintains the component with each algorithm in its own small evaluator, which is the
+same for all four, so the costs compare with each other but not with the engine's.
+
+- **Reference.** The spike's own derive over the old inputs is the start, and its derive over the new inputs is
+  what each result must equal. The engine's kept rows can't serve: `rr_in_annotation_0_gfn` lacks 160 rows its
+  rules derive.
+- **Verify.** `RERAIL_SPIKE_RECURSIVE_VERIFY` recounts every row's supports after the run.
+
+The algorithms:
+
+- **DRed.** Over-delete what a gone row derived, rederive one step from the survivors, then insert.
+- **Levels.** Each row keeps the round it was first derived in, and a count of its derivations whose recursive
+  premises are all at lower levels.
+  - Those derivations are well-founded, so a count of zero means the row has lost its support. That holds inside
+    cycles too, where plain counting is not exact.
+  - Each lost or new derivation is found exactly once, from its first premise processed.
+  - Kept state is 8 bytes a row: the level (u32) and the count (u32).
+- **B/F** (backward/forward, after Motik et al. 2015). For each row a deletion touches, search backward for a
+  proof that avoids the deleted rows. Delete the rows left unproved, then insert forward. Nothing is kept.
+
+**Results.** All 39 recursive components, CPU seconds summed over them, load 20. Every algorithm equals the derive
+from scratch at every step, and levels' counts verify with 0 mismatches.
+
+| step | recompute | DRed | levels | B/F |
+| --- | ---: | ---: | ---: | ---: |
+| 06 (2 files) | 2.56 s, 765 k emitted | 0.25 s, 28.9 k, 4,334 deleted | 0.05 s, 3.0 k, 627 deleted | 0.08 s, 19.7 k, 584 deleted |
+| 07 (6 files) | 2.77 s, 803 k | 0.63 s, 85.0 k, 8,926 | 0.41 s, 42.8 k, 1,612 | 0.39 s, 66.0 k, 1,363 |
+| 08 (6 files) | 2.84 s, 816 k | 2.04 s, 277 k, 37,686 | 0.89 s, 76.5 k, 13,280 | 1.13 s, 187 k, 12,645 |
+
+The 58-relation component (`pv`, `bv`, `acls`, …) dominates:
+
+| step | recompute | DRed | levels | B/F |
+| --- | ---: | ---: | ---: | ---: |
+| 06 | 1.27 s | 0.23 s | 0.01 s | 0.05 s |
+| 07 | 1.48 s | 0.55 s | 0.30 s | 0.29 s |
+| 08 | 1.51 s | 1.85 s | 0.58 s | 0.90 s |
+
+The witness for levels:
+- **Kept state.** 3.7–3.8 MB for all the components (675 kB for the 58-relation one).
+- **First build.** 6.4–7.0 s for all components: a derive plus a count of each row's supports, about 2.3× a
+  derive. It runs once; each step after that maintains the witness, so it is not paid again.
+
+What the data says:
+
+- **Rows deleted.** DRed deletes 3–7× the rows truly gone (37,686 against levels' 13,280 at step 08); levels and
+  B/F delete about what is gone.
+- **Derivations emitted.**
+  - DRed emits 3–10× what levels emits.
+  - At step 08 DRed costs more than deriving the 58-relation component again (1.85 s against 1.51 s).
+  - Levels stays at 40% of a derive.
+- **Levels.** It is the cheapest at every step, at 8 bytes a row of kept state.
+- **B/F.** It keeps nothing, at about 1.3–1.6× the CPU of levels at steps 07 and 08 (at step 06 every algorithm
+  is under 0.1 s).
+- **Recompute.** It costs 2.6–2.8 s a step whatever the change. It is the right choice only past the size where
+  DRed now sits at step 08.
+
+**Pitfalls the spike found**, which any implementation must handle:
+
+- **A seeded negation must still be checked.** When a row of the negated relation seeds a firing, the rule must
+  still test the negated literal against the relation's other rows: in `!opaque_dec($f, _)`, another row with the
+  same `$f` still blocks it. Skipping that test left 5 stale rows at step 07 under all three algorithms.
+- **The seed does not block itself.** At its own literal, the seed row must not count as blocking.
+- **Rederive must not count a derivation made new by a negation.** In levels, a derivation whose negation became
+  true because an input row is gone is new. Rederive must leave it to the insertion, or it is counted twice.
+- **Join order needs measured rows per key.** Counting bound columns misleads:
+  - `pv($o, 221, $k)` probed by the constant alone is most of `pv`;
+  - `pv($a, $k, $v)` probed by `$k, $v` finds about 536 rows a key, where `cfn($c, _, $f)` probed by `$c` finds
+    one.
+
+  Planning by measured rows per key took the 58-relation component's step-08 maintenance from 9.6 s (DRed) and
+  2.7 s (levels) to 1.85 s and 0.58 s, and its witness from 33 s to 2.9 s.
+
+The caveats:
+- One replay over one 84-file repository.
+- The spike's own evaluator, not the engine's plans or the transducer path.
+- Emitted rows stand in for derivations.
+- The witness is built from scratch here; how it is kept across runs (with the kept rows, under 0096) is not built.
 
 ## What the prior work says
 

@@ -520,7 +520,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "from typing import List\nx: List[int] = []\n").unwrap();
         super::super::run(&program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let prepared = super::super::prepared_cache().lock().unwrap().values().find(|p| p.prog.rules.iter().any(|r| r.head.rel.contains("violation") || !r.body.is_empty())).cloned().expect("a prepared program");
+        let prepared = super::super::prepared_cache().lock().unwrap().values().flatten().find(|p| p.prog.rules.iter().any(|r| r.head.rel.contains("violation") || !r.body.is_empty())).cloned().expect("a prepared program");
         let facts = super::facts_of(&prepared);
         let dialect = prepared.lowered.dialect;
         let back = super::prepared_of(&facts, dialect).unwrap();
@@ -535,7 +535,7 @@ mod tests {
         assert_eq!((&back.split.exports, &back.split.base, &back.split.locations, &back.split.same_doc), (&prepared.split.exports, &prepared.split.base, &prepared.split.locations, &prepared.split.same_doc));
         // Every prepared program the process holds splits back the same: which one is found above varies with the
         // tests that run beside this one.
-        let all: Vec<super::Prepared> = super::super::prepared_cache().lock().unwrap().values().cloned().collect();
+        let all: Vec<super::Prepared> = super::super::prepared_cache().lock().unwrap().values().flatten().cloned().collect();
         for p in &all {
             let b = super::prepared_of(&super::facts_of(p), p.lowered.dialect).unwrap();
             assert_eq!((&b.split.exports, &b.split.base, &b.split.locations, &b.split.same_doc), (&p.split.exports, &p.split.base, &p.split.locations, &p.split.same_doc));
