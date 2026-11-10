@@ -131,6 +131,23 @@ The installed `rerail` command is `rerail.cmd`, which the policy does not block.
 The first `npx @neralabs/rerail setup` downloads and installs about 300 MB; npx prints nothing for 20 to 60 seconds.
 Set-up then prints `Downloading @neralabs/rerail@<version> from npm…`, and npm installs it again under `~/.rerail`.
 
+### npx exits with code 1 and prints nothing
+
+```text
+PS C:\code\app> npx.cmd @neralabs/rerail setup
+PS C:\code\app> $LASTEXITCODE
+1
+```
+
+npx failed to install Rerail before set-up could start: npm prints nothing for `npx` when the install script of a
+package it installs fails. npm's log says which one. Open the newest file in the `_logs` folder of npm's cache
+(`npm config get cache` prints the folder: on Windows usually `%LocalAppData%\npm-cache`, on macOS and Linux
+`~/.npm`) and search it for `error`. Attach that log when you report the problem.
+
+Rerail 0.1.3 and earlier made npm compile better-sqlite3, which needs Python and C++ build tools, and the log shows
+`gyp ERR! find Python`. Later versions install the copy better-sqlite3 ships prebuilt: run
+`npx @neralabs/rerail@latest setup`.
+
 ### npm cannot reach the registry
 
 Without Rerail in its cache, npx stops before Rerail runs:
@@ -580,6 +597,20 @@ set-up in WSL warns and goes on:
 △ This is WSL, and /mnt/c/code/app is on the Windows drive.
   Rerail and your coding agent have to be installed on the same side: both in WSL, or both on Windows.
   Repos on the Windows drive are slow from WSL; a clone in the Linux file system (under ~) is faster.
+```
+
+## Working from a clone of Rerail
+
+For changing Rerail itself; setting up is in [CONTRIBUTING.md](../CONTRIBUTING.md#development-setup).
+
+### Windows: checks and pack tests fail in a clone made before LF line ends
+
+In a clone made on Windows before `.gitattributes` set `* text=auto eol=lf`, Git checked text files out with CRLF line
+ends. Then the model check fails, `npm run check:structure` fails metrics #8 and #24, and 25 pack tests fail. Commit or
+stash your work, then check every file out again under the current `.gitattributes`, once:
+
+```sh
+git rm --cached -r . && git reset --hard
 ```
 
 ## Reporting a problem

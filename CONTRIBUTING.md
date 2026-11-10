@@ -172,9 +172,21 @@ git clone https://github.com/neralabs/rerail.git
 
 `RERAIL_ORACLES_DIR` points the build and tests at another fixtures directory.
 
-Prerequisites: Node.js 24+, npm, Rust through [rustup](https://rustup.rs/), and [`just`](https://github.com/casey/just)
-for the dev recipes (`just rerail-dev`, `just nuke-rerail`). `rust-toolchain.toml` pins the toolchain, so `cargo`
-installs and selects it on first use.
+Prerequisites:
+
+- Node.js 24.18 or later, for its npm (11.16 or later), which reads `allowScripts` in `package.json`. That denies
+  better-sqlite3's install script, so `npm ci` uses the addon better-sqlite3 ships prebuilt instead of compiling it.
+  An older npm runs the script, which fails without Python and C++ build tools. `npm run check:install-scripts` fails
+  when a bump leaves the deny on the old version.
+- Rust through [rustup](https://rustup.rs/), to build the native engine. `rust-toolchain.toml` pins the toolchain, so
+  `cargo` installs and selects it on first use. Without Rust, use a released engine ([Without Rust](#without-rust)).
+- [`just`](https://github.com/casey/just) for the dev recipes (`just rerail-dev`, `just nuke-rerail`), or the command
+  each recipe runs, which the [`Justfile`](Justfile) shows.
+- The AWS CLI v2, signed in with read access to the pack test data, for the pack tests and the conformance gate
+  ([Pack test data](#pack-test-data)). Without access, `npm run check`, the builds and `npm run test:scripts` still
+  run, and so do the tests that read no pack data; the ones that do fail, each saying to pull it.
+
+On Windows, see also [Windows](#windows).
 
 ```sh
 npm ci
@@ -190,6 +202,30 @@ The pack tests also need the pack test data: run `npm run fixtures:pull` ([Pack 
 
 `npm run build:native` needs `cargo` on `PATH`; after a fresh rustup install, `export PATH="$HOME/.cargo/bin:$PATH"`.
 On Windows, see [Developing on Windows](#developing-on-windows).
+
+### Without Rust
+
+`npm run engine:pull` puts a released engine in `native/` instead of building one: it runs
+`npm pack @neralabs/rerail@<version>` for the version `package.json` names (`-- --version <version>` for another) and
+copies its `native/rerail_engine.<platform>.node`. When `native/`, `Cargo.toml`, `Cargo.lock` or `languages/` changed
+since that release's tag (`git diff --stat v<version> -- native/ Cargo.toml Cargo.lock languages/`), it warns and
+lists the changes: the engine is older than the checkout, and tests of those changes need `npm run build:native`.
+`RERAIL_ENGINE_PATH` makes the runtime load an engine from another path instead.
+
+### Windows
+
+- **Rust.** The toolchain targets MSVC, so it needs Visual Studio's C++ tools: Visual Studio or its Build Tools with
+  the "Desktop development with C++" workload, or just the "MSVC v143 build tools" and a "Windows 11 SDK". Install
+  rustup with `winget install Rustlang.Rustup` (or `rustup-init.exe` from [rustup.rs](https://rustup.rs/)), then
+  open a new terminal. In a PowerShell already open, `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"` puts
+  `cargo` on `PATH`.
+- **`just`.** `winget install Casey.Just`. It runs each recipe with `sh`, so use it from Git Bash, or put Git's `bin`
+  folder (`C:\Program Files\Git\bin`) on `PATH`. Without `just`, run the command the recipe runs.
+- **Line ends.** A clone made before `.gitattributes` set `* text=auto eol=lf` has files with CRLF line ends, and the
+  model check, structure metrics #8 and #24 and 25 pack tests fail in it. After committing or stashing your work,
+  check every file out again once:
+  `git rm --cached -r . && git reset --hard`
+  ([Troubleshooting](docs/troubleshooting.md#windows-checks-and-pack-tests-fail-in-a-clone-made-before-lf-line-ends)).
 
 ### Each component
 
@@ -401,9 +437,10 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
 - `npm run check` passes: the type check, the layer boundaries, the repository structure gate, Windows-safe paths,
   child processes started only through `src/engine/child-process.ts`, renames only through `src/engine/file-replace.ts`,
   test folders removed only through `test/support/platform/remove-folder.ts`, checkout paths resolved only through
-  `src/engine/catalog/checkout-control.ts`, opens that refuse a symlink only through `src/engine/no-follow.ts`, and no
-  internal references (ticket IDs, `nera-` names outside the public list). While the pull request stages pack data in
-  a `publish/`, structure metric #3 fails for each such tool-pack until the data is published.
+  `src/engine/catalog/checkout-control.ts`, opens that refuse a symlink only through `src/engine/no-follow.ts`, no
+  internal references (ticket IDs, `nera-` names outside the public list), and `allowScripts` denying the install
+  script of every installed package that ships its addon prebuilt. While the pull request stages pack data in a
+  `publish/`, structure metric #3 fails for each such tool-pack until the data is published.
 - `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
 - `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
   runs it).
