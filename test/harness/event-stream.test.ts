@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 const routing = vi.hoisted(() => ({
   isMainRerailBuild: vi.fn<() => boolean>(),
-  daemonEngineEndpoint: vi.fn<(replaceOtherPackage: boolean) => Promise<{ socketPath: string; accessToken?: string }>>(),
+  daemonEngineEndpoint: vi.fn<(replaceOtherPackage: boolean, deadline?: number) => Promise<{ socketPath: string; accessToken?: string }>>(),
 }));
 vi.mock("../../src/engine/native/rerail-build.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/engine/native/rerail-build.js"),
@@ -152,6 +152,7 @@ describe("rerail events in a main build", () => {
     output.setEncoding("utf8").on("data", (chunk: string) => { written += chunk; });
     const session = { host: "claude-code", sessionId: "s", cwd: root };
 
+    const before = Date.now();
     await runRerailEventStream({
       workspaceRoot: root,
       storageRoot: join(root, "sessions"),
@@ -163,6 +164,7 @@ describe("rerail events in a main build", () => {
       ]),
       output,
     });
+    const after = Date.now();
 
     const results = written.trim().split("\n").map(line => JSON.parse(line) as { eventId: string; deliveries: Array<{ content: string }> });
     expect(results.map(result => [result.eventId, result.deliveries.map(delivery => delivery.content)])).toEqual([
@@ -178,7 +180,13 @@ describe("rerail events in a main build", () => {
     }));
     // Only the first event may replace a daemon from another package; a stream that outlives an update must
     // keep using the newer daemon rather than bring its own version back.
-    expect(routing.daemonEngineEndpoint.mock.calls).toEqual([[true], [false]]);
+    expect(routing.daemonEngineEndpoint.mock.calls.map(([replaceOtherPackage]) => replaceOtherPackage)).toEqual([true, false]);
+    // Each event waits for a busy daemon until 12 s after it arrived, the start check's read of the daemon included, as
+    // a hook does; without a deadline it waited 2 s for the start check, then 2 s and 10 s for the endpoint.
+    for (const [, deadline] of routing.daemonEngineEndpoint.mock.calls) {
+      expect(deadline).toBeGreaterThanOrEqual(before + 12_000);
+      expect(deadline).toBeLessThanOrEqual(after + 12_000);
+    }
   });
 
   it("never asks for the daemon, which would autostart it, while Rerail is off in the checkout", async () => {

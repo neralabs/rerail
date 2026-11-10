@@ -15,7 +15,7 @@ import {
 } from "../runtime/event-protocol.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
-import { daemonEngineEndpoint, engineEndpointAt } from "../runtime/daemon-control.js";
+import { daemonEngineEndpoint, engineEndpointAt, HOOK_DAEMON_WAIT_MS } from "../runtime/daemon-control.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { linkDeliveries } from "../presentation/session-presentation.js";
@@ -116,11 +116,14 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
     const explicitDatabase = options.databasePath === undefined ? undefined : configuration.databasePath;
     const eventLoop: RerailEventLoop = {
       ingest: async (event) => {
+        // As a hook waits: a busy daemon gets HOOK_DAEMON_WAIT_MS from the event's arrival, the start check's read of
+        // it included, and no more.
+        const deadline = Date.now() + HOOK_DAEMON_WAIT_MS;
         if (event.kind === "session-start") host = event.session.host;
         // As hooks do: where Rerail is off nothing is recorded, and asking for the socket would autostart the daemon.
         if (!await hookRerailStarted(host, workspaceRoot, explicitDatabase)) return [];
         const named = process.env.RERAIL_ENGINE_SOCKET;
-        const endpoint = named !== undefined ? await engineEndpointAt(named) : await daemonEngineEndpoint(replaceOtherPackage);
+        const endpoint = named !== undefined ? await engineEndpointAt(named) : await daemonEngineEndpoint(replaceOtherPackage, deadline);
         replaceOtherPackage = false;
         return await ingestEngineEvent(endpoint, event, configuration);
       },
