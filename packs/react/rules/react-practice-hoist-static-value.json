@@ -1292,6 +1292,31 @@
                   }
                 }
               }
+            },
+            "not": {
+              "regex": "^[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*$",
+              "not": {
+                "any": [
+                  {
+                    "inside": {
+                      "kind": "member_expression",
+                      "field": "object"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "call_expression",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "new_expression",
+                      "field": "constructor"
+                    }
+                  }
+                ]
+              }
             }
           }
         }

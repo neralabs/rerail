@@ -71,6 +71,14 @@
     {
       "path": "src/a/Columns.tsx",
       "content": "import { format } from './format';\nimport { Table } from './Table';\n\nexport function Filters() {\n  const columns = [{ key: 'date', render: (v) => format(v) }];\n  return <Table columns={columns} />;\n}\n"
+    },
+    {
+      "path": "src/settings/SettingsCard.tsx",
+      "content": "import { SettingsIcon } from './icons';\nimport { Card } from './Card';\n\nexport function SettingsCard() {\n  const header = { title: 'Settings', Icon: SettingsIcon };\n  return <Card header={header} />;\n}\n"
+    },
+    {
+      "path": "src/charts/ChartActions.tsx",
+      "content": "import { ExternalLink } from './ExternalLink';\nimport { Chart } from './Chart';\n\nexport function ChartActions() {\n  const actions = [<ExternalLink key=\"docs\" href=\"/docs\" />];\n  return <Chart actions={actions} />;\n}\n"
     }
   ],
   "passed": [

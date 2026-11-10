@@ -71,6 +71,10 @@
     {
       "path": "src/users/UserBadge.tsx",
       "content": "import { useEffect, useState } from 'react';\nimport axios from 'axios';\n\nexport function UserBadge({ id }: { id: string }) {\n  const [user, setUser] = useState<User | null>(null);\n\n  useEffect(() => {\n    axios.get(`/api/users/${id}`).then((r) => setUser(r.data));\n  }, [id]);\n\n  return <Badge user={user} />;\n}\n"
+    },
+    {
+      "path": "src/replays/ReplayOffset.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { api } from '../api';\n\nexport function ReplayOffset({ replayId }: { replayId: string }) {\n  const [data, setData] = useState<Replay | null>(null);\n\n  useEffect(() => {\n    Promise.resolve(replayId)\n      .then((id) => api.get(id))\n      .then(setData);\n  }, [replayId]);\n\n  return <span>{data?.offset}</span>;\n}\n"
     }
   ],
   "passed": [
@@ -169,6 +173,10 @@
     {
       "path": "src/users/GuardedUserBadge.tsx",
       "content": "import { useEffect, useState } from 'react';\nimport axios from 'axios';\n\nexport function GuardedUserBadge({ id }: { id: string }) {\n  const [user, setUser] = useState<User | null>(null);\n\n  useEffect(() => {\n    let ignore = false;\n    axios.get(`/api/users/${id}`).then((r) => {\n      if (!ignore) setUser(r.data);\n    });\n    return () => {\n      ignore = true;\n    };\n  }, [id]);\n\n  return <Badge user={user} />;\n}\n"
+    },
+    {
+      "path": "src/replays/ReplayOffsetGuarded.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { api } from '../api';\n\nexport function ReplayOffset({ replayId }: { replayId: string }) {\n  const [data, setData] = useState<Replay | null>(null);\n\n  useEffect(() => {\n    let ignore = false;\n    Promise.resolve(replayId)\n      .then((id) => api.get(id))\n      .then((result) => {\n        if (!ignore) setData(result);\n      });\n    return () => {\n      ignore = true;\n    };\n  }, [replayId]);\n\n  return <span>{data?.offset}</span>;\n}\n"
     }
   ]
 }

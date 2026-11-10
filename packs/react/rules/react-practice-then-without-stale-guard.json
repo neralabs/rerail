@@ -793,7 +793,11 @@
                     "field": "function",
                     "has": {
                       "field": "object",
-                      "regex": "^Promise\\s*\\.\\s*(?:resolve|reject)\\b|^new\\s+Promise\\b"
+                      "kind": "call_expression",
+                      "has": {
+                        "field": "function",
+                        "regex": "^Promise\\s*\\.\\s*(?:resolve|reject)$"
+                      }
                     }
                   }
                 }
