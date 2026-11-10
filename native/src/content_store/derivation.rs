@@ -12,9 +12,9 @@
 //!   read it is enqueued (early cutoff, `facts::propagate`).
 //! - The readers of a name are found through `derivation_inputs_by_name`: the next wave's frontier.
 
-use super::{ContentStore, StoreError, StoreResult, Sym};
-use rusqlite::{OptionalExtension, Transaction, params};
-use std::collections::BTreeSet;
+use super::{ContentStore, StoreError, StoreResult, Sym, bounded_insert};
+use rusqlite::{OptionalExtension, Transaction, params, types::Value};
+use std::collections::{BTreeSet, HashMap};
 
 /// The digest an unbound name reads as: a derivation that probed a name nobody bound records it,
 /// and is invalidated when the name is first bound.
@@ -61,13 +61,9 @@ impl ContentStore {
     pub fn bind_names(&self, bindings: &[Binding]) -> StoreResult<Vec<String>> {
         let names = self.intern_atoms(&bindings.iter().map(|b| b.name.as_str()).collect::<Vec<_>>())?;
         self.immediate_transaction(|transaction| {
-            let mut changed = Vec::new();
-            for (binding, &name) in bindings.iter().zip(&names) {
-                if bind(transaction, name, &binding.digest)? {
-                    changed.push(binding.name.clone());
-                }
-            }
-            Ok(changed)
+            let named: Vec<(Sym, [u8; 32])> = names.iter().copied().zip(bindings.iter().map(|b| b.digest)).collect();
+            let changed = bind_all(transaction, &named)?;
+            Ok(bindings.iter().zip(changed).filter(|(_, c)| *c).map(|(b, _)| b.name.clone()).collect())
         })
     }
 
@@ -80,24 +76,23 @@ impl ContentStore {
             values.extend(record.inputs.iter().filter_map(|input| input.name.as_deref()));
         }
         let atoms = self.intern_atoms(&values)?;
+        let mut atoms = atoms.iter().copied();
+        let mut derivations = Vec::with_capacity(records.len());
+        let mut bindings = Vec::with_capacity(records.len());
+        for record in records {
+            let output = atoms.next().expect("one atom per output");
+            let inputs = record
+                .inputs
+                .iter()
+                .map(|input| (input.name.as_ref().map(|_| atoms.next().expect("one atom per named input")), input.digest))
+                .collect();
+            derivations.push((output, StoredDerivation { producer: record.producer, status: record.status, cost: record.cost, inputs }));
+            bindings.push((output, record.digest));
+        }
         self.immediate_transaction(|transaction| {
-            let mut changed = Vec::new();
-            let mut atoms = atoms.iter().copied();
-            for record in records {
-                let output = atoms.next().expect("one atom per output");
-                let inputs = record
-                    .inputs
-                    .iter()
-                    .map(|input| (input.name.as_ref().map(|_| atoms.next().expect("one atom per named input")), input.digest))
-                    .collect();
-                let derivation =
-                    StoredDerivation { producer: record.producer, status: record.status, cost: record.cost, inputs };
-                write_derivation(transaction, output, &derivation)?;
-                if bind(transaction, output, &record.digest)? {
-                    changed.push(record.output.clone());
-                }
-            }
-            Ok(changed)
+            write_derivations(transaction, &derivations)?;
+            let changed = bind_all(transaction, &bindings)?;
+            Ok(records.iter().zip(changed).filter(|(_, c)| *c).map(|(r, _)| r.output.clone()).collect())
         })
     }
 
@@ -269,12 +264,8 @@ impl ContentStore {
         derivations: &[(Sym, StoredDerivation)],
     ) -> StoreResult<()> {
         self.immediate_transaction(|transaction| {
-            for (name, digest) in bindings {
-                bind(transaction, *name, digest)?;
-            }
-            for (output, derivation) in derivations {
-                write_derivation(transaction, *output, derivation)?;
-            }
+            bind_all(transaction, bindings)?;
+            write_derivations(transaction, derivations)?;
             Ok(())
         })
     }
@@ -289,43 +280,80 @@ pub struct StoredDerivation {
     pub inputs: Vec<(Option<Sym>, [u8; 32])>,
 }
 
-fn write_derivation(transaction: &Transaction<'_>, output: Sym, derivation: &StoredDerivation) -> StoreResult<()> {
-    transaction
-        .prepare_cached(
-            "INSERT INTO derivations(output_atom,producer,status,cost) VALUES (?1,?2,?3,?4) \
-             ON CONFLICT(output_atom) DO UPDATE \
-             SET producer=excluded.producer,status=excluded.status,cost=excluded.cost",
-        )?
-        .execute(params![output, &derivation.producer[..], derivation.status, derivation.cost])?;
-    transaction
-        .prepare_cached("DELETE FROM derivation_inputs WHERE output_atom=?1")?
-        .execute([output])?;
-    let mut insert = transaction.prepare_cached(
-        "INSERT INTO derivation_inputs(output_atom,ordinal,name_atom,digest) VALUES (?1,?2,?3,?4)",
-    )?;
-    for (ordinal, (name, digest)) in derivation.inputs.iter().enumerate() {
-        insert.execute(params![output, ordinal as i64, name, &digest[..]])?;
+/// Writes each derivation, its inputs replaced, as a few statements whatever their number (a derivation listed twice
+/// is its last).
+fn write_derivations(transaction: &Transaction<'_>, derivations: &[(Sym, StoredDerivation)]) -> StoreResult<()> {
+    if derivations.is_empty() {
+        return Ok(());
     }
+    let mut last: HashMap<Sym, &StoredDerivation> = HashMap::with_capacity(derivations.len());
+    for (output, derivation) in derivations {
+        last.insert(*output, derivation);
+    }
+    let mut outputs: Vec<Sym> = last.keys().copied().collect();
+    outputs.sort_unstable();
+    bounded_insert::insert(
+        transaction,
+        "INSERT INTO derivations(output_atom,producer,status,cost)",
+        "ON CONFLICT(output_atom) DO UPDATE SET producer=excluded.producer,status=excluded.status,cost=excluded.cost",
+        outputs.iter().map(|o| {
+            let d = last[o];
+            [Value::Integer(i64::from(*o)), Value::Blob(d.producer.to_vec()), Value::Integer(d.status), Value::Integer(d.cost)]
+        }),
+    )?;
+    transaction
+        .prepare_cached("DELETE FROM derivation_inputs WHERE output_atom IN (SELECT value FROM json_each(?1))")?
+        .execute([serde_json::to_string(&outputs).expect("integers")])?;
+    bounded_insert::insert(
+        transaction,
+        "INSERT INTO derivation_inputs(output_atom,ordinal,name_atom,digest)",
+        "",
+        outputs.iter().flat_map(|o| {
+            last[o].inputs.iter().enumerate().map(move |(ordinal, (name, digest))| {
+                [Value::Integer(i64::from(*o)), Value::Integer(ordinal as i64), name.map_or(Value::Null, |n| Value::Integer(i64::from(n))), Value::Blob(digest.to_vec())]
+            })
+        }),
+    )?;
     Ok(())
 }
 
-/// Binds the atom `name` to `digest`; whether its digest changed.
-fn bind(transaction: &Transaction<'_>, name: Sym, digest: &[u8; 32]) -> StoreResult<bool> {
-    let held = transaction
-        .prepare_cached("SELECT digest FROM name_bindings WHERE name_atom=?1")?
-        .query_row([name], |row| row.get::<_, Vec<u8>>(0))
-        .optional()?;
-    if held.as_deref() == Some(&digest[..]) {
-        return Ok(false);
+/// Binds each atom to its digest, in order, as a few statements whatever their number: one read of the digests held,
+/// the changes found in memory, one upsert of the names whose digest moved (a rebinding bumps its revision). Whether
+/// each binding changed its name's digest: a first binding to `ABSENT` is none (it read as that already).
+fn bind_all(transaction: &Transaction<'_>, bindings: &[(Sym, [u8; 32])]) -> StoreResult<Vec<bool>> {
+    if bindings.is_empty() {
+        return Ok(Vec::new());
     }
-    transaction
-        .prepare_cached(
-            "INSERT INTO name_bindings(name_atom,digest,revision) VALUES (?1,?2,0) \
-             ON CONFLICT(name_atom) DO UPDATE SET digest=excluded.digest,revision=revision+1",
-        )?
-        .execute(params![name, &digest[..]])?;
-    // A first binding of a name read while absent is a change only if it differs from ABSENT.
-    Ok(held.is_some() || digest != &ABSENT)
+    let mut names: Vec<Sym> = bindings.iter().map(|(n, _)| *n).collect();
+    names.sort_unstable();
+    names.dedup();
+    let mut held: HashMap<Sym, [u8; 32]> = HashMap::with_capacity(names.len());
+    {
+        let mut read = transaction.prepare_cached("SELECT name_atom,digest FROM name_bindings WHERE name_atom IN (SELECT value FROM json_each(?1))")?;
+        let rows = read.query_map([serde_json::to_string(&names).expect("integers")], |row| Ok((row.get::<_, Sym>(0)?, row.get::<_, Vec<u8>>(1)?)))?;
+        for row in rows {
+            let (name, bytes) = row?;
+            held.insert(name, digest(&bytes)?);
+        }
+    }
+    let mut changed = Vec::with_capacity(bindings.len());
+    let mut writes = Vec::new();
+    for (name, d) in bindings {
+        let was = held.insert(*name, *d);
+        if was == Some(*d) {
+            changed.push(false);
+            continue;
+        }
+        writes.push([Value::Integer(i64::from(*name)), Value::Blob(d.to_vec()), Value::Integer(0)]);
+        changed.push(was.is_some() || d != &ABSENT);
+    }
+    bounded_insert::insert(
+        transaction,
+        "INSERT INTO name_bindings(name_atom,digest,revision)",
+        "ON CONFLICT(name_atom) DO UPDATE SET digest=excluded.digest,revision=revision+1",
+        writes,
+    )?;
+    Ok(changed)
 }
 
 fn digest(bytes: &[u8]) -> StoreResult<[u8; 32]> {

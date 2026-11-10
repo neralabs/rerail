@@ -202,68 +202,6 @@ impl Work<'_> {
     }
 }
 
-pub(super) fn track_views(w: &mut Work<'_>, run: &mut session::Execution) -> Result<usize> {
-    let e = Arc::make_mut(&mut run.emitted);
-    let views = std::mem::take(&mut e.views);
-    if views.is_empty() {
-        return Ok(0);
-    }
-    let mut names = BTreeSet::new();
-    for (name, q) in &views {
-        let width = q.body.columns.len();
-        let (old, count) = w.snapshot(name, width)?;
-        w.db.execute_batch(&format!("DROP VIEW {}", quote(name)))
-            .map_err(error)?;
-        let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
-        for table in [name.clone(), format!("new_{name}"), format!("delta_{name}")] {
-            w.db.execute_batch(&format!(
-                "CREATE TEMP TABLE {}({},PRIMARY KEY({})) WITHOUT ROWID",
-                quote(&table),
-                cols.iter()
-                    .map(|c| format!("{c} INTEGER"))
-                    .collect::<Vec<_>>()
-                    .join(","),
-                cols.join(",")
-            ))
-            .map_err(error)?;
-            if table != *name {
-                run.objects.push((table, true));
-            }
-        }
-        w.db.execute_batch(&format!("INSERT INTO {} SELECT * FROM {old}", quote(name)))
-            .map_err(error)?;
-        if let Some((_, table)) = run.objects.iter_mut().find(|(n, _)| n == name) {
-            *table = true;
-        }
-        run.counts.insert(name.clone(), count);
-        e.program.relations.push((name.clone(), width));
-        e.program.steps.push(schedule::Step {
-            output: name.clone(),
-            stratum: 0,
-            reads: vec![],
-            sql: format!("INSERT OR IGNORE INTO new_{name} {}", q.render()),
-        });
-        e.queries.push(Some(q.clone()));
-        names.insert(name.clone());
-    }
-    for (step, q) in e.program.steps.iter_mut().zip(&e.queries) {
-        if let Some(q) = q {
-            for r in q.reads() {
-                if let Some(r) = r.program_relation()
-                    && names.contains(r)
-                    && !step.reads.iter().any(|name| name == r)
-                {
-                    step.reads.push(r.into());
-                }
-            }
-        }
-    }
-    for (table, cols) in indexes::wanted(e) {
-        session::index(w.db, &table, &cols).map_err(error)?;
-    }
-    Ok(views.len())
-}
-
 pub(super) fn barrier(q: &Query) -> bool {
     if !q.ctes.is_empty() {
         return true;

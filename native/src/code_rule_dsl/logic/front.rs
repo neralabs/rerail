@@ -360,6 +360,19 @@ pub(in crate::code_rule_dsl) struct Program {
     /// only, its `doc`, `source` and `src_line` and no tree, when a scope selects it. Every program's, in a combined
     /// one.
     pub(in crate::code_rule_dsl) text_globs: Vec<String>,
+    /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
+    /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
+    pub(in crate::code_rule_dsl) qualifiers: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
+pub(in crate::code_rule_dsl) const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic"];
+
+impl Program {
+    /// Whether `.decl rel(…)` carries the qualifier `word` (one of `QUALIFIERS`).
+    pub(in crate::code_rule_dsl) fn qualified(&self, rel: &str, word: &str) -> bool {
+        self.qualifiers.get(rel).is_some_and(|q| q.contains(word))
+    }
 }
 
 /// A `.scope` entry taken from a policy option (`.scope dirs option("applicationRoots")`), as `doc_scopes` holds it

@@ -955,6 +955,8 @@ fn benchmark_python_calls_program_corpus() {
         if library(&f) { ("<library>".to_owned(), 0) } else { let s = at[n].0; let l = line_of(&f, s); (f, l) }
     };
     let open: BTreeSet<(String, usize, usize)> = rows("call_open").iter().map(|r| key(&r[0])).collect();
+    // The analysis phase (calls_p3) names no library node: a call that reaches a library's callable is `call_lib`.
+    let lib_calls: BTreeSet<(String, usize, usize)> = if out.join("call_lib.csv").exists() { rows("call_lib").iter().map(|r| key(&r[0])).collect() } else { BTreeSet::new() };
     let mut named: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
     for r in rows("call_target") {
         let t = target(&r[1]);
@@ -1017,7 +1019,7 @@ fn benchmark_python_calls_program_corpus() {
                 }
                 *tally.entry("both decided").or_default() += 1;
                 let lib = ("<library>".to_owned(), 0);
-                let reaches_library = named.get(&k).is_some_and(|d| d.contains(&lib)) || classes.get(&k).is_some_and(|c| c.contains(&lib));
+                let reaches_library = named.get(&k).is_some_and(|d| d.contains(&lib)) || classes.get(&k).is_some_and(|c| c.contains(&lib)) || lib_calls.contains(&k);
                 let mut defs = named.get(&k).cloned().unwrap_or_default();
                 let mut cls = classes.get(&k).cloned().unwrap_or_default();
                 defs.remove(&lib);
@@ -1440,14 +1442,24 @@ fn spike_o125_replay() {
     if spans_on {
         crate::code_rule_dsl::logic::profile::set(true);
     }
+    // `O125_DECISIONS=<topic text>`: each step's decisions under topics holding the text, with how often.
+    let decided = std::cell::RefCell::new(crate::code_rule_dsl::logic::profile::decisions());
     let show_spans = |step: usize| {
         if !spans_on {
             return;
         }
+        if let Ok(topic) = std::env::var("O125_DECISIONS") {
+            let now = crate::code_rule_dsl::logic::profile::decisions_since(&decided.borrow());
+            for ((t, text), n) in now.iter().filter(|((t, _), _)| t.contains(topic.as_str())) {
+                println!("o125d {step:02} {n:>7} {t}: {text}");
+            }
+            *decided.borrow_mut() = crate::code_rule_dsl::logic::profile::decisions();
+        }
         let spans = crate::code_rule_dsl::logic::profile::spans();
         // `O125_SPANS_TSV=<dir>`: the step's whole session tree, `<dir>/spans-<step>.tsv` (path, calls, CPU s).
         if let Some(dir) = std::env::var_os("O125_SPANS_TSV") {
-            let rows: String = spans.iter().filter(|(p, _)| p.contains("session/")).map(|(p, t)| format!("{p}\t{}\t{:.4}\n", t.calls, t.total)).collect();
+            let rows: String = spans.iter().filter(|(p, _)| p.contains("session/") || std::env::var_os("O125_SPANS_ALL").is_some()).map(|(p, t)| format!("{p}\t{}\t{:.4}\n", t.calls, t.total)).collect();
+            let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::write(PathBuf::from(dir).join(format!("spans-{step:02}.tsv")), rows);
         }
         let mut by: BTreeMap<String, f64> = BTreeMap::new();

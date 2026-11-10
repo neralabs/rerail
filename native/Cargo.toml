@@ -49,6 +49,8 @@ metal-tests = []
 # `.rr`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
+# Relational kernels on every lane and the executor that batches their launches (decision 0098).
+rerail-accel = { path = "../accel" }
 ast-grep-core = "=0.51.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).

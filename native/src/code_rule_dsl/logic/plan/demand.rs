@@ -35,6 +35,9 @@
 //!   Its other rules take the demand too. The rows not built must outweigh the strata the split adds, opened in
 //!   every chunk.
 //!
+//! The program overrides the size test (decision 0099): `.decl r(…) magic` demands r whenever it can be, and
+//! `.decl r(…) no_magic` never.
+//!
 //! A positive read is cut like a negation, with a guard of its own. A negation only filters, so the reader's body less
 //! it is no larger than the reader's work. A positive read can be what keeps the body small, so it is cut only where
 //!
@@ -90,6 +93,8 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
             || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
             || prog.demand.iter().any(|d| d == rel)
             || prog.gates.iter().any(|(g, _)| g == rel)
+            // `.decl r(…) no_magic` (decision 0099): the program keeps it whole.
+            || prog.qualified(rel, "no_magic")
             // A relation memoised per import component (decision 0076, its copy from `<rel>__cross`): its stored rows
             // must be all of a document's, not those a reader outside the closure asked for.
             || prog.rules.iter().any(|r| r.head.rel == rel && r.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.ends_with("__cross"))))
@@ -144,7 +149,7 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
     let recursive = |rel: &str, rules: &[&Rule]| rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Atom(a) | Literal::Agg { atom: a, .. } if a.rel == rel)));
     let mut candidates: BTreeSet<&str> = by_rel
         .iter()
-        .filter(|(rel, rules)| !kept(rel) && !recursive(rel, rules) && rules.iter().all(|r| !reads_demand(r)) && demandable(rules))
+        .filter(|(rel, rules)| !kept(rel) && !recursive(rel, rules) && rules.iter().all(|r| !reads_demand(r)) && (demandable(rules) || prog.qualified(rel, "magic")))
         .map(|(rel, _)| *rel)
         .collect();
     // Read only by atoms (negated or positive) whose arguments are variables or constants.

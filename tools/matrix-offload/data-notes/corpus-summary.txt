@@ -1,0 +1,8 @@
+documents 13088
+with parse errors 46
+named nodes 22295712
+kinds 115
+names 260202
+identifier occurrences 5797248 (bindings 1533941)
+(document, name) pairs 1141483
+import edges 105691 (unresolved import names 72303)
