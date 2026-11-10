@@ -12,6 +12,8 @@ pub(super) struct Execution {
     pub emitted: Arc<plan::emit::Emitted>,
     /// Physical arities at the compiler boundary, before executor-private walk lowering.
     pub logical_relations: Arc<Vec<(String,usize)>>,
+    /// Logical component proofs are built once, before physical helper lowering.
+    pub loop_analyses: Arc<Vec<Value>>,
     /// The program as declared (pruned, before lowering), for the catalog.
     pub program: Arc<front::Program>,
     /// Relations made by SQL producers, each with the session inputs its query reads. Tuple

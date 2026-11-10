@@ -21,6 +21,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime};
 use timing::{Started, Timing};
+#[path = "clock.rs"]
+#[cfg(any(test, feature = "headless"))]
+mod clock;
+#[cfg(any(test, feature = "headless"))]
+pub(in crate::code_rule_dsl) use clock::thread_cpu_ns;
 
 static DIRECTORY: LazyLock<Option<PathBuf>> =
     LazyLock::new(|| std::env::var_os("RERAIL_SQL_PROFILE_DIR").map(PathBuf::from));

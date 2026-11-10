@@ -1,5 +1,6 @@
 //! Dependency components and expression effects, independent of executor storage.
 use std::collections::{BTreeMap, BTreeSet};
+pub(in crate::code_rule_dsl) mod loops;
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub(in crate::code_rule_dsl) struct Components {

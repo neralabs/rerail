@@ -2,6 +2,19 @@
 use super::*;
 
 impl CodeRuleSqlExecutor {
+    /// Development comparison only. Published results and retained maintenance are unchanged.
+    #[doc(hidden)]
+    pub fn compare_recursive_components(&mut self,max_waves:Option<u32>,sql_first:bool)->Result<String> {
+        self.profiled("recursive component comparison",|this| {
+            let run=this.executions.last().cloned().ok_or_else(||error("component comparison requires a completed program"))?;
+            let limits=this.limits.clone();
+            let budget=limits.enter(this.db.connection_mut())?;
+            let result=component_loop::compare(&this.db,&run,max_waves.unwrap_or(run.max_waves),sql_first);
+            budget.leave(this.db.connection_mut());
+            serde_json::to_string(&result?).map_err(error)
+        })
+    }
+
     #[doc(hidden)]
     pub fn use_cold_oracle(&mut self) {
         self.cold_oracle = true;

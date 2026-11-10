@@ -150,6 +150,14 @@ fn components(steps: &[(schedule::Step, Option<Query>)]) -> crate::code_rule_dsl
     crate::code_rule_dsl::logic::analysis::stages::Components::analyze(&edges)
 }
 
+pub(super) fn loop_analyses(emitted:&plan::emit::Emitted)->Arc<Vec<Value>> {
+    let steps=emitted.program.steps.iter().cloned().zip(emitted.queries.iter().cloned()).collect::<Vec<_>>();
+    let components=components(&steps);
+    let lattices=emitted.program.lattices.iter().map(|(r,_,_)|r.clone()).collect();
+    let groups=components.recursive.iter().map(|r|components.members[r].clone()).collect::<BTreeSet<_>>();
+    Arc::new(groups.into_iter().map(|members|json!({"component":members,"analysis":plan::acyclic::version_loop(&steps,&members,&lattices),"purpose":"Logical eligibility only; actual scheduling is reported separately"})).collect())
+}
+
 #[cfg(test)]
 mod replay_tests {
     use super::*;
@@ -602,6 +610,7 @@ pub(super) fn prepare(
                 break;
             }
         }
+        let components=Arc::new(components(&steps));
         let mut trace = Trace {
             whole: false,
             producers: Arc::new(BTreeMap::new()),
@@ -611,7 +620,7 @@ pub(super) fn prepare(
             prefix: format!("__it{namespace}_s{stratum}"),
             emitted: e.clone(),
             relations,
-            components: Arc::new(components(&steps)),
+            components,
             steps: Arc::new(steps),
             stage_decisions: BTreeMap::new(),
             after,

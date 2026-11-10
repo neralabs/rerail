@@ -213,6 +213,7 @@ impl Operator {
         }];
         emitted.queries = vec![query];
         let mut run = session::Execution {
+            loop_analyses:Arc::new(vec![]),
             logical_relations: Arc::new(emitted.program.relations.clone()),
             inputs: dependencies,
             objects: vec![(result.clone(), true)],

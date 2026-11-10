@@ -176,6 +176,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })
             })?;
         }
+        let mut component_comparison=Value::Null;
+        if request["compare_components"].as_bool()==Some(true) {
+            component_comparison=phase(&trace_state,&mut session,"recursive-component-comparison",&mut phases,|session| {
+                session.compare_recursive_components(request["max_waves"].as_u64().map(|n|n as u32),request["comparison_sql_first"].as_bool().unwrap_or(false))
+                    .and_then(|text|serde_json::from_str(&text).map_err(|e|napi::Error::from_reason(e.to_string())))
+            })?;
+        }
         for (i, sql) in request["after_run_sql"]
             .as_array()
             .into_iter()
@@ -299,7 +306,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             repeated.push(json!({"same_program": session.run(program.into(), "python".into(), None).map_err(|e|e.to_string())}));
         }
         Ok(
-            json!({"execution":execution,"plan":plan,"queries":results,"repeated":repeated,"updates":updates}),
+            json!({"execution":execution,"plan":plan,"queries":results,"repeated":repeated,"updates":updates,"component_comparison":component_comparison}),
         )
     })();
     if !shared_profile {

@@ -2964,3 +2964,106 @@ Recursive execution remains open. The mixed one-file replay records thirty-six p
 The next comparison must measure component scheduling and a genuine SQL loop over immutable version references.
 The SQL loop must keep joins, projections, negative probes, and novelty checks in SQL.
 Native helpers can construct storage roots. They must not execute nested rule SQL that hides submissions.
+
+### Component scheduling and a SQL version loop (2026-11-10)
+
+The debug comparison now executes the same component transition through two drivers.
+The host driver prepares one transition statement and submits it for each iteration.
+The SQL driver carries an integer version reference through one recursive CTE.
+SQL evaluates rule joins, projections, auxiliary walks, negative probes, duplicate elimination, and novelty checks.
+A native aggregate collects typed result rows and constructs immutable roots. It has no database connection and executes no rule SQL.
+The comparison uses native references, without JSON serialization of relation contents.
+
+#### Shared proof and explanation
+
+The common stage analysis propagates recursive dependence through auxiliary stages, including cyclic walks.
+Scalar or negative reads of a dependent stage block the version loop. Aggregation over a dependent stage also blocks it.
+Stable external scalars and negative reads remain valid within a component evaluation.
+Set outputs and total expressions are required. Lattice merge and widening retain their existing schedule.
+The SQL adapter supplies these properties from checked queries. Native execution can use the same graph analysis.
+Explain exposes successful and rejected proofs through each execution's `component_loop_analysis`.
+The schedule caches this immutable analysis before physical helper lowering. Replay does not reconstruct it for each snapshot or frame.
+
+SQL profiles attach the component, driver, and logical proof to executed statements.
+The profiler records plans before temporary native schemas and functions disappear.
+Diagnostic EXPLAIN remains outside submission accounting and execution limits.
+VM work uses shared profiler counters or statement counters. A separate trace callback can reset statement counters.
+In that case, the comparison reports unavailable VM work instead of a false zero.
+
+#### Corpus comparison
+
+Both corpus programs run to completion before the component comparison.
+External inputs remain fixed at those completed versions. Each component then starts from empty roots.
+Both drivers produce identical complete relation contents and identical frontier sizes at every iteration.
+Iterations include seed evaluation and final empty-frontier detection.
+
+| Component | Output rows | Host submissions | SQL submissions |
+| --- | ---: | ---: | ---: |
+| Workload: `returns`, `type_of` | 1,864 | 8 | 1 |
+| Calls: `base`, `bv`, `found`, `need_attr`, `pv`, `qv`, `sub` | 2,021 | 13 | 1 |
+| Calls: `attr_open`, `base_open`, `bopen`, `qopen`, `vopen` | 2,239 | 15 | 1 |
+| Calls: `walk` | 4,299 | 4 | 1 |
+
+All four workload set components and all nine call-analysis set components pass complete component parity.
+The workload's `cv` lattice component remains excluded.
+Trace accounting records exactly twenty-seven workload comparison submissions: eighteen host transitions, four SQL loops, and five validation queries.
+Call analysis records exactly eighty-one: fifty-three host transitions, nine SQL loops, and nineteen validation queries.
+These observed totals match the reported strategy counts. There are no hidden rule submissions in native collectors.
+They describe separate component experiments, not new complete-session totals.
+
+The two large call components have eleven and thirteen feedback rounds between seed evaluation and empty detection.
+These counts match the preceding component observations for a nonempty evaluation. They remain properties of this algorithm, not semantic minima.
+
+#### Separate debug CPU observations
+
+Four fresh processes run two unprofiled trials per corpus. Each process uses a fresh store.
+The second trial reverses driver order and corpus order. Builds, tests, and profiled runs stop during these trials.
+Component CPU includes registration, preparation, transition execution, and native root construction.
+It excludes the completed session, eligibility analysis, final parity queries, and report serialization.
+
+| Component | Median host CPU | Median SQL-loop CPU | Paired SQL CPU changes |
+| --- | ---: | ---: | --- |
+| Workload: `returns`, `type_of` | 222.975 ms | 222.133 ms | -3.30%, +3.43% |
+| Calls: seven-relation value component | 609.097 ms | 632.497 ms | +6.99%, +0.28% |
+| Calls: five-relation open component | 213.464 ms | 213.816 ms | -3.89%, +5.68% |
+| Calls: `walk` | 544.015 ms | 526.510 ms | -1.60%, -4.96% |
+
+These two trials do not establish whole-product CPU acceptance. The SQL loop does not consistently improve CPU.
+The seven-relation component still executes approximately ten million VM instructions in either driver.
+Its thirteen host submissions perform 1,092 sorts. The recursive SQL statement performs 1,093.
+The open component performs 1,065 host sorts and 1,066 SQL-loop sorts.
+Its VM count increases from 848,475 to 902,081 with the SQL driver.
+Preparation takes approximately two to four milliseconds for those large components.
+Native root construction takes approximately twenty-five to forty-five milliseconds.
+Moving loop control removes submissions while most transition work remains.
+
+#### Decision and required production work
+
+The SQL component loop is a valid submission strategy for the proven set components.
+The current implementation remains a development comparison. Production still uses retained incremental execution.
+Its final roots do not contain the rule contexts, support indexes, and scalar cursors that sparse edits require.
+Running this cold loop and then rebuilding retained state would restore the duplicate evaluation pass that earlier work removed.
+The comparison also retains intermediate states. It does not establish production memory headroom.
+
+The next production changes are:
+
+1. Compile a component plan that shares rule-context and support descriptions with retained maintenance.
+   Collect required contexts beside candidate heads in the same SQL evaluation.
+   Preserve sparse insertion, overdeletion, rederivation, stable scalar inputs, atomic failure, and retry.
+2. Use the version loop for proven component feedback, with native callbacks limited to storage construction.
+   Keep opaque gates, component-dependent scalars, lattice merges, and widening on their existing paths until their proofs exist.
+3. Reduce transition work independently of submission count.
+   Propagate candidate uniqueness through set unions and anti-filters before removing redundant DISTINCT operations.
+   Inspect repeated auxiliary work and indexed probes using the captured plans and native counters.
+4. Repeat complete corpus and mixed-producer sessions, including edits, unchanged publication, deletion, restoration, failure, and recovery.
+   Compare every logical relation against the independent cold oracle.
+   Keep the complete-session allowance at 100 and repeat separate unprofiled CPU measurements.
+
+The one-file mixed session still uses 135 submissions. Production recursive execution and full-session acceptance remain unfinished.
+
+Final debug verification passes 175 SQL-executor tests, fifteen shared-analysis tests, and twelve SQL-profiler tests.
+The forty-four JavaScript report, budget, and parity tests pass at the producer checkpoint.
+The profiler parent invokes its separately ignored child. It checks component plans and bytecode before temporary input cleanup.
+Component regressions cover cyclic reachability, mutually recursive relations with different widths, stable external summaries, execution limits, cleanup, retry, and unchanged results.
+The public explain regression checks the shared component proof through the session interface.
+Both headless examples build in the development profile. No release or profiling-profile build runs.

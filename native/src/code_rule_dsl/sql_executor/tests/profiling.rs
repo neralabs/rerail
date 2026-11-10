@@ -30,6 +30,7 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
     let mut sparse_batch = false;
     let mut files = 0;
     let mut logical = false;
+    let mut component_loop=false;
     for entry in std::fs::read_dir(directory.path().join("sql")).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().is_none_or(|s| s != "json") {
@@ -89,6 +90,12 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             columns |= event["frame"][3].as_u64().unwrap_or(0) > 0;
             inserts |= event["frame"][4].as_u64().unwrap_or(0) > 0;
             let q = &queries[event["query"].as_u64().unwrap() as usize];
+            if stage=="recursive component comparison" && event["context"]["strategy"].is_string() {
+                assert!(q["plan"].is_array(),"Component inputs must remain available for explanation: {q}");
+                assert!(q["bytecode"].is_array());
+                assert_eq!(event["context"]["logicalAnalysis"]["decision"]["proven"],true);
+                component_loop=true;
+            }
             if q["sql"].as_str().unwrap().contains("/* sparse compound */") {
                 // Includes native candidate inspections, not only rows returned to SQLite.
                 assert!(event["frame"][2].as_u64().unwrap() < 100, "{event}");
@@ -121,6 +128,7 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             && failed
             && sparse_batch
             && logical
+            && component_loop
     );
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let output = std::process::Command::new("node")
@@ -226,6 +234,8 @@ fn profiled_session_child() {
     );
     e.db.profile_checkpoint();
     versions.close(&e.db).unwrap();
+    e.run(".decl edge(a:number,b:number,w:number)\n.input edge\n.decl profile_reach(a:number,b:number)\nprofile_reach(a,b) :- edge(a,b,_).\nprofile_reach(a,c) :- profile_reach(a,b),edge(b,c,_).\n.output profile_reach\n".into(),"python".into(),None).unwrap();
+    e.compare_recursive_components(Some(128),false).unwrap();
     // Exercise the SQL storage adapter as well as the default retained graph.
     e.legacy_initial=true;
     e.bind_relation(json!({"name":"profile_seed","columns":["n"],"rows":[[1],[2]]}).to_string()).unwrap();

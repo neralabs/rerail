@@ -99,6 +99,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
             break;
         }
     }
+    let components=Arc::new(components(&steps));
     let mut trace = Trace {
         whole: true,
         producers: Arc::new(run.producers.clone()),
@@ -108,7 +109,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         prefix: format!("__it{namespace}_global"),
         emitted: e,
         relations,
-        components: Arc::new(components(&steps)),
+        components,
         steps: Arc::new(steps),
         stage_decisions,
         after,

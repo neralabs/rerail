@@ -668,6 +668,19 @@ Component records distinguish seeds, recursive inputs, recursive candidate impro
 A productive-feedback frame has nonempty recursive inputs, candidate improvements, and a new component frontier.
 This metric describes the current algorithm and does not prove a semantic lower bound on SQL submissions.
 
+Each execution also exposes `component_loop_analysis` through explain.
+The shared analysis follows recursive dependence through auxiliary stages, including cycles.
+It rejects component-dependent scalars, negative reads, aggregates, lattice outputs, and expressions without a total-effect proof.
+Positive auxiliary stages can qualify even when their inputs depend on the recursive component.
+The schedule caches these logical proofs before physical helper lowering. Warm replay shares the immutable analysis.
+Eligibility does not select a production execution strategy.
+
+The debug `sql-executor-bench` accepts `compare_components: true` in its request.
+It compares a host component loop with one recursive SQL statement over native version references.
+`comparison_sql_first: true` reverses strategy order for paired CPU measurements.
+Both strategies use the same relational transition. The report includes complete parity, submissions, frontier sizes, preparation CPU, storage CPU, and VM work.
+Component inputs remain fixed at their completed session versions. These comparisons do not measure complete-session performance or incremental maintenance.
+
 Contexts identify the API operation, preparation stage, recursive component, frame, relation, and rule step.
 Native version differences have separate operator records. Failed operations and rollback remain in the trace.
 Profile checkpoints retain an encoded prefix of immutable query records and append only new records.

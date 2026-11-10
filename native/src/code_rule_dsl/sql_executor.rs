@@ -38,6 +38,8 @@ mod temporal;
 mod updates;
 #[cfg(any(test, feature = "headless"))]
 mod verification;
+#[cfg(any(test, feature = "headless"))]
+mod component_loop;
 mod versions;
 mod walks;
 use super::logic::sql::lattices;
@@ -757,6 +759,7 @@ impl CodeRuleSqlExecutor {
                 }
             }
             let mut execution = session::Execution {
+                loop_analyses:Arc::new(vec![]),
                 logical_relations: Arc::new(emitted.program.relations.clone()),
                 inputs: dependencies,
                 objects: objects.clone(),
@@ -775,6 +778,7 @@ impl CodeRuleSqlExecutor {
             work.profiler = self.db.profiler();
             let materialized_views = 0;
             let constant_tables = constants::prepare(&self.db, &mut execution, retained.then_some(&self.versions))?;
+            execution.loop_analyses=temporal::loop_analyses(&execution.emitted);
             #[cfg(test)]
             let retained_initial = retained && !self.legacy_initial;
             #[cfg(not(test))]
