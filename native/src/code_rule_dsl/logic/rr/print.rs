@@ -205,6 +205,7 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
                 }
                 // `core.rr`'s `docof` over nodes and spans stays an input (`lower::projections`).
                 _ if i == 0 && name == "docof" && prog.inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
+                _ if prog.tapes.get(name).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
             }
         }

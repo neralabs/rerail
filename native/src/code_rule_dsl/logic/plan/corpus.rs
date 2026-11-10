@@ -1021,6 +1021,9 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         for (rel, words) in prog.qualifiers {
             all.qualifiers.entry(rename(&rel)).or_default().extend(words);
         }
+        for (rel, cols) in prog.tapes {
+            all.tapes.entry(rename(&rel)).or_default().extend(cols);
+        }
         for (rel, mut native) in prog.natives {
             native.rename_reads(rename);
             all.natives.insert(rename(&rel), native);
@@ -4490,8 +4493,6 @@ fn run_observed(
                             program.qualifiers.entry(rel).or_default().insert("levels".to_owned());
                         }
                     }
-                    // A cache whose key came out as it was is clean, kept as it was (decision 0103).
-                    cut.clean.extend(maintained.kept_as_is.iter().cloned());
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_entries} inputs' deltas read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
                         None => format!("no kept documents: {} inputs' deltas found by hashing their documents", hashed.len()),

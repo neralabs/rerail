@@ -1731,7 +1731,7 @@ embed(d, s, "python", "code") :- kind(s, "string"), docof(s, d).
 embed_value(d, n, "python", "made", "import sys") :- kind(n, "integer"), docof(n, d).
 .decl imp(r: symbol, x: symbol, l: number)
 imp(r, x, l) :- doc_role(g, r), node(g, i, "import_statement", _, _), text(i, x), line(i, l).
-.decl tapes(t: symbol)
+.decl tapes(t: tape)
 tapes(t) :- kind(s, "string"), sub_tape(s, "python", t).
 .decl top(x: symbol, l: number)
 top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
@@ -1904,7 +1904,7 @@ result(r) :- context(n, _), parsed(n, "annotation", r).
 "#,r#"
 .decl context(n: node, x: symbol)
 .input context
-.decl result(t: symbol)
+.decl result(t: tape)
 result(t) :- context(n, x), t = @parse("sql", x).
 .output result
 "#] {

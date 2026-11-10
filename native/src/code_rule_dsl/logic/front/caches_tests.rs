@@ -1,10 +1,6 @@
-//! The form of a cache (decision 0103 §1): what `.cache C by K` refuses.
+//! The lint of a cache (decision 0103): what `.cache C by K` refuses.
 
 use super::{Cache, caches};
-
-fn program(text: &str) -> crate::code_rule_dsl::logic::front::Program {
-    crate::code_rule_dsl::logic::rr::parse(text).unwrap()
-}
 
 fn refused(text: &str) -> String {
     match crate::code_rule_dsl::logic::rr::parse(text) {
@@ -13,24 +9,22 @@ fn refused(text: &str) -> String {
     }
 }
 
-const DECLS: &str = ".decl src(a: symbol, b: symbol)\n.input src\n.decl k(a: symbol)\n.decl c(a: symbol, b: symbol)\n";
+const DECLS: &str = ".decl src(a: symbol, b: symbol)\n.input src\n.decl k(a: symbol, v: symbol)\n.decl c(a: symbol, v: symbol, b: symbol)\n";
 
 #[test]
-fn a_cache_is_a_key_rule_and_an_output_rule() {
-    let p = program(&format!("{DECLS}.cache c by k\nk(a) :- src(a, _).\nc(a, b) :- k(a), src(a, b).\n.output c\n"));
-    assert_eq!(caches(&p).unwrap(), vec![Cache { out: "c".into(), key: "k".into(), cols: vec![0] }]);
-    // The key in another column of the output.
-    let p = program(&format!("{DECLS}.cache c by k\nk(a) :- src(a, _).\nc(b, a) :- k(a), src(a, b).\n.output c\n"));
-    assert_eq!(caches(&p).unwrap()[0].cols, vec![1]);
+fn a_cache_is_a_key_rule_with_a_version_tag_and_an_output_rule() {
+    let p = crate::code_rule_dsl::logic::rr::parse(&format!("{DECLS}.cache c by k\nk(a, \"v1\") :- src(a, _).\nc(a, v, b) :- k(a, v), src(a, b).\n.output c\n")).unwrap();
+    let got = caches(&p).unwrap();
+    assert_eq!((got[0].out.as_str(), got[0].key.as_str(), got.len()), ("c", "k", 1));
 }
 
 #[test]
-fn a_broken_cache_is_refused() {
-    let with = |rules: &str| format!("{DECLS}.cache c by k\nk(a) :- src(a, _).\n{rules}.output c\n");
-    assert!(refused(&with("c(a, b) :- src(a, b).\n")).contains("reads k 0 times"));
-    assert!(refused(&with("c(a, b) :- src(a, b), !k(a).\n")).contains("negated"));
-    assert!(refused(&with("c(a, b) :- k(x), src(a, b).\n")).contains("does not have the key"));
-    assert!(refused(&with("c(a, b) :- k(a), src(a, b).\nc(b, a) :- k(a), src(a, b).\n")).contains("other columns"));
-    assert!(refused(&with("c(a, b) :- k(a), src(a, b).\nc(a, b) :- k(a), c(b, a).\n")).contains("reads itself"));
-    assert!(refused(&format!("{DECLS}.cache c\nk(a) :- src(a, _).\n")).contains("write `.cache C by K`"));
+fn the_lint_refuses_a_key_without_a_version_and_an_output_that_does_not_read_it() {
+    let with = |key: &str, rules: &str| format!("{DECLS}.cache c by k\n{key}{rules}.output c\n");
+    let key = "k(a, \"v1\") :- src(a, _).\n";
+    assert!(refused(&with("k(a, b) :- src(a, b).\n", "c(a, v, b) :- k(a, v), src(a, b).\n")).contains("no version tag"));
+    assert!(refused(&with(key, "c(a, \"v1\", b) :- src(a, b).\n")).contains("does not read k"));
+    assert!(refused(&with(key, "c(a, \"v1\", b) :- src(a, b), !k(a, \"v1\").\n")).contains("does not read k"));
+    assert!(refused(&format!("{DECLS}.cache c\n{key}")).contains("write `.cache C by K`"));
+    assert!(refused(&format!("{DECLS}.cache d by k\n{key}")).contains("d is not declared"));
 }

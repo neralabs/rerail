@@ -91,6 +91,8 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("answer", &["p:sym", "req:sym", "i:int", "by:sym"]),
         // `qualifiers`: `.decl r(…) inline` and its kin (decision 0099).
         ("qualifier", &["p:sym", "rel:sym", "word:sym"]),
+        // `tapes`: the columns declared `tape` (decision 0103 §3).
+        ("tape_column", &["p:sym", "rel:sym", "i:int"]),
     ];
     SCHEMA
         .iter()
@@ -222,6 +224,11 @@ impl Writer<'_> {
         for (rel, words) in &prog.qualifiers {
             for w in words {
                 self.row("qualifier", vec![s(rel), s(w)]);
+            }
+        }
+        for (rel, cols) in &prog.tapes {
+            for i in cols {
+                self.row("tape_column", vec![s(rel), n(*i)]);
             }
         }
         for (rel, l) in &prog.lattice {
@@ -519,6 +526,9 @@ impl<'a> Reader<'a> {
         prog.nullary = self.get("nullary").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
         for row in self.get("qualifier") {
             prog.qualifiers.entry(text(&row[0])?).or_default().insert(text(&row[1])?);
+        }
+        for row in self.get("tape_column") {
+            prog.tapes.entry(text(&row[0])?).or_default().insert(int(&row[1])? as usize);
         }
         let merges = self.by_id_text("lattice_merge")?;
         let widens = self.by_id_text("lattice_widen")?;
