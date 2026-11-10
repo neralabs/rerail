@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { closeSync, existsSync, openSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { homedir } from "node:os";
@@ -17,6 +17,7 @@ import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineHoldsCapability } from "./engine-proof.js";
+import { enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
@@ -410,7 +411,7 @@ export function isUsableEngineSocketPath(
   platform: NodeJS.Platform = process.platform,
 ): value is string {
   if (typeof value !== "string" || value.length <= 1 || value.includes("\0")) return false;
-  if (platform === "win32") return /^\\\\\.\\pipe\\[^\\]+$/u.test(value);
+  if (platform === "win32") return isNamedPipe(value) && pipeNameOf(value).length > 0 && !pipeNameOf(value).includes("\\");
   return isAbsolute(value) && (platform !== "darwin" || Buffer.byteLength(value) <= MAX_MACOS_UNIX_SOCKET_PATH_BYTES);
 }
 
@@ -468,12 +469,10 @@ export interface DaemonMachine {
   forgetMainInstanceHolder(pid: number): void;
 }
 
-const WINDOWS_PIPES = String.raw`\\.\pipe` + "\\";
-
 const THIS_MACHINE: DaemonMachine = {
   platform: process.platform,
   kill: (pid, signal) => process.kill(pid, signal),
-  pipes: () => readdirSync(WINDOWS_PIPES),
+  pipes: listPipes,
   holdsCapability: async (socketPath, accessToken) => await engineHoldsCapability(socketPath, accessToken),
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
 };
@@ -484,16 +483,8 @@ const THIS_MACHINE: DaemonMachine = {
  * daemon always holds its pipe, so a live pid without one is not the daemon. Unknown counts as there.
  */
 function enginePipeExists(state: DaemonState, machine: DaemonMachine): boolean {
-  const name = state.kernelSocketPath.slice(WINDOWS_PIPES.length).toLowerCase();
-  try {
-    return machine.pipes().some(pipe => pipe.toLowerCase() === name);
-  } catch {
-    return true;
-  }
+  return pipeListed(state.kernelSocketPath, () => machine.pipes());
 }
-
-/** A Rerail engine pipe, `rerail-<24 hex>` (`defaultEngineSocketPath`), or the random fallback a refused one moves to. */
-const ENGINE_PIPE = /^rerail-[0-9a-f]{24}(?:-[0-9a-f]+)?$/u;
 
 /**
  * Whether `pid`, recorded by a daemon that may be gone, can still be a Rerail daemon: a live process, and on Windows only
@@ -502,12 +493,7 @@ const ENGINE_PIPE = /^rerail-[0-9a-f]{24}(?:-[0-9a-f]+)?$/u;
  */
 export function daemonMayHold(pid: number, machine: DaemonMachine = THIS_MACHINE): boolean {
   if (!processAlive(pid, machine.kill)) return false;
-  if (machine.platform !== "win32") return true;
-  try {
-    return machine.pipes().some(pipe => ENGINE_PIPE.test(pipe.toLowerCase()));
-  } catch {
-    return true;
-  }
+  return machine.platform !== "win32" || enginePipeListed(() => machine.pipes());
 }
 
 /**

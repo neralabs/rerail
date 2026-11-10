@@ -1,4 +1,4 @@
-import { createHash, randomBytes, X509Certificate } from "node:crypto";
+import { randomBytes, X509Certificate } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
 import { readFile, stat, writeFile, rm } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
@@ -16,6 +16,7 @@ import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, 
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
@@ -162,10 +163,9 @@ export function defaultEngineSocketPath(
   databasePath: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const identity = createHash("sha256").update(resolve(databasePath)).digest("hex").slice(0, 24);
   return platform === "win32"
-    ? String.raw`\\.\pipe\rerail-${identity}`
-    : join(tmpdir(), `rerail-${process.getuid!()}`, `${identity}.sock`);
+    ? enginePipeName(databasePath)
+    : join(tmpdir(), `rerail-${process.getuid!()}`, `${engineIdentity(databasePath)}.sock`);
 }
 
 /** The listener the daemon serves on: `node:http`'s, or `node:https`'s when it has a certificate. */
@@ -513,7 +513,7 @@ export class RerailDaemon {
         accessToken,
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
         ...(options.kernelSocketPath === undefined
-          ? { pipeFallback: () => `${kernelSocketPath}-${randomBytes(8).toString("hex")}` }
+          ? { pipeFallback: () => fallbackPipe(kernelSocketPath) }
           : {}),
       });
       started.engineService = engineService;

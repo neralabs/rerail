@@ -13,6 +13,7 @@ import {
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
+import { isNamedPipe } from "./engine-pipe.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -55,10 +56,6 @@ function parseEngineRequest(value: unknown): EngineRequest {
   return { event, configuration };
 }
 
-
-function isWindowsNamedPipe(endpoint: string): boolean {
-  return endpoint.startsWith("\\\\.\\pipe\\");
-}
 
 /** Why `directory` cannot hold the engine socket, and what the person can do about it. */
 interface DirectoryRefusal {
@@ -124,7 +121,7 @@ export async function chooseEngineSocketPath(
   // the BSDs. A longer path fails to bind, or on some systems binds a truncated name no client finds.
   const limit = platform === "linux" || platform === "android" ? 107 : 103;
   for (const candidate of candidates) {
-    if (isWindowsNamedPipe(candidate)) return candidate;
+    if (isNamedPipe(candidate)) return candidate;
     const bytes = Buffer.byteLength(candidate);
     if (bytes > limit) {
       refused.push(`${candidate} is ${bytes} bytes, longer than the ${limit} a socket path may be here. Pointing RERAIL_HOME (or TMPDIR) at a shorter folder shortens it.`);
@@ -362,7 +359,7 @@ async function listenOnSocket(
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     // libuv creates a pipe's first instance alone, and reports a name another process holds as EACCES or EADDRINUSE.
-    if (isWindowsNamedPipe(socketPath) && (code === "EACCES" || code === "EADDRINUSE")) {
+    if (isNamedPipe(socketPath) && (code === "EACCES" || code === "EADDRINUSE")) {
       return await listenBesideHeldPipe(socketPath, error, {
         listen: async path => await listen(server, path),
         ownEngineAnswers: async path => await ownEngineAnswers(path, options.accessToken),
@@ -386,7 +383,7 @@ async function listenOnSocket(
 }
 
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
-  if (!isWindowsNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
+  if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const routing: EngineRoutingState = {
     runtimes: new Map(),
     runtimeKeysBySession: new Map(),

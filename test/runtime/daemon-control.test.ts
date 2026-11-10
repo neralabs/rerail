@@ -61,6 +61,7 @@ import {
   stopDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
@@ -92,6 +93,18 @@ describe("engine service IPC endpoints", () => {
     expect(second).not.toBe(first);
     expect(isUsableEngineSocketPath(first, "win32")).toBe(true);
     expect(isUsableEngineSocketPath(String.raw`C:\temp\engine.sock`, "win32")).toBe(false);
+  });
+
+  it("knows the pipe the daemon names, and the fallback it moves to, for a Rerail engine's, and nothing else", () => {
+    const pipe = defaultEngineSocketPath(String.raw`C:\Users\me\.rerail\rerail.sqlite`, "win32");
+    const fallback = fallbackPipe(pipe);
+    expect(isEnginePipe(pipeNameOf(pipe))).toBe(true);
+    expect(isEnginePipe(pipeNameOf(fallback))).toBe(true);
+    expect(isEnginePipe(pipeNameOf(fallback).toUpperCase())).toBe(true);
+    expect(isUsableEngineSocketPath(fallback, "win32")).toBe(true);
+    expect(fallbackPipe(pipe)).not.toBe(fallback);
+    expect(isEnginePipe("rerail-squatted")).toBe(false);
+    expect(isEnginePipe(`${pipeNameOf(pipe)}x`)).toBe(false);
   });
 });
 
@@ -465,7 +478,9 @@ describe("stopping the daemon", () => {
 });
 
 describe("a state file Windows left behind", () => {
-  const PIPE = String.raw`\\.\pipe\rerail-0123456789abcdef01234567`;
+  const PIPE = enginePipeName(String.raw`C:\Users\me\.rerail\rerail.sqlite`);
+  /** The engine pipe as `\\.\pipe\` lists it. */
+  const PIPE_NAME = pipeNameOf(PIPE);
   let home: string;
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "rerail-stale-"));
@@ -511,7 +526,7 @@ describe("a state file Windows left behind", () => {
     const asked: Array<[string, string]> = [];
     // An elevated process answers a medium-integrity `kill(pid, 0)` with EPERM, as another user's does.
     const elevated = {
-      ...windows(["rerail-0123456789abcdef01234567"]),
+      ...windows([PIPE_NAME]),
       kill: denied,
       holdsCapability: async (socketPath: string, accessToken: string) => {
         asked.push([socketPath, accessToken]);
@@ -552,7 +567,7 @@ describe("a state file Windows left behind", () => {
       throw new Error("connect ECONNREFUSED 127.0.0.1:1");
     }));
     await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
-    expect(await lookupDaemon(home, windows(["rerail-0123456789abcdef01234567"]))).toMatchObject({ status: "unresponsive" });
+    expect(await lookupDaemon(home, windows([PIPE_NAME]))).toMatchObject({ status: "unresponsive" });
   });
 
   it("finds the engine pipe whatever its case, and leaves a daemon whose pipes cannot be listed to the health probe", async () => {
@@ -561,7 +576,7 @@ describe("a state file Windows left behind", () => {
       throw new Error("connect ECONNREFUSED 127.0.0.1:1");
     }));
     await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
-    expect(await lookupDaemon(home, windows(["other", "RERAIL-0123456789ABCDEF01234567"]))).toMatchObject({ status: "unresponsive" });
+    expect(await lookupDaemon(home, windows(["other", PIPE_NAME.toUpperCase()]))).toMatchObject({ status: "unresponsive" });
     const unlisted = {
       ...windows([]),
       pipes: (): readonly string[] => {
@@ -588,7 +603,7 @@ describe("a state file Windows left behind", () => {
     const signals: Array<string | number | undefined> = [];
     const forgotten: number[] = [];
     const machine = {
-      ...windows(["rerail-0123456789abcdef01234567"], [], forgotten),
+      ...windows([PIPE_NAME], [], forgotten),
       kill: (_pid: number, signal?: string | number) => {
         signals.push(signal);
         if (signal === 0 && !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
@@ -610,7 +625,7 @@ describe("a state file Windows left behind", () => {
   it("counts a recorded cache holder only while a Rerail engine pipe exists on Windows", () => {
     expect(daemonMayHold(DEAD_PID, windows([]))).toBe(false);
     expect(daemonMayHold(DEAD_PID, windows(["other-pipe"]))).toBe(false);
-    expect(daemonMayHold(DEAD_PID, windows(["rerail-0123456789abcdef01234567"]))).toBe(true);
+    expect(daemonMayHold(DEAD_PID, windows([PIPE_NAME]))).toBe(true);
     expect(daemonMayHold(DEAD_PID, { ...windows([]), platform: "linux" })).toBe(true);
   });
 });
