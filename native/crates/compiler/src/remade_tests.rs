@@ -96,3 +96,4 @@ fn remade_positions_payoff() {
         eprintln!("{name}: {} slots, {} instructions, {mem} memory, {stack} stack, {:.2} ms CPU per MB", g.native.passes().slots, lines.len(), seconds * 1e3 / 8.0);
     }
 }
+

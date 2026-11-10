@@ -174,9 +174,27 @@ everything else.
 
   A phase is two remainders and shifts, about 12 operations; a `prev` of a plane is about 5
   and a carried bit. Both cost more than a store and a load in order, so on the CPU they are
-  not free to remake. The test is `remade_tests::remade_positions_payoff`. Still open: Metal,
-  where the row is in device memory, and number planes from 6 on, which are the same in
-  every byte of a block and could be one word, not 26.
+  not free to remake. The test is `remade_tests::remade_positions_payoff`.
+
+  On Metal, in the forward carry with its backward passes, remaking is no faster either: GPU
+  time per MB, best of 5, stored against remade.
+
+  | Grammar | Stored | Remade |
+  |---|---|---|
+  | `aligned(_, 3)` after `back_fill` | 7 slots, 0.20 ms | 4 slots, 0.20 ms |
+  | The numbers grammar, 1 MB | 101 slots, 2.08 ms | 67 slots, 2.16 ms |
+
+  What remaking saves is room: the numbers grammar's row is 13 bytes for each byte of input,
+  and at 8 MB it is over the device's capacity. No grammar that ships uses numbers (JSON and
+  `.rr` do not, and Python's lexer does not compile yet), so room is not worth the time now.
+  The test is `compile_tests::positions_after_a_backward_pass_metal_payoff`.
+
+  A position's planes from 6 on are the same in every byte of a block, but they are already
+  made from the block's index and never stored. What is stored is their `prev`, the previous
+  byte's planes, read by `end - position`; making those from the index is the remaking
+  measured above. Holding a number's upper planes as one word would change the arithmetic
+  itself, and `end - position` would stay bit-sliced, since `end` differs from byte to byte.
+  That waits for a grammar that ships with numbers.
 
 ### 1.11 Phases with small interfaces
 

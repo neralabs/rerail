@@ -292,6 +292,29 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
     }
 }
 
+/// The payoff on Metal of remaking values made from the position (doc 26 §1.10), run by hand:
+/// the row's slots and the forward carry's GPU seconds, best of 5, over 8 MB (1 MB for the
+/// numbers, whose stored row is over the device's capacity at 8).
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "a measurement: run by hand"]
+fn positions_after_a_backward_pass_metal_payoff() {
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask s = back_fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(s, 3)\n";
+    for (name, text, names, mb) in [("aligned", aligned, &["a", "b"][..], 8), ("numbers", NUMBERS, &["long", "close", "over", "far", "odd"][..], 1)] {
+        let file: Vec<u8> = runs().into_iter().flatten().map(|b| [b'1', b'`', b'"', b' '][usize::from(b) % 4]).cycle().take(mb << 20).collect();
+        let stmts = ::bitlex::syntax::parse(text).expect("parses");
+        let compiled = bitlex_compile::compile(&stmts, names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
+        let p = rir::assemble(&format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows)).expect("assembles");
+        let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
+        let batch = [block::BatchFile { bytes: &file, program: 0 }];
+        let seconds = (0..5)
+            .map(|_| run_serial_split(&[&native], &batch, Segments { blocks: 29, warm: 1 }).expect("runs").run.seconds)
+            .fold(f64::MAX, f64::min);
+        eprintln!("{name}: {} slots, {:.2} ms GPU per MB", native.passes().slots, seconds * 1e3 / mb as f64);
+    }
+}
+
 /// The whole of `json.bitlex`: on every input and every executor, a file the evaluator rejects
 /// falls back, and for one that neither rejects, each row's masks equal the evaluator's: the
 /// tree section's starts, ends and facts, and each token kind's starts and last bytes.
