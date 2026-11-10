@@ -677,6 +677,43 @@ every maintained stratum again, costs 18.3–18.9 s on steps 23–24. So the gap
 Most of it is a fixed cost per stratum or per program, which decision 0101 is meant to remove: run the
 whole-program passes once, and skip strata whose deltas are empty.
 
+### The gap, profiled against a cold derive
+
+The table above is the profile of one session step. Compared span by span with the cold derive before it, on
+one binary (`RERAIL_PROFILE`: the replay keeps each run's `spans-<step>-<run>.tsv`), the gap is this:
+
+- **Inline-or-store priced every rule for nothing: 3.6 s, fixed.** It plans every rule of the program before
+  looking for a relation it may inline. A maintained program has about ten times the rules: 19,777 estimates at
+  step 23, against 2,052 cold. A session stores every cross-file relation, so there is never a choice to make.
+  It now estimates only when some relation may be inlined: 0.2 s, and the step's cross part goes from 14.0 to
+  12.1 s.
+- **The first maintained step measures what it binds: 2.0 s, once.** Each kept relation and each input's
+  `__plus` is measured when bound, and each maintained relation is counted for its patched statistics. From the
+  second step on, the patched statistics are carried. What's left is about 0.7 s a step, mostly the `__plus`
+  deltas (226 of them, 0.38 s).
+- **Joins: 8.2 s at step 24 against 6.1 s cold.** Three causes:
+  - *A stratum derived again also makes its deltas.* `h__plus :- h, !h__old` and `h__minus :- h__old, !h` are
+    full anti-joins: 188 K probes each for `kind` and `docof`, whatever the change. Over step 24 they cost 1.5 s,
+    more than the rules they follow (the supports, 1.1 s).
+  - *It runs in its support form:* `kind__sup0` from `node`, then `kind` from that, where the cold cross part
+    reads `kind__sup0` from the file-local part. That's two strata for each head, each with its deltas.
+  - *More engine calls:* 3,531 against 1,286. Engine time outside the plan pieces rises 2.5 → 3.5 s, about
+    0.4 ms an extra call.
+- **Per-stratum bookkeeping: about 1 s.** Each stratum's own time, the run's own time, spec, re-pricing and
+  binding, over 2,478 strata against 826.
+- **Smaller:** input deltas from the changed documents 0.26 s, the rewrite 0.15 s, what's left of inline-or-store
+  0.2 s.
+
+Step 24 after the fix: cross part 13.0 s against 8.5 s cold, at load 55–70. On a mass delete, maintenance saves
+no join work. The derived-again strata cost more than their cold form, because of the deltas and the support form.
+
+**What would close it**, in order of size:
+1. Make a derived-again stratum's deltas only when a maintained reader reads them. A reader that is derived
+   again too reads the whole relation. Where they are needed, make them O(change).
+2. Derive again in the cold form (the head's own rules, reading the support from the file-local part where the
+   cold program does), and keep the support for the next run's counting only where it's maintained.
+3. 0101's per-stratum fixed cost: fewer, larger strata and engine calls.
+
 ### What makes levels expensive
 
 Steps 22–25 of the stress replay, profiled by stratum and by role:
