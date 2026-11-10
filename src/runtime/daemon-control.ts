@@ -9,12 +9,11 @@ import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { renameWithRetry } from "../engine/file-replace.js";
-import { windowsSystemProgram } from "../engine/system-programs.js";
+import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding, type NativeBinding } from "../engine/native/native.js";
 import { forgetMainInstanceHolder } from "../engine/native/main-instance.js";
 import { keepFolderToOwner } from "../engine/storage/windows-acl.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
-import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineHoldsCapability } from "./engine-proof.js";
 import { enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
@@ -251,10 +250,10 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
  */
 export function nodeExecutable(platform: NodeJS.Platform = process.platform): string {
   if (process.versions.bun === undefined) return process.execPath;
-  if (platform !== "win32") return resolveExecutable("node") ?? "node";
-  const node = resolveExecutable("node", process.env, platform, { binaryOnly: true });
-  if (node === undefined) throw new Error("Rerail runs its CLI under Node.js, and no node.exe is on PATH");
-  return node;
+  const node = programOnPath("node", { platform });
+  if (node !== undefined) return node;
+  if (platform !== "win32") return "node";
+  throw new Error("Rerail runs its CLI under Node.js, and no node.exe is on PATH");
 }
 
 export const DAEMON_STATE_FILE = "daemon.json";

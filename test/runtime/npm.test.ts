@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
 
-import { cleanCommandError, environmentForNode, resolveExecutable, runNpm } from "../../src/runtime/npm.js";
+import { cleanCommandError, environmentForNode, runNpm } from "../../src/runtime/npm.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -32,36 +32,6 @@ async function fakeNpm(body: string): Promise<string> {
   return bin;
 }
 
-describe("resolveExecutable", () => {
-  it("returns an absolute command unchanged and finds a bare name through PATH", async () => {
-    const bin = await binDirectory("node");
-    expect(resolveExecutable("/opt/x/bin/node", { PATH: "" })).toBe("/opt/x/bin/node");
-    expect(resolveExecutable("node", { PATH: `/nowhere${delimiter}${bin}` })).toBe(join(bin, "node"));
-  });
-
-  it("returns undefined when nothing on PATH carries the name", async () => {
-    const bin = await binDirectory();
-    expect(resolveExecutable("node", { PATH: bin })).toBeUndefined();
-    expect(resolveExecutable("node", {})).toBeUndefined();
-  });
-
-  it("tries PATHEXT extensions on Windows", async () => {
-    const bin = await binDirectory("node.exe");
-    expect(resolveExecutable("node", { Path: bin, PATHEXT: ".com;.exe" }, "win32")).toBe(join(bin, "node.exe"));
-    expect(resolveExecutable("node", { Path: bin, PATHEXT: ".CMD" }, "win32")).toBeUndefined();
-  });
-
-  it("takes only a .exe or .com on Windows when a binary is asked for, past a node.cmd shim earlier on PATH", async () => {
-    const shims = await binDirectory("node.cmd");
-    const binaries = await binDirectory("node.exe");
-    const env = { PATH: `${shims};${binaries}`, PATHEXT: ".com;.exe;.bat;.cmd" };
-    expect(resolveExecutable("node", env, "win32")).toBe(join(shims, "node.cmd"));
-    expect(resolveExecutable("node", env, "win32", { binaryOnly: true })).toBe(join(binaries, "node.exe"));
-    // A relative entry names the current folder, which a bare name already searches first.
-    expect(resolveExecutable("node", { PATH: `.;${shims}`, PATHEXT: ".exe;.cmd" }, "win32", { binaryOnly: true })).toBeUndefined();
-  });
-});
-
 describe("runNpm on Windows", () => {
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
   afterEach(() => {
@@ -83,6 +53,20 @@ describe("runNpm on Windows", () => {
     expect(command).toBe(node);
     expect((options as childProcess.SpawnOptions).env?.PATH).toBe(`${bin}${delimiter}/usr/bin`);
   });
+
+  it("runs npm under the node.exe PATH finds, never a node.cmd shim before it, which no spawn without a shell starts", async () => {
+    const shims = await binDirectory("node.cmd");
+    const binaries = await binDirectory("node.exe");
+    vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
+      process.nextTick(() => child.emit("exit", 0, null));
+      return child as unknown as childProcess.ChildProcess;
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    await runNpm(["rebuild", "better-sqlite3"], { node: "node", env: { PATH: `${shims};${binaries}`, PATHEXT: ".cmd;.exe" } });
+    const [command] = vi.mocked(childProcess.spawn).mock.calls.at(-1)!;
+    expect(command).toBe(join(binaries, "node.exe"));
+  });
 });
 
 describe("environmentForNode", () => {
@@ -100,7 +84,7 @@ describe("environmentForNode", () => {
     const empty = await binDirectory();
     const env = { PATH: empty };
     expect(environmentForNode("node", env)).toBe(env);
-    const bin = await binDirectory("node");
+    const bin = await binDirectory(process.platform === "win32" ? "node.exe" : "node");
     const searched = `${empty}${delimiter}${bin}`;
     expect(environmentForNode("node", { PATH: searched })).toEqual({ PATH: `${bin}${delimiter}${searched}` });
   });

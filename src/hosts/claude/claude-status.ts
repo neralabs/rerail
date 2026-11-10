@@ -1,11 +1,11 @@
 import type { ChildProcess } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
-import { isAbsolute, resolve, win32 } from "node:path";
+import { realpathSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { spawn } from "../../engine/child-process.js";
-import { gitExecutable } from "../../engine/git.js";
+import { gitBash } from "../../engine/git.js";
 import { processState } from "../../engine/process-liveness.js";
 import { windowsSystemProgram } from "../../engine/system-programs.js";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
@@ -73,26 +73,14 @@ export interface PreviousStatusSpawn {
  * cmd.exe is what is left.
  */
 export function previousStatusSpawn(command: string, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): PreviousStatusSpawn {
-  const bash = platform === "win32" ? gitBash(env) : undefined;
+  const bash = platform === "win32" ? claudeGitBash(env) : undefined;
   return bash === undefined ? { file: command, args: [], shell: true } : { file: bash, args: ["-c", command], shell: false };
 }
 
 /** Git Bash's bash.exe: `CLAUDE_CODE_GIT_BASH_PATH`, which Claude Code itself honours, else the one beside Rerail's Git. */
-function gitBash(env: NodeJS.ProcessEnv): string | undefined {
+function claudeGitBash(env: NodeJS.ProcessEnv): string | undefined {
   const named = env.CLAUDE_CODE_GIT_BASH_PATH;
-  if (named !== undefined && named !== "") return named;
-  try {
-    // Git for Windows' `<Git>\bin\bash.exe` sits a folder or two above its git.exe: `cmd\`, `bin\` or `mingw64\bin\`.
-    let folder = win32.dirname(gitExecutable());
-    for (let level = 0; level < 3; level += 1) {
-      const bash = win32.join(folder, "bin", "bash.exe");
-      if (existsSync(bash)) return bash;
-      folder = win32.dirname(folder);
-    }
-  } catch {
-    // No Git: no Git Bash either.
-  }
-  return undefined;
+  return named !== undefined && named !== "" ? named : gitBash();
 }
 
 /** Ends the process tree under `pid`, calling `failed` when that could not be done. */

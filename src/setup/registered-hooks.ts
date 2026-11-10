@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { spawn } from "../engine/child-process.js";
 import { removeScratch } from "../engine/file-replace.js";
-import { resolveExecutable } from "../runtime/npm.js";
+import { programOnPath } from "../engine/system-programs.js";
 
 /** Rerail's hook scripts, as a registration names them in a hook's command or arguments. */
 const RERAIL_HOOK_SCRIPT = /[\\/]dist[\\/](?:harness[\\/]hook-launcher|hosts[\\/]claude[\\/]claude-(?:hook|status))\.js$/u;
@@ -122,5 +122,5 @@ export async function runRegisteredClaudeHook(home: string, env: NodeJS.ProcessE
  * from the current folder. A name PATH cannot resolve stays as written, and the spawn's refusal is the failure reported.
  */
 function registeredProgram(command: string, env: NodeJS.ProcessEnv): string {
-  return resolveExecutable(command, env, process.platform, { binaryOnly: true }) ?? command;
+  return programOnPath(command, { env }) ?? command;
 }

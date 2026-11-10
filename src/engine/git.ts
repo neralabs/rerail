@@ -299,6 +299,25 @@ export function gitExecutable(): string {
   return probed.path;
 }
 
+/**
+ * Git Bash's `bash.exe` in the Git for Windows install Rerail runs Git from ({@link gitExecutable}), or undefined
+ * without Git or a Git Bash beside it. `<Git>\bin\bash.exe` sits a folder or two above its git.exe: `cmd\`, `bin\` or
+ * `mingw64\bin\`.
+ */
+export function gitBash(exists: (path: string) => boolean = existsSync): string | undefined {
+  let folder: string;
+  try {
+    folder = win32.dirname(gitExecutable());
+  } catch {
+    return undefined;
+  }
+  for (let level = 0; level < 3; level += 1, folder = win32.dirname(folder)) {
+    const bash = win32.join(folder, "bin", "bash.exe");
+    if (exists(bash)) return bash;
+  }
+  return undefined;
+}
+
 export interface GitResult {
   /** Null when Git could not be started or was killed. */
   status: number | null;

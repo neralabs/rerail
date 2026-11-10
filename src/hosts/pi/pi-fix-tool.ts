@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { z } from "zod/v4";
 import { spawn } from "../../engine/child-process.js";
 import { internalTesting } from "../../engine/internal-testing.js";
-import { resolveExecutable } from "../../runtime/npm.js";
+import { programOnPath } from "../../engine/system-programs.js";
 
 /** The tool a `subagent` steer names on Pi; Rerail registers it with the first such steer. */
 export const PI_FIX_TOOL = "rerail_fix";
@@ -87,7 +87,7 @@ export function piFixInvocation(
   // A compiled `pi` binary is its own entry point; a bare runtime without one falls back to PATH.
   if (!/^(node|bun)(\.exe)?$/u.test(basename(execPath).toLowerCase())) return { command: execPath, args };
   if (system.platform !== "win32") return { command: "pi", args };
-  const pi = resolveExecutable("pi", system.env, "win32", { binaryOnly: true });
+  const pi = programOnPath("pi", { env: system.env, platform: "win32" });
   if (pi === undefined) throw new Error("Rerail runs Pi's fix as pi.exe from PATH, and none is there; start Pi from its own entry point");
   return { command: pi, args };
 }

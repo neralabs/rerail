@@ -40,8 +40,8 @@ export function withHiddenWindow(args: readonly unknown[]): unknown[] {
  * Refuses, on Windows, to start a program named by a bare name or a relative path: Windows looks for one in the current
  * folder before PATH, and Rerail runs inside repositories it does not trust, so a `git.exe`, `node.exe` or
  * `powershell.exe` committed to one would run in Rerail's place and get what Rerail hands it. Rerail names every program
- * by absolute path there (`windowsSystemProgram`, `resolveExecutable` with `binaryOnly`, `gitExecutable`). A command
- * line run with `shell: true` is the shell's to read, and is let through.
+ * by absolute path there, found as `system-programs.ts` finds it. A command line run with `shell: true` is the shell's
+ * to read, and is let through.
  */
 export function assertProgramPath(args: readonly unknown[], platform: NodeJS.Platform = process.platform): void {
   if (platform !== "win32") return;
