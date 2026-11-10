@@ -1,0 +1,90 @@
+[
+  {
+    "test": "cross_file_strata_are_kept_across_runs_in_the_tape_cache",
+    "exit": 0,
+    "wall": 3.3562615419505164,
+    "nativeOnly": true,
+    "counts": [
+      "1",
+      "0",
+      "0"
+    ]
+  },
+  {
+    "test": "a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_readers",
+    "exit": 0,
+    "wall": 0.6156322089955211,
+    "nativeOnly": true,
+    "counts": [
+      "1",
+      "0",
+      "0"
+    ]
+  },
+  {
+    "test": "corpus::cache_tests",
+    "exit": 101,
+    "wall": 2.8679639579495415,
+    "nativeOnly": false,
+    "counts": [
+      "1",
+      "1",
+      "0"
+    ]
+  },
+  {
+    "test": "corpus::cache_architecture",
+    "exit": 101,
+    "wall": 0.28070608305279166,
+    "nativeOnly": false,
+    "counts": [
+      "2",
+      "1",
+      "0"
+    ]
+  },
+  {
+    "test": "logic::facts_only",
+    "exit": 101,
+    "wall": 0.0496083750622347,
+    "nativeOnly": false,
+    "counts": [
+      "0",
+      "2",
+      "0"
+    ]
+  },
+  {
+    "test": "an_unchanged_run_writes_its_kept_outputs",
+    "exit": 0,
+    "wall": 0.5337617499753833,
+    "nativeOnly": false,
+    "counts": [
+      "1",
+      "0",
+      "0"
+    ]
+  },
+  {
+    "test": "authored_rr_batched_positive_documents_preserve_all_four_labels",
+    "exit": 0,
+    "wall": 2.8843292909441516,
+    "nativeOnly": false,
+    "counts": [
+      "1",
+      "0",
+      "0"
+    ]
+  },
+  {
+    "test": "corpus::session::tests",
+    "exit": 101,
+    "wall": 11.056716458057053,
+    "nativeOnly": false,
+    "counts": [
+      "0",
+      "9",
+      "1"
+    ]
+  }
+]

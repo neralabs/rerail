@@ -2665,7 +2665,7 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) native: BTreeSet<String>,
     /// Each output's node columns (atoms mode: node ids are the vtabs', `d << 32 | index`).
     pub(in crate::code_rule_dsl) nodes: BTreeMap<String, Vec<usize>>,
-    /// The kept outputs (`Inputs::kept`) the native engine holds (`native::derived`); the others are in their tables.
+    /// Outputs held as resident facts (`native::derived`), including decoded composed outputs kept for sessions.
     pub(in crate::code_rule_dsl) kept: BTreeSet<String>,
     /// The kept relations handed to the caller during the run (`run_atoms_native_handing`), no longer held.
     pub(in crate::code_rule_dsl) handed: BTreeSet<String>,
@@ -3088,28 +3088,35 @@ impl Run<'_, '_> {
         Ok(n)
     }
 
+    /// Read a completed unary relation where its facts live. SQL is only a fallback for SQL-owned facts.
+    fn native_demand(&mut self, input: &str) -> Result<std::sync::Arc<Vec<i64>>> {
+        let source = if self.native_rels.contains(input) {
+            Some(super::native::component::derived(self.db, input).ok_or_else(|| Error::Plan(format!("missing retained demand {input}")))?)
+        } else if self.prog.inputs.iter().any(|r| r == input) {
+            crate::code_rule_dsl::facts::vtab::bound_source(self.db, input)
+        } else { None };
+        if source.is_none() { self.ensure(&[input.to_owned()])?; }
+        self.demands.read(self.db, input, &self.model.col(input, 0), source)
+    }
+
     /// One producer invocation for a completed demand relation; native rows never take a SQL round trip.
     fn python_relation(&mut self, rel: &str, kind: &str, input: &str, targets: &Option<String>) -> Result<usize> {
         use super::native::component;
         use crate::code_rule_dsl::facts::vtab;
         let ident = crate::code_rule_dsl::logic::sql::ident;
-        let source = if self.native_rels.contains(input) {
-            Some(component::derived(self.db, input).ok_or_else(|| Error::Plan(format!("missing retained demand {input}")))?)
-        } else if self.prog.inputs.iter().any(|r| r == input) {
-            vtab::bound_source(self.db, input)
-        } else { None };
-        if source.is_none() { self.ensure(&[input.to_owned()])?; }
-        let requests = self.demands.read(self.db, input, &self.model.col(input, 0), source)?;
+        let requests = self.native_demand(input)?;
         let mut rows = if requests.is_empty() { Vec::new() } else {
             let mut wanted = BTreeSet::new();
             if let Some(targets) = targets {
-                // Target relations can be derived as well as constant. Preserve their declared dependency.
-                self.ensure(std::slice::from_ref(targets))?;
-                self.materialize(std::slice::from_ref(targets))?;
-                let col = self.model.col(targets, 0);
-                let col = if self.model.inputs.atoms.is_some() { format!("sym_text({col})") } else { col };
-                let mut s = self.db.prepare(&format!("SELECT {col} FROM {}", ident(targets)))?;
-                wanted = s.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
+                if self.model.inputs.atoms.is_some() {
+                    let keys = self.native_demand(targets)?;
+                    wanted = keys.iter().map(|&key| super::native::symbol_text(self.db, key).map_err(Error::from)).collect::<Result<_>>()?;
+                } else {
+                    self.ensure(std::slice::from_ref(targets))?;
+                    let col = self.model.col(targets, 0);
+                    let mut s = self.db.prepare(&format!("SELECT {col} FROM {}", ident(targets)))?;
+                    wanted = s.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
+                }
             }
             let source = vtab::bound_source(self.db, "node").ok_or_else(|| Error::Plan("Python producer requires bound syntax facts".into()))?;
             let batch = source.python_batch().ok_or_else(|| Error::Plan("Python producer requires a syntax batch".into()))?;
@@ -5148,6 +5155,8 @@ pub(in crate::code_rule_dsl) trait KeptStrata {
     /// Each relation of the program the run evaluates, by its identity (`identities`): what was kept of a relation
     /// is of the relation of that identity.
     fn program(&mut self, identities: &HashMap<String, [u8; 32]>);
+    /// Admit potentially consumed retained rows before scheduling. Metadata for unconsumed relations stays cheap.
+    fn admit(&mut self, _relations: &[String]) {}
     /// Input `rel`'s digest in this run (`None`: not known).
     fn input(&mut self, rel: &str) -> Option<u64>;
     /// The digest relation `rel` had when it was kept.
@@ -5184,6 +5193,13 @@ fn stratum_reads(prog: &Program, scc: &BTreeSet<String>, rules: &[&Rule]) -> BTr
         }
     }
     out
+}
+
+fn retainable_stratum(prog: &Program, scc: &BTreeSet<String>, rules: &[&Rule], views: &HashSet<String>) -> bool {
+    !rules.is_empty()
+        && !scc.iter().any(|r| prog.natives.contains_key(r) || prog.lattice.contains_key(r) || views.contains(r)
+            || prog.answers.values().any(|produced| produced.contains(r)))
+        && !rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Ast { .. })))
 }
 
 /// What a stratum read names a native step's answers for `p` by: `answer:<p>`.
@@ -5435,7 +5451,13 @@ pub(in crate::code_rule_dsl) fn view_sql(rel: &str, query: &Query) -> String {
 /// The views `run` makes of one-atom projections of an input, each as its query (`view_sql`).
 fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&Rule>>) -> Result<Vec<(String, Query)>> {
     let mut views = Vec::new();
+    // Resident consumers need facts, not a SQL view that must be read back at each chunk.
+    // Other native operators still use SQL-owned inputs and keep their projection views.
+    let native_reads: HashSet<&str> = if model.inputs.atoms.is_some() && model.inputs.native.contains("program") {
+        prog.natives.values().filter(|n| matches!(n, super::front::Native::Python { .. } | super::front::Native::PythonCandidates { .. })).flat_map(|n| n.reads()).collect()
+    } else { HashSet::new() };
     for (&rel, rs) in rules_by {
+        if native_reads.contains(rel) { continue; }
         let [rule] = rs.as_slice() else { continue };
         if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
             continue;
@@ -5587,8 +5609,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 connection::bind(db,&rel,source)?;
             }
         }
-        let plan=compose::planned(prog,db,inputs)?;
-        let mut out=plan.execute(db,prog,lowered,&mut hooks)?;
+        let mut out=compose::run(prog,db,inputs,lowered,&mut hooks)?;
         if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
         for rel in &sentinels {
             if let Some(rows)=out.outputs.get_mut(rel){for row in rows {*row=row.split_once('\t').map_or(String::new(),|(_,r)|r.into());}}
@@ -6017,6 +6038,31 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let mut stratum_read_digests: HashMap<usize, Option<Vec<(String, u64)>>> = HashMap::new();
     let input_set: BTreeSet<&str> = prog.inputs.iter().map(String::as_str).collect();
     let produced_here = super::answers::produced(prog);
+    if let Some(ks) = strata_kept.as_deref_mut() {
+        // Prove unchanged strata from admitted metadata and input digests. Anything unproved can run.
+        // Only those consumers' retained inputs and the outputs need payloads. Early cutoff during
+        // execution can shrink this set, but cannot add a reader not covered here.
+        let mut unchanged = HashSet::new();
+        let mut demand: BTreeSet<String> = stays.iter().filter(|r| ks.has_rows(r)).cloned().collect();
+        for (scc, rules) in sccs.iter().zip(&by_stratum) {
+            let reads = stratum_reads(prog, scc, rules);
+            let clean = retainable_stratum(prog, scc, rules, &run.views) && scc.iter().all(|r| ks.has_rows(r))
+                && reads.iter().filter(|r| !scc.contains(*r) || input_set.contains(r.as_str())).all(|r| {
+                    let now = if unchanged.contains(r) { ks.was(r) }
+                        else if input_set.contains(r.as_str()) { ks.input(r) }
+                        else if rules_by.contains_key(r.as_str()) { None }
+                        else { Some(0) };
+                    now.is_some() && scc.iter().all(|x| ks.read_was(x, r) == now)
+                });
+            if clean { unchanged.extend(scc.iter().cloned()); }
+            else { demand.extend(reads.into_iter().filter(|r| ks.has_rows(r))); }
+            // Native-answer validation reads requests, and a view holds its component members.
+            if scc.iter().any(|r| run.views.contains(r) || prog.answers.contains_key(r)) {
+                demand.extend(scc.iter().filter(|r| ks.has_rows(r)).cloned());
+            }
+        }
+        ks.admit(&demand.into_iter().collect::<Vec<_>>());
+    }
     // This run's digest of each derived relation (`None`: not known, as for a stratum SQL ran); clean relations not
     // yet held; the strata evaluated whose rows' digests are not taken yet. A stratum waiting on its device wave has
     // no rows yet: its digest is taken once its wave ran (a stratum that reads it finishes the wave first).
@@ -6604,13 +6650,9 @@ fn first_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String
     let by = rules_by_stratum(prog, sccs);
     for (j, scc) in sccs.iter().enumerate().rev() {
         let at = if scc.iter().all(|r| views.contains(r)) { scc.iter().filter_map(|r| first.get(r)).copied().min().unwrap_or(j) } else { j };
-        for r in &by[j] {
-            for l in &r.body {
-                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
-                    let e = first.entry(a.rel.clone()).or_insert(at);
-                    *e = (*e).min(at);
-                }
-            }
+        for rel in stratum_reads(prog, scc, &by[j]) {
+            let e = first.entry(rel).or_insert(at);
+            *e = (*e).min(at);
         }
     }
     first
@@ -6649,13 +6691,9 @@ fn last_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>
     let by = rules_by_stratum(prog, sccs);
     for (j, scc) in sccs.iter().enumerate().rev() {
         let at = if scc.iter().all(|r| views.contains(r)) { scc.iter().filter_map(|r| last.get(r)).copied().max().unwrap_or(j).max(j) } else { j };
-        for r in &by[j] {
-            for l in &r.body {
-                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
-                    let e = last.entry(a.rel.clone()).or_insert(at);
-                    *e = (*e).max(at);
-                }
-            }
+        for rel in stratum_reads(prog, scc, &by[j]) {
+            let e = last.entry(rel).or_insert(at);
+            *e = (*e).max(at);
         }
     }
     last
