@@ -44,3 +44,16 @@ class HasattrBatchTests(unittest.TestCase):
         with patch.object(data_layer_record,'snapshot',return_value=([],dict(include=['**/*.py'],exclude=[]),None)):
             suite.compare_original('hasattr_async','check_file',SimpleNamespace(),(Path('missing.py'),),{},[])
         self.assertEqual('passed',suite.observations[0]['status'])
+
+    def test_retained_io_record_still_proves_its_exact_empty_result(self):
+        from suite import Suite
+        import data_layer_record
+        suite=Suite.__new__(Suite);identity='test_read_error'
+        suite.item=SimpleNamespace(nodeid=identity,funcargs={});suite.observed=Counter();suite.observations=[]
+        suite.baseline=dict(events=[dict(test=identity,check='hasattr_async',entry='check_file',
+            retained_reason='Test replaces the Python source reader; retain its I/O assertions upstream',
+            sourceResult=[],files=[],scope=dict(include=['**/*.py'],exclude=[]))])
+        with patch.object(data_layer_record,'snapshot',return_value=([],dict(include=['**/*.py'],exclude=[]),None)):
+            suite.compare_original('hasattr_async','check_file',SimpleNamespace(),(Path('unreadable.py'),),{},[])
+        self.assertEqual('passed',suite.observations[0]['status'])
+        self.assertEqual([],suite.observations[0]['expected'])
