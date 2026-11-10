@@ -1,9 +1,9 @@
 import { once } from "node:events";
-import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { DAEMON_STATE_FILE, daemonEndpoint, probeDaemon, readDaemonState, recordedDaemonAlive, type DaemonEndpoint, type DaemonState } from "../runtime/daemon-control.js";
+import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import { CALLER_CWD_HEADER } from "../engine/catalog/repository-model.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -163,6 +163,15 @@ async function relayRequest(
   }
 }
 
+/** The folder the bridge started in, spelt as checkouts are (`checkoutRealpath`); undefined when it is gone. */
+function callerFolder(cwd: string): string | undefined {
+  try {
+    return checkoutRealpath(cwd);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Stdio MCP bridge to the machine's Rerail daemon, found for each request through the Rerail home's daemon state.
  * It names its caller: every relay carries the real path of the folder the bridge started in, URI-encoded, in
@@ -171,7 +180,7 @@ async function relayRequest(
  * A failed request answers its own ids with a JSON-RPC error; only stdin EOF ends the bridge.
  */
 export async function runRerailMcpBridge(options: RerailMcpBridgeOptions = {}): Promise<void> {
-  const callerCwd = await realpath(options.cwd ?? process.cwd()).catch(() => undefined);
+  const callerCwd = callerFolder(options.cwd ?? process.cwd());
   const callerHeaders: Record<string, string> = callerCwd === undefined ? {} : { [CALLER_CWD_HEADER]: encodeURIComponent(callerCwd) };
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;

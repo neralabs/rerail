@@ -15,9 +15,10 @@
 //   file-replace    rename and renameSync of node:fs, anywhere in src/. On Windows renaming onto or from a file another
 //                   process holds open fails with EPERM, EACCES or EBUSY for a moment; one unretried rename failed the
 //                   daemon's start and another left an agent's edit in place after a rewind.
-//   checkout-paths  realpath and realpathSync of node:fs, in the modules that key records by a checkout path (KEYED). On
-//                   Windows the JS realpath keeps the caller's spelling (`c:\work\app`, VS Code's) while Git prints
-//                   `C:/work/app`, so keys resolved both ways never met and no rule ran in the session.
+//   checkout-paths  realpath and realpathSync of node:fs, in the modules that key records by a checkout path or look
+//                   a caller's folder up in its checkout (KEYED). On Windows the JS realpath keeps the caller's
+//                   spelling (`c:\work\app`, VS Code's, or 8.3 short names, `C:\Users\RUNNER~1`) while Git prints
+//                   `C:/work/app` with long names, so keys resolved both ways never met and no rule ran in the session.
 //   no-follow       constants.O_NOFOLLOW of node:fs, anywhere in src/. Windows has no O_NOFOLLOW, and `flags |
 //                   undefined` adds nothing, so an open meant to refuse a symbolic link followed a planted one there.
 //
@@ -41,14 +42,16 @@ const CODE = /\.(?:[cm]?[jt]s)$/u;
 const ABSOLUTE = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u;
 const STARTERS = new Set(["spawn", "spawnSync", "execFile", "execFileSync", "spawnShown"]);
 
-/** The modules that key records by a checkout path: whole folders end in `/`. */
+/**
+ * The modules that key records by a checkout path, or look a caller's folder up in its checkout: whole folders end in
+ * `/`. The API is listed whole because each of its modules takes paths from callers.
+ */
 export const KEYED = [
   "src/engine/catalog/",
   "src/engine/audit/",
   "src/runtime/runtime.ts",
   "src/runtime/presentation-preference-store.ts",
-  "src/api/operations.ts",
-  "src/api/repository-operations.ts",
+  "src/api/",
 ];
 
 const inSrc = path => path.startsWith("src/");

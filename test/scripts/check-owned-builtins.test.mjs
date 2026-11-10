@@ -88,6 +88,14 @@ describe("check-owned-builtins", () => {
     expect(problems[4].message).toContain(rule("checkout-paths").owner);
   });
 
+  it("covers every module of the API, where a caller's folder is resolved and looked for in its checkout", () => {
+    const problems = ownedBuiltinProblems([
+      { path: "src/api/mcp.ts", text: 'import { realpathSync } from "node:fs";\n' },
+      { path: "src/api/mcp-bridge.ts", text: 'import { realpath } from "node:fs/promises";\n' },
+    ]);
+    expect(rules(problems)).toEqual(["src/api/mcp.ts:1:checkout-paths", "src/api/mcp-bridge.ts:1:checkout-paths"]);
+  });
+
   it("flags every way a module outside the child-process helper loads node:child_process as a value", () => {
     const problems = ownedBuiltinProblems([
       { path: "src/a.ts", text: 'import { spawn } from "node:child_process";\n' },
