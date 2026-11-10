@@ -530,6 +530,64 @@ Pitfalls found on the way, beyond those above:
   step 3, 16 by step 7, with the per-step equality check off (`O125_NO_FULL`). This is open; it looks like a defect
   in the engine's DRed path.
 
+## Built: levels, checked, in the engine (2026-11-09)
+
+Recursive strata are now maintained by *levels, checked* by default (`RERAIL_RECURSIVE=dred` keeps DRed). It is the
+same engine: the rewrite makes ordinary rules, and the component runs them in waves.
+
+**The rules.** Per recursive relation `h`, the maintenance rewrite (`maintain.rs`) makes five relations:
+
+| relation | rows | made by |
+| --- | --- | --- |
+| `h__cand` | heads of old derivations that lost a premise | DRed's delete rules, reading `q__gone` for the stratum's own `q` |
+| `h__chk` | the candidates of the level being checked | the component's levels driver |
+| `h__held` | the checked rows that still have a derivation | `h__held(H) :- h__chk(H), body` with the stratum's own atoms read as `q__live` |
+| `h__gone` | the checked rows with none | the driver: `h__chk` less `h__held` |
+| `h__live` | the kept rows already decided, below the level checked | `h__old` in place, rows hidden by the dead bitmap |
+
+**The driver** (`setfix.rs`, `Levels`). At a quiet point of the component it does three things:
+- it closes the level just checked: the rows of `h__chk` not in `h__held` go to `h__gone`;
+- it shows in `h__live` the kept rows below the next candidate level that are not gone;
+- it moves that level's candidates into `h__chk`.
+
+A candidate at or below a level already closed was decided there. Rederive and insertion then run as in DRed. A
+new row's level is the component's highest kept level plus its wave (`Rel::level`). Levels go with a kept
+relation through `based`, compaction and hand-off, and with an output read back from the engine (`corpus.rs`).
+
+**Two planning faults, fixed.** They made the first build slower than DRed outside the recursive strata:
+- **`h__live` was read as a delta.** It starts holding all of `h__old`, so the first wave scanned 181 K rows.
+  `h__live` is never a delta now.
+- **Whole plans were used for small batches.** The levels relations get small batches from row 0, and the engine
+  took those for a whole relation: it ran each batch with the plan for a whole relation, which scans `h__live` or
+  `h__old` first. Levels relations take no whole plans now. `h__live` is also planned with `h__old`'s statistics.
+
+**Measured** (O125 replay steps 06–08, CPU seconds in the component strata, from the profile):
+
+| step | DRed, all strata | levels, all strata | DRed, recursive | levels, recursive |
+| --- | ---: | ---: | ---: | ---: |
+| 06 (2 files) | 1.76 | **1.39** | 0.72 | 0.53 |
+| 07 (6 files) | 2.67 | **2.13** | 1.52 | 1.18 |
+| 08 (6 files) | 6.59 | **2.83** | 3.51 | 1.13 |
+
+- **Results.** Steps 06–08 equal the full derive (`same as full: true`), and the findings gate is unchanged:
+  `total (all): 3988 303 298 0`.
+- **The mass-delete steps.** The stress replay's steps 20–26, cross-file CPU seconds per step (the whole cross
+  part, not only the strata). Both equal the full derive. The full derive's cross part takes 7.7–8.2 s.
+
+  | step | change | DRed | levels |
+  | --- | --- | ---: | ---: |
+  | 20 | an O125 edit (2 files) | 12.2 | **9.1** |
+  | 21 | delete `l1400_types/__init__.py` | 6.4 | 6.4 |
+  | 22 | restore it | **6.1** | 7.0 |
+  | 23 | delete `purity.py`, `lazy_mixin.py` | **9.9** | 11.5 |
+  | 24 | restore them | **10.7** | 12.8 |
+  | 25 | delete a 24-file package | **10.0** | 12.3 |
+  | 26 | restore it | **12.4** | 13.9 |
+
+  This is what the spike found: levels wins on edits and loses 15–20% on mass toggles. At steps 23–26 both cost
+  more than deriving again, which is §4's threshold. The threshold is not built yet: it is the next step, and with
+  it the toggles cost the full derive's 8 s whichever algorithm runs.
+
 ## What the prior work says
 
 - **Target architecture (03):**
@@ -573,6 +631,6 @@ Pitfalls found on the way, beyond those above:
 ## Open
 
 - Whether 03 §2's "no DRed" is to be read as "no stored witness" (§6). This needs the architecture owner.
-- θ and the cost estimate (§4) are unmeasured.
+- θ and the cost estimate (§4) are unmeasured. The mass-delete steps above (23–26) are the cases it must catch.
 - Interface summaries for libraries (03 §14's derivations) and this session store meet at the library boundary;
   0083 §5–§6 places it, and this record does not.
