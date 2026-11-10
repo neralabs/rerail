@@ -93,7 +93,7 @@ export const RULES = [
   },
 ].map(rule => ({ ...rule, names: rule.names?.map(name => name.split(".")) }));
 
-const PROGRAM_PATH_MESSAGE = "names a program without its folder, which Windows looks for in the current folder first; pass an absolute path (windowsSystemProgram, resolveExecutable with binaryOnly)";
+const PROGRAM_PATH_MESSAGE = "names a program without its folder, which Windows looks for in the current folder first; pass an absolute path (windowsSystemProgram, programOnPath)";
 
 /** `path` inside `module` as a rule names it: a built-in's `default` is the module itself, and fs's `promises` holds the same names. */
 function canonical(module, path) {
