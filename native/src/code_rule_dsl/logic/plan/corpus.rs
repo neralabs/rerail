@@ -1283,26 +1283,28 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
     let (tx, rx) = std::sync::mpsc::channel();
     let path = store.database_path().to_path_buf();
     let late = Arc::clone(late);
+    let mut reading = reading;
     store.write_back(
         "the run's manifest",
         0,
         Vec::new(),
         Box::new(move |store| {
-            // The sources of the writes queued before this one, written now.
-            let mut sources = sources;
+            // The sources of the writes queued before this one, written now (run again if the store was busy).
+            let mut sources = sources.clone();
             sources.extend(late.lock().expect("the late sources").iter().copied());
             let recorded = store
                 .record_corpus_run_naming(&root, &sources, crate::code_rule_dsl::workspace::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), plan, &also, now)
                 .and_then(|_| store.record_corpus_relations(plan, &relations));
             // The manifest now protects the sources. Release before collection, including warm runs
             // that must resume a pass deferred by another active reader.
-            drop(reading);
+            drop(reading.take());
             recorded?;
             // No thread, no second connection, unless a pass has work (a run of fresh roots decides rarely).
             if !collect || !store.corpus_pass_wanted(&policy, now)? {
                 let _ = tx.send(None);
                 return Ok(());
             }
+            let path = path.clone();
             let _ = tx.send(Some(std::thread::spawn(move || {
 
         let started = std::time::Instant::now();
