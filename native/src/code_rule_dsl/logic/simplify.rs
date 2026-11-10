@@ -693,7 +693,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             Some(_) => true,
         };
         match a.rel.as_str() {
-            "docof" | "visit_index" | "kind" | "text" | "name" | "line" | "op" => on(0),
+            "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" => on(0),
             "node" => on(1),
             "field" => on(2),
             "child" => on(1),
@@ -860,7 +860,7 @@ fn rename_all(l: &Literal, to: &BTreeMap<String, String>) -> Literal {
 
 /// A base relation a negation may test inside a filter: the functional lookups' relations.
 fn base_lookup(rel: &str) -> bool {
-    matches!(rel, "docof" | "visit_index" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
+    matches!(rel, "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
 }
 
 /// A relation of several rules each `node(_, $n, _, _, _), !x_i($n)` (the converter's `not` of an `all`: every node
@@ -1067,6 +1067,27 @@ fn drop_unread(prog: &mut Program) -> Vec<String> {
 /// answered and nullary ones, and a relation an aggregate reads (a count, a sum or a string join counts its rows, which
 /// a projection would merge). One column at least stays. Dropping a head column can leave its variable named once in
 /// the body, made `_` there, which can free another relation's column: so it repeats until nothing changes.
+/// Whether column `c` of derived relation `rel` holds a location, as the split takes one (`file_local::split`'s
+/// base locations): declared a node, or filled by every rule from a node column, or a document column, of a base
+/// relation it reads. A location through another derived relation's number column is not seen (none is projected
+/// today: such a column holds a document key only where it is filled from one).
+fn location_column(prog: &Program, rel: &str, c: usize) -> bool {
+    if prog.decls.get(rel).and_then(|d| d.get(c)).is_some_and(|(_, t)| t == "node") {
+        return true;
+    }
+    let base_location = |a: &Atom, i: usize| {
+        crate::code_rule_dsl::typing::file_local::document_column(&a.rel) == Some(i)
+            || (a.rel == "docof" && i == 1)
+            || prog.decls.get(&a.rel).and_then(|d| d.get(i)).is_some_and(|(_, t)| t == "node")
+    };
+    let mut rules = prog.rules.iter().filter(|r| r.head.rel == rel).peekable();
+    rules.peek().is_some()
+        && rules.all(|r| {
+            let Some(Term::Var(v)) = r.head.args.get(c) else { return false };
+            r.body.iter().filter_map(|l| l.atom()).filter(|a| !a.neg).any(|a| a.args.iter().enumerate().any(|(i, t)| matches!(t, Term::Var(w) if w == v) && base_location(a, i)))
+        })
+}
+
 fn project_unread_columns(prog: &mut Program) -> Vec<(String, Vec<usize>)> {
     if std::env::var("RERAIL_PROJECT_COLUMNS").is_ok_and(|v| v == "off") {
         return Vec::new();
@@ -1108,6 +1129,15 @@ fn project_unread_columns(prog: &mut Program) -> Vec<(String, Vec<usize>)> {
             let Some(decl) = prog.decls.get(&rel) else { continue };
             let n = decl.len();
             let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
+            // A location stays though no reader reads it: the split partitions a file-local relation's rows by one,
+            // and a load hands on a document's rows by it (`py_docmod(d, p, q)`, read as `py_docmod(_, p, q)`). One
+            // is enough: the first, when no column read is one.
+            if !keep.iter().any(|&c| location_column(prog, &rel, c))
+                && let Some(c) = (0..n).find(|&c| location_column(prog, &rel, c))
+            {
+                keep.push(c);
+                keep.sort_unstable();
+            }
             if keep.is_empty() {
                 keep.push(0);
             }
@@ -2103,6 +2133,28 @@ mod tests {
         let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
         assert!(text.iter().any(|r| r.starts_with("out(") && r.contains("pair($n)")), "{text:?}");
         assert!(text.iter().any(|r| r.starts_with("pair($a) :-")), "{text:?}");
+    }
+
+    /// A relation whose readers read no location column keeps its first one: the split partitions a file-local
+    /// relation's rows by it, and a load hands on a document's rows by it (python/modules.rr's `py_docmod`).
+    #[test]
+    fn a_projection_keeps_a_location_column() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl doc(d: number, p: symbol, q: symbol)
+            .input doc
+            .decl docmod(d: number, p: symbol, q: symbol)
+            .decl out(q: symbol)
+            .output out
+            docmod(d, p, q) :- doc(d, p, q), q != "".
+            out(q) :- docmod(_, _, q).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert_eq!(report.projected, vec![("docmod".to_owned(), vec![1])]);
+        let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
+        assert!(text.iter().any(|r| r.starts_with("docmod($d, $q) :-")), "{text:?}");
     }
 
     /// `count : { r(…) } = 0` is `!r(…)`, and `> 0` is `r(…)`: a plain read for demand, inlining and projection.

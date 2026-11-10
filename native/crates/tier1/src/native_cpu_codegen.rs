@@ -2,7 +2,7 @@ use cranelift_codegen::Context;
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Module, ModuleError};
 
-pub(super) fn define_function(
+pub fn define_function(
     module: &mut JITModule,
     id: FuncId,
     context: &mut Context,
@@ -14,11 +14,13 @@ pub(super) fn define_function(
         function.colocated = false;
     }
     module.define_function(id, context)?;
-    #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
-    tests::record(id, context);
+    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos", target_arch = "aarch64"))]
+    relocations::record(id, context);
     Ok(())
 }
 
-#[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+/// The relocations' checks: every call of a generated function reaches its callee however far
+/// apart the code is mapped. Its hooks are the engine's tests' too (feature `test-hooks`).
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos", target_arch = "aarch64"))]
 #[path = "native_cpu_relocation_tests.rs"]
-mod tests;
+pub mod relocations;

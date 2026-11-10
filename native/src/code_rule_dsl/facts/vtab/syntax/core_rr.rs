@@ -503,6 +503,8 @@ pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &
 /// strings are interned.
 #[derive(Default)]
 pub(super) struct CoreRows {
+    /// The per-node relations no rule reads (`Batch::build`, from the projection): their rows are not made.
+    pub(super) skip: Skip,
     op: Vec<[i64; 2]>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
@@ -533,6 +535,21 @@ pub(super) struct CoreRows {
     ast_match: Vec<[i64; 4]>,
 }
 
+/// `node`'s relations a program does not read, each family's rows left unmade (all made by default). Measured on
+/// struct and values (237 files): every node's operators, siblings, names and literals were made for programs that
+/// read few of them.
+#[derive(Default)]
+pub(super) struct Skip {
+    /// `op`, `op_at`.
+    pub(super) ops: bool,
+    pub(super) next_sibling: bool,
+    pub(super) comment: bool,
+    pub(super) spread: bool,
+    pub(super) name: bool,
+    /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
+    pub(super) literal: bool,
+}
+
 /// Every match of `re` in `text`, each named group (and the whole match, group 0) that takes part: (match, group,
 /// start, end), byte offsets in `text`. `rx_span`'s scan (`Extra::document`).
 pub(super) fn scan(re: &regex::Regex, names: &[Option<&str>], text: &str) -> std::sync::Arc<[(u32, u32, u32, u32)]> {
@@ -552,7 +569,7 @@ pub(super) fn scan(re: &regex::Regex, names: &[Option<&str>], text: &str) -> std
 
 /// A pattern `rx_span` runs: over which spans, its text, its regex, and over a document's source or lines its
 /// block program (`transducer::packed::regex_block`), which marks where a match can end.
-pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::SpanIn, &'a str, regex::Regex, Option<crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter>);
+pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::SpanIn, &'a str, regex::Regex, Option<std::sync::Arc<crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter>>);
 
 /// Texts past this are scanned where they are, not kept in `Extra::rx_memo`.
 pub(super) const RX_MEMO_TEXT: usize = 4096;
@@ -569,7 +586,7 @@ impl CoreRows {
         // `op`: every anonymous child; `op_at`: those that are no punctuation, in order, Python's two-word
         // operators as one ("not in", "is not"), which `op` has too.
         let mut ops: Vec<String> = Vec::new();
-        for &c in children {
+        for &c in children.iter().filter(|_| !self.skip.ops) {
             if f.named(c) {
                 continue;
             }
@@ -590,7 +607,7 @@ impl CoreRows {
             }
         }
         let mut prev = None;
-        for c in p.children(local) {
+        for c in p.children(local).filter(|_| !self.skip.next_sibling) {
             if let Some(a) = prev {
                 self.next_sibling.push([p.global(a), p.global(c)]);
             }
@@ -598,13 +615,16 @@ impl CoreRows {
         }
         let mut token_like = children.is_empty();
         if is_comment(kind) {
-            self.comment.push([n, string(comment_body(text)) as i64]);
+            if !self.skip.comment {
+                self.comment.push([n, string(comment_body(text)) as i64]);
+            }
             token_like = true;
         } else {
-            if is_spread(kind) {
+            if !self.skip.spread && is_spread(kind) {
                 self.spread.push(n);
             }
-            if let Some(s) = name(kind, text) {
+            if self.skip.name {
+            } else if let Some(s) = name(kind, text) {
                 self.name.push([n, string(&s) as i64]);
             } else if dialect.family == Family::Rr && kind == "variable" {
                 self.name.push([n, string(text) as i64]);
@@ -615,7 +635,7 @@ impl CoreRows {
                 (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
                 _ => false,
             };
-            let lit = literal(dialect.family, kind, text, interpolated);
+            let lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
             if let Some(prefix) = &lit.prefix {
                 self.strprefix.push([n, string(prefix) as i64]);
                 token_like = true;
@@ -672,6 +692,7 @@ impl CoreRows {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
+        let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
             let source = p.len() + x.tokens;
             self.source.push([key, p.global(source)]);
@@ -690,6 +711,8 @@ impl CoreRows {
                 }
             }
         }
+        drop(lines_span);
+        let text_span = crate::code_rule_dsl::logic::profile::span(|| "span text".into());
         if wants_text {
             for (i, &[a, b]) in x.spans.iter().enumerate() {
                 let requested_container = (wants_source_text && i == x.tokens as usize)
@@ -699,7 +722,9 @@ impl CoreRows {
                 }
             }
         }
+        drop(text_span);
         let Some(dialect) = dialect.filter(|_| wants_tokens) else { return };
+        let _tokens_span = crate::code_rule_dsl::logic::profile::span(|| "tokens".into());
         // Tokens: the leaves, named or anonymous, other than comments, in source order (ESLint's token store).
         let mut toks: Vec<(u32, u32, i64)> = (0..p.len())
             .filter_map(|l| {
@@ -812,14 +837,16 @@ impl CoreRows {
             }
             let interpolated = dialect.family == Family::Python
                 && kept.iter().any(|&c| f.named(c) && dialect.name(f, c) == "interpolation");
-            let (mut h, mut o) = (Sha256::new(), Sha256::new());
-            for x in [&mut h, &mut o] {
+            // Each hash only when its relation is read: a node's two SHA-256s were most of a projection that
+            // reads `def_digest` alone (struct's), 1.5 s of 2.8 s on 237 files.
+            let (mut h, mut o) = (trees.then(Sha256::new), units.then(Sha256::new));
+            for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
                 x.update(kind.as_bytes());
                 x.update([0]);
             }
             match literal(dialect.family, kind, f.text(id), interpolated).value {
                 Some((value, ty)) => {
-                    for x in [&mut h, &mut o] {
+                    for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
                         x.update(b"=");
                         x.update(ty.as_bytes());
                         x.update([0]);
@@ -827,22 +854,30 @@ impl CoreRows {
                     }
                 }
                 None if kept.is_empty() => {
-                    for x in [&mut h, &mut o] {
+                    for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
                         x.update(b"'");
                         x.update(f.text(id).as_bytes());
                     }
                 }
                 None => {
                     for &c in &kept {
-                        h.update(f.field[c as usize].to_le_bytes());
-                        h.update(hash[c as usize]);
-                        o.update(f.field[c as usize].to_le_bytes());
-                        o.update(if units && unit(c) { placeholder(c) } else { own[c as usize] });
+                        if let Some(h) = h.as_mut() {
+                            h.update(f.field[c as usize].to_le_bytes());
+                            h.update(hash[c as usize]);
+                        }
+                        if let Some(o) = o.as_mut() {
+                            o.update(f.field[c as usize].to_le_bytes());
+                            o.update(if unit(c) { placeholder(c) } else { own[c as usize] });
+                        }
                     }
                 }
             }
-            hash[id as usize] = h.finalize().into();
-            own[id as usize] = o.finalize().into();
+            if let Some(h) = h {
+                hash[id as usize] = h.finalize().into();
+            }
+            if let Some(o) = o {
+                own[id as usize] = o.finalize().into();
+            }
         }
         let hex = |h: &[u8; 32]| -> String { h.iter().map(|b| format!("{b:02x}")).collect() };
         for local in 0..p.len() {

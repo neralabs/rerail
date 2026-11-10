@@ -61,6 +61,8 @@ rr_cx_guest(g, h) :- guest(g, h, _, _).
 rr_cx_guest(g, h) :- parsed(s, _, r), docof(s, h), docof(r, g), g != h.
 
 // d depends on e.
+// Stored (decision 0099, priced by the recursion's delta plans): unfolded into rr_cx_reach's recursion, each new
+// reach row would scan every document's module.
 .decl rr_cx_edge(d: number, e: number)
 rr_cx_edge(d, e) :- rr_cx_imports(d, q), rr_cx_module(e, q), d != e.
 rr_cx_edge(g, h) :- rr_cx_guest(g, h).

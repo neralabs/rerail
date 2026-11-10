@@ -90,7 +90,9 @@ fn check(ks: &[Kernel]) -> Stats {
                 Output::Counts { rows, cols, data } => format!("counts {rows}x{cols}, sum {}", data.iter().map(|&x| x as u64).sum::<u64>()),
                 Output::PerRow(v) => format!("per row {}, sum {}", v.len(), v.iter().map(|&x| x as u64).sum::<u64>()),
                 Output::Pairs(p) => format!("{} pairs, first {:?}", p.len(), p.iter().take(4).collect::<Vec<_>>()),
+                Output::View(v) => format!("{} pairs, first {:?}", v.len(), v.iter().take(4).collect::<Vec<_>>()),
                 Output::Bits(b) => format!("bits {}x{}, ones {}", b.rows, b.words, b.data.iter().map(|w| w.count_ones()).sum::<u32>()),
+                Output::Program(_) => "a program's result".to_owned(),
             };
             panic!("launch {i} ({}): gpu {} vs reference {}", k.form().name(), brief(o), brief(&want));
         }

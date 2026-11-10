@@ -67,6 +67,7 @@ fn workloads() -> Vec<(&'static str, Kernel)> {
 fn tiny(f: Form) -> Kernel {
     let mut rng = Rng(7);
     match f {
+        Form::Program => unreachable!("a program prices itself"),
         Form::BitProduct => Kernel::BitProduct { a: bits(&mut rng, 4, 64, 4), b: bits(&mut rng, 4, 64, 4), min: None },
         Form::CountTable | Form::CountPairs => {
             Kernel::CountTable { loff: vec![0, 2].into(), left: vec![1, 2].into(), roff: vec![0, 2].into(), right: vec![2, 1].into(), emit: f == Form::CountPairs }
@@ -77,7 +78,7 @@ fn tiny(f: Form) -> Kernel {
             Kernel::Closure { n: 8, off, dst }
         }
         Form::Probe | Form::Tile => {
-            let keys: crate::kernel::Keys = vec![std::sync::Arc::<[i64]>::from(vec![1i64, 2])].into();
+            let keys: crate::kernel::Keys = vec![crate::col::Col::from(vec![1i64, 2])].into();
             let by = if f == Form::Tile { crate::kernel::JoinBy::Tile } else { crate::kernel::JoinBy::Probe };
             Kernel::Join { left: keys.clone(), right: keys, right_id: None, by }
         }

@@ -138,17 +138,41 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
         let mut priced = true;
         for &(ri, i) in &reads {
             let reader = &prog.rules[ri];
-            let Ok((_, own, _)) = model.plan_rule(prog, &reader.head, &reader.body, None) else {
-                priced = false;
-                break;
-            };
-            for copy in unfold(reader, i, rules, 0).unwrap_or_default() {
-                match model.plan_rule(prog, &copy.head, &copy.body, None) {
-                    Ok((_, w, _)) => added += w,
-                    Err(_) => priced = false,
+            let copies = unfold(reader, i, rules, 0).unwrap_or_default();
+            // A reader in a recursion runs as its delta plans, one per recursive atom read first, over each wave's
+            // new rows: priced so, each copy with the same atom first. Its whole plan may start from the inlined
+            // relation's own inputs, which no delta plan can: `rr_cx_reach(d, f) :- rr_cx_reach(d, e),
+            // rr_cx_edge(e, f)` priced whole joined `rr_cx_edge`'s imports and modules first, and inlining it looked
+            // 7.8 M work cheaper; run, each new reach row scanned every document's module (277 s of calls_cx).
+            let scc = sccs.iter().find(|s| s.contains(&reader.head.rel));
+            let deltas: Vec<usize> = (0..reader.body.len())
+                .filter(|&k| k != i && reader.body[k].atom().is_some_and(|a| !a.neg && scc.is_some_and(|s| s.contains(&a.rel))))
+                .collect();
+            let firsts: Vec<Option<usize>> = if deltas.is_empty() { vec![None] } else { deltas.iter().map(|&k| Some(k)).collect() };
+            for first in firsts {
+                let Ok((_, own, _)) = model.plan_rule(prog, &reader.head, &reader.body, first) else {
+                    priced = false;
+                    break;
+                };
+                for copy in &copies {
+                    // The delta atom in the copy: the reader's literal, which unfolding leaves as it is.
+                    let at = match first {
+                        Some(k) => match copy.body.iter().position(|l| *l == reader.body[k]) {
+                            Some(at) => Some(at),
+                            None => {
+                                priced = false;
+                                continue;
+                            }
+                        },
+                        None => None,
+                    };
+                    match model.plan_rule(prog, &copy.head, &copy.body, at) {
+                        Ok((_, w, _)) => added += w,
+                        Err(_) => priced = false,
+                    }
                 }
+                added -= own;
             }
-            added -= own;
         }
         if !priced {
             lines.push(format!("{rel}: stored, a reader copy does not plan"));
@@ -552,6 +576,41 @@ mod tests {
         let reader = rule("o(n) :- a(t), c(t, n).");
         let twice = rule("c(n, n) :- a(n).");
         assert_eq!(unfold(&reader, 1, &[&twice], 1).unwrap()[0].to_string(), "o($n) :- a($t), a($t), $t = $n");
+    }
+
+    /// A reader in a recursion is priced by its delta plans: inlined into `reach`'s recursive rule, `edge`'s join
+    /// is made again for each new reach row, though priced whole the copy joins `imp` and `md` first and looks as
+    /// cheap as reading `edge` (`rr_cx_edge`, priced 7.8 M work cheaper inlined; 277 s of calls_cx when it was).
+    #[test]
+    fn a_relation_read_in_a_recursion_is_priced_by_its_delta_plans() {
+        use super::super::{Inputs, Stats};
+        use std::collections::{HashMap, HashSet};
+        let prog = super::super::super::rr::parse(
+            ".decl imp(d: number, q: number)\n.decl md(e: number, q: number)\n.decl own(d: number)\n.input imp\n.input md\n.input own\n\
+             .decl edge(d: number, e: number)\nedge(d, e) :- imp(d, q), md(e, q).\n\
+             .decl reach(d: number, e: number)\nreach(d, d) :- own(d).\nreach(d, f) :- reach(d, e), edge(e, f).\n.output reach\n",
+        )
+        .unwrap();
+        let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+        let mut model = Model { analysis: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+        model.stats.nodes = 450_000.0;
+        // Measured rows (an earlier chunk's), then distinct values by column.
+        for (rel, rows, ndv) in [
+            ("imp", 40_000.0, vec![4_000.0, 4_000.0]),
+            ("md", 4_000.0, vec![4_000.0, 4_000.0]),
+            ("own", 4_000.0, vec![4_000.0]),
+            ("edge", 40_000.0, vec![4_000.0, 4_000.0]),
+            ("reach", 100_000.0, vec![4_000.0, 4_000.0]),
+        ] {
+            model.stats.card.insert(rel.to_owned(), rows);
+            for (c, n) in ndv.into_iter().enumerate() {
+                model.ndv.insert((rel.to_owned(), c), n);
+                model.stats.fan.insert((rel.to_owned(), c), rows / n);
+            }
+        }
+        let chosen = choose(&prog, &mut model).unwrap();
+        assert!(chosen.is_none(), "edge inlined into reach's recursion");
     }
 
     /// `.decl r(…) inline` and its kin are read as Soufflé spells them; two that disagree are an error.

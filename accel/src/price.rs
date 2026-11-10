@@ -31,7 +31,7 @@
 //!
 //! Fixed costs, measured with the smallest launch of each form:
 //!
-//! - the cores: about 2 µs a launch within a submission (one parallel pass on the rayon pool);
+//! - the cores: about 2 µs a launch (a job on the executor's pool);
 //! - SME: 1 µs a submission, 3 µs a launch;
 //! - the GPU: 0.2 ms of wall a command buffer (80–100 µs of it host CPU, 8 µs on the device), 22 µs a launch;
 //! - the Neural Engine: 0.1 ms a submission, and 0.25 ms a launch (a tile of 2,048 rows' prediction call).
@@ -45,8 +45,14 @@
 //! - the Neural Engine: about 2–3 W sustained in community `powermetrics` readings (2.8 W peak on an M4; 4.5 W in
 //!   an M5 Pro study); taken as 3 W.
 //!
-//! **Placement** ([`Prices::choose`]): the lane that finishes first, given what is already queued on each lane, is
-//! the reference. Every lane that would finish within the **parity band** of it (`band`, 3× to start; the user,
+//! **Host CPU** (decision 0100 §9). On a loaded machine the cores are the scarce lane, and a device's latency costs
+//! the host nothing while the host works on. So the executor places by [`Prices::choose_host`]: of the lanes that
+//! finish by the deadline (the band, or the caller's slack when it is later), the one that costs the host the least
+//! CPU. Host CPU per unit and per job is its own table (`host_per_unit`, `host`); a lane's latency is measured by
+//! the scoreboard as the run goes, and the cores' wall time is scaled by the machine's load.
+//!
+//! **Placement by energy** ([`Prices::choose`], kept for the price tests): the lane that finishes first, given what
+//! is already queued on each lane, is the reference. Every lane that would finish within the **parity band** of it (`band`, 3× to start; the user,
 //! 2026-11-09) is a candidate, and the candidate that spends the least energy is chosen. So near parity, the Neural
 //! Engine takes the work: it frees the CPU and the GPU, and draws a fraction of their power.
 
@@ -67,22 +73,59 @@ pub struct Fixed {
 #[derive(Clone, Debug)]
 pub struct Prices {
     /// Seconds per unit, by form then lane; `None` where the lane has no kernel for the form.
-    per_unit: [[Option<f64>; 4]; 7],
+    per_unit: [[Option<f64>; 4]; FORMS],
     /// Per lane; for the CPU lane, wall seconds (the cores' time is `per_unit` divided by `cores`).
     pub fixed: [Fixed; 4],
-    /// The cores the CPU lane spreads a launch over.
+    /// The cores the CPU lane spreads a launch over: the executor's pool (`RERAIL_THREADS`).
     pub cores: f64,
-    /// The parity band: lanes finishing within `band` × the fastest are candidates, the least energy wins.
+    /// The parity band: lanes finishing within `band` × the fastest are candidates.
     pub band: f64,
+    /// Host CPU seconds per unit, by form then lane: what a launch costs the host's cores on that lane (the cores'
+    /// own work; SME's stream on a core; a device lane's uploads and grouping).
+    host_per_unit: [[Option<f64>; 4]; FORMS],
+    /// Host CPU per job (a batch's share of the lane: its submission) and per launch in it.
+    pub host: [Fixed; 4],
+    /// Seconds from a job's submission to its outputs beyond its work (the GPU's commit, scheduling and wake): the
+    /// start; the scoreboard's measurements replace it as the run goes.
+    pub latency: [f64; 4],
+}
+
+/// What placement weighs a launch by on one lane ([`Prices::choose_host`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Cost {
+    /// When it would finish, counting what is queued, the lane's latency, and the load on the cores.
+    pub finish: f64,
+    /// Its wall seconds of work on the lane.
+    pub wall: f64,
+    /// The host CPU seconds it costs.
+    pub host: f64,
+}
+
+/// What a lane's choice is weighed against: the lanes' queued seconds and measured latency, which lanes this batch
+/// already pays a job on, how loaded the cores are, and how long the caller works before it waits.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Load {
+    pub queued: [f64; 4],
+    pub latency: [f64; 4],
+    pub open: [bool; 4],
+    /// The cores' slowdown: the machine's load over its cores, at least 1.
+    pub cores: f64,
+    /// Seconds the caller works before it waits for the batch (measured per kind of batch).
+    pub slack: f64,
+    /// Per lane, the measured host CPU over the price's estimate (1 until measured).
+    pub host_scale: [f64; 4],
 }
 
 fn form_index(f: Form) -> usize {
     f as usize
 }
 
+/// The forms the table prices, and a program's row (always empty: a program prices itself).
+const FORMS: usize = Form::ALL.len() + 1;
+
 impl Default for Prices {
     fn default() -> Self {
-        let mut per_unit = [[None; 4]; 7];
+        let mut per_unit = [[None; 4]; FORMS];
         let mut set = |f: Form, l: Lane, s: f64| per_unit[form_index(f)][l.index()] = Some(s);
         // Release builds, per unit at the largest workload of each form (see the module's comment).
         set(Form::BitProduct, Lane::Cpu, 4.1e-12);
@@ -106,7 +149,33 @@ impl Default for Prices {
         set(Form::Probe, Lane::Gpu, 1.4e-9);
         set(Form::Tile, Lane::Cpu, 5.7e-9);
         set(Form::Tile, Lane::Gpu, 5e-9);
+        // Host CPU per unit. The cores and SME: their work is on the host's cores. The GPU: copying a host
+        // column into a shared buffer (about 1 ns a row; a staged column is not copied), a tile side's grouping
+        // (5 ns a row, measured with the join prices). The Neural Engine: its host expansion and sums are most of
+        // its submission (the price's own comment), so its time counts as host time.
+        let mut host_per_unit = [[None; 4]; FORMS];
+        for f in Form::ALL {
+            let i = form_index(f);
+            host_per_unit[i][Lane::Cpu.index()] = per_unit[i][Lane::Cpu.index()];
+            host_per_unit[i][Lane::Sme.index()] = per_unit[i][Lane::Sme.index()];
+            host_per_unit[i][Lane::Ane.index()] = per_unit[i][Lane::Ane.index()];
+            host_per_unit[i][Lane::Gpu.index()] = per_unit[i][Lane::Gpu.index()].map(|_| match f {
+                Form::Tile => 5e-9,
+                Form::BitProduct => 1e-15,
+                _ => 1e-9,
+            });
+        }
         Prices {
+            host_per_unit,
+            // Host CPU a job and a launch (the scoreboard, 2026-11-09): the cores' task; SME's handoff; the GPU's
+            // command buffer, encoder and commit, and each join's encoding and reads; the Neural Engine's surfaces.
+            host: [
+                Fixed { submission: 2e-6, launch: 0.0 },
+                Fixed { submission: 1e-6, launch: 3e-6 },
+                Fixed { submission: 40e-6, launch: 10e-6 },
+                Fixed { submission: 0.1e-3, launch: 0.25e-3 },
+            ],
+            latency: [0.0, 0.0, 0.2e-3, 0.1e-3],
             per_unit,
             fixed: [
                 // A launch's task on the rayon pool.
@@ -118,7 +187,7 @@ impl Default for Prices {
                 // The surfaces and the grouping, and a tile's prediction call.
                 Fixed { submission: 0.1e-3, launch: 0.25e-3 },
             ],
-            cores: std::thread::available_parallelism().map_or(8, |n| n.get()) as f64,
+            cores: crate::exec::threads() as f64,
             band: 3.0,
         }
     }
@@ -136,8 +205,13 @@ impl Prices {
 
     /// `k`'s wall time on `lane`, without the submission's cost; `None` when the lane has no kernel for it.
     pub fn wall(&self, k: &Kernel, lane: Lane) -> Option<f64> {
-        let busy = self.per_unit(k.form(), lane)? * k.units();
-        let busy = if lane == Lane::Cpu { busy / self.cores } else { busy };
+        let per = match k {
+            Kernel::Program(p) => p.0.per_unit(lane)?,
+            _ => self.per_unit(k.form(), lane)?,
+        };
+        let busy = per * k.units();
+        // A table form splits its work over the cores; a program's cores' form is one job, its price one thread's.
+        let busy = if lane == Lane::Cpu && !matches!(k, Kernel::Program(_)) { busy / self.cores } else { busy };
         Some(self.fixed[lane.index()].launch + busy)
     }
 
@@ -150,10 +224,51 @@ impl Prices {
     /// Chooses a lane for `k` among `able` lanes, given each lane's `queued` seconds: the least energy among the
     /// lanes that finish within the band of the first to finish. A lane with nothing queued yet pays its submission.
     pub fn choose(&self, k: &Kernel, able: &[Lane], queued: &[f64; 4]) -> Option<(Lane, f64)> {
+        self.choose_open(k, able, queued, &std::array::from_fn(|i| queued[i] > 0.0))
+    }
+
+    /// `k`'s host CPU seconds on `lane`, its job's share counted when the lane is not `open` for this batch yet.
+    pub fn host(&self, k: &Kernel, lane: Lane, open: bool) -> Option<f64> {
+        let per = match k {
+            Kernel::Program(p) => p.0.host_per_unit(lane)?,
+            _ => self.host_per_unit[form_index(k.form())][lane.index()]?,
+        };
+        let fixed = self.host[lane.index()];
+        Some(per * k.units() + fixed.launch + if open { 0.0 } else { fixed.submission })
+    }
+
+    /// `k`'s cost on `lane` under `load`.
+    pub fn cost(&self, k: &Kernel, lane: Lane, load: &Load) -> Option<Cost> {
+        let i = lane.index();
+        let slow = if matches!(lane, Lane::Cpu | Lane::Sme) { load.cores.max(1.0) } else { 1.0 };
+        let wall = self.wall(k, lane)? * slow;
+        let finish = load.queued[i] + if load.open[i] { 0.0 } else { load.latency[i] } + wall;
+        let scale = if load.host_scale[i] > 0.0 { load.host_scale[i] } else { 1.0 };
+        Some(Cost { finish, wall, host: self.host(k, lane, load.open[i])? * scale })
+    }
+
+    /// Chooses a lane for `k` among `able` by host CPU (decision 0100 §9). The lanes that finish by the deadline are
+    /// candidates: the later of the band times the first to finish, and the caller's slack (it works that long
+    /// before it waits, so a lane done by then costs it no wall time). Among them, the least host CPU wins, then the
+    /// least energy. The chosen lane's cost, and the fastest's.
+    pub fn choose_host(&self, k: &Kernel, able: &[Lane], load: &Load) -> Option<(Lane, Cost, Cost)> {
+        let costs: Vec<(Lane, Cost)> = able.iter().filter_map(|&l| Some((l, self.cost(k, l, load)?))).collect();
+        let fastest = costs.iter().min_by(|a, b| a.1.finish.total_cmp(&b.1.finish))?.1;
+        let deadline = (fastest.finish * self.band).max(load.slack);
+        let (lane, cost) = costs
+            .iter()
+            .filter(|(_, c)| c.finish <= deadline)
+            .min_by(|a, b| a.1.host.total_cmp(&b.1.host).then(self.joules(a.0, a.1.wall).total_cmp(&self.joules(b.0, b.1.wall))).then(a.1.finish.total_cmp(&b.1.finish)))
+            .copied()?;
+        Some((lane, cost, fastest))
+    }
+
+    /// [`Prices::choose`], where `open` says which lanes this batch already pays a submission on: a lane not open
+    /// pays its submission, whatever other batches have queued on it.
+    pub fn choose_open(&self, k: &Kernel, able: &[Lane], queued: &[f64; 4], open: &[bool; 4]) -> Option<(Lane, f64)> {
         let finish = |l: Lane| -> Option<f64> {
-            let q = queued[l.index()];
-            let sub = if q == 0.0 { self.fixed[l.index()].submission } else { 0.0 };
-            Some(q + sub + self.wall(k, l)?)
+            let sub = if open[l.index()] { 0.0 } else { self.fixed[l.index()].submission };
+            Some(queued[l.index()] + sub + self.wall(k, l)?)
         };
         let best = able.iter().filter_map(|&l| finish(l)).fold(f64::INFINITY, f64::min);
         if !best.is_finite() {
@@ -170,3 +285,36 @@ impl Prices {
 #[cfg(test)]
 #[path = "price_bench.rs"]
 mod bench;
+
+#[cfg(test)]
+mod host_tests {
+    use super::*;
+    use crate::col::Col;
+    use crate::kernel::JoinBy;
+
+    fn join(n: usize) -> Kernel {
+        let keys = |n: usize| -> crate::kernel::Keys { vec![Col::from((0..n as i64).collect::<Vec<_>>())].into() };
+        Kernel::Join { left: keys(n), right: keys(n), right_id: None, by: JoinBy::Probe }
+    }
+
+    /// Within the caller's slack the lane of least host CPU wins, though it finishes later; with no slack, the band
+    /// decides, and a lane far slower is not a candidate. A loaded machine stretches the cores' wall time.
+    #[test]
+    fn the_least_host_cpu_wins_within_the_slack() {
+        let p = Prices::default();
+        let k = join(100_000);
+        let able = [Lane::Cpu, Lane::Gpu];
+        let (cpu, gpu) = (p.cost(&k, Lane::Cpu, &Load::default()).unwrap(), p.cost(&k, Lane::Gpu, &Load { latency: [0.0, 0.0, 2e-3, 0.0], ..Load::default() }).unwrap());
+        assert!(gpu.host < cpu.host, "the gpu costs the host less: {gpu:?} {cpu:?}");
+        let mut load = Load { latency: [0.0, 0.0, 2e-3, 0.0], cores: 1.0, ..Load::default() };
+        load.slack = 1.0;
+        assert_eq!(p.choose_host(&k, &able, &load).unwrap().0, Lane::Gpu);
+        // No slack, and the gpu's latency far past the cores' time: the cores.
+        load.slack = 0.0;
+        load.latency[2] = 1.0;
+        assert_eq!(p.choose_host(&k, &able, &load).unwrap().0, Lane::Cpu);
+        // The cores' wall time stretches under load.
+        let loaded = p.cost(&k, Lane::Cpu, &Load { cores: 4.0, ..Load::default() }).unwrap();
+        assert!((loaded.wall / cpu.wall - 4.0).abs() < 1e-9);
+    }
+}
