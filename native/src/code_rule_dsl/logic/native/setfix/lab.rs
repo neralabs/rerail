@@ -146,7 +146,8 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
     for line in &spec.lines {
         match line {
             // The run held its rows in memory, not in tables; the replay writes them, to compare them.
-            Line::NoWrite | Line::Device | Line::Seed { .. } | Line::Join { .. } => {}
+            // Where the run put it (`Device`): the replay runs every capture on the CPU, and again on the device.
+            Line::NoWrite | Line::Device | Line::Leveled | Line::Seed { .. } | Line::Join { .. } => {}
             Line::Rel { name, types, start } => {
                 let empty = match start {
                     Start::Rows => false,
@@ -159,8 +160,8 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
             Line::Produced(_) => return Err("a `produced` line".to_owned()),
             Line::Probe { .. } => return Err("a `probe` line".to_owned()),
             Line::Gate { .. } => return Err("a `gate` line".to_owned()),
+            Line::Levels { .. } => return Err("a `levels` line".to_owned()),
             Line::Edge(_) => return Err("a `rule` line".to_owned()),
-            Line::Levels(_) => return Err("a `levels` line".to_owned()),
         }
         let joins: Vec<&Arc<JoinSpec>> = match line {
             Line::Seed { join, .. } => vec![join],

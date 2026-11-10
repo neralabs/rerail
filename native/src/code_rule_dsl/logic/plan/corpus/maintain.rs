@@ -98,11 +98,9 @@ fn insert(rules: &mut Vec<Rule>, h: &str, args: &[Term], body: Vec<Literal>, gon
 }
 
 /// Whether recursive strata are maintained by levels (decision 0090), not delete-and-rederive.
-fn levels_wanted() -> bool {
-    // Opt-in (`RERAIL_RECURSIVE=levels`) on the integration branch: merged, O125 step 08 keeps 1 `type_of` and 2
-    // `possible_type` rows a full run does not (steps 01-07 equal), with delete-and-rederive 8 of 8 (decision 0090,
-    // "Merged: levels opt-in"). The levels branch's default is levels.
-    std::env::var("RERAIL_RECURSIVE").is_ok_and(|v| v == "levels")
+pub(in crate::code_rule_dsl) fn levels_wanted() -> bool {
+    // The default (decision 0090, levels checked); `RERAIL_RECURSIVE=dred` keeps delete-and-rederive.
+    std::env::var("RERAIL_RECURSIVE").map_or(true, |v| v != "dred")
 }
 
 fn atom(rel: String, args: Vec<Term>, neg: bool) -> Literal {
@@ -197,10 +195,13 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut fresh: Vec<(String, String)> = Vec::new();
     // Relations of the strata maintained: their net deltas come from their own del, redo and ins.
     let mut maint: BTreeSet<String> = BTreeSet::new();
-    // Of those, the ones maintained exactly (counting): their deletes are final, nothing is derived again.
-    let mut exact_rels: BTreeSet<String> = BTreeSet::new();
     // Relations of strata maintained by levels: their rows gone are `h__gone`, not `h__del`.
     let mut gone_of: BTreeSet<String> = BTreeSet::new();
+    // Of those, the ones maintained exactly (counting): their deletes are final, nothing is derived again.
+    let mut exact_rels: BTreeSet<String> = BTreeSet::new();
+    // Each maintained stratum, the span of `rules` its maintained form wrote, and its rules as given: its form
+    // derived again (`front::Again`).
+    let mut groups: Vec<(BTreeSet<String>, usize, usize, Vec<Rule>)> = Vec::new();
     for scc in dirty {
         let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
         let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
@@ -221,6 +222,8 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             continue;
         }
         maintained += 1;
+        let start = rules.len();
+        let as_given: Vec<Rule> = given.iter().map(|r| (*r).clone()).collect();
         let exact = scc.iter().all(|r| super::supports::is_support(r));
         // Under counting, a head whose every rule projects one of its supports (`h(x) :- h__sup0(x, _)`) is exact
         // too: a row is gone when it lost a support and none is left in the new rows, a count reaching zero. Its
@@ -412,6 +415,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
         maint.extend(scc.iter().cloned());
         changed.extend(scc.iter().cloned());
+        groups.push((scc.clone(), start, rules.len(), as_given));
     }
     let mut sources = Vec::new();
     for rel in &deltas {
@@ -439,6 +443,38 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
         fresh.push((rel.clone(), named(rel, "minus")));
         fresh.push((rel.clone(), named(rel, "plus")));
+    }
+    // Each maintained stratum's form derived again (decision 0090 §4): its rules as given, and its deltas against
+    // its old rows; what its maintained form makes (its pieces' heads, and its relations' deltas) is replaced.
+    // A maintained relation's minus and plus rules, by the relation: found once, not per stratum.
+    let delta_of: std::collections::HashMap<String, &str> = deltas.iter().filter(|r| maint.contains(*r)).flat_map(|r| [(named(r, "minus"), r.as_str()), (named(r, "plus"), r.as_str())]).collect();
+    let mut delta_rules: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    for (i, r) in rules.iter().enumerate() {
+        if let Some(&rel) = delta_of.get(&r.head.rel) {
+            delta_rules.entry(rel).or_default().push(i);
+        }
+    }
+    for (scc, start, end, given) in groups {
+        let mine: Vec<&Rule> = rules[start..end].iter().chain(scc.iter().filter_map(|s| delta_rules.get(s.as_str())).flatten().map(|&i| &rules[i])).collect();
+        let owned: BTreeSet<String> = mine.iter().map(|r| r.head.rel.clone()).chain(scc.iter().cloned()).collect();
+        let reads: BTreeSet<String> = mine
+            .iter()
+            .flat_map(|r| r.body.iter().filter_map(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(&a.rel),
+                _ => None,
+            }))
+            .filter(|r| !owned.contains(*r) && (r.ends_with("__minus") || r.ends_with("__plus")))
+            .cloned()
+            .collect();
+        let mut again_deltas = Vec::new();
+        for rel in scc.iter().filter(|r| deltas.contains(*r)) {
+            let v = row(part.program.decls[rel].len());
+            let a = |rel: String, neg: bool| atom(rel, v.clone(), neg);
+            again_deltas.push(Rule { head: Atom { rel: named(rel, "minus"), args: v.clone(), neg: false, gated: false }, body: vec![a(named(rel, "old"), false), a(rel.clone(), true)] });
+            again_deltas.push(Rule { head: Atom { rel: named(rel, "plus"), args: v.clone(), neg: false, gated: false }, body: vec![a(rel.clone(), false), a(named(rel, "old"), true)] });
+        }
+        let olds = scc.iter().map(|r| named(r, "old")).collect();
+        part.program.again.push(front::Again { scc, owned, rules: given, deltas: again_deltas, reads: reads.into_iter().collect(), olds });
     }
     for rel in &olds {
         // Named as the planner reads its statistics (`sql_col`).

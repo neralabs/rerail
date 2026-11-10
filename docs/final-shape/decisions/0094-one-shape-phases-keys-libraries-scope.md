@@ -73,6 +73,124 @@ These are requirements, not details:
 
 The id scheme is part of the per-file memo's plan key, so a change of scheme misses the memo once, as it should.
 
+### 2a. Built: definition ids are the default (2026-11-10)
+
+Node ids are now numbered per definition by default (`syntax/granules.rs`). `RERAIL_NODE_IDS=preorder` keeps
+preorder ids, to compare. This section says how the numbering works in each language, how it meets §2's
+requirements, what had to change in the readers, and what it costs.
+
+**Granules.** A document is cut into granules the same way in every language:
+
+- A definition starts a granule wherever it is, so the granule is the innermost one. A wrapper that only adds to a
+  definition (a decorator, an `export`, the SQL statement around a `CREATE`) is part of its granule.
+- Each statement of a container is a granule of its own. A container is the document's top level, or a class-like
+  body: a class, an interface, a Rust `impl` or `mod`, a namespace. So a class header and its fields are apart
+  from its methods, and an edit to one module-level statement renumbers that statement only.
+- Everything else belongs to the granule it is in: a function's body, a JSX tree, an anonymous callback.
+
+| language | definitions | containers |
+| --- | --- | --- |
+| Python | `def`, `class` (with their decorators) | the module, a class body |
+| JavaScript, TypeScript, TSX | functions, generators, classes, methods, interfaces, type aliases, enums, namespaces (with `export`) | the program, a class body, a namespace body |
+| PHP | functions, classes, interfaces, traits, enums, methods | the program, a declaration list, a namespace body |
+| Rust | `fn`, `struct`, `enum`, `union`, `trait`, `impl`, `mod`, `macro_rules!`, `const`, `static`, `type` | the file, an `impl`/`trait`/`mod` body |
+| SQL | `CREATE TABLE`, `VIEW`, `FUNCTION`, `PROCEDURE`, `INDEX`, `TRIGGER`, `TYPE`, … | the script |
+| Vue | — | the file: its template, script and style are granules |
+| others (`.rr`, Blade) | — | the top level |
+
+**Keys.** A granule's key is its parent's key, its kind, its name and an ordinal among siblings of the same kind
+and name, for example `/class_definition:C#0/function_definition:m#0`. The name is, in order:
+
+- a definition's own name (its `name` field; an `impl`'s trait and type; a SQL object's reference);
+- the names a declaration binds: `const App = () => …`, `export const X = …`, `X = 1`, a class field. A React
+  component or a constant then keeps its granule when its value is edited;
+- an import's text;
+- for any other statement, a digest of its own text with nested granules cut out. An unchanged statement keeps
+  its granule wherever it moves.
+
+**Slots, by symbol order.** A granule's home slot is a hash of its key, and clashes are settled in key order:
+granules are placed by (home, key), each in the first free slot from its home. So the slots are a function of the
+set of keys. Moving definitions keeps every id, and adding one moves at most a granule it clashes with. The flag's
+old probing in document order did not have this.
+
+**Overflow never falls back to preorder.** The flag kept preorder ids for a document that overflowed, which mixed
+the two schemes and showed them wrongly (`slot.index`). Now:
+- a granule past one slot's 2^18 indexes goes on in further slots, keyed by its key and a count. They are placed
+  after every granule's first slot, nodes before tokens, so a token never moves a node;
+- a document with more granules than slots folds its statement granules into their parents, then, past that,
+  every granule into its root;
+- spans (a document's text, lines and matches) take the top 16 slots, down from the last: 4 M spans a document.
+
+**Embedded documents** (guests: SQL in a Python string, a Vue file's script) are numbered by the same rules in
+their own grammar. A guest's document key is a hash of its host node's id (`corpus::guests`), so it is as stable
+as that node, which is now stable across edits elsewhere in the host. The flag left guests in preorder.
+
+**The bit widths, from data** (`definition_ids_census`, every source file of the data layer at `82f8be6eb0`, the
+landing app, and this repository):
+
+| corpus | language | files | granules p50 / p99 / max | largest granule (nodes and tokens) | spilled |
+| --- | --- | ---: | --- | ---: | ---: |
+| data layer | Python | 8,927 | 27 / 372 / 7,996 | 43,583 (generated facades) | 0 |
+| data layer | Rust | 1,186 | 9 / 307 / 6,912 | 147,070 (a generated grammar shard) | 0 |
+| data layer | JavaScript | 49 | 15 / 257 / 257 | 410,252 (Sphinx's `searchindex.js`) | 1 |
+| landing, this repo | TypeScript | 1,210 | 14 / 143 / 4,741 | 45,353 (a test catalog) | 0 |
+| landing | TSX | 510 | 11 / 51 / 87 | 8,395 (a page component) | 0 |
+| this repo | Rust | 1,189 | 33 / 307 / 731 | 70,584 (`corpus.rs`) | 0 |
+| both | PHP, SQL, Vue | 169 | ≤ 118 granules | 15,352 | 0 |
+
+So 14 bits of slot (16,366 for granules) hold the most granules seen with room to spare, and 18 bits of index hold
+every granule but one generated file's, which spills into a second slot as designed. No document folded. The
+widths stay 14 and 18.
+
+**Readers that assumed preorder ids**, found by running the rule and syntax tests under the new default:
+- `within_stop` over a relation of nodes lowered "the nearest stop is `a` or above it" to `stop <= a`. Now it is
+  `stop = a` or `within(a, stop)`, as the kind-set form already was (`rr/lower.rs`).
+- **Rules that order nodes by id**: `b < n` (a binding before its use: pyflakes, misc2-perf, misc2-self), `c < o`
+  (misc2-todo), `max k : { binding(…k…) }`. Inside one granule ids still follow preorder; across granules they do
+  not. `front::finish` now rewrites a comparison of two node-typed variables, and a `min`/`max` over a node
+  variable, to read the nodes' preorder keys from a new relation, `node_order(n, k)` (`k` is
+  `document << 32 | preorder index`, the old id). So these rules mean exactly what they did.
+- Two tests read ids as preorder indexes: the T exporter comparison (now through `local_of`) and the Python string
+  parts helper.
+- `native/extension.rs`'s subtree intervals are rdl's SQL backend over its own tape tables, a separate id space;
+  they are unchanged. The cycle check already treats `<` as its own order (`front/cycles.rs`).
+
+**Measured** (debug build, CPU, load 28–70):
+- Numbering costs 5–7% of a file's parse and projection: 0.65 of 9.7 s for 1,400 Python files, 0.97 of 15.3 s
+  for 1,189 Rust files, 0.47 of 8.2 s for 1,210 TypeScript files.
+- The gate is unchanged under the new default: `total (all): 3988 303 298 0`.
+- O125 replay steps 01–03 (load 70–100): session CPU 13.6, 11.8 and 9.0 s, and step 03 equals a full run.
+  Step 01 under preorder ids, at the same load, is 21.1 s.
+- The cold run's first output has 2,577 rows under preorder ids. Under definition ids it had 2,576 before rules
+  that order nodes read `node_order`, and 2,577 after: `calls.rr` orders nodes across granules.
+
+**Open.**
+- **Inside a granule, ids are preorder.** An edit inside a large function or JSX component renumbers the rest of
+  it. The census's largest hand-written granules are 8–9 K nodes (a TSX page, a Python script). A finer cut needs
+  keys that survive edits; JSX elements have none in general (a `key` or `id` attribute sometimes).
+- **Clash rates on history** (O126) are unmeasured: how often an added definition moves another's slot.
+- **Range reads over ids** (`Batch::between`) scan a document's nodes under definition ids. Nothing in the gate or
+  the replay asks for one narrower than a document.
+- `def_digest`'s units (0083 §0: the root, functions, classes) are unchanged. Granules are finer, as addresses
+  need, and phases keep their units.
+
+**Other popular languages.** The cut is the same for any language with named definitions, so adding a grammar
+means listing its definition and body kinds:
+- **Go:** functions, methods and type declarations; the file is the container.
+- **Java, C#, Kotlin:** classes, interfaces, enums, records and methods; class bodies and namespaces are
+  containers, so a field is its own granule.
+- **C and C++:** function definitions, structs, classes and enums; namespace and class bodies are containers.
+  Preprocessor blocks (`#if`) are statements keyed by their text.
+- **Ruby, Swift:** methods, classes and modules or extensions, the same way.
+
+Embedded languages:
+- **SQL in strings** is a guest, numbered as a SQL script: each statement a granule, a `CREATE` named by its
+  object. Its document key follows its host node, so an edit elsewhere in the host leaves the SQL's ids alone.
+- **JSX** is part of the TSX and JavaScript grammars, not a guest. A component is its function's or declaration's
+  granule, named by the component's name.
+- **HTML, Vue templates, CSS:** a template is one granule today. CSS rules could be keyed by their selectors, the
+  way statements are keyed by their text.
+
 ### 3. Libraries and scope
 
 - **A library is a module, held once per run** (0089), under its own names. A program that adds to a library
@@ -239,7 +357,7 @@ Open: the name of `.global` (§3), against 0093's global facts. `.shared` says w
 1. Phase 0's stored answers and read record (t23 a): removes the warm run's 4.3 s of re-measurement.
 2. `#include` loading in phase 0, keyed by the module graph; 0089 stage 3.
 3. 0090 steps 2–3 (in place, per-file deltas), then the replay with preorder against definition ids, sizing §2.
-4. Definition ids by §2's encoding, after the preorder readers are replaced.
+4. Definition ids by §2's encoding, after the preorder readers are replaced. *Built* (§2a): the default.
 5. Searches (§5).
 6. The git provider; events later.
 

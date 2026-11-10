@@ -6,12 +6,12 @@
 //! as its text, up to the end of its line. Two JSON forms stay for what has no Datalog form yet: the matcher term
 //! `ast(n, { … })` and the policy document `.policy { … }`.
 
-use super::Error;
-use super::tape::{self, Field, Kind, Tree};
+use crate::Error;
+use crate::tape::{self, Field, Kind, Tree};
 use std::cell::Cell;
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum Tok {
+pub enum Tok {
     Id(String),
     Str(String),
     Num(i64),
@@ -33,7 +33,7 @@ const PUNCT: [&str; 31] = [
 ];
 
 /// A token, and the byte range it spans.
-pub(super) type Spanned = (Tok, usize, usize);
+pub type Spanned = (Tok, usize, usize);
 
 /// A string literal's escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}` and JSON's `\uXXXX`. Any other backslash is
 /// kept with the character after it, so a regex reads as written (`"\d+\.py"`).
@@ -83,7 +83,7 @@ fn unescape(body: &str) -> Result<String, String> {
 }
 
 /// A string as an `.rr` literal, read back by `unescape` as the same string.
-pub(in crate::code_rule_dsl) fn quote(s: &str) -> String {
+pub fn quote(s: &str) -> String {
     // Most strings need no escape: copied whole.
     if !s.chars().any(|c| matches!(c, '"' | '\\') || c.is_control()) {
         let mut out = String::with_capacity(s.len() + 2);
@@ -110,13 +110,13 @@ pub(in crate::code_rule_dsl) fn quote(s: &str) -> String {
 
 /// What the lexer reads: the tokens, the comments' spans (a tape's extras), and the first error. A token the lexer
 /// cannot read is `Tok::Bad`; an unterminated string, backtick literal or comment is one `Bad` to the end of the file.
-pub(super) struct Lexed {
-    pub(super) toks: Vec<Spanned>,
-    pub(super) comments: Vec<(usize, usize)>,
-    pub(super) error: Option<(usize, Error)>,
+pub struct Lexed {
+    pub toks: Vec<Spanned>,
+    pub comments: Vec<(usize, usize)>,
+    pub error: Option<(usize, Error)>,
 }
 
-pub(super) fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
+pub fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
     let lexed = lex(src);
     match lexed.error {
         Some((_, error)) => Err(error),
@@ -124,7 +124,7 @@ pub(super) fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
     }
 }
 
-pub(super) fn lex(src: &str) -> Lexed {
+pub fn lex(src: &str) -> Lexed {
     let bytes = src.as_bytes();
     let (mut pos, mut out, mut comments, mut error) = (0, Vec::new(), Vec::new(), None);
     let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
@@ -234,27 +234,27 @@ pub(super) fn lex(src: &str) -> Lexed {
     Lexed { toks: out, comments, error }
 }
 
-pub(super) fn line_of(src: &str, pos: usize) -> usize {
+pub fn line_of(src: &str, pos: usize) -> usize {
     src[..pos.min(src.len())].bytes().filter(|&b| b == b'\n').count() + 1
 }
 
 /// Where each line of a text starts, so a position's line is a binary search, not a count from the start: a parser
 /// asks the line of every statement, and a count from the start made a long file quadratic.
-pub(super) struct Lines(Vec<usize>);
+pub struct Lines(Vec<usize>);
 
 impl Lines {
-    pub(super) fn of(src: &str) -> Self {
+    pub fn of(src: &str) -> Self {
         Lines(src.bytes().enumerate().filter(|&(_, b)| b == b'\n').map(|(i, _)| i).collect())
     }
 
     /// The line of byte `pos`, from 1, as `line_of` gives it.
-    pub(super) fn line(&self, pos: usize) -> usize {
+    pub fn line(&self, pos: usize) -> usize {
         self.0.partition_point(|&newline| newline < pos) + 1
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum Term {
+pub enum Term {
     Var(String),
     Wild,
     Num(i64),
@@ -274,7 +274,7 @@ pub(super) enum Term {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum Lit {
+pub enum Lit {
     Atom { rel: String, args: Vec<Term>, neg: bool },
     Cmp { l: Term, op: &'static str, r: Term },
     Pattern { subject: Term, pattern: String, neg: bool },
@@ -283,14 +283,14 @@ pub(super) enum Lit {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct Head {
-    pub(super) modal: Option<String>,
-    pub(super) rel: String,
-    pub(super) args: Vec<Term>,
+pub struct Head {
+    pub modal: Option<String>,
+    pub rel: String,
+    pub args: Vec<Term>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum Item {
+pub enum Item {
     Include(String),
     /// `.decl r(c: t, …)` and the words after it on its line (`widen 64`, `must, may`, `ordered by earlier`).
     Decl { name: String, cols: Vec<(String, String)>, tail: Vec<String> },
@@ -325,26 +325,26 @@ pub(super) enum Item {
 
 /// A `.violation`'s code: a column's value (`code {c}`), or a constant (`code "E501"`).
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum Code {
+pub enum Code {
     Column(String),
     Constant(String),
 }
 
 /// A `.violation`'s `suppress TOOL "rule", … [over {c}]` line: the tool comments that silence its findings.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct Suppress {
-    pub(super) tool: String,
-    pub(super) rules: Vec<String>,
-    pub(super) over: Option<String>,
+pub struct Suppress {
+    pub tool: String,
+    pub rules: Vec<String>,
+    pub over: Option<String>,
 }
 
 /// A statement and the line it starts on.
-pub(super) type Statement = (Item, usize);
+pub type Statement = (Item, usize);
 
 /// Reads statements; `taped` also builds the file's tree (decision 0061). Each production that makes a node opens it
 /// at its first token and closes it after its last; tokens become leaves as they are read. Without a tree every
 /// tree step does nothing.
-pub(super) struct Parser<'s> {
+pub struct Parser<'s> {
     src: &'s str,
     lines: Lines,
     toks: Vec<Spanned>,
@@ -366,12 +366,12 @@ struct Save {
 }
 
 impl<'s> Parser<'s> {
-    pub(super) fn new(src: &'s str) -> Result<Self, Error> {
+    pub fn new(src: &'s str) -> Result<Self, Error> {
         Ok(Self { src, lines: Lines::of(src), toks: tokens(src)?, i: 0, no_named: false, tree: None, comments: Vec::new(), failed_at: Cell::new(0), error: None })
     }
 
     /// A parser that builds the file's tree, and reads on past a statement that does not parse (`recover`).
-    pub(super) fn taped(src: &'s str) -> Self {
+    pub fn taped(src: &'s str) -> Self {
         let lexed = lex(src);
         Self {
             src,
@@ -387,7 +387,7 @@ impl<'s> Parser<'s> {
     }
 
     /// The tree read, in preorder with its comments (`tape::flatten`), and the first error.
-    pub(super) fn into_tape(self) -> (Vec<tape::Node>, Option<(usize, Error)>) {
+    pub fn into_tape(self) -> (Vec<tape::Node>, Option<(usize, Error)>) {
         let nodes = self.tree.as_ref().map_or_else(Vec::new, |tree| tape::flatten(tree, &self.comments));
         (nodes, self.error)
     }
@@ -710,7 +710,7 @@ impl<'s> Parser<'s> {
         Ok(())
     }
 
-    pub(super) fn statements(&mut self) -> Result<Vec<Statement>, Error> {
+    pub fn statements(&mut self) -> Result<Vec<Statement>, Error> {
         let mut out = Vec::new();
         while *self.peek() != Tok::Eof {
             let line = self.line();
@@ -1170,7 +1170,7 @@ impl<'s> Parser<'s> {
         }
     }
 
-    pub(super) fn term(&mut self) -> Result<Term, Error> {
+    pub fn term(&mut self) -> Result<Term, Error> {
         let from = self.here();
         let mut l = self.product()?;
         while let Tok::P(op @ ("+" | "-")) = self.peek() {
@@ -1359,7 +1359,7 @@ impl<'s> Parser<'s> {
 
 impl Term {
     /// The variables in the term, patterns' and templates' `$X` included.
-    pub(super) fn vars(&self, out: &mut Vec<String>) {
+    pub fn vars(&self, out: &mut Vec<String>) {
         match self {
             Term::Var(v) => out.push(v.clone()),
             Term::Tick(t) => out.extend(tick_vars(t)),
@@ -1382,7 +1382,7 @@ impl Term {
 impl Lit {
     /// The variables of this literal's own scope: not those only inside an aggregate's body, which are that
     /// body's own unless they appear outside it too (Soufflé's scoping).
-    pub(super) fn scope_vars(&self, out: &mut Vec<String>) {
+    pub fn scope_vars(&self, out: &mut Vec<String>) {
         fn term(t: &Term, out: &mut Vec<String>) {
             match t {
                 Term::Agg { .. } => {}
@@ -1406,7 +1406,7 @@ impl Lit {
         }
     }
 
-    pub(super) fn vars(&self, out: &mut Vec<String>) {
+    pub fn vars(&self, out: &mut Vec<String>) {
         match self {
             Lit::Atom { args, .. } => args.iter().for_each(|a| a.vars(out)),
             Lit::Cmp { l, r, .. } => {
@@ -1423,7 +1423,7 @@ impl Lit {
 }
 
 /// The `$X`, `$$$X` names in a pattern or template.
-pub(super) fn tick_vars(t: &str) -> Vec<String> {
+pub fn tick_vars(t: &str) -> Vec<String> {
     let b = t.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;

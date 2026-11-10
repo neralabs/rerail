@@ -11,13 +11,13 @@ macro_rules! kinds {
         /// A node kind; its id is its discriminant.
         #[repr(u16)]
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(in crate::code_rule_dsl) enum Kind {
+        pub enum Kind {
             _Unknown = 0,
             $($kind,)*
         }
 
         /// Kind names, by id (0: no kind).
-        pub(in crate::code_rule_dsl) const KIND_NAMES: &[&str] = &["", $($name,)*];
+        pub const KIND_NAMES: &[&str] = &["", $($name,)*];
     };
 }
 
@@ -137,23 +137,23 @@ kinds! {
 }
 
 /// Kinds from this id on are anonymous.
-pub(in crate::code_rule_dsl) const FIRST_ANONYMOUS: u16 = Kind::Turnstile as u16;
+pub const FIRST_ANONYMOUS: u16 = Kind::Turnstile as u16;
 
 /// The kind id a tree gives ERROR, as every grammar does.
-pub(super) const ERROR: u16 = u16::MAX;
+pub const ERROR: u16 = u16::MAX;
 
 macro_rules! fields {
     ($($field:ident = $name:literal,)*) => {
         /// A field; its id is its discriminant.
         #[repr(u16)]
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(in crate::code_rule_dsl) enum Field {
+        pub enum Field {
             None = 0,
             $($field,)*
         }
 
         /// Field names, by id (0: no field).
-        pub(in crate::code_rule_dsl) const FIELD_NAMES: &[&str] = &["", $($name,)*];
+        pub const FIELD_NAMES: &[&str] = &["", $($name,)*];
     };
 }
 
@@ -204,13 +204,13 @@ fields! {
 }
 
 /// The anonymous kind of a token written `text` (punctuation, a directive keyword, a reserved word), if it is one.
-pub(super) fn anonymous(text: &str) -> Option<u16> {
+pub fn anonymous(text: &str) -> Option<u16> {
     KIND_NAMES[usize::from(FIRST_ANONYMOUS)..].iter().position(|name| *name == text).map(|at| at as u16 + FIRST_ANONYMOUS)
 }
 
 /// The directive keyword `.word` names, as one anonymous token; `None` for a setting (`.mode`, `.scope`, …), whose
 /// word is its name.
-pub(super) fn directive(word: &str) -> Option<u16> {
+pub fn directive(word: &str) -> Option<u16> {
     matches!(word, "decl" | "edit" | "functor" | "type" | "input" | "output" | "lattice" | "pragma" | "violation" | "policy")
         .then(|| anonymous(&format!(".{word}")))
         .flatten()
@@ -219,32 +219,32 @@ pub(super) fn directive(word: &str) -> Option<u16> {
 /// One node of the tree a parse builds: a kind (`ERROR` for a statement that did not parse), the field it holds in
 /// its parent, its byte span, and its children in source order.
 #[derive(Clone, Debug)]
-pub(super) struct Built {
-    pub(super) kind: u16,
-    pub(super) field: u16,
-    pub(super) start: usize,
-    pub(super) end: usize,
-    pub(super) children: Vec<u32>,
+pub struct Built {
+    pub kind: u16,
+    pub field: u16,
+    pub start: usize,
+    pub end: usize,
+    pub children: Vec<u32>,
 }
 
 /// The tree a `syntax::Parser` builds: node 0 is the `source_file`, and `stack` the nodes open while it parses.
 #[derive(Clone, Debug)]
-pub(super) struct Tree {
-    pub(super) nodes: Vec<Built>,
-    pub(super) stack: Vec<u32>,
+pub struct Tree {
+    pub nodes: Vec<Built>,
+    pub stack: Vec<u32>,
 }
 
 /// Where a parse can be put back to (`Parser::mark`): the open nodes, the top one's children and the nodes made.
 #[derive(Clone, Copy)]
-pub(super) struct Mark {
-    pub(super) tok: usize,
+pub struct Mark {
+    pub tok: usize,
     stack: usize,
     children: usize,
     nodes: usize,
 }
 
 impl Tree {
-    pub(super) fn new(len: usize) -> Self {
+    pub fn new(len: usize) -> Self {
         Self { nodes: vec![Built { kind: Kind::SourceFile as u16, field: 0, start: 0, end: len, children: Vec::new() }], stack: vec![0] }
     }
 
@@ -254,7 +254,7 @@ impl Tree {
     }
 
     /// A node of `kind` from `start`, a child of the open node; it stays open when `open`.
-    pub(super) fn push(&mut self, kind: u16, start: usize, end: usize, open: bool) -> u32 {
+    pub fn push(&mut self, kind: u16, start: usize, end: usize, open: bool) -> u32 {
         let id = self.nodes.len() as u32;
         self.nodes.push(Built { kind, field: 0, start, end, children: Vec::new() });
         self.top().children.push(id);
@@ -265,7 +265,7 @@ impl Tree {
     }
 
     /// Closes the open node at `end`.
-    pub(super) fn close(&mut self, end: usize) {
+    pub fn close(&mut self, end: usize) {
         let id = self.stack.pop().expect("an open node");
         debug_assert!(id != 0, "source_file is never closed");
         let node = &mut self.nodes[id as usize];
@@ -273,13 +273,13 @@ impl Tree {
     }
 
     /// The open node's child count: where a later `wrap` starts.
-    pub(super) fn here(&self) -> usize {
+    pub fn here(&self) -> usize {
         self.nodes[*self.stack.last().expect("open") as usize].children.len()
     }
 
     /// Opens a node of `kind` around the open node's children from `from` on (an operator found after its left
     /// operand: `a - b`, `x <= y`, `n ~ `…``). It takes the field the first of them held.
-    pub(super) fn wrap(&mut self, from: usize, kind: u16) -> u32 {
+    pub fn wrap(&mut self, from: usize, kind: u16) -> u32 {
         let id = self.nodes.len() as u32;
         let moved: Vec<u32> = self.top().children.split_off(from);
         let first = moved.first().map(|&c| self.nodes[c as usize].clone());
@@ -294,16 +294,16 @@ impl Tree {
     }
 
     /// The open node's last child.
-    pub(super) fn last(&self) -> Option<u32> {
+    pub fn last(&self) -> Option<u32> {
         self.nodes[*self.stack.last().expect("open") as usize].children.last().copied()
     }
 
-    pub(super) fn mark(&self, tok: usize) -> Mark {
+    pub fn mark(&self, tok: usize) -> Mark {
         Mark { tok, stack: self.stack.len(), children: self.here(), nodes: self.nodes.len() }
     }
 
     /// Puts the tree back to `mark`: what was made since is dropped.
-    pub(super) fn reset(&mut self, mark: Mark) {
+    pub fn reset(&mut self, mark: Mark) {
         self.stack.truncate(mark.stack);
         self.top().children.truncate(mark.children);
         self.nodes.truncate(mark.nodes);
@@ -313,24 +313,24 @@ impl Tree {
 /// A node of a `.rr` tape, in preorder: its kind (`ERROR` for a bad statement), field, span and parent, and whether
 /// it is an extra (a comment).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Node {
-    pub(in crate::code_rule_dsl) kind: u16,
-    pub(in crate::code_rule_dsl) field: u16,
-    pub(in crate::code_rule_dsl) start: u32,
-    pub(in crate::code_rule_dsl) end: u32,
-    pub(in crate::code_rule_dsl) parent: Option<u32>,
-    pub(in crate::code_rule_dsl) extra: bool,
+pub struct Node {
+    pub kind: u16,
+    pub field: u16,
+    pub start: u32,
+    pub end: u32,
+    pub parent: Option<u32>,
+    pub extra: bool,
 }
 
 impl Node {
-    pub(in crate::code_rule_dsl) fn is_error(&self) -> bool {
+    pub fn is_error(&self) -> bool {
         self.kind == ERROR
     }
 }
 
 /// `tree` in preorder, each comment of `comments` a child of the innermost node whose span holds it, at its place in
 /// source order. A comment inside a leaf (a `json_object`, a `raw_text`) is part of the leaf's text.
-pub(super) fn flatten(tree: &Tree, comments: &[(usize, usize)]) -> Vec<Node> {
+pub fn flatten(tree: &Tree, comments: &[(usize, usize)]) -> Vec<Node> {
     struct Walk<'t> {
         tree: &'t Tree,
         comments: &'t [(usize, usize)],

@@ -1,0 +1,40 @@
+[package]
+name = "rerail-store"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The engine's content store (SQLite): sources, tapes, memos, run records; and the git workspace it reads."
+
+# The sources stay where they were (`native/src/content_store`, `native/src/git_workspace.rs`): this crate
+# compiles them in place (`#[path]`), so the engine builds them once, not with every change of its own.
+
+[features]
+# The store's test hooks (busy-wait overrides, write counters, test-only writers), for the engine's tests. The
+# engine turns it on always, not only for its tests: a feature that differed between its test and bin builds
+# would rebuild the engine at each switch. The hooks do nothing unless a test sets them.
+test-hooks = []
+
+[dependencies]
+rerail-accel = { path = "../../../accel" }
+foldhash = "=0.2.0"
+gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }
+hashbrown = { version = "=0.16.1", default-features = false }
+libc = "0.2.189"
+parking_lot = { version = "0.12", features = ["arc_lock"] }
+rayon = "=1.12.0"
+regex = "=1.13.1"
+regex-syntax = "=0.8.11"
+rusqlite = { version = "=0.40.2", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab", "array"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+zstd = "=0.14.3"
+
+[target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
+tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }
+
+[target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]
+sha2 = { version = "0.10", features = ["asm"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"

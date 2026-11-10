@@ -164,8 +164,12 @@ impl ContentStore {
         {
             let mut s = w.shared.state.lock().expect("the writer's state");
             // Back-pressure: past the cap, wait for the writer (never for an empty queue).
+            let t = (s.jobs > 0 && s.bytes + bytes > CAP_BYTES).then(std::time::Instant::now);
             while s.jobs > 0 && s.bytes + bytes > CAP_BYTES {
                 s = w.shared.changed.wait(s).expect("the writer's state");
+            }
+            if let Some(t) = t {
+                super::hazards::wait_in_wave("the queue's back-pressure", t.elapsed().as_secs_f64());
             }
             s.bytes += bytes;
             s.jobs += 1;
@@ -199,6 +203,8 @@ impl ContentStore {
         let thread = std::thread::Builder::new()
             .name("rerail-store-writer".into())
             .spawn(move || {
+                // What this thread sends to SQLite no wave waits for.
+                super::hazards::behind_the_run();
                 for (job, bytes, keys, holder) in rx {
                     *store.holder.lock() = holder;
                     let before = thread_cpu();
@@ -221,8 +227,12 @@ impl ContentStore {
     pub fn settle(&self, key: &Key) {
         let Some(w) = self.writer() else { return };
         let mut s = w.shared.state.lock().expect("the writer's state");
+        let t = s.keys.contains_key(key).then(std::time::Instant::now);
         while s.keys.contains_key(key) {
             s = w.shared.changed.wait(s).expect("the writer's state");
+        }
+        if let Some(t) = t {
+            super::hazards::wait_in_wave("a read of a queued write (settle)", t.elapsed().as_secs_f64());
         }
     }
 
@@ -231,8 +241,12 @@ impl ContentStore {
     pub fn written(&self) -> StoreResult<()> {
         let Some(w) = self.writer() else { return Ok(()) };
         let mut s = w.shared.state.lock().expect("the writer's state");
+        let t = (s.jobs > 0).then(std::time::Instant::now);
         while s.jobs > 0 {
             s = w.shared.changed.wait(s).expect("the writer's state");
+        }
+        if let Some(t) = t {
+            super::hazards::wait_in_wave("every queued write (written)", t.elapsed().as_secs_f64());
         }
         match s.error.take() {
             Some(e) => Err(StoreError::Invalid(format!("a write queued behind the run failed: {e}"))),

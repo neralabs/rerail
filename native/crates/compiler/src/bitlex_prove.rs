@@ -25,11 +25,11 @@
 //! The position is in the stream (the questions are about tokens): a byte at or before it is the
 //! stream's or before it (`within` is which), one after it may be past the end.
 
-use super::block::{BlockOp, ClassTable};
+use crate::block::{BlockOp, ClassTable};
 use std::collections::{HashMap, HashSet};
 
 /// A set of bytes, bit `b` for byte `b`.
-pub(super) type ByteSet = [u64; 4];
+pub type ByteSet = [u64; 4];
 
 /// A byte before the stream: no byte class has it, every carried value is 0 there.
 const BEFORE: u16 = 256;
@@ -328,7 +328,7 @@ fn groups(tables: &[ClassTable], readers: &HashSet<Reader>) -> Vec<u8> {
 
 /// The bytes a value's set bits can be at, at delay `d` (bit `i` is byte `i - d`): each byte for
 /// which the value is not proved zero. Sound: a byte left out never has a bit.
-pub(super) fn first_bytes(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> ByteSet {
+pub fn first_bytes(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> ByteSet {
     let (cone, readers) = cone(ops, v);
     let groups = readers.iter().map(|(&lag, r)| (lag, groups(tables, r))).collect();
     let mut p = Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::new(), vals: HashMap::new(), cone, groups, budget: 0 };
@@ -344,7 +344,7 @@ pub(super) fn first_bytes(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8)
 }
 
 /// Whether a value is zero at every byte of every stream, proved.
-pub(super) fn never(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
+pub fn never(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
     first_bytes(ops, tables, v, d) == [0; 4]
 }
 

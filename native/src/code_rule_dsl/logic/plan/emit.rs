@@ -352,5 +352,5 @@ pub(in crate::code_rule_dsl) fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
 ) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
-    decoded_outputs(&lowered.program, db, Some(lowered), "main.", true, &BTreeSet::new())
+    decoded_outputs(&lowered.program, db, Some(lowered), "main.", true, &BTreeSet::new(), &BTreeSet::new())
 }

@@ -19,24 +19,24 @@ use std::collections::HashMap;
 /// A state of tier 2's state machine (docs/parser-generators/18-tree-as-grammar.md §2): the
 /// tree section's grammar, one level per nested node. State 0 is the root's start.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct StateRow {
+pub struct StateRow {
     /// The node kind of its level: the root's, or a nested node's (a nested choice's name).
-    pub(super) level: u16,
+    pub level: u16,
     /// Its level has a node of its own: not a nested choice's, which opens none.
-    pub(super) own: bool,
+    pub own: bool,
     /// Its level may end here, after this many closes inside it: a nested level then closes its
     /// node and pops (at once, when the state has no arms); the root accepts at the end of the
     /// file. `None`: it may not end here.
-    pub(super) end: Option<u8>,
+    pub end: Option<u8>,
     /// The hidden marks its level refuses (`refuse M in L`): before a token it takes, each
     /// refuses the file.
-    pub(super) refuses: Vec<u16>,
+    pub refuses: Vec<u16>,
 }
 
 /// What a transition does, in order: close nodes (innermost first), open nodes (outermost
 /// first), then the token's own leaf.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Act {
+pub enum Act {
     /// Close the innermost open node, at the end of the token before.
     Close,
     /// Open a node of `kind` at the token's start, with a field (0: none) and supertypes
@@ -73,18 +73,18 @@ pub(in crate::code_rule_dsl) enum Act {
 /// makes, each entering a nested level and keeping the state to return to, outermost first (a
 /// call at a level's first token makes one inside another).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct ArmRow {
-    pub(super) from: u16,
-    pub(super) token: u16,
-    pub(super) acts: Vec<Act>,
-    pub(super) to: u16,
-    pub(super) push: Vec<u16>,
+pub struct ArmRow {
+    pub from: u16,
+    pub token: u16,
+    pub acts: Vec<Act>,
+    pub to: u16,
+    pub push: Vec<u16>,
 }
 
 /// The state machine as text, a line per state and per arm, for tests and dumps:
 /// `state S level K [end C]`; `arm S token K to T [push P] do ACT…`, an act `close`,
 /// `open K [f F] [s K]…` or `leaf [f F] [s K]…`.
-pub(super) fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
+pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     for (s, state) in states.iter().enumerate() {
@@ -197,15 +197,15 @@ struct Rule {
 }
 
 /// The ids of the grammar's names: kinds (token kinds, node kinds, supertypes) and fields.
-pub(super) struct Ids<'a> {
-    pub(super) kind: &'a dyn Fn(&str) -> Result<u16, String>,
-    pub(super) field: &'a dyn Fn(&str) -> Result<u16, String>,
+pub struct Ids<'a> {
+    pub kind: &'a dyn Fn(&str) -> Result<u16, String>,
+    pub field: &'a dyn Fn(&str) -> Result<u16, String>,
     /// Whether a name is a token kind the lexer makes (a token's, or a keyword's).
-    pub(super) is_token: &'a dyn Fn(&str) -> bool,
+    pub is_token: &'a dyn Fn(&str) -> bool,
     /// Every token kind the grammar may see (marks aside): what a `balanced` leaf takes.
-    pub(super) tokens: &'a [String],
+    pub tokens: &'a [String],
     /// A reading's id, by name (`reread R`).
-    pub(super) reading: &'a dyn Fn(&str) -> Result<u16, String>,
+    pub reading: &'a dyn Fn(&str) -> Result<u16, String>,
 }
 
 /// The level a `balanced` leaf's name: its kind, then a byte no name holds.
@@ -515,7 +515,7 @@ struct Raw {
 /// With a whole root (`node K whole`), the root is open before the first token (the words open
 /// it at byte 0, `bitlex_tier2::lower`): state 0's arms do not open it, and state 0 ends the file
 /// when the root may be empty. The third value says so.
-pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow>, bool), String> {
+pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow>, bool), String> {
     let mut rules = Vec::new();
     let mut choices = Vec::new();
     let mut nested_choices = Vec::new();
@@ -793,7 +793,7 @@ fn refusing(states: &[StateRow], arms: &[ArmRow]) -> Result<(), String> {
 ///
 /// In state 0 nothing is open: the extra arm opens the root first (so the root starts at the
 /// extra) and goes on in a copy of state 0 whose arms do not open it.
-pub(super) fn with_extras(
+pub fn with_extras(
     mut states: Vec<StateRow>,
     mut arms: Vec<ArmRow>,
     extras: &[u16],
@@ -928,7 +928,7 @@ pub(super) fn with_extras(
 
 /// The arms on marks (tokens of no width) write no leaf: a mark makes no node. A field or a
 /// supertype on one would name a node that is not there.
-pub(super) fn without_mark_leaves(arms: &mut [ArmRow], marks: &[u16]) -> Result<(), String> {
+pub fn without_mark_leaves(arms: &mut [ArmRow], marks: &[u16]) -> Result<(), String> {
     for a in arms.iter_mut().filter(|a| marks.contains(&a.token)) {
         let mut acts = Vec::with_capacity(a.acts.len());
         for act in std::mem::take(&mut a.acts) {
@@ -948,7 +948,7 @@ pub(super) fn without_mark_leaves(arms: &mut [ArmRow], marks: &[u16]) -> Result<
 /// set of positions reached (subset construction), the arms from one state on disjoint bytes.
 /// State 0 is the start. The compiler makes a mask per state, over every byte of the file at
 /// once (`bitlex_compile`); a byte with no arm, or an end outside an accepting state, refuses.
-pub(super) fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -> Result<(Vec<bool>, Vec<(u16, [u64; 4], u16)>), String> {
+pub fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -> Result<(Vec<bool>, Vec<(u16, [u64; 4], u16)>), String> {
     fn set(ranges: &[(u32, u32)]) -> [u64; 4] {
         let mut s = [0u64; 4];
         for &(lo, hi) in ranges {

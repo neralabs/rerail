@@ -156,7 +156,7 @@ struct State {
 }
 
 /// A process's atoms of one database (decision 0049): the arena, its watermark and the lease.
-pub(crate) struct Atoms {
+pub struct Atoms {
     /// The database file; `None` for an in-memory database, whose atoms are never written.
     path: Option<PathBuf>,
     state: RwLock<State>,
@@ -233,7 +233,7 @@ impl Atoms {
     }
 
     /// This process's atoms of the database at `path`.
-    pub(crate) fn for_path(path: &Path) -> Arc<Atoms> {
+    pub fn for_path(path: &Path) -> Arc<Atoms> {
         let key = key(path);
         let mut registry = REGISTRY.lock();
         if let Some(atoms) = registry.get(&key).and_then(Weak::upgrade) {
@@ -246,7 +246,7 @@ impl Atoms {
 
     /// Atoms for a database just created at `path`, replacing any this process held for a file
     /// that was there before.
-    pub(crate) fn fresh(path: &Path) -> Arc<Atoms> {
+    pub fn fresh(path: &Path) -> Arc<Atoms> {
         let key = key(path);
         let atoms = Arc::new(Atoms::new(Some(key.clone())));
         REGISTRY.lock().insert(key, Arc::downgrade(&atoms));
@@ -255,12 +255,12 @@ impl Atoms {
 
     /// Makes `path`'s database read and write these atoms in this process: a run's working database
     /// (its SQL's scratch) whose symbols are the store's (decision 0052).
-    pub(crate) fn share(self: &Arc<Self>, path: &Path) {
+    pub fn share(self: &Arc<Self>, path: &Path) {
         REGISTRY.lock().insert(key(path), Arc::downgrade(self));
     }
 
     /// This process's atoms of `connection`'s main database.
-    pub(crate) fn for_connection(connection: &Connection) -> Arc<Atoms> {
+    pub fn for_connection(connection: &Connection) -> Arc<Atoms> {
         match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_path(Path::new(path)),
             None => Arc::clone(&MEMORY),
@@ -278,7 +278,7 @@ impl Atoms {
     /// Registers the `atoms` virtual table on `connection` and, for a database on disk, the commit
     /// hook that refuses a commit writing it while atoms are pending that the transaction did not
     /// append.
-    pub(crate) fn install(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
+    pub fn install(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
         let atoms = Atoms::for_connection(connection);
         vtab::install(connection, &atoms)?;
         if atoms.owns(connection) {
@@ -305,23 +305,23 @@ impl Atoms {
         Ok(atoms)
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.state.read().atoms.len()
     }
 
     /// Segments this process appended so far: (segments, atoms, bytes), and the atoms pending now.
-    pub(crate) fn writes(&self) -> ((u64, u64, u64), usize) {
+    pub fn writes(&self) -> ((u64, u64, u64), usize) {
         let state = self.state.read();
         (*self.written.lock(), state.atoms.len() - state.stored.min(state.atoms.len()))
     }
 
     /// Heap bytes the arena holds.
-    pub(crate) fn bytes(&self) -> usize {
+    pub fn bytes(&self) -> usize {
         self.state.read().atoms.bytes()
     }
 
     /// Whether atoms are pending (given out, not yet in the database).
-    pub(crate) fn pending(&self) -> bool {
+    pub fn pending(&self) -> bool {
         self.path.is_some() && {
             let state = self.state.read();
             state.atoms.len() > state.stored
@@ -329,18 +329,18 @@ impl Atoms {
     }
 
     /// The atom of `value` in this process's arena, without reading the database.
-    pub(crate) fn get(&self, value: &str) -> Option<Sym> {
+    pub fn get(&self, value: &str) -> Option<Sym> {
         self.state.read().atoms.get(value)
     }
 
     /// `f` of atom `atom`'s string, if the arena holds it.
-    pub(crate) fn with_str<R>(&self, atom: Sym, f: impl FnOnce(&str) -> R) -> Option<R> {
+    pub fn with_str<R>(&self, atom: Sym, f: impl FnOnce(&str) -> R) -> Option<R> {
         let state = self.state.read();
         ((atom as usize) < state.atoms.len()).then(|| f(state.atoms.str(atom)))
     }
 
     /// The atom of `value`, if the database or this process holds it.
-    pub(crate) fn lookup(&self, value: &str) -> StoreResult<Option<Sym>> {
+    pub fn lookup(&self, value: &str) -> StoreResult<Option<Sym>> {
         if let Some(atom) = self.get(value) {
             return Ok(Some(atom));
         }
@@ -349,7 +349,7 @@ impl Atoms {
     }
 
     /// The string of `atom`, if the database or this process holds it.
-    pub(crate) fn value(&self, atom: Sym) -> StoreResult<Option<String>> {
+    pub fn value(&self, atom: Sym) -> StoreResult<Option<String>> {
         if (atom as usize) >= self.len() {
             self.catch_up()?;
         }
@@ -357,7 +357,7 @@ impl Atoms {
     }
 
     /// The atom of each of `values`, giving out new ones (pending) under the lease.
-    pub(crate) fn intern_all(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
+    pub fn intern_all(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
         {
             let state = self.state.read();
             if let Some(found) = values.iter().map(|value| state.atoms.get(value)).collect::<Option<Vec<_>>>() {
@@ -377,7 +377,7 @@ impl Atoms {
     }
 
     /// The atom of `value`, given out (pending) under the lease if it is new.
-    pub(crate) fn intern(&self, value: &str) -> StoreResult<Sym> {
+    pub fn intern(&self, value: &str) -> StoreResult<Sym> {
         if let Some(atom) = self.get(value) {
             return Ok(atom);
         }
@@ -475,7 +475,7 @@ impl Atoms {
     /// In `connection`'s open transaction, if it writes the main database: appends the pending
     /// atoms as one segment and marks the transaction as having done so (the commit hook). Returns
     /// the watermark to pass to `committed` after the commit.
-    pub(crate) fn write_pending(&self, connection: &Connection) -> StoreResult<usize> {
+    pub fn write_pending(&self, connection: &Connection) -> StoreResult<usize> {
         if self.path.is_none() {
             return Ok(0);
         }
@@ -523,7 +523,7 @@ impl Atoms {
 
     /// After a commit that held `write_pending`'s segment: atoms below `upto` are stored. The
     /// lease is given back once none is pending.
-    pub(crate) fn committed(&self, upto: usize) {
+    pub fn committed(&self, upto: usize) {
         if self.path.is_none() {
             return;
         }
@@ -539,7 +539,7 @@ impl Atoms {
     }
 
     /// Whether a flush is due: enough pending (count, bytes or age), or another process waiting.
-    pub(crate) fn due(&self) -> bool {
+    pub fn due(&self) -> bool {
         if self.path.is_none() {
             return false;
         }
@@ -577,7 +577,7 @@ impl Atoms {
 
     /// Appends the pending atoms in a transaction of their own on `connection`, unless it is inside
     /// a transaction (its commit will) or another writer holds the database now (a later one will).
-    pub(crate) fn flush(&self, connection: &Connection) -> StoreResult<()> {
+    pub fn flush(&self, connection: &Connection) -> StoreResult<()> {
         if !self.pending() {
             return Ok(());
         }
@@ -617,14 +617,14 @@ impl Atoms {
     }
 
     /// `flush` if one is due.
-    pub(crate) fn flush_if_due(&self, connection: &Connection) -> StoreResult<()> {
+    pub fn flush_if_due(&self, connection: &Connection) -> StoreResult<()> {
         if self.due() { self.flush(connection) } else { Ok(()) }
     }
 }
 
 /// Commits `connection`'s open transaction (`BEGIN` … ), appending the pending atoms first if it
 /// writes the main database: for transactions written as SQL rather than through the store.
-pub(crate) fn commit(connection: &Connection) -> StoreResult<()> {
+pub fn commit(connection: &Connection) -> StoreResult<()> {
     let atoms = Atoms::for_connection(connection);
     let upto = atoms.write_pending(connection)?;
     connection.execute_batch("COMMIT")?;
@@ -635,7 +635,7 @@ pub(crate) fn commit(connection: &Connection) -> StoreResult<()> {
 /// `temp.atoms(atom, value)` on `connection`: the atoms its database's segments hold, decoded, and
 /// nothing pending in any process. For checks of what a store holds on disk (after a crash, in a
 /// capture), on a connection without the `atoms` virtual table; the temp table hides it otherwise.
-pub(crate) fn materialize_stored(connection: &Connection) -> StoreResult<()> {
+pub fn materialize_stored(connection: &Connection) -> StoreResult<()> {
     let mut atoms = Interner::default();
     {
         let mut statement = connection.prepare("SELECT first, ends, bytes FROM main.atom_segment WHERE first > 0 ORDER BY first")?;
@@ -678,7 +678,7 @@ impl super::ContentStore {
     /// transaction on the store, or in one of their own when a flush is due (decision 0049 §4).
     /// This process's atoms of the store, for a reader that interns away from the store handle (a lazily
     /// decoded source). Pending atoms are appended by the store's next flush.
-    pub(crate) fn atoms_handle(&self) -> std::sync::Arc<Atoms> {
+    pub fn atoms_handle(&self) -> std::sync::Arc<Atoms> {
         std::sync::Arc::clone(&self.atoms)
     }
 
@@ -693,11 +693,11 @@ impl super::ContentStore {
     /// Appends the pending atoms now, unless another writer holds the store (a later write will).
     /// The database at `path` reads and writes this store's atoms in this process (`Atoms::share`): a
     /// connection there resolves symbols as the store does. Call before opening it.
-    pub(crate) fn share_atoms_with(&self, path: &Path) {
+    pub fn share_atoms_with(&self, path: &Path) {
         self.atoms.share(path);
     }
 
-    pub(crate) fn flush_atoms(&self) -> StoreResult<()> {
+    pub fn flush_atoms(&self) -> StoreResult<()> {
         if !self.atoms.pending() {
             return Ok(());
         }
@@ -718,7 +718,7 @@ impl super::ContentStore {
     }
 
     /// The atoms' writes so far: (segments, atoms, bytes) appended, and the atoms pending now.
-    pub(crate) fn atom_writes(&self) -> ((u64, u64, u64), usize) {
+    pub fn atom_writes(&self) -> ((u64, u64, u64), usize) {
         self.atoms.writes()
     }
 
@@ -733,7 +733,7 @@ impl super::ContentStore {
     }
 
     /// Commits `transaction`, appending the pending atoms first if it writes the store.
-    pub(crate) fn commit(&self, transaction: rusqlite::Transaction<'_>) -> StoreResult<()> {
+    pub fn commit(&self, transaction: rusqlite::Transaction<'_>) -> StoreResult<()> {
         let upto = self.atoms.write_pending(&transaction)?;
         transaction.commit()?;
         self.atoms.committed(upto);

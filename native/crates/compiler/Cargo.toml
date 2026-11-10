@@ -1,9 +1,9 @@
 [package]
-name = "rerail-tier1"
+name = "rerail-compiler"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Tier 1 of the transducer's parsers: block programs, their native IR and their Cranelift lowering."
+description = "The transducer's parser compiler: Bitlex to tier 1 and tier 2, and their Cranelift lowering."
 
 [features]
 # The relocations' recording (`native_cpu_codegen::relocations`), for the engine's tests.

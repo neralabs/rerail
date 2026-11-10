@@ -89,8 +89,17 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
             }
         }
     }
-    // The `RERAIL_INLINE_ONLY` list, read before the cone (below) is chosen.
+    // `RERAIL_INLINE_ONLY=r,…` (the lab's comparison): those relations inlined where they can be, every other stored.
+    // Read before the cone (below) is chosen.
     let only: Option<Vec<String>> = std::env::var("RERAIL_INLINE_ONLY").ok().map(|v| v.split(',').map(str::to_owned).collect());
+    // The estimates below plan rules, which a maintained program has about ten times of. They price only a relation
+    // that may be inlined: none (a session's part stores its relations, decision 0099), none are made.
+    let open = |rel: &str| !prog.qualified(rel, "no_inline") && !reasons.contains_key(rel) && readers.contains_key(rel);
+    if only.is_none() && !rules_of.keys().any(|rel| prog.qualified(rel, "inline") || open(rel)) {
+        let stored = rules_of.keys().filter(|rel| prog.qualified(rel, "no_inline")).count();
+        super::super::profile::decision("inline or store (decision 0099)", || format!("no relation may be inlined ({stored} `.decl … no_inline`): nothing estimated"));
+        return Ok(None);
+    }
     // The relations whose estimates the pricing reads: each candidate (a relation the loop below may price), what its
     // readers read, and upstream of those every relation their rules read; the outputs too when the profile names
     // the factorizable ones. Estimating every derived relation planned every rule of the program (10.7 k rules on
@@ -129,7 +138,7 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     let held = OBSERVED.with(|o| o.borrow_mut().as_mut().map(std::mem::take));
     let observed_any = held.as_ref().is_some_and(|o| !o.rules.is_empty());
     let (estimates, inserted) = estimate(prog, model, &rules_of, &sccs, &need, &candidates);
-    let by_estimates = price_all(prog, model, &rules_of, &sccs, &readers, &reasons, &estimates, &need);
+    let by_estimates = price_all(prog, model, &rules_of, &readers, &reasons, &estimates, &need, &sccs);
     OBSERVED.with(|o| {
         if let (Some(o), Some(h)) = (o.borrow_mut().as_mut(), held) {
             *o = h;
@@ -165,14 +174,13 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
                 Some(((*rel).to_owned(), (observed_rows(rel, nodes).unwrap_or(rows), build, planned)))
             })
             .collect();
-        let got = price_all(prog, model, &rules_of, &sccs, &readers, &reasons, &again_estimates, &again);
+        let got = price_all(prog, model, &rules_of, &readers, &reasons, &again_estimates, &again, &sccs);
         restore(model, saved);
         got
     };
     let mut inline: BTreeSet<String> = BTreeSet::new();
     let mut lines: Vec<String> = Vec::new();
     let mut refused_inline: Vec<String> = Vec::new();
-    // `RERAIL_INLINE_ONLY=r,…` (the lab's comparison): those relations inlined where they can be, every other stored.
     for (rel, rules) in &rules_of {
         let rel = *rel;
         if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == rel)) {
@@ -319,15 +327,16 @@ fn price_all(
     prog: &Program,
     model: &Model,
     rules_of: &BTreeMap<&str, Vec<&Rule>>,
-    sccs: &[BTreeSet<String>],
     readers: &BTreeMap<&str, Vec<(usize, usize)>>,
     reasons: &BTreeMap<String, &'static str>,
     estimates: &BTreeMap<String, (f64, f64, f64)>,
     need: &BTreeSet<&str>,
+    sccs: &[BTreeSet<String>],
 ) -> BTreeMap<String, Priced> {
     let nodes = model.stats.nodes;
-    // Each reader's own price at each read, planned once however many of the relations it reads are priced.
-    let mut own_price: BTreeMap<(usize, usize), Option<f64>> = BTreeMap::new();
+    // Each reader's own price (by its delta atom read first, `None`: whole), planned once however many of the
+    // relations it reads are priced.
+    let mut own_price: BTreeMap<(usize, Option<usize>), Option<f64>> = BTreeMap::new();
     let mut out = BTreeMap::new();
     for (rel, rules) in rules_of {
         let rel = *rel;
@@ -352,26 +361,24 @@ fn price_all(
         let mut priced = true;
         for &(ri, i) in reads {
             let reader = &prog.rules[ri];
+            let copies = unfold(reader, i, rules, 0).unwrap_or_default();
             // A reader in a recursion runs as its delta plans, one per recursive atom read first, over each wave's
             // new rows: priced so, each copy with the same atom first. Its whole plan may start from the inlined
             // relation's own inputs, which no delta plan can: `rr_cx_reach(d, f) :- rr_cx_reach(d, e),
             // rr_cx_edge(e, f)` priced whole joined `rr_cx_edge`'s imports and modules first, and inlining it looked
             // 7.8 M work cheaper; run, each new reach row scanned every document's module (277 s of calls_cx).
             let scc = sccs.iter().find(|s| s.contains(&reader.head.rel));
-            let firsts: Vec<Option<usize>> = {
-                let deltas: Vec<usize> = (0..reader.body.len())
-                    .filter(|&k| k != i && reader.body[k].atom().is_some_and(|a| !a.neg && scc.is_some_and(|s| s.contains(&a.rel))))
-                    .collect();
-                if deltas.is_empty() { vec![None] } else { deltas.into_iter().map(Some).collect() }
-            };
-            let Some(own_est) = *own_price.entry((ri, i)).or_insert_with(|| firsts.iter().map(|&k| calibrated_at(prog, model, reader, k)).sum::<Option<f64>>()) else {
-                priced = false;
-                break;
-            };
-            own.push((own_est, observed_rule(reader, nodes)));
-            let mut est = 0.0;
-            let copies = unfold(reader, i, rules, 0).unwrap_or_default();
-            for &first in &firsts {
+            let deltas: Vec<usize> = (0..reader.body.len())
+                .filter(|&k| k != i && reader.body[k].atom().is_some_and(|a| !a.neg && scc.is_some_and(|s| s.contains(&a.rel))))
+                .collect();
+            let firsts: Vec<Option<usize>> = if deltas.is_empty() { vec![None] } else { deltas.iter().map(|&k| Some(k)).collect() };
+            let (mut own_est, mut est) = (0.0, 0.0);
+            for first in firsts {
+                let Some(o) = *own_price.entry((ri, first)).or_insert_with(|| calibrated_at(prog, model, reader, first)) else {
+                    priced = false;
+                    break;
+                };
+                own_est += o;
                 for copy in &copies {
                     // The delta atom in the copy: the reader's literal, which unfolding leaves as it is.
                     let at = match first {
@@ -390,6 +397,10 @@ fn price_all(
                     }
                 }
             }
+            if !priced {
+                break;
+            }
+            own.push((own_est, observed_rule(reader, nodes)));
             inl.push((est, observed_copies(rel, reader, nodes)));
         }
         if !priced {
@@ -975,7 +986,7 @@ fn calibrated(prog: &Program, model: &Model, rule: &Rule) -> Option<f64> {
     calibrated_at(prog, model, rule, None)
 }
 
-/// `calibrated`, its plan reading body literal `first` first (a delta plan).
+/// `calibrated`, the plan read with body literal `first` first (a delta plan's), else whole.
 fn calibrated_at(prog: &Program, model: &Model, rule: &Rule, first: Option<usize>) -> Option<f64> {
     calibrated_rows_at(prog, model, rule, first).map(|(w, _)| w)
 }
@@ -985,6 +996,7 @@ fn calibrated_rows(prog: &Program, model: &Model, rule: &Rule) -> Option<(f64, f
     calibrated_rows_at(prog, model, rule, None)
 }
 
+/// `calibrated_rows`, with body literal `first` read first.
 fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<usize>) -> Option<(f64, f64)> {
     let was = super::explaining(true);
     let got = model.plan_rule_explained(prog, &rule.head, &rule.body, first);
@@ -1232,6 +1244,41 @@ mod tests {
         assert_eq!(unfold(&reader, 1, &[&twice], 1).unwrap()[0].to_string(), "o($n) :- a($t), a($t), $t = $n");
     }
 
+    /// A reader in a recursion is priced by its delta plans: inlined into `reach`'s recursive rule, `edge`'s join
+    /// is made again for each new reach row, though priced whole the copy joins `imp` and `md` first and looks as
+    /// cheap as reading `edge` (`rr_cx_edge`, priced 7.8 M work cheaper inlined; 277 s of calls_cx when it was).
+    #[test]
+    fn a_relation_read_in_a_recursion_is_priced_by_its_delta_plans() {
+        use super::super::{Inputs, Stats};
+        use std::collections::{HashMap, HashSet};
+        let prog = super::super::super::rr::parse(
+            ".decl imp(d: number, q: number)\n.decl md(e: number, q: number)\n.decl own(d: number)\n.input imp\n.input md\n.input own\n\
+             .decl edge(d: number, e: number)\nedge(d, e) :- imp(d, q), md(e, q).\n\
+             .decl reach(d: number, e: number)\nreach(d, d) :- own(d).\nreach(d, f) :- reach(d, e), edge(e, f).\n.output reach\n",
+        )
+        .unwrap();
+        let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+        let mut model = Model { analysis: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+        model.stats.nodes = 450_000.0;
+        // Measured rows (an earlier chunk's), then distinct values by column.
+        for (rel, rows, ndv) in [
+            ("imp", 40_000.0, vec![4_000.0, 4_000.0]),
+            ("md", 4_000.0, vec![4_000.0, 4_000.0]),
+            ("own", 4_000.0, vec![4_000.0]),
+            ("edge", 40_000.0, vec![4_000.0, 4_000.0]),
+            ("reach", 100_000.0, vec![4_000.0, 4_000.0]),
+        ] {
+            model.stats.card.insert(rel.to_owned(), rows);
+            for (c, n) in ndv.into_iter().enumerate() {
+                model.ndv.insert((rel.to_owned(), c), n);
+                model.stats.fan.insert((rel.to_owned(), c), rows / n);
+            }
+        }
+        let chosen = choose(&prog, &mut model).unwrap();
+        assert!(chosen.is_none(), "edge inlined into reach's recursion");
+    }
+
     /// A head that names a variable twice equates the read's terms there, the read's own: a reader variable named as
     /// one of the definition's (`n` in both) stays the reader's. (`expr_name(n, n, x) :- ast_name(n, x)` read as
     /// `expr_name(t, n, x)` once came out `t = t`, leaving the reader's `n` free: every stored name of the batch.)
@@ -1362,41 +1409,6 @@ mod tests {
         // Both ran, inlined did worse than stored: taken back.
         let v = weigh(&[(17_000.0, Some(30_000.0))], &[(8_500.0, Some(2_000_000.0))], (55_000.0, Some(55_000.0)), (1_433.0, Some(1_433.0)));
         assert!(!v.inline && v.how == "both sides observed", "{v:?}");
-    }
-
-    /// A reader in a recursion is priced by its delta plans: inlined into `reach`'s recursive rule, `edge`'s join
-    /// is made again for each new reach row, though priced whole the copy joins `imp` and `md` first and looks as
-    /// cheap as reading `edge` (`rr_cx_edge`, priced 7.8 M work cheaper inlined; 277 s of calls_cx when it was).
-    #[test]
-    fn a_relation_read_in_a_recursion_is_priced_by_its_delta_plans() {
-        use super::super::{Inputs, Stats};
-        use std::collections::{HashMap, HashSet};
-        let prog = super::super::super::rr::parse(
-            ".decl imp(d: number, q: number)\n.decl md(e: number, q: number)\n.decl own(d: number)\n.input imp\n.input md\n.input own\n\
-             .decl edge(d: number, e: number)\nedge(d, e) :- imp(d, q), md(e, q).\n\
-             .decl reach(d: number, e: number)\nreach(d, d) :- own(d).\nreach(d, f) :- reach(d, e), edge(e, f).\n.output reach\n",
-        )
-        .unwrap();
-        let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
-        let mut model = Model { analysis: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
-        model.stats.nodes = 450_000.0;
-        // Measured rows (an earlier chunk's), then distinct values by column.
-        for (rel, rows, ndv) in [
-            ("imp", 40_000.0, vec![4_000.0, 4_000.0]),
-            ("md", 4_000.0, vec![4_000.0, 4_000.0]),
-            ("own", 4_000.0, vec![4_000.0]),
-            ("edge", 40_000.0, vec![4_000.0, 4_000.0]),
-            ("reach", 100_000.0, vec![4_000.0, 4_000.0]),
-        ] {
-            model.stats.card.insert(rel.to_owned(), rows);
-            for (c, n) in ndv.into_iter().enumerate() {
-                model.ndv.insert((rel.to_owned(), c), n);
-                model.stats.fan.insert((rel.to_owned(), c), rows / n);
-            }
-        }
-        let chosen = choose(&prog, &mut model).unwrap();
-        assert!(chosen.is_none(), "edge inlined into reach's recursion");
     }
 
     /// `.decl r(…) inline` and its kin are read as Soufflé spells them; two that disagree are an error.

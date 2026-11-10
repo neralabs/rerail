@@ -572,7 +572,7 @@ fn scan(re: &regex::Regex, names: &[Option<&str>], text: &str) -> std::sync::Arc
 
 /// A pattern `rx_span` runs: over which spans, its text, its regex, and over a document's source or lines its
 /// block program (`transducer::packed::regex_block`), which marks where a match can end.
-pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::SpanIn, &'a str, regex::Regex, Option<crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter>);
+pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::SpanIn, &'a str, regex::Regex, Option<std::sync::Arc<crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter>>);
 
 /// Texts past this are scanned where they are, not kept in `CoreRows::rx_memo`.
 const RX_MEMO_TEXT: usize = 4096;
