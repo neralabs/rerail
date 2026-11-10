@@ -172,10 +172,32 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     if inline.is_empty() {
         return Ok(None);
     }
-    // A relation inlined into another inlined one is unfolded into its copies in turn; one inlined relation reading
-    // another is unfolded first, readers after, so a pass takes one level. A chain deeper than the passes stores
-    // the rest.
-    let mut rules: Vec<Rule> = prog.rules.clone();
+    let rules = unfold_reads(prog.rules.clone(), &inline);
+    let unfinished: BTreeSet<String> = rules
+        .iter()
+        .filter(|r| !inline.contains(&r.head.rel))
+        .flat_map(|r| r.body.iter().filter_map(Literal::atom))
+        .filter(|a| inline.contains(&a.rel))
+        .map(|a| a.rel.clone())
+        .collect();
+    // An inlined relation some reader still reads (a chain deeper than the passes) keeps its rules.
+    let mut out = prog.clone();
+    out.rules = rules.into_iter().filter(|r| !inline.contains(&r.head.rel) || unfinished.contains(&r.head.rel)).collect();
+    let done: Vec<String> = inline.into_iter().filter(|r| !unfinished.contains(r)).collect();
+    if done.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((out, done)))
+}
+
+/// `rules` with the reads of the `inline` relations unfolded into their readers (`unfold`). A relation inlined into
+/// another inlined one is unfolded into its copies in turn; one inlined relation reading another is unfolded first,
+/// readers after, so a pass takes one level. A chain deeper than the passes leaves its reads (the caller stores the
+/// rest). A pass unfolds a rule's first such read, so a rule reading two is unfolded over two passes: the count that
+/// names the copies' variables apart runs across the passes, or the second read's copy takes the first's names
+/// (`layer_num(gf, f), layer_num(gt, t)` would join the two numbers' digits as one).
+fn unfold_reads(mut rules: Vec<Rule>, inline: &BTreeSet<String>) -> Vec<Rule> {
+    let mut fresh = 0usize;
     for _ in 0..8 {
         let bodies: BTreeMap<String, Vec<Rule>> = inline
             .iter()
@@ -183,7 +205,6 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
             .collect();
         let mut changed = false;
         let mut next = Vec::with_capacity(rules.len());
-        let mut fresh = 0usize;
         for rule in rules {
             let at = rule.body.iter().position(|l| l.atom().is_some_and(|a| inline.contains(&a.rel)));
             match at {
@@ -207,21 +228,7 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
             break;
         }
     }
-    let unfinished: BTreeSet<String> = rules
-        .iter()
-        .filter(|r| !inline.contains(&r.head.rel))
-        .flat_map(|r| r.body.iter().filter_map(Literal::atom))
-        .filter(|a| inline.contains(&a.rel))
-        .map(|a| a.rel.clone())
-        .collect();
-    // An inlined relation some reader still reads (a chain deeper than the passes) keeps its rules.
-    let mut out = prog.clone();
-    out.rules = rules.into_iter().filter(|r| !inline.contains(&r.head.rel) || unfinished.contains(&r.head.rel)).collect();
-    let done: Vec<String> = inline.into_iter().filter(|r| !unfinished.contains(r)).collect();
-    if done.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some((out, done)))
+    rules
 }
 
 /// Why each derived relation that must be stored is (the module's list); a relation absent may be inlined.
@@ -554,5 +561,15 @@ mod tests {
         assert!(prog.qualified("r", "inline") && prog.qualified("s", "no_magic") && prog.qualified("t", "no_inline") && prog.qualified("t", "magic"));
         assert!(!prog.qualified("r", "magic"));
         assert!(super::super::super::rr::parse(".decl r(x: node) inline no_inline\n").is_err());
+    }
+
+    /// A reader of one inlined relation twice has the second read unfolded a pass after the first, its copy's
+    /// variables named apart from the first copy's: the same names would join the two reads' rows as one.
+    #[test]
+    fn two_reads_of_one_relation_unfold_apart() {
+        let reader = rule("o(x) :- a(y), r(x), r(y).");
+        let def = rule("r(z) :- b(z, w), a(w).");
+        let rules = unfold_reads(vec![reader, def], &BTreeSet::from(["r".to_owned()]));
+        assert_eq!(rules[0].to_string(), "o($x) :- a($y), b($x, $w_i1_1), a($w_i1_1), b($y, $w_i2_1), a($w_i2_1)");
     }
 }
