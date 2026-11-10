@@ -244,7 +244,7 @@ export function lastEventAt(s) {
   return Math.max(row ?? -Infinity, loaded ?? -Infinity);
 }
 
-/** A list row's violations: logged in the session, and of those the ones steered (recorded in Steer or Block mode). */
+/** A list row's violations: logged in the session, and of those the ones steered (recorded by an audit in Steer mode while their rule was on Steer or Block). */
 export function violationCounts(s) {
   const logged = s.violationCount ?? 0;
   return { logged, steered: Math.min(logged, s.steeredViolations ?? 0) };
