@@ -65,6 +65,9 @@ pub(super) struct World {
     loads: BTreeMap<String, Loaded>,
     refused: BTreeSet<String>,
     budget: usize,
+    /// The documents loaded from beyond the corpus root (the libraries'), which the budget bounds. A source file of
+    /// the run's own tree is always loaded (phase 1, `sources.rr`).
+    beyond: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
     pub(super) dropped: usize,
 }
@@ -163,12 +166,14 @@ impl World {
         if corpus.contains(&path) || self.loads.contains_key(&path) {
             return None;
         }
-        if grammar != run_grammar || self.loads.len() >= self.budget {
+        let own = self.roots.first().is_some_and(|r| Path::new(&path).starts_with(r));
+        if grammar != run_grammar || (!own && self.beyond >= self.budget) {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
         }
         let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
+        self.beyond += usize::from(!own);
         self.loads.insert(path, loaded.clone());
         Some(loaded)
     }

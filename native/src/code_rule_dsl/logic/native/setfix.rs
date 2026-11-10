@@ -125,6 +125,17 @@ pub(in crate::code_rule_dsl) fn intern_batch<'a>(conn: &Connection, texts: impl 
     Ok(ids)
 }
 
+/// `sym_text(a)` read from `conn`'s symbols in memory, without a statement: the text of a request's atom, answered in a
+/// wave (decision 0104).
+pub fn sym_text_of(conn: &Connection, a: i64) -> Result<String> {
+    let syms = symbols(conn)?;
+    let s = syms.read().unwrap();
+    if a < 0 || a as usize >= s.len() {
+        return Err(err(format!("no symbol {a}")));
+    }
+    Ok(s.name(a))
+}
+
 /// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`a.b`) over `conn`'s symbols: the planner's SQL holds symbols
 /// as atoms (decision 0009), and these are the only places it reads or makes their text. NULL gives NULL. Also
 /// registers `atoms` and the store's commit hook on `conn` (decision 0049).

@@ -1280,13 +1280,15 @@ impl Collecting {
 /// Records the run's manifest and relations, then starts collection if a pass is due: queued behind the run's
 /// writes (decision 0102), so the manifest names only what is written, and the lease on collection is let go
 /// once it is.
-fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>) -> Result<Option<Collecting>> {
+fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
-    let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off");
+    // A run inside another (a phase's, as phase 1's while the outer run lists its files; the constants') leaves
+    // collection to the outer run, which collects after its last wave: here it would run beside the outer run's waves.
+    let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer;
     let mut policy = crate::content_store::CorpusPolicy::default();
     if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
         (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
@@ -1574,7 +1576,7 @@ fn run_observed(
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
     // The constants' own run runs no phase: a constant reads no input (`constants::foldable`), and a phase export is
     // one. Run here, a phase took the constants' option for its own, and wrote none of its exports.
-    let (phased, phase_runs) = if options.get(constants::OWN).is_some() {
+    let (phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
         (Default::default(), Vec::new())
     } else {
         phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?
@@ -1609,13 +1611,6 @@ fn run_observed(
     phase("combine", 0);
     let mut folded = fold_constants(&mut prog)?;
     phase("constants", 0);
-    // Plans are kept across this run's chunks (decision 0038), and a session's across its runs (decision 0090 step 5).
-    let across = session::generation();
-    let _plans = super::KeepPlans::start(across);
-    // And the values derived from them (`logic::derived`): each chunk's join specs.
-    let _derived = crate::code_rule_dsl::logic::derived::Keep::start(across);
-    // A session's run (`session`, decision 0063): its store and its memo, held for the run.
-    let mut held = session::current();
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     // The program's `.language`, which picks the corpus's files: `.rr` files only when it names `rr` (decision 0061).
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
@@ -1646,13 +1641,50 @@ fn run_observed(
             } else {
                 let found = scoped(corpus_files(root)?, &prog, options);
                 let label = corpus_language(language.as_deref(), typing, &found);
-                (found.of(label), label)
+                let files = found.of(label);
+                // Phase 1 (`sources.rr`, decision 0104) loads the source files, and its documents are this run's: a
+                // phase's own run, and the constants', list theirs.
+                let sourcing = phases::declared(&prog).is_none() && !phases::in_phase() && options.get(constants::OWN).is_none() && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off");
+                let files = if sourcing {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
+                    // The observer's facts: each source file of the run's grammar, by its content's digest (read only
+                    // where the observer cannot vouch for it).
+                    let stated: Vec<(String, String, String)> = files
+                        .iter()
+                        .filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label))
+                        .map(|p| (p.clone(), label.to_owned(), world::bytes_digest(&root.join(p))))
+                        .filter(|(_, _, c)| !c.is_empty())
+                        .collect();
+                    let (documents, run) = phases::sources(&stated, label, root, out, modes, binding, chunk_nodes, typing, options)?;
+                    let made: std::collections::HashSet<&str> = documents.iter().map(|(p, _, _)| p.as_str()).collect();
+                    let stated_paths: std::collections::HashSet<&str> = stated.iter().map(|(p, _, _)| p.as_str()).collect();
+                    // A source file phase 1 made no document of (it did not load or parse) is listed as before, so
+                    // that the run reports it; a file of no grammar (`.scope text`) is not a source file.
+                    let left = stated.iter().filter(|(p, _, _)| !made.contains(p.as_str())).count();
+                    crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || format!("{} of {} source files are its documents; {left} listed without it", made.len(), stated.len()));
+                    phase_runs.push(run);
+                    let mut listed: Vec<String> = documents.iter().map(|(p, _, _)| p.clone()).collect();
+                    listed.extend(files.iter().filter(|p| !stated_paths.contains(p.as_str()) || !made.contains(p.as_str())).cloned());
+                    listed.sort();
+                    listed
+                } else {
+                    files
+                };
+                (files, label)
             };
             // A document's key is a function of its path (decision 0052), so a memoised row's node ids stay valid.
             let keys = memo::doc_keys(&files);
             (keys.into_iter().zip(files).collect(), HashMap::new(), label)
         }
     };
+    // Taken once the files are listed: phase 1, run while they are, is a run of its own, with its session and plans.
+    // Plans are kept across this run's chunks (decision 0038), and a session's across its runs (decision 0090 step 5).
+    let across = session::generation();
+    let _plans = super::KeepPlans::start(across);
+    // And the values derived from them (`logic::derived`): each chunk's join specs.
+    let _derived = crate::code_rule_dsl::logic::derived::Keep::start(across);
+    // A session's run (`session`, decision 0063): its store and its memo, held for the run.
+    let mut held = session::current();
     let mut docs = docs;
     // What the run consults (`Report::consulted`): first the workspace documents, when they are files under `root`.
     let mut consulted: Vec<(String, String, String)> =
@@ -2010,7 +2042,19 @@ fn run_observed(
         let digest = memo::program_digest(&split.local);
         let reads_options = split.local.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(&a.rel));
         let digest = if reads_options { memo::with_options(digest, options) } else { digest };
-        under_phased(digest, &split.local.rules)
+        // Under the earlier phases' rows only those rules read that a memoised row depends on (an export's or an
+        // output's): a constant the per-file part derives for nothing it keeps (phase 1's keys) does not change a
+        // file's entry.
+        let mut kept: BTreeSet<&str> = split.exports.iter().chain(split.local.outputs.iter()).map(String::as_str).collect();
+        loop {
+            let more: Vec<&str> = split.local.rules.iter().filter(|r| kept.contains(r.head.rel.as_str())).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).filter(|r| !kept.contains(r)).collect();
+            if more.is_empty() {
+                break;
+            }
+            kept.extend(more);
+        }
+        let reaching: Vec<front::Rule> = split.local.rules.iter().filter(|r| kept.contains(r.head.rel.as_str())).cloned().collect();
+        under_phased(digest, &reaching)
     };
     // The components' stored rows are a function of the phases' exports the cross-file rules read too (P3's
     // `types__attr`, `types__tmap`: a library's stubs, which no component's documents hold), so the plan is digested
@@ -2076,7 +2120,17 @@ fn run_observed(
         let mut whole = split.cross.clone();
         whole.answers = world::answers(&whole);
         let cone = crate::code_rule_dsl::logic::answers::split(&whole).ok_or_else(|| Error::Plan("a program that reads the file system makes no request in its cross-file part".to_owned()))?;
-        let per_file: BTreeSet<String> = cone.load.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|r| split.exports.contains(r) || split.base.contains(r)).collect();
+        // A constant of the run (an earlier phase's export, the observer's facts) is one set of rows for the run, not
+        // a document's: the cone reads it as it is bound, and a load does not answer it.
+        let per_file: BTreeSet<String> = cone
+            .load
+            .rules
+            .iter()
+            .flat_map(|r| &r.body)
+            .filter_map(|l| l.atom())
+            .map(|a| a.rel.clone())
+            .filter(|r| (split.exports.contains(r) || split.base.contains(r)) && !crate::code_rule_dsl::typing::file_local::run_constant(&prog, r))
+            .collect();
         if let Some(base) = per_file.iter().find(|r| split.base.contains(*r)) {
             return Err(Error::Plan(format!("the cone of requests reads base relation {base}: a load answers exports only (decision 0065 §2a)")));
         }
@@ -3901,6 +3955,19 @@ fn run_observed(
         skip_counted.set(false);
         let per_file_in: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> =
             counted_view.unwrap_or_else(|| per_file.iter().map(|r| (r.clone(), exports.borrow().snapshot(r, lowered.program.decls[r].len()))).collect());
+        // The constants of the run the cone reads (the observer's facts, an earlier phase's exports), bound in its own
+        // connection as the main one binds them.
+        let constants_in: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = load
+            .rules
+            .iter()
+            .flat_map(|r| &r.body)
+            .filter_map(|l| l.atom())
+            .map(|a| a.rel.clone())
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .filter(|r| phased.contains_key(r))
+            .map(|r| Ok((r.clone(), atoms_source(&store, prog.decls[&r].len(), phased[&r].iter())?)))
+            .collect::<Result<_>>()?;
         let (db_path, x_path, kept_in, world_in) = (path.clone(), cross_path.clone(), kept.clone(), world_inputs);
         // The cone's relations are kept like any (t33 K1), in a fact space of their own; its stratum that asks and
         // answers is clean while what it reads and its answers are as they were (K3).
@@ -3927,6 +3994,10 @@ fn run_observed(
             };
             let mut cone_inputs: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
             for (rel, source) in per_file_in {
+                cone_inputs.push((rel.clone(), Arc::clone(&source)));
+                bind(&rel, source)?;
+            }
+            for (rel, source) in constants_in {
                 cone_inputs.push((rel.clone(), Arc::clone(&source)));
                 bind(&rel, source)?;
             }
@@ -3959,7 +4030,7 @@ fn run_observed(
         });
         // The answers turn request atoms back into text, warm runs included (nothing else registers them then).
         crate::code_rule_dsl::logic::native::register_symbols(&db)?;
-        let text = |atom: i64| -> Result<String> { Ok(db.query_row("SELECT sym_text(?1)", [atom], |r| r.get(0))?) };
+        let text = |atom: i64| -> Result<String> { Ok(crate::code_rule_dsl::logic::native::sym_text_of(&db, atom)?) };
         let atoms = |texts: &[&str]| -> Result<Vec<i64>> { Ok(crate::code_rule_dsl::logic::native::intern_batch(&db, texts.iter().copied())?) };
         let mut pauses = 0;
         let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Chunk) -> Result<()>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
@@ -4139,7 +4210,7 @@ fn run_observed(
     // after the cross-file part: published then, the lease held until.
     let mut publish_later = None;
     let mut collecting = if recording && cross_plan.is_none() {
-        record_run(store, root, &run_sources, &memo_program, &program_plans, &relations, &late_sources, reading)?
+        record_run(store, root, &run_sources, &memo_program, &program_plans, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?
     } else if recording {
         publish_later = Some((relations, reading));
         None
@@ -5443,7 +5514,7 @@ fn run_observed(
     }
     if let Some((relations, reading)) = publish_later {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "record the run in the store".into());
-        collecting = record_run(store, root, &run_sources, &memo_program, &program_plans, &relations, &late_sources, reading)?;
+        collecting = record_run(store, root, &run_sources, &memo_program, &program_plans, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
     }
     statements.enter("write");
     let writing = crate::code_rule_dsl::logic::profile::span(|| "write the outputs".into());
@@ -7067,10 +7138,10 @@ uses(n, f) :- imp(n, q), def(f, q).
         let program = [7; 32];
         // Simulate another active run deferring the first run's background collection.
         let reader = store.hold_collection().unwrap();
-        super::record_run(&store, &root, &[source], &program, &[], &[], &Default::default(), None).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
+        super::record_run(&store, &root, &[source], &program, &[], &[], &Default::default(), None, true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
         assert!(store.corpus_collection_due().unwrap());
         // Same files and plan: the manifest is unchanged, but pending collection must still run.
-        super::record_run(&store, &root, &[source], &program, &[], &[], &Default::default(), Some(reader)).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
+        super::record_run(&store, &root, &[source], &program, &[], &[], &Default::default(), Some(reader), true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
         assert!(!store.corpus_collection_due().unwrap());
         assert_eq!(store.source_by_hash(orphan_hash).unwrap(), None);
     }
