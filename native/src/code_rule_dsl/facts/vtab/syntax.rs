@@ -1664,8 +1664,8 @@ impl Batch {
 /// T's base relations over `documents` (`sources`), each of `tests`' relations, and each of `sets` (a relation and its set's kind atoms):
 /// `rr_nearest_<set>(n, a)`, the nearest ancestor in the set, `rr_inside_<set>(n, a)`, every one (decision 0036), or
 /// `rr_has_<set>(n, a)`, n in the set and a each of its strict ancestors. Each is made per looked-up node on the host
-/// (`within::Axis`); `binding` (the transducer's file-local FIX, `typing::file_local::nearest`) no longer makes them
-/// for the whole batch first (O87).
+/// (`within::Axis`), or for the whole batch by the transducer's file-local FIX (`typing::file_local::nearest`, bound
+/// `binding`) where the planner expects more lookups than that costs (decision 0105).
 pub(crate) fn with_nearest(
     store: &ContentStore,
     documents: Vec<Document>,
@@ -1705,7 +1705,7 @@ pub(crate) fn with_nearest(
         } else {
             within::Axis::Nearest
         };
-        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members))));
+        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members, binding))));
     }
     // The stored-projection spike (measurement only): the relations the program reads, but the per-node axes.
     if let Some(db) = std::env::var_os("RERAIL_SPIKE_PROJECTION") {

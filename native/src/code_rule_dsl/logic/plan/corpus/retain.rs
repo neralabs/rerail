@@ -570,6 +570,9 @@ impl Source for Renamed {
     fn made_on_lookup(&self) -> bool {
         self.0.made_on_lookup()
     }
+    fn expect_lookups(&self, column: usize, keys: f64) {
+        self.0.expect_lookups(column, keys);
+    }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         let names = self.0.columns();
         let stats = self.0.statistics()?;

@@ -2038,7 +2038,7 @@ fn run_observed(
     });
     crate::code_rule_dsl::logic::profile::decision("nearest ancestors", || {
         let names: Vec<&str> = sets.iter().map(|(n, _)| n.as_str()).collect();
-        format!("{} sets made by the transducer's file-local FIX, bound {binding:?}: {}", sets.len(), names.join(", "))
+        format!("{} sets, each made per looked-up node, or for the batch by the transducer's file-local FIX (bound {binding:?}) where the planner expects more lookups than that costs (decision 0105): {}", sets.len(), names.join(", "))
     });
     // Requests answered inside the fixpoint (decision 0065 §2a): the cross-file part's cone of requests runs first,
     // pausing for answers. A load's answer is the loaded document's rows of every per-file relation the cone reads,

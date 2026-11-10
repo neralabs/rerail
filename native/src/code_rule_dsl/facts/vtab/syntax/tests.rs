@@ -496,8 +496,14 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
         let ((dn, ln, _), (da, la, za)) = (at(n), at(a));
         dn == da && la < ln && ln <= la + za
     };
-    for axis in [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has] {
-        let source = within::Within::axis(Arc::clone(&batch), axis, &set);
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0105) on the CPU and on Metal.
+    let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
+    for (axis, (binding, solve)) in [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has].into_iter().flat_map(|a| ways.map(|w| (a, w))) {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding);
+        if solve {
+            source.expect_lookups(0, 1e12);
+        }
         let mut expected = BTreeSet::new();
         for n in 0..nodes {
             for a in 0..nodes {
