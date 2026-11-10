@@ -31,9 +31,9 @@ import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
-  daemonMayHold,
   daemonUsesPackageRoot,
   lookupDaemon,
+  mainInstanceHolderRuns,
   openDashboard,
   START_LOCK_DIR,
   startDaemon,
@@ -79,8 +79,8 @@ export interface SetupContext {
   /** Where rule packs come from and go to; npm, into `home`, unless given. */
   packs?: PackStore;
   /**
-   * The machine whose processes and named pipes say whether another Rerail daemon still holds the cache the uninstall
-   * would remove (`cacheHolder`); this one unless a test names another.
+   * The machine whose main-instance lock, processes and named pipes say whether another Rerail daemon still holds the
+   * cache the uninstall would remove (`cacheHolder`); this one unless a test names another.
    */
   machine?: DaemonMachine;
 }
@@ -447,14 +447,15 @@ function pathExists(path: string): boolean {
 }
 
 /**
- * Another Rerail daemon (another `RERAIL_HOME`'s) that still holds the machine-wide cache, by pid. On Windows the
- * record outlives a daemon ended at logoff, so its pid counts only while a Rerail engine pipe exists (`daemonMayHold`).
- * `machine` is this one unless a test names another.
+ * Another Rerail daemon (another `RERAIL_HOME`'s) that still holds the machine-wide cache, by the pid its record names.
+ * The record outlives a daemon ended without its cleanup (on Windows, at every logoff), so the pid counts only while a
+ * process holds the cache's main-instance lock, or by the pid rule where the lock cannot be tried
+ * (`mainInstanceHolderRuns`). `machine` is this one unless a test names another.
  */
 export function cacheHolder(cache: string, machine?: DaemonMachine): number | undefined {
   try {
     const { pid } = JSON.parse(readFileSync(join(cache, MAIN_INSTANCE_HOLDER_FILE), "utf8")) as { pid?: unknown };
-    return typeof pid === "number" && Number.isInteger(pid) && pid !== process.pid && daemonMayHold(pid, machine) ? pid : undefined;
+    return typeof pid === "number" && Number.isInteger(pid) && pid !== process.pid && mainInstanceHolderRuns(cache, pid, machine) ? pid : undefined;
   } catch {
     return undefined;
   }

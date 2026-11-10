@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { replaceFileSync } from "../file-replace.js";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
@@ -76,6 +76,26 @@ function readHolder(directory: string): MainInstanceHolder | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Whether a process holds the main-instance lock in `directory`, asked by taking the lock and giving it straight back:
+ * the lock is the liveness signal, where the holder record can name a pid the OS has given another process since.
+ * False where there is no lock file, which is left unmade; undefined when the native binding does not load or the
+ * lock cannot be tried, for the caller to fall back on what else it knows.
+ */
+export function mainInstanceLockHeld(directory: string): boolean | undefined {
+  const path = join(directory, MAIN_INSTANCE_LOCK_FILE);
+  if (!existsSync(path)) return false;
+  let lock: NativeExclusiveFileLock | null;
+  try {
+    lock = loadNativeBinding().tryLockExclusive(path);
+  } catch {
+    return undefined;
+  }
+  if (lock === null) return true;
+  lock.release();
+  return false;
 }
 
 /**

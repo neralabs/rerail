@@ -12,7 +12,9 @@ import {
   assertContentStoreOwner,
   forgetMainInstanceHolder,
   MAIN_INSTANCE_HOLDER_FILE,
+  MAIN_INSTANCE_LOCK_FILE,
   MainInstanceConflictError,
+  mainInstanceLockHeld,
   type MainInstanceLease,
   type MainRerailBuild,
 } from "../../../src/engine/native/main-instance.js";
@@ -167,5 +169,19 @@ describe("forgetMainInstanceHolder", () => {
     } finally {
       await removeFolder(directory);
     }
+  });
+});
+
+describe("mainInstanceLockHeld", () => {
+  // The lock refuses every other handle, this process's own included, so the holder can sit in this process.
+  it("answers held while a main instance holds the lock, free once it lets go, and makes no lock file where none is", async () => {
+    const directory = await temporaryDirectory();
+    expect(mainInstanceLockHeld(directory)).toBe(false);
+    expect(existsSync(join(directory, MAIN_INSTANCE_LOCK_FILE))).toBe(false);
+    const lease = acquireMainInstance(build, directory);
+    leases.push(lease);
+    expect(mainInstanceLockHeld(directory)).toBe(true);
+    lease.release();
+    expect(mainInstanceLockHeld(directory)).toBe(false);
   });
 });

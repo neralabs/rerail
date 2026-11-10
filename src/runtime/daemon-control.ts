@@ -11,7 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
-import { forgetMainInstanceHolder } from "../engine/native/main-instance.js";
+import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native/main-instance.js";
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
@@ -481,6 +481,11 @@ export interface DaemonMachine {
   holdsCapability(socketPath: string, accessToken: string): Promise<boolean>;
   /** Removes the main-instance record when it names `pid` (`forgetMainInstanceHolder`). */
   forgetMainInstanceHolder(pid: number): void;
+  /**
+   * Whether a process holds the main-instance lock in `directory` (`mainInstanceLockHeld`); undefined when the native
+   * binding does not load.
+   */
+  mainInstanceLockHeld(directory: string): boolean | undefined;
   /** The Node binary Rerail's own processes run under ({@link nodeExecutable}). */
   nodeExecutable(): string;
   /** Windows: starts a process through the native module's spawn ({@link launchDetached} says why). */
@@ -506,6 +511,7 @@ const THIS_MACHINE: DaemonMachine = {
   pipes: listPipes,
   holdsCapability: async (socketPath, accessToken) => await engineHoldsCapability(socketPath, accessToken),
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
+  mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
   nodeExecutable: () => nodeExecutable(),
   spawnDetached: nativeSpawnDetached,
   spawn: (command, args, options) => spawn(command, args, options),
@@ -524,11 +530,21 @@ function enginePipeExists(state: DaemonState, machine: DaemonMachine): boolean {
 /**
  * Whether `pid`, recorded by a daemon that may be gone, can still be a Rerail daemon: a live process, and on Windows only
  * while some Rerail engine pipe exists, since every live daemon holds one. Windows ends a daemon without its cleanup at
- * logoff or reboot, so a record it wrote can name a pid Windows has given to another process since.
+ * logoff or reboot, so a record it wrote can name a pid Windows has given to another process since. Any Rerail home's
+ * pipe counts, so this over-counts while another home's daemon runs: {@link mainInstanceHolderRuns} asks the lock first.
  */
 export function daemonMayHold(pid: number, machine: DaemonMachine = THIS_MACHINE): boolean {
   if (!processAlive(pid, machine.kill)) return false;
   return machine.platform !== "win32" || enginePipeListed(() => machine.pipes());
+}
+
+/**
+ * Whether the main instance the record in `directory` names (`pid`) still runs: while a process holds that directory's
+ * main-instance lock, which the OS drops however the holder ends. Where the native binding does not load to try the
+ * lock, the pid rule answers ({@link daemonMayHold}).
+ */
+export function mainInstanceHolderRuns(directory: string, pid: number, machine: DaemonMachine = THIS_MACHINE): boolean {
+  return machine.mainInstanceLockHeld(directory) ?? daemonMayHold(pid, machine);
 }
 
 /**

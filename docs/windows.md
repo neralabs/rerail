@@ -418,8 +418,10 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   (`src/presentation/session-presentation.ts`). So each of them finds a daemon started elevated, and none sends the
   capability to a process on a reused pid. `processState` (`src/engine/process-liveness.ts`) reads `kill(pid, 0)` once
   for it and for every other pid check.
-- `daemonMayHold` counts a pid in `main-instance.json` as a daemon that may hold the content cache only while some
-  Rerail engine pipe exists, so a reused pid does not keep the uninstall from the cache.
+- The uninstall counts the pid in `main-instance.json` as a daemon that holds the content cache only while a process
+  holds `main-instance.lock` beside it (`mainInstanceHolderRuns`): the OS drops that lock however the daemon ends, so
+  neither a reused pid nor another Rerail home's daemon keeps the cache. Where the native binding does not load to try
+  the lock, `daemonMayHold` counts the pid while it is live and some Rerail engine pipe exists.
 - `stopDaemon` sends `POST /native/shutdown` on Windows, with the capability and the native token only `daemon.json`
   holds, and waits up to 10 s for the daemon to close: requests other sessions have in flight finish, and the daemon
   removes its state file and main-instance record. It kills only a daemon still running after that. macOS and Linux

@@ -27,4 +27,18 @@ describe("the uninstall's cache holder", () => {
     expect(cacheHolder(cache, windows(["rerail-0123456789abcdef01234567"]))).toBe(recorded);
     expect(cacheHolder(cache, { ...windows([]), platform: "linux" })).toBe(recorded);
   });
+
+  // The holder keeps `main-instance.lock` for its whole life and the OS drops it however the holder ends, so the lock
+  // decides; the pid rule above is for a machine where the native binding does not load.
+  it("counts the recorded pid only while a process holds the cache's main-instance lock, whatever engine pipes exist", async () => {
+    const cache = await mkdtemp(join(tmpdir(), "rerail-cache-holder-"));
+    roots.push(cache);
+    const recorded = process.pid + 1;
+    await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: recorded }));
+    // Another Rerail home's daemon runs, so a Rerail engine pipe exists, and the recorded pid is a live process.
+    const machine = (held: boolean) => ({ ...windows(["rerail-0123456789abcdef01234567"]), mainInstanceLockHeld: () => held });
+    expect(cacheHolder(cache, machine(false))).toBeUndefined();
+    expect(cacheHolder(cache, machine(true))).toBe(recorded);
+    expect(cacheHolder(cache, { ...machine(false), platform: "linux" })).toBeUndefined();
+  });
 });
