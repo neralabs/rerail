@@ -303,9 +303,14 @@ function applySchema(database: RerailDatabase, path: string, migrations: readonl
   const refusal = schemaRefusal(path, stamp, supported);
   if (refusal !== undefined) throw new Error(refusal);
   if (migrations === undefined) return;
+  const stepsRun = stamp.version !== 0 && pendingMigrations(database, migrations).length > 0;
   const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, migrations);
   if (floor !== stamp.version) database.run(sql.raw(`PRAGMA user_version = ${floor}`));
   database.run(sql.raw("COMMIT"));
+  // A step can rewrite much of the file (`audit-rule-provenance-once` frees each audit's copy of its provenance), and
+  // every page it writes goes through the WAL, which SQLite keeps at that size while any connection holds the file.
+  // Once the steps commit, the WAL is emptied; a connection still reading from it leaves it for a later checkpoint.
+  if (stepsRun) database.$client.pragma("wal_checkpoint(TRUNCATE)");
 }
 
 function rollbackQuietly(database: RerailDatabase): void {

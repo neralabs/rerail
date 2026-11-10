@@ -157,20 +157,20 @@ const MOVED_PER_BATCH = 100;
  * `audit-rule-provenance-once`'s move: each audit with its provenance inline names the stored copy of that JSON text
  * instead, stored first when no audit before it had the same text, and keeps `[]` inline. The text moves as it is, so
  * every audit reads the same provenance after. Its key is the SHA-256 of the text, as the audit store keys the
- * provenance it writes, so the store's later audits of the same rules name the copy moved here. Each batch leaves the
- * query, so the next one reads on from the first audit not moved yet.
+ * provenance it writes, so the store's later audits of the same rules name the copy moved here. Batches go in rowid
+ * order, each from where the last one ended.
  */
 function moveRuleProvenances(database: RerailDatabase): void {
   const client = database.$client;
-  const inline = client.prepare<[number], { auditId: string; json: string }>(`SELECT audit_id AS auditId, rule_provenance_json AS json
-    FROM audits WHERE rule_provenance_id IS NULL AND rule_provenance_json <> '[]' LIMIT ?`);
+  const inline = client.prepare<[number, number], { row: number; json: string }>(`SELECT rowid AS row, rule_provenance_json AS json
+    FROM audits WHERE rowid > ? AND rule_provenance_id IS NULL AND rule_provenance_json <> '[]' ORDER BY rowid LIMIT ?`);
   const stored = client.prepare<[string], number>("SELECT provenance_id FROM audit_rule_provenances WHERE digest = ?").pluck();
   const store = client.prepare<[string, string]>("INSERT INTO audit_rule_provenances (digest, rule_provenance_json) VALUES (?, ?)");
-  const name = client.prepare<[number, string]>("UPDATE audits SET rule_provenance_id = ?, rule_provenance_json = '[]' WHERE audit_id = ?");
-  for (let rows = inline.all(MOVED_PER_BATCH); rows.length > 0; rows = inline.all(MOVED_PER_BATCH)) {
-    for (const { auditId, json } of rows) {
+  const name = client.prepare<[number, number]>("UPDATE audits SET rule_provenance_id = ?, rule_provenance_json = '[]' WHERE rowid = ?");
+  for (let rows = inline.all(Number.MIN_SAFE_INTEGER, MOVED_PER_BATCH); rows.length > 0; rows = inline.all(rows.at(-1)!.row, MOVED_PER_BATCH)) {
+    for (const { row, json } of rows) {
       const digest = createHash("sha256").update(json).digest("hex");
-      name.run(stored.get(digest) ?? Number(store.run(digest, json).lastInsertRowid), auditId);
+      name.run(stored.get(digest) ?? Number(store.run(digest, json).lastInsertRowid), row);
     }
   }
 }
