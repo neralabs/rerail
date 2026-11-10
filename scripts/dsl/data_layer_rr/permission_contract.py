@@ -31,6 +31,18 @@ def cases():
             rows.append(dict(kind='content', id=f'content-{len(rows)}', disk=disk, supplied=supplied))
     for excluded in [[], ['docs'], ['skip.py'], ['hidden', '.git']]:
         rows.append(dict(kind='files', id='files-' + repr(excluded), excluded=excluded))
+    for value in [None, [], 'wrong', {}, {'path': 'a.py', 'line': 1},
+                  *[dict(path=path, line=line, message=message) for path, line, message in [
+                      ('a.py', 2, 'message'), ('./a//b.py', -3, None), ('/absolute.py', True, False),
+                      ('//network/a.py', False, ['☃', 1]), ('../a.py', 3.9, {'key': 'value'}),
+                      ('', -3.9, ''), (None, '  +1_024\n', 'integer string'),
+                      (['a', 1], '١٢', 'Unicode decimal'), ('a.py', '1.0', 'invalid integer'),
+                      ('a.py', None, 'null integer'), ('a.py', [], 'array integer'),
+                      ('a.py', {}, 'object integer'), ('a.py', 2**100, 'large integer')]]]:
+        rows.append(dict(kind='from-fact', id=f'from-fact-{len(rows)}', raw=value))
+    for root in ['root', '.', '/', '//']:
+        for path in ['root/a.py', 'root/../outside.py', '/absolute.py', '//network/a.py', '.', 'root']:
+            rows.append(dict(kind='to-fact', id=f'to-fact-{len(rows)}', root=root, path=path))
     return rows
 
 
@@ -70,10 +82,16 @@ def exercise(module, case, root):
             stack.enter_context(patch.object(module, 'get_project_root', lambda: root))
             invoke = lambda: [dict(path=clean(v.file_path), line=v.line_number, message=v.message)
                               for v in module.check_file_content(path, case['supplied'])]
-        else:
+        elif case['kind'] == 'files':
             for name in ['z.py', 'a/z.py', 'a-.py', 'docs/example.py', 'skip.py', 'hidden/x.py', '.git/x.py', 'other.txt']:
                 p = root/name; p.parent.mkdir(parents=True, exist_ok=True); p.write_text('pass\n')
             invoke = lambda: clean(module.find_python_files(root, set(case['excluded'])))
+        elif case['kind'] == 'from-fact':
+            def invoke():
+                value = module._violation_from_fact(case['raw'], root)
+                return None if value is None else dict(path=clean(value.file_path), line=value.line_number, message=value.message)
+        else:
+            invoke = lambda: module._violation_to_fact(module.Violation(Path(case['path']), 2, MESSAGE), Path(case['root']))
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try: value = dict(value=invoke())
             except BaseException as error:
