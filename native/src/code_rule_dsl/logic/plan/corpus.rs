@@ -2515,9 +2515,14 @@ fn run_observed(
                     }
                 }
             }
-            // Each export's rows over the batch, as columns: one statement per relation writes them to `x`, from
-            // a bound source (`rr_memo_w<width>`), not a statement per row.
-            let mut batch: BTreeMap<String, (usize, Vec<Vec<i64>>)> = BTreeMap::new();
+            // Each export's rows over the batch, as columns, in two parts: a hit's rows of its own document, which
+            // no other file's entry holds, are appended to the export unchecked (`Exports::append_own`); the others
+            // (a value document's, kept by each file that asked for it) are kept once, through the export's set.
+            // With the statistics kept by file failed, every row goes through the set and is measured.
+            let unchecked = keeper.as_ref().is_some_and(|k| !k.failed());
+            let exported: std::collections::HashSet<&str> = split.exports.iter().map(String::as_str).collect();
+            let mut batch: BTreeMap<String, (usize, Option<usize>, Vec<Vec<i64>>, Vec<Vec<i64>>)> = BTreeMap::new();
+            let mut own_docs: Vec<i64> = Vec::new();
             for (path, entry, content) in hits {
                 // The statistics kept by file (decision 0096 §3): a content new to the keeper is counted in.
                 if let (Some(k), Some(memo)) = (keeper.as_mut(), memo) {
@@ -2538,12 +2543,15 @@ fn run_observed(
                     // held"). They were also kept whole and measured again, so a memo hit's rows counted twice.
                 }
                 // Gathered by relation across the batch's hits: one statement per relation below, not one per row.
+                own_docs.push(entry.key);
                 for (rel, (width, values)) in entry.rows {
-                    if values.is_empty() || !split.exports.contains(&rel) {
+                    if values.is_empty() || !exported.contains(rel.as_str()) {
                         continue;
                     }
-                    let cols = &mut batch.entry(rel).or_insert_with(|| (width, vec![Vec::new(); width])).1;
+                    let at = split.locations.get(&rel).and_then(|l| l.first().copied()).filter(|a| *a < width && unchecked);
+                    let (_, _, own_cols, shared_cols) = batch.entry(rel).or_insert_with(|| (width, at, vec![Vec::new(); width], vec![Vec::new(); width]));
                     for row in values.chunks_exact(width) {
+                        let cols = if at.is_some_and(|a| memo::document_of(row[a]) == entry.key) { &mut *own_cols } else { &mut *shared_cols };
                         for (c, v) in row.iter().enumerate() {
                             cols[c].push(*v);
                         }
@@ -2554,12 +2562,19 @@ fn run_observed(
                     node_columns.insert(rel, columns);
                 }
             }
-            for (rel, (width, cols)) in batch {
+            for (rel, (width, at, own_cols, cols)) in batch {
+                if let Some(at) = at {
+                    exports.borrow_mut().append_own(&rel, width, at, own_cols, own_docs.iter().copied());
+                }
+                if cols.first().is_none_or(Vec::is_empty) {
+                    hits_unmeasured |= unchecked;
+                    continue;
+                }
                 let types: Vec<&str> = lowered.program.decls[&rel].iter().map(|(_, t)| t.as_str()).collect();
                 let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
                 let rows = crate::code_rule_dsl::logic::native::component::columns_source(names.clone(), cols.into_iter().map(Some).collect());
                 let inserted = exports.borrow_mut().add(&rel, width, rows.as_ref());
-                if keeper.as_ref().is_some_and(|k| !k.failed()) {
+                if unchecked {
                     hits_unmeasured = true;
                 } else {
                     totals.add_rows(&rel, inserted, rows.as_ref(), &types);
