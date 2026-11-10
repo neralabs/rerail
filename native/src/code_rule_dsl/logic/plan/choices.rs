@@ -118,6 +118,7 @@ pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
         let d = d.borrow();
         let (store, prepared) = d.as_ref()?;
         let _span = super::super::profile::span(|| "planning choices, from the store".into());
+        store.settle(&queued(prepared, key));
         read(store, prepared, key).ok().flatten()
     })?;
     keep(*key, found.clone());
@@ -130,10 +131,17 @@ pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
     DURABLE.with(|d| {
         let d = d.borrow();
         if let Some((store, prepared)) = d.as_ref() {
-            let _span = super::super::profile::span(|| "planning choices, kept in the store".into());
-            let _ = write(store, prepared, &key, &chosen);
+            let _span = super::super::profile::span(|| "planning choices, kept in the store, queued".into());
+            // Made into facts and written by the store's writer (decision 0102).
+            let prepared = *prepared;
+            store.write_back("the planning choices", 0, vec![(queued(&prepared, &key), None)], Box::new(move |store| write(store, &prepared, &key, &chosen).map(drop)));
         }
     });
+}
+
+/// What the write of program `key`'s choices is queued under (`write_back`).
+fn queued(prepared: &[u8; 32], key: &[u8; 32]) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"facts_memo/choices", prepared, key])
 }
 
 fn keep(key: [u8; 32], chosen: Chosen) {
