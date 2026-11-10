@@ -1,13 +1,17 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { installedPacksPrefix } from "../../src/engine/index.js";
 import { withPacksLock } from "../../src/setup/packs-lock.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
 
+vi.mock("node:fs", { spy: true });
+
 const homes: string[] = [];
 afterEach(() => {
+  vi.mocked(writeFileSync).mockReset();
+  vi.mocked(rmSync).mockReset();
   for (const home of homes.splice(0)) removeFolderSync(home);
 });
 
@@ -77,4 +81,41 @@ describe("withPacksLock", () => {
     await expect(withPacksLock(home, async () => { throw new Error("npm failed"); })).rejects.toThrow("npm failed");
     expect(existsSync(lockOf(home))).toBe(false);
   });
+
+  it.each(["EPERM", "EACCES", "EBUSY"])("waits through %s on Windows, where another process is deleting the lock file, then takes it", async code => {
+    const home = temporaryHome();
+    failNextLockCreate(code);
+    let waits = 0;
+
+    expect(await withPacksLock(home, async () => "ran", { platform: "win32", sleep: async () => { waits += 1; } })).toBe("ran");
+    expect(waits).toBe(1);
+    expect(existsSync(lockOf(home))).toBe(false);
+  });
+
+  it("waits on Windows when another process is already deleting the abandoned lock file, instead of failing to remove it", async () => {
+    const home = temporaryHome();
+    heldBy(home, 999_999);
+    vi.mocked(rmSync).mockImplementationOnce(path => {
+      throw Object.assign(new Error(`EPERM: operation not permitted, unlink '${String(path)}'`), { code: "EPERM", syscall: "unlink" });
+    });
+    let waits = 0;
+
+    expect(await withPacksLock(home, async () => "ran", { platform: "win32", running: () => false, sleep: async () => { waits += 1; } })).toBe("ran");
+    expect(waits).toBe(1);
+  });
+
+  it("fails at once on EPERM elsewhere, where it means the folder refuses the process", async () => {
+    const home = temporaryHome();
+    failNextLockCreate("EPERM");
+
+    await expect(withPacksLock(home, async () => "ran", { platform: "linux", sleep: async () => { throw new Error("waited"); } }))
+      .rejects.toMatchObject({ code: "EPERM" });
+  });
 });
+
+/** The next lock file create fails with `code`, as Windows fails it while another process deletes that file. */
+function failNextLockCreate(code: string): void {
+  vi.mocked(writeFileSync).mockImplementationOnce(path => {
+    throw Object.assign(new Error(`${code}: operation not permitted, open '${String(path)}'`), { code, syscall: "open" });
+  });
+}

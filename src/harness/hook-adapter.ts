@@ -9,6 +9,7 @@ import { isSteerRule, type AdapterDelivery, type RerailHost, type SteerRule } fr
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { processState } from "../engine/process-liveness.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
+import { nameTaken } from "../engine/file-replace.js";
 import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
 import { scrubSecrets } from "../engine/secret-scrub.js";
 import { makeLedgerFolder, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
@@ -232,19 +233,6 @@ async function reclaimDeadOwner(path: string): Promise<boolean> {
 /** How long a hook waits for its session's lock before it gives up on its event. */
 const LOCK_WAIT_MS = 30_000;
 
-/**
- * What creating a lock file raises on Windows while another hook of the session deletes that file: the file is still
- * there, pending its delete, and Windows answers access denied (EPERM or EACCES) or busy, not EEXIST.
- */
-const HELD_ON_WINDOWS: ReadonlySet<string> = new Set(["EPERM", "EACCES", "EBUSY"]);
-
-/** Whether `error`, from creating the lock file, means another hook holds or is letting go of the lock. */
-function lockTaken(error: unknown, platform: NodeJS.Platform): boolean {
-  if (errno(error, "EEXIST")) return true;
-  const code = error instanceof Error && "code" in error ? error.code : undefined;
-  return platform === "win32" && typeof code === "string" && HELD_ON_WINDOWS.has(code);
-}
-
 async function acquireLock(path: string, serializedOwner: string, label: string, platform: NodeJS.Platform): Promise<void> {
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
@@ -252,7 +240,8 @@ async function acquireLock(path: string, serializedOwner: string, label: string,
       await writeFile(path, serializedOwner, { flag: "wx", mode: 0o600 });
       return;
     } catch (error) {
-      if (!lockTaken(error, platform)) throw error;
+      // Another hook holds the lock, or on Windows is still deleting its lock file: either way, wait.
+      if (!nameTaken(error, platform)) throw error;
       if (errno(error, "EEXIST") && await reclaimDeadOwner(path)) continue;
       if (Date.now() >= deadline) throw new Error(`Timed out waiting for session lock: ${label}`);
       await delay(10);

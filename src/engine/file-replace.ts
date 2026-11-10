@@ -1,11 +1,13 @@
 /**
- * Replacing and removing files where Windows holds them open.
+ * Replacing, removing and exclusively creating files where Windows holds them open.
  *
  * On Windows, renaming a file onto or from one another process holds open fails with EPERM, EACCES or EBUSY: a
  * reader of `daemon.json`, an editor or language server with a source file open, or antivirus and the indexer scanning
  * a file just written. Removing a folder fails the same way while a file in it is held. Each hold lasts a moment, so
  * these helpers retry there; elsewhere the first failure stands, as a rename over a file never fails for that reason.
- * Every rename in `src/` goes through them: `npm run check:owned-builtins` fails on any other.
+ * Every rename in `src/` goes through them: `npm run check:owned-builtins` fails on any other. Creating a file or
+ * folder only if none is there fails with those codes too, not EEXIST, while another process deletes one of that name:
+ * `nameTaken` reads them as the name being taken.
  *
  * To make text the whole of a file, use `replaceFile` or `replaceFileSync`. `renameWithRetry` is for moving a file or
  * folder that already exists, and for a writer that must open its new file itself.
@@ -37,6 +39,24 @@ export interface RenameOptions {
 const codeOf = (error: unknown): unknown => (error instanceof Error && "code" in error ? error.code : undefined);
 
 /**
+ * Whether `error` is Windows refusing a file or folder another process holds open or is deleting (EPERM, EACCES or
+ * EBUSY), which it is free of a moment later. Never on another platform, where those codes mean this process may not.
+ */
+export function heldOnWindows(error: unknown, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "win32" && HELD.has(codeOf(error));
+}
+
+/**
+ * Whether `error`, from creating a file or folder only if none is there (`wx`, `O_EXCL`, or a `mkdir` taken as a lock),
+ * says another process has the name. EEXIST says so everywhere. On Windows a file or folder another process is deleting
+ * keeps its name until the delete ends: creating, reading or removing it in that moment fails with EPERM, EACCES or
+ * EBUSY, and looking at it (`stat`) still succeeds. The name is free again a moment later.
+ */
+export function nameTaken(error: unknown, platform: NodeJS.Platform = process.platform): boolean {
+  return codeOf(error) === "EEXIST" || heldOnWindows(error, platform);
+}
+
+/**
  * What a rename Windows refused for the whole retry throws. The bare `EPERM: operation not permitted, rename` never
  * says that another program had the file open, which is what the person must close; the code stays for callers that
  * branch on it, and the last refusal is the cause.
@@ -56,7 +76,6 @@ function heldTooLong(error: unknown, from: string, to: string, retryMs: number):
  */
 export async function renameWithRetry(from: string, to: string, options: RenameOptions = {}): Promise<void> {
   const rename = options.rename ?? fsRename;
-  const windows = (options.platform ?? process.platform) === "win32";
   const retryMs = options.retryMs ?? RENAME_RETRY_MS;
   const deadline = Date.now() + retryMs;
   for (let attempt = 1; ; attempt += 1) {
@@ -64,7 +83,7 @@ export async function renameWithRetry(from: string, to: string, options: RenameO
       await rename(from, to);
       return;
     } catch (error) {
-      if (!windows || !HELD.has(codeOf(error))) throw error;
+      if (!heldOnWindows(error, options.platform)) throw error;
       if (attempt === 1 && await makeWritable(to) === "folder") throw error;
       if (Date.now() >= deadline) throw heldTooLong(error, from, to, retryMs);
       await sleep(RENAME_RETRY_INTERVAL_MS);
@@ -82,7 +101,6 @@ const PAUSE = new Int32Array(new SharedArrayBuffer(4));
 /** {@link renameWithRetry} for synchronous code, which waits between attempts without yielding. */
 export function renameWithRetrySync(from: string, to: string, options: RenameSyncOptions = {}): void {
   const rename = options.rename ?? fsRenameSync;
-  const windows = (options.platform ?? process.platform) === "win32";
   const retryMs = options.retryMs ?? RENAME_RETRY_MS;
   const deadline = Date.now() + retryMs;
   for (let attempt = 1; ; attempt += 1) {
@@ -90,7 +108,7 @@ export function renameWithRetrySync(from: string, to: string, options: RenameSyn
       rename(from, to);
       return;
     } catch (error) {
-      if (!windows || !HELD.has(codeOf(error))) throw error;
+      if (!heldOnWindows(error, options.platform)) throw error;
       if (attempt === 1 && makeWritableSync(to) === "folder") throw error;
       if (Date.now() >= deadline) throw heldTooLong(error, from, to, retryMs);
       Atomics.wait(PAUSE, 0, 0, RENAME_RETRY_INTERVAL_MS);

@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { heldOnWindows, nameTaken } from "../engine/file-replace.js";
 import { processState } from "../engine/process-liveness.js";
 
 /** How long to wait for another change to the packs to end: several npm installs, each fetching from the registry. */
@@ -31,6 +32,8 @@ export interface PacksLockOptions {
   /** Whether process `pid` is running. */
   readonly running?: (pid: number) => boolean;
   readonly now?: () => number;
+  /** The platform whose errors for a lock file being deleted count as the lock being held; this process's by default. */
+  readonly platform?: NodeJS.Platform;
 }
 
 /** Whether `pid` runs, as any user. */
@@ -47,13 +50,16 @@ function readOwner(lock: string): LockOwner | undefined {
   }
 }
 
-/** Creates the lock file only if there is none (`wx`); false when another holds it. */
-function tryTake(lock: string, owner: LockOwner): boolean {
+/**
+ * Creates the lock file only if there is none (`wx`); false when another process holds it, or on Windows is still
+ * deleting it as it lets go.
+ */
+function tryTake(lock: string, owner: LockOwner, platform: NodeJS.Platform): boolean {
   try {
     writeFileSync(lock, JSON.stringify(owner), { flag: "wx" });
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    if (nameTaken(error, platform)) return false;
     throw error;
   }
 }
@@ -70,6 +76,22 @@ function abandoned(lock: string, owner: LockOwner | undefined, running: (pid: nu
 }
 
 /**
+ * Removes the abandoned lock `owner` left, unless another process took it over meanwhile; true when the next try may
+ * take it. On Windows a file another process is deleting reads as no owner while `stat` still sees its age, and
+ * removing it fails: false then, so the caller waits for that delete to end.
+ */
+function takeOver(lock: string, owner: LockOwner | undefined, platform: NodeJS.Platform): boolean {
+  if (readOwner(lock)?.token !== owner?.token) return true;
+  try {
+    rmSync(lock, { force: true });
+    return true;
+  } catch (error) {
+    if (heldOnWindows(error, platform)) return false;
+    throw error;
+  }
+}
+
+/**
  * Runs `action` holding the lock on `home`'s packs (`packs/.lock`), waiting while another process holds it. A lock
  * whose process is gone is taken over. Throws, naming the holder, when it is still held after the wait.
  */
@@ -81,14 +103,11 @@ export async function withPacksLock<T>(home: string, action: () => Promise<T>, o
   const sleep = options.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const running = options.running ?? processRunning;
   const now = options.now ?? Date.now;
+  const platform = options.platform ?? process.platform;
   const token = randomUUID();
-  for (let waited = 0; !tryTake(lock, { pid: process.pid, token, at: now() }); waited += POLL_MS) {
+  for (let waited = 0; !tryTake(lock, { pid: process.pid, token, at: now() }, platform); waited += POLL_MS) {
     const owner = readOwner(lock);
-    if (abandoned(lock, owner, running, now())) {
-      // Only the lock as it was read: another process may have taken it over meanwhile.
-      if (readOwner(lock)?.token === owner?.token) rmSync(lock, { force: true });
-      continue;
-    }
+    if (abandoned(lock, owner, running, now()) && takeOver(lock, owner, platform)) continue;
     if (waited >= waitMs) {
       throw new Error(`Another Rerail process (${owner === undefined ? "starting" : `pid ${owner.pid}`}) is changing the rule packs in ${prefix}; try again once it is done.`);
     }

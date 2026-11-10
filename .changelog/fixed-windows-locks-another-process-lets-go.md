@@ -1,0 +1,1 @@
+On Windows, two set-ups, or a set-up and `rerail packs add`, running at once no longer fail with "EPERM: operation not permitted" when one lets go of the rule packs' lock as the other takes it: the second waits its turn.
