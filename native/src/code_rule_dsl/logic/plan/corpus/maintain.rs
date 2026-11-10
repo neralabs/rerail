@@ -125,8 +125,8 @@ fn unmaintainable(prog: &front::Program, scc: &BTreeSet<String>, rules: &[&Rule]
             return Some("its own old rows not kept");
         }
     }
-    // Counting (`supports`) has no witness of a row's level, so a recursive stratum keeps its rules and is maintained
-    // by delete-and-rederive below (`RERAIL_COUNT_RECURSIVE=again`: derived again, as the first comparison did).
+    // Counting (`supports`) is for non-recursive strata: a recursive one keeps its rules and is maintained below by
+    // levels, or by delete-and-rederive (`RERAIL_COUNT_RECURSIVE=again`: derived again, as the first comparison did).
     if super::supports::counting()
         && std::env::var("RERAIL_COUNT_RECURSIVE").is_ok_and(|v| v == "again")
         && rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(&a.rel))))

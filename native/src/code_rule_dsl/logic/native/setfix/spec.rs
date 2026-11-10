@@ -99,7 +99,8 @@ pub struct JoinSpec {
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
-/// (`base`), plus its table's rows when `seeded`.
+/// (`base`), plus its table's rows when `seeded`. A `base` with no relation gone (`-`) is a copy of the kept
+/// relation, its levels with it (decision 0090's `h__live`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Start {
     Rows,

@@ -603,9 +603,10 @@ compare with.
 
   A row that keeps a support is no longer deleted and appended again. So the survivors start from the old rows
   with only the truly gone ones dead (step 4's in-place start), and compaction sees only real garbage.
-- **Recursive strata** have no supports. They are maintained under counting, where the comparison derived them
-  again. `RERAIL_COUNT_RECURSIVE=again` restores that. They are maintained by levels, checked (built: see the
-  section above); `RERAIL_RECURSIVE=dred` keeps delete-and-rederive for them.
+- **Recursive strata** have no supports. They are maintained by *levels, checked* (above), or by
+  delete-and-rederive under `RERAIL_RECURSIVE=dred`, where the first comparison derived them again.
+  `RERAIL_COUNT_RECURSIVE=again` restores that. The measurements below predate levels: their recursive strata ran
+  by delete-and-rederive.
 - **A session stores its cross-file relations** (`no_inline`, decision 0099), except one the program declares
   `inline`. An inlined relation leaves no rows for the next run, so every stratum over it was derived again: 98–118
   strata a step. `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare.
@@ -813,3 +814,48 @@ until 0101 removes the per-stratum fixed cost, counting is the slower default on
 - Levels: one check batch per level, and the probe estimate on `__live` relations that is off by about 270×.
 - Interface summaries for libraries (03 §14's derivations) and this session store meet at the library boundary;
   0083 §5–§6 places it, and this record does not.
+
+## Measured: why a session's maintenance deletes so much (2026-11-09)
+
+A session's maintained relation gives the rows it removed and added since the last run (`InRel::delta_since`,
+decision 0096 step 4). A row in both was overdeleted and put back; a row only removed is truly gone. Over every
+maintained relation of the O125 replay, steps 01–03, load 70–130:
+
+| step | node ids | removed | put back (overdeleted) | truly gone | truly new | session CPU |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 01 (1 file) | preorder | 81,014 | 7,841 (10%) | 73,173 | 74,039 | 25.0 s |
+| 02 (2 files) | preorder | 92,014 | 13,500 (15%) | 78,514 | 80,266 | 20.7 s |
+| 01 | by definition | 70 | 22 | 48 | 903 | 12.8 s |
+| 02 | by definition | 9,565 | 7,357 (77%) | 2,208 | 3,950 | 15.3 s |
+| 03 | either | 2,386 | 810 (34%) | 1,576 | 1,666 | 7.8 s |
+
+Two causes, in this order:
+
+- **Node ids.** With preorder ids (the default), an edit renumbers every node after it in the file. Each row
+  naming one is truly gone and comes back under a new id (`look`: 2,379 gone, 2,411 new). DRed is not at fault
+  here: these are real deltas. Per-definition ids (`RERAIL_NODE_IDS=definition`, decision 0083) take step 01
+  from 81,014 rows removed to 70, and the session from 25.0 s to 12.8 s.
+- **DRed in recursive components.** Once the ids are stable, what is left is overdeletion, nearly all of it in
+  recursive components. In the 58-relation one, step 02 removes 2,723 rows of `pv` and puts back 2,676 (47
+  gone), and `found` removes 523 and puts back all 523. Non-recursive relations put back almost nothing (0–3% of
+  what they remove): a row there rarely has a second derivation.
+
+What the component's maintenance costs, by definition ids (the `acls/…` stratum and its `__del` stratum):
+
+| step | the strata | joins | spec, planning, opening |
+| --- | ---: | ---: | ---: |
+| 01 (70 rows removed) | 3.4 s | 0.38 s | about 2.3 s: 4,363 join variants of the rewrite |
+| 02 | 6.0 s | 3.1 s, mostly rows overdeleted and derived again | about 2.1 s |
+
+So DRed is not needed:
+
+- **Recursive components:** the levels scheme above deletes about what is truly gone (627 against DRed's 4,334
+  at step 06; 13,280 against 37,686 at step 08). Its cost is 0.01–0.58 s on the 58-relation component, against
+  DRed's 0.23–1.85 s, in the spike's evaluator. It replaces the overdelete and rederive rules with a count per
+  row, 8 bytes a row.
+- **Non-recursive strata:** DRed's overdelete is close to the true delta, so counting gains little on rows.
+  Plain counting would still drop the rederive rules, which are part of the fixed cost of the rewrite's variants.
+- **Order of work:** per-definition ids first (the larger win, and levels' deltas assume stable rows). Then levels
+  for recursive components in the engine, its witness kept with the relation (0096's `Patched` keeps a session's
+  per-relation state the same way). The rewrite's fixed cost of about 2 s for 4,363 variants needs its own fix:
+  plan and spec only the variants whose delta is not empty.

@@ -236,7 +236,10 @@ struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i64>, 
              /// The kept relation it started as (`InRel::delta_since`).
              from: Option<Origin>,
              /// Each row's level (decision 0090: `lbase` plus the wave that pushed it), while every row has one.
-             level: Vec<u32>, lbase: u32 }
+             level: Vec<u32>, lbase: u32,
+             /// Whether its rows get levels: only a relation of a recursive stratum reads them (`open`), and at 4
+             /// bytes a row they are not held for the others.
+             leveled: bool }
 
 /// The kept relation (by address) a maintained relation started as, and how its rows follow from that one's.
 #[derive(Clone)]
@@ -251,7 +254,7 @@ impl Rel {
     fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         let idx = (0..k).map(|c| Index { cols: vec![c], table: HashTable::new(), next: Vec::new() }).collect();
-        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead: Vec::new(), ndead: 0, summaries: Default::default(), from: None, level: Vec::new(), lbase: 0 }
+        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead: Vec::new(), ndead: 0, summaries: Default::default(), from: None, level: Vec::new(), lbase: 0, leveled: true }
     }
     /// A relation that starts as `old` (a kept one: its rows, dedup set and indexes, copied as memory, not hashed
     /// again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are the first wave's
@@ -299,7 +302,7 @@ impl Rel {
         }
         let level = if old.has_levels() { old.level.clone() } else { Vec::new() };
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n });
-        Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), set: set.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead, ndead, summaries: Default::default(), from, level, lbase: 0 })
+        Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), set: set.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead, ndead, summaries: Default::default(), from, level, lbase: 0, leveled: true })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
     fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
@@ -351,7 +354,7 @@ impl Rel {
         let id = self.n as u32;
         self.data.extend_from_slice(row);
         // A relation started from a kept one without levels has none (`has_levels` then says so).
-        if self.level.len() == self.n {
+        if self.leveled && self.level.len() == self.n {
             self.level.push(self.lbase + self.wave + 1);
         }
         self.n += 1;
@@ -669,7 +672,13 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
                         let (o, g) = { let d = DERIVED.lock().unwrap(); (d.get(&(scope(conn), old.clone())).cloned(), if gone == "-" { None } else { d.get(&(scope(conn), gone.clone())).cloned() }) };
                         // `-`: no rows gone (a copy of the kept relation, its levels with it).
                         let o = o.ok_or_else(|| err(format!("rel: no native relation {old}")))?;
-                        let g = if gone == "-" { None } else { Some(g.ok_or_else(|| err(format!("rel: no native relation {gone}")))?) };
+                        // The rows gone, from the stratum that made them: a native relation, or a table where a SQL
+                        // stratum wrote them (an overdelete reading an input's delta); they are the delta's size.
+                        let g = match g {
+                            Some(g) => Some(g),
+                            None if gone == "-" => None,
+                            None => Some(InRel::flat(&read_rows(conn, gone, types.as_bytes(), &mut syms)?, types.as_bytes().to_vec())),
+                        };
                         match Rel::based(table, types.as_bytes(), &o, g.as_deref()) {
                             Some(b) => rel = b,
                             None => rel = Rel::compacted(table, types.as_bytes(), &o, g.as_deref()),
@@ -732,6 +741,30 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
         }
     }
     let _multi = crate::code_rule_dsl::logic::profile::span(|| "open: indexes".into());
+    // Levels only where they are read: a relation on a cycle of the component's rules (a recursive stratum's), one
+    // of a levels line, or one started from a kept relation with levels. The others hold none.
+    {
+        let n = rels.len();
+        let mut next: Vec<Vec<usize>> = vec![Vec::new(); n];
+        // A seed probe (`SEED`) reads no relation of the component.
+        for p in probes.iter().filter(|p| p.delta < n) { next[p.delta].push(p.head); }
+        for e in edges.iter().filter(|e| e.src < n) { next[e.src].push(e.head); }
+        let mut keep = vec![false; n];
+        for ln in &levels.lines { for r in [ln.cand, ln.chk, ln.held, ln.gone, ln.live] { keep[r] = true; } }
+        for r in 0..n {
+            if keep[r] || (rels[r].n > 0 && rels[r].level.len() == rels[r].n) { keep[r] = true; continue; }
+            // Whether `r` reaches itself.
+            let mut seen = vec![false; n];
+            let mut stack = next[r].clone();
+            while let Some(x) = stack.pop() {
+                if x == r { keep[r] = true; break; }
+                if !std::mem::replace(&mut seen[x], true) { stack.extend(next[x].iter().copied()); }
+            }
+        }
+        for (r, keep) in rels.iter_mut().zip(keep) {
+            if !keep { r.leveled = false; r.level = Vec::new(); }
+        }
+    }
     // Rows this run pushes go above every kept row's level in the component (`Rel::level`).
     let lbase = rels.iter().filter(|r| r.level.len() == r.n).flat_map(|r| r.level.iter().copied()).max().unwrap_or(0);
     for r in &mut rels { r.lbase = lbase; }
@@ -1700,6 +1733,16 @@ impl InRel {
     pub fn bytes(&self) -> usize {
         self.rows.len() * 8 + self.level.len() * 4
     }
+    /// What it holds in memory, by part: its values, its rows' levels, and its dedup set, dead bits and hash
+    /// indexes (each by capacity, the bytes allocated).
+    pub fn held_bytes(&self) -> (usize, usize, usize) {
+        let values = self.rows.capacity() * 8;
+        let levels = self.level.capacity() * 4;
+        // A hash table's entry and its control byte.
+        let set = self.set.capacity() * (4 + 1) + self.dead.capacity() * 8;
+        let chains: usize = self.chains.iter().map(|ix| ix.next.capacity() * 4 + ix.table.capacity() * (std::mem::size_of::<Post>() + 1)).sum();
+        (values, levels, set + chains)
+    }
     pub fn rows(&self) -> usize {
         self.len() - self.ndead
     }
@@ -1875,6 +1918,39 @@ impl InRel {
             }
         }
         Some((added, removed))
+    }
+    /// Column `c`'s postings, from the index the engine kept on it (`Rel::new`): each value with the first-column
+    /// values of its live rows (a row's document, as `syntax::measured` reads it), so nothing is hashed again. A
+    /// posting of one live row is handed on as it is; a longer one is walked. `false`, and nothing visited, for a
+    /// relation without that index (a view, or rows loaded flat).
+    pub fn each_posting(&self, c: usize, visit: &mut dyn FnMut(i64, &[i64])) -> bool {
+        if self.view.is_some() || c >= self.k {
+            return false;
+        }
+        let Some(ix) = self.chains.iter().find(|ix| ix.cols == [c]).filter(|ix| ix.next.len() >= self.n) else { return false };
+        let (k, data) = (self.k, &self.rows);
+        let mut firsts: Vec<i64> = Vec::new();
+        for p in ix.table.iter() {
+            let v = data[p.head as usize * k + c];
+            if p.len == 1 {
+                if !is_dead(&self.dead, p.head) {
+                    visit(v, &[data[p.head as usize * k]]);
+                }
+                continue;
+            }
+            firsts.clear();
+            let mut id = p.head;
+            for _ in 0..p.len {
+                if !is_dead(&self.dead, id) {
+                    firsts.push(data[id as usize * k]);
+                }
+                id = ix.next[id as usize];
+            }
+            if !firsts.is_empty() {
+                visit(v, &firsts);
+            }
+        }
+        true
     }
     /// Its live rows, row-major.
     pub fn live_rows(&self) -> Option<Vec<i64>> {
@@ -3046,7 +3122,7 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
             let c0 = &j.counts[0];
             c0[0].set(c0[0].get() + 1);
             let mut last = u32::MAX;
-            for &(li, rid) in &p.pairs {
+            for (li, rid) in p.pairs.iter() {
                 if cx.error.is_some() { break; }
                 if li != last {
                     last = li;
@@ -3133,6 +3209,35 @@ mod posted_tests {
             let measured: Vec<[i64; 4]> = crate::code_rule_dsl::facts::vtab::syntax::measured(source.as_ref()).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect();
             assert_eq!(rel.posted().expect("a relation with its postings"), measured);
         }
+    }
+
+    /// Statistics counted from a relation's postings are those counted from its live rows.
+    #[test]
+    fn statistics_counted_from_postings_are_those_of_the_rows() {
+        use crate::code_rule_dsl::logic::plan::statkeep::RelStats;
+        let node = |d: i64, i: i64| (d << 32) | i;
+        let mut rel = Rel::new("t", b"iiii");
+        for i in 0..900 {
+            // Documents interleaved; a first column that is sometimes a document key; a few-valued column; a value
+            // column past the exact map's size that crosses documents; a reference to another document's node.
+            let d = 1 + (i * 7) % 5;
+            let first = if i % 11 == 0 { d } else { node(d, i) };
+            rel.push(&[first, i % 4, (i * 37) % 300, if i % 3 == 0 { node(6 - d, i % 9) } else { node(d, i % 13) }]);
+        }
+        let old = InRel::moved(rel);
+        let mut gone = Rel::new("g", b"iiii");
+        for id in [3usize, 40, 41, 300] {
+            let r = old.row(id).to_vec();
+            gone.push(&r);
+        }
+        let rel = InRel::moved(Rel::based("t", b"iiii", &old, Some(&InRel::moved(gone))).expect("few dead"));
+        let names: Vec<String> = (0..4).map(|c| format!("c{c}")).collect();
+        let live = rel.live_rows().expect("flat");
+        let mut want = RelStats::paired(names.clone());
+        want.documents(&live, 4, 1);
+        let got = RelStats::from_postings(names, rel.rows() as i64, &mut |c, visit| rel.each_posting(c, visit)).expect("postings");
+        assert_eq!(got, want);
+        assert_eq!(got.statistics(&|_| true), want.statistics(&|_| true));
     }
 
     /// A maintained relation's delta from the relation it started as: the rows it marked dead, and those it added

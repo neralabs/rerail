@@ -474,18 +474,22 @@ pub(in crate::code_rule_dsl) fn run_over(
     let planned = chunks(documents, limits.chunk_bytes, program.file_local);
     let mut outcome = Outcome { chunks: planned.len(), ..Outcome::default() };
     let store = graph.store();
-    std::thread::scope(|threads| -> StoreResult<()> {
-        // A rendezvous: chunk k+1 is built while chunk k runs, and waits there until it is taken.
-        let (send, receive) = std::sync::mpsc::sync_channel::<Built>(0);
-        threads.spawn(move || {
-            for chunk in planned {
+    // Chunk k+1's sources are built as a job on the pool while chunk k runs; the run takes them once built (running
+    // the pool's jobs meanwhile), and starts chunk k+2's.
+    let next: parking_lot::Mutex<Option<Built>> = parking_lot::Mutex::new(None);
+    let mut planned = planned.into_iter();
+    crate::threads::scope(|jobs| -> StoreResult<()> {
+        let next = &next;
+        let start = |chunk: Vec<Document>| {
+            jobs.spawn(move |_| {
                 let built = sources(store, chunk.clone()).map(|s| (chunk, s));
-                if send.send(built).is_err() {
-                    break;
-                }
-            }
-        });
-        for built in receive {
+                *next.lock() = Some(built);
+            })
+        };
+        let mut started = planned.next().map(start).is_some();
+        while started {
+            let built = rerail_accel::exec::help_until(|| next.lock().take());
+            started = planned.next().map(start).is_some();
             let (docs, relations) = built?;
             fresh(graph, &docs)?;
             lease.execute_batch("DELETE FROM temp.wave_document")?;

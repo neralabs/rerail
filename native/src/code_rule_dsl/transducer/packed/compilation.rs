@@ -11,9 +11,8 @@
 
 use super::{Error, ExecutionBackend, Program, native_cpu};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::{LazyLock, Mutex};
-use std::thread::JoinHandle;
 
 /// A plan's identity (list step 16; 03 §3 "Interpreted, then JIT"): one digest of what a batch
 /// runs, whatever binds it. The interpreter and the compiled programs are two bindings of the same
@@ -58,7 +57,7 @@ enum Binding {
 
 #[derive(Default)]
 struct Requests {
-    running: BTreeMap<(Binding, PlanId), JoinHandle<()>>,
+    running: BTreeSet<(Binding, PlanId)>,
     ready: BTreeSet<(Binding, PlanId)>,
     failed: BTreeSet<(Binding, PlanId)>,
 }
@@ -70,19 +69,21 @@ fn ready(binding: Binding, plan: PlanId) -> bool {
     REQUESTS.lock().is_ok_and(|requests| requests.ready.contains(&(binding, plan)))
 }
 
-/// Starts `compile` on its own thread unless a request for (`binding`, `plan`) runs, finished or
-/// failed.
+/// Starts `compile` as a job on the pool unless a request for (`binding`, `plan`) runs, finished
+/// or failed.
 fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), Error> + Send + 'static) {
     let Ok(mut requests) = REQUESTS.lock() else { return };
     let key = (binding, plan);
-    requests.running.retain(|_, handle| !handle.is_finished());
-    if requests.running.contains_key(&key) || requests.ready.contains(&key) || requests.failed.contains(&key) {
+    if requests.running.contains(&key) || requests.ready.contains(&key) || requests.failed.contains(&key) {
         return;
     }
     crate::code_rule_dsl::prof::count("compilation.requests", 1);
-    let handle = std::thread::Builder::new().name("rerail-compile".to_owned()).spawn(move || {
-        let done = compile();
+    requests.running.insert(key);
+    rayon::spawn(move || {
+        // A panic is a failed compilation (a job's panic would end the process).
+        let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile)).unwrap_or(Err(Error::BackendFailure));
         if let Ok(mut requests) = REQUESTS.lock() {
+            requests.running.remove(&key);
             if done.is_ok() {
                 requests.ready.insert(key);
             } else {
@@ -90,9 +91,6 @@ fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), 
             }
         }
     });
-    if let Ok(handle) = handle {
-        requests.running.insert(key, handle);
-    }
 }
 
 /// The backend a batch of `programs` runs on, as `resolve_plan` under their own plan.
@@ -149,13 +147,7 @@ pub(super) fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[
 /// Waits for every running compilation (tests: the batch after it runs compiled).
 #[cfg(test)]
 pub(super) fn settle() {
-    let running = REQUESTS
-        .lock()
-        .map(|mut requests| std::mem::take(&mut requests.running))
-        .unwrap_or_default();
-    for (_, handle) in running {
-        let _ = handle.join();
-    }
+    rerail_accel::exec::help_until(|| REQUESTS.lock().map_or(true, |requests| requests.running.is_empty()).then_some(()));
 }
 
 #[cfg(test)]

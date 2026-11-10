@@ -101,7 +101,11 @@ fn gpu() -> Option<&'static Gpu> {
 
 /// This lane's backend, when this machine has a Metal device and the kernels compiled.
 pub fn backend() -> Option<Arc<dyn Backend>> {
-    gpu().map(|gpu| Arc::new(GpuBackend { gpu, space: Default::default() }) as Arc<dyn Backend>)
+    gpu().map(|gpu| {
+        // The joins' small path compiles in the background, so the first chunk's batch does not wait for it.
+        join::prewarm();
+        Arc::new(GpuBackend { gpu, space: Default::default() }) as Arc<dyn Backend>
+    })
 }
 
 /// The gpu lane.
@@ -161,7 +165,9 @@ impl Backend for GpuBackend {
                 off.len() as u64 == n + 1 && u32ok(n * words * 2) && fits(n * words * 8)
             }
             Kernel::Join { left, right, by, .. } => {
-                let Ok((nl, nr)) = Kernel::join_shape(left, right) else { return false };
+                let Ok((nl, nr)) = Kernel::join_shape(left, right) else {
+                    return false;
+                };
                 // The pairs' space (two a left row to start) and the columns at 64 bits.
                 let shape = fits(nl as u64 * 16) && fits(nr as u64 * 8) && (nl as u64) < (u32::MAX as u64) / 2;
                 shape && (*by == JoinBy::Probe || left.len() <= 3)
@@ -188,6 +194,17 @@ impl Backend for GpuBackend {
         Ok(outs.into_iter().map(|o| o.expect("every launch ran")).collect())
     }
 
+    /// A batch of joins only: its first command buffer committed, and read by `finish` (the worker begins its next
+    /// submission meanwhile). Any other batch runs as it begins.
+    fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn crate::exec::Pending + 'a>, String> {
+        if !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Join { .. })) {
+            let started = objc::rc::autoreleasepool(|| space::start(&self.space, ks))?;
+            return Ok(Box::new(started));
+        }
+        let outs = self.submit(ks);
+        Ok(Box::new(Done(outs)))
+    }
+
     fn forget(&self, id: u64) {
         if let Ok(mut s) = self.space.lock() {
             s.forget(id);
@@ -205,12 +222,27 @@ impl Backend for GpuBackend {
     }
 }
 
+impl crate::exec::Pending for space::Started {
+    fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
+        objc::rc::autoreleasepool(|| space::Started::finish(*self))
+    }
+}
+
+/// A submission that ran as it began.
+struct Done(Result<Vec<Output>, String>);
+
+impl crate::exec::Pending for Done {
+    fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
+        self.0
+    }
+}
+
 impl GpuBackend {
     /// Runs `ks` as one submission, with what it took on the device.
     pub fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Stats), String> {
         objc::rc::autoreleasepool(|| {
             let mut plan = Planner { gpu: self.gpu, inputs: HashMap::new(), leases: Default::default() };
-            let jobs: Vec<Job> = ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>()?;
+            let jobs: Vec<Job> = crate::score::phase("upload", || ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>())?;
             let mut stats = Stats::default();
             self.execute(jobs.iter().map(|j| j.stages.as_slice()), &mut stats)?;
             // Pairs that outgrew their first buffer: their scatter again, into the exact size.
@@ -237,6 +269,7 @@ impl GpuBackend {
                 let stage = [Stage { ds: rerun, writes: Vec::new() }];
                 self.execute(std::iter::once(&stage[..]), &mut stats)?;
             }
+            let _read = ReadPhase(crate::score::thread_cpu(), std::time::Instant::now());
             let mut outs = Vec::with_capacity(jobs.len());
             for (i, j) in jobs.into_iter().enumerate() {
                 if let Some(bad) = &j.bad {
@@ -264,6 +297,7 @@ impl GpuBackend {
     #[allow(unexpected_cfgs)] // `msg_send!` expands to a `cargo-clippy` cfg check.
     fn execute<'a>(&self, jobs: impl Iterator<Item = &'a [Stage]> + Clone, stats: &mut Stats) -> Result<(), String> {
         let gpu = self.gpu;
+        let (c0, t0) = (crate::score::thread_cpu(), std::time::Instant::now());
         let cb = gpu.queue.new_command_buffer();
         let enc = cb.compute_command_encoder_with_dispatch_type(MTLDispatchType::Concurrent);
         let depth = jobs.clone().map(|j| j.len()).max().unwrap_or(0);
@@ -294,8 +328,11 @@ impl GpuBackend {
             }
         }
         enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        crate::score::add("encode", crate::score::thread_cpu() - c0, t0.elapsed().as_secs_f64());
+        crate::score::phase("gpu commit", || cb.commit());
+        let committed = join::host_clock();
+        crate::score::phase("gpu wait", || cb.wait_until_completed());
+        join::add_timeline(cb, committed, join::host_clock());
         if cb.status() != metal::MTLCommandBufferStatus::Completed {
             return Err(format!("the command buffer ended {:?}", cb.status()));
         }
@@ -303,6 +340,15 @@ impl GpuBackend {
         stats.device += (end - start).max(0.0);
         stats.command_buffers += 1;
         Ok(())
+    }
+}
+
+/// The read phase of a run (`crate::score`), counted when it drops: the outputs copied from their buffers.
+struct ReadPhase(f64, std::time::Instant);
+
+impl Drop for ReadPhase {
+    fn drop(&mut self) {
+        crate::score::add("read", crate::score::thread_cpu() - self.0, self.1.elapsed().as_secs_f64());
     }
 }
 

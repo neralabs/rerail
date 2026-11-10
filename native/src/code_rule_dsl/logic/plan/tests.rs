@@ -25,6 +25,17 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[1]["result"],vec!["1\t99\t3\t17\t3\t7","2\t99\t1\t-2\t-2\t-2","4\t99\t3\t9223372036854775807\t-1\t9223372036854775807"]);
 }
 
+/// Whether this process numbers nodes in preorder, as T's facts and outputs do (`RERAIL_NODE_IDS=preorder`). The
+/// tests that compare with T run only then: under ids per definition (the default, decision 0094 §2a) a program that
+/// orders nodes reads `node_order`, which T's facts do not have, and outputs show ids as `slot.index`.
+fn t_numbering(test: &str) -> bool {
+    let preorder = !crate::code_rule_dsl::facts::vtab::syntax::definition_ids();
+    if !preorder {
+        eprintln!("{test}: skipped, T's facts number nodes in preorder; run with RERAIL_NODE_IDS=preorder");
+    }
+    preorder
+}
+
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
 }
@@ -55,6 +66,9 @@ fn chosen_line(c: &Chosen) -> String {
 /// On T's facts, the port chooses T's plans (anchor, walks, estimated work, rule for rule) and derives T's outputs.
 #[test]
 fn t_programs_plan_and_run_like_t() {
+    if !t_numbering("t_programs_plan_and_run_like_t") {
+        return;
+    }
     let facts = facts();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
@@ -90,6 +104,9 @@ fn t_programs_plan_and_run_like_t() {
 /// child process of this test, as T's `rdl.py` does.
 #[test]
 fn t_programs_run_natively_like_t() {
+    if !t_numbering("t_programs_run_natively_like_t") {
+        return;
+    }
     const CASE: &str = "RERAIL_RDL_NATIVE_CASE";
     if let Ok(case) = std::env::var(CASE) {
         let (modes, name) = case.split_once(' ').expect("modes and program");
@@ -195,6 +212,9 @@ fn outputs_match(name: &str, got: &Outcome, first: &HashMap<i64, i64>, failures:
 /// get T's plans and, decoded, T's outputs.
 #[test]
 fn t_programs_over_atoms_plan_and_run_like_t() {
+    if !t_numbering("t_programs_over_atoms_plan_and_run_like_t") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     let path = crate::code_rule_dsl::prefilter::tests::temp();
     let store = ContentStore::open(&path).unwrap();
@@ -245,6 +265,9 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
 /// the estimates and again from the counts the first run's boundary recorded.
 #[test]
 fn t_programs_as_wave_programs_give_run_atoms_outputs() {
+    if !t_numbering("t_programs_as_wave_programs_give_run_atoms_outputs") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::waves::{owner::Backing, schedule};
     use crate::content_store::Binding;
@@ -321,6 +344,9 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
 #[test]
 #[cfg_attr(debug_assertions, ignore = "O82: aborts in the metal crate on a debug build (`slice::from_raw_parts` precondition, metal-0.33.0 lib.rs:82)")]
 fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
+    if !t_numbering("t_programs_with_the_transducers_nearest_derive_t_outputs") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
     let t = Connection::open_in_memory().unwrap();
@@ -366,6 +392,9 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
 /// each component a mode runs in `logic::native` gives the rows T's pure SQL mode gives (the goldens).
 #[test]
 fn t_programs_run_natively_over_atoms_like_t() {
+    if !t_numbering("t_programs_run_natively_over_atoms_like_t") {
+        return;
+    }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
     let t = Connection::open_in_memory().unwrap();
@@ -477,6 +506,9 @@ fn product_programs_derive_t_outputs() {
 /// differ only in how they are written (`path:index` against T's global ids), so the own outputs are mapped to T's.
 #[test]
 fn own_ingestion_derives_what_t_facts_do() {
+    if !t_numbering("own_ingestion_derives_what_t_facts_do") {
+        return;
+    }
     use crate::code_rule_dsl::typing::file_local::Binding;
     let raw = zstd::decode_all(std::fs::File::open(root().join("../facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
     let corpus: Vec<(String, String)> = serde_json::from_slice(&raw).unwrap();
@@ -726,4 +758,41 @@ captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
     let result = result.unwrap();
     assert_eq!(result.outputs["captured"].len(), 1000);
     assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
+}
+
+/// A delta probe of a recursive component prices a lookup by the share of the binding's values the column holds
+/// (containment): `fbind`'s shape, where `fcall` by `$a` (a few hundred rows, few distinct `$a`) is probed by
+/// `pv`'s many `$a`. Priced as if every probe hit, `fcall` looked dearer than `tfix` by `$k`, and the plan read
+/// `tfix` and `fgp` first (19 M rows of work for 220 in calls_cx).
+#[test]
+fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
+    let p = parse(
+        ".decl pv(a:number, k:number, v:number)\n.decl fcall(c:number, f:number, i:number, a:number)\n.decl tfix(k:number, ka:number, w:number, x:number)\n\
+         .decl fgp(f:number, i:number, ka:number, w:number, y:number)\n.decl fbind(c:number, f:number, y:number, x:number)\n\
+         fbind(c, f, y, x) :- fcall(c, f, i, a), fgp(f, i, ka, w, y), pv(a, 1, k), tfix(k, ka, w, x).\n.output fbind\n",
+    )
+    .unwrap();
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut model = Model { analysis: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+    model.stats.nodes = 450_000.0;
+    // Live counts, as a wave leaves them: rows, then distinct values by column.
+    for (rel, rows, ndv) in [
+        ("pv", 400_000.0, vec![300_000.0, 3.0, 5_000.0]),
+        ("fcall", 400.0, vec![400.0, 50.0, 5.0, 100.0]),
+        ("tfix", 550.0, vec![350.0, 50.0, 10.0, 300.0]),
+        ("fgp", 100.0, vec![50.0, 5.0, 50.0, 10.0, 20.0]),
+        ("fbind", 1.0, vec![1.0; 4]),
+    ] {
+        model.stats.card.insert(rel.to_owned(), rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    model.stats.solve(["pv", "fcall", "tfix", "fgp", "fbind"].into_iter().map(str::to_owned).collect());
+    let r = &p.rules[0];
+    let ((order, _, _), _) = model.plan_rule_explained(&p, &r.head, &r.body, Some(2)).unwrap();
+    let order: Vec<&str> = order.iter().filter_map(|s| s.lit.atom()).map(|a| a.rel.as_str()).collect();
+    assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }

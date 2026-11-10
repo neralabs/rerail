@@ -33,7 +33,6 @@ use napi::{Error, Result, Status, bindgen_prelude::Float32Array};
 use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
-use std::sync::LazyLock;
 
 // jemalloc does not build for MSVC targets; Windows keeps the system allocator.
 #[cfg(not(any(windows, target_family = "wasm")))]
@@ -66,8 +65,10 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
-    // And, as the addon loads, before any pool is made: the most threads the process uses (`RERAIL_THREADS`).
-    threads::configure();
+    // And, as the library loads (before `main` in the engine's binary, as Node loads the addon), before any pool
+    // is made: the one pool, of the most threads the process uses (`RERAIL_THREADS`), the process's main thread
+    // one of them when it is the one loading.
+    threads::configure(threads::is_main_thread());
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // SAFETY: jemalloc's malloc accepts any size.
@@ -105,15 +106,6 @@ fn install_tree_sitter_allocator() {
         }));
     }
 }
-
-pub(crate) const WORKER_THREADS: usize = 4;
-pub(crate) static WORK_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(WORKER_THREADS.min(threads::max()))
-        .thread_name(|index| format!("rerail-worker-{index}"))
-        .build()
-        .expect("build Rerail worker pool")
-});
 
 #[napi(object)]
 pub struct Health {
@@ -225,7 +217,7 @@ pub fn native_memory_profile() -> String {
     serde_json::json!({
         "allocator": allocator,
         "workerPool": {
-            "threads": WORKER_THREADS.min(threads::max()),
+            "threads": threads::max(),
         },
     })
     .to_string()

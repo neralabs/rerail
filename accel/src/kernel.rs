@@ -95,8 +95,9 @@ pub enum Kernel {
     Join { left: Keys, right: Keys, right_id: Option<u64>, by: JoinBy },
 }
 
-/// A relation's key columns, one per key, of equal length.
-pub type Keys = Arc<[Arc<[i64]>]>;
+/// A relation's key columns, one per key, of equal length: each the host's, or staged (written after the launch
+/// was begun, [`crate::col`]).
+pub type Keys = Arc<[crate::col::Col]>;
 
 /// How a join's pairs are found on a device (decision 0095 §4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -198,7 +199,10 @@ impl Form {
 }
 
 /// A kernel's result.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Two outputs are equal when they hold the same values: pairs read in place ([`Output::View`]) equal the same
+/// pairs copied ([`Output::Pairs`]).
+#[derive(Clone, Debug)]
 pub enum Output {
     /// A matrix of counts, row-major.
     Counts { rows: usize, cols: usize, data: Vec<u32> },
@@ -206,6 +210,148 @@ pub enum Output {
     PerRow(Vec<u32>),
     /// Pairs of row indexes, in the order the kernel defines.
     Pairs(Vec<(u32, u32)>),
+    /// The same, read in place in a device's buffer: no copy.
+    View(PairView),
     /// Rows of bits.
     Bits(Bits),
+}
+
+impl Output {
+    /// The pairs of a join or a pair-emitting kernel, owned or in place.
+    pub fn into_pairs(self) -> Option<Pairs> {
+        match self {
+            Output::Pairs(p) => Some(Pairs::Owned(p)),
+            Output::View(v) => Some(Pairs::View(v)),
+            _ => None,
+        }
+    }
+
+    /// The pairs, copied (tests, reports).
+    pub fn pairs(&self) -> Option<Vec<(u32, u32)>> {
+        match self {
+            Output::Pairs(p) => Some(p.clone()),
+            Output::View(v) => Some(v.iter().collect()),
+            _ => None,
+        }
+    }
+}
+
+impl PartialEq for Output {
+    fn eq(&self, other: &Output) -> bool {
+        match (self, other) {
+            (Output::Counts { rows: a, cols: b, data: c }, Output::Counts { rows: x, cols: y, data: z }) => a == x && b == y && c == z,
+            (Output::PerRow(a), Output::PerRow(b)) => a == b,
+            (Output::Bits(a), Output::Bits(b)) => a == b,
+            (Output::Pairs(a), Output::Pairs(b)) => a == b,
+            (Output::Pairs(_) | Output::View(_), Output::Pairs(_) | Output::View(_)) => {
+                let (a, b) = (self.clone().into_pairs().expect("pairs"), other.clone().into_pairs().expect("pairs"));
+                a.len() == b.len() && a.iter().eq(b.iter())
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Output {}
+
+/// Pairs read in place: segments of a device's buffer, in order, the buffer kept as long as the view (decision
+/// 0100 §9). A probe's pairs are its threadgroups' blocks of the batch's arena, block by block in left row order.
+#[derive(Clone)]
+pub struct PairView {
+    /// What keeps the memory: the buffer's lease.
+    _keep: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    base: *const [u32; 2],
+    /// (first pair, pairs) of each segment.
+    segs: std::sync::Arc<[(u32, u32)]>,
+    len: usize,
+}
+
+// SAFETY: the memory is the kept buffer's, written by the device before the view was made and only read after.
+unsafe impl Send for PairView {}
+unsafe impl Sync for PairView {}
+
+impl PairView {
+    /// A view of `segs` of the pairs at `base`, whose memory `keep` holds.
+    ///
+    /// # Safety
+    /// Every segment is inside the memory `keep` holds, written and not written again while the view lives.
+    pub unsafe fn new(keep: std::sync::Arc<dyn std::any::Any + Send + Sync>, base: *const [u32; 2], segs: Vec<(u32, u32)>) -> PairView {
+        let len = segs.iter().map(|&(_, n)| n as usize).sum();
+        PairView { _keep: keep, base, segs: segs.into(), len }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The segments, as slices.
+    pub fn segments(&self) -> impl Iterator<Item = &[[u32; 2]]> + '_ {
+        // SAFETY: each segment is inside the kept memory (`new`'s contract).
+        self.segs.iter().map(|&(at, n)| unsafe { std::slice::from_raw_parts(self.base.add(at as usize), n as usize) })
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.segments().flatten().map(|p| (p[0], p[1]))
+    }
+}
+
+impl std::fmt::Debug for PairView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+/// A join's pairs: owned, or read in place.
+#[derive(Clone, Debug)]
+pub enum Pairs {
+    Owned(Vec<(u32, u32)>),
+    View(PairView),
+}
+
+impl Pairs {
+    pub fn len(&self) -> usize {
+        match self {
+            Pairs::Owned(v) => v.len(),
+            Pairs::View(v) => v.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn iter(&self) -> PairsIter<'_> {
+        match self {
+            Pairs::Owned(v) => PairsIter { cur: &[], owned: v.iter(), segs: None },
+            Pairs::View(v) => PairsIter { cur: &[], owned: [].iter(), segs: Some(Box::new(v.segments())) },
+        }
+    }
+}
+
+/// The pairs of [`Pairs::iter`], in order.
+pub struct PairsIter<'a> {
+    owned: std::slice::Iter<'a, (u32, u32)>,
+    cur: &'a [[u32; 2]],
+    segs: Option<Box<dyn Iterator<Item = &'a [[u32; 2]]> + 'a>>,
+}
+
+impl Iterator for PairsIter<'_> {
+    type Item = (u32, u32);
+    #[inline]
+    fn next(&mut self) -> Option<(u32, u32)> {
+        if let Some(&p) = self.owned.next() {
+            return Some(p);
+        }
+        loop {
+            if let Some((p, rest)) = self.cur.split_first() {
+                self.cur = rest;
+                return Some((p[0], p[1]));
+            }
+            self.cur = self.segs.as_mut()?.next()?;
+        }
+    }
 }

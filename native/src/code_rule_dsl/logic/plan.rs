@@ -540,8 +540,8 @@ pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
 
-/// A survivors rule of a maintained stratum, `h(v..) :- h__old(v..), !h__del(v..)` (decision 0077's rewrite), over
-/// native relations: the kept relation and the deleted one.
+/// A survivors rule of a maintained stratum, `h(v..) :- h__old(v..), !h__del(v..)` (decision 0077's rewrite): the
+/// kept relation native, the deleted one of a lower stratum.
 /// Under decision 0090's levels the rows gone are `h__gone`'s, decided in level order, not `h__del`'s.
 /// A levels stratum's kept rows to check against, `h__live(v..) :- h__old(v..), !h__gone(v..)` with the negation
 /// gated (it only places `h__live` in the stratum): `(h__old, "-")`, the kept relation with no row gone.
@@ -557,10 +557,11 @@ fn survivors(r: &Rule, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -
         let (old, gone) = (format!("{base}__old"), format!("{base}__gone"));
         return (b.gated && a.rel == old && b.rel == gone && native_rels.contains(&old)).then(|| (old, "-".to_owned()));
     }
+    // The kept relation is native, read in place; the deleted one is of a lower stratum, native or a table.
     let old = format!("{h}__old");
     [format!("{h}__del"), format!("{h}__gone")]
         .into_iter()
-        .find(|gone| a.rel == old && &b.rel == gone && native_rels.contains(&old) && native_rels.contains(gone))
+        .find(|gone| a.rel == old && &b.rel == gone && native_rels.contains(&old) && !scc.contains(gone))
         .map(|gone| (old, gone))
 }
 
@@ -1076,6 +1077,33 @@ impl Model {
                 if c != first {
                     rows /= self.ndv_or_1(&a.rel, c);
                 }
+            }
+            // A relation of the component being solved, probed by a value an earlier step bound: a column's fanout
+            // is the rows per value it holds (`fan`), so a probe is priced as if it always hits. Most do not where
+            // the binding ranges over more values than the column holds: `fbind`'s `fcall($c, $f, $i, $a)` by `$a`,
+            // 399 rows, probed by `pv($a, "inst", $k)`'s 280,000, was priced at a row a probe and planned after
+            // `tfix` by `$k` (19 M rows of work for 220). The probes that hit are the column's share of the binding's
+            // values (containment): its distinct values over the binding's, where both are measured (live counts),
+            // the binding's by the fewest distinct values of an atom of bound variables that holds it.
+            if stats.solving.contains(&a.rel) {
+                let mut hit = 1.0f64;
+                for &c in &cols {
+                    let Term::Var(v) = &a.args[c] else { continue };
+                    let Some(&here) = self.ndv.get(&(a.rel.clone(), c)) else { continue };
+                    let from = body
+                        .iter()
+                        .filter_map(|l| match l {
+                            Literal::Atom(b) if !b.neg && !std::ptr::eq(b, a) && b.vars().iter().all(|x| bound.contains(x)) => {
+                                b.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).and_then(|c2| self.ndv.get(&(b.rel.clone(), c2)).copied())
+                            }
+                            _ => None,
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    if from.is_finite() && from > here.max(1.0) {
+                        hit = hit.min(here.max(1.0) / from);
+                    }
+                }
+                rows *= hit;
             }
             // Every column bound: a membership test, at most one row of a set.
             if cols.len() == a.args.len() && !prog.lattice.contains_key(&a.rel) {
@@ -1797,6 +1825,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "rx_span" => &[&["c"], &["m"]],
         "ast_match" => &[&["n"], &["c"]],
         "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],
+        "node_order" => &[&["n"], &["k"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
         "next_sibling" => &[&["a"], &["b"]],
@@ -5043,12 +5072,22 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             // The level's first joins (decision 0100 §5, §6): every seed join of its strata that reads only
             // relations already held, sent to the executor as one batch while the level's strata run.
             let native_ones: Vec<usize> = level.iter().copied().filter(|&j| !sccs[j].iter().all(|r| run.views.contains(r))).collect();
-            let specs: Vec<Arc<JoinSpec>> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
+            let mut specs: Vec<Arc<JoinSpec>> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
+            // Chained (decision 0100 §11): the next level's seed joins whose relations are already held go in this
+            // batch too, so their launch and its latency run under this level's strata, not before the next's.
+            // `seed_specs` keeps only those whose every atom is a relation run natively so far.
+            let own = specs.len();
+            if let Some(next) = (at..sccs.len()).map(|j| level_of[j]).filter(|&l| l > level_of[at]).min() {
+                let later: Vec<usize> = (at..sccs.len()).filter(|&j| level_of[j] == next && !waved[j] && !sccs[j].iter().all(|r| run.views.contains(r))).collect();
+                specs.extend(later.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])));
+            }
             if !specs.is_empty() {
                 let _wave = super::profile::span(|| "level wave (joins)".into());
                 let sent = super::native::component::prefetch_joins(db, &specs)?;
                 if sent > 0 {
-                    super::profile::decision("level joins (decision 0100 §5)", || format!("a level of {} strata: {sent} of {} seed joins sent as one batch", level.len(), specs.len()));
+                    super::profile::decision("level joins (decision 0100 §5)", || {
+                        format!("a level of {} strata: {sent} of {} seed joins sent as one batch ({} of them the next level's, chained)", level.len(), specs.len(), specs.len() - own)
+                    });
                 }
             }
         }
@@ -5161,8 +5200,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
-    // The chunk's end: pairs no seed took, and what the lanes kept for the chunk's joins.
+    // The chunk's end: pairs no seed took, and what the lanes kept for the chunk's joins; the executor's scoreboard
+    // so far, to its trace (`RERAIL_SCOREBOARD`).
     super::native::component::level_clear();
+    super::lanes::executor().note("a chunk's end");
     if let Some(path) = level_trace() {
         use std::io::Write as _;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
