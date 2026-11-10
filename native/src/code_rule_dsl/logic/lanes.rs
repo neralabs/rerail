@@ -43,6 +43,12 @@ pub(in crate::code_rule_dsl) fn executor() -> &'static Executor {
     if super::plan::placement::device() { &ALL } else { &CPU }
 }
 
+/// The executor of a binding: every lane under the device binding (`device`), the cores' (and SME's) otherwise. For
+/// a job on another thread than the run's (whose binding is the run's thread's, [`executor`]).
+pub(in crate::code_rule_dsl) fn executor_for(device: bool) -> &'static Executor {
+    if device { &ALL } else { &CPU }
+}
+
 /// Each executor made so far, by binding, and its scoreboard: for the profile.
 pub(in crate::code_rule_dsl) fn scores() -> Vec<(&'static str, rerail_accel::score::Score)> {
     let mut out = Vec::new();

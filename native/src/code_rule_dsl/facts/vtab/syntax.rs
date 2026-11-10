@@ -935,7 +935,7 @@ impl Batch {
                     use crate::code_rule_dsl::logic::front::SpanIn;
                     let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
                     let prefilter = match within {
-                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::compile(re, *within == SpanIn::Line),
+                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::compile(re, *within == SpanIn::Line).map(Arc::new),
                         _ => None,
                     };
                     regex::Regex::new(re).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
@@ -946,24 +946,27 @@ impl Batch {
         };
         // The AST patterns, compiled once per grammar; one a grammar does not parse matches nothing there.
         let mut ast_patterns: HashMap<u8, Vec<(&str, ast_grep_core::matcher::Pattern)>> = HashMap::new();
-        // Every prefiltered pattern's marks over every file, in one batch of block programs (decision 0081 §3): on Metal
-        // under the device binding, the CPU interpreter otherwise. `span_ends[doc][pattern]`.
+        // Every prefiltered pattern's marks over every file, in one batch of block programs (decision 0081 §3): one
+        // launch of the executor (decision 0100 §13), on the cores or, under the device binding, the GPU, as its price
+        // places it. `span_ends[doc][pattern]`.
         let span_ends: Vec<Vec<Option<Vec<u64>>>> = {
-            use crate::code_rule_dsl::transducer::packed::regex_block::{RanOn, SpanPrefilter, ends_batch};
-            let filters: Vec<(usize, &SpanPrefilter)> = rx_spans.iter().enumerate().filter_map(|(i, (_, _, _, f))| f.as_ref().map(|f| (i, f))).collect();
+            use crate::code_rule_dsl::transducer::packed::regex_block::{RanOn, SpanPrefilter, ends_launch};
+            let filters: Vec<(usize, &Arc<SpanPrefilter>)> = rx_spans.iter().enumerate().filter_map(|(i, (_, _, _, f))| f.as_ref().map(|f| (i, f))).collect();
             let mut out: Vec<Vec<Option<Vec<u64>>>> = vec![vec![None; rx_spans.len()]; documents.len()];
             if !filters.is_empty() {
                 let mut at = Vec::new();
-                let mut files: Vec<(&[u8], usize)> = Vec::new();
+                let mut sources: Vec<Arc<String>> = Vec::new();
+                let mut files: Vec<(usize, usize)> = Vec::new();
                 for (j, d) in documents.iter().enumerate().filter(|(_, d)| d.guest.is_none()) {
+                    sources.push(Arc::clone(&d.facts.source));
                     for (f, _) in filters.iter().enumerate() {
                         at.push((j, filters[f].0));
-                        files.push((d.facts.source.as_bytes(), f));
+                        files.push((sources.len() - 1, f));
                     }
                 }
                 let _span = crate::code_rule_dsl::logic::profile::span(|| "span prefilter".into());
-                let programs: Vec<&SpanPrefilter> = filters.iter().map(|(_, f)| *f).collect();
-                let (ends, ran) = ends_batch(&programs, &files, metal);
+                let programs: Vec<Arc<SpanPrefilter>> = filters.iter().map(|(_, f)| Arc::clone(f)).collect();
+                let (ends, ran) = ends_launch(crate::code_rule_dsl::logic::lanes::executor_for(metal), &programs, &sources, &files, metal).map_err(StoreError::Invalid)?;
                 crate::code_rule_dsl::logic::profile::decision("span prefilter", || match ran {
                     RanOn::Metal => "metal".into(),
                     RanOn::Cpu => "cpu".into(),

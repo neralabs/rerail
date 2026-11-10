@@ -81,7 +81,7 @@ fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), 
     requests.running.insert(key);
     rayon::spawn(move || {
         // A panic is a failed compilation (a job's panic would end the process).
-        let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile)).unwrap_or(Err(Error::BackendFailure));
+        let done = rerail_accel::exec::as_job("a compilation", || std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile))).unwrap_or(Err(Error::BackendFailure));
         if let Ok(mut requests) = REQUESTS.lock() {
             requests.running.remove(&key);
             if done.is_ok() {

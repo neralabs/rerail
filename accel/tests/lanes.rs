@@ -477,3 +477,62 @@ fn a_device_begins_its_next_submission_before_it_reads_the_last() {
     let kinds: Vec<&str> = log.iter().map(|e| e.0).collect();
     assert_eq!(kinds, ["start", "start", "end", "end"], "the second began while the first was in flight");
 }
+
+/// A program of the caller's (`Kernel::Program`): its result says which lane's form ran it.
+struct Where {
+    units: f64,
+    cpu: Option<f64>,
+    gpu: Option<f64>,
+}
+
+impl rerail_accel::kernel::Program for Where {
+    fn name(&self) -> &'static str {
+        "a test's program"
+    }
+    fn units(&self) -> f64 {
+        self.units
+    }
+    fn per_unit(&self, lane: Lane) -> Option<f64> {
+        match lane {
+            Lane::Cpu => self.cpu,
+            Lane::Gpu => self.gpu,
+            _ => None,
+        }
+    }
+    fn run(&self, lane: Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
+        Ok(Arc::new(lane))
+    }
+}
+
+fn program(units: f64, cpu: Option<f64>, gpu: Option<f64>) -> Kernel {
+    Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(Where { units, cpu, gpu })))
+}
+
+fn ran_on(out: &rerail_accel::kernel::Output) -> Lane {
+    let rerail_accel::kernel::Output::Program(r) = out else { panic!("not a program's result: {out:?}") };
+    *r.0.downcast_ref::<Lane>().expect("the test's program returns its lane")
+}
+
+/// Programs are launches like the others: placed by their own prices, run by the lane they were placed on, each
+/// lane's form returning its result, and scored.
+#[test]
+fn a_program_is_placed_by_its_own_prices_and_runs_the_lanes_form() {
+    let ex = Executor::new();
+    let gpu = ex.lanes().contains(&Lane::Gpu);
+    // Only a cores' form; only a device's (where there is one); both, the device's far cheaper on a large one.
+    let mut ks = vec![program(1e3, Some(1e-9), None)];
+    if gpu {
+        ks.push(program(1e3, None, Some(1e-9)));
+        ks.push(program(1e9, Some(1e-8), Some(1e-12)));
+    }
+    let (done, _) = ex.run(Batch(ks.into_iter().map(Launch::new).collect())).unwrap();
+    for d in &done {
+        assert_eq!(ran_on(&d.out), d.lane, "its result is the form of the lane it ran on");
+    }
+    assert_eq!(done[0].lane, Lane::Cpu);
+    if gpu {
+        assert_eq!(done[1].lane, Lane::Gpu, "a program with only a device's form runs there");
+        assert_eq!(done[2].lane, Lane::Gpu, "and one far cheaper there goes there");
+    }
+    assert!(format!("{}", ex.score()).contains("program"), "{}", ex.score());
+}

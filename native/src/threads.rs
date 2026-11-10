@@ -47,10 +47,13 @@ pub(crate) struct Jobs<'s, 'r>(
 );
 
 impl<'s> Jobs<'s, '_> {
-    /// Starts `f` as a job on the pool (wasm32 has no threads: it runs here).
-    pub(crate) fn spawn(&self, f: impl for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's) {
+    /// Starts `f` as the job `name` on the pool (wasm32 has no threads: it runs here). A wait that runs it for
+    /// another knows it by its name (`rerail_accel::exec::waits`).
+    pub(crate) fn spawn(&self, name: &'static str, f: impl for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's) {
         #[cfg(not(target_family = "wasm"))]
-        self.0.spawn(move |s| f(&Jobs(s)));
+        self.0.spawn(move |s| rerail_accel::exec::as_job(name, || f(&Jobs(s))));
+        #[cfg(target_family = "wasm")]
+        let _ = name;
         #[cfg(target_family = "wasm")]
         f(self);
     }
@@ -74,16 +77,17 @@ pub(crate) fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
 /// no other job until it has started ([`Beside::wait_for`]); with one thread (or none), on a thread of its own: one
 /// thread cannot hold both stacks.
 pub(crate) struct Beside<T> {
+    name: &'static str,
     slot: std::sync::Arc<(parking_lot::Mutex<Option<std::thread::Result<T>>>, std::sync::atomic::AtomicBool)>,
 }
 
 /// Starts `f` beside the caller ([`Beside`]).
-pub(crate) fn beside<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
+pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
     let held = std::sync::Arc::clone(&slot);
     let run = move || {
         held.1.store(true, std::sync::atomic::Ordering::Release);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
         *held.0.lock() = Some(r);
     };
     if cfg!(not(target_family = "wasm")) && max() >= 2 {
@@ -91,13 +95,13 @@ pub(crate) fn beside<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) 
     } else {
         std::thread::spawn(run);
     }
-    Beside { slot }
+    Beside { name, slot }
 }
 
 impl<T> Beside<T> {
-    /// Waits until `poll` gives a value. Once the job has started, the wait runs the pool's other jobs; before, it
-    /// only sleeps (a little more each time, to 1 ms), so it never takes the job itself.
-    pub(crate) fn wait_for<V>(&self, mut poll: impl FnMut() -> Option<V>) -> V {
+    /// Waits until `poll` gives a value, the wait recorded under `site`. Once the job has started, the wait runs the
+    /// pool's other jobs; before, it only sleeps (a little more each time, to 1 ms), so it never takes the job itself.
+    pub(crate) fn wait_for<V>(&self, site: &'static str, mut poll: impl FnMut() -> Option<V>) -> V {
         let mut nap = 20e-6f64;
         while !self.slot.1.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(v) = poll() {
@@ -106,12 +110,12 @@ impl<T> Beside<T> {
             std::thread::sleep(std::time::Duration::from_secs_f64(nap));
             nap = (nap * 2.0).min(1e-3);
         }
-        rerail_accel::exec::help_until(poll)
+        rerail_accel::exec::help_until_as(site, poll)
     }
 
     /// Its result, once it ends (a panic as `Err`).
     pub(crate) fn join(self) -> std::thread::Result<T> {
-        self.wait_for(|| self.slot.0.lock().take())
+        self.wait_for(self.name, || self.slot.0.lock().take())
     }
 }
 
@@ -129,9 +133,9 @@ mod tests {
         let n = std::sync::atomic::AtomicUsize::new(0);
         super::scope(|jobs| {
             for _ in 0..8 {
-                jobs.spawn(|jobs| {
+                jobs.spawn("a test's job", |jobs| {
                     n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    jobs.spawn(|_| {
+                    jobs.spawn("a test's job", |_| {
                         n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     });
                 });
@@ -146,7 +150,7 @@ mod tests {
     fn a_job_beside_its_caller_takes_turns_with_it() {
         let (ask, asked) = std::sync::mpsc::channel::<u32>();
         let (answer, answered) = std::sync::mpsc::channel::<u32>();
-        let job = super::beside(move || {
+        let job = super::beside("a test's turns", move || {
             let mut sum = 0;
             for i in 0..20 {
                 ask.send(i).unwrap();
@@ -154,7 +158,7 @@ mod tests {
             }
             sum
         });
-        while let Some(i) = job.wait_for(|| match asked.try_recv() {
+        while let Some(i) = job.wait_for("a test's caller", || match asked.try_recv() {
             Ok(i) => Some(Some(i)),
             Err(std::sync::mpsc::TryRecvError::Empty) => None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
