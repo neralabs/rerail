@@ -835,7 +835,8 @@ describe("Rerail daemon", () => {
     await mkdir(stateFile);
     const close = vi.spyOn(NativeSessionServer.prototype, "close").mockRejectedValueOnce(new Error("close failed"));
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    await expect(start({ stateFile })).rejects.toThrow(/EISDIR|illegal operation on a directory/u);
+    // Windows refuses to rename the state file over a folder with EPERM; elsewhere the rename fails with EISDIR.
+    await expect(start({ stateFile })).rejects.toThrow(/EISDIR|EPERM|illegal operation on a directory/u);
     expect(close).toHaveBeenCalledTimes(1);
     expect(existsSync(defaultEngineSocketPath(databasePath))).toBe(false);
     // Review of #49 (N5): the failed close is on record.

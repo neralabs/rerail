@@ -64,14 +64,14 @@ async function workspace(git: boolean, codeRules: readonly CodeRule[], tree: Rea
     workspaceRoot: root, steerDelivery: { requestSteer: vi.fn(async () => undefined) }, audits: recorder,
     scope: "ai-output", timingLog: line => lines.push(line),
   });
-  /** One log-only audit: its status, the sorted paths it reports, and its failures. */
+  /** One log-only audit: its status, the sorted paths it reports, and its sorted failures, which finish in no set order. */
   const audit = async (scope: "repository" | "touched-files", paths?: string[]) => {
     const [auditId] = await enforcer.audit("unlisted", { scope, mode: "log", ...(paths === undefined ? {} : { paths }) });
     const result = audits.get(auditId!)?.result;
     return {
       status: result?.status,
       paths: (result?.violations ?? []).map(violation => violation.path).toSorted(),
-      failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`),
+      failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`).toSorted(),
     };
   };
   return { root, enforcer, audit, lines };

@@ -357,7 +357,8 @@ describe("gitCandidates", () => {
     }
   });
 
-  it("still lists PATH and the install locations from a working folder that was deleted", async () => {
+  it("still lists PATH and the install locations from a working folder that was deleted", async ({ skip }) => {
+    skip(process.platform === "win32", "Windows keeps a process's working folder open, so it cannot be deleted under the process");
     const gone = await mkdtemp(join(tmpdir(), "rerail-git-gone-"));
     const before = process.cwd();
     process.chdir(gone);
