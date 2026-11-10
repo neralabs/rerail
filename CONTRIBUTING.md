@@ -189,6 +189,7 @@ npm run package:check     # build and dry-run the npm pack
 The pack tests also need the pack test data: run `npm run fixtures:pull` ([Pack test data](#pack-test-data)).
 
 `npm run build:native` needs `cargo` on `PATH`; after a fresh rustup install, `export PATH="$HOME/.cargo/bin:$PATH"`.
+On Windows, see [Developing on Windows](#developing-on-windows).
 
 ### Each component
 
@@ -285,6 +286,103 @@ The command prints one JSON evidence record per harness attempt (`status` `PASSE
 exits nonzero for any missing prerequisite or failed assertion. It leaves your daemon and harness profiles alone, and
 removes its profiles and workspaces after each run. When an attempt counts as inconclusive, and how each harness is set
 up, is in `scripts/host/host-smoke.ts` and `scripts/host/host-harness.ts`.
+
+### Developing on Windows
+
+Pull request CI runs on Linux and macOS only. Test a change to how Rerail starts processes, resolves paths, replaces
+files or writes commands on Windows yourself, and keep to the rules in [docs/windows.md](docs/windows.md).
+
+**Git, Git LFS and line endings.** Git for Windows includes Git LFS; run `git lfs install` once before you clone. Its
+installer sets `core.autocrlf=true` for the whole machine, which checks text files out with CRLF line breaks.
+`.gitattributes` sets `* text=auto eol=lf`, so a checkout writes LF whatever that setting says, and marks
+`model/config.json` and `model/tokenizer.json` `-text`, so they keep their bytes: `model/manifest.json` pins their
+SHA-256, and a CRLF copy made every hook of a checkout build fail, so nothing was recorded. A checkout made before the
+`eol=lf` line keeps its CRLF files until Git writes them again. Commit or stash your work, then have Git write every
+tracked file again:
+
+```sh
+git rm -r --cached -q . && git reset --hard
+```
+
+> TODO(lane D): confirm `.gitattributes` holds `* text=auto eol=lf` after the merge; at the base of this section only
+> the two model files are `-text`.
+
+**Node and the native engine.** Install Node.js 24 or newer. `npm run build:native` compiles with Microsoft's C++
+toolchain, so install the Visual Studio Build Tools with the C++ workload, and rustup:
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+winget install --id Rustlang.Rustup -e
+```
+
+Then open a new terminal so `%USERPROFILE%\.cargo\bin` is on `PATH`; a terminal inside VS Code or Cursor keeps the
+editor's `PATH` until the editor restarts. rustup's default host on Windows is the MSVC one, and `rust-toolchain.toml`
+picks the toolchain. `.cargo/config.toml` links the C runtime into the engine (`+crt-static`), so it loads on a
+machine with no Visual C++ runtime. The first build writes `native/rerail_engine.win32-<arch>-msvc.node`; it took 23
+minutes on a Windows 11 laptop. Install rustup this way before you run `just rerail-native`, which then only installs
+the pinned toolchain and builds. Run `just` recipes from Git Bash: `just` runs each recipe with `sh`, which Git for
+Windows puts on `PATH` there.
+
+**Tests and your profile.** The vitest setup file (`test/support/setup-rerail-home.ts`) gives every test file its own
+user home, Rerail home and content store. It sets both `HOME` and `USERPROFILE`, since `os.homedir()` reads
+`USERPROFILE` on Windows, and copies your global `.gitconfig` there, so Git keeps your `safe.directory` and line-ending
+settings. A test that moves the home calls `stubUserHome` (`test/support/user-home.ts`), never `vi.stubEnv("HOME")`
+alone: on Windows that leaves `os.homedir()` on your real profile, and a registration test once pointed every hook in a
+developer's `~/.claude/settings.json` at a temp folder the run then deleted, so their machine recorded nothing. The
+setup file fails a test file that writes a temp path into your real coding agent settings, naming each file;
+`rerail install --refresh` restores them.
+
+Never run a probe script or a built CLI against your real profile either. Outside vitest, move the home in the shell
+first, as vitest does (Git Bash), and remove `$T` afterwards:
+
+```sh
+T=$(cygpath -w "$(mktemp -d)")
+export HOME="$T" USERPROFILE="$T" APPDATA="$T\\AppData\\Roaming" LOCALAPPDATA="$T\\AppData\\Local"
+export RERAIL_AUTOSTART=0 RERAIL_MODIFY_PATH=0 RERAIL_DEVICE_SECRET_STORE=file
+```
+
+`RERAIL_MODIFY_PATH=0` keeps set-up out of your user `Path`, which lives in the registry, where no environment variable
+redirects it. `RERAIL_DEVICE_SECRET_STORE=file` keeps activation out of Windows Credential Manager.
+
+**Symlinks.** Windows makes a symlink only with Developer Mode on or from an elevated process. Rerail itself never
+makes one there ([docs/windows.md, "Links"](docs/windows.md#links)), so run the suite without Developer Mode, as most
+users' machines are: a test that needs a symlink skips and says why, or makes a junction where a junction tests the
+same thing.
+
+> TODO(lane E): name the test helper that skips or makes a junction, and the suite's state on Windows after the merge.
+
+**PowerShell scripts.** `scripts/host/windows-install-smoke.ps1`, the release gate on Windows, runs under PowerShell 7
+in `release.yml`. It dot-sources `scripts/host/windows-host.ps1`, which the environment matrix's Windows VMs also run
+under Windows PowerShell 5.1, so keep that file working in both. Install PowerShell 7 with
+`winget install --id Microsoft.PowerShell -e`, then run the smoke on a package you packed:
+
+```sh
+npm run build && npm pack
+pwsh -NoProfile -File scripts/host/windows-install-smoke.ps1 -Tarball neralabs-rerail-<version>.tgz
+```
+
+Delete the tarball afterwards; git does not ignore it. The smoke installs into a sandbox profile whose folder name has
+an accent and a space. It puts back your user `Path`, which set-up writes and the sandbox cannot redirect, and reads
+every child's output as UTF-8, so it passes on a console whose code page is 437, an en-US install's default.
+
+> TODO(lane D): confirm both fixes landed. If either did not, say instead to save the user `Path` before a run, and
+> that the smoke fails at its `no-repo` step on code page 437.
+
+**Console windows.** On Windows, a console program started by a process with no console opens a window, which
+Windows 11 hands to Windows Terminal, and it takes focus. When you change how Rerail starts a process, start it
+through `src/engine/child-process.ts`, and only the browser opener through `spawnShown`; `npm run check` holds the
+first. Then watch it on Windows 11 with Windows Terminal as the default terminal application, as it is out of the
+box: run your build as the daemon your coding agents use (`just rerail-dev --install-bridge`), work a session in a
+repository where Rerail is started, and look for any window that opens. A window that shows for a moment is easy to
+miss. The tracer posted with the
+[report of this problem](https://github.com/neralabs/rerail/issues/507#issuecomment-6754235764) logs every console
+window shown, every focus change and every process start with its parent, and exits 1 when a console window appears:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File popups.ps1 -Seconds 60
+```
+
+Run `npx @neralabs/rerail setup` afterwards to return to the published package.
 
 ### UI
 
