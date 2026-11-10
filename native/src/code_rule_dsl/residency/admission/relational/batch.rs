@@ -50,7 +50,18 @@ fn advance(
         &session.clause.id,
         (session.syntax_files.len() == 1).then(|| session.syntax_files[0].0.as_str()),
     );
-    match context.run(|| session.advance()) {
+    let before = session.next;
+    let advanced = context.run(|| session.advance());
+    if std::env::var_os("RERAIL_CODE_RULE_PROFILE").is_some() {
+        for stage in &session.plan.stages[before..session.next] {
+            *result
+                .metrics
+                .relational_materializations
+                .entry(stage.name.clone())
+                .or_default() += 1;
+        }
+    }
+    match advanced {
         Ok(Some(demand)) => Some(demand),
         Ok(None) => {
             match context.run(|| session.finish()) {
@@ -274,6 +285,10 @@ fn run_prepared(
     }
     #[cfg(feature = "code-rule-profile")]
     trace.detail(|| serde_json::json!({"emptyAdmissions":stats.skipped_empty,"capacityPartitions":stats.partitions,"peakSuspendedSessions":stats.peak_sessions,"peakSuspendedSqlBytes":stats.peak_sql_bytes,"inputCapacityBytes":input_limit,"sqlAdmissionBytes":sql_limit}));
+    if let Some(first) = results.first_mut() {
+        first.metrics.python_ast_parses += allowance.python_ast_parses;
+        first.metrics.python_ast_module_walks += allowance.python_ast_module_walks;
+    }
     (results, stats)
 }
 fn execute(
