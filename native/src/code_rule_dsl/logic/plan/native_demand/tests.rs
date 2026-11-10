@@ -84,11 +84,14 @@ mod integration_tests {
 .decl py_call_site(d:number,report:node,call:node,ref:node)
 .input py_call_site
 .decl wanted(n:node)
-wanted(n) :- py_call_site(_,_,_,n), n >= 0.
+wanted(n) :- py_call_site(_,_,_,n).
 .decl get_target(q:symbol)
-get_target("requests.get").
+.decl target_pool(q:symbol)
+target_pool("requests.get").
+target_pool("requests.post").
+get_target(q) :- target_pool(q), q = "requests.get".
 .decl post_target(q:symbol)
-post_target("requests.post").
+post_target(q) :- target_pool(q), q = "requests.post".
 .decl gets(n:node,q:symbol)
 .decl posts(n:node,q:symbol)
 gets(n,q) :- python_qualified(n,q,wanted,get_target).
@@ -173,6 +176,14 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
                     modes,
                 )
                 .unwrap();
+                if modes == "program" && !composed {
+                    assert!(got.native.contains("wanted"), "a native demand projection must stay resident");
+                    let published: i64 = db.query_row(
+                        "SELECT count(*) FROM temp.sqlite_master WHERE name IN ('wanted', 'get_target', 'post_target')",
+                        [], |r| r.get(0),
+                    ).unwrap();
+                    assert_eq!(published, 0, "resident native demands and targets must not be published to SQL");
+                }
                 assert_eq!(got.outputs["gets"].len(), expected_gets);
                 assert_eq!(got.outputs["posts"].len(), 1);
                 assert!(
@@ -213,5 +224,39 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
         assert_eq!(count, 2);
         native::component::release(&db, &["facts".into()]);
         assert!(native::component::derived(&db, "facts").is_none());
+    }
+}
+
+#[test]
+fn native_metadata_reads_pin_inputs_and_targets_through_their_consumers() {
+    use crate::code_rule_dsl::logic::{front, plan, rr};
+    use std::collections::HashSet;
+    let p = rr::parse(r#"
+#include "core.rr"
+.decl demand(d:number)
+.input demand
+.decl target_seed(q:symbol)
+.input target_seed
+.decl targets(q:symbol)
+targets(q) :- target_seed(q).
+.decl reached(c:node,f:node,r:node,o:node)
+reached(c,f,r,o) :- python_candidates(c,f,r,o,demand,targets,"async_function","open").
+.output reached
+"#).unwrap();
+    let (sccs, _) = front::strata(&p).unwrap();
+    let operator = p.natives.keys().next().unwrap();
+    let consumer = sccs.iter().position(|s| s.contains(operator)).unwrap();
+    // The target can be a view. Its underlying input must also survive until the native reader.
+    for views in [HashSet::new(), HashSet::from(["targets".into()])] {
+        let first = plan::first_reads(&p, &sccs, &views);
+        let last = plan::last_reads(&p, &sccs, &views);
+        for rel in ["demand", "targets"] {
+            assert_eq!(first.get(rel), Some(&consumer), "first read of {rel}");
+            assert_eq!(last.get(rel), Some(&consumer), "last read of {rel}");
+        }
+        if views.contains("targets") {
+            assert_eq!(first["target_seed"], consumer);
+            assert_eq!(last["target_seed"], consumer);
+        }
     }
 }

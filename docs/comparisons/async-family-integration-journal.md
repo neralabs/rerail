@@ -999,3 +999,61 @@ The final build disables incremental compilation after a stale-object linker fai
 Only inactive engine incremental caches in this task's target directory were removed.
 Reproduction artifacts and the final report are under `benchmark/async-family-integration/session-publication`
 and `docs/comparisons/composed-session-publication-2026-11-10.md`.
+
+
+## 2026-11-10 — Native cold execution budget
+
+Merged integration `1e1ec60a3` as `40443adfd`. Its optional index experiments remain off.
+Reproduced the existing 100-execution failure with the previous verified binary (`c05e28a75` source):
+396 core executions across all 5,725 files, including 373 local executions.
+The profile is in `native-budget-1e1ec60a3/baseline-profile` under the comparison artifact directory.
+This baseline predates the merge; validation of the fix uses the merged sources.
+
+Across 73 chunks, the profile records 73 demand-view scans, 73 target-table creations,
+73 target reads, 73 target-table drops, and 73 temporary-schema scans.
+The last two categories include final cleanup in the cross phase.
+These round trips have no useful relational work to perform: their inputs are native facts.
+
+Source inspection found a lifetime defect. Scheduling includes native operator dependencies,
+but first-read and last-read analysis includes only rule-body atoms.
+A native producer can therefore lose its derived targets before consumption.
+Recreating an empty target table loses the requested API set.
+Inspection of import screening shows that known matching APIs can then be discarded,
+while opaque or unresolved calls can still pass. The initial broadening-only diagnosis was incorrect.
+The empty finding set in the full corpus cannot detect this defect alone.
+
+The implementation uses the existing complete dependency analysis for relation lifetimes.
+Native demand projections remain native relations instead of becoming SQL views.
+Python producers read both demand keys and target keys from resident facts, with SQL fallback
+for SQL-owned inputs. Target symbols decode through the shared atom arena.
+This uses the existing per-run demand snapshot, without another cache or execution mode.
+
+Regression coverage includes metadata-only dependencies, view-input lifetimes, derived target
+filters, repeated runs, independent target sets, and the absence of demand/target SQL publication.
+The existing whole-job ceiling remains 100. Build and final measurements are pending.
+
+
+### Native budget qualification
+
+The merged-source build and all selected checks pass: five demand/lifetime tests,
+the 120-finding native positive fixture, and all thirteen native session/cache checks.
+The previous binary also passes the positive fixture. It cannot expose the target-lifetime defect alone.
+The new metadata dependency regression checks that defect directly.
+
+All five full-corpus conditions pass the unchanged ceiling: 20 cold statements, 32 warm,
+32 warm with profiling, 22 after an edit, and 32 after warming the edit.
+Cold local execution now uses zero SQL statements. Seven statistics statements and thirteen cross-file
+statements account for the remaining twenty. Whole-process cold CPU is 19.401 s; wall time is 25.821 s.
+These single observations under shared load do not establish a timing improvement.
+
+The separate cold profile records 74,705 SQL VM instructions, versus 116,245 before.
+It confirms resident reads of all 47 target keys and no demand-view or target-table SQL.
+Both profiles screen 65,292 calls and emit ten conservative candidates.
+The fixed profile has 72 worker chunks, versus 73 before; the work and file set are unchanged.
+The remaining document-range statistics insert accounts for 74,433 VM instructions.
+The profiled local CPU is 0.704 s, versus 0.645 s before. No CPU speedup is claimed.
+
+Results, reproduction commands, and limits are recorded in
+`docs/comparisons/native-cold-budget-2026-11-10.md`.
+Artifacts include the before/after profiles, workload runs, validation logs, and source/binary digests
+under `native-budget-1e1ec60a3` in the comparison artifact directory.

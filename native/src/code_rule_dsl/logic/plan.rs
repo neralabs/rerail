@@ -2913,28 +2913,35 @@ impl Run<'_, '_> {
         Ok(n)
     }
 
+    /// Read a completed unary relation where its facts live. SQL is only a fallback for SQL-owned facts.
+    fn native_demand(&mut self, input: &str) -> Result<std::sync::Arc<Vec<i64>>> {
+        let source = if self.native_rels.contains(input) {
+            Some(super::native::component::derived(self.db, input).ok_or_else(|| Error::Plan(format!("missing retained demand {input}")))?)
+        } else if self.prog.inputs.iter().any(|r| r == input) {
+            crate::code_rule_dsl::facts::vtab::bound_source(self.db, input)
+        } else { None };
+        if source.is_none() { self.ensure(&[input.to_owned()])?; }
+        self.demands.read(self.db, input, &self.model.col(input, 0), source)
+    }
+
     /// One producer invocation for a completed demand relation; native rows never take a SQL round trip.
     fn python_relation(&mut self, rel: &str, kind: &str, input: &str, targets: &Option<String>) -> Result<usize> {
         use super::native::component;
         use crate::code_rule_dsl::facts::vtab;
         let ident = crate::code_rule_dsl::logic::sql::ident;
-        let source = if self.native_rels.contains(input) {
-            Some(component::derived(self.db, input).ok_or_else(|| Error::Plan(format!("missing retained demand {input}")))?)
-        } else if self.prog.inputs.iter().any(|r| r == input) {
-            vtab::bound_source(self.db, input)
-        } else { None };
-        if source.is_none() { self.ensure(&[input.to_owned()])?; }
-        let requests = self.demands.read(self.db, input, &self.model.col(input, 0), source)?;
+        let requests = self.native_demand(input)?;
         let mut rows = if requests.is_empty() { Vec::new() } else {
             let mut wanted = BTreeSet::new();
             if let Some(targets) = targets {
-                // Target relations can be derived as well as constant. Preserve their declared dependency.
-                self.ensure(std::slice::from_ref(targets))?;
-                self.materialize(std::slice::from_ref(targets))?;
-                let col = self.model.col(targets, 0);
-                let col = if self.model.inputs.atoms.is_some() { format!("sym_text({col})") } else { col };
-                let mut s = self.db.prepare(&format!("SELECT {col} FROM {}", ident(targets)))?;
-                wanted = s.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
+                if self.model.inputs.atoms.is_some() {
+                    let keys = self.native_demand(targets)?;
+                    wanted = keys.iter().map(|&key| super::native::symbol_text(self.db, key).map_err(Error::from)).collect::<Result<_>>()?;
+                } else {
+                    self.ensure(std::slice::from_ref(targets))?;
+                    let col = self.model.col(targets, 0);
+                    let mut s = self.db.prepare(&format!("SELECT {col} FROM {}", ident(targets)))?;
+                    wanted = s.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
+                }
             }
             let source = vtab::bound_source(self.db, "node").ok_or_else(|| Error::Plan("Python producer requires bound syntax facts".into()))?;
             let batch = source.python_batch().ok_or_else(|| Error::Plan("Python producer requires a syntax batch".into()))?;
@@ -5230,7 +5237,13 @@ pub(in crate::code_rule_dsl) fn view_sql(rel: &str, query: &Query) -> String {
 /// The views `run` makes of one-atom projections of an input, each as its query (`view_sql`).
 fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&Rule>>) -> Result<Vec<(String, Query)>> {
     let mut views = Vec::new();
+    // Resident consumers need facts, not a SQL view that must be read back at each chunk.
+    // Other native operators still use SQL-owned inputs and keep their projection views.
+    let native_reads: HashSet<&str> = if model.inputs.atoms.is_some() && model.inputs.native.contains("program") {
+        prog.natives.values().filter(|n| matches!(n, super::front::Native::Python { .. } | super::front::Native::PythonCandidates { .. })).flat_map(|n| n.reads()).collect()
+    } else { HashSet::new() };
     for (&rel, rs) in rules_by {
+        if native_reads.contains(rel) { continue; }
         let [rule] = rs.as_slice() else { continue };
         if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
             continue;
@@ -6394,13 +6407,9 @@ fn first_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String
     let by = rules_by_stratum(prog, sccs);
     for (j, scc) in sccs.iter().enumerate().rev() {
         let at = if scc.iter().all(|r| views.contains(r)) { scc.iter().filter_map(|r| first.get(r)).copied().min().unwrap_or(j) } else { j };
-        for r in &by[j] {
-            for l in &r.body {
-                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
-                    let e = first.entry(a.rel.clone()).or_insert(at);
-                    *e = (*e).min(at);
-                }
-            }
+        for rel in stratum_reads(prog, scc, &by[j]) {
+            let e = first.entry(rel).or_insert(at);
+            *e = (*e).min(at);
         }
     }
     first
@@ -6439,13 +6448,9 @@ fn last_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>
     let by = rules_by_stratum(prog, sccs);
     for (j, scc) in sccs.iter().enumerate().rev() {
         let at = if scc.iter().all(|r| views.contains(r)) { scc.iter().filter_map(|r| last.get(r)).copied().max().unwrap_or(j).max(j) } else { j };
-        for r in &by[j] {
-            for l in &r.body {
-                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
-                    let e = last.entry(a.rel.clone()).or_insert(at);
-                    *e = (*e).max(at);
-                }
-            }
+        for rel in stratum_reads(prog, scc, &by[j]) {
+            let e = last.entry(rel).or_insert(at);
+            *e = (*e).max(at);
         }
     }
     last

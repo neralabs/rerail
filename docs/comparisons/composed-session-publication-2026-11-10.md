@@ -101,7 +101,8 @@ The positive fixture supplies the nonempty semantic check.
 These are single observations on a shared machine; they do not establish a timing improvement.
 SQL counts are core workload executions. Storage publication is measured separately above.
 
-**The integration default's native cold run still fails the existing gate at 396 executions.**
+**At this revision, the integration default's native cold run fails the existing gate at 396 executions.**
+The [native cold budget follow-up](native-cold-budget-2026-11-10.md) resolves this failure at 20 executions.
 Its local phase accounts for 373. Warm and edited native runs pass at 30–32 executions.
 The runner records that failure and exits unsuccessfully, even when asked to finish the comparison.
 This separate integration limitation is not repaired by the composed-retention or frame-publication changes.
