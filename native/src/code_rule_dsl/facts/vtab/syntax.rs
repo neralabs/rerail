@@ -1762,7 +1762,7 @@ pub(crate) fn with_nearest(
     binding: crate::code_rule_dsl::typing::file_local::Binding,
     projection: &Projection,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-    with_matchers(store, documents, sets, &[], tests, binding, projection)
+    with_matchers(store, documents, sets, &Matchers::default(), tests, binding, projection)
 }
 
 /// A program's `ast` matcher (decision 0106): the relation of its matched nodes, `rr_ast_<k>(n)`, its matcher lowered
@@ -1773,35 +1773,140 @@ pub(crate) struct Matcher {
     pub(in crate::code_rule_dsl) gates: Vec<crate::code_rule_dsl::matcher::DocumentGate>,
 }
 
-/// Each matcher's relation over the documents' tapes: one pass of the matcher's labels and roots over the batch (the
-/// transducer, on Metal where the run is bound there), its roots mapped from tape preorder (a core id) to the batch's
-/// node ids. A document with no tape (a guest, a text-only file) or one its gates exclude has no rows.
+/// A program's matchers (decision 0106) and the wave they run as: every matcher's labels and roots in one run per
+/// chunk (decision 0107).
+#[derive(Default)]
+pub(crate) struct Matchers {
+    pub(crate) list: Vec<Matcher>,
+    pub(in crate::code_rule_dsl) wave: Option<Arc<crate::code_rule_dsl::transducer::packed::LoweredWave>>,
+}
+
+impl Matchers {
+    /// `list` as one wave (labels shared by matchers are one pass).
+    pub(in crate::code_rule_dsl) fn new(list: Vec<Matcher>) -> Result<Self, String> {
+        let wave = if list.is_empty() {
+            None
+        } else {
+            let clauses: Vec<&crate::code_rule_dsl::transducer::packed::LoweredMatcher> = list.iter().map(|m| m.lowered.as_ref()).collect();
+            Some(Arc::new(crate::code_rule_dsl::transducer::packed::LoweredWave::new(&clauses).map_err(|e| format!("the ast matchers as one wave: {e:?}"))?))
+        };
+        Ok(Self { list, wave })
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.list.len()
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+}
+
+/// A chunk's matcher wave as one launch of the executor (decision 0107), as every other dispatch: priced by its tape
+/// nodes and passes, placed on the cores or the GPU, run on that lane's worker and scored. Its GPU form is the wave's
+/// passes and roots in one command buffer; its cores' form the interpreter, which the GPU's runs instead where the
+/// device refuses the batch.
+struct MatcherWave {
+    wave: Arc<crate::code_rule_dsl::transducer::packed::LoweredWave>,
+    tapes: Vec<crate::code_rule_dsl::tape::TapeDoc>,
+    /// Per matcher, per tape: whether the matcher runs there (its gates hold).
+    active: Vec<Vec<bool>>,
+    gpu: bool,
+}
+
+/// What a wave's launch returns: per matcher, per tape, the matched roots; how it ran; its wall seconds on the lane.
+type WaveFound = Result<(Vec<Vec<BTreeSet<u32>>>, crate::code_rule_dsl::transducer::packed::WaveRun, f64), String>;
+
+/// The cores' interpreter: seconds a tape node and pass (one thread), and the GPU's. Priors, replaced by the
+/// executor's learned rates once it has measured the form.
+const WAVE_CPU_PER_NODE_PASS: f64 = 2e-8;
+const WAVE_GPU_PER_NODE_PASS: f64 = 1e-9;
+
+impl MatcherWave {
+    fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {
+        let started = std::time::Instant::now();
+        let (found, run) = self.wave.roots_batch(backend, &self.tapes, &self.active).map_err(|e| format!("{e:?}"))?;
+        Ok((found, run, started.elapsed().as_secs_f64()))
+    }
+}
+
+impl rerail_accel::kernel::Program for MatcherWave {
+    fn name(&self) -> &'static str {
+        "ast matcher wave"
+    }
+
+    fn units(&self) -> f64 {
+        let passes = self.wave.passes().max(1) as f64;
+        self.tapes.iter().map(|t| t.transducer_len() as f64).sum::<f64>() * passes
+    }
+
+    fn per_unit(&self, lane: rerail_accel::Lane) -> Option<f64> {
+        match lane {
+            rerail_accel::Lane::Cpu => Some(WAVE_CPU_PER_NODE_PASS),
+            rerail_accel::Lane::Gpu if self.gpu => Some(WAVE_GPU_PER_NODE_PASS),
+            _ => None,
+        }
+    }
+
+    fn run(&self, lane: rerail_accel::Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
+        use crate::code_rule_dsl::transducer::packed::MatcherBackend;
+        #[cfg(target_os = "macos")]
+        if lane == rerail_accel::Lane::Gpu
+            && let Ok(found) = self.on(MatcherBackend::MetalInterpreter)
+        {
+            return Ok(Arc::new(Ok(found) as WaveFound));
+        }
+        let _ = lane;
+        Ok(Arc::new(self.on(MatcherBackend::Cpu)))
+    }
+}
+
+/// Each matcher's relation over the documents' tapes: the chunk's matcher wave as one launch ([`MatcherWave`]), its
+/// roots mapped from tape preorder (a core id) to the batch's node ids. A document with no tape (a guest, a text-only
+/// file) or one a matcher's gates exclude has no rows of that matcher.
 fn matched(
     batch: &Batch,
     tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
-    matchers: &[Matcher],
+    matchers: &Matchers,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     use crate::code_rule_dsl::logic::profile;
-    use crate::code_rule_dsl::transducer::packed::MatcherBackend;
     let _span = profile::span(|| "ast matchers on the transducer".into());
-    let backend = match binding {
-        #[cfg(target_os = "macos")]
-        crate::code_rule_dsl::typing::file_local::Binding::Metal => MatcherBackend::MetalInterpreter,
-        _ => MatcherBackend::Cpu,
-    };
-    // Each tape's document in the batch.
+    let Some(wave) = &matchers.wave else { return Ok(Vec::new()) };
+    let metal = matches!(binding, crate::code_rule_dsl::typing::file_local::Binding::Metal);
+    // Each tape's document in the batch; the tapes outside it take no part.
     let at: Vec<Option<&Projected>> = tapes.iter().map(|(facts, _, _)| batch.docs.iter().find(|p| Arc::ptr_eq(&p.facts, facts))).collect();
+    let held: Vec<usize> = (0..tapes.len()).filter(|&i| at[i].is_some()).collect();
+    let active: Vec<Vec<bool>> = matchers
+        .list
+        .iter()
+        .map(|m| held.iter().map(|&i| m.gates.iter().all(|g| g.holds(&tapes[i].2, tapes[i].0.source.as_str()))).collect())
+        .collect();
+    let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = held.iter().map(|&i| tapes[i].1.clone()).collect();
+    let nodes: u64 = docs.iter().map(|d| d.transducer_len() as u64).sum();
+    let found = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
+        vec![vec![BTreeSet::new(); docs.len()]; matchers.len()]
+    } else {
+        let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu: cfg!(target_os = "macos") && metal };
+        let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
+        let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);
+        let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;
+        let done = done.remove(0);
+        let rerail_accel::kernel::Output::Program(r) = done.out else {
+            return Err(StoreError::Invalid("ast matcher wave: not a program's result".into()));
+        };
+        let r = r.0.downcast::<WaveFound>().map_err(|_| StoreError::Invalid("ast matcher wave: a result of another type".into()))?;
+        let (found, run, wall) = r.as_ref().clone().map_err(|e| StoreError::Invalid(format!("ast matcher wave: {e}")))?;
+        if run.metal {
+            profile::device("ast matcher wave", run.command_buffers as u64, run.device, wall, nodes);
+        }
+        profile::decision("ast matcher wave lane", || (if run.metal { "metal" } else { "cpu" }).to_owned());
+        found
+    };
+    profile::work(profile::Unit::Node, nodes);
     let mut out = Vec::new();
-    for m in matchers {
-        let held: Vec<usize> = (0..tapes.len())
-            .filter(|&i| at[i].is_some() && m.gates.iter().all(|g| g.holds(&tapes[i].2, tapes[i].0.source.as_str())))
-            .collect();
-        let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = held.iter().map(|&i| tapes[i].1.clone()).collect();
-        let roots = if docs.is_empty() { Vec::new() } else { m.lowered.roots_batch(backend, &docs).map_err(|e| StoreError::Invalid(format!("{}: {e:?}", m.rel)))? };
+    for (m, found) in matchers.list.iter().zip(found) {
         let mut r = Relation::new(&["n"]);
         let mut rows = 0u64;
-        for (&i, found) in held.iter().zip(roots) {
+        for (&i, found) in held.iter().zip(found) {
             let p = at[i].expect("held");
             for core in found {
                 let local = p.local.get(core as usize).copied().unwrap_or(NONE);
@@ -1811,7 +1916,6 @@ fn matched(
                 }
             }
         }
-        profile::work(profile::Unit::Node, docs.iter().map(|d| d.transducer_len() as u64).sum());
         crate::code_rule_dsl::prof::count("ast.matched", rows as usize);
         out.push((m.rel.clone(), Arc::new(r) as Arc<dyn Source>));
     }
@@ -1823,7 +1927,7 @@ pub(crate) fn with_matchers(
     store: &ContentStore,
     documents: Vec<Document>,
     sets: &[(String, Vec<i64>)],
-    matchers: &[Matcher],
+    matchers: &Matchers,
     tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
     projection: &Projection,
