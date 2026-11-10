@@ -32,6 +32,27 @@ pub(super) fn base_key(rel: &str) -> String {
     format!("base:{rel}")
 }
 
+/// Which column of a base relation's row (in `input_columns` order) names the file the row is kept for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Owner {
+    /// A node or a document key: the row is its document's (`document_of`).
+    Node(usize),
+    /// A string: the row is each file's whose text holds it, as a text test's row is (`strings::TEXT_COLUMNS`).
+    Text(usize),
+}
+
+/// The owner column of `rel`'s rows. Most base relations lead with their node or document; a pattern's spans and
+/// matches lead with the pattern (`rx_span(p, c, …)`, `ast_match(p, n, …)`), so their node is the second column;
+/// `value_type(v, t)` is keyed by the value itself, a string some file's `value(n, v)` holds.
+pub(super) fn owner(rel: &str) -> Owner {
+    match rel {
+        "rx_span" | "ast_match" => Owner::Node(1),
+        "value_type" => Owner::Text(0),
+        _ if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => Owner::Text(0),
+        _ => Owner::Node(0),
+    }
+}
+
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct Entry {
