@@ -2043,10 +2043,6 @@ impl InRel {
         let k = types.len();
         Arc::new(InRel { k, n, rows, view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() })
     }
-    /// Its columns' value types (the engine's codes).
-    pub fn types(&self) -> &[u8] {
-        &self.types
-    }
     /// Its rows, as a source of columns `names`.
     pub fn source(self: &Arc<Self>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
         Derived::new(Arc::clone(self), Some(names))
@@ -2065,7 +2061,7 @@ impl InRel {
     /// row was pushed at; 4096 rows a wave without levels), with as many duplicates offered as its derivations had
     /// (`RERAIL_SPIKE_DERIVATIONS`), into today's dedup set and chains (`Rel::push`, the engine's own) and into the
     /// mixed shape grown (`Growing` for the whole row and `hot`, `Runs` for the `orders`, each wave's run its delta).
-    fn grow_spike(&self, name: &str, hot: &[Vec<usize>], orders: Vec<Vec<usize>>) -> String {
+    fn grow_spike(&self, name: &str, hot: &[Vec<usize>], orders: Vec<Vec<usize>>, rest: &[Vec<usize>]) -> String {
         let (k, n, rows) = (self.k, self.n, &self.rows);
         // Waves: runs of one level, or of 4096 rows.
         // The rows a maintained run added to the kept relation it started as (`Origin::Based`), else the last wave:
@@ -2136,7 +2132,10 @@ impl InRel {
         let t = Instant::now();
         let mut set = ordered::Growing::new((0..k).collect(), id_bits);
         let mut placed: Vec<ordered::Growing> = hot.iter().map(|c| ordered::Growing::new(c.clone(), id_bits)).collect();
-        let mut runs: Vec<ordered::Runs> = orders.into_iter().map(ordered::Runs::new).collect();
+        let fanout: usize = std::env::var("RERAIL_RUNS_FANOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+        let prefix: Vec<usize> = orders.iter().map(|o| rest.iter().filter(|s| o[..s.len()].iter().all(|c| s.contains(c))).map(Vec::len).max().unwrap_or(1)).collect();
+        let mut runs: Vec<ordered::Runs> = orders.iter().cloned().map(|o| ordered::Runs::with_fanout(o, fanout)).collect();
+        let mut waves_fresh: Vec<Vec<u32>> = Vec::new();
         let mut held_new = 0usize;
         let (mut t_set, mut t_placed, mut t_runs) = (0.0f64, 0.0f64, 0.0f64);
         let mut seen = vec![0u64; n.div_ceil(64)];
@@ -2178,6 +2177,7 @@ impl InRel {
             for r in &mut runs {
                 r.add_wave(rows, k, fresh.clone());
             }
+            waves_fresh.push(fresh);
             t_runs += t2.elapsed().as_secs_f64();
             t_placed += (t2 - t1).as_secs_f64();
             t_set += (t1 - t0).as_secs_f64();
@@ -2186,6 +2186,44 @@ impl InRel {
             }
         }
         let new_ms = t.elapsed().as_secs_f64() * 1e3;
+        // The orders' growth again at each fanout: its time, the ids its merges copied, its runs, and a probe's time
+        // over its runs against one run of them all (each order's longest covered key, at sampled rows).
+        let mut by_fanout = Vec::new();
+        if !orders.is_empty() {
+            let live: Vec<u32> = (0..n as u32).filter(|&id| !is_dead(&self.dead, id)).collect();
+            let sample: Vec<u32> = live.iter().step_by((live.len() / 2048).max(1)).copied().collect();
+            for t in [2usize, 4, 8] {
+                let tg = Instant::now();
+                let mut grown: Vec<ordered::Runs> = orders.iter().cloned().map(|o| ordered::Runs::with_fanout(o, t)).collect();
+                for f in &waves_fresh {
+                    for r in &mut grown {
+                        r.add_wave(rows, k, f.clone());
+                    }
+                }
+                let ms = tg.elapsed().as_secs_f64() * 1e3;
+                let probe = |rs: &[ordered::Runs]| -> f64 {
+                    let mut best = f64::MAX;
+                    for _ in 0..3 {
+                        let tp = Instant::now();
+                        for (r, &len) in rs.iter().zip(&prefix) {
+                            let mut key = vec![0i64; len];
+                            for &id in &sample {
+                                let row = self.row(id as usize);
+                                for (j, &c) in r.order[..len].iter().enumerate() { key[j] = row[c]; }
+                                std::hint::black_box(r.count(rows, k, &key));
+                            }
+                        }
+                        best = best.min(tp.elapsed().as_nanos() as f64 / (sample.len() * rs.len()).max(1) as f64);
+                    }
+                    best
+                };
+                let (ns, one) = (probe(&grown), probe(&grown.iter().map(|r| r.merged_all(rows, k)).collect::<Vec<_>>()));
+                let merged: usize = grown.iter().map(|r| r.merged).sum();
+                let nruns: usize = grown.iter().map(|r| r.runs.len()).sum();
+                FANOUT.with(|f| { let e = &mut f.borrow_mut()[t / 4]; e.0 += ms; e.1 += merged; e.2 += nruns; e.3 += ns; e.4 += one; e.5 += 1; });
+                by_fanout.push(format!("T{t} {ms:.1} ms, {merged} copied, {nruns} runs, probe {ns:.0} ns vs {one:.0} one run"));
+            }
+        }
         let new_bytes = set.bytes() + placed.iter().map(ordered::Growing::bytes).sum::<usize>() + runs.iter().map(ordered::Runs::bytes).sum::<usize>();
         GROWN.with(|g| { let mut g = g.borrow_mut(); g.0 += now_ms; g.1 += new_ms; g.2 += offered; g.3 += held_now; g.4 += now_bytes; g.5 += new_bytes; g.6 += t_set * 1e3; g.7 += t_placed * 1e3; g.8 += t_runs * 1e3; g.9 += delta_offers; g.10 += now_delta; g.11 += now_copy; g.12 += new_delta; g.13 += new_copy; g.14 += set.rehashed + placed.iter().map(|p| p.rehashed).sum::<usize>(); g.15 += usize::from(based.is_some()); });
         format!(
@@ -2202,10 +2240,14 @@ impl InRel {
             set.rehashed,
             runs.iter().map(|r| r.runs.len()).collect::<Vec<_>>(),
             if based.is_some() { " (a maintained run's)" } else { " (the last wave)" }
-        )
+        ) + &if by_fanout.is_empty() { String::new() } else { format!("; orders by fanout: {}", by_fanout.join(", ")) }
     }
     /// The spike's growth totals since the last take: today's ms, the mixed ms, offers, rows held, today's bytes, the
     /// mixed bytes, and the mixed ms by part (set, placed, orders).
+    /// The orders' growth totals by fanout (2, 4, 8) since the last take.
+    pub fn index_spike_fanout() -> [(f64, usize, usize, f64, f64, usize); 3] {
+        FANOUT.with(|f| std::mem::take(&mut *f.borrow_mut()))
+    }
     pub fn index_spike_grown() -> Grown {
         GROWN.with(|g| std::mem::replace(&mut *g.borrow_mut(), GROWN_ZERO))
     }
@@ -2337,7 +2379,7 @@ impl InRel {
             let hot: Vec<Vec<usize>> = measured.iter().filter(|(_, d, f, p, c)| !*d && *c as usize >= live_n && p < f).map(|m| m.0.clone()).collect();
             let mut chains = ordered::cover(&rest, k);
             chains.retain(|o| rest.iter().any(|s| o[..s.len()].iter().all(|c| s.contains(c))));
-            parts.push(self.grow_spike(name, &hot, chains));
+            parts.push(self.grow_spike(name, &hot, chains, &rest));
         }
         parts.push(format!("mixed {:.1} B/row", mixed_bytes as f64 / live_n as f64));
         Some((
@@ -2406,6 +2448,9 @@ thread_local! {
     static MIXED: std::cell::RefCell<(usize, f64)> = const { std::cell::RefCell::new((0, 0.0)) };
     /// Its growth totals (`InRel::grow_spike`).
     static GROWN: std::cell::RefCell<Grown> = const { std::cell::RefCell::new(GROWN_ZERO) };
+    /// The orders' growth by fanout 2, 4, 8 (`InRel::grow_spike`): ms, ids copied by merges, runs, probe ns summed
+    /// over relations, the same over one run, relations.
+    static FANOUT: std::cell::RefCell<[(f64, usize, usize, f64, f64, usize); 3]> = const { std::cell::RefCell::new([(0.0, 0, 0, 0.0, 0.0, 0); 3]) };
 }
 
 /// Tests: this thread's count steps build their tables at their first probe.

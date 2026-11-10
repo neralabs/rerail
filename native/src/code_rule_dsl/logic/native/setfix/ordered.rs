@@ -503,37 +503,67 @@ impl Growing {
     }
 }
 
-/// Sorted orders that grow by runs (the logarithmic method): each wave's new ids sorted by the order are a run, the
-/// newest of which is the wave's delta; before a wave adds its run, the newest runs are merged while the older is no
-/// more than twice the newer, so there are O(log n) runs and each id is merged O(log n) times.
+/// Sorted orders that grow by runs (size-tiered): each wave's new ids sorted by the order are a run, the newest of
+/// which is the wave's delta. Before a wave adds its run, the newest `fanout` runs are merged in one pass while the
+/// oldest of them is no more than `fanout` times the newest: O(log_fanout n) passes over each id, and up to
+/// `fanout` runs of each size for a probe to search.
 pub(super) struct Runs {
     pub(super) order: Vec<usize>,
     pub(super) runs: Vec<Vec<u32>>,
     pub(super) merged: usize,
+    fanout: usize,
 }
 
 impl Runs {
     pub(super) fn new(order: Vec<usize>) -> Runs {
-        Runs { order, runs: Vec::new(), merged: 0 }
+        Runs::with_fanout(order, 2)
     }
 
+    pub(super) fn with_fanout(order: Vec<usize>, fanout: usize) -> Runs {
+        Runs { order, runs: Vec::new(), merged: 0, fanout: fanout.max(2) }
+    }
+
+    #[inline]
     fn cmp(order: &[usize], rows: &[i64], k: usize, a: u32, b: u32) -> Ordering {
         let (ra, rb) = (&rows[a as usize * k..][..k], &rows[b as usize * k..][..k]);
         order.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or_else(|| a.cmp(&b))
     }
 
-    pub(super) fn add_wave(&mut self, rows: &[i64], k: usize, mut ids: Vec<u32>) {
-        while self.runs.len() >= 2 && self.runs[self.runs.len() - 2].len() <= 2 * self.runs[self.runs.len() - 1].len() {
-            let b = self.runs.pop().unwrap();
-            let a = self.runs.pop().unwrap();
-            self.merged += a.len() + b.len();
-            let mut out = Vec::with_capacity(a.len() + b.len());
+    /// Merges `parts` (each sorted) in one pass: each output id is the least of the parts' heads.
+    fn merge(order: &[usize], rows: &[i64], k: usize, parts: Vec<Vec<u32>>) -> Vec<u32> {
+        let total = parts.iter().map(Vec::len).sum();
+        let mut out = Vec::with_capacity(total);
+        let mut at = vec![0usize; parts.len()];
+        if parts.len() == 2 {
+            let (a, b) = (&parts[0], &parts[1]);
             let (mut i, mut j) = (0, 0);
             while i < a.len() && j < b.len() {
-                if Self::cmp(&self.order, rows, k, a[i], b[j]).is_le() { out.push(a[i]); i += 1 } else { out.push(b[j]); j += 1 }
+                if Self::cmp(order, rows, k, a[i], b[j]).is_le() { out.push(a[i]); i += 1 } else { out.push(b[j]); j += 1 }
             }
             out.extend_from_slice(&a[i..]);
             out.extend_from_slice(&b[j..]);
+            return out;
+        }
+        loop {
+            let mut best: Option<usize> = None;
+            for (p, part) in parts.iter().enumerate() {
+                if at[p] < part.len() && best.is_none_or(|q| Self::cmp(order, rows, k, part[at[p]], parts[q][at[q]]).is_lt()) {
+                    best = Some(p);
+                }
+            }
+            let Some(p) = best else { break };
+            out.push(parts[p][at[p]]);
+            at[p] += 1;
+        }
+        out
+    }
+
+    pub(super) fn add_wave(&mut self, rows: &[i64], k: usize, mut ids: Vec<u32>) {
+        let t = self.fanout;
+        while self.runs.len() >= t && self.runs[self.runs.len() - t].len() <= t * self.runs[self.runs.len() - 1].len() {
+            let parts: Vec<Vec<u32>> = self.runs.split_off(self.runs.len() - t);
+            self.merged += parts.iter().map(Vec::len).sum::<usize>();
+            let out = Self::merge(&self.order, rows, k, parts);
             self.runs.push(out);
         }
         if ids.is_empty() {
@@ -542,6 +572,12 @@ impl Runs {
         let order = &self.order;
         ids.sort_unstable_by(|&a, &b| Self::cmp(order, rows, k, a, b));
         self.runs.push(ids);
+    }
+
+    /// Every run merged into one (the frozen order, to compare probes with).
+    pub(super) fn merged_all(&self, rows: &[i64], k: usize) -> Runs {
+        let one = Self::merge(&self.order, rows, k, self.runs.clone());
+        Runs { order: self.order.clone(), runs: vec![one], merged: 0, fanout: self.fanout }
     }
 
     /// The number of ids holding `key` on the order's first `key.len()` columns, over every run.
@@ -576,6 +612,7 @@ mod grow_tests {
             let mut set = Growing::new(vec![0, 1, 2], id_bits);
             let mut by01 = Growing::new(vec![0, 1], id_bits);
             let mut runs = Runs::new(vec![0, 1, 2]);
+            let mut wide = Runs::with_fanout(vec![0, 1, 2], 4);
             let mut held = 0;
             for wave in (0..2500u32).collect::<Vec<_>>().chunks(97) {
                 set.reserve(&rows, k, wave.len());
@@ -591,6 +628,7 @@ mod grow_tests {
                     by01.insert(&rows, k, id, key_hash([rows[id as usize * k], rows[id as usize * k + 1]].into_iter()), false);
                 }
                 held += fresh.len();
+                wide.add_wave(&rows, k, fresh.clone());
                 runs.add_wave(&rows, k, fresh);
             }
             assert_eq!(held, 2000, "id bits {id_bits}");
@@ -600,6 +638,9 @@ mod grow_tests {
             assert!(if id_bits == 26 { set.rehashed > 1000 } else { set.rehashed < 100 }, "{} rehashed, id bits {id_bits}", set.rehashed);
             assert_eq!(runs.count(&rows, k, &[3]), 200);
             assert_eq!(runs.count(&rows, k, &[3, 4]), 28);
+            assert_eq!(wide.count(&rows, k, &[3, 4]), 28);
+            assert_eq!(wide.merged_all(&rows, k).count(&rows, k, &[3]), 200);
+            assert!(wide.merged < runs.merged, "{} merged by 4s, {} by 2s", wide.merged, runs.merged);
             let mut got = 0;
             by01.each(&rows, k, &[3, 4], |id| { assert_eq!(&rows[id as usize * k..][..2], &[3, 4]); got += 1 });
             assert_eq!(got, 28, "id bits {id_bits}");
