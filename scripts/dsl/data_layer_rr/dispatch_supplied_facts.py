@@ -39,6 +39,19 @@ def cases(module):
     add('literal-tag-collision',[dict(hit,message=['float','7ff0000000000000'])])
     for name,facts in [('missing',{}),('foreign',{'other':[hit]}),('foreign-first',{'other':[dict(hit,line=None)],module.DISPATCH_EXTRACTOR.extractor_id:[hit]})]:
         rows.append(dict(id='extractor-'+name,root='/repo',bundles=[dict(path='a.py',facts=facts)]))
+    for i,(root,path) in enumerate([('/', '/a.py'),('//','//a.py'),('//','/a.py'),('/','//a.py'),
+        ('.','a.py'),('','./a.py'),('relative','relative/a.py'),('relative','/repo/a.py'),
+        ('/repo','/repo'),('/repo','.'),('/repo/..','/repo/../a.py'),('/repo/..','/repo/a.py'),
+        ('/repo/','/repo//./a.py'),('///repo','/repo/a.py'),('//repo','//repo/a.py'),('/repo','impl/../a.py')]):
+        rows.append(dict(id='root-'+str(i),root=root,bundles=[dict(path=path,value=[hit])]))
+    rows.extend([
+        dict(id='same-row-error-order',root='/repo',bundles=[dict(path='a.py',value=[dict(hit,line='first',occurrence=None)])]),
+        dict(id='distinct-keys-same-owner',root='/repo',bundles=[dict(key='first',path='a.py',value=[hit]),dict(key='second',path='a.py',value=[hit])]),
+        dict(id='same-key-replaced-owner',root='/repo',bundles=[dict(key='same',path='first.py',value=[hit]),dict(key='other',path='z.py',value=[hit]),dict(key='same',path='last.py',value=[dict(hit,line=8)])]),
+    ])
+    for key in ['line','occurrence']:
+        for i,value in enumerate(['x'*300,'☃'*300,'\n'*300,"'"*300,'7'*300+'x','😀'*300]):
+            add(key+'-invalid-long-'+str(i),[dict(hit,**{key:value})])
     for value in [None,'','# comment\n \n','entry\nentry\n','\u2000# ignored\u0085a\u2028b\u2029','a\0b\n']:
         add('inventory-'+str(len(rows)),[hit],inventory=value)
     for signature in ['', 'UNSIGNED','NEEDS_SIGNING','!!!!','AAAA']:

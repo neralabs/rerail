@@ -920,6 +920,21 @@ mod tests {
     }
 
     #[test]
+    fn integer_errors_limit_the_representation_by_characters_without_changing_values() {
+        for (text, expected) in [
+            ("x".repeat(198), format!("invalid literal for int() with base 10: '{}'", "x".repeat(198))),
+            ("x".repeat(199), format!("invalid literal for int() with base 10: '{}", "x".repeat(199))),
+            ("😀".repeat(300), format!("invalid literal for int() with base 10: '{}", "😀".repeat(199))),
+            ("\n".repeat(300), format!("invalid literal for int() with base 10: '{}\\", "\\n".repeat(99))),
+        ] {
+            let packed=serde_json::json!(["str",text]);
+            let value=python_value(&packed).unwrap();
+            assert_eq!(value.text(),text,"the string projection must retain the complete value");
+            assert_eq!(value.integer(),vec![Json::String(String::new()),Json::String("ValueError".into()),Json::String(expected)]);
+        }
+    }
+
+    #[test]
     fn malformed_typed_python_values_publish_no_selector_prefix() {
         for bad in [r#"["float","bad"]"#,r#"["dict",[[3,["str","x"]]]]"#,r#"["unknown",0]"#] {
             let value:Json=serde_json::from_str(&format!(r#"[["str","valid"],{bad}]"#)).unwrap();
