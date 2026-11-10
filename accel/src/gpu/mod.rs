@@ -194,6 +194,17 @@ impl Backend for GpuBackend {
         Ok(outs.into_iter().map(|o| o.expect("every launch ran")).collect())
     }
 
+    /// A batch of joins only: its first command buffer committed, and read by `finish` (the worker begins its next
+    /// submission meanwhile). Any other batch runs as it begins.
+    fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn crate::exec::Pending + 'a>, String> {
+        if !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Join { .. })) {
+            let started = objc::rc::autoreleasepool(|| space::start(&self.space, ks))?;
+            return Ok(Box::new(started));
+        }
+        let outs = self.submit(ks);
+        Ok(Box::new(Done(outs)))
+    }
+
     fn forget(&self, id: u64) {
         if let Ok(mut s) = self.space.lock() {
             s.forget(id);
@@ -208,6 +219,21 @@ impl Backend for GpuBackend {
 
     fn space(&self) -> space::Counts {
         self.space.lock().map(|s| s.counts()).unwrap_or_default()
+    }
+}
+
+impl crate::exec::Pending for space::Started {
+    fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
+        objc::rc::autoreleasepool(|| space::Started::finish(*self))
+    }
+}
+
+/// A submission that ran as it began.
+struct Done(Result<Vec<Output>, String>);
+
+impl crate::exec::Pending for Done {
+    fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
+        self.0
     }
 }
 

@@ -384,3 +384,96 @@ fn launches_planned_on_a_lane_behind_its_plan_are_claimed_by_the_others() {
     busy.wait().unwrap();
     eprintln!("{}", ex.score());
 }
+
+/// A "device" that runs the reference: at once, or begun and finished after `delay` (`start`), logging when each
+/// submission began and ended.
+struct Fake {
+    delay: std::time::Duration,
+    log: Arc<std::sync::Mutex<Vec<(&'static str, std::time::Instant)>>>,
+}
+
+struct FakePending(Vec<rerail_accel::kernel::Output>, std::time::Duration, Arc<std::sync::Mutex<Vec<(&'static str, std::time::Instant)>>>);
+
+impl rerail_accel::exec::Pending for FakePending {
+    fn finish(self: Box<Self>) -> Result<Vec<rerail_accel::kernel::Output>, String> {
+        std::thread::sleep(self.1);
+        self.2.lock().unwrap().push(("end", std::time::Instant::now()));
+        Ok(self.0)
+    }
+}
+
+impl rerail_accel::exec::Backend for Fake {
+    fn lane(&self) -> Lane {
+        Lane::Gpu
+    }
+    fn can(&self, _: &Kernel) -> bool {
+        true
+    }
+    fn submit(&self, ks: &[&Kernel]) -> Result<Vec<rerail_accel::kernel::Output>, String> {
+        Ok(ks.iter().map(|k| cpu::run(k)).collect())
+    }
+    fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn rerail_accel::exec::Pending + 'a>, String> {
+        self.log.lock().unwrap().push(("start", std::time::Instant::now()));
+        Ok(Box::new(FakePending(self.submit(ks)?, self.delay, Arc::clone(&self.log))))
+    }
+}
+
+fn probe(rng: &mut Rng, n: usize) -> Kernel {
+    let col = |rng: &mut Rng| -> rerail_accel::Col { (0..n).map(|_| rng.below(50) as i64).collect::<Vec<_>>().into() };
+    let (l, r) = (col(rng), col(rng));
+    Kernel::Join { left: vec![l].into(), right: vec![r].into(), right_id: None, by: rerail_accel::kernel::JoinBy::Probe }
+}
+
+/// The cores behind their plan, every pool thread busy and the caller not yet waiting: a device with nothing
+/// planned in the batch takes its launches (decision 0100 §11), and the outputs are the reference's.
+#[test]
+fn a_device_with_nothing_planned_takes_the_cores_late_launches() {
+    use rerail_accel::exec::CpuBackend;
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Fake { delay: std::time::Duration::ZERO, log })]);
+    // The device fast, but dear in host CPU, so the plan puts every launch on the cores.
+    ex.prices.set(rerail_accel::kernel::Form::Probe, Lane::Gpu, Some(1e-9));
+    ex.prices.latency = [0.0; 4];
+    ex.prices.fixed[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
+    ex.prices.host[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.05, launch: 0.05 };
+    let hold = std::time::Duration::from_millis(300);
+    // Every pool thread busy for `hold`, its work unknown to the plan (estimate 0).
+    let busy: Vec<_> = (0..rerail_accel::exec::threads()).map(|_| ex.spawn("hold", 0.0, move || std::thread::sleep(hold))).collect();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let mut rng = Rng(0xd1);
+    let ks: Vec<Kernel> = (0..8).map(|i| probe(&mut rng, 200 + i)).collect();
+    let want: Vec<rerail_accel::kernel::Output> = ks.iter().map(cpu::run).collect();
+    let running = ex.begin_as("idle device", Batch(ks.into_iter().map(Launch::new).collect())).unwrap();
+    // The caller works before it waits, so only the device can reach the launches meanwhile.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let t0 = std::time::Instant::now();
+    let (done, _) = running.wait().unwrap();
+    for (i, (d, w)) in done.iter().zip(&want).enumerate() {
+        assert_eq!(&d.out, w, "launch {i} on {}", d.lane.name());
+    }
+    let tag = ex.score().tags["idle device"].clone();
+    assert!(done.iter().all(|d| d.lane == Lane::Gpu), "the device took every late launch: {tag:?}");
+    assert!(t0.elapsed() < std::time::Duration::from_millis(50), "the outputs were ready when the caller waited");
+    for b in busy {
+        b.wait().unwrap();
+    }
+}
+
+/// Two batches on a device two submissions deep: the second begins before the first is read.
+#[test]
+fn a_device_begins_its_next_submission_before_it_reads_the_last() {
+    use rerail_accel::exec::CpuBackend;
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Fake { delay: std::time::Duration::from_millis(100), log: Arc::clone(&log) })]);
+    let mut rng = Rng(0xd2);
+    let (a, b) = (probe(&mut rng, 100), probe(&mut rng, 120));
+    let want = [cpu::run(&a), cpu::run(&b)];
+    let ra = ex.begin(Batch(vec![Launch::on(a, Lane::Gpu)])).unwrap();
+    let rb = ex.begin(Batch(vec![Launch::on(b, Lane::Gpu)])).unwrap();
+    let (da, _) = ra.wait().unwrap();
+    let (db, _) = rb.wait().unwrap();
+    assert_eq!((&da[0].out, &db[0].out), (&want[0], &want[1]));
+    let log = log.lock().unwrap();
+    let kinds: Vec<&str> = log.iter().map(|e| e.0).collect();
+    assert_eq!(kinds, ["start", "start", "end", "end"], "the second began while the first was in flight");
+}

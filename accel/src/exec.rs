@@ -93,6 +93,21 @@ pub fn measured_lane() -> Option<Lane> {
     })
 }
 
+/// A submission begun ([`Backend::start`]) and not yet read.
+pub trait Pending {
+    /// Waits for it to complete: its outputs, in its launches' order.
+    fn finish(self: Box<Self>) -> Result<Vec<Output>, String>;
+}
+
+/// A submission that ran as it began.
+struct Ready(Result<Vec<Output>, String>);
+
+impl Pending for Ready {
+    fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
+        self.0
+    }
+}
+
 /// A lane's implementation.
 pub trait Backend: Send + Sync {
     fn lane(&self) -> Lane;
@@ -101,6 +116,12 @@ pub trait Backend: Send + Sync {
     fn can(&self, k: &Kernel) -> bool;
     /// Runs `ks` as one submission. The outputs are in `ks`' order, each equal to [`crate::cpu::run`]'s.
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String>;
+    /// Begins `ks` as one submission and returns before it completes: the lane's worker begins its next one while
+    /// the device runs this, and reads this one's outputs with [`Pending::finish`] after. A lane that cannot
+    /// overlap its submissions runs it here (the default).
+    fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn Pending + 'a>, String> {
+        Ok(Box::new(Ready(self.submit(ks))))
+    }
     /// Drops what the lane keeps for the join id `id` (decision 0100 §4).
     fn forget(&self, _id: u64) {}
     /// Drops everything the lane keeps (a chunk's end).
@@ -203,14 +224,92 @@ fn run_job(backend: &dyn Backend, board: &Scoreboard, ks: &[&Kernel], mut ticket
     (r, start, Instant::now())
 }
 
-/// The worker of a device lane: serves each batch it is sent, in order, until the executor drops.
+/// A device lane's submission in flight: begun, its outputs not yet read.
+struct Flight<'a> {
+    claims: Arc<Claims>,
+    ids: Vec<usize>,
+    ticket: Ticket,
+    start: Instant,
+    pending: Result<Box<dyn Pending + 'a>, String>,
+}
+
+impl Flight<'_> {
+    /// Waits for it and hands its outputs to the batch's waiter.
+    fn end(self, board: &Scoreboard, lane: Lane) {
+        let Flight { claims, ids, ticket, start, pending } = self;
+        let r = pending.and_then(|p| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.finish())).unwrap_or_else(|_| Err("its submission panicked".into())));
+        board.finish(ticket, r.is_ok());
+        claims.reply((lane, ids, (r, start, Instant::now())));
+    }
+}
+
+/// The worker of a device lane, until the executor drops: two submissions deep (decision 0100 §11).
+///
+/// It keeps every batch it is sent while that batch has a launch it may yet take. Its next submission is the
+/// oldest batch's launches planned on it, else what it may take from a lane behind its plan; it begins that one
+/// before it waits for the one in flight, so the device runs one while the host encodes the next. With nothing to
+/// begin it waits for the one in flight, else sleeps until the soonest launch it may take falls due, or a batch
+/// comes.
 fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc::Sender<Task> {
+    use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
     let (send, take) = std::sync::mpsc::channel::<Task>();
     std::thread::Builder::new()
         .name(format!("rerail-accel {}", backend.lane().name()))
         .spawn(move || {
-            for claims in take {
-                claims.serve_device(&*backend, &board);
+            let lane = backend.lane();
+            let mut open: std::collections::VecDeque<Arc<Claims>> = Default::default();
+            let mut flight: Option<Flight<'_>> = None;
+            let mut ended = false;
+            loop {
+                if flight.is_none() && open.is_empty() {
+                    if ended {
+                        return;
+                    }
+                    match take.recv() {
+                        Ok(c) => open.push_back(c),
+                        Err(_) => return,
+                    }
+                }
+                loop {
+                    match take.try_recv() {
+                        Ok(c) => open.push_back(c),
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => {
+                            ended = true;
+                            break;
+                        }
+                    }
+                }
+                let next = open.iter().find_map(|c| c.next_device(lane).map(|ids| (Arc::clone(c), ids)));
+                if let Some((claims, ids)) = next {
+                    let mut ticket = board.claimed(lane, ids.iter().map(|&i| claims.item(i, lane)).collect(), claims.begun);
+                    board.start(&mut ticket);
+                    let start = Instant::now();
+                    let pending = {
+                        let ks: Vec<&Kernel> = ids.iter().map(|&i| &claims.kernels[i]).collect();
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.start(&ks))).unwrap_or_else(|_| Err("its submission panicked".into()))
+                    };
+                    if let Some(f) = flight.replace(Flight { claims, ids, ticket, start, pending }) {
+                        f.end(&board, lane);
+                    }
+                    continue;
+                }
+                if let Some(f) = flight.take() {
+                    f.end(&board, lane);
+                    continue;
+                }
+                open.retain(|c| c.takeable_in(lane).is_some());
+                let Some(wait) = open.iter().filter_map(|c| c.takeable_in(lane)).reduce(f64::min) else { continue };
+                let wait = std::time::Duration::from_secs_f64(wait.clamp(20e-6, 0.05));
+                if ended {
+                    std::thread::sleep(wait);
+                    continue;
+                }
+                match take.recv_timeout(wait) {
+                    Ok(c) => open.push_back(c),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => ended = true,
+                }
             }
         })
         .expect("a lane's worker thread");
@@ -228,8 +327,12 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
 /// So a spike on one lane moves its work to the others as it happens, and without one the plan stands. The cores
 /// take from a device whose worker is still busy with earlier batches; a device, after each submission, takes the
 /// cores' launches their pool has not reached; and the caller, when it waits, runs free launches itself rather than
-/// stall. A pinned launch stays on its lane. A device is sent a batch only when it has launches planned, so it
-/// takes others' only after a submission of its own.
+/// stall. A pinned launch stays on its lane. A device is sent every batch it could take a launch of, planned there
+/// or not, and keeps it until nothing in it is left for it ([`worker`]).
+///
+/// When a launch is due: on a device, once the work outstanding there is done; on the cores, once a pool thread
+/// is free, the outstanding work spread over the pool's threads and the batch's launches, largest first, each on
+/// the thread free soonest.
 pub struct Claims {
     kernels: Vec<Kernel>,
     /// Per launch: 0 while free, else 1 + the index of the lane that claimed it.
@@ -286,12 +389,46 @@ impl Claims {
     /// Whether `lane` may take launch `i`, planned elsewhere: free, not pinned, `lane` can run it, and its lane is
     /// behind its plan by more than `lane`'s time for it.
     fn may_take(&self, i: usize, lane: Lane) -> bool {
+        self.threshold(i, lane).is_some_and(|t| self.late(i) > t)
+    }
+
+    /// How late launch `i`'s lane must be for `lane` to take it: `lane`'s own time for it, at least `LATE_MIN`;
+    /// `None` when `lane` may never take it (planned on `lane`, pinned, claimed, or `lane` cannot run it).
+    fn threshold(&self, i: usize, lane: Lane) -> Option<f64> {
         if self.plan[i] == lane || self.pinned[i] || !self.free(i) {
-            return false;
+            return None;
         }
-        let Some(c) = self.costs[i][lane.index()] else { return false };
+        let c = self.costs[i][lane.index()]?;
         let own = c.wall + if lane == Lane::Cpu { 0.0 } else { c.finish - c.wall - self.due_on(lane) };
-        self.late(i) > own.max(LATE_MIN)
+        Some(own.max(LATE_MIN))
+    }
+
+    /// Seconds from now until `lane` may take a launch of this batch (0 when it may now); `None` when there is
+    /// none it may ever take.
+    fn takeable_in(&self, lane: Lane) -> Option<f64> {
+        let now = self.begun.elapsed().as_secs_f64();
+        (0..self.plan.len())
+            .filter_map(|i| {
+                let t = self.threshold(i, lane)?;
+                let late = self.late(i);
+                // A lane whose worker claimed its launches never leaves one free: nothing to wait for there.
+                (late > f64::NEG_INFINITY).then(|| (self.due[i] + t - now).max(0.0))
+            })
+            .reduce(f64::min)
+    }
+
+    /// A device's next submission from this batch: its own launches the first time it looks (it has started the
+    /// batch after), else what it may take from a lane behind its plan; `None` when there is nothing now.
+    fn next_device(&self, lane: Lane) -> Option<Vec<usize>> {
+        use std::sync::atomic::Ordering::AcqRel;
+        if !self.started[lane.index()].swap(true, AcqRel) {
+            let own: Vec<usize> = self.order[lane.index()].iter().copied().filter(|&i| self.free(i) && self.claim(i, lane)).collect();
+            if !own.is_empty() {
+                return Some(own);
+            }
+        }
+        let late: Vec<usize> = std::iter::from_fn(|| self.take_late(lane)).collect();
+        (!late.is_empty()).then_some(late)
     }
 
     /// When `lane`'s plan had it start (a device's latency is part of its finish, not of its start).
@@ -332,21 +469,6 @@ impl Claims {
     fn serve_cpu(&self, backend: &dyn Backend) {
         while let Some(i) = self.next_cpu() {
             self.run_cpu(backend, i);
-        }
-    }
-
-    /// A device's share: every launch planned on it that is free, as one submission; then, after each submission,
-    /// what it may take from a lane behind its plan, as another.
-    fn serve_device(&self, backend: &dyn Backend, board: &Scoreboard) {
-        let lane = backend.lane();
-        let mut ids: Vec<usize> = self.order[lane.index()].iter().copied().filter(|&i| self.free(i) && self.claim(i, lane)).collect();
-        self.started[lane.index()].store(true, std::sync::atomic::Ordering::Release);
-        while !ids.is_empty() {
-            let ks: Vec<&Kernel> = ids.iter().map(|&i| &self.kernels[i]).collect();
-            let ticket = board.claimed(lane, ids.iter().map(|&i| self.item(i, lane)).collect(), self.begun);
-            let r = run_job(backend, board, &ks, ticket);
-            self.reply((lane, std::mem::take(&mut ids), r));
-            ids = std::iter::from_fn(|| self.take_late(lane)).collect();
         }
     }
 }
@@ -579,13 +701,23 @@ impl Executor {
             }
             let (lane, c, _) = costs[i];
             all[i][lane.index()] = Some(c);
-            due[i] = if lane == Lane::Cpu { c.finish - c.wall } else { load.queued[lane.index()] };
+            if lane != Lane::Cpu {
+                due[i] = load.queued[lane.index()];
+            }
             per_lane[lane.index()] += 1;
         }
         let mut by_size: Vec<usize> = (0..n).collect();
         by_size.sort_by(|&a, &b| batch.0[b].kernel.units().total_cmp(&batch.0[a].kernel.units()));
         for &i in &by_size {
             order[costs[i].0.index()].push(i);
+        }
+        // The cores' launches start as the pool's threads free up: the work outstanding on the cores spread over the
+        // threads, then each launch, largest first, on the thread free soonest (the cores' slowdown is in its wall).
+        let mut free_at = vec![load.queued[Lane::Cpu.index()] / threads() as f64; threads()];
+        for &i in &order[Lane::Cpu.index()] {
+            let t = free_at.iter_mut().min_by(|a, b| a.total_cmp(b)).expect("a thread");
+            due[i] = *t;
+            *t += costs[i].1.wall;
         }
         for lane in Lane::ALL {
             let est: f64 = order[lane.index()].iter().map(|&i| costs[i].1.wall).sum();
@@ -624,9 +756,10 @@ impl Executor {
                         pool().spawn_fifo(move || claims.serve_cpu(&*backend));
                     }
                 }
-                // A device lane: its worker claims its share when it reaches the batch.
+                // A device lane: its worker claims its share when it reaches the batch, and a device with nothing
+                // planned may still take the others' launches once they fall behind.
                 Some(w) => {
-                    if per_lane[lane.index()] > 0 {
+                    if per_lane[lane.index()] > 0 || (0..n).any(|i| !claims.pinned[i] && claims.costs[i][lane.index()].is_some()) {
                         w.send(Arc::clone(&claims)).map_err(|_| format!("{} lane: its worker ended", lane.name()))?;
                     }
                 }

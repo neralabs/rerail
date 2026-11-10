@@ -106,9 +106,16 @@ pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String>
 }
 
 thread_local! {
-    /// This thread's scratch buffers, by slot: a sort's or probe's intermediates, kept for the next (each call
-    /// completes its command buffers before it returns, so no two calls share one in flight).
-    static SCRATCH: RefCell<Vec<Option<shared::Pooled>>> = const { RefCell::new(Vec::new()) };
+    /// This thread's scratch buffers, two sets by slot: a sort's or probe's intermediates, kept for the next. A
+    /// submission uses one set (`scratch_set`); the lane has at most two in flight, each on its own set, and starts
+    /// a third only once the first completed, so no two in flight share one.
+    static SCRATCH: RefCell<[Vec<Option<shared::Pooled>>; 2]> = const { RefCell::new([Vec::new(), Vec::new()]) };
+    static SET: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Makes `set` (0 or 1) this thread's scratch set; the previous one.
+pub fn scratch_set(set: usize) -> usize {
+    SET.with(|c| c.replace(set & 1))
 }
 
 /// The pipeline `name` of the variant `variant`, its source made by `source` the first time: kept by the one
@@ -174,11 +181,12 @@ pub fn set_wait(w: Wait) -> Wait {
 /// A committed command buffer, to wait for, and the pooled buffers it reads that nothing else holds: a pooled
 /// buffer is written by the host when handed out again, and Metal orders no host write after a GPU read, so they
 /// return to the pool only once it completes.
-struct Submitted {
+pub(super) struct Submitted {
     command: metal::CommandBuffer,
     done: Option<std::sync::mpsc::Receiver<()>>,
     reads: Vec<Column>,
-    /// The host clock at its commit (`host_clock`).
+    /// The host clock at its commit (`host_clock`); NaN for a second watcher of a command buffer another waits
+    /// for (`watch`), which adds no timeline.
     committed: f64,
 }
 
@@ -221,7 +229,7 @@ pub fn add_timeline(command: &CommandBufferRef, committed: f64, returned: f64) {
 
 impl Submitted {
     /// Commits `command` (checked against the launch budget), with a completion handler when this thread waits on one.
-    fn commit(command: &CommandBufferRef) -> Result<Submitted, String> {
+    pub(super) fn commit(command: &CommandBufferRef) -> Result<Submitted, String> {
         let done = (WAIT.with(Cell::get) == Wait::Handler).then(|| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
             let block = block::ConcreteBlock::new(move |_: &CommandBufferRef| {
@@ -239,8 +247,13 @@ impl Submitted {
         Ok(Submitted { command: command.to_owned(), done, reads: Vec::new(), committed: host_clock() })
     }
 
+    /// Another wait for a committed command buffer: what a sort encoded into it waits for (`Keyed::settle`).
+    pub(super) fn watch(&self) -> Submitted {
+        Submitted { command: self.command.clone(), done: None, reads: Vec::new(), committed: f64::NAN }
+    }
+
     /// Waits for it; its GPU seconds. The buffers it read return to the pool after.
-    fn wait(self) -> f64 {
+    pub(super) fn wait(self) -> f64 {
         crate::score::phase("gpu wait", || match &self.done {
             Some(rx) if self.command.status() != metal::MTLCommandBufferStatus::Completed => {
                 let _ = rx.recv();
@@ -249,7 +262,9 @@ impl Submitted {
             }
             _ => self.command.wait_until_completed(),
         });
-        add_timeline(&self.command, self.committed, host_clock());
+        if !self.committed.is_nan() {
+            add_timeline(&self.command, self.committed, host_clock());
+        }
         gpu_seconds(&self.command)
     }
 }
@@ -265,7 +280,9 @@ const SCAN: usize = 5;
 
 /// Scratch slot `slot`, at least `bytes` long (grown to a power of two when it is shorter).
 fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
-    SCRATCH.with_borrow_mut(|s| {
+    let set = SET.with(Cell::get);
+    SCRATCH.with_borrow_mut(|sets| {
+        let s = &mut sets[set];
         if s.len() <= slot {
             s.resize_with(slot + 1, || None);
         }
@@ -638,6 +655,11 @@ impl Drop for Keyed {
 }
 
 impl Keyed {
+    /// The command buffer this sort was encoded into, committed and not waited for: `settle` waits for it.
+    pub(super) fn pending_on(&self, s: &Submitted) {
+        *self.pending.lock().expect("a sort's pending command buffer") = Some(s.watch());
+    }
+
     /// Waits for the sort, once (a sort encoded into a caller's command buffer is the caller's to wait for).
     pub fn settle(&self) {
         use std::sync::atomic::Ordering::Relaxed;
