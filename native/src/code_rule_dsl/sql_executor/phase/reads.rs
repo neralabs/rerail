@@ -10,6 +10,7 @@ struct Read {
 #[derive(Clone)]
 pub(super) struct Plan {
     pub arms: Vec<String>,
+    pub queries:Vec<String>,
     pub logical_reads: usize,
     reads: Vec<Read>,
 }
@@ -17,6 +18,7 @@ impl Plan {
     pub fn new(phase: &Phase, width: usize) -> Self {
         let mut plan = Self {
             arms: vec![],
+            queries:vec![],
             logical_reads: 0,
             reads: vec![],
         };
@@ -61,6 +63,7 @@ impl Plan {
                         .collect::<Vec<_>>()
                         .join(",")
                 });
+                plan.queries.push(format!("SELECT {fields} FROM {source}"));
                 plan.arms
                     .push(format!("SELECT {at},{fields} FROM {source}"));
                 plan.reads.push(Read {

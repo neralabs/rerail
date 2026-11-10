@@ -186,6 +186,7 @@ impl State {
 /// Must drop before its connection. The Box keeps callback data stable when Session moves.
 /// Each connection runs on one worker at a time, as required by rusqlite.
 pub(in crate::code_rule_dsl) struct Profiler {
+    observer:Option<Arc<crate::code_rule_dsl::sql_admission::observer::Observed>>,
     database: *mut ffi::sqlite3,
     state: RefCell<State>,
     context: Arc<parking_lot::Mutex<Value>>,
@@ -208,6 +209,8 @@ impl Drop for Context {
 unsafe impl Send for Profiler {}
 
 impl Profiler {
+    pub(in crate::code_rule_dsl) fn observe(&mut self,observer:Arc<crate::code_rule_dsl::sql_admission::observer::Observed>) {self.observer=Some(observer);}
+
     /// Cumulative executions, wall nanoseconds, VM steps, scans, sorts, and autoindex rows.
     pub(in crate::code_rule_dsl) fn totals(&self) -> [u64;6] { self.state.borrow().totals }
     /// Untimed API outcome. Measured work remains in SQL and native operator events.
@@ -264,6 +267,7 @@ impl Profiler {
         let file = File::create(stem.with_extension("jsonl"))
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let mut this = Box::new(Self {
+            observer:None,
             // SAFETY: the profiler is owned by Session and dropped before this connection.
             database: unsafe { connection.handle() },
             state: RefCell::new(State {
@@ -587,6 +591,7 @@ unsafe extern "C" fn trace(
                     }
                 };
                 let sql = String::from_utf8_lossy(canonical);
+                if let Some(observer)=&profiler.observer {observer.start(pointer);}
                 let query = state.query(&sql, "sql");
                 state.sql_started += 1;
                 state.origin_started[origin] += 1;
@@ -617,6 +622,7 @@ unsafe extern "C" fn trace(
                 }
             }
             ffi::SQLITE_TRACE_PROFILE => {
+                if let Some(observer)=&profiler.observer {observer.end(pointer);}
                 let Some(running) = state.running.remove(&key) else {
                     return;
                 };

@@ -381,6 +381,7 @@ impl Operator {
         Ok(())
     }
     pub(super) fn append_kernel(&self, phase: &mut super::super::phase::Phase, width: usize) -> String {
+        phase.owner_only=true;
         let query = self.run.emitted.queries[0].as_ref().unwrap();
         let evaluated = phase.checked_relation(width, query);
         let present = (0..width).map(|c|format!("c{c} IS NOT NULL")).collect::<Vec<_>>().join(" AND ");

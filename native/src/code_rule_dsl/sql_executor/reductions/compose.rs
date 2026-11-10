@@ -164,6 +164,7 @@ impl Retained {
         full: bool,
         summaries: &mut reducer::staged::Batch,
     ) -> Result<(String,String)> {
+        if self.can_fuse() {phase.checked_total=true;}else{phase.owner_only=true;}
         if w.profiler.is_some() {
             phase
                 .analyses

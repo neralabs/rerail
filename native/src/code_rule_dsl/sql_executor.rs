@@ -103,12 +103,15 @@ impl CodeRuleSqlExecutor {
     #[napi(constructor)]
     pub fn new(store_path: String) -> Result<Self> {
         let store = ContentStore::open(Path::new(&store_path)).map_err(error)?;
-        let db = Database::open(&store).map_err(error)?;
+        let db = Database::open_admitted(&store).map_err(error)?;
         super::logic::native::register(&db).map_err(error)?;
         strings::register(&db).map_err(error)?;
         wire::register(&db)?;
         lattices::builtins(&db)?;
         reductions::register(&db)?;
+        let worker_profile_totals = Arc::new(work_graph::Accounting::default());
+        let mut scratch = scratch::Pool::default();
+        scratch.worker_accounting = Some(worker_profile_totals.clone());
         Ok(Self {
             db,
             store,
@@ -121,13 +124,13 @@ impl CodeRuleSqlExecutor {
             mutable_inputs: BTreeSet::new(),
             live_inputs: BTreeMap::new(),
             documents: None,
-            scratch: scratch::Pool::default(),
+            scratch,
             versions: versions::Store::default(),
             next_trace: 0,
             stats_ready: std::cell::Cell::new(false),
             statistics: session::Statistics::default(),
             last_sql_work_plan: None,
-            worker_profile_totals: Arc::new(work_graph::Accounting::default()),
+            worker_profile_totals,
             catalog_dirty: std::cell::Cell::new(true),
             control_ready: std::cell::Cell::new(false),
             #[cfg(any(test, feature = "headless"))]
@@ -350,7 +353,7 @@ impl CodeRuleSqlExecutor {
             return Err(error("bindCorpus needs a 64-bit target: its rows are document << 32 | row"));
         }
         #[cfg(target_pointer_width = "64")]
-        self.bind_corpus_64(root, relations)
+        self.profiled("bind_corpus", |this| this.bind_corpus_64(root, relations))
     }
 
     #[cfg(target_pointer_width = "64")]
@@ -369,6 +372,14 @@ impl CodeRuleSqlExecutor {
             None => recorded.keys().cloned().collect(),
         };
         let run = Arc::new(corpus::Run::open(frames)?);
+        self.db.admission().require_owner(|| {
+            let mut bindings: BTreeSet<_> = wanted.iter().cloned().collect();
+            bindings.insert("corpus_document".into());
+            let affected = self.affected(&bindings);
+            let drops = affected.iter().flat_map(|i| &self.executions[*i].objects)
+                .filter(|(n, _)| !self.versions.owns(n)).collect::<BTreeSet<_>>().len();
+            bindings.len() + drops + if affected.is_empty() { 0 } else { self.control_drop_bound() }
+        }).map_err(error)?;
         let mut bound = serde_json::Map::new();
         for rel in &wanted {
             // An export's columns, or `{"lines": columns}` for a file-local output's rendered lines.
@@ -413,10 +424,13 @@ impl CodeRuleSqlExecutor {
         })
     }
 
-    /// Limits apply independently to each subsequent run/query. An empty object removes limits.
+    /// VM and time limits apply per operation. The submission limit covers the session
+    /// from connection setup onward. An empty object removes limits without resetting usage.
     #[napi]
     pub fn set_limits(&mut self, limits_json: String) -> Result<()> {
-        self.limits = serde_json::from_str(&limits_json).map_err(error)?;
+        let limits:runtime::Limits = serde_json::from_str(&limits_json).map_err(error)?;
+        self.db.admission().configure(limits.max_submissions).map_err(error)?;
+        self.limits=limits;
         Ok(())
     }
 
@@ -936,6 +950,11 @@ impl CodeRuleSqlExecutor {
     }
 
     fn clear_results(&mut self) -> Result<()> {
+        self.db.admission().require_owner(|| {
+            self.control_drop_bound()
+                + self.generated.iter().filter(|(n, _)| !self.versions.owns(n)).count()
+                + self.scratch.sql_drop_bound(&self.versions)
+        }).map_err(error)?;
         self.db.profile_checkpoint();
         // Views first, then their backing tables. Input virtual tables are untouched.
         for table in [false, true] {

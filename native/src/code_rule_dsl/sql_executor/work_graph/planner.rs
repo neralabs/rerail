@@ -5,7 +5,7 @@ const MAX_ARMS: usize = 400;
 const MAX_EXPANSION: usize = phase::Phase::EXPANSION_BUDGET;
 
 #[derive(Default)]
-pub(super) struct Group {
+pub(in crate::code_rule_dsl::sql_executor) struct Group {
     pub(super) nodes: Vec<usize>,
     pub dependencies: BTreeSet<usize>,
     pub inputs: BTreeSet<String>,
@@ -13,7 +13,7 @@ pub(super) struct Group {
     pub cost: usize,
     partitioned: bool,
 }
-pub(super) struct Plan {
+pub(in crate::code_rule_dsl::sql_executor) struct Plan {
     pub groups: Vec<Group>,
 }
 
@@ -30,8 +30,9 @@ impl Group {
                     .collect::<Vec<_>>()
                     .join(",");
                 format!(
-                    "{}({columns}) AS MATERIALIZED ({})",
+                    "{}({columns}) AS {} ({})",
                     quote(&node.name),
+                    if node.materialized {"MATERIALIZED"}else{"NOT MATERIALIZED"},
                     node.sql
                 )
             })

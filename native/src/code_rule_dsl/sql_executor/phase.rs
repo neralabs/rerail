@@ -5,13 +5,20 @@ use super::*;
 
 mod publication;
 mod reads;
+mod worker;
 
 #[derive(Clone)]
 struct Definition {
     sql: String,
+    query_start: usize,
     materialized: bool,
     width: usize,
     expansion: usize,
+}
+impl Definition {
+    fn query(&self) -> &str {
+        &self.sql[self.query_start..self.sql.len() - 1]
+    }
 }
 
 #[derive(Clone)]
@@ -60,6 +67,8 @@ pub(super) struct Template {
     width: usize,
     outputs: usize,
     expansion: usize,
+    checked_total: bool,
+    owner_only: bool,
 }
 impl Template {
     pub fn sql(&self) -> String {
@@ -108,6 +117,8 @@ impl Template {
 #[derive(Default)]
 pub(super) struct Phase {
     pub analyses: Vec<Value>,
+    pub checked_total:bool,
+    pub owner_only:bool,
     definitions: Vec<Definition>,
     outputs: Vec<Output>,
     key_sets: BTreeMap<String, crate::code_rule_dsl::logic::analysis::key_sets::KeySet>,
@@ -212,9 +223,11 @@ impl Phase {
             .collect::<Vec<_>>()
             .join(",");
         let expansion = self.source_expansion(query);
+        let prefix = format!("{name}({columns}) AS {hint} (");
         self.definitions.push(Definition {
+            query_start: prefix.len(),
             expansion,
-            sql: format!("{name}({columns}) AS {hint} ({query})"),
+            sql: format!("{prefix}{query})"),
             materialized: hint == "MATERIALIZED",
             width,
         });
@@ -360,12 +373,7 @@ impl Phase {
         if self.outputs.is_empty() {
             return Ok(BTreeMap::new());
         }
-        crate::code_rule_dsl::logic::lanes::sql_executor().local(
-            rerail_accel::Lane::Sql,
-            "SQL retained phase",
-            0.0,
-            || self.execute_owned(w),
-        )
+        self.execute_owned(w)
     }
     pub fn compile(self) -> Result<(Template, Vec<versions::Version>)> {
         let width = self
@@ -387,6 +395,8 @@ impl Phase {
                 width,
                 outputs,
                 expansion,
+                checked_total:self.checked_total,
+                owner_only:self.owner_only,
             },
             snapshots,
         ))
@@ -396,7 +406,6 @@ impl Phase {
             .versions
             .ok_or_else(|| error("SQL phase requires native storage"))?;
         let (template, snapshots) = self.compile()?;
-        let sql = template.sql();
         let _context = w.profile_scope(||json!({"stage":"fused relational phase",
             "phaseOutputs":template.publication.names(),"publication":template.publication.explain(&snapshots),
             "logicalAnalyses":template.analyses,"outputProtocol":{"sqlArms":template.reads.arms.len(),
@@ -404,45 +413,58 @@ impl Phase {
         // Delta-first CROSS JOINs and primary-key probes fix the sparse access
         // paths. Reuse preparation across wave scopes while xFilter reads their
         // current immutable roots; rows and expressions are never cached here.
-        let mut statement = {
-            let _cpu = super::super::logic::profile::span(|| "SQL phase preparation".into());
-            let operation = w.profiler.map(|p| {
-                p.operation(
-                    "SQL phase preparation",
-                    ("sql-extension", 0),
-                    0,
-                    vec![
-                        ("sql_bytes".into(), sql.len() as i64),
-                        ("definitions".into(), template.definitions.len() as i64),
-                        ("output_arms".into(), template.reads.arms.len() as i64),
-                        ("logical_reads".into(), template.reads.logical_reads as i64),
-                        (
-                            "dependency_expansion_cost".into(),
-                            template.expansion.min(i64::MAX as usize) as i64,
-                        ),
-                    ],
-                )
-            });
-            let prepared = w.db.prepare_cached(&sql).map_err(|e| {
-                error(format!(
-                    "{e}; dependency expansion cost {}, definitions {}, result arms {}",
-                    template.expansion,
-                    template.definitions.len(),
-                    template.reads.arms.len()
-                ))
-            });
-            if let Some(operation) = operation {
-                operation.finish_unobserved();
-            }
-            prepared?
+        let buffers = if let Some(buffers) = worker::evaluate(&template, w)? {
+            buffers
+        } else {
+            crate::code_rule_dsl::logic::lanes::sql_executor().local(
+                rerail_accel::Lane::Sql,
+                "SQL retained phase",
+                0.0,
+                || {
+                    let sql = template.sql();
+                    let mut statement = {
+                        let _cpu = super::super::logic::profile::span(|| "SQL phase preparation".into());
+                        let operation = w.profiler.map(|p| {
+                            p.operation(
+                                "SQL phase preparation",
+                                ("sql-extension", 0),
+                                0,
+                                vec![
+                                    ("sql_bytes".into(), sql.len() as i64),
+                                    ("definitions".into(), template.definitions.len() as i64),
+                                    ("output_arms".into(), template.reads.arms.len() as i64),
+                                    ("logical_reads".into(), template.reads.logical_reads as i64),
+                                    (
+                                        "dependency_expansion_cost".into(),
+                                        template.expansion.min(i64::MAX as usize) as i64,
+                                    ),
+                                ],
+                            )
+                        });
+                        let prepared = w.db.prepare_cached(&sql).map_err(|e| {
+                            error(format!(
+                                "{e}; dependency expansion cost {}, definitions {}, result arms {}",
+                                template.expansion,
+                                template.definitions.len(),
+                                template.reads.arms.len()
+                            ))
+                        });
+                        if let Some(operation) = operation {
+                            operation.finish_unobserved();
+                        }
+                        prepared?
+                    };
+                    let mut cursor = statement.query([]).map_err(error)?;
+                    let mut buffers = template.buffers();
+                    while let Some(row) = cursor.next().map_err(error)? {
+                        template.collect_row(row, &mut buffers)?;
+                    }
+                    drop(cursor);
+                    drop(statement);
+                    Ok::<_, napi::Error>(buffers)
+                },
+            )?
         };
-        let mut cursor = statement.query([]).map_err(error)?;
-        let mut buffers = template.buffers();
-        while let Some(row) = cursor.next().map_err(error)? {
-            template.collect_row(row, &mut buffers)?;
-        }
-        drop(cursor);
-        drop(statement);
         let operation = w.profiler.map(|p| {
             p.operation(
                 "SQL phase publication",

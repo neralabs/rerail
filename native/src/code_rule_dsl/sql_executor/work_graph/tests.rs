@@ -2,6 +2,7 @@ use super::*;
 
 fn node(name: &str, sql: &str, width: usize, reads: &[&str]) -> Node {
     Node {
+        materialized:true,
         name: name.into(),
         sql: sql.into(),
         width,
@@ -210,6 +211,7 @@ fn workers_share_vm_limits_and_failed_queries_do_not_publish() {
     );
     // Each query fits, but their total exceeds this operation's shared allowance.
     let limits = runtime::Limits {
+        max_submissions:None,
         max_steps: Some(one.vm_steps + one.vm_steps / 2),
         timeout_ms: Some(5000),
     };

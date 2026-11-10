@@ -16,6 +16,7 @@ mod sharing;
 mod shape;
 mod producers;
 mod component_caches;
+mod workers;
 
 pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();

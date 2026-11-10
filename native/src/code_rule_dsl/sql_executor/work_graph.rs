@@ -6,10 +6,10 @@ use rerail_accel::{Batch, Lane, Launch};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-mod planner;
+pub(super) mod planner;
 #[cfg(test)]
 mod tests;
-mod worker;
+pub(super) mod worker;
 
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,6 +19,8 @@ pub(super) struct Node {
     /// Output columns are c0..cN; cells are nullable integers, including symbol atoms.
     pub width: usize,
     pub reads: Vec<String>,
+    #[serde(default = "materialized")]
+    pub materialized: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -28,6 +30,9 @@ pub(super) struct Request {
     pub outputs: Vec<String>,
     #[serde(default = "allowance")]
     pub max_submissions: usize,
+}
+fn materialized() -> bool {
+    true
 }
 fn allowance() -> usize {
     100
@@ -42,6 +47,7 @@ struct Shared {
     deadline: Option<Instant>,
     cancelled: AtomicBool,
     accounting: Option<Arc<Accounting>>,
+    reservation: Option<Arc<super::super::sql_admission::Reservation>>,
 }
 #[derive(Default)]
 pub(super) struct Accounting(pub [AtomicU64; 6]);
@@ -66,6 +72,7 @@ impl Shared {
                 .and_then(|ms| Instant::now().checked_add(Duration::from_millis(ms))),
             cancelled: AtomicBool::new(false),
             accounting,
+            reservation: None,
         })
     }
     fn interrupted(&self) -> bool {
@@ -92,6 +99,7 @@ pub(super) struct ResultSet {
     pub vm_steps: u64,
 }
 
+#[cfg(test)]
 pub(super) fn execute(
     request: Request,
     sources: BTreeMap<String, Arc<dyn Source>>,
@@ -101,15 +109,35 @@ pub(super) fn execute(
     execute_accounted(request, sources, limits, profiler, None)
 }
 pub(super) fn execute_accounted(
-    request: Request,
+    mut request: Request,
     sources: BTreeMap<String, Arc<dyn Source>>,
     limits: &runtime::Limits,
     profiler: Option<&super::super::sql_profile::Profiler>,
     accounting: Option<Arc<Accounting>>,
 ) -> Result<ResultSet> {
+    let ledger = super::super::sql_admission::current();
+    if let Some(ledger) = &ledger {
+        request.max_submissions = request.max_submissions.min(ledger.available());
+    }
     let plan =
         planner::Plan::new(&request, &sources, rerail_accel::exec::threads()).map_err(error)?;
-    let shared = Shared::new(limits, request.max_submissions, accounting);
+    execute_planned(request, sources, limits, profiler, accounting, plan)
+}
+
+pub(in crate::code_rule_dsl::sql_executor) fn execute_planned(
+    request: Request,
+    sources: BTreeMap<String, Arc<dyn Source>>,
+    limits: &runtime::Limits,
+    profiler: Option<&super::super::sql_profile::Profiler>,
+    accounting: Option<Arc<Accounting>>,
+    plan: planner::Plan,
+) -> Result<ResultSet> {
+    let reservation = super::super::sql_admission::current()
+        .map(|l| l.reserve(plan.groups.len()))
+        .transpose()
+        .map_err(error)?;
+    let mut shared = Shared::new(limits, request.max_submissions, accounting);
+    Arc::get_mut(&mut shared).unwrap().reservation = reservation;
     let explain = plan.explain(&request);
     let graph = NEXT_GRAPH.fetch_add(1, Ordering::Relaxed);
     let _context = profiler.map(|p| p.scope(json!({"sqlWorkGraph":graph,"sqlWorkPlan":explain})));

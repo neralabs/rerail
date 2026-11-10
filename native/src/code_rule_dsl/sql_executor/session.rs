@@ -64,6 +64,9 @@ impl CodeRuleSqlExecutor {
             .iter()
             .flat_map(|i| self.executions[*i].objects.iter().cloned())
             .collect();
+        self.db.admission().require_owner(|| {
+            self.control_drop_bound() + objects.iter().filter(|(n, _)| !self.versions.owns(n)).count()
+        }).map_err(error)?;
         for table in [false, true] {
             for (name, is_table) in objects.iter().filter(|(_, is_table)| *is_table == table) {
                 if self.versions.owns(name) {
@@ -162,6 +165,10 @@ impl CodeRuleSqlExecutor {
         }
         Ok(objects)
     }
+    pub(super) fn control_drop_bound(&self) -> usize {
+        // One view drop for native statistics, then one inventory and up to seven table drops.
+        usize::from(self.statistics.snapshot().is_some()) + if self.control_ready.get() { 8 } else { 0 }
+    }
     pub(super) fn clear_control(&self) -> Result<()> {
         self.statistics.clear(&self.db)?;
         self.stats_ready.set(false);
@@ -224,7 +231,9 @@ impl Drop for CodeRuleSqlExecutor {
         let _scope = profiling::scope(&self.db, "reset");
         self.db.profile_checkpoint();
         let _ = self.db.remove_bindings();
-        let _ = crate::content_store::atoms::Atoms::for_connection(&self.db).flush(&self.db);
+        if let Ok(_admission)=self.db.admission().enter("cleanup") {
+            let _ = crate::content_store::atoms::Atoms::for_connection(&self.db).flush(&self.db);
+        }
         self.db.profile_checkpoint();
     }
 }

@@ -88,6 +88,7 @@ pub(super) struct Job {
 // Field order is intentional: the callback must drop before its connection.
 struct Database {
     profiler: Option<Box<super::super::super::sql_profile::Profiler>>,
+    _admission: Option<Box<super::super::super::sql_admission::observer::Observer>>,
     connection: rusqlite::Connection,
     _modules: Modules,
     accounting: Option<Arc<Accounting>>,
@@ -105,13 +106,19 @@ impl Database {
     fn open(job: &Job) -> std::result::Result<Self, String> {
         let connection = rusqlite::Connection::open_in_memory().map_err(|e| e.to_string())?;
         // SAFETY: the callback is dropped before its owned connection, including errors.
-        let profiler =
+        let admission=job.shared.reservation.as_ref().map(|r|unsafe {
+            super::super::super::sql_admission::observer::Observer::install(&connection,r.ledger(),Some(r.clone()))
+        });
+        let mut profiler =
             unsafe { super::super::super::sql_profile::Profiler::configured(&connection) }
                 .map_err(|e| e.to_string())?;
+        if let Some(p)=&mut profiler {if let Some(a)=&admission {p.observe(a.shared.clone());}}
+        super::super::reductions::register(&connection).map_err(|e|e.to_string())?;
         let modules = Modules::default();
         // Establish RAII ownership before any fallible binding or hook registration.
         let mut db = Self {
             profiler,
+            _admission:admission,
             connection,
             _modules: modules,
             accounting: job.shared.accounting.clone(),
@@ -173,10 +180,10 @@ impl Database {
         Ok(db)
     }
 }
-pub(super) fn pure_builtin(name: &str) -> bool {
+pub(in crate::code_rule_dsl::sql_executor) fn pure_builtin(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "abs"
+        "rr_nonnegative_count" | "rr_update_sum" | "rr_sum_low" | "rr_sum_high" | "rr_sum_value" | "abs"
             | "avg"
             | "cast"
             | "coalesce"

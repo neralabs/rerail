@@ -16,6 +16,7 @@ use std::sync::Arc;
 pub(in crate::code_rule_dsl) struct Database {
     // Drop the callback before closing its connection.
     profiler: Option<Box<crate::code_rule_dsl::sql_profile::Profiler>>,
+    admission: Option<Box<crate::code_rule_dsl::sql_admission::observer::Observer>>,
     connection: Connection,
     /// The store file the connection is on; a recycled owner serves only that store.
     pub(super) path: PathBuf,
@@ -31,6 +32,10 @@ pub(in crate::code_rule_dsl) struct Database {
 }
 
 impl Database {
+    pub(in crate::code_rule_dsl) fn admission(&self) -> Arc<crate::code_rule_dsl::sql_admission::Ledger> {
+        self.admission.as_ref().expect("admitted SQL session").shared.ledger()
+    }
+
     pub(in crate::code_rule_dsl) fn profiler(
         &self,
     ) -> Option<&crate::code_rule_dsl::sql_profile::Profiler> {
@@ -165,10 +170,22 @@ impl Database {
     }
     /// A connection on `store`'s file with the symbol functions and the `demand` modules.
     pub(in crate::code_rule_dsl) fn open(store: &ContentStore) -> StoreResult<Self> {
+        Self::open_with_admission(store, false)
+    }
+    pub(in crate::code_rule_dsl) fn open_admitted(store: &ContentStore) -> StoreResult<Self> {
+        Self::open_with_admission(store, true)
+    }
+    fn open_with_admission(store: &ContentStore, admit: bool) -> StoreResult<Self> {
         let connection = store.open_connection()?;
-        // SAFETY: this field is declared before the owned connection.
-        let profiler =
-            unsafe { crate::code_rule_dsl::sql_profile::Profiler::configured(&connection)? };
+        let admission = admit.then(|| {
+            use crate::code_rule_dsl::sql_admission::{Ledger, observer::Observer};
+            // SAFETY: the observer field is declared before the owned connection.
+            unsafe { Observer::install(&connection, Ledger::new(), None) }
+        });
+        let mut profiler = unsafe { crate::code_rule_dsl::sql_profile::Profiler::configured(&connection)? };
+        if let (Some(p), Some(admission)) = (&mut profiler, &admission) {
+            p.observe(admission.shared.clone());
+        }
         if let Some(p) = &profiler {
             p.context(serde_json::json!({"scope":"sql-owner","stage":"connection setup","executionPhase":"connectionSetup"}));
         }
@@ -180,6 +197,7 @@ impl Database {
         register_module(&connection, Arc::clone(&registry))?;
         Ok(Self {
             profiler,
+            admission,
             connection,
             path: store.database_path().to_path_buf(),
             healthy: Cell::new(true),

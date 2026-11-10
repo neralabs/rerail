@@ -40,7 +40,10 @@ impl CodeRuleSqlExecutor {
     ) -> Result<T> {
         let _scope = scope(&self.db, name);
         let _operation = self.db.profile_scope(|| json!({"operation":name}));
-        let result = f(self);
+        let result = match self.db.admission().enter(name) {Ok(_admission)=>f(self),Err(e)=>Err(error(e))};
+        let result=if result.is_err() && self.db.admission().exhausted() {
+            Err(error(format!("SQL session submission allowance exhausted: {}",self.db.admission().snapshot())))
+        }else{result};
         if let Some(p) = self.db.profiler() {
             p.result(name, result.as_ref().err().map(ToString::to_string));
         }
@@ -54,7 +57,10 @@ impl CodeRuleSqlExecutor {
     ) -> Result<T> {
         let _scope = scope(&self.db, name);
         let _operation = self.db.profile_scope(|| json!({"operation":name}));
-        let result = f(self);
+        let result = match self.db.admission().enter(name) {Ok(_admission)=>f(self),Err(e)=>Err(error(e))};
+        let result=if result.is_err() && self.db.admission().exhausted() {
+            Err(error(format!("SQL session submission allowance exhausted: {}",self.db.admission().snapshot())))
+        }else{result};
         if let Some(p) = self.db.profiler() {
             p.result(name, result.as_ref().err().map(ToString::to_string));
         }
