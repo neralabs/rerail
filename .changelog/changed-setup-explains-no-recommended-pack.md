@@ -1,0 +1,1 @@
+When no rule pack is recommended, set-up and `rerail packs recommend` now say why: every file type scanned, the folders not scanned, and the pack that came closest with the places it ignores, or, when none came close, what each pack looks for.

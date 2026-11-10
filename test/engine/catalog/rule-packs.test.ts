@@ -13,7 +13,7 @@ import {
   rulePackRecommendationsSchema,
   DatabaseApiStores,
 } from "../../../src/api/index.js";
-import { fileEndings, globPattern, scanRepository, signalEvidence, skippedFiles } from "../../../src/engine/catalog/rule-pack-matcher.js";
+import { fileEndings, globPattern, packLooksFor, scanRepository, signalEvidence, skippedFiles } from "../../../src/engine/catalog/rule-pack-matcher.js";
 import {
   cachedRecommendRulePacks,
   RECOMMENDATION_CACHE_MS,
@@ -209,29 +209,37 @@ describe("skippedFiles", () => {
       ...["a", "b", "c", "d", "e", "f"].map(name => `tests/test_${name}.py`),
       ...["release", "bump", "lint"].map(name => `scripts/${name}.py`),
     ];
-    expect(skippedFiles(python, scan(files))).toEqual([
-      { label: "Python source files", count: 9, rules: [{ rule: "tests/", count: 6 }, { rule: "scripts/", count: 3 }] },
-    ]);
+    expect(skippedFiles(python, scan(files))).toEqual({ count: 9, rules: [{ rule: "tests/", count: 6 }, { rule: "scripts/", count: 3 }] });
   });
 
   it("counts a file under the first skip rule that catches it", () => {
     const files = ["src/app/models_test.py", "src/app/test_views.py", "src/tests/test_api.py"];
-    expect(skippedFiles(python, scan(files))).toEqual([
-      { label: "Python source files", count: 3, rules: [{ rule: "tests/", count: 1 }, { rule: "test_*.py", count: 1 }, { rule: "*_test.py", count: 1 }] },
-    ]);
+    expect(skippedFiles(python, scan(files))).toEqual({ count: 3, rules: [{ rule: "tests/", count: 1 }, { rule: "test_*.py", count: 1 }, { rule: "*_test.py", count: 1 }] });
   });
 
-  it("empty when the pack fits", () => {
-    expect(skippedFiles(python, scan(["src/app/models.py", "tests/test_models.py"]))).toEqual([]);
+  it("counts a file two checks look for once, under the more specific check's skip rule", () => {
+    const complexity = JSON.parse(readFileSync(fileURLToPath(new URL("../../../packs/complexity/pack.json", import.meta.url)), "utf8")).match;
+    expect(skippedFiles(complexity, scan(["tests/view.blade.php"]))).toEqual({ count: 1, rules: [{ rule: "tests/", count: 1 }] });
   });
 
-  it("empty with no Python files", () => {
-    expect(skippedFiles(python, scan(["main.go", "README.md"]))).toEqual([]);
+  it("nothing when the pack fits", () => {
+    expect(skippedFiles(python, scan(["src/app/models.py", "tests/test_models.py"]))).toBeUndefined();
   });
 
-  it("empty for a dependency signal", () => {
+  it("nothing with no Python files", () => {
+    expect(skippedFiles(python, scan(["main.go", "README.md"]))).toBeUndefined();
+  });
+
+  it("nothing for a dependency signal", () => {
     const match = { any: [{ dependencies: { ecosystem: "pypi" as const, names: ["django"] } }] };
-    expect(skippedFiles(match, scan(["tests/test_views.py"]))).toEqual([]);
+    expect(skippedFiles(match, scan(["tests/test_views.py"]))).toBeUndefined();
+  });
+});
+
+describe("packLooksFor", () => {
+  it("names each pack's file patterns and dependencies once, tidied", () => {
+    const typescript = JSON.parse(readFileSync(fileURLToPath(new URL("../../../packs/typescript/pack.json", import.meta.url)), "utf8")).match;
+    expect(packLooksFor(typescript)).toEqual({ files: ["*.ts", "*.mts", "*.cts", "*.tsx"], dependencies: ["typescript"] });
   });
 });
 
@@ -274,7 +282,18 @@ describe("fileEndings", () => {
     const python = JSON.parse(readFileSync(fileURLToPath(new URL("../../../packs/python/pack.json", import.meta.url)), "utf8")).match;
     const found = scanRepository(root);
     expect(fileEndings(found)).toEqual([{ ending: ".md", count: 1 }]);
-    expect(skippedFiles(python, found)).toEqual([]);
+    expect(skippedFiles(python, found)).toBeUndefined();
+    expect(found.git).toBe(true);
+    expect(found.skipped).toEqual([{ folder: ".venv", count: 1 }, { folder: "build", count: 1 }, { folder: "fixtures", count: 1 }, { folder: "testdata", count: 1 }]);
+  });
+
+  it("names the skipped folders it walked past outside Git, without counting into them", async () => {
+    const root = await temporaryDirectory("rerail-unseen-walk-");
+    writeFiles(root, { "fixtures/app.py": "app = None\n", "node_modules/pkg/index.js": "\n", "notes.md": "notes\n" });
+    const found = scanRepository(root);
+    expect(found.git).toBe(false);
+    expect(found.skipped).toEqual([{ folder: "fixtures" }, { folder: "node_modules" }]);
+    expect(fileEndings(found)).toEqual([{ ending: ".md", count: 1 }]);
   });
 });
 

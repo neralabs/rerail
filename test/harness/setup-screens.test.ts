@@ -370,7 +370,7 @@ describe("T4 / C4 recommended rule packs", () => {
     available: TEN_PACKS,
     nothingFits: {
       closest: [{ name: "Python", count: 9, places: [{ place: "tests/", count: 6 }, { place: "scripts/", count: 3 }] }],
-      endings: [{ ending: ".ipynb", count: 12 }, { ending: ".md", count: 4 }, { ending: ".toml", count: 1 }, { ending: ".json", count: 1 }],
+      endings: [{ ending: ".ipynb", count: 12 }, { ending: ".md", count: 4 }, { ending: ".toml", count: 1 }],
     },
   };
   const closestOnly = (closest: NonNullable<RecommendedPacksInput["nothingFits"]>["closest"]): RecommendedPacksInput =>
@@ -420,6 +420,43 @@ describe("T4 / C4 recommended rule packs", () => {
   it("says none when nothing was scanned and no pack came close", () => {
     const text = renderRecommendedPacks({ ...NO_FIT, nothingFits: { closest: [], endings: [] } }, "agent");
     expect(text).toContain("  Scanned types   none\n  Closest match   none\n");
+  });
+
+  it("shows every scanned file type, so a lone source file is not hidden", () => {
+    const endings = [[".md", 40], [".json", 12], [".yaml", 6], [".toml", 2], [".go", 1]] as const;
+    const text = renderRecommendedPacks({ ...NO_FIT, nothingFits: { closest: [], endings: endings.map(([ending, count]) => ({ ending, count })) } }, "agent");
+    expect(text).toContain("  Scanned types   .md 40 · .json 12 · .yaml 6 · .toml 2 · .go 1\n");
+  });
+
+  it("names the folders that were not scanned, and files Git ignores", () => {
+    const only = (notScanned: readonly { folder: string; count?: number }[], git: boolean) =>
+      renderRecommendedPacks({ ...NO_FIT, nothingFits: { closest: [], endings: [], notScanned, git } }, "agent");
+    expect(only([{ folder: "fixtures", count: 1 }], true)).toContain([
+      "  Scanned types   none",
+      "  Not scanned     fixtures/ (1), and files Git ignores",
+      "  Closest match   none",
+    ].join("\n"));
+    expect(only([], true)).toContain("  Not scanned     files Git ignores\n");
+    expect(only([{ folder: "node_modules" }], false)).toContain("  Not scanned     node_modules/\n");
+    expect(only([], false)).not.toContain("Not scanned");
+  });
+
+  it("says what each pack looks for when no pack came close", () => {
+    const available = [
+      { ...TEN_PACKS[0]!, looksFor: { files: ["*.py", "*.pyi"], dependencies: [] } },
+      { ...TEN_PACKS[1]!, looksFor: { files: ["*.ts", "*.mts", "*.cts", "*.tsx"], dependencies: ["typescript"] } },
+      { ...TEN_PACKS[9]!, looksFor: { files: ["*.cjs", "*.mjs", "*.cts", "*.mts"], dependencies: ["express", "koa", "fastify"] } },
+    ];
+    const text = renderRecommendedPacks({ ...NO_FIT, available, nothingFits: { closest: [], endings: [{ ending: ".ipynb", count: 12 }] } }, "agent");
+    expect(text).toContain([
+      "  Available (3)   Python       *.py, *.pyi",
+      "                  TypeScript   *.ts, *.mts, *.cts, +1 more,",
+      "                               typescript dependency",
+      "                  Node.js      *.cjs, *.mjs, *.cts, +1 more,",
+      "                               express dependency, koa dependency,",
+      "                               +1 more dependencies",
+    ].join("\n"));
+    expect(renderRecommendedPacks({ ...NO_FIT, available }, "agent")).toContain("  Available (3)   Python, TypeScript, Node.js");
   });
 
   it("explains nothing extra when packs are recommended", () => {

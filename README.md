@@ -29,7 +29,7 @@ npx @neralabs/rerail setup
 
 Then, in a new terminal, which has `rerail` on its `PATH`, open the dashboard with `rerail manage`.
 
-Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) says what set-up changes on your machine and how to update and remove Rerail.
+Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, or why none fits, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) says what set-up changes on your machine and how to update and remove Rerail.
 
 Then start a new Claude Code, Codex, Cursor, OMP or Pi session in the repository. To watch Rerail catch a broken rule and steer the fix, run:
 

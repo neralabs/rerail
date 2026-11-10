@@ -211,11 +211,22 @@ describe("rerail packs recommend", () => {
       "Packs are recommended when their file or dependency checks match.",
       "",
       "Scanned types   .py 3 · .md 1",
+      "Not scanned     files Git ignores",
       "Closest match   Valid — 3 source files found, all in folders",
       "                the Valid pack ignores: tests/ (2), scripts/ (1)",
       "",
       "Other rule packs:",
     ].join("\n"));
+  });
+
+  it("says what each pack looks for when no pack came close", async () => {
+    const home = temporaryHome();
+    const root = project({ "notebook.ipynb": "{}\n" });
+
+    const text = await packsOutput(["recommend", "--repo", root], skippingStore(home));
+
+    expect(text).toContain("Closest match   none");
+    expect(text).toMatch(/^ {2}@neralabs\/rerail-pack-valid@\S+ \(\d+ rules\): looks for \*\.py$/mu);
   });
 
   it("names the recommended packs, explaining nothing extra", async () => {

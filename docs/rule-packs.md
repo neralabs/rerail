@@ -17,7 +17,7 @@ A pack directory holds rule documents in `rules/` and a `pack.json`. The `pack.j
 
 Set-up installs and adds the packs the person confirms. Afterwards the dashboard adds and removes packs and turns their rules on or off, for the repository. The API and its MCP tools add and remove packs, turn rules off or change their mode, per repository, folder and checkout.
 
-Recommendations match the repository's files and dependency manifests against each match definition. Matching is data only: no pack code, no model, no reading code for violations, no network but npm to fetch the packs. Rerail says nothing about what no pack covers.
+Recommendations match the repository's files and dependency manifests against each match definition. Matching is data only: no pack code, no model, no reading code for violations, no network but npm to fetch the packs. When no pack fits, set-up and `rerail packs recommend` say what was scanned and why no pack fit.
 
 </details>
 
@@ -87,7 +87,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 
 1. **Fetch.** Set-up fetches every listed pack under the update channel's npm dist-tag: `latest` by default, where each pack version is published ([pack format](pack-format.md#release)), or `next` for a pack with no `latest`. They land in a staging folder under `$RERAIL_HOME/packs/staging`, which installs nothing and is removed once read. Each is checked as the [catalog](#catalog-checks) does.
 2. **Keep newer versions.** A pack installed at a newer version than the tag's (`rerail packs add typescript@next`) is offered at that version. If it does not load (its core range, after setting up an older core again, say), set-up names it as unusable, with why, and does not offer it. An answer naming an older version than the installed one is refused; `rerail packs add` downgrades.
-3. **Ask.** Set-up lists each fitting pack with its rule count and why it fits, and the rules the repository's lint config turns off or configures. It warns when a yes replaces an installed version, which every repository on the computer runs. A fitting pack with no rule that starts on is named as having no rules yet, as is every such pack under "Skip, I'll pick packs".
+3. **Ask.** Set-up lists each fitting pack with its rule count and why it fits, and the rules the repository's lint config turns off or configures. It warns when a yes replaces an installed version, which every repository on the computer runs. A fitting pack with no rule that starts on is named as having no rules yet, as is every such pack under "Skip, I'll pick packs". When no pack fits, it lists every file type it scanned, the folders it did not scan, and the pack that came closest with the places that pack ignores, or, when none came close, what each pack looks for.
 4. **Install only what the answer carries.**
    - **"Yes"** installs the versions shown, from npm's cache where discovery left them; a coding agent passes `--packs typescript@0.1.1,…`.
    - **"Change rule packs…"** (`--answer choose`) installs only the packs picked from those fetched, replacing any an earlier dashboard review added. Not offered if no pack was fetched.
@@ -102,7 +102,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 - **`list`**: installed packs with versions, and any left out, with why.
 - **`add <id[@version]> …`**: installs a Rerail pack by id, or any pack by package name.
 - **`remove <id | package> …`**: uninstalls a package by name, or every installed package holding a pack id.
-- **`recommend [--repo <dir>]`**: runs set-up's discovery and prints what fits; installs nothing.
+- **`recommend [--repo <dir>]`**: runs set-up's discovery and prints what fits, or why nothing does; installs nothing.
 
 <details>
 <summary>Arguments and refusals</summary>

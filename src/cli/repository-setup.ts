@@ -22,7 +22,7 @@ import {
   workspaceSetUp,
 } from "../runtime/repository-start.js";
 import { recordSetUp } from "../engine/catalog/rule-configuration.js";
-import { loadRulePacks, packIdOfPackage, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
+import { loadRulePacks, packIdOfPackage, packLooksFor, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { readRepositoryLintConfig } from "../engine/catalog/lint-config/repository-lint-config.js";
@@ -726,6 +726,7 @@ function discoveryOffering(discovery: PackDiscovery): Offering {
     available: discovery.available.map(found => ({
       ...availablePack(found.pack, found.packageName, found.version),
       ...(found.match === undefined ? {} : { reason: found.match.reason }),
+      looksFor: packLooksFor(found.pack.match),
     })),
     unavailable: discovery.problems,
     withoutRules: discovery.withoutRules.flatMap(found => found.match === undefined ? [] : [found.pack.name]),

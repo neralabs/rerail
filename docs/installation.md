@@ -45,7 +45,7 @@ It installs Rerail under `~/.rerail`, without admin rights, and asks:
    edit) to check them against your rules?
 2. Outside a repository it asks which folder to start with, or lets you skip; `--repo <folder>` names one. If you skip
    the scan and pick rule packs yourself, no code is read.
-3. It shows the recommended rule packs, each with why it matched, and the coding agents it will connect. "Not now"
+3. It shows the recommended rule packs, each with why it matched, or why none was, and the coding agents it will connect. "Not now"
    installs, connects and turns on nothing.
 
 </details>

@@ -449,6 +449,15 @@ describe("discoverPacks", () => {
     expect(discovery.nothingFits?.endings).toEqual([{ ending: ".py", count: 3 }, { ending: ".md", count: 1 }]);
   });
 
+  it("names the folder it did not scan when that held the only source file", async () => {
+    const home = temporaryHome();
+    const root = project({ "fixtures/app.py": "app = 1\n" });
+
+    const discovery = await discoverPacks(root, fetching(home, skippingPack(home)));
+
+    expect(discovery.nothingFits).toEqual({ closest: [], endings: [], notScanned: [{ folder: "fixtures" }], git: false });
+  });
+
   it("no explanation when a pack fits", async () => {
     const home = temporaryHome();
     const root = project({ "src/app.py": "app = 1\n", "tests/test_app.py": "t = 1\n" });

@@ -50,6 +50,12 @@ export interface AvailablePack {
   readonly name: string;
   /** Why it fits the repository; undefined for a pack that does not. */
   readonly reason?: string;
+  readonly looksFor?: LooksForInput;
+}
+
+export interface LooksForInput {
+  readonly files: readonly string[];
+  readonly dependencies: readonly string[];
 }
 
 export interface DashboardLink {
@@ -444,6 +450,8 @@ export interface ClosestPack {
 export interface NothingFitsInput {
   readonly closest: readonly ClosestPack[];
   readonly endings: readonly { readonly ending: string; readonly count: number }[];
+  readonly notScanned?: readonly { readonly folder: string; readonly count?: number }[];
+  readonly git?: boolean;
 }
 
 export interface RecommendedPacksInput {
@@ -565,7 +573,9 @@ const NO_FIT_LABEL_WIDTH = 16;
 const NO_FIT_TEXT_WIDTH = 50;
 const MAX_CLOSEST_PACKS = 2;
 const MAX_CLOSEST_PLACES = 3;
-const MAX_SCANNED_TYPES = 3;
+const MAX_LOOKS_FOR_FILES = 3;
+const MAX_LOOKS_FOR_DEPENDENCIES = 2;
+const LOOKS_FOR_NAME_GAP = 3;
 
 function wrapWords(words: readonly string[], width: number): string[] {
   const rows: string[] = [];
@@ -581,7 +591,8 @@ function noFitRow(label: string, rows: readonly string[], style: Style, indent: 
   return rows.map((row, index) => `${indent}${index === 0 ? style.dim(label.padEnd(NO_FIT_LABEL_WIDTH)) : " ".repeat(NO_FIT_LABEL_WIDTH)}${row}`);
 }
 
-const withCommas = (items: readonly string[]): string[] => items.map((item, index) => (index < items.length - 1 ? `${item},` : item));
+const separated = (items: readonly string[], mark: string): string[] => items.map((item, index) => (index < items.length - 1 ? `${item}${mark}` : item));
+const withCommas = (items: readonly string[]): string[] => separated(items, ",");
 
 function closestRows(pack: ClosestPack): string[] {
   const name = clean(pack.name);
@@ -599,21 +610,57 @@ function closestRows(pack: ClosestPack): string[] {
 
 export const NO_FIT_RULE = "Packs are recommended when their file or dependency checks match.";
 
+function notScannedRows(found: NothingFitsInput): string[] {
+  const folders = (found.notScanned ?? []).map(folder => (folder.count === undefined ? `${clean(folder.folder)}/` : `${clean(folder.folder)}/ (${folder.count})`));
+  if (found.git !== true) return folders.length === 0 ? [] : wrapWords(withCommas(folders), NO_FIT_TEXT_WIDTH);
+  const ignored = folders.length === 0 ? ["files", "Git", "ignores"] : ["and", "files", "Git", "ignores"];
+  return wrapWords([...folders.map(folder => `${folder},`), ...ignored], NO_FIT_TEXT_WIDTH);
+}
+
 function explanationRows(found: NothingFitsInput, style: Style, indent: string): string[] {
-  const types = found.endings.slice(0, MAX_SCANNED_TYPES).map(type => `${clean(type.ending)} ${type.count}`).join(" · ");
+  const types = separated(found.endings.map(type => `${clean(type.ending)} ${type.count}`), " ·");
+  const notScanned = notScannedRows(found);
   const closest = found.closest.slice(0, MAX_CLOSEST_PACKS).flatMap(closestRows);
   return [
-    ...noFitRow("Scanned types", [types === "" ? "none" : types], style, indent),
+    ...noFitRow("Scanned types", types.length === 0 ? ["none"] : wrapWords(types, NO_FIT_TEXT_WIDTH), style, indent),
+    ...(notScanned.length === 0 ? [] : noFitRow("Not scanned", notScanned, style, indent)),
     ...noFitRow("Closest match", closest.length === 0 ? ["none"] : closest, style, indent),
   ];
 }
 
 export const nothingFitsLines = (found: NothingFitsInput): string[] => explanationRows(found, PLAIN_STYLE, "");
 
+function looksForItems(looksFor: LooksForInput): string[] {
+  const files = looksFor.files.map(clean);
+  const dependencies = looksFor.dependencies.map(clean);
+  const moreFiles = files.length - MAX_LOOKS_FOR_FILES;
+  const moreDependencies = dependencies.length - MAX_LOOKS_FOR_DEPENDENCIES;
+  return [
+    ...files.slice(0, MAX_LOOKS_FOR_FILES),
+    ...(moreFiles > 0 ? [`+${moreFiles} more`] : []),
+    ...dependencies.slice(0, MAX_LOOKS_FOR_DEPENDENCIES).map(name => `${name} dependency`),
+    ...(moreDependencies > 0 ? [`+${moreDependencies} more dependencies`] : []),
+  ];
+}
+
+export const looksForText = (looksFor: LooksForInput): string => withCommas(looksForItems(looksFor)).join(" ");
+
+function looksForRows(packs: readonly AvailablePack[]): string[] {
+  const nameWidth = Math.max(...packs.map(pack => clean(pack.name).length)) + LOOKS_FOR_NAME_GAP;
+  return packs.flatMap(pack => {
+    const items = pack.looksFor === undefined ? [] : withCommas(looksForItems(pack.looksFor));
+    const rows = items.length === 0 ? [""] : wrapWords(items, NO_FIT_TEXT_WIDTH - nameWidth);
+    return rows.map((row, index) => `${(index === 0 ? clean(pack.name) : "").padEnd(nameWidth)}${row}`.trimEnd());
+  });
+}
+
 function noFitLines(input: RecommendedPacksInput, style: Style): string[] {
   const names = input.available.map(pack => clean(pack.name));
-  const available = noFitRow(`Available (${names.length})`, names.length === 0 ? ["none"] : wrapWords(withCommas(names), NO_FIT_TEXT_WIDTH), style, "  ");
   const found = input.nothingFits;
+  const rows = names.length === 0 ? ["none"]
+    : found !== undefined && found.closest.length === 0 ? looksForRows(input.available)
+    : wrapWords(withCommas(names), NO_FIT_TEXT_WIDTH);
+  const available = noFitRow(`Available (${names.length})`, rows, style, "  ");
   return [
     `  ${NO_FIT_RULE}`,
     "",

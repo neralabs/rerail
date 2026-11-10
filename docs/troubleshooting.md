@@ -191,6 +191,23 @@ Node.js and React would fit, but have no rules yet, so set-up does not offer the
 These packs are published but have no rules yet, so they would check nothing. Nothing to do: a later version brings
 its rules. `rerail packs recommend` lists them too.
 
+### `No packs recommended`
+
+```text
+Scanned acme-api. No packs recommended.
+  Packs are recommended when their file or dependency checks match.
+
+  Scanned types   .py 3 · .md 1
+  Not scanned     files Git ignores
+  Closest match   Python — 3 source files found, all in folders
+                  the Python pack ignores: tests/ (2), scripts/ (1)
+```
+
+No pack's checks matched the repository. **Closest match** is a pack that found its files but ignores every one of
+them, and says where they are. **Not scanned** names the folders set-up never reads, such as `fixtures/` and
+`node_modules/`. When no pack came close, each available pack says what it looks for. To add a pack anyway, answer
+"Change rule packs…", or run `rerail packs add <id>`.
+
 ## The `rerail` command
 
 Fixes for `rerail` not being found, finding no repository, or stopping after Node changed.

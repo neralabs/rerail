@@ -15,12 +15,13 @@ import {
   type RepositoryScan,
   type RulePackMatch,
   type RulePackSignal,
-  type SkippedFiles,
+  type SkippedFolder,
 } from "./rule-pack-matcher.js";
 import type { RuleDocument } from "./rule-store.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 
-export type { RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
+export type { PackLooksFor, RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
+export { packLooksFor } from "./rule-pack-matcher.js";
 
 /**
  * Rule packs: named sets of rules, each its own npm package (`rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`; Rerail's
@@ -394,24 +395,21 @@ export interface ClosestPackMatch {
 export interface NoFitExplanation {
   readonly closest: readonly ClosestPackMatch[];
   readonly endings: readonly FileEnding[];
-}
-
-function closestMatch(pack: RulePack, skipped: readonly SkippedFiles[]): ClosestPackMatch {
-  const byPlace = new Map<string, number>();
-  for (const { rule, count } of skipped.flatMap(files => files.rules)) byPlace.set(rule, (byPlace.get(rule) ?? 0) + count);
-  return {
-    name: pack.name,
-    count: skipped.reduce((total, files) => total + files.count, 0),
-    places: [...byPlace].map(([place, count]) => ({ place, count })).sort((left, right) => right.count - left.count),
-  };
+  readonly notScanned: readonly SkippedFolder[];
+  readonly git: boolean;
 }
 
 export function explainNoFit(packs: readonly RulePack[], scan: RepositoryScan): NoFitExplanation {
   const closest = packs.flatMap(pack => {
     const skipped = skippedFiles(pack.match, scan);
-    return skipped.length === 0 ? [] : [closestMatch(pack, skipped)];
+    return skipped === undefined ? [] : [{ name: pack.name, count: skipped.count, places: skipped.rules.map(({ rule, count }) => ({ place: rule, count })) }];
   });
-  return { closest: closest.sort((left, right) => right.count - left.count), endings: fileEndings(scan) };
+  return {
+    closest: closest.sort((left, right) => right.count - left.count),
+    endings: fileEndings(scan),
+    notScanned: scan.skipped ?? [],
+    git: scan.git ?? false,
+  };
 }
 
 /** The packs that fit the repository at `repositoryRoot` (`rulePacksThatFit`) and have a rule that starts on. */

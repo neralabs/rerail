@@ -15,6 +15,7 @@ import { ruleDocumentDigest } from "../engine/stable-json.js";
 import { workspaceStartState } from "../runtime/repository-start.js";
 import {
   packIdOfPackage,
+  packLooksFor,
   RERAIL_PUBLISHER,
   RULE_PACK_ID,
   RULE_PACK_PACKAGE_NAME,
@@ -24,7 +25,7 @@ import {
   rulePackShortName,
   type RulePackLocalSource,
 } from "../engine/catalog/rule-packs.js";
-import { clean, NO_FIT_RULE, nothingFitsLines } from "../harness/setup-screens.js";
+import { clean, looksForText, NO_FIT_RULE, nothingFitsLines } from "../harness/setup-screens.js";
 import {
   addPackSpecs,
   discoverPacks,
@@ -189,10 +190,12 @@ function worktreeLines(home: string, checkoutRoot: string): string[] {
 }
 
 /** One discovered pack; its name, reason and version come from the pack, so they are printed without control characters. */
-function discoveredLine(found: DiscoveredPack): string {
+function discoveredLine(found: DiscoveredPack, coverage = false): string {
   const installed = found.installed === null ? "" : found.installed === found.version ? "  (installed)" : `  (${clean(found.installed)} installed)`;
   // The reason names where each signal matched; the folder is where set-up would add the pack.
-  const match = found.match === undefined ? "" : `: ${clean(found.match.reason)}${found.match.folder === "" ? "" : `; added in ${clean(found.match.folder)}/`}`;
+  const match = found.match !== undefined ? `: ${clean(found.match.reason)}${found.match.folder === "" ? "" : `; added in ${clean(found.match.folder)}/`}`
+    : coverage ? `: looks for ${looksForText(packLooksFor(found.pack.match))}`
+    : "";
   return `  ${clean(found.packageName)}@${clean(found.version)} (${found.ruleCount} rules)${match}${installed}`;
 }
 
@@ -201,14 +204,15 @@ async function recommend(args: readonly string[], usage: () => string, store: Pa
   const { workspaceRoot } = repositoryIdentityLocation(resolve(options.get("--repo") ?? process.cwd()));
   const discovery = await discoverPacks(workspaceRoot, store);
   const others = discovery.available.filter(found => found.match === undefined);
+  const coverage = discovery.nothingFits !== undefined && discovery.nothingFits.closest.length === 0;
   write([
     discovery.recommended.length === 0 ? `No packs recommended for ${workspaceRoot}.` : `Packs recommended for ${workspaceRoot}:`,
     ...(discovery.recommended.length === 0 ? [NO_FIT_RULE] : []),
     ...(discovery.nothingFits === undefined ? [] : ["", ...nothingFitsLines(discovery.nothingFits), ""]),
-    ...discovery.recommended.map(discoveredLine),
-    ...(others.length === 0 ? [] : ["Other rule packs:", ...others.map(discoveredLine)]),
+    ...discovery.recommended.map(found => discoveredLine(found)),
+    ...(others.length === 0 ? [] : ["Other rule packs:", ...others.map(found => discoveredLine(found, coverage))]),
     // Never offered, since adding one would run nothing; listed so a pack that fits is not simply missing.
-    ...(discovery.withoutRules.length === 0 ? [] : ["No rules yet, so not offered:", ...discovery.withoutRules.map(discoveredLine)]),
+    ...(discovery.withoutRules.length === 0 ? [] : ["No rules yet, so not offered:", ...discovery.withoutRules.map(found => discoveredLine(found))]),
     ...(discovery.problems.length === 0 ? [] : ["Not available:", ...discovery.problems.map(problem => `  ${clean(problem)}`)]),
     ...(discovery.recommended.length === 0 ? [] : [`Install them with: rerail packs add ${discovery.recommended.map(found => `${clean(rulePackShortName(found.packageName))}@${clean(found.version)}`).join(" ")}`]),
   ]);

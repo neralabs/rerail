@@ -33,6 +33,13 @@ export interface RepositoryScan {
   readonly files: readonly string[];
   /** Per ecosystem, package name (normalised) to every manifest that depends on it, shallowest first, then by path. */
   readonly dependencies: ReadonlyMap<DependencyEcosystem, ReadonlyMap<string, readonly string[]>>;
+  readonly skipped?: readonly SkippedFolder[];
+  readonly git?: boolean;
+}
+
+export interface SkippedFolder {
+  readonly folder: string;
+  readonly count?: number;
 }
 
 const GIT_LIST_BUFFER_BYTES = 256 * 1024 * 1024;
@@ -57,7 +64,9 @@ function readableEntries(directory: string): Dirent[] {
   }
 }
 
-function walk(root: string): string[] {
+const skippedDirectory = (name: string): boolean => IGNORED_DIRECTORIES.has(name) || FIXTURE_DIRECTORIES.has(name);
+
+function walk(root: string, skipped: Set<string>): string[] {
   const files: string[] = [];
   const pending = [root];
   while (pending.length > 0 && files.length < MAX_WALKED_FILES) {
@@ -65,7 +74,8 @@ function walk(root: string): string[] {
     for (const entry of readableEntries(directory)) {
       const path = join(directory, entry.name);
       if (entry.isFile()) files.push(relative(root, path).split(sep).join("/"));
-      else if (entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name) && !FIXTURE_DIRECTORIES.has(entry.name)) pending.push(path);
+      else if (entry.isDirectory() && skippedDirectory(entry.name)) skipped.add(entry.name);
+      else if (entry.isDirectory()) pending.push(path);
     }
   }
   return files;
@@ -91,14 +101,31 @@ const SKIP_WORKTREE_TAG = "S";
  * a bounded walk elsewhere.
  */
 export function listRepositoryFiles(root: string): string[] {
+  return repositoryListing(root).files;
+}
+
+function repositoryListing(root: string): { files: string[]; skipped: SkippedFolder[]; git: boolean } {
   // `-t` prefixes each entry with its status tag and a space: `H` tracked, `S` skip-worktree, `?` untracked, ….
   const tagged = gitListing(root, ["-t", "--cached", "--others", "--exclude-standard"]);
   const listed = tagged?.filter(entry => !entry.startsWith(`${SKIP_WORKTREE_TAG} `)).map(entry => entry.slice(2));
   const deleted = new Set(listed === undefined ? [] : gitListing(root, ["--deleted"]) ?? []);
-  const paths = listed === undefined ? walk(root) : listed.filter(path => !deleted.has(path));
-  return [...new Set(paths)]
-    .filter(path => !path.split("/").slice(0, -1).some(segment => IGNORED_DIRECTORIES.has(segment) || FIXTURE_DIRECTORIES.has(segment)))
+  const walkedPast = new Set<string>();
+  const paths = listed === undefined ? walk(root, walkedPast) : listed.filter(path => !deleted.has(path));
+  const counted = new Map<string, number>();
+  const files = [...new Set(paths)]
+    .filter(path => {
+      const folder = path.split("/").slice(0, -1).find(skippedDirectory);
+      if (folder !== undefined) counted.set(folder, (counted.get(folder) ?? 0) + 1);
+      return folder === undefined;
+    })
     .sort(compareDeterministicStrings);
+  const skipped = [
+    ...[...counted]
+      .sort(([leftFolder, leftCount], [rightFolder, rightCount]) => rightCount - leftCount || compareDeterministicStrings(leftFolder, rightFolder))
+      .map(([folder, count]) => ({ folder, count })),
+    ...[...walkedPast].filter(folder => !counted.has(folder)).sort(compareDeterministicStrings).map(folder => ({ folder })),
+  ];
+  return { files, skipped, git: listed !== undefined };
 }
 
 /**
@@ -230,7 +257,7 @@ export function normalizeDependencyName(ecosystem: DependencyEcosystem, name: st
 }
 
 export function scanRepository(root: string): RepositoryScan {
-  const files = listRepositoryFiles(root);
+  const { files, skipped, git } = repositoryListing(root);
   const dependencies = new Map<DependencyEcosystem, Map<string, string[]>>(DEPENDENCY_ECOSYSTEMS.map(ecosystem => [ecosystem, new Map()]));
   const manifests = files
     .flatMap(path => {
@@ -242,7 +269,7 @@ export function scanRepository(root: string): RepositoryScan {
     const byName = dependencies.get(ecosystem)!;
     for (const name of new Set(manifestDependencies(root, path, ecosystem))) byName.set(name, [...(byName.get(name) ?? []), path]);
   }
-  return { files, dependencies };
+  return { files, dependencies, skipped, git };
 }
 
 /** How many characters the glob token at `index` spans: `**\/`, `**`, a whole `{…}` group, or one character. */
@@ -348,35 +375,51 @@ export function matchFolder(match: RulePackMatch, scan: RepositoryScan): string 
 }
 
 export interface SkippedFiles {
-  readonly label: string;
   readonly count: number;
   readonly rules: readonly { readonly rule: string; readonly count: number }[];
 }
 
-function skipRuleName(glob: string): string {
+function tidyGlob(glob: string): string {
   const name = glob.startsWith("**/") ? glob.slice(3) : glob;
   return name.endsWith("/**") ? name.slice(0, -2) : name;
 }
 
-export function skippedFiles(match: RulePackMatch, scan: RepositoryScan): readonly SkippedFiles[] {
-  if (match.any.some(signal => signalEvidence(signal, scan).length > 0)) return [];
-  return match.any.flatMap(signal => {
-    if ("dependencies" in signal) return [];
-    const include = globPattern(signal.files);
-    const skipped = scan.files.filter(path => include.test(path));
-    if (skipped.length === 0) return [];
-    const excludes = (signal.exclude ?? []).map(glob => globPattern([glob]));
-    const counts = excludes.map(() => 0);
-    for (const path of skipped) {
-      const first = excludes.findIndex(pattern => pattern.test(path));
-      if (first !== -1) counts[first]! += 1;
+export function skippedFiles(match: RulePackMatch, scan: RepositoryScan): SkippedFiles | undefined {
+  if (match.any.some(signal => signalEvidence(signal, scan).length > 0)) return undefined;
+  const signals = match.any.flatMap(signal => "dependencies" in signal ? [] : [{
+    includes: signal.files.map(glob => ({ length: glob.length, pattern: globPattern([glob]) })),
+    excludes: (signal.exclude ?? []).map(glob => ({ rule: tidyGlob(glob), pattern: globPattern([glob]) })),
+  }]);
+  const counts = new Map<string, number>(signals.flatMap(signal => signal.excludes.map(exclude => [exclude.rule, 0] as const)));
+  let count = 0;
+  for (const path of scan.files) {
+    let best: { length: number; rule: string | undefined } | undefined;
+    for (const signal of signals) {
+      const length = Math.max(0, ...signal.includes.filter(include => include.pattern.test(path)).map(include => include.length));
+      if (length > 0 && (best === undefined || length > best.length)) best = { length, rule: signal.excludes.find(exclude => exclude.pattern.test(path))?.rule };
     }
-    const rules = (signal.exclude ?? [])
-      .map((glob, index) => ({ rule: skipRuleName(glob), count: counts[index]! }))
-      .filter(rule => rule.count > 0)
-      .sort((left, right) => right.count - left.count);
-    return [{ label: signal.label, count: skipped.length, rules }];
-  });
+    if (best === undefined) continue;
+    count += 1;
+    if (best.rule !== undefined) counts.set(best.rule, (counts.get(best.rule) ?? 0) + 1);
+  }
+  if (count === 0) return undefined;
+  const rules = [...counts].filter(([, total]) => total > 0).map(([rule, total]) => ({ rule, count: total })).sort((left, right) => right.count - left.count);
+  return { count, rules };
+}
+
+export interface PackLooksFor {
+  readonly files: readonly string[];
+  readonly dependencies: readonly string[];
+}
+
+export function packLooksFor(match: RulePackMatch): PackLooksFor {
+  const files = new Set<string>();
+  const dependencies = new Set<string>();
+  for (const signal of match.any) {
+    if ("dependencies" in signal) for (const name of signal.dependencies.names) dependencies.add(name);
+    else for (const glob of signal.files) files.add(tidyGlob(glob));
+  }
+  return { files: [...files], dependencies: [...dependencies] };
 }
 
 export interface FileEnding {

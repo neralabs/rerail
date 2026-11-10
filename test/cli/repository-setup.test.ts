@@ -387,6 +387,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
       "  Packs are recommended when their file or dependency checks match.",
       "",
       "  Scanned types   .py 3 · .ts 1",
+      "  Not scanned     files Git ignores",
       "  Closest match   Python — 3 source files found, all in folders",
       "                  the Python pack ignores: tests/ (2), scripts/ (1)",
       "",
