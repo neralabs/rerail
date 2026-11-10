@@ -29,7 +29,8 @@ sf_row(b,r) :- option("entryPoint","_report_facts"), sf_container(b,"array"), sf
 .decl sf_field(b: number, ordinal: number, key: symbol, value: symbol)
 sf_field(b,r,k,v) :- sf_row(b,r), sf_property(b,r,k,v).
 sf_field(b,r,k,v) :- sf_row(b,r), sf_default(k,v), !sf_property(b,r,k,_).
-sf_field(b,r,k,cat(root,"/",p)) :- sf_row(b,r), sf_bundle(b,p), workspace_root(root), sf_config("path_field",k), !sf_property(b,r,k,_).
+sf_field(b,r,k,cat(root,"/",p)) :- sf_row(b,r), sf_bundle(b,p), workspace_root(root), sf_config("path_field",k), !sf_property(b,r,k,_), !sf_config("bundle_fallback","exact").
+sf_field(b,r,k,p) :- sf_row(b,r), sf_bundle(b,p), sf_config("path_field",k), !sf_property(b,r,k,_), sf_config("bundle_fallback","exact").
 .decl sf_int(b: number, ordinal: number, value: symbol, json: symbol)
 sf_int(b,r,v,v) :- sf_row(b,r), sf_type(b,r,"line","number"), sf_json(b,r,"line",v), @count_matches("[.eE]",v) = 0.
 sf_int(b,r,"1","true") :- sf_row(b,r), sf_type(b,r,"line","boolean"), sf_json(b,r,"line","true").

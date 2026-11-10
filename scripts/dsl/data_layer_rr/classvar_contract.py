@@ -2,6 +2,7 @@
 import contextlib
 from pathlib import Path
 from dto import canonical
+from replay import write_fixture
 
 CHECK = 'classvar_check'
 BAD = 'get_origin(annotation) is ClassVar\n'
@@ -40,33 +41,48 @@ def cases(_module):
         rows.append(dict(kind=kind, id=kind+'-invalid-utf8', binary='ff', supplied=BAD))
     for path in ['tests/a.py','a.pyi']:
         rows.append(dict(kind='content',id='content-excluded-unreadable-'+path,path=path,binary='ff',supplied=BAD))
+    for kind in ['file','content']:
+        for path in ['.py','.hidden.py']:
+            rows.append(dict(kind=kind,id=kind+'-dotfile-'+path,path=path,disk=BAD,supplied=BAD))
+        rows.append(dict(kind=kind,id=kind+'-relative',path='a.py',relative=True,disk=BAD,supplied=BAD))
+        rows.append(dict(kind=kind,id=kind+'-root-inside-tests',rootPath='tests/project',disk=BAD,supplied=BAD))
+    tree=[dict(path=p,source=BAD) for p in ['z.py','sub/a.py','tests/a.py','__pycache__/a.py','conform/a.py','.venv/a.py','.py']]
+    for i,exclude in enumerate([None,[],['/sub/'],['a.py'],['.venv'],['no-match']]):
+        rows.append(dict(kind='directory',id='directory-'+str(i),files=tree,exclude=exclude))
+    rows.append(dict(kind='directory',id='directory-pycache-root',rootPath='__pycache__',files=tree))
+    for kind in ['file','content']:
+        rows.append(dict(kind=kind,id=kind+'-alias-root-inside-tests',rootPath='tests/project',argument_alias='var',disk=BAD,supplied=BAD))
     return rows
 
 
 def exercise(module, case, temporary):
-    root = temporary / 'root'; root.mkdir()
+    temporary=temporary.resolve()
+    root = temporary / case.get('rootPath','root'); root.mkdir(parents=True)
     path = root / case.get('path', 'a.py'); path.parent.mkdir(parents=True, exist_ok=True)
     if 'binary' in case:
         path.write_bytes(bytes.fromhex(case['binary']))
     elif case.get('disk') is not None:
         path.write_text(case['disk'])
+    write_fixture(root,case.get('files',[]))
+    argument=path.relative_to(root) if case.get('relative') else path
+    if case.get('argument_alias')=='var' and str(argument).startswith('/private/var/'):
+        argument=Path(str(argument).removeprefix('/private'))
     with contextlib.chdir(root):
         try:
-            result = (module.lint_file(path) if case['kind'] == 'file'
-                      else module.lint_file_content(path, case['supplied'], root=root))
+            if case['kind']=='directory':result=module.lint_directory(root,case.get('exclude'))
+            elif case['kind']=='file':result=module.lint_file(argument)
+            else:result=module.lint_file_content(argument,case['supplied'],root=root)
             return dict(value=canonical(result, temporary))
         except BaseException as error:
             return dict(error=dict(type=type(error).__name__, args=canonical(error.args, temporary)))
 
 
 def install(backend, module, detectors=False):
-    from suite import Suite
-    backend.replace(module, 'lint_file', lambda filepath: Suite.scan(backend, CHECK, 'lint_file', module, dict(filepath=filepath)))
-    backend.replace(module, 'lint_file_content', lambda filepath, source, *, root=None:
-                    Suite.scan(backend, CHECK, 'lint_file_content', module, dict(filepath=filepath, source=source, root=root)))
+    from classvar_port import install as native_install
+    native_install(backend,module,detectors=detectors)
 
 
 if __name__ == '__main__':
     from contract_runner import main
     main(CHECK, 'rerail.classvar-contract/v1', cases, exercise, install,
-         ['classvar_contract.py', 'suite.py', 'dto.py'])
+         ['classvar_contract.py', 'classvar_port.py', 'suite.py', 'dto.py'])

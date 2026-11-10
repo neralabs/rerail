@@ -391,37 +391,8 @@ class Suite:
             return scan(self, entry, module, arguments)
         path = Path(arguments.get('path', arguments.get('file_path', arguments.get('filepath', 'input.py'))))
         if check == 'classvar_check':
-            if entry == 'lint_file_content':
-                gates = self.native(check, '_classvar_source_gate', [], dict(callSource=arguments['source']))
-                if len(gates) > 1 or any(r['code'] != 'CV_SOURCE_GATE' for r in gates):
-                    raise AssertionError('Invalid native ClassVar source gate')
-                if not gates or not path.is_file():
-                    return []
-            if entry == 'lint_directory':
-                paths = []
-                for directory, names, filenames in os.walk(arguments['dirpath']):
-                    names[:] = [name for name in names if name != '__pycache__']
-                    for filename in filenames:
-                        item = Path(directory) / filename
-                        if filename.endswith('.py') and not any(pattern in str(item) for pattern in arguments.get('exclude_patterns') or []):
-                            paths.append(item)
-            else:
-                paths = [path]
-            originals, files = {}, []
-            for item in paths:
-                root = Path(arguments['dirpath']) if entry == 'lint_directory' else Path(arguments.get('root') or item.parent)
-                name = item.relative_to(root).as_posix() if item.is_relative_to(root) else item.name
-                originals[name] = item
-                files.append(dict(path=name, source=item.read_text()))
-            options = dict(callSource=arguments['source']) if entry == 'lint_file_content' else {}
-            options.update(cvDocuments=list(originals), cvLogicalPaths=[str(item) for item in originals.values()])
-            rows = self.native(check, entry, files, options)
-            if any(row['code'] != 'CLASSVAR001' for row in rows):
-                raise AssertionError('Unexpected native ClassVar code')
-            order = {f['path']: i for i, f in enumerate(files)}
-            rows.sort(key=lambda r: (order[r['path']], r['parameters']['collector_visit'], r['parameters']['ordinal']))
-            return [module.LintIssue(file=originals[r['path']], line=r['line'], col=r['parameters']['column'],
-                                     message=r['message'], code=r['code']) for r in rows]
+            from classvar_port import scan
+            return scan(self,entry,module,arguments)
         if check == 'dynamic_module_loading':
             if entry == '_is_in_type_checking_block':
                 # Preserve arbitrary list elements, including embedded line separators.
@@ -562,6 +533,9 @@ class Suite:
             if check in {'backend_type_strings', 'hasattr_async'}:
                 from text_cli_port import install
                 install(self, module, check)
+            if check == 'classvar_check':
+                from classvar_port import install
+                install(self,module)
             if check == 'dynamic_module_loading':
                 from dynamic_port import install
                 install(self,module,detectors=True)
@@ -612,7 +586,7 @@ class Suite:
                 return
             check, name, passive = originals[frame.f_code]
             host = {'admin_async_purity': {'cli_main'},
-                    'async_executor': {'cli_main'}, 'classvar_check': {'cli_main'},
+                    'async_executor': {'cli_main'},
                     'type_safety_patterns': {'cli_main'},
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},
                     'data_layer_facade_purity': {'cli_main', '_print_results'},

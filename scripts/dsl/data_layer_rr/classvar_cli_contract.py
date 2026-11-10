@@ -49,7 +49,7 @@ def exercise(module,case,temporary):
             try:result=dict(value=module.cli_main())
             except BaseException as error:result=dict(error=dict(type=type(error).__name__,args=canonical(error.args,temporary)))
     def normalize(value):
-        if isinstance(value,str):return value.replace(str(temporary),'$TMP')
+        if isinstance(value,str):return value.replace(str(temporary.resolve()),'$TMP').replace(str(temporary),'$TMP')
         if isinstance(value,list):return [normalize(v) for v in value]
         if isinstance(value,dict):return {k:normalize(v) for k,v in value.items()}
         return value

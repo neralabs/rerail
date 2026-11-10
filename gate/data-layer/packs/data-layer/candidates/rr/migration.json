@@ -1581,7 +1581,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/classvar-check.rr",
-      "sha256": "a135e1975ab6a1ead74d4c702a40f0d7079bb4551647face88ead279712d748d",
+      "sha256": "acbbfe4655cc9892d15b404465a905ce0ddf94fe713a13a73600cc72b31485c0",
       "origin": "authored",
       "upstreamPath": "scripts/lint_classvar_check.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2672,7 +2672,7 @@
     {
       "destination": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
       "origin": "authored",
-      "sha256": "6f049ad9972b4529237efb98490e674d0c9176ab421841ec87a2c9a886084ede"
+      "sha256": "a48a82c9fc0cd18c8b615878535aada700e0cf523c806f9af54efea0312c9efa"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/model-validation.rr",
@@ -2884,6 +2884,11 @@
       "sha256": "3a71c2edfbd0894a1deceab85a97018bad54d3a8355450ce2bda5131f5a68d61",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+      "origin": "authored",
+      "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
     }
   ],
   "rules": [
@@ -3448,7 +3453,7 @@
       "legacySha256": "9056ad18066c1d44a2d9c8d6ae676f25a4aada9c2130cd698976d64c48857eda",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/classvar-check.rr",
-      "ruleSha256": "a135e1975ab6a1ead74d4c702a40f0d7079bb4551647face88ead279712d748d"
+      "ruleSha256": "acbbfe4655cc9892d15b404465a905ce0ddf94fe713a13a73600cc72b31485c0"
     },
     {
       "check": "type_safety_patterns",

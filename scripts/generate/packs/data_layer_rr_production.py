@@ -7,6 +7,7 @@ import re
 from data_layer_rr_text import module, character_class, search
 
 CLAUSES = {
+    'classvar_check': ['ClassVarComparison'],
     'removed_compat_surfaces': ['Removed'], 'versioned_lifecycle_legacy_surfaces': ['Lifecycle'],
     'no_api_root_imports': ['RootImport', 'RootExample'],
     'backend_type_strings': ['BackendBT00'+str(i) for i in range(6)],
@@ -71,7 +72,7 @@ def production(source, check, text):
     default = next(f.default for f in fields(original.StructuredViolation) if f.name == 'severity')
     assert len(severities) <= 1
     severity = next(iter(severities), default)
-    dynamic = check in {'backend_type_strings', 'no_api_root_imports', 'no_blanket_grammar_bypass'}
+    dynamic = check in {'backend_type_strings', 'no_api_root_imports', 'no_blanket_grammar_bypass', 'classvar_check'}
     if dynamic: roots, scope = [], 'production'
     elif check == 'hasattr_async': roots, scope = [p.rstrip('/') for p in original.DIRECTORIES_TO_CHECK], 'async'
     elif plugin.file_scope.broad_repo_scope: roots, scope = ['.'], 'static'
@@ -96,7 +97,7 @@ def production(source, check, text):
         'no_api_root_imports':'nari_file', 'backend_type_strings':'bts_doc', 'hasattr_async':'async_selected',
         'no_source_inspection':'inspection_selected', 'serverplan_name_inference':'name_selected',
         'no_blanket_grammar_bypass':'bypass_selected', 'serverplan_grammar_surface':'sgp_admitted',
-        'permission_error':'permission_selected'}[check]
+        'permission_error':'permission_selected', 'classvar_check':'cv_selected'}[check]
     pattern = re.compile(r'(?m)^'+selector+r'\([^\n]* :- [\s\S]*?\.\n')
     text = pattern.sub(lambda m: '' if 'pp_run()' in m.group() else m.group(), text)
     text += f'\n{selector}(d) :- pp_run(), pp_doc(d,_), pp_fact_present(d).\n'
@@ -143,6 +144,7 @@ def production(source, check, text):
                 body += f', visit_index(c,ppe_class_order), visit_index({terms[0]},ppe_method_order)'
                 order = ['ppe_class_order','ppe_method_order','0']
             elif check == 'no_api_root_imports': order = [names['ordinal'], '-1' if clause == 'RootImport' else names['piece']+'*2+'+names['pattern'], names['occurrence']]
+            elif check == 'classvar_check': order = [names['collector_visit'],names['ordinal'],'0']
             elif check == 'backend_type_strings': order = [line,names['pattern'],names['occurrence']]
             elif check == 'hasattr_async': order = [line,'0' if clause == 'Asynchasattr' else '1','0']
             elif check == 'no_source_inspection': order = [line,names['ordinal'],'0']
@@ -174,7 +176,7 @@ def production(source, check, text):
         api_anchor = 'anchor' if node else '@place(p,l)'
         suffix += clause+'('+','.join([api_anchor,*[k for k,_ in tail],'o0','o1','o2'])+') :- '+event+', pp_api().\n'
         if check != 'versioned_lifecycle_legacy_surfaces':
-            suffix += clause+'('+','.join(['@place(p,l)',*[k for k,_ in tail],'o0','o1','o2'])+') :- '+event+', pp_run(), pp_fact_allowed(p), pp_report_allowed(p).\n'
+            suffix += clause+'('+','.join(['@place(p,l)',*[k for k,_ in tail],'o0','o1','o2'])+') :- '+event+', pp_run(), pp_fact_allowed(p), pp_report_allowed(p), !option("entryPoint","_production_contract").\n'
         if check == 'versioned_lifecycle_legacy_surfaces':
             event += ', lc_collector_message(p,l,cls,method,lc_message)'
             message = 'lc_message'
@@ -190,6 +192,7 @@ def production(source, check, text):
         if check == 'removed_compat_surfaces': payload = [('path','p','symbol'),('line','l','number'),('name','name','symbol')]
         elif check == 'versioned_lifecycle_legacy_surfaces': payload = [('file_path','p','symbol'),('line','l','number'),('class_name','cls','symbol'),('method_name','method','symbol'),('message',message,'symbol')]
         elif check == 'no_api_root_imports': payload = [('file_path','full','symbol'),('line','l','number'),('message',message,'symbol')]
+        elif check == 'classvar_check': payload = [('file','full','symbol'),('line','l','number'),('col','column','number'),('message',message,'symbol'),('code',code,'symbol')]
         elif check == 'backend_type_strings': payload = [('file','full','symbol'),('line','l','number'),('column','column','number'),('message',message,'symbol'),('code',code,'symbol'),('snippet','snippet','symbol')]
         elif check == 'hasattr_async': payload = [('line','l','number'),('pattern_type',code,'symbol'),('method_name','method','symbol')]
         elif check == 'no_source_inspection': payload = [('file_path','full','symbol'),('line','l','number'),('line_content','snippet','symbol'),('pattern_name','label','symbol')]

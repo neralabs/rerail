@@ -11396,3 +11396,24 @@ Global admission remains 12 of 100 ports. No full-repository cold benchmark ran.
 The final tooling run passes 398 tests in 13.773 seconds. The migration inventory verification also passes.
 The ClassVar content API still needs broader read-selection acceptance, including unreadable files that its fact scope excludes.
 The checkpoints retain the tested cases and do not claim full ClassVar API acceptance.
+
+### Complete ClassVar contract on Final fc6, 2026-11-10
+
+The ClassVar port now uses the shared native production planner and supplied-fact reporter.
+The production entry checks dynamic layer roots, file and directory links, exact fact payloads, and ordered findings.
+The explicit-file API selects a batch before reading it. This preserves suffix and test-path exclusions, even for unreadable files.
+The `.py` dotfile case distinguishes explicit selection from directory discovery. Relative paths and both macOS temporary-root aliases have separate cases.
+
+The plugin receives metadata and extractor settings from the native configuration entry.
+The compatibility collector serializes the supplied AST once and submits one native query for the complete tree.
+The production rule reads the engine's native syntax facts. It does not invoke a Python parser worker.
+The CLI uses the pinned argument schema. Native relations select paths, order issues, render streams, and determine the exit status.
+
+The [family receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-classvar-complete-finalfc6.json.gz) checks 1,198 native executions on `63278a96b660a897…`.
+Each API passes 82 public cases, 36 component cases, 40 CLI cases, and 17 production cases.
+All eight owned original tests pass through each API, including five positive observations. Complete returned tuples match the original recording.
+Each API also passes 19 update steps and nine removal controls. The controls check detection, scope, AST extraction, supplied facts, metadata, and CLI behavior.
+
+Six supplemental cases finish before a detector query. These cover file-read errors, parser exits, and framework inputs that do not reach the collector.
+Those cases execute and match the source. Every original assertion submits native work.
+The admission regression rejects a missing positive, missing native work, an altered DTO, a skipped test, and an ineffective control.

@@ -1,0 +1,17 @@
+// Typed values preserve Python string conversions, non-finite floats and unbounded integers.
+// Each producer binds these columns to its own exact fact namespace.
+.decl sfe_container(b: number,kind: symbol)
+.decl sfe_shape(b: number,r: number,kind: symbol)
+.decl sfe_member(b: number,r: number,f: number,key: symbol)
+.decl sfe_value(b: number,r: number,f: number,value: symbol)
+.decl sfe_tag(b: number,r: number,f: number,tag: symbol)
+.decl sfe_scalar(b: number,r: number,f: number,value: symbol)
+.decl sfe_json(b: number,r: number,f: number,value: symbol)
+sf_container(b,k) :- sfe_container(b,k).
+sf_shape(b,r,k) :- sfe_shape(b,r,k).
+sf_member(b,r,f,k) :- sfe_member(b,r,f,k).
+sf_value(b,r,f,v) :- sfe_value(b,r,f,v).
+sf_type(b,r,k,"number") :- sfe_member(b,r,f,k),sfe_tag(b,r,f,"int").
+sf_type(b,r,k,"boolean") :- sfe_member(b,r,f,k),sfe_tag(b,r,f,"bool").
+sf_json(b,r,k,v) :- sfe_member(b,r,f,k),sfe_tag(b,r,f,"int"),sfe_scalar(b,r,f,v).
+sf_json(b,r,k,v) :- sfe_member(b,r,f,k),sfe_tag(b,r,f,"bool"),sfe_json(b,r,f,v).

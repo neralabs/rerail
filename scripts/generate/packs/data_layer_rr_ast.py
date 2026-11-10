@@ -2,9 +2,12 @@
 
 
 def classvar_check(source, target, header):
-    from data_layer_rr_cli import logical_scope
-    text = logical_scope(header('classvar_check', target), 'cv_selected')
-    return text + r'''
+    from data_layer_rr_cli import api_scope
+    text = api_scope(header('classvar_check', target))
+    text += r'''
+.decl cv_selected(d: number)
+cv_selected(d) :- doc(d,_,_), option("entryPoint",_).
+cv_selected(d) :- doc(d,_,_), !option("entryPoint",_).
 .decl cv_test_path(path: symbol)
 cv_test_path(p) :- option_item("cvLogicalPaths",_,p), (contains("/tests/",cat("/",p)) ; contains("/test/",cat("/",p))).
 .decl cv_fact_file(d: number)
@@ -12,10 +15,6 @@ cv_fact_file(d) :- doc(d,p,_), option_item("cvDocuments",i,p), option_item("cvLo
     suffix(".py",full), !cv_test_path(full).
 cv_fact_file(d) :- doc(d,p,_), !option_item("cvDocuments",_,_), suffix(".py",p),
     !path_part(d,"tests"), !path_part(d,"test").
-.violation ClassVarSourceGate(at: span) code "CV_SOURCE_GATE" "source gate"
-ClassVarSourceGate(@place("",0)) :- option("entryPoint","_classvar_source_gate"), option("callSource",t),
-    contains("get_origin",t), contains("ClassVar",t).
-
 .decl cv_source(d: number, t: symbol)
 cv_source(d, t) :- source(d, sp), text(sp, t).
 .decl cv_trigger(d: number)
@@ -23,6 +22,7 @@ cv_trigger(d) :- cv_source(d, t), (contains("get_origin", t) ; contains("ClassVa
 .decl cv_api_gate(d: number)
 cv_api_gate(d) :- doc(d, _, _), !option("entryPoint", _).
 cv_api_gate(d) :- cv_source(d, t), option("entryPoint", "lint_file"), contains("get_origin", t), contains("ClassVar", t).
+cv_api_gate(d) :- doc(d,_,_), option("entryPoint", "_issues_for_files").
 cv_api_gate(d) :- cv_source(d, t), option("entryPoint", "lint_directory"), contains("get_origin", t), contains("ClassVar", t).
 // lint_file_content uses its source argument only as a gate; the framework still reads the named file.
 cv_api_gate(d) :- doc(d, _, _), option("entryPoint", "lint_file_content"), option("callSource", t),
@@ -52,6 +52,9 @@ cv_exempt(c) :- cv_candidate(c, _, _), cv_helper(f), decorator(f, e), within(c, 
 // Keep the comparator ordinal: repeated links produce repeated public DTOs, as the source collector does.
 ClassVarComparison(c, ordinal, style, column, visit) :- cv_candidate(c, ordinal, style), !cv_exempt(c), col(c, column), visit_index(c, visit).
 '''
+    from data_layer_rr_production import production
+    from data_layer_rr_classvar import suffix,batch_suffix,cli_suffix
+    return production(source, 'classvar_check', text) + suffix(source) + batch_suffix() + cli_suffix(source)
 
 
 def forwardref(source, target, header):
