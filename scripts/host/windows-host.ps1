@@ -180,10 +180,11 @@ function Assert-RerailManagedInstall([string]$RerailHome) {
 function Invoke-RerailSessionStartHooks([string]$UserHome, [string]$Project, [string]$WorkDir, [string]$Prefix) {
   $ErrorActionPreference = "Continue"
   $node = Get-RerailNode
-  $claude = (Get-Content -Raw "$UserHome\.claude\settings.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0]
+  # UTF-8, as set-up writes them: Windows PowerShell reads a file without a byte order mark in the ANSI code page.
+  $claude = (Get-Content -Raw -Encoding UTF8 "$UserHome\.claude\settings.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0]
   if ($null -eq $claude.args) { throw "the Claude Code hook is not in exec form: $($claude.command)" }
   Write-RerailUtf8 "$WorkDir\claude-args.json" (ConvertTo-Json -Compress @($claude.args))
-  Write-RerailUtf8 "$WorkDir\codex-command.txt" (Get-Content -Raw "$UserHome\.codex\hooks.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0].command
+  Write-RerailUtf8 "$WorkDir\codex-command.txt" (Get-Content -Raw -Encoding UTF8 "$UserHome\.codex\hooks.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0].command
   $probe = "const {spawnSync}=require('child_process'),fs=require('fs');const [kind,a,b,payload,cwd]=process.argv.slice(1);const input=fs.readFileSync(payload);" +
     "const r=kind==='exec'?spawnSync(a,JSON.parse(fs.readFileSync(b,'utf8')),{input,encoding:'utf8',cwd}):spawnSync('powershell.exe',['-NoProfile','-Command',fs.readFileSync(a,'utf8')],{input,encoding:'utf8',cwd});" +
     "process.stdout.write('exit='+r.status+' '+(r.stdout+r.stderr).trim().slice(0,300));process.exitCode=r.status"
