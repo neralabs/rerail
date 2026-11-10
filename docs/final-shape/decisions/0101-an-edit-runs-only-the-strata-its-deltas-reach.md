@@ -270,7 +270,7 @@ self.model.resolve(prog, Model::read_by(rules.iter().copied()))?;
 Steps 02 and 03 do not move: by then a kept relation's statistics are carried or kept by delta, and
 binding was 0.17–0.19 s. Findings are the same as a full run's at each step, and the gate passes.
 
-## Proposed: §5, a base relation patched by its documents' delta, not sorted again (2026-11-10)
+## Built: §5, a base relation's sorted columns carried from the last run, not sorted again (2026-11-10)
 
 **What is sorted each step.** A span on each stored column's first sort (`sort a stored column`), at O125
 with profiling on:
@@ -297,37 +297,52 @@ relation's digest, and one edited file changes it. So each step rebuilds these f
 - **The rows are already per document.** They come one memo entry per file (`plan/corpus.rs`, the memo
   hits), and a node id carries its document (`id >> 32`).
 
-**The proposal.** The session holds each base relation as last run's source, with each document's row
-range. An edit's delta is its documents' partitions: old range out, new rows in. The new source is the
-old one patched, not a copy, and so is each sorted column:
+**What was built** (it differs from the first proposal). This run's copy of a base relation is still made
+from every file's rows, as before. What changes is that last run's sorted columns are carried into it,
+patched where its rows changed (`carry_sorted` in `native/setfix.rs`, called from `retain::kept_source`):
 
 ```text
-// Last run:  rows [doc 1 | doc 2 | doc 3]     column c sorted: ids by value
-// Edit doc 2: its range is dropped, its new rows appended:
-//            rows [doc 1 | doc 3 | doc 2']
-// Column c:  old ids minus doc 2's, renumbered past its range (one pass),
-//            merged with doc 2's new rows sorted (a few hundred): no sort of 141 k.
-// A node-id column needs no merge: a document's values are one interval,
-// so its run is spliced.
+// Last run:  rows [doc 1 | doc 2 | doc 3]    column c sorted: (value, row) pairs
+// This run:  rows [doc 1 | doc 2' | doc 3]   doc 2 edited
+// Each run of one document's rows is compared with its old run, value for
+// value. A run that is the same keeps its rows' places; doc 2's old rows
+// drop out of each sorted column; doc 2''s rows are sorted alone (a few
+// hundred) and merged in by (value, row). No sort of 141 k rows.
 ```
 
-- **Statistics.** `measure the base rows held` is patched by the same delta, as kept relations' are
-  (0096 step 4, `statkeep`).
-- **Digests.** `kept_source` compares per-document digests, which the memo already has, not one digest of
-  141 k rows.
-- **Across processes.** A new process reads the frames and sorts once. A sorted column stored as a derived
-  relation is 0104 step 7's question, not this one's.
-- **Not a cache.** No key or table of its own: the relation is the session's held fact, maintained by its
-  delta.
+- **Exact.** Each carried index is the one `Sorted::of` (or a multi-column `order`) would build over the
+  same rows. A unit test checks this (`carry_sorted_tests`) with a document gone, one changed and one added,
+  and with the runs out of order.
+- **Row order.** When the unchanged runs are in their old order, the rows keep this run's order, so nothing
+  downstream sees a change. When they are not (the files parsed this run come first), the rows are laid
+  out as the unchanged runs in their old order, then the rest: one copy, no sort. Joins, digests,
+  `document_delta` and `measured` do not depend on row order.
+- **Runs, not documents.** A document's rows can come in more than one run (its own node row apart), so
+  runs are matched as (document, which of its runs).
+- **Limits.** Nothing is carried when more than a quarter of the rows changed, or the two copies hold
+  other columns. `RERAIL_SORT_BASE_AGAIN` sorts again, as before.
 
-**Expected.** 0.7–1.0 s a step with profiling on (the base inputs' sorts plus their statistics), about
-half that without. That is about 10% of a steady step's cross part. The sample before §4 put
-`Stored::sorted` at 12% of samples.
+**Measured** (O125 steps 01–03, debug build, load 77–123):
 
-**Risks.** Row order changes from run to run. Joins and findings are set-valued, so that is safe, but
-anything that reads row order as meaning breaks: the documents count in `measured` sorts the ids it
-reads, so it holds; others must be found. The patch must be exact under a document added or removed, and
-under two edits in one step. The session test of §1 extends to that.
+| with profiling spans | 01 | 02 | 03 |
+|---|---:|---:|---:|
+| rows sorted, sorted again | 3.33 M | 3.01 M | 2.15 M |
+| rows sorted, carried | 2.11 M | 1.21 M | 0.93 M |
+| sorts + carries, sorted again | 1.29 s | 1.12 s | 0.83 s |
+| sorts + carries, carried | 0.82 s | 0.57 s | 0.52 s |
+
+| session CPU, no spans | 01 | 02 | 03 |
+|---|---:|---:|---:|
+| sorted again | 12.6 s | 9.8 s | 6.7 s |
+| carried | 11.4 s | 6.8 s | 5.4 s |
+
+The session totals move by more than the sort spans do, and the load moved between the two runs, so
+trust the spans. Findings are the same as a full run's at step 03, and the gate passes.
+
+**What is left.** Each carry costs ≈ 25 ms in a debug build: the comparison of every run, value for value.
+The sorts still made are of columns last run never indexed, and of the smaller inputs that come in by
+another path (35–45 k rows). Each is under 0.12 s a step.
+
 
 ## Open
 

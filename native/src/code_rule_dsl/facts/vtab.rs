@@ -72,6 +72,8 @@ pub(crate) trait Source: Send + Sync {
         Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),None))
     }
     fn text_column(&self, _column: usize) -> bool { false }
+    /// The source as itself, for a caller that carries state between two of one kind (`carry_sorted`).
+    fn as_any(&self) -> Option<&dyn std::any::Any> { None }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
     /// Row `row`'s values of `columns`, into `out`: one value at a time by default; a source that finds a row's

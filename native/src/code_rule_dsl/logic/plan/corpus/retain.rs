@@ -423,10 +423,21 @@ pub(in crate::code_rule_dsl) fn kept_source(
     let d = digest(source.as_ref());
     digests.insert(rel.to_owned(), d);
     let columns = source.columns();
-    parts
-        .values()
-        .find_map(|p| p.input_srcs.get(rel).filter(|s| p.inputs.get(rel) == Some(&d) && s.columns() == columns).cloned())
-        .unwrap_or(source)
+    if let Some(same) = parts.values().find_map(|p| p.input_srcs.get(rel).filter(|s| p.inputs.get(rel) == Some(&d) && s.columns() == columns).cloned()) {
+        return same;
+    }
+    // Changed rows: last run's sorted columns, patched by the documents that changed, not sorted again (decision
+    // 0101 §5). `RERAIL_SORT_BASE_AGAIN` sorts them again, as before.
+    if std::env::var_os("RERAIL_SORT_BASE_AGAIN").is_none()
+        && let Some(old) = parts.values().find_map(|p| p.input_srcs.get(rel).filter(|s| s.columns() == columns))
+    {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("carry {rel}'s sorted columns"));
+        let (laid, _) = crate::code_rule_dsl::logic::native::component::carry_sorted(old.as_ref(), source.as_ref(), super::memo::document_of);
+        if let Some(laid) = laid {
+            return laid;
+        }
+    }
+    source
 }
 
 impl Retained {
