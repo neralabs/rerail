@@ -1,5 +1,8 @@
 # Fact admission and memo lookup — 2026-11-10
 
+Follow-up: [composed session retention and bulk publication](composed-session-publication-2026-11-10.md)
+repairs the open session-retention and per-frame publication items in this report.
+
 Integration `013068e01` is merged into `jeremy/async-family-integration-comparison`.
 Commit `3a288daf8` adds bulk frame admission. The following change imports rr-align's native-answer retention from `d589e41fa` and fixes memo lookup order.
 Integration's shared executor and ordinary `.cache` semantics remain in use.

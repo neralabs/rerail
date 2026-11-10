@@ -2490,7 +2490,7 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) native: BTreeSet<String>,
     /// Each output's node columns (atoms mode: node ids are the vtabs', `d << 32 | index`).
     pub(in crate::code_rule_dsl) nodes: BTreeMap<String, Vec<usize>>,
-    /// The kept outputs (`Inputs::kept`) the native engine holds (`native::derived`); the others are in their tables.
+    /// Outputs held as resident facts (`native::derived`), including decoded composed outputs kept for sessions.
     pub(in crate::code_rule_dsl) kept: BTreeSet<String>,
     /// The kept relations handed to the caller during the run (`run_atoms_native_handing`), no longer held.
     pub(in crate::code_rule_dsl) handed: BTreeSet<String>,
@@ -5345,8 +5345,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 connection::bind(db,&rel,source)?;
             }
         }
-        let plan=compose::planned(prog,db,inputs)?;
-        let mut out=plan.execute(db,prog,lowered,&mut hooks)?;
+        let mut out=compose::run(prog,db,inputs,lowered,&mut hooks)?;
         if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
         for rel in &sentinels {
             if let Some(rows)=out.outputs.get_mut(rel){for row in rows {*row=row.split_once('\t').map_or(String::new(),|(_,r)|r.into());}}

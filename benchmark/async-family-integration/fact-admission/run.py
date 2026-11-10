@@ -5,6 +5,8 @@ p = argparse.ArgumentParser()
 p.add_argument('--binary', type=pathlib.Path, required=True)
 p.add_argument('--corpus', type=pathlib.Path, required=True)
 p.add_argument('--out', type=pathlib.Path, required=True)
+p.add_argument('--engine', choices=['native', 'composed'], default='composed')
+p.add_argument('--record-budget-failures', action='store_true', help='finish measurements after an execution-budget failure, but still exit with failure')
 a = p.parse_args()
 if (a.out / "facts.sqlite").exists() or (a.out / "measurements.json").exists():
     p.error("use a new output directory so the cold run has an empty fact store")
@@ -12,7 +14,7 @@ a.out.mkdir(parents=True, exist_ok=True)
 corpus = a.out / 'corpus'
 if not corpus.exists(): shutil.copytree(a.corpus, corpus)
 env = {k:v for k,v in os.environ.items() if not k.startswith('RERAIL_')}
-env.update(RUST_MIN_STACK='67108864', RERAIL_THREADS='4', RERAIL_SHARED_CORPUS=str(corpus.resolve()), RERAIL_TAPE_CACHE=str((a.out/'facts.sqlite').resolve()))
+env.update(RUST_MIN_STACK='67108864', RERAIL_THREADS='4', RERAIL_COMPOSE='1' if a.engine == 'composed' else '0', RERAIL_SHARED_CORPUS=str(corpus.resolve()), RERAIL_TAPE_CACHE=str((a.out/'facts.sqlite').resolve()))
 results = []
 for label in ['cold', 'warm', 'warm-profile', 'edit', 'edit-warm']:
     if label == 'edit':
@@ -31,6 +33,8 @@ for label in ['cold', 'warm', 'warm-profile', 'edit', 'edit-warm']:
         r = json.loads(report.read_text()); row.update(files=r['report']['files'], keys=r['keys'], phases=r['report']['phases'], coreCpu=r['cpuNs']/1e9, crossKept=r['report'].get('crossStrata'))
     results.append(row); (a.out/'measurements.json').write_text(json.dumps(results, indent=2)+'\n')
     print(label, row['exit'], round(row['cpu'],3), round(row['wall'],3), flush=True)
-    if run.returncode: raise SystemExit(run.returncode)
+    if run.returncode and not (a.record_budget_failures and 'whole-job SQL execution budget exceeded:' in (a.out/(label+'.log')).read_text()): raise SystemExit(run.returncode)
     assert row['files'] == 5725 and row['keys'] == [], row
 (a.out/'manifest.json').write_text(json.dumps(dict(binary=str(a.binary), sha256=hashlib.sha256(a.binary.read_bytes()).hexdigest(), corpus=str(a.corpus), environment={k:v for k,v in env.items() if k.startswith('RERAIL_') or k == 'RUST_MIN_STACK'}), indent=2)+'\n')
+
+if any(r["exit"] for r in results): raise SystemExit(1)

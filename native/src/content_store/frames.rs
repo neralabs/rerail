@@ -198,35 +198,40 @@ impl ContentStore {
             t.execute_batch(SCHEMA)?;
             t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
             let run: i64 = t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
-            let mut ins = t.prepare_cached(
-                "INSERT INTO frames(space, rel, ident, part, digest, reads, width, rows, types, data, used) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) ON CONFLICT(space, rel, ident, part) DO UPDATE SET \
-                 digest = excluded.digest, reads = excluded.reads, width = excluded.width, rows = excluded.rows, \
-                 types = excluded.types, data = excluded.data, used = excluded.used",
-            )?;
-            for (p, data) in puts.iter().zip(&blocks) {
-                ins.execute(params![
-                    &space[..],
-                    p.rel.name,
-                    &p.rel.ident[..],
-                    p.part,
-                    p.digest as i64,
-                    encode_reads(&p.reads),
-                    p.rows.types.len() as i64,
-                    p.rows.n as i64,
-                    p.rows.types,
-                    data,
-                    run
-                ])?;
+            // Nine bound values per frame, plus shared space and run, stay below 999 parameters.
+            // Each statement publishes a bounded batch. No frame launches its own SQL execution.
+            for batch in puts.iter().zip(&blocks).collect::<Vec<_>>().chunks(96) {
+                let values = (0..batch.len()).map(|i| {
+                    let p=3+9*i;
+                    format!("(?1,?{p},?{},?{},?{},?{},?{},?{},?{},?{},?2)",p+1,p+2,p+3,p+4,p+5,p+6,p+7,p+8)
+                }).collect::<Vec<_>>().join(",");
+                let sql=format!("INSERT INTO frames(space,rel,ident,part,digest,reads,width,rows,types,data,used) VALUES {values} \
+                    ON CONFLICT(space,rel,ident,part) DO UPDATE SET digest=excluded.digest, reads=excluded.reads, \
+                    width=excluded.width, rows=excluded.rows, types=excluded.types, data=excluded.data, used=excluded.used");
+                let mut args: Vec<rusqlite::types::Value>=vec![space.to_vec().into(),run.into()];
+                for (p,data) in batch {
+                    args.extend([p.rel.name.clone().into(),p.rel.ident.to_vec().into(),p.part.into(),(p.digest as i64).into(),
+                        encode_reads(&p.reads).into(),(p.rows.types.len() as i64).into(),(p.rows.n as i64).into(),p.rows.types.clone().into(),(*data).clone().into()]);
+                }
+                t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
-            let mut del = t.prepare_cached("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?;
-            for (rel, part) in gone {
-                del.execute(params![&space[..], rel.name, &rel.ident[..], part])?;
+            for batch in gone.chunks(READ_BATCH) {
+                let values=(0..batch.len()).map(|i|format!("(?{},?{},?{})",2+3*i,3+3*i,4+3*i)).collect::<Vec<_>>().join(",");
+                let sql=format!("WITH demanded(rel,ident,part) AS (VALUES {values}) \
+                    DELETE FROM frames WHERE (space,rel,ident,part) IN (SELECT ?1,rel,ident,part FROM demanded)");
+                let mut args: Vec<rusqlite::types::Value>=vec![space.to_vec().into()];
+                for (rel,part) in batch { args.extend([rel.name.clone().into(),rel.ident.to_vec().into(),(*part).into()]); }
+                t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
             if let Some(used) = used {
-                let mut mark = t.prepare_cached("UPDATE frames SET used = ?4 WHERE space = ?1 AND rel = ?2 AND ident = ?3")?;
-                for rel in used {
-                    mark.execute(params![&space[..], rel.name, &rel.ident[..], run])?;
+                for batch in used.chunks(READ_BATCH) {
+                    let values=(0..batch.len()).map(|i|format!("(?{},?{})",3+2*i,4+2*i)).collect::<Vec<_>>().join(",");
+                    // Row-value membership selects primary-key prefixes, including every partition of a relation.
+                    let sql=format!("WITH demanded(rel,ident) AS (VALUES {values}) \
+                        UPDATE frames SET used=?2 WHERE (space,rel,ident) IN (SELECT ?1,rel,ident FROM demanded)");
+                    let mut args: Vec<rusqlite::types::Value>=vec![space.to_vec().into(),run.into()];
+                    for rel in batch { args.extend([rel.name.clone().into(),rel.ident.to_vec().into()]); }
+                    t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
                 }
                 t.execute("DELETE FROM frames WHERE space = ?1 AND used <= ?2", params![&space[..], run - RUNS])?;
                 t.execute("UPDATE frame_spaces SET runs = runs + 1 WHERE space = ?1", [&space[..]])?;
@@ -264,6 +269,48 @@ fn decode_reads(mut bytes: &[u8]) -> Vec<(String, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_publication_batches_put_delete_and_usage_with_bounded_work() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let puts: Vec<_> = (0..8192).map(|i| Put { rel: rel(&format!("r{i}"), 1), part: 0,
+            digest: 7, reads: vec![], rows: Rows { types: vec![0], rows: vec![i], n: 1 } }).collect();
+        store.keep_frames(&[1; 32], &puts, &[], None).unwrap();
+        let mut changed: Vec<_> = puts.iter().step_by(31).take(257).map(|p| Put { rel: p.rel.clone(), part: 0,
+            digest: 9, reads: vec![], rows: Rows { types: vec![0], rows: vec![999], n: 1 } }).collect();
+        // One batch can publish the same key twice. The last publication wins, as before.
+        changed.push(Put { rel: changed[0].rel.clone(), part: 0, digest: 10, reads: vec![],
+            rows: Rows { types: vec![], rows: vec![], n: 1 } });
+        let gone: Vec<_> = puts.iter().skip(1).step_by(31).take(257).map(|p| (p.rel.clone(),0)).collect();
+        let used: Vec<_> = changed.iter().map(|p| p.rel.clone()).collect();
+        let counters = [AtomicUsize::new(0),AtomicUsize::new(0)];
+        unsafe extern "C" fn trace(event: u32, state: *mut std::ffi::c_void, stmt: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+            let c = unsafe { &*state.cast::<[AtomicUsize;2]>() };
+            if event == rusqlite::ffi::SQLITE_TRACE_STMT {
+                c[0].fetch_add(1, Ordering::Relaxed);
+                // Cached statements include untraced fixture setup unless reset at execution start.
+                unsafe {rusqlite::ffi::sqlite3_stmt_status(stmt.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1)};
+            }
+            else {
+                let vm=unsafe {rusqlite::ffi::sqlite3_stmt_status(stmt.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1)} as usize;
+                c[1].fetch_add(vm,Ordering::Relaxed);
+            }
+            0
+        }
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
+            rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace), (&counters as *const [AtomicUsize;2]).cast_mut().cast()); }
+        let refs: Vec<_> = changed.iter().collect();
+        let result = store.keep_frame_refs(&[1;32], &refs, &gone, Some(&used));
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
+        result.unwrap();
+        eprintln!("frame publication total: {} statements, {} VM",counters[0].load(Ordering::Relaxed),counters[1].load(Ordering::Relaxed));
+        assert_eq!(store.frame_rows(&[1;32], &changed[0].rel,0).unwrap(),Some(changed.last().unwrap().rows.clone()));
+        for (r,part) in &gone { assert!(store.frame_rows(&[1;32],r,*part).unwrap().is_none()); }
+        assert!(counters[0].load(Ordering::Relaxed)<=20,"257 publications/deletions/touches must be bounded batches: {} statements",counters[0].load(Ordering::Relaxed));
+        assert!(counters[1].load(Ordering::Relaxed)<100_000,"publication must probe keys instead of multiplying the space by demands: {} VM",counters[1].load(Ordering::Relaxed));
+    }
 
     #[test]
     fn frame_admission_probes_demanded_keys_instead_of_scanning_the_space() {

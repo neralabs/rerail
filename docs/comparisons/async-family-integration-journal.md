@@ -880,3 +880,122 @@ The final engine build passes. Both architecture guards and all four relocated n
 The independent full-corpus native/reference harness passes parity and its timing gates.
 Its generated-compiler qualification remains false; this is supporting reference evidence, not a production cutover claim.
 The default-mode session failures remain open and are included in the evidence.
+
+
+## 2026-11-10 — Composed session retention and bulk publication
+
+Merged integration tip `5ea1d2f75` as `d65a24d47`.
+Resolved the oracle helper conflict with the shared helper and integration's feature gate.
+Removed duplicate dependency declarations introduced by the merge.
+Integration now selects composed execution with `RERAIL_COMPOSE=1`.
+Validation explicitly sets that selector. The native default cannot prove that composed retention works.
+
+The repair retains typed output rows in ordinary resident relations before decoding them.
+The compiler assigns distinct physical CTE names when logical relation names differ only by case.
+The rewrite traverses typed queries, including aggregates and correlated subqueries. It does not replace SQL text.
+
+Frame publication will use bounded insert, delete, and usage-update batches in the existing transaction.
+The new regression publishes, deletes, and touches 257 keys in a space of 8,192 frames.
+It checks both statement count and VM work, plus repeated keys and nullary replacement.
+
+
+The merged baseline fails all three targeted composed checks: session cache output, case-distinct relations, and durable reuse reporting.
+The publication regression fails at 782 statements before batching.
+The new writer executes 18 statements and 74,776 VM instructions. All eight frame tests pass.
+Its work ceiling is now 100,000 VM instructions.
+The trace resets VM counters at statement start. Without that reset, cached statements include untraced fixture setup.
+
+Composed durable retention now records requested outputs and their transitive input digests.
+An unchanged output can supply another program's reads. Internal CTEs stay inside the query.
+Outputs with unversioned native or tree dependencies run again; their explicit demands alone do not prove unchanged document state.
+
+### Session repair: preparation expansion and restored statistics
+
+The first repaired build passes all ten direct composition tests, both cache-version tests,
+and durable reuse. Six of the thirteen explicit composed session checks still fail.
+Five reach SQLite's 65,535-reference limit; one restored shared relation lacks `uses.c0` statistics.
+The native baseline passes all thirteen checks.
+
+Captured the failing negation-maintenance SQL from `sqlite3_prepare_v3` under LLDB.
+It has 44,239 bytes and 38 CTEs. Recursive substitution of its FROM/JOIN dependencies
+counts 5,850,486 references across the definitions. This is preparation expansion, not
+an executed-row measurement. `MATERIALIZED` does not bound that preparation work.
+
+Added typed dependency counts and bounded shared publication stages. Each stage exports
+only relations used after the cut, together in one query. Ordinary plans remain one query.
+The compiler rejects plans beyond its stage budget instead of silently scheduling each relation.
+Before planning, empty positive joins are removed; negation and aggregates retain their semantics.
+A proven quiet maintenance relation shares its old resident fact and indexes.
+Restored and staged facts supply their existing statistics to the planner.
+Profile output now records generated SQL before preparation, so a failed preparation leaves evidence.
+Validation of this second repair is pending.
+
+### Quiet relations and a separate native budget failure
+
+Bounded CTE stages and restored statistics repair twelve of thirteen session checks.
+The remaining check has correct findings but reports zero quiet strata.
+The SQL needs the net change relations before it can prove that a kept relation is unchanged.
+The repair requests those relations together, then shares old resident facts when both changes are empty.
+A direct regression requires the same resident object, so publication cannot discard its indexes by copying rows.
+The stage budget is shared by change admission and result evaluation.
+Compilation now moves the planner statistics through stages instead of cloning the input statistics at each boundary.
+
+The native whole-job comparison exposed a distinct integration limitation: the cold 5,725-file run
+executes 396 statements (373 in the local phase) and fails the existing ceiling of 100.
+The result keys remain correct. Warm and edited runs execute 30–32 statements.
+This failure is preserved separately; neither the engine default nor the ceiling changes.
+The comparison runner can finish recording after a budget failure, but still exits with failure.
+
+### Whole-job gate catches an over-eager stage cut
+
+All thirteen existing session/cache tests now pass in both modes. The positive four-rule fixture
+and the three cache architecture checks also pass. The new direct tests initially selected the
+legacy SQL-table input mode; corrected their inputs to the production atom-backed configuration.
+
+The 5,725-file composed cold run then fails the unchanged job ceiling: 154 executions.
+Its trace shows 73 chunks with two queries each, plus eight setup/cross statements.
+The initial 4,096-reference planning threshold split a graph that fits SQLite safely.
+Reconstructing dependencies from the profiled queries gives about 5,600 expanded references.
+Raised the internal threshold to 8,192, still well below SQLite's 65,535-reference limit.
+This restores fusion for the async workload while keeping boundaries for the pathological
+maintenance graphs. The job ceiling remains 100. Final validation is pending this rebuild.
+
+### Preparation decides whether a risky graph needs a cut
+
+The 8,192-reference threshold still gives 154 executions. The earlier reconstruction from
+separate stage queries is not a reliable measurement of the original graph: generated demand
+helper names belong to each statement's scope. Reconstructing across those scopes loses identity.
+
+Ran the earlier uncut compiler on the same 5,725-file workload with profiling.
+It passes the unchanged ceiling at 81 executions. Its local query is 23,416 bytes,
+runs 73 times, and accounts for 719,167 VM instructions. SQLite can prepare this graph.
+
+The physical planner now uses the reference estimate to identify risky graphs, then asks SQLite
+to prepare the complete query. A successful preparation keeps it fused. A structural-limit error
+selects shared stages. That result is cached with the compiled plan, so later chunks do not repeat
+a failed preparation. Other SQL errors are returned unchanged. Preparation has its own profile span
+and does not count as execution. The external ceiling remains 100.
+The dense-DAG regression now starts from a bound input and requires SQLite to reject the full query
+before the staged form passes its execution and result gates.
+
+### Final qualification and publication
+
+The preparation-based decision restores fusion without changing the job ceiling.
+All thirteen existing composed session/cache checks pass, as do all thirteen direct compiler tests.
+The same existing session suite passed in native mode. Eight storage tests, three cache architecture
+checks, and the 120-finding positive fixture also pass.
+
+On the full 5,725-file workload, composed execution uses 81 cold statements, 19 warm statements,
+and 10 after the comment edit. All five conditions pass the 100-execution gate.
+Whole-process CPU is 18.514 s cold, 0.652 s warm, and 0.662 s after the edit.
+The same final binary's native arm uses 18.333 s, 0.718 s, and 0.663 s respectively.
+These single observations do not establish a timing improvement.
+The native cold arm still fails its inherited budget at 396 executions; warm and edited runs pass.
+
+Frame publication changes 782 statements to 18, with 74,776 measured VM instructions.
+The regression ceilings remain 20 statements and 100,000 VM instructions.
+Both requested defects are resolved. The separate native cold-run budget failure remains documented.
+The final build disables incremental compilation after a stale-object linker failure.
+Only inactive engine incremental caches in this task's target directory were removed.
+Reproduction artifacts and the final report are under `benchmark/async-family-integration/session-publication`
+and `docs/comparisons/composed-session-publication-2026-11-10.md`.
