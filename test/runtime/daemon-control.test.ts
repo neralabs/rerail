@@ -38,19 +38,12 @@ import {
 } from "../../src/runtime/daemon-control.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
-import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
 
 const originalRerailHome = process.env.RERAIL_HOME;
-
-/**
- * The engine endpoint every recorded state names: a socket path nothing listens on, or on Windows a named pipe the
- * daemon control tests hold open, since a lookup there counts a recorded daemon whose pipe is gone as stale.
- */
-const ENGINE_ENDPOINT = testEngineEndpoint("/nowhere");
 
 function stateFor(overrides: Partial<DaemonState>): DaemonState {
   return {
@@ -60,7 +53,7 @@ function stateFor(overrides: Partial<DaemonState>): DaemonState {
     url: "http://127.0.0.1:1/",
     version: "0.0.0-test",
     databasePath: "/nowhere/rerail.sqlite",
-    kernelSocketPath: ENGINE_ENDPOINT,
+    kernelSocketPath: "/nowhere/engine.sock",
     ui: "dev",
     startedAt: 0,
     packageRoot: "/nowhere/rerail",
@@ -93,16 +86,18 @@ describe("engine service IPC endpoints", () => {
 
 describe("Rerail daemon control", () => {
   let home: string;
-  let releaseEndpoint: () => Promise<void>;
+  /**
+   * This machine's processes, read by the macOS and Linux rules: the states these tests record name a Unix socket,
+   * which a Windows lookup refuses, and no engine pipe. The Windows rules have their own tests below.
+   */
+  const posix = fakeMachine("linux", { kill: (pid, signal) => process.kill(pid, signal) });
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "rerail-home-"));
     process.env.RERAIL_HOME = join(home, "catalog-home");
-    releaseEndpoint = await holdEngineEndpoint(ENGINE_ENDPOINT);
   });
 
   afterEach(async () => {
-    await releaseEndpoint();
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
     await rm(home, { recursive: true, force: true });
@@ -122,9 +117,9 @@ describe("Rerail daemon control", () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     await writeFile(stateFile, JSON.stringify(stateFor({})));
     expect(processAlive(DEAD_PID)).toBe(false);
-    expect(await findRunningDaemon(home)).toBeUndefined();
+    expect(await findRunningDaemon(home, posix)).toBeUndefined();
     expect(existsSync(stateFile)).toBe(false);
-    expect(await stopDaemon(home)).toBe("not-running");
+    expect(await stopDaemon(home, posix)).toBe("not-running");
   });
 
   const foreignPid = otherUserPid();
@@ -156,7 +151,7 @@ describe("Rerail daemon control", () => {
       // so use the parent pid: alive, yet not the pid the daemon answers with.
       const stateFile = join(home, DAEMON_STATE_FILE);
       await writeFile(stateFile, JSON.stringify(stateFor({ pid: process.ppid, url: daemon.url, port: daemon.port, accessToken: daemon.state().accessToken! })));
-      expect(await findRunningDaemon(home)).toBeUndefined();
+      expect(await findRunningDaemon(home, posix)).toBeUndefined();
       expect(existsSync(stateFile)).toBe(false);
     } finally {
       await daemon.close();
@@ -168,11 +163,11 @@ describe("Rerail daemon control", () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const state = stateFor({ pid: process.pid, url: "http://127.0.0.1:1/" });
     await writeFile(stateFile, JSON.stringify(state));
-    expect(await lookupDaemon(home)).toEqual({ status: "unresponsive", state });
+    expect(await lookupDaemon(home, posix)).toEqual({ status: "unresponsive", state });
     expect(existsSync(stateFile)).toBe(true);
-    expect(await findRunningDaemon(home)).toBeUndefined();
+    expect(await findRunningDaemon(home, posix)).toBeUndefined();
     expect(existsSync(stateFile)).toBe(true);
-    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }))
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, posix))
       .rejects.toThrow(/alive but not answering/);
     expect(existsSync(join(home, "start.lock"))).toBe(false);
   });
@@ -188,12 +183,12 @@ describe("Rerail daemon control", () => {
           const daemon = spawn(
             process.execPath,
             ["-e", "require('node:net').createServer().listen(0)"],
-            { detached: true, stdio: "ignore" },
+            { detached: true, stdio: "ignore", windowsHide: true },
           );
           daemon.unref();
           process.stdout.write(String(daemon.pid));
         `],
-        { stdio: ["ignore", "pipe", "ignore"] },
+        { stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
       );
       if (launcher.stdout === null) throw new Error("test launcher did not start");
       const [pidOutput] = await once(launcher.stdout, "data") as [Buffer];
@@ -202,7 +197,7 @@ describe("Rerail daemon control", () => {
       if (!Number.isInteger(daemonPid)) throw new Error("test daemon did not receive a pid");
       await writeFile(stateFile, JSON.stringify(stateFor({ pid: daemonPid, url: "http://127.0.0.1:1/" })));
 
-      expect(await stopDaemon(home)).toBe("stopped");
+      expect(await stopDaemon(home, posix)).toBe("stopped");
       expect(processAlive(daemonPid)).toBe(false);
       expect(existsSync(stateFile)).toBe(false);
     } finally {
@@ -238,14 +233,14 @@ describe("Rerail daemon control", () => {
     await writeFile(join(lockPath, "lease.json"), JSON.stringify({ pid: DEAD_PID, expiresAt: Date.now() + 60_000 }));
     // Dead owner: the lock is reclaimed and the (unresponsive) lookup still runs to its refusal.
     await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: process.pid, url: "http://127.0.0.1:1/" })));
-    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }))
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, posix))
       .rejects.toThrow(/alive but not answering/);
     expect(existsSync(lockPath)).toBe(false);
 
     // Live owner but expired lease: also reclaimed, so a crashed-but-still-running starter cannot wedge the home.
     await mkdir(lockPath, { recursive: true });
     await writeFile(join(lockPath, "lease.json"), JSON.stringify({ pid: process.pid, expiresAt: Date.now() - 1 }));
-    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }))
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, posix))
       .rejects.toThrow(/alive but not answering/);
     expect(existsSync(lockPath)).toBe(false);
   });
