@@ -72,7 +72,7 @@ DynamicTypeCheckingProbe(@place("input.py", l)) :- option("entryPoint", "_is_in_
     dml_type_checking(_, l).
 .violation DynamicLoading(at: span, ordinal: number, snippet: symbol, label: symbol) code "DML001" tag {ordinal} "{label}"
 DynamicLoading(@place(p, l), ordinal, clean, label) :- doc(d, p, _), dml_owner(d,owner), !dml_allowed(owner),
-    !option("entryPoint", "_is_in_type_checking_block"), dml_candidate(d, l, ordinal, label),
+    !option("entryPoint", "_dynamic_repository"), !option("entryPoint", "_is_in_type_checking_block"), dml_candidate(d, l, ordinal, label),
     dml_line(d, l, _, clean, _), !prefix("#", clean), dml_state(d, l, ""), dml_quotes(d, l, 0, 0),
     !dml_type_checking(d, l), (ordinal < 3 ; ordinal >= 3, !dml_primary(d, l)).
 .decl dml_signature(s: symbol)
@@ -86,3 +86,8 @@ DynamicSignature(@place("scripts/lint_dynamic_module_loading.py", 1)) :- !option
     allow_status("dynamic_module_loading", status), status != "valid".
 '''
     return text
+
+
+def repository_program(text):
+    text='\n'.join('.scope dirs "__dynamic_no_primary__"' if line.startswith('.scope include ') else line for line in text.splitlines())+'\n'
+    return text+'#include "data-layer/dynamic-discovery.rr"\n'

@@ -29,6 +29,8 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/facts/vtab/syntax/tests.rs',
     'native/src/code_rule_dsl/facts/vtab/syntax/python_',
     'native/src/code_rule_dsl/logic/plan.rs',
+    # Folded filesystem symbols must survive the internal row transport unchanged.
+    'native/src/code_rule_dsl/logic/plan/corpus/constants.rs',
     # Unconditional ground readers must seed a demanded producer.
     'native/src/code_rule_dsl/logic/plan/demand.rs',
     # Generic ordered BFS, on Final's existing native-relation boundary.

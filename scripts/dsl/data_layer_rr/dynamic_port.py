@@ -32,6 +32,16 @@ def configuration(backend):
     return {key:[v for _,v in sorted(grouped[key])] for key in sorted(grouped)}
 
 
+def repository(backend,module,root,directories=None):
+    root=Path(root)
+    exports=['dml.discovery=true']+[f'dml.allowed.{i}={p}' for i,p in enumerate(module.ALLOWLISTED_FILES)]
+    if directories is not None:exports+=['data-layer.scan.configured=true']+[f'data-layer.scan.{i}={p}' for i,p in enumerate(directories)]
+    rows=backend.native(CHECK,'_dynamic_repository',[],dict(env=exports),root=root)
+    if any(r['code'] not in {'DML_DISCOVERED','DML_FOUND'} for r in rows):raise ValueError('Unexpected dynamic repository response')
+    found=sorted((r for r in rows if r['code']=='DML_FOUND'),key=lambda r:(r['parameters']['file_ordinal'],r['line'],r['parameters']['ordinal']))
+    return [(root/r['parameters']['path'],r['line'],r['parameters']['snippet'],r['parameters']['label']) for r in found]
+
+
 def install(backend,module,detectors=False):
     config=configuration(backend)
     if not config:raise ValueError('Native dynamic-loading configuration is missing')
@@ -44,6 +54,7 @@ def install(backend,module,detectors=False):
     for key in ['source_triggers','source_trigger_groups','project_input_facts']:data[key]=tuple(data[key])
     backend.replace(module,'DYNAMIC_MODULE_LOADING_EXTRACTOR',type(module.DYNAMIC_MODULE_LOADING_EXTRACTOR)(**data))
     if detectors:
+        backend.replace(module,'find_violations',lambda root,directories=None:repository(backend,module,root,directories))
         backend.replace(module,'_scan_file',lambda file_path,root,allowlisted:scan(backend,'_scan_file',module,file_path,root,allowlisted))
         backend.replace(module,'_scan_file_content',lambda file_path,root,allowlisted,content:scan(backend,'_scan_file_content',module,file_path,root,allowlisted,content))
         def predicate(lines,line_idx):

@@ -29,9 +29,14 @@ def main(check,format,build_cases,exercise,install,dependencies):
         class Backend:
             def __init__(self):self.calls=[]
             def replace(self,owner,name,value):setattr(owner,name,value)
-            def native(self,check,entry,files,options=None):
-                result=execute(a.engine,ROOT/'gate/data-layer/packs/data-layer/candidates/rr'/policy_filename(check,entry),
-                               files,dict(entryPoint=entry,**(options or {})))
+            def native(self,check,entry,files,options=None,*,root=None):
+                policy=ROOT/'gate/data-layer/packs/data-layer/candidates/rr'/policy_filename(check,entry)
+                arguments=dict(entryPoint=entry,**(options or {}))
+                if root is None:result=execute(a.engine,policy,files,arguments)
+                else:
+                    from replay import execute_repository
+                    if files:raise ValueError('Repository transport takes physical resources, not document copies')
+                    result=execute_repository(a.engine,policy,root,arguments,a.mode)
                 self.calls.append(result);return result['diagnostics']
         backend=Backend();install(backend,module,detectors=True)
         baseline=read_json(a.baseline);compare(baseline['passed'],True)

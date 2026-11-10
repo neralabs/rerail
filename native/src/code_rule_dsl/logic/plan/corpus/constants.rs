@@ -84,6 +84,20 @@ fn copy(rel: &str) -> String {
     format!("rr_const_{rel}")
 }
 
+// The internal output boundary is tab/line delimited. Quote symbols before
+// writing them, including the escape marker itself; decode only after splitting.
+// This boundary must not change a directory name or any other symbolic value.
+const ESCAPES: &[(&str, &str)] = &[("%", "%25"), ("\t", "%09"), ("\n", "%0A"), ("\r", "%0D"), ("\0", "%00")];
+
+fn quoted(term: crate::code_rule_dsl::logic::front::Term) -> crate::code_rule_dsl::logic::front::Term {
+    use crate::code_rule_dsl::logic::front::Term;
+    ESCAPES.iter().fold(term, |term, (raw, code)| Term::Call("replace_all".into(), vec![term, Term::Str((*raw).into()), Term::Str((*code).into())]))
+}
+
+fn unquoted(text: &str) -> String {
+    ESCAPES.iter().rev().fold(text.to_owned(), |value, (raw, code)| value.replace(code, raw))
+}
+
 /// The constants' run's program: its outputs are a copy of each wanted relation, made by a rule of its own. The copy
 /// reads the relation as any rule outside the requests' cone does, so the cone hands it on wherever it is made.
 pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
@@ -93,8 +107,9 @@ pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
         let Some(cols) = prog.decls.get(rel).cloned() else { continue };
         let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}"))).collect();
         let atom = |r: String| Atom { rel: r, args: args.clone(), neg: false, gated: false };
+        let head_args = args.iter().zip(&cols).map(|(arg, (_, ty))| if ty == "symbol" || ty == "sym" { quoted(arg.clone()) } else { arg.clone() }).collect();
         prog.decls.insert(copy(rel), cols);
-        prog.rules.push(Rule { head: atom(copy(rel)), body: vec![Literal::Atom(atom(rel.clone()))] });
+        prog.rules.push(Rule { head: Atom { rel: copy(rel), args: head_args, neg: false, gated: false }, body: vec![Literal::Atom(atom(rel.clone()))] });
         prog.outputs.push(copy(rel));
     }
 }
@@ -141,7 +156,7 @@ pub(super) fn fold(
             if vals.len() != types.len() {
                 return Err(super::super::Error::Plan(format!("the run's constant {rel}: a row of {} values, not {}: {line:?}", vals.len(), types.len())));
             }
-            rows.push(vals.iter().zip(&types).map(|(v, t)| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| Value::Str((*v).to_owned()), Value::Int) } else { Value::Str((*v).to_owned()) }).collect());
+            rows.push(vals.iter().zip(&types).map(|(v, t)| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| Value::Str((*v).to_owned()), Value::Int) } else { Value::Str(unquoted(v)) }).collect());
         }
         prog.facts.insert(rel.clone(), rows);
     }
@@ -229,4 +244,48 @@ fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted:
     table(&db)?;
     db.execute("INSERT OR REPLACE INTO constant_rows VALUES (?1, ?2, ?3)", rusqlite::params![key, serde_json::to_string(rows).unwrap_or_default(), serde_json::to_string(consulted).unwrap_or_default()])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folded_filesystem_symbols_keep_delimiters_and_literal_escape_sequences() {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("constant-delimiters");
+        std::fs::create_dir_all(&dir).unwrap();
+        let _serial = super::super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        std::fs::write(dir.join("primary.py"),"pass\n").unwrap();
+        let name="a\n\t\r%0A%25é.py";
+        std::fs::write(dir.join(name),"pass\n").unwrap();
+        let text=format!(r#".language python
+.scope include "primary.py"
+#include "core.rr"
+.decl seen(value: symbol)
+seen(value) :- dir_entry(".",value,0).
+.decl answer(value: number)
+answer(1) :- doc(_,"primary.py",_),seen({}).
+.output answer
+"#,serde_json::to_string(name).unwrap());
+        let out=dir.join("out");
+        for _ in 0..2 {
+            super::super::run_all(&[&text],&dir,&out,"program",crate::code_rule_dsl::typing::file_local::Binding::Cpu,1<<18).unwrap();
+            assert_eq!(std::fs::read_to_string(out.join("answer.csv")).unwrap(),"1\n");
+        }
+        std::fs::remove_file(dir.join(name)).unwrap();
+        super::super::run_all(&[&text],&dir,&out,"program",crate::code_rule_dsl::typing::file_local::Binding::Cpu,1<<18).unwrap();
+        assert_eq!(std::fs::read_to_string(out.join("answer.csv")).unwrap(),"");
+        super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn symbol_transport_quotes_the_escape_marker_before_delimiters() {
+        for value in ["", "%", "%0A", "%2509", "\t\n\r\0", "é😀\n%25"] {
+            let encoded=ESCAPES.iter().fold(value.to_owned(),|v,(raw,code)|v.replace(raw,code));
+            assert!(!encoded.contains(['\t','\n','\r','\0']));
+            assert_eq!(unquoted(&encoded),value);
+        }
+    }
 }

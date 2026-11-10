@@ -1519,7 +1519,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr",
-      "sha256": "5c671bcc694a0a71e3e0f51dfe35a7ae9e4442a244a9b16bec5ba4d6f035da19",
+      "sha256": "89dbf517b6023c1277e82fd287a39d62d6842a45f3c5fbf05ac42bb2e74d01ff",
       "origin": "authored",
       "upstreamPath": "scripts/lint_dynamic_module_loading.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2075,7 +2075,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-discovery.rr",
-      "sha256": "bd48aa641b9a2789fddc45bada4c02bf4181dca2e02123ed8088c2e3ac8d2056",
+      "sha256": "c5fbb0a12b1b89cea6079fbb56876ea107f9d0bdbfb023b5e787412434a26b0a",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/discovery.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2760,6 +2760,25 @@
       "sha256": "a90924666d0eae39c11cf3f1343874115b3c2d2c6ac6439799ce42a8324c9fbb",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading-repository.rr",
+      "sha256": "baa946cf20df733ab7686716aaada29879e07c9a59d6aff1923547125594abc5",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_dynamic_module_loading.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/python-discovery.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "sha256": "4a6436d56099372da77547e758ea1d0255b81971a9b6faf896f4a43b4918134c"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/dynamic-discovery.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "sha256": "4fdc4a96bce03067cadefd429a541f05d4a40ba92a854de484f5fe0a1125c330"
     }
   ],
   "rules": [
@@ -3297,7 +3316,7 @@
       "legacySha256": "60a9cff5845cb22edfd90b365ba5ac41e948b605115c0233af66a81ab68d6478",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr",
-      "ruleSha256": "5c671bcc694a0a71e3e0f51dfe35a7ae9e4442a244a9b16bec5ba4d6f035da19"
+      "ruleSha256": "89dbf517b6023c1277e82fd287a39d62d6842a45f3c5fbf05ac42bb2e74d01ff"
     },
     {
       "check": "forwardref",
@@ -4723,6 +4742,11 @@
       {
         "path": "native/src/content_store/observe.rs",
         "sha256": "dd262ece4ce3c2cb7d9f3ec0927a40b12a0c1362fba1d29a111fa47b95c74ad1"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
+        "sha256": "8a6376dee589280a254b4eb1322658f451de9a51949df60a29cc9cd05d87fce4",
+        "reason": "Preserve tab, newline, CR, NUL and literal escape markers across the folded-constant output boundary; witnessed by dynamic discovery source corpus."
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
@@ -4781,18 +4805,6 @@
         "profiling"
       ],
       "seconds": 147.615
-    },
-    "adoptionAudit": {
-      "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "ef317e108358b2107336d1dd957ef9856b721b8d",
-      "engineCommit": "a438d925ff4d913f6cb428133960eadeb825a514",
-      "sourceTrees": {
-        "native": "c9461628b06bf7a916a2bae68156ac9ca26c829a",
-        "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
-        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-        "Cargo.toml": "bfce2f449c0ee137f9606200433782ccc20e69c0",
-        "Cargo.lock": "708164ac8a73f7ef6ebb46975a1f3408d263f6ec"
-      }
     }
   },
   "engineSourceSnapshots": [

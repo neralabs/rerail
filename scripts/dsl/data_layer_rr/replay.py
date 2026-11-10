@@ -90,6 +90,18 @@ def execute_workspace(engine, rule, files, options, sources=None, workspace_name
     return _execute(engine,rule,files,dict(options),sources,workspace_name)
 
 
+def execute_repository(engine, rule, root, options, mode):
+    """Keep filesystem resources intact; native requests choose and read files.
+
+    A snapshot starts with an empty primary document batch. Repository loads use
+    the physical resources through the same demanded reader as workspace runs.
+    """
+    if mode not in {'snapshot','workspace'}:raise ValueError('Unknown execution mode: '+mode)
+    if 'inputFiles' in options:raise ValueError('Repository transport owns inputFiles')
+    options=dict(options,inputFiles=[]) if mode=='snapshot' else dict(options)
+    return _execute(engine,rule,[],options,None,'corpus',physical_root=Path(root).absolute())
+
+
 def execute_workspace_context(engine, rule, files, options_for_root, sources=None, workspace_name='corpus'):
     """Bind caller path arguments after the physical test workspace exists."""
     def options(root):
@@ -125,7 +137,7 @@ def write_fixture(corpus, files, sources=None):
     for target,link in links:target.symlink_to(link)
 
 
-def _execute(engine, rule, files, options, sources, workspace_name):
+def _execute(engine, rule, files, options, sources, workspace_name, *, physical_root=None):
     import migration
     manifest=migration.read_json(ROOT/migration.MANIFEST)
     migration.verify_source_cohort(ROOT,manifest['engineSource'])
@@ -138,9 +150,10 @@ def _execute(engine, rule, files, options, sources, workspace_name):
         root = Path(temporary)
         if Path(workspace_name).name != workspace_name or workspace_name in {'', '.', '..'}:
             raise ValueError('Invalid fixture workspace name')
-        corpus = root / workspace_name
-        corpus.mkdir()
-        write_fixture(corpus,files,sources)
+        corpus = root / workspace_name if physical_root is None else physical_root
+        if physical_root is None:
+            corpus.mkdir()
+            write_fixture(corpus,files,sources)
         option_file = root / 'options.json'
         arguments = options(corpus) if callable(options) else options
         # The load-request cone consumes exports, not post-load option tables.
@@ -171,7 +184,8 @@ def worker(engine, execution_mode="snapshot"):
     for line in sys.stdin:
         try:
             request = json.loads(line)
-            response = dict(result=execute_api(engine, Path(request['rule']), request['files'], request['options']),executionMode=execution_mode)
+            result=(execute_repository(engine,Path(request['rule']),Path(request['root']),request['options'],execution_mode) if 'root' in request else execute_api(engine,Path(request['rule']),request['files'],request['options']))
+            response=dict(result=result,executionMode=execution_mode)
         except Exception as error:
             response = dict(error=f'{type(error).__name__}: {error}')
         print(json.dumps(response), flush=True)

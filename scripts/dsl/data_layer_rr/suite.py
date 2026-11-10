@@ -117,13 +117,16 @@ class Suite:
         from replay import sign_native
         return sign_native(self.engine,requests)
 
-    def native(self, check, entry, files, options=None):
+    def native(self, check, entry, files, options=None, *, root=None):
         from policy_routes import policy_filename
         rule = self.rule_root / policy_filename(check, entry)
         request = dict(rule=str(rule), files=files, options=dict(({} if entry is None else dict(entryPoint=entry)), **(options or {})))
         call = dict(test=self.item.nodeid if self.item else '<native-configuration>', check=check, entry=entry, policy=str(rule), files=len(files), status='started', executionMode=self.execution_mode,
                     inputFiles=[dict(path=f['path'], sourceSha256=sha(f['source'].encode())) for f in files],
                     options=request['options'])
+        if root is not None:
+            if files:raise ValueError('Repository transport takes physical resources, not document copies')
+            request['root']=str(Path(root).absolute());call['repositoryRoot']=request['root']
         self.calls.append(call)
         self.worker.stdin.write(json.dumps(request) + '\n')
         self.worker.stdin.flush()
