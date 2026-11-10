@@ -2778,7 +2778,7 @@ impl Run<'_, '_> {
             let Some((g, k, _)) = deferred.remove(*r) else { continue };
             let d = &prog.again[g].deltas[k];
             let _span = super::profile::span(|| format!("delta {} made where it is read", d.head.rel));
-            if !self.native_stratum(&BTreeSet::from([d.head.rel.clone()]), &[d])? {
+            if !self.native_stratum_now(&BTreeSet::from([d.head.rel.clone()]), &[d])? {
                 return Err(Error::Plan(format!("{} derived again: the native engine declined", d.head.rel)));
             }
         }
@@ -5445,7 +5445,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // yet held; the strata evaluated whose rows' digests are not taken yet. A stratum waiting on its device wave has
     // no rows yet: its digest is taken once its wave ran (a stratum that reads it finishes the wave first).
     let mut fresh: HashMap<String, Option<u64>> = HashMap::new();
-    let mut deferred: BTreeSet<String> = BTreeSet::new();
+    let mut unheld: BTreeSet<String> = BTreeSet::new();
     let mut evaluated: Vec<usize> = Vec::new();
     let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
     for (at, scc) in sccs.iter().enumerate() {
@@ -5608,16 +5608,16 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             if clean {
                 for r in scc {
                     fresh.insert(r.clone(), ks.was(r));
-                    deferred.insert(r.clone());
+                    unheld.insert(r.clone());
                 }
                 clean_strata += 1;
                 continue;
             }
             // A clean relation this stratum reads is held now, as the last run derived it.
-            let wanted: Vec<String> = reads.iter().filter(|r| deferred.contains(*r)).cloned().collect();
+            let wanted: Vec<String> = reads.iter().filter(|r| unheld.contains(*r)).cloned().collect();
             for r in wanted {
                 held_rows += kept_strata_hold(ks, db, &mut run, &r)?;
-                deferred.remove(&r);
+                unheld.remove(&r);
                 held_again += 1;
             }
             stratum_read_digests.insert(at, nows);
@@ -5826,10 +5826,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             kept_strata_ran(ks, db, &run, &sccs[k], reads.as_ref(), &mut fresh);
         }
         // What stays to the run's end (outputs, relations kept for the caller) is held again if it was clean.
-        let wanted: Vec<String> = deferred.iter().filter(|r| stays.contains(*r)).cloned().collect();
+        let wanted: Vec<String> = unheld.iter().filter(|r| stays.contains(*r)).cloned().collect();
         for r in wanted {
             held_rows += kept_strata_hold(ks, db, &mut run, &r)?;
-            deferred.remove(&r);
+            unheld.remove(&r);
             held_again += 1;
         }
         ks.counted(sccs.len() - clean_strata, sccs.len());

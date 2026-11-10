@@ -562,7 +562,8 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
 
 /// The documents a run read: the workspace's and those it loaded, each once.
 fn documents(consulted: &[(String, String, String)]) -> usize {
-    consulted.iter().filter(|c| c.0 == "doc" || c.0 == "load").map(|c| c.1.as_str()).collect::<BTreeSet<_>>().len()
+    // A workspace document listed without a digest was not read (`run_observed`: none built).
+    consulted.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").map(|c| c.1.as_str()).collect::<BTreeSet<_>>().len()
 }
 
 fn parse_consulted(text: &str) -> Vec<(String, String, String)> {

@@ -288,7 +288,8 @@ fn changes_of(programs: &[&str], root: &Path, typing: &Typing, options: &serde_j
     if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1) {
         return Ok(None);
     }
-    let changed: Vec<String> = docs.iter().filter(|d| world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
+    // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
+    let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
     const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
     Ok((inputs::still(&prog, root, &read) && world::World::new(root, &prog).still(&requests)).then_some(changed))
@@ -2187,8 +2188,12 @@ fn run_observed(
         }
         if !reads_documents && !docs.is_empty() {
             crate::code_rule_dsl::logic::profile::decision("documents", || format!("none built: no rule reads a relation of the {} documents", docs.len()));
+            // Still listed in what the run consulted, without a digest: the workspace's files are what they were
+            // (a file added or gone runs it again), but no edit of one changes what it derives (`changes_of`).
             let dropped: BTreeSet<String> = docs.drain(..).map(|(_, p)| p).collect();
-            consulted.retain(|c| !(c.0 == "doc" && dropped.contains(&c.1)));
+            for c in consulted.iter_mut().filter(|c| c.0 == "doc" && dropped.contains(&c.1)) {
+                c.2.clear();
+            }
         }
     }
     // T's corpus statistics, read once: each chunk plans with them and its sources' own, measured in memory, and the
@@ -2841,7 +2846,7 @@ fn run_observed(
         where
             'a: 's,
         {
-            rerail_accel::exec::help_until(|| {
+            rerail_accel::exec::help_until_as("the main thread: its next chunk", || {
                 self.advance(jobs);
                 let mut c = self.cut.lock();
                 if let Some(r) = c.handed.pop_front() {
@@ -2920,7 +2925,7 @@ fn run_observed(
             let to = docs.resolved_to.load(Acquire);
             if to < horizon && !docs.resolving.swap(true, Acquire) {
                 let docs = Arc::clone(&docs);
-                jobs.spawn(move |jobs| {
+                jobs.spawn("a window of files resolved", move |jobs| {
                     let from = thread_usage();
                     let end = (to + WINDOW).min(docs.asked.len());
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (&mut *self.resolve.lock())(&docs.asked[to..end])));
@@ -2940,15 +2945,23 @@ fn run_observed(
                 });
                 progress = true;
             }
-            // Each document within `ahead` whose window is resolved, built as a job.
+            // Each document within `ahead` whose window is resolved, built as a job: the longest first (by its
+            // source's bytes; a memo hit is none). Other threads take a thread's jobs oldest first, and a wait takes
+            // its own thread's newest: the long builds start soonest, on other threads, and a waiting thread runs the
+            // short ones, so it is not held long past what it waits for (`rerail_accel::exec::waits`).
             let to = docs.resolved_to.load(Acquire);
-            while c.spawned < horizon.min(to) {
-                let (i, docs) = (c.spawned, Arc::clone(&docs));
-                c.spawned += 1;
-                if docs.built.lock().contains_key(&i) {
-                    continue;
-                }
-                jobs.spawn(move |jobs| {
+            let mut ready: Vec<(usize, usize)> = {
+                let (resolved, built) = (docs.resolved.lock(), docs.built.lock());
+                (c.spawned..horizon.min(to).max(c.spawned))
+                    .filter(|i| !built.contains_key(i))
+                    .map(|i| (resolved.get(&i).map_or(0, |(_, r)| r.as_ref().err().map_or(0, |(source, _)| source.len())), i))
+                    .collect()
+            };
+            c.spawned = c.spawned.max(horizon.min(to));
+            ready.sort_by(|a, b| b.cmp(a));
+            for (_, i) in ready {
+                let docs = Arc::clone(&docs);
+                jobs.spawn("a document built", move |jobs| {
                     let from = thread_usage();
                     let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.build)(&docs, i))).unwrap_or_else(|_| Err(Error::Plan("the chunk builder panicked".to_owned())));
                     Self::add(&mut self.jobs_cpu.lock(), from);
@@ -3037,7 +3050,7 @@ fn run_observed(
             let pending = std::mem::take(&mut c.pending);
             let id = c.posted;
             c.posted += 1;
-            jobs.spawn(move |jobs| {
+            jobs.spawn("a chunk projected", move |jobs| {
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.project)(pending)));
                 self.projected.lock().insert(id, r);
                 self.advance(jobs);
@@ -3744,7 +3757,7 @@ fn run_observed(
         let decls = load.decls.clone();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
         let modes = modes.to_owned();
-        let cone = crate::threads::beside(move || -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+        let cone = crate::threads::beside("the cone of requests", move || -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             let db2 = Connection::open(&db_path)?;
             db2.execute_batch("PRAGMA synchronous=OFF")?;
             db2.execute("ATTACH ?1 AS x", [x_path.to_string_lossy()])?;
@@ -3766,7 +3779,7 @@ fn run_observed(
             }
             let mut answer = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
                 ask_tx.send((rel.to_owned(), rows.to_vec())).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
-                rerail_accel::exec::help_until(|| match reply_rx.try_recv() {
+                rerail_accel::exec::help_until_as("the cone: an answer", || match reply_rx.try_recv() {
                     Ok(r) => Some(Ok(r)),
                     Err(std::sync::mpsc::TryRecvError::Empty) => None,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(Error::Plan("the answer channel closed".to_owned()))),
@@ -3847,7 +3860,7 @@ fn run_observed(
             }
             Ok(out)
         };
-        while let Some((rel, rows)) = cone.wait_for(|| match ask_rx.try_recv() {
+        while let Some((rel, rows)) = cone.wait_for("the main thread: the cone's requests", || match ask_rx.try_recv() {
             Ok(asked) => Some(Some(asked)),
             Err(std::sync::mpsc::TryRecvError::Empty) => None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
@@ -3883,7 +3896,7 @@ fn run_observed(
     drop(docs_out);
     main_doing.set("done");
     crate::code_rule_dsl::logic::profile::wait("the worker's end", &worker_doing, || {
-        rerail_accel::exec::help_until(|| {
+        rerail_accel::exec::help_until_as("the main thread: the builder's end", || {
             builder.advance(jobs);
             builder.cut.lock().ended.then_some(())
         })

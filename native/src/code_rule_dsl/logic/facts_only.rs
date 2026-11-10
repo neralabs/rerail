@@ -46,6 +46,8 @@ const FACT_STORE: &[&str] = &[
     "node_type",
     "frames",
     "frame_spaces",
+    // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
+    "samples",
     "{p}_out in code_rule_dsl/logic/native.rs",
     "{p}_out in code_rule_dsl/logic/native/extension.rs",
     "{} in code_rule_dsl/logic/plan.rs",
@@ -158,6 +160,8 @@ const NOT_YET_TABLES_PIN: usize = 66;
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
+    ("code_rule_dsl/logic/costs.rs", "FITTED"),
+    ("code_rule_dsl/logic/costs.rs", "WRITER"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
@@ -218,9 +222,11 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "BUSY_DEADLINE_OVERRIDE"),
     ("content_store/connection.rs", "BUSY_TIMEOUT_OVERRIDE"),
     ("content_store/connection.rs", "BUSY_WAIT_HOOK"),
+    ("content_store/connection.rs", "CONNECTION_FUNCTIONS"),
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
+    ("content_store/hazards.rs", "HAZARDS"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),

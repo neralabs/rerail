@@ -777,7 +777,7 @@ pub(in crate::code_rule_dsl) fn warm() {
     STARTED.call_once(|| {
         // A panic leaves the kernels to be compiled where they are needed (a job's panic would end
         // the process).
-        rayon::spawn(|| {
+        rayon::spawn(|| rerail_accel::exec::as_job("the label kernels' warm-up", || {
             let _ = std::panic::catch_unwind(|| {
                 // The set program's kernels first: it runs first in a wave (its candidates). The shared
                 // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
@@ -787,7 +787,7 @@ pub(in crate::code_rule_dsl) fn warm() {
                 let _ = pipelines();
                 let _ = compile_sweep_cached();
             });
-        });
+        }));
     });
 }
 
