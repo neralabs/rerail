@@ -45,6 +45,8 @@ pub mod token_local;
 mod token_local_tests;
 #[cfg(test)]
 mod remade_tests;
+#[cfg(test)]
+mod totals_tests;
 
 pub use error::Error;
 
@@ -58,3 +60,5 @@ mod outline_tests;
 mod tier2_tests;
 #[cfg(test)]
 mod ladder_tests;
+#[cfg(test)]
+mod grammar_tests;

@@ -30,6 +30,9 @@ pub mod sme;
 #[cfg(all(feature = "gpu", target_os = "macos"))]
 pub mod gpu;
 
+#[cfg(all(feature = "gpu", target_os = "macos"))]
+pub mod forest;
+
 #[cfg(all(feature = "ane", target_os = "macos"))]
 pub mod ane;
 

@@ -141,6 +141,38 @@ impl ContentStore {
         source_id_by_hash(&connection, hash)
     }
 
+    /// The tape of each of `sources` in `grammar_id` at the given versions, as its stored frame, in their order: one
+    /// read, nothing written. A run reads its files' tapes before its first wave, and decompresses each in its file's
+    /// wave (decision 0104).
+    pub fn tape_frames_for(
+        &self,
+        sources: &[SourceId],
+        grammar_id: i64,
+        grammar_version: i64,
+        tape_format_version: i64,
+    ) -> StoreResult<Vec<Option<TapeFrame>>> {
+        let mut out: Vec<Option<TapeFrame>> = vec![None; sources.len()];
+        if sources.is_empty() {
+            return Ok(out);
+        }
+        let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT j.key, t.raw_length, t.codec_id, t.frame FROM json_each(?1) j JOIN tape_objects t \
+             ON t.source_id=j.value AND t.grammar_id=?2 AND t.grammar_version=?3 AND t.tape_format_version=?4",
+        )?;
+        let rows = statement.query_map(params![list, grammar_id, grammar_version, tape_format_version], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, Vec<u8>>(3)?))
+        })?;
+        for row in rows {
+            let (at, raw_length, codec, frame) = row?;
+            if codec == CODEC_ZSTD {
+                out[at as usize] = Some(TapeFrame { raw_length, frame: Arc::new(frame) });
+            }
+        }
+        Ok(out)
+    }
+
     pub fn tape_by_source(
         &self,
         source_id: SourceId,
@@ -1176,4 +1208,27 @@ pub(super) fn source_id_by_hash(connection: &Connection, key: HashKey) -> StoreR
         )
         .optional()
         .map_err(StoreError::from)
+}
+
+/// A stored tape's frame, before it is decompressed (`tape_frames_for`).
+#[derive(Clone, Debug)]
+pub struct TapeFrame {
+    raw_length: i64,
+    frame: Arc<Vec<u8>>,
+}
+
+impl TapeFrame {
+    /// The tape's bytes.
+    pub fn bytes(&self) -> StoreResult<Vec<u8>> {
+        let bytes = zstd::stream::decode_all(Cursor::new(&self.frame[..]))?;
+        if usize::try_from(self.raw_length).ok() != Some(bytes.len()) {
+            return Err(StoreError::Corrupt("tape length does not match metadata".to_owned()));
+        }
+        Ok(bytes)
+    }
+
+    /// The frame's size, compressed.
+    pub fn len(&self) -> usize {
+        self.frame.len()
+    }
 }

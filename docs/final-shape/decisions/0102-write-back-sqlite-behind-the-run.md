@@ -143,8 +143,8 @@ read from the memo.
   stratum's relation is read from its table. On the slice nothing is materialized now, and SQLite's
   time fell from 0.06 s to 0.01 s. The findings are unchanged.
   - `finding` still goes through SQL, because it joins the nodes' and the documents' inputs.
-  - A program's own stated facts (`builtin`, `py_keyword`, …) are still loaded through in-memory
-    temp tables at a run's start. That is set-up within a run, not a wait between waves.
+  - A program's own stated facts (`builtin`, `py_keyword`, …) were loaded through in-memory temp
+    tables at each run's start, inside the waves. They are held in the engine now (0104).
 
 The statistics keeper's counting is about 0.9 s on the slice. It is in memory, and it does no reading
 of SQLite on a cold run.

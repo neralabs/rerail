@@ -1121,3 +1121,12 @@ SPDX-License-Identifier = "Apache-2.0"
 # Makuza), eslint-plugin-react 7.37.5 (2014 Yannick Croissant), eslint-plugin-react-hooks 7.1.1 (Meta Platforms, Inc.
 # and affiliates.), @next/eslint-plugin-next 16.3.8 (2025 Vercel, Inc.), ESLint 10.11.0 (OpenJS Foundation and other
 # contributors), eslint-plugin-unicorn 76.0.0 (Sindre Sorhus) — each MIT, combined with Rerail's Apache-2.0.
+
+# MLDB (mldbai/mldb, branch opencl-random-forests at e3caed6fa447): the Metal random forest trainer, the UKL kernel
+# shims and the compute-kernel runtime, copied verbatim under accel/src/forest/mldb/ at their upstream paths, then
+# adapted in place. Upstream's LICENSE is beside them.
+[[annotations]]
+path = "accel/src/forest/mldb/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2015-2022 mldb.ai inc.", "2021-2022 Jeremy Barnes", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0"
