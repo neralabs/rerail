@@ -48,6 +48,8 @@ metal-tests = []
 [dependencies]
 # Relational kernels on every lane and the executor that batches their launches (decision 0098).
 rerail-accel = { path = "../accel" }
+# The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
+rerail-store = { path = "crates/store", features = ["test-hooks"] }
 ast-grep-core = "=0.50.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).

@@ -13,7 +13,7 @@ const MAX_PREFIX_CHARS: usize = 8;
 /// Necessary conditions only: passing this probe never replaces regex matching.
 /// All lengths are UTF-8 byte lengths, as in the regex engine's HIR properties.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct TextProbe {
+pub struct TextProbe {
     min_len: usize,
     max_len: Option<usize>,
     prefixes: Option<Vec<String>>,
@@ -25,7 +25,7 @@ pub(crate) struct TextProbe {
 }
 
 impl TextProbe {
-    pub(crate) fn compile(pattern: &str) -> Self {
+    pub fn compile(pattern: &str) -> Self {
         // Parsing and extraction are optional optimizations. Bound their work,
         // and leave authoritative syntax/size validation to the actual matcher.
         if pattern.len() > MAX_PATTERN_BYTES {
@@ -74,11 +74,11 @@ impl TextProbe {
 
     /// A complete union of nonempty prefixes at the start of the node text.
     /// None is unconstrained, including unanchored and multiline-only starts.
-    pub(crate) fn prefixes(&self) -> Option<&[String]> {
+    pub fn prefixes(&self) -> Option<&[String]> {
         self.prefixes.as_deref()
     }
 
-    pub(crate) fn allows(&self, text: &str) -> bool {
+    pub fn allows(&self, text: &str) -> bool {
         text.len() >= self.min_len
             && self.max_len.is_none_or(|max| text.len() <= max)
             && self
@@ -97,7 +97,7 @@ impl TextProbe {
 
     /// The prefixes as half-open ranges of UTF-8 (memcmp) order: every allowed text lies in one.
     /// The upper bound is the prefix with its last character advanced; None is unbounded.
-    pub(crate) fn prefix_ranges(&self) -> Option<Vec<(String, Option<String>)>> {
+    pub fn prefix_ranges(&self) -> Option<Vec<(String, Option<String>)>> {
         let prefixes = self.prefixes.as_ref()?;
         Some(prefixes.iter().map(|prefix| (prefix.clone(), successor(prefix))).collect())
     }
