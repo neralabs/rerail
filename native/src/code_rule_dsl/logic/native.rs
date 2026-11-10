@@ -43,7 +43,7 @@ pub(in crate::code_rule_dsl) mod component {
     #[cfg(target_os = "macos")]
     pub(in crate::code_rule_dsl) use super::setfix::{DeviceReport, device_report};
     pub(in crate::code_rule_dsl) use super::setfix::probed;
-    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, cat_symbols, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows};
+    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, cat_symbols, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, live, materialize, open_spec, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows, source_rows, finding_rows};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};

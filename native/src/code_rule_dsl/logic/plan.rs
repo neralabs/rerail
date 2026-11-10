@@ -6366,7 +6366,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // SQLite between this run and its reader (the guests' requests start the next wave). `finding` joins the nodes'
     // and documents' inputs, in SQL.
     let native_out: BTreeSet<String> = if atoms {
-        written.iter().filter(|r| *r != "finding" && run.native_rels.contains(*r) && !run.inputs.contains(r.as_str()) && super::native::component::held(db, r).is_some()).cloned().collect()
+        // `finding` too, when the nodes and documents it is decoded with are bound in place (`finding_rows`).
+        let in_place = |r: &str| r != "finding" || ["node", "doc"].iter().all(|t| crate::code_rule_dsl::facts::vtab::bound_source(db, t).is_some());
+        written.iter().filter(|r| in_place(r) && run.native_rels.contains(*r) && !run.inputs.contains(r.as_str()) && super::native::component::held(db, r).is_some()).cloned().collect()
     } else {
         BTreeSet::new()
     };
@@ -6596,9 +6598,14 @@ fn decoded_outputs(
             SqlValue::Null => "None".to_owned(),
             SqlValue::Blob(b) => format!("{b:?}"),
         };
-        let held = if native.contains(rel) {
-            let text: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
-            super::native::component::output_rows(db, rel, &text)?
+        let text_cols: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
+        let held = if native.contains(rel) && rel == "finding" {
+            super::native::component::finding_rows(db)?.map(|rows| rows.into_iter().map(|(c, p, at)| vec![SqlValue::Text(c), SqlValue::Text(p), SqlValue::Integer(at)]).collect())
+        } else if native.contains(rel) {
+            super::native::component::output_rows(db, rel, &text_cols)?
+        } else if atoms && rel != "finding" && prog.inputs.contains(rel) && let Some(src) = crate::code_rule_dsl::facts::vtab::bound_source(db, rel) {
+            // An input handed on as an output is read where it is bound.
+            Some(super::native::component::source_rows(db, src.as_ref(), &text_cols)?)
         } else {
             None
         };
