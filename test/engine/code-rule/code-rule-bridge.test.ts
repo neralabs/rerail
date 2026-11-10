@@ -560,7 +560,7 @@ describe("CodeRuleBridge", () => {
     }
   });
 
-  it("discovers a shell write that races the startup snapshot read", async () => {
+  it("discovers a command's shell write that races the startup snapshot read", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");
     await writeFile(path, "before\n");
@@ -570,13 +570,16 @@ describe("CodeRuleBridge", () => {
     const reading = holdDiscovery("reads", path);
     await bridge.openWorkspace("session-1");
     await reading.entered;
+    await bridge.begin("shell-race", "Bash", { command: "./write.sh" });
     await writeFile(path, "after\n");
     reading.release();
-    await bridge.checkpoint("turn");
+    await bridge.finish("shell-race");
     expect(auditGeneratedEdits).toHaveBeenCalledWith("session-1", expect.objectContaining({
       edits: [expect.objectContaining({ path: "src/a.py", generatedText: "after\n" })],
     }));
     await bridge.checkpoint("turn");
+    // Each audit is the session's own discovery, never a Log audit of another writer's change.
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.mode)).not.toContain("log");
     expect(auditGeneratedEdits).toHaveBeenLastCalledWith("session-1", expect.objectContaining({
       edits: [expect.objectContaining({ path: "src/a.py", generatedText: "after\n" })],
     }));
@@ -1340,6 +1343,18 @@ describe("CodeRuleBridge and another session's writes", () => {
     await a.bridge.finish("shell-a");
     expect(b.auditGeneratedEdits).not.toHaveBeenCalled();
     expect(a.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([[mine]]);
+  });
+
+  it("tells nobody of a file only the other session changed, however often it changes it", async () => {
+    const root = await twoBranches();
+    const [a, b] = await twoSessions(root);
+    for (const line of ["first\n", "second\n", "third\n"]) {
+      await shell(a.bridge, () => appendFile(join(root, "src", "a.py"), line));
+      await awaitClockPastNow();
+      await shell(b.bridge, () => undefined);
+    }
+    await b.bridge.checkpoint("turn");
+    expect(b.auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
   it("measures a later shell edit of the file from the text the other session left once a walk has seen it", async () => {

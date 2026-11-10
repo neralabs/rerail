@@ -403,6 +403,8 @@ interface SourceScan {
  * which is no change of the session's.
  */
 type TextOrigin = "edit" | "git" | "other-writer" | "first-sight";
+/** Whether the evaluator holds a text of that origin as the session's: what it last audited of the source. */
+const HELD_BY_EVALUATOR: Readonly<Record<TextOrigin, boolean>> = { edit: true, git: true, "other-writer": false, "first-sight": false };
 /** One traversal of the workspace: what it compares against, when it started, and what it has found so far. */
 interface SourceWalk {
   readonly discovery: SourceDiscovery;
@@ -1588,12 +1590,14 @@ export class CodeRuleBridge {
   }
 
   /**
-   * A write the session did not make is audited only for a source it had changed. With `keptAs` (another writer's, or
-   * Git's text neither the index nor `HEAD` holds) its text is kept for the session's next edit of the source.
+   * A write the session did not make is audited only for a source the evaluator holds the session's text of: one it
+   * edited, or one Git wrote over. Text another writer left, or a first sight, is no change of the session's, so the
+   * evaluator never held it. With `keptAs` (another writer's, or Git's text neither the index nor `HEAD` holds) its text
+   * is kept for the session's next edit of the source.
    */
   #sortUnownedWrite(edit: CodeRuleEdit, keptAs: "git" | "other-writer" | undefined, notOwn: CodeRuleEdit[]): void {
     const held = this.#texts.get(edit.path);
-    if (held !== undefined && held.origin !== "first-sight")
+    if (held !== undefined && HELD_BY_EVALUATOR[held.origin])
       notOwn.push(edit.generatedText === undefined ? edit : { ...withoutUncaptured(edit), previousText: edit.generatedText });
     // The next shell edit measures from the text left, which neither the index nor `HEAD` may hold.
     else if (keptAs !== undefined && edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, keptAs);

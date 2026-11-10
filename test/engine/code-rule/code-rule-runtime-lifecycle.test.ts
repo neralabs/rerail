@@ -1121,6 +1121,32 @@ describe("source-scoped steers", () => {
     } finally { await test.close(); }
   });
 
+  it("opens a Codex turn's window at its first call when the runtime never saw the turn's prompt, as after a restart", async () => {
+    const batches: Parameters<CodeRuleAuditor["auditGeneratedEdits"]>[1][] = [];
+    const test = await fixture({
+      host: "codex",
+      prepare: root => writeFile(join(root, "route.py"), "transaction.fetch_value('SELECT 1')\n"),
+      auditGeneratedEdits: () => async (_sessionId, batch) => {
+        batches.push(batch);
+        return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+      },
+    });
+    try {
+      const sessionId = test.session.sessionId;
+      expect(await test.runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId, text: "" })).toEqual([]);
+      // No user-prompt: the daemon that saw it is gone. The turn's next shell command reaches this one.
+      const command = { sessionId, toolCallId: "shell-1", toolName: "exec_command" };
+      await test.runtime.ingest({ kind: "call", eventId: "call", ...command, input: { cmd: "ls" } });
+      await test.runtime.ingest({ kind: "result", eventId: "result", ...command, output: "" });
+      // `apply_patch` after the command, which no hook shows.
+      await writeFile(join(test.root, "route.py"), "cursor.execute('SELECT 1')\n");
+      await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId, text: "done" });
+      expect(batches.map(batch => [batch.mode, batch.edits.map(edit => [edit.path, edit.generatedText])])).toEqual([
+        [undefined, [["route.py", "cursor.execute('SELECT 1')\n"]]],
+      ]);
+    } finally { await test.close(); }
+  });
+
   it("discards buffered and late results after session closure", async () => {
     const test = await fixture();
     try {

@@ -964,11 +964,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * A host whose own edit tool no hook shows (`observedFileWrite: "shell"`: Codex's `apply_patch`) writes outside every
    * call's window, so its turn, from the prompt to the turn's end, is one: what is stamped then is the session's own.
-   * Two of its sessions' turns in one folder at once both take a change made then, as overlapping calls do.
+   * A call opens it too, as a turn has one only at its prompt, which a daemon restart in the middle of the turn loses;
+   * a window already open keeps its start. Two of its sessions' turns in one folder at once both take a change made
+   * then, as overlapping calls do.
    */
   async #noteTurnWindow(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
     if (ADAPTER_CAPABILITIES[state.descriptor.host].observedFileWrite !== "shell") return;
-    if (event.kind === "user-prompt") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID);
+    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID);
     else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
   }
 
