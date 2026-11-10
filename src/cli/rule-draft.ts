@@ -700,6 +700,7 @@ function rerailRuleShown(database: RerailDatabase, ruleCatalog: RuleCatalog, bun
   const name = repositoryName(checkout.checkoutPath);
   const copies = rerailRuleCopiesIn(database, checkout.repositoryKey, id);
   if (copies.length > 0) return { draft: bundled, notes: [copyAddedText(id, name, copies)] };
+  // The repository's settings only, not this checkout's: the copy runs in the whole repository, as its settings do.
   const running = listRepositoryRules(database, ruleCatalog, checkout.repositoryKey).rules
     .find(rule => rule.document.rule.id === id && rule.source.kind !== "library_rule");
   if (running === undefined) return { draft: bundled, notes: [notAddedText(id, name)] };

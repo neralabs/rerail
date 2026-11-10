@@ -217,7 +217,8 @@ mode and its id stay as they are. Write's review and quality gates are about tho
 commands, not a new rule.
 
 1. **Read the rule:** `rerail rules show <id>`. It prints the rule as a draft, as it runs in this repo; save it as
-   `<tmp>/draft.json`. Its last line, on stderr, says what saving does:
+   `<tmp>/draft.json`. A line on stderr says what saving does:
+   - No line: the rule is the person's own, and saving changes it where it is.
    - A rule that ships with Rerail is saved as the person's copy, added where it is; approving the copy turns it off there.
    - "already has your copy … Change that one": run `rules show` on the copy's id and change that one instead.
    - "is not added to <repo>": the rule does not run here, so there is no scope to change. Say so, and stop.
