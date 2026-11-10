@@ -191,11 +191,8 @@ fn pattern(out: &mut String, node: &PackedPattern, names: Option<&Names>) {
     }
 }
 
-// A block program's rows, tier 1's (`rerail_compiler::block::block_rows`).
-// Tier 2's rows and quoted strings, the compiler's (`rerail_compiler::rir_text`).
+// Quoted strings, the compiler's (`rerail_compiler::rir_text`).
 pub(in crate::code_rule_dsl) use rerail_compiler::rir_text::quote;
-pub(super) use rerail_compiler::rir_text::{reading_rows, switch_rows};
-pub(super) use super::block::block_rows;
 
 pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Names>) -> String {
     let mut out = String::new();

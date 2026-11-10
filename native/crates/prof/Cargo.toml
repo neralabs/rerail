@@ -1,0 +1,9 @@
+[package]
+name = "rerail-prof"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Wall time and counts by stage (RERAIL_PROF), shared by the engine and its crates."
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+libc = "0.2.189"

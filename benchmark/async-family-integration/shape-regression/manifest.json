@@ -1,0 +1,41 @@
+{
+  "baselineCommit": "43250ea0076f84e98ca9fd7ba2016914d6922f49",
+  "branch": "jeremy/async-family-integration-comparison",
+  "sources": {
+    "native/src/code_rule_dsl/logic/plan.rs": "3db447fd62239913826869f0f561def85f2f8b8dd94777d6e8ec936b2c77ba57",
+    "native/src/code_rule_dsl/logic/plan/compose.rs": "36878ca7543182ce91d04c29dcaedee148ad92d41c81285ca40834fe0c0b4d2d",
+    "native/src/code_rule_dsl/logic/plan/compose/experiments.rs": "e816bc12947c23a4a76d9bc473eb5591dffcf923801a2c4f16fb04fa27f365fe",
+    "native/src/code_rule_dsl/logic/plan/compose/tests.rs": "5098813a8363da642ccba213c829bc3594aabad55b87128cb16f1af7eba6ef3c",
+    "native/src/code_rule_dsl/findings/tests/rr_comparison.rs": "a4c9469a1f59dd730a4d5822603dc8e04c2d27ee4f440c847eec20f5c723a715"
+  },
+  "binaries": {
+    "before": {
+      "path": "/Users/jeremy/orca/artifacts/async-family-comparison/shape-lab/before-engine",
+      "sha256": "d5c5d3ae5cb1eeca519c6fe15b8b21eabddfdb86b627ebfc19b824470814a421"
+    },
+    "timedFix": {
+      "path": "/Users/jeremy/orca/artifacts/async-family-comparison/shape-lab/fixed-engine",
+      "sha256": "7ed67f48fda7fc609452c167cc30e31cb8386a0434e3dd01ec66bc8eb3077bc9"
+    },
+    "final": {
+      "path": "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-299493bcd9a62f43",
+      "sha256": "d1ca1c8d570a87526bb326dd0c18308b31503be5b5e2ac312b751d7a389659a5"
+    }
+  },
+  "notes": [
+    "before-engine adds test-only diagnostics to the published production compiler.",
+    "fixed-engine times the two lowering fixes before the bound-suffix guard was added. The async workload uses an unbound suffix.",
+    "The final production profile and positive profile use the final test binary, including the bound-suffix guard and focused regression tests.",
+    "All builds and workloads ran at nice level 19.",
+    "Replay CPU uses warm bound sources; snapshot captures are charged separately.",
+    "Wall timings reflect substantial shared-host contention.",
+    "Full-job batch counts can vary with the bounded adaptive scheduler."
+  ],
+  "corpusManifest": "../corpus-manifest.json",
+  "corpusManifestSha256": "500103c0c6d33ff8d533d0af9b2797f29206a2a571e2c0524522e5cdc0ad0a83",
+  "timedAndFinalSqlIdentical": true,
+  "queryHashes": [
+    "634019fbe12091645bafed7350eb41257679503d3166d3de6e3fc4f4e443e9e4",
+    "8e61c0f78826e8a1a5e6d5af60139889d8f61fcc14748825d7a1a8cfa924c187"
+  ]
+}

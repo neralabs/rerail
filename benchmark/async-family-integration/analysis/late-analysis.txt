@@ -1,0 +1,12 @@
+== Structural analysis
+CPU is attributed cost, not an estimate of recoverable savings. Findings can overlap.
+
+LATE_PROJECTION [observed] input projection
+  CPU: 3.943614 s
+  Evidence: 12535139 scalar node visits; 12535139 identities; 4187794 interned batch strings. Consumer paths: text <- async_open_receiver <- p3_ASYNC230
+  Action: Check the named consumers for candidate restrictions before Projection::of; push only semantically valid demands into producers.
+
+CACHED_TAPE_REBUILD [investigate] input lifecycle
+  CPU: 1.540585 s
+  Evidence: 5726 tape cache hits, 0 misses; restore/core-fact construction: parse the program/parse each program (4)/facts from tape: 1 calls, 0.000031 own CPU s; parse the program/parse each program (4)/tape restore: 1 calls, 0.000023 own CPU s; tree-sitter and facts/facts from tape: 5725 calls, 0.955908 own CPU s; tree-sitter and facts/tape restore: 5725 calls, 0.584623 own CPU s. Tape hits do not mean core facts were reused.
+  Action: Measure immutable core-fact reuse keyed by source and grammar generation. Check ownership and invalidation before adding a cache; this does not prove duplicate construction.

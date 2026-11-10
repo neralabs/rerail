@@ -1021,6 +1021,9 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         for (rel, words) in prog.qualifiers {
             all.qualifiers.entry(rename(&rel)).or_default().extend(words);
         }
+        for (rel, cols) in prog.tapes {
+            all.tapes.entry(rename(&rel)).or_default().extend(cols);
+        }
         for (rel, mut native) in prog.natives {
             native.rename_reads(rename);
             all.natives.insert(rename(&rel), native);
@@ -1855,6 +1858,7 @@ fn run_observed(
             prog = front::prune(prog);
             // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
             crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
+            prog = front::prune(prog);
             // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
             let (mut prog, demanded) = crate::code_rule_dsl::logic::magic::demand_negated_tests(prog);
             drop(preparing);
@@ -3134,6 +3138,11 @@ fn run_observed(
         if !hits.is_empty() {
             let _replay = crate::code_rule_dsl::logic::profile::span(|| "memo replay".into());
             memo_hits += hits.len();
+            // What an edit's run restores of the files it did not change (t31 step 0.3): every hit's rows, today.
+            crate::code_rule_dsl::logic::profile::decision("memo replay", || {
+                let values: usize = hits.iter().map(|(_, e, _)| e.rows.values().map(|(_, v)| v.len()).sum::<usize>()).sum();
+                format!("{} entries replayed, {:.1} MB of values", hits.len(), values as f64 * 8.0 / 1e6)
+            });
             db.execute_batch("BEGIN")?;
             // The planner's tree counts for the files read from the memo (decision 0063): a chunk mix's measured
             // counts, scaled by the hits' nodes, as an evaluated chunk's are. Without them a run read whole from the
@@ -3532,7 +3541,7 @@ fn run_observed(
                 entries.get_mut(&f).expect("checked").rows.entry(rel.to_owned()).or_insert_with(|| (width, Vec::new())).1.extend(values);
             }
         };
-        db.execute_batch("BEGIN")?;
+        // Exports remain in native memory; this boundary performs no SQL writes.
         for rel in split.exports.iter().filter(|r| !handed.contains(*r)) {
             // Rows another chunk wrote too (a file-local relation without a location column) are kept once. A kept
             // export goes from the engine to `x` in one statement and is measured in place; one a SQL stratum
@@ -3557,7 +3566,6 @@ fn run_observed(
                 }
             }
         }
-        db.execute_batch("COMMIT")?;
         // The semi-join: of each deferred base relation, the rows whose node an export row holds.
         for (rel, source, pairs) in std::mem::take(&mut deferred) {
             let have = source.columns();
@@ -4149,6 +4157,27 @@ fn run_observed(
             base_sources.insert(rel.clone(), retain::kept_source(parts.as_deref(), &rel, source, &mut input_digests));
         }
     }
+    // What the memo entries written by this run hold (t31 A2): the largest relations, and any join pushed into the
+    // chunks (`fl<n>_<rule>`, decision 0051) that exports more rows than four per node of its files, the shape of a
+    // composition left unfiltered (F823's `outer`, 15 M rows for one 291 KB file).
+    if crate::code_rule_dsl::logic::profile::on() {
+        let (nodes, by_rel) = memo::sizes();
+        if nodes > 0 {
+            let total: u64 = by_rel.values().map(|v| v.1).sum();
+            let mut top: Vec<(&String, &(u64, u64))> = by_rel.iter().collect();
+            top.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+            crate::code_rule_dsl::logic::profile::decision("memo entries written", || {
+                let named: Vec<String> = top.iter().take(8).map(|(r, (rows, values))| format!("{r} {:.1} MB ({rows} rows, {:.0}%)", *values as f64 * 8.0 / 1e6, 100.0 * *values as f64 / total.max(1) as f64)).collect();
+                format!("{:.1} MB of values over {nodes} nodes: {}", total as f64 * 8.0 / 1e6, named.join("; "))
+            });
+            for (rel, (rows, _)) in &top {
+                let pushed = rel.strip_prefix("fl").and_then(|s| s.split_once('_')).is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+                if pushed && *rows > 4 * nodes {
+                    crate::code_rule_dsl::logic::profile::decision("pushed joins over 4 rows per node", || format!("{rel}: {rows} rows over {nodes} nodes ({:.1} per node)", *rows as f64 / nodes as f64));
+                }
+            }
+        }
+    }
     crate::code_rule_dsl::logic::profile::decision("held for the cross-file part", || {
         let mut held: Vec<(usize, String)> = base_sources
             .iter()
@@ -4389,7 +4418,7 @@ fn run_observed(
                             given.insert(rel.clone(), (atoms_source(&store, decl.len(), plus.iter())?, atoms_source(&store, decl.len(), minus.iter())?));
                         }
                     }
-                    let mut cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
                     let s = span("bind unchanged inputs");
                     let same = cell.as_ref().map(|kept| kept.same_inputs(ckey, &digests)).unwrap_or_default();
@@ -4490,8 +4519,6 @@ fn run_observed(
                             program.qualifiers.entry(rel).or_default().insert("levels".to_owned());
                         }
                     }
-                    // A cache whose key came out as it was is clean, kept as it was (decision 0103).
-                    cut.clean.extend(maintained.kept_as_is.iter().cloned());
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_entries} inputs' deltas read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
                         None => format!("no kept documents: {} inputs' deltas found by hashing their documents", hashed.len()),
@@ -5484,7 +5511,7 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
 /// `RDL_STMTS=<file>`: also each statement's cost at its end (`SQLITE_TRACE_PROFILE`): its time and SQLite's own
 /// counters (VM steps, full-scan steps, sorts, automatic-index rows), summed by statement text and written to `<file>`
 /// as tab-separated rows (phase, runs, ms, vm steps, full-scan steps, sorts, autoindex rows, text).
-struct Statements {
+pub(super) struct Statements {
     db: *mut rusqlite::ffi::sqlite3,
     state: Box<StatementState>,
     /// The profile's span of the phase entered last (`logic::profile`).
@@ -5497,7 +5524,7 @@ struct StatementState {
     costs: Option<parking_lot::Mutex<HashMap<(&'static str, String), [u64; 6]>>>,
 }
 impl Statements {
-    fn on(db: &Connection) -> Self {
+    pub(super) fn on(db: &Connection) -> Self {
         use rusqlite::ffi;
         unsafe extern "C" fn trace(event: u32, state: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
             // SAFETY: the state outlives the callback (removed on drop).
@@ -5548,7 +5575,7 @@ impl Statements {
         unsafe { ffi::sqlite3_trace_v2(db, mask, Some(trace), std::ptr::from_ref(&*state).cast_mut().cast()) };
         Statements { db, state, span: Default::default() }
     }
-    fn count(&self) -> usize {
+    pub(super) fn count(&self) -> usize {
         self.state.count.load(std::sync::atomic::Ordering::Relaxed)
     }
     /// The phase the statements from now on are charged to.

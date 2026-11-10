@@ -8,10 +8,12 @@
 // blocks the event loop until a child process changes state.
 //   async def f(): os.waitpid(pid, 0)      ← ASYNC222
 //   async def f(): await proc.wait()       not reported: an asyncio process
-#include "python/misc2-async.rr"
+#include "python/async-demand.rr"
 
 .violation ASYNC222(at: node) code "ASYNC222"
     "Offload the wait with `await asyncio.to_thread(wait_fn, ...)`; preserve arguments and status. Await `proc.wait()` only for an async process."
     suppress ruff "ASYNC222"
 ASYNC222(f) :- async_blocking(_, f, q), split_dot(q, "os", x),
     (x = "wait" ; x = "wait3" ; x = "wait4" ; x = "waitid" ; x = "waitpid").
+
+async_api_target(q) :- async_wait(q).

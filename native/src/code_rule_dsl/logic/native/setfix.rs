@@ -161,6 +161,14 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Decode a composed output through the shared atom arena, without a SQL query per row.
+pub(in crate::code_rule_dsl) fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
+    let symbols=symbols(conn)?;
+    let s=symbols.read().unwrap();
+    if atom<0 || atom as usize>=s.len(){return Err(err(format!("no symbol {atom}")))}
+    Ok(s.name(atom).to_owned())
+}
+
 /// Appends the symbols pending in `conn`'s database if a flush is due (decision 0049 §4.2): a run's end.
 pub fn flush_symbols(conn: &Connection) -> Result<()> {
     crate::content_store::atoms::Atoms::for_connection(conn).flush_if_due(conn).map_err(|e| err(e.to_string()))
@@ -1920,6 +1928,18 @@ pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
 /// relation is its kept one, unchanged (decision 0101 §1), shared with its indexes.
 pub fn hold_as(conn: &Connection, table: &str, rel: Arc<InRel>) {
     DERIVED.lock().unwrap().insert((scope(conn), table.to_owned()), rel);
+}
+
+/// A native fact operator's completed set. No rows are published until a SQL consumer materializes it.
+/// Unlike `adopt`, this is a result of the current run, not an input scheduled for the next one.
+pub fn retain(conn: &Connection, table: &str, mut rows: Vec<Vec<i64>>, types: Vec<u8>) -> Result<()> {
+    if rows.iter().any(|r| r.len() != types.len()) { return Err(err(format!("{table}: native result width differs from its declaration"))); }
+    rows.sort_unstable();
+    rows.dedup();
+    let mut rel = InRel::flat(&rows, types);
+    Arc::get_mut(&mut rel).unwrap().stored = 0;
+    DERIVED.lock().unwrap().insert((scope(conn), table.to_owned()), rel);
+    Ok(())
 }
 
 /// Holds `table` in `conn`'s run as a relation with no rows, as a component that derived none would leave it: for a

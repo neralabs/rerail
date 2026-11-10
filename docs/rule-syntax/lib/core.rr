@@ -195,11 +195,11 @@
 // Grammars: "annotation" (a Python expression), or a language label ("python", "sql", "typescript", …).
 // Guests have no source, src_line or line_count rows: their text is the host's.
 .decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation", …)
-.decl sub_tape(at: node, grammar: symbol, t: symbol)     // the tape (content key) of the guest at `at`
+.decl sub_tape(at: node, grammar: symbol, t: tape)       // the tape (content key) of the guest at `at`
 .decl guest(g: number, host: number, at: node, grammar: symbol)  // document g is the code at host node `at`
 .decl doc_role(d: number, role: symbol)                  // "primary" (a file), "fragment", or an embed's role
 .decl doc_root(d: number, n: node)                       // the root of document d's tree
-.decl tape_of(d: number, t: symbol)                      // document d places tape t; equal texts share a tape
+.decl tape_of(d: number, t: tape)                        // document d places tape t; equal texts share a tape
 .decl host_node(n: node, h: node)                        // h is the innermost host node over guest node n
 .input sub_tape, guest, doc_role, doc_root, tape_of, host_node
 // What a rule sees (decision 0058): files, and guests in the run's language unless `.guests off`. A rule that
@@ -210,9 +210,9 @@
 //   t = @parse("sql", q)     parse_of(q, "sql", t)     q parsed as SQL; tape_of(d, t) gives its document
 //   x = @unparse(t)          unparse_of(t, x)          a guest's or a value's text
 //   t3 = @splice(t, n, t2)   splice_of(t, n, t2, t3)   t with node n's text replaced by t2's, parsed again
-.decl parse_of(x: symbol, g: symbol, t: symbol)
-.decl unparse_of(t: symbol, x: symbol)
-.decl splice_of(t: symbol, n: node, t2: symbol, t3: symbol)
+.decl parse_of(x: symbol, g: symbol, t: tape)
+.decl unparse_of(t: tape, x: symbol)
+.decl splice_of(t: tape, n: node, t2: tape, t3: tape)
 .input parse_of, unparse_of, splice_of
 // embed(d, at, "sql", "query"): a library declares that the code at node `at` of document d is a guest of that
 // grammar and role (`.guests off` leaves these out). embed_value(d, at, g, role, text) for a computed text,
@@ -613,3 +613,13 @@
 //                                              ends unknown on any file. Members run as usual.
 // .scope tests false                          drops documents with a `test` or `tests` path part. Walks always
 //                                              skip .git, .venv, venv, __pycache__ and tmp.
+
+// Batched Python facts. Requests is a unary node relation; targets is a unary symbol relation.
+// These operators do not evaluate rules. Unknown semantic facts produce no known result.
+// Conservative call candidates. Documents and targets are unary relations; context/member are literal strings.
+// The direct reference or receiver is -1 when that demand does not apply. Exact semantic operators decide matches.
+.decl python_candidates(call: node, report: node, reference: node, receiver: node, documents: relation, targets: relation, context: symbol, member: symbol)
+.decl python_qualified(n: node, q: symbol, requests: relation, targets: relation)
+.decl python_origins(n: node, value: node, requests: relation)
+.decl python_assigned(n: node, value: node, requests: relation)
+.decl python_arguments(call: node, position: number, keyword: symbol, spread: symbol, value: node, requests: relation)

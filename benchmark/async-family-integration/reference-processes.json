@@ -1,0 +1,60 @@
+[
+  {
+    "name": "admission",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-4f1d47ecdb5c7ca6",
+      "catalog_async_compiler_admission_is_accounted_for",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.17013001441955566,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/results/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_ASYNC_ADMISSION_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/results/admission.json"
+    }
+  },
+  {
+    "name": "reference-positive",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-4f1d47ecdb5c7ca6",
+      "async_reference::tests::",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.18132591247558594,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/results/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_ASYNC_EXPORT_FIXTURES": "/Users/jeremy/orca/artifacts/async-family-comparison/results/edge-fixtures"
+    }
+  },
+  {
+    "name": "reference-full",
+    "command": [
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-4f1d47ecdb5c7ca6",
+      "async_reference::tests::complete_async_family_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 144.1347851753235,
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/results/tape-cache.sqlite",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_SHARED_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/results/reference-full.json"
+    }
+  }
+]

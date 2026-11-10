@@ -1,0 +1,7 @@
+
+running 1 test
+test code_rule_dsl::findings::async_reference::rr_comparison::complete_async_family_authored_rr_corpus_profile ... authored .rr: 2 files, 24 keys, 440664000 CPU ns, 444315125 wall ns
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3229 filtered out; finished in 0.47s
+
