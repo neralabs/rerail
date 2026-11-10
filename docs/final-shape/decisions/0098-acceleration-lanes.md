@@ -473,6 +473,37 @@ What it shows:
     1,055 to 467 ms CPU on the 8-program slice.
   - Its rows are pushed once, with no fresh-row buffer hashed first.
 
+**After the merges (2026-11-10).** The same pack, cold, CPU binding, profiled, one run each. The merged binary has
+closure waves, factorized exports, the front-end and statistics work, observed step counts, device strata joins, kept
+cross-file strata, the inliner fix and streamed prepared parts. Load: base 9 to 12, merged 14 to 21. Instructions are
+`time -l`'s retired count. The merged run was its binary's first profiled run, so it also measured the roofline
+(about 62 G instructions and 0.7 GB, after the run's work; the base's roofs were cached).
+
+| | base | merged |
+|---|---:|---:|
+| process CPU (user + sys) | 191.9 s | 158.6 s |
+| instructions retired | 3,026 G | 2,403 G (about 2,341 G without the roofline) |
+| peak footprint, the profile's own | 1,429 MB | 1,375 MB |
+| joins, file-local part | 65.4 s | 54.9 s |
+| moving rows to the cross-file part | 26.1 s | 22.4 s |
+| statistics phase | 15.1 s | 12.1 s |
+| parsing | 14.7 s | 10.3 s |
+| planning strata | 14.0 s | 6.5 s |
+| opening inputs, building indexes | 9.9 s | 8.5 s |
+| guests | 8.9 s | 4.4 s |
+| joins, cross-file part | 7.7 s | 6.6 s |
+| measuring sources | 7.2 s | 2.7 s |
+
+The findings are the base's except for B007: 16,033 rows become 82, which fixes the inliner's wrong renaming
+(decision 0097). Every other program's output is identical.
+
+What is left:
+- The file-local joins are still a third of the run.
+- Moving rows to the cross-file part is next. Its largest piece is the memo's write, 9.0 s: zstd and the entry's
+  byte copies, which a debug build checks per copy.
+- The peak (1.4 GB) is over the 1 GB budget. Its highest single rise was keeping the prepared program, 442 MB, half
+  of it a copy of the program's facts. That copy is now gone, but the pack's peak has not been measured since.
+
 ### Device waves for kernel launches (2026-11-09)
 
 Before this, each closure submitted its one launch alone, in the middle of its stratum, and a closure past 16,384
