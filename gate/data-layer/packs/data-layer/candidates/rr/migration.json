@@ -2889,6 +2889,13 @@
       "destination": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
       "origin": "authored",
       "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-target-architecture.rr",
+      "sha256": "1ed9c467397ed073a0185d6e4b02664fadda87f840e25f7948f0b3fdd26aee0f",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_serverplan_target_architecture.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
   "rules": [
@@ -3978,8 +3985,9 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-target-architecture.json",
       "legacySha256": "f8ca589ed2cda0828a22e4abaf4316bfbfd2f8dc3cb25f46596851770cbd6b4a",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-target-architecture.rr",
+      "ruleSha256": "1ed9c467397ed073a0185d6e4b02664fadda87f840e25f7948f0b3fdd26aee0f"
     },
     {
       "check": "execution_authority_bypass",
@@ -4694,7 +4702,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "9e5fa489e0a28d514282ff31652ad05da33bad32",
-    "status": "Final 9e5fa489e merged. The new CLI build and parity runs are pending.",
+    "status": "Final 9e5fa489e merged and the root CLI rebuilt. All 120 policy files pass the reader. ServerPlan target architecture has original static-suite parity through both APIs; application probes are pending.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4977,6 +4985,36 @@
         "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
         "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
       }
+    },
+    "cliArtifact": {
+      "engineCommit": "ebbf1e38a6552ff786ad68d38545ea4a69bb3cd4",
+      "upstreamCommit": "9e5fa489e0a28d514282ff31652ad05da33bad32",
+      "sourceTrees": {
+        "native": "8ecb7697775e02279086ac1f2eb862fd66d02262",
+        "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
+        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+        "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+        "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-ef1a5c7432a728b3",
+      "sha256": "ef1a5c7432a728b38f2f25dfcd186129748a0dd33356c4482f5c5a730f93e812",
+      "command": [
+        "rustup",
+        "run",
+        "1.95.0",
+        "cargo",
+        "build",
+        "-p",
+        "rerail-engine",
+        "--features",
+        "headless",
+        "--bin",
+        "rerail-engine",
+        "--profile",
+        "profiling"
+      ],
+      "seconds": 412.02,
+      "cpuSeconds": 1115.06
     }
   },
   "engineSourceSnapshots": [

@@ -55,6 +55,7 @@ ENTRIES = {
     'error_handling': ['scan_file_content'],
     'backend_type_strings': ['check_file', 'check_file_content', 'should_skip_file', 'find_python_files'],
     'serverplan_grammar_surface': ['scan_file', 'iter_python_files'],
+    'serverplan_target_architecture': ['scan_sources', '_frozen_slots', '_symbol_names'],
     'unresolved_forward_refs': ['analyze_file', 'AnnotationUsageFinder.analyze', 'AnnotationUsageFinder._is_field_annotation_access',
         'AnnotationUsageFinder._is_safe_str_conversion', 'AnnotationUsageFinder._is_none_check',
         'AnnotationUsageFinder._is_isinstance_none_check', 'AnnotationUsageFinder._node_contains',
@@ -202,6 +203,10 @@ class Suite:
             files, scope, root = snapshot(args[2], args[3])
         elif check == 'sync_async_signatures':
             files, scope, root = snapshot(module, 'file', args, kwargs)
+        elif check == 'serverplan_target_architecture':
+            from target_architecture_port import files_for
+            sources = args[0] if args else kwargs['sources']
+            files, scope, root = files_for(sources), dict(include=['**/*.py'], exclude=[]), None
         elif check == 'admin_async_purity':
             from data_layer_batch_two import normalize as normalize_two
             root = Path(args[0] if args else kwargs['project_root'])
@@ -261,6 +266,9 @@ class Suite:
             from signatures_port import legacy_message
             actual = [dict(path=files[0]['path'], line=v.async_func.line, column=None,
                 code='sync_async_signature_mismatch', message=canonical(legacy_message(v), root)) for v in result]
+        elif check == 'serverplan_target_architecture':
+            from data_layer_batch_six import normalize as normalize_six
+            actual = normalize_six(check, result, root, files)
         elif check == 'versioned_lifecycle_legacy_surfaces':
             # This DTO has no message field. Use the engine's complete diagnostic instead of
             # calling the source Violation.render() from the legacy recording normalizer.
@@ -323,6 +331,9 @@ class Suite:
         if check == 'serverplan_grammar_surface':
             from grammar_surface_port import scan
             return scan(self, entry, module, arguments)
+        if check == 'serverplan_target_architecture':
+            from target_architecture_port import scan
+            return scan(self, module, arguments, entry=entry)
         if check == 'backend_type_strings':
             from backend_types_port import scan
             return scan(self, entry, module, arguments)

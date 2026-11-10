@@ -11467,3 +11467,28 @@ The recorder preserves 356 complete returns and output-parameter changes. It cap
 The other 181 tests do not call the recorded entries. Their assertions still need native acceptance where they exercise rule behavior.
 The two legacy signing tests use the exact committed source as their Git input. Their original signer mocks and allowlist comparison still run.
 The [original recording](../gate/data-layer/fixtures/host/data-layer-port/rr-missing-four-original-recording.json.gz) has no source mismatches.
+
+### Final 9e5 integration and ServerPlan target architecture, 2026-11-10
+
+Final `9e5fa489e` adds the matcher wave and a converter for three missing rules.
+The merged root CLI builds with Rust 1.95.0 in 412.02 wall seconds and 1,115.06 CPU seconds.
+This was a fresh build after a shared build ran out of disk space and a shared cache resolved a different compiler dependency.
+Fourteen older test binaries in the local scratch directory are preserved as verified Zstandard archives.
+
+The expanded original source recording passes 545 cases. It includes the target-shape probes, shared fact values, and linter scope tests.
+The same 356 calls preserve complete returned values and output-parameter changes.
+
+The ServerPlan target-architecture draft checks required symbols and declarations, forbidden dependencies and branches, and execution accounting.
+Both APIs pass the 12 original scanner cases and nine original fact-helper cases. They match every returned scanner field.
+Three additional cases cover file scope and repeated declarations. Disabling the static detector fails all ten original positive scanner cases and passes both clean cases.
+The executable application probe contract remains pending. Four other assertions in the shared fact-value module exercise different rules.
+
+The converted legacy-execution candidate matched five existing probes on the sibling CLI.
+On the rebuilt root CLI, it matched 11 of 15 original observations by path, line, and code.
+The four differences cover eager transaction calls, versioning helper definitions, graph fallback, and legacy stub definitions.
+The quality converter also exposes mixed relation column types. Separating the field list reveals a second conflict between a file name and a syntax kind.
+These candidate results are intermediate and do not establish full DTO parity.
+
+All 120 policy files pass the rebuilt reader. The tooling suite passes 409 tests and 165 subtests.
+The [static progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-target-architecture-static-final9e5-progress.json.gz) records both APIs and the disabled-detector run.
+The inventory has 13 full admissions, 84 drafts, and three absent rules.
