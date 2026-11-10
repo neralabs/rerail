@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -409,6 +409,76 @@ describe("discoverPacks", () => {
     const discovery = await discoverPacks(undefined, offline);
 
     expect(discovery.available.map(found => [found.pack.id, found.version, found.installed])).toEqual([["typescript", version, version]]);
+  });
+
+  function skippingPack(root: string): string {
+    const copy = join(root, "skipping-pack");
+    cpSync(VALID, copy, { recursive: true });
+    const definition = JSON.parse(readFileSync(join(copy, "pack.json"), "utf8")) as Record<string, unknown>;
+    const match = { any: [{ files: ["**/*.py"], exclude: ["**/tests/**", "**/scripts/**"], label: "Python source files" }] };
+    writeFileSync(join(copy, "pack.json"), JSON.stringify({ ...definition, match }));
+    return copy;
+  }
+
+  const fetching = (home: string, directory: string): PackStore => ({
+    home,
+    fetch: async () => ({ fetched: [{ id: "valid", directory }], problems: [], release: async () => {} }),
+    install: async () => {},
+    remove: async () => {},
+  });
+
+  function project(files: Record<string, string>): string {
+    const root = temporaryHome();
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
+    return root;
+  }
+
+  it("explains no fit with near misses and file endings", async () => {
+    const home = temporaryHome();
+    const root = project({ "tests/test_a.py": "a = 1\n", "tests/test_b.py": "b = 1\n", "scripts/release.py": "r = 1\n", "README.md": "hi\n" });
+
+    const discovery = await discoverPacks(root, fetching(home, skippingPack(home)));
+
+    expect(discovery.recommended).toEqual([]);
+    expect(discovery.nothingFits?.closest).toEqual([
+      { name: "Valid", count: 3, places: [{ place: "tests/", count: 2 }, { place: "scripts/", count: 1 }] },
+    ]);
+    expect(discovery.nothingFits?.endings).toEqual([{ ending: ".py", count: 3 }, { ending: ".md", count: 1 }]);
+  });
+
+  it("no explanation when a pack fits", async () => {
+    const home = temporaryHome();
+    const root = project({ "src/app.py": "app = 1\n", "tests/test_app.py": "t = 1\n" });
+
+    const discovery = await discoverPacks(root, fetching(home, skippingPack(home)));
+
+    expect(discovery.recommended.map(found => found.pack.id)).toEqual(["valid"]);
+    expect(discovery.nothingFits).toBeUndefined();
+  });
+
+  it("no explanation without a project", async () => {
+    const home = temporaryHome();
+
+    const discovery = await discoverPacks(undefined, fetching(home, skippingPack(home)));
+
+    expect(discovery.nothingFits).toBeUndefined();
+  });
+
+  it("no explanation without a pack to offer", async () => {
+    const home = temporaryHome();
+    const root = project({ "tests/test_a.py": "a = 1\n" });
+    const offline: PackStore = {
+      ...fetching(home, VALID),
+      fetch: async ids => ({ fetched: [], problems: ids.map(id => ({ packageName: `@neralabs/rerail-pack-${id}`, reason: "npm could not reach the registry (ENOTFOUND)" })), release: async () => {} }),
+    };
+
+    const discovery = await discoverPacks(root, offline);
+
+    expect(discovery.available).toEqual([]);
+    expect(discovery.nothingFits).toBeUndefined();
   });
 });
 

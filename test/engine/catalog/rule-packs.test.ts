@@ -13,12 +13,13 @@ import {
   rulePackRecommendationsSchema,
   DatabaseApiStores,
 } from "../../../src/api/index.js";
-import { globPattern, scanRepository, signalEvidence } from "../../../src/engine/catalog/rule-pack-matcher.js";
+import { fileEndings, globPattern, scanRepository, signalEvidence, skippedFiles } from "../../../src/engine/catalog/rule-pack-matcher.js";
 import {
   cachedRecommendRulePacks,
   RECOMMENDATION_CACHE_MS,
   readRulePacks,
   recommendRulePacks,
+  rulePacksThatFit,
   type RulePack,
 } from "../../../src/engine/catalog/rule-packs.js";
 import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-documents.js";
@@ -196,6 +197,92 @@ describe("the Python pack's match", () => {
     ["docs/_ext/directive.py", false],
   ])("counts %s as Python source: %s", (path, expected) => {
     expect(signalEvidence(signal, scan([path]))).toEqual(expected ? [path] : []);
+  });
+});
+
+describe("skippedFiles", () => {
+  const python = JSON.parse(readFileSync(fileURLToPath(new URL("../../../packs/python/pack.json", import.meta.url)), "utf8")).match;
+  const scan = (files: string[]) => ({ files, dependencies: new Map() });
+
+  it("counts skipped Python files by skip rule", () => {
+    const files = [
+      ...["a", "b", "c", "d", "e", "f"].map(name => `tests/test_${name}.py`),
+      ...["release", "bump", "lint"].map(name => `scripts/${name}.py`),
+    ];
+    expect(skippedFiles(python, scan(files))).toEqual([
+      { label: "Python source files", count: 9, rules: [{ rule: "tests/", count: 6 }, { rule: "scripts/", count: 3 }] },
+    ]);
+  });
+
+  it("counts a file under the first skip rule that catches it", () => {
+    const files = ["src/app/models_test.py", "src/app/test_views.py", "src/tests/test_api.py"];
+    expect(skippedFiles(python, scan(files))).toEqual([
+      { label: "Python source files", count: 3, rules: [{ rule: "tests/", count: 1 }, { rule: "test_*.py", count: 1 }, { rule: "*_test.py", count: 1 }] },
+    ]);
+  });
+
+  it("empty when the pack fits", () => {
+    expect(skippedFiles(python, scan(["src/app/models.py", "tests/test_models.py"]))).toEqual([]);
+  });
+
+  it("empty with no Python files", () => {
+    expect(skippedFiles(python, scan(["main.go", "README.md"]))).toEqual([]);
+  });
+
+  it("empty for a dependency signal", () => {
+    const match = { any: [{ dependencies: { ecosystem: "pypi" as const, names: ["django"] } }] };
+    expect(skippedFiles(match, scan(["tests/test_views.py"]))).toEqual([]);
+  });
+});
+
+describe("fileEndings", () => {
+  const scan = (files: string[]) => ({ files, dependencies: new Map() });
+
+  it("counts files by ending, most first", () => {
+    const files = ["a.py", "src/b.py", "src/c.py", "README.md", "docs/guide.md", "pyproject.toml"];
+    expect(fileEndings(scan(files))).toEqual([{ ending: ".py", count: 3 }, { ending: ".md", count: 2 }, { ending: ".toml", count: 1 }]);
+  });
+
+  it("ties in alphabetical order", () => {
+    expect(fileEndings(scan(["pyproject.toml", "README.md"]))).toEqual([{ ending: ".md", count: 1 }, { ending: ".toml", count: 1 }]);
+  });
+
+  it("counts endings regardless of case", () => {
+    expect(fileEndings(scan(["A.PY", "b.py"]))).toEqual([{ ending: ".py", count: 2 }]);
+  });
+
+  it("leaves out files with no ending", () => {
+    expect(fileEndings(scan(["Makefile", "docker/Dockerfile", ".gitignore", "notes."]))).toEqual([]);
+  });
+
+  it("empty for an empty project", () => {
+    expect(fileEndings(scan([]))).toEqual([]);
+  });
+
+  it("does not see test data, skipped folders or Git-ignored files", async () => {
+    const root = await temporaryDirectory("rerail-unseen-");
+    writeFiles(root, {
+      ".gitignore": "local/\n",
+      "fixtures/app.py": "app = None\n",
+      "testdata/sample.py": "sample = None\n",
+      ".venv/lib/site.py": "site = None\n",
+      "build/generated.py": "generated = None\n",
+      "local/output.py": "output = None\n",
+      "notes.md": "notes\n",
+    });
+    execFileSync("git", ["-C", root, "init", "-q"]);
+    const python = JSON.parse(readFileSync(fileURLToPath(new URL("../../../packs/python/pack.json", import.meta.url)), "utf8")).match;
+    const found = scanRepository(root);
+    expect(fileEndings(found)).toEqual([{ ending: ".md", count: 1 }]);
+    expect(skippedFiles(python, found)).toEqual([]);
+  });
+});
+
+describe("rulePacksThatFit", () => {
+  it("uses the file list it is handed", async () => {
+    const packs = await withTestPacks();
+    const empty = await temporaryDirectory("rerail-handed-scan-");
+    expect(rulePacksThatFit(empty, packs, { files: ["src/index.ts"], dependencies: new Map() }).map(found => found.pack.id)).toEqual(["lang-ts"]);
   });
 });
 

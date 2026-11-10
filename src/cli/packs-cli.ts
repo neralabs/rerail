@@ -24,7 +24,7 @@ import {
   rulePackShortName,
   type RulePackLocalSource,
 } from "../engine/catalog/rule-packs.js";
-import { clean } from "../harness/setup-screens.js";
+import { clean, NO_FIT_RULE, nothingFitsLines } from "../harness/setup-screens.js";
 import {
   addPackSpecs,
   discoverPacks,
@@ -202,7 +202,9 @@ async function recommend(args: readonly string[], usage: () => string, store: Pa
   const discovery = await discoverPacks(workspaceRoot, store);
   const others = discovery.available.filter(found => found.match === undefined);
   write([
-    discovery.recommended.length === 0 ? `No rule pack fits ${workspaceRoot}.` : `Rule packs that fit ${workspaceRoot}:`,
+    discovery.recommended.length === 0 ? `No packs recommended for ${workspaceRoot}.` : `Packs recommended for ${workspaceRoot}:`,
+    ...(discovery.recommended.length === 0 ? [NO_FIT_RULE] : []),
+    ...(discovery.nothingFits === undefined ? [] : ["", ...nothingFitsLines(discovery.nothingFits), ""]),
     ...discovery.recommended.map(discoveredLine),
     ...(others.length === 0 ? [] : ["Other rule packs:", ...others.map(discoveredLine)]),
     // Never offered, since adding one would run nothing; listed so a pack that fits is not simply missing.

@@ -72,6 +72,7 @@ import {
   type AvailablePack,
   type CodingAgent,
   type DashboardLink,
+  type NothingFitsInput,
   type QuestionForm,
   type QuestionStep,
   type RecommendedPacksInput,
@@ -704,6 +705,7 @@ interface Offering {
   readonly withoutRules: readonly string[];
   /** The catalog the offered packs' rules come from, for the lint config's settings. */
   readonly catalog: RuleCatalog;
+  readonly nothingFits?: NothingFitsInput;
 }
 
 const onRules = (pack: RulePack): number => pack.rules.filter(rule => rule.on).length;
@@ -728,6 +730,7 @@ function discoveryOffering(discovery: PackDiscovery): Offering {
     unavailable: discovery.problems,
     withoutRules: discovery.withoutRules.flatMap(found => found.match === undefined ? [] : [found.pack.name]),
     catalog: discovery.catalog,
+    ...(discovery.nothingFits === undefined ? {} : { nothingFits: discovery.nothingFits }),
   };
 }
 
@@ -788,6 +791,7 @@ function packsInput(run: Run, repository: Repository, offering: Offering): Recom
     agentsFound: codingAgents(connecting),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
     lintConfig: readRepositoryLintConfig(repository.root, offering.catalog, offering.offers.map(({ recommendation }) => recommendation.pack.id)),
+    ...(offering.nothingFits === undefined ? {} : { nothingFits: offering.nothingFits }),
   };
 }
 

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { packAddSpec, runPacksCommand } from "../../src/cli/packs-cli.js";
 import { openRerailDatabase, recordCheckout, setUpRepository } from "../../src/engine/index.js";
@@ -172,6 +172,61 @@ describe("a third party's pack", () => {
     const store = linkingPackStore(temporaryHome(), {});
     await expect(runPacksCommand(["remove", "@acme/sql"], () => "usage", store)).rejects.toThrow("Name the rule packs to remove by id or package");
     expect(store.removes).toEqual([]);
+  });
+});
+
+describe("rerail packs recommend", () => {
+  function skippingStore(home: string): PackStore {
+    const copy = join(home, "skipping-pack");
+    cpSync(fixturesPath("packs", "valid"), copy, { recursive: true });
+    const definition = JSON.parse(readFileSync(join(copy, "pack.json"), "utf8")) as Record<string, unknown>;
+    const match = { any: [{ files: ["**/*.py"], exclude: ["**/tests/**", "**/scripts/**"], label: "Python source files" }] };
+    writeFileSync(join(copy, "pack.json"), JSON.stringify({ ...definition, match }));
+    return {
+      home,
+      fetch: async () => ({ fetched: [{ id: "valid", directory: copy }], problems: [], release: async () => {} }),
+      install: async () => {},
+      remove: async () => {},
+    };
+  }
+
+  function project(files: Record<string, string>): string {
+    const root = realpathSync(temporaryHome());
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
+    execFileSync("git", ["-C", root, "init", "-q"]);
+    return root;
+  }
+
+  it("explains why no pack is recommended", async () => {
+    const home = temporaryHome();
+    const root = project({ "tests/test_a.py": "a = 1\n", "tests/test_b.py": "b = 1\n", "scripts/release.py": "r = 1\n", "README.md": "hi\n" });
+
+    const text = await packsOutput(["recommend", "--repo", root], skippingStore(home));
+
+    expect(text).toContain([
+      `No packs recommended for ${root}.`,
+      "Packs are recommended when their file or dependency checks match.",
+      "",
+      "Scanned types   .py 3 · .md 1",
+      "Closest match   Valid — 3 source files found, all in folders",
+      "                the Valid pack ignores: tests/ (2), scripts/ (1)",
+      "",
+      "Other rule packs:",
+    ].join("\n"));
+  });
+
+  it("names the recommended packs, explaining nothing extra", async () => {
+    const home = temporaryHome();
+    const root = project({ "src/app.py": "app = 1\n" });
+
+    const text = await packsOutput(["recommend", "--repo", root], skippingStore(home));
+
+    expect(text).toContain(`Packs recommended for ${root}:`);
+    expect(text).not.toContain("No packs recommended");
+    expect(text).not.toContain("Closest match");
   });
 });
 

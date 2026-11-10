@@ -64,8 +64,6 @@ function recorder(lane: RepositorySetupIo["lane"] = "agent"): RepositorySetupIo 
   return { lane, lines, say: text => { lines.push(text); } };
 }
 
-const NO_PACK_FITS = "  No rule pack fits this repository yet. Add rules on the rules page";
-
 function writeFiles(root: string, files: Record<string, string>): void {
   for (const [path, content] of Object.entries(files)) {
     mkdirSync(join(root, path, ".."), { recursive: true });

@@ -346,3 +346,51 @@ export function matchReason(match: RulePackMatch, scan: RepositoryScan): string 
 export function matchFolder(match: RulePackMatch, scan: RepositoryScan): string {
   return commonDirectory(match.any.flatMap(signal => signalEvidence(signal, scan)));
 }
+
+export interface SkippedFiles {
+  readonly label: string;
+  readonly count: number;
+  readonly rules: readonly { readonly rule: string; readonly count: number }[];
+}
+
+function skipRuleName(glob: string): string {
+  const name = glob.startsWith("**/") ? glob.slice(3) : glob;
+  return name.endsWith("/**") ? name.slice(0, -2) : name;
+}
+
+export function skippedFiles(match: RulePackMatch, scan: RepositoryScan): readonly SkippedFiles[] {
+  if (match.any.some(signal => signalEvidence(signal, scan).length > 0)) return [];
+  return match.any.flatMap(signal => {
+    if ("dependencies" in signal) return [];
+    const include = globPattern(signal.files);
+    const skipped = scan.files.filter(path => include.test(path));
+    if (skipped.length === 0) return [];
+    const excludes = (signal.exclude ?? []).map(glob => globPattern([glob]));
+    const counts = excludes.map(() => 0);
+    for (const path of skipped) {
+      const first = excludes.findIndex(pattern => pattern.test(path));
+      if (first !== -1) counts[first]! += 1;
+    }
+    const rules = (signal.exclude ?? [])
+      .map((glob, index) => ({ rule: skipRuleName(glob), count: counts[index]! }))
+      .filter(rule => rule.count > 0)
+      .sort((left, right) => right.count - left.count);
+    return [{ label: signal.label, count: skipped.length, rules }];
+  });
+}
+
+export interface FileEnding {
+  readonly ending: string;
+  readonly count: number;
+}
+
+export function fileEndings(scan: RepositoryScan): readonly FileEnding[] {
+  const counts = new Map<string, number>();
+  for (const path of scan.files) {
+    const ending = posix.extname(path).toLowerCase();
+    if (ending.length > 1) counts.set(ending, (counts.get(ending) ?? 0) + 1);
+  }
+  return [...counts]
+    .sort(([leftEnding, leftCount], [rightEnding, rightCount]) => rightCount - leftCount || compareDeterministicStrings(leftEnding, rightEnding))
+    .map(([ending, count]) => ({ ending, count }));
+}

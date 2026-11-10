@@ -435,6 +435,17 @@ export interface LintConfigInput {
   readonly notes: readonly string[];
 }
 
+export interface ClosestPack {
+  readonly name: string;
+  readonly count: number;
+  readonly places: readonly { readonly place: string; readonly count: number }[];
+}
+
+export interface NothingFitsInput {
+  readonly closest: readonly ClosestPack[];
+  readonly endings: readonly { readonly ending: string; readonly count: number }[];
+}
+
 export interface RecommendedPacksInput {
   readonly repoName: string;
   readonly repoPath: string;
@@ -450,6 +461,7 @@ export interface RecommendedPacksInput {
   readonly setupCommand?: string;
   /** The rule settings starting Rerail takes from the repository's lint config; nothing shown when empty. */
   readonly lintConfig?: LintConfigInput;
+  readonly nothingFits?: NothingFitsInput;
 }
 
 /** At most this many lines say which rule packs set-up could not fetch; the rest are counted. */
@@ -549,19 +561,80 @@ function withoutRulesLines(names: readonly string[] | undefined, wouldFit: boole
   return [`  ${andList(names.map(clean))} ${wouldFit ? `would fit, but ${has}` : has} no rules yet, so set-up does not offer ${one ? "it" : "them"}.`];
 }
 
+const NO_FIT_LABEL_WIDTH = 16;
+const NO_FIT_TEXT_WIDTH = 50;
+const MAX_CLOSEST_PACKS = 2;
+const MAX_CLOSEST_PLACES = 3;
+const MAX_SCANNED_TYPES = 3;
+
+function wrapWords(words: readonly string[], width: number): string[] {
+  const rows: string[] = [];
+  for (const word of words) {
+    const last = rows.at(-1);
+    if (last !== undefined && last.length + 1 + word.length <= width) rows[rows.length - 1] = `${last} ${word}`;
+    else rows.push(word);
+  }
+  return rows;
+}
+
+function noFitRow(label: string, rows: readonly string[], style: Style, indent: string): string[] {
+  return rows.map((row, index) => `${indent}${index === 0 ? style.dim(label.padEnd(NO_FIT_LABEL_WIDTH)) : " ".repeat(NO_FIT_LABEL_WIDTH)}${row}`);
+}
+
+const withCommas = (items: readonly string[]): string[] => items.map((item, index) => (index < items.length - 1 ? `${item},` : item));
+
+function closestRows(pack: ClosestPack): string[] {
+  const name = clean(pack.name);
+  const shown = pack.places.slice(0, MAX_CLOSEST_PLACES);
+  const more = pack.places.length - shown.length;
+  const where = pack.places.every(place => place.place.endsWith("/")) ? "folders" : "places";
+  const items = [...shown.map(place => `${clean(place.place)} (${place.count})`), ...(more === 0 ? [] : [`+${more} more`])];
+  const found = `${name} — ${plural(pack.count, "source file")} found, all in ${where}`;
+  const ignored = `the ${name} pack ignores:`;
+  return [
+    ...wrapWords(found.split(" "), NO_FIT_TEXT_WIDTH),
+    ...wrapWords([...ignored.split(" "), ...withCommas(items)], NO_FIT_TEXT_WIDTH),
+  ];
+}
+
+export const NO_FIT_RULE = "Packs are recommended when their file or dependency checks match.";
+
+function explanationRows(found: NothingFitsInput, style: Style, indent: string): string[] {
+  const types = found.endings.slice(0, MAX_SCANNED_TYPES).map(type => `${clean(type.ending)} ${type.count}`).join(" · ");
+  const closest = found.closest.slice(0, MAX_CLOSEST_PACKS).flatMap(closestRows);
+  return [
+    ...noFitRow("Scanned types", [types === "" ? "none" : types], style, indent),
+    ...noFitRow("Closest match", closest.length === 0 ? ["none"] : closest, style, indent),
+  ];
+}
+
+export const nothingFitsLines = (found: NothingFitsInput): string[] => explanationRows(found, PLAIN_STYLE, "");
+
+function noFitLines(input: RecommendedPacksInput, style: Style): string[] {
+  const names = input.available.map(pack => clean(pack.name));
+  const available = noFitRow(`Available (${names.length})`, names.length === 0 ? ["none"] : wrapWords(withCommas(names), NO_FIT_TEXT_WIDTH), style, "  ");
+  const found = input.nothingFits;
+  return [
+    `  ${NO_FIT_RULE}`,
+    "",
+    ...(found === undefined ? [] : [...explanationRows(found, style, "  "), ""]),
+    ...available,
+  ];
+}
+
 function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): string[] {
   const style = styleFor(lane);
   const repo = clean(input.repoName);
   const count = input.packs.length;
   const scanned = count === 0
-    ? `Scanned ${repo}. None of Rerail’s rule packs fit it.`
+    ? `Scanned ${repo}. No packs recommended.`
     : `Scanned ${repo}. ${count === 1 ? "1 rule pack fits" : `${count} rule packs fit`}:`;
   const connecting = input.agentsFound.length === 0
     ? ["  Will connect to: no coding agents found"]
     : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, `  Adds ${sigilIn(input.agentsFound)}rerail commands and a status line to each. Connecting is free.`];
   return [
     lane === "terminal" ? bullet(scanned, style) : scanned,
-    ...(count === 0 ? [] : ["", ...packTable(input.packs, style)]),
+    ...(count === 0 ? noFitLines(input, style) : ["", ...packTable(input.packs, style)]),
     ...replaceLines(input.packs, style),
     ...unreviewedLines(input.packs, style),
     ...withoutRulesLines(input.withoutRules, true),

@@ -22,12 +22,15 @@ import {
   readRuleCatalog,
 } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog, SkippedRulePack } from "../engine/catalog/repository-model.js";
+import { scanRepository } from "../engine/catalog/rule-pack-matcher.js";
 import {
+  explainNoFit,
   packIdOfPackage,
   RULE_PACK_PACKAGE_NAME,
   rulePackPackageName,
   rulePackPackageOf,
   rulePacksThatFit,
+  type NoFitExplanation,
   type RulePack,
 } from "../engine/catalog/rule-packs.js";
 import { defaultRerailHome, UPDATE_STATE_FILE } from "../engine/storage/rerail-home.js";
@@ -260,6 +263,7 @@ export interface PackDiscovery {
   readonly downloadFailures?: readonly string[];
   /** The catalog of the fetched packs: what their rules would be, before any is installed. */
   readonly catalog: RuleCatalog;
+  readonly nothingFits?: NoFitExplanation;
 }
 
 /** Why a pack was left out, naming its files from the pack's own folder: the package name already says which pack. */
@@ -309,7 +313,8 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
       coreVersion: activeCoreVersion(home), compile: true, localSources: localSources(home, standIns),
     });
     const packs = [...catalog.packs.values()];
-    const matched = new Map((repositoryRoot === undefined ? [] : rulePacksThatFit(repositoryRoot, packs)).map(found => [found.pack.id, found]));
+    const scan = repositoryRoot === undefined ? undefined : scanRepository(repositoryRoot);
+    const matched = new Map((repositoryRoot === undefined ? [] : rulePacksThatFit(repositoryRoot, packs, scan)).map(found => [found.pack.id, found]));
     const discovered = packs.flatMap((pack): DiscoveredPack[] => {
       if (pack.version === null || pack.packageName === null) return [];
       const found = matched.get(pack.id);
@@ -325,13 +330,15 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
     // Those that fit first, in catalog order within each.
     const ordered = [...discovered.filter(pack => pack.match !== undefined), ...discovered.filter(pack => pack.match === undefined)];
     const available = ordered.filter(pack => pack.ruleCount > 0);
+    const recommended = available.filter(pack => pack.match !== undefined);
     return {
-      recommended: available.filter(pack => pack.match !== undefined),
+      recommended,
       available,
       withoutRules: ordered.filter(pack => pack.ruleCount === 0),
       problems: [...fetch.problems.map(problem => `${problem.packageName}: ${problem.reason}`), ...catalog.skipped.map(skippedProblem)],
       ...(fetch.fetched.length === 0 && fetch.problems.length > 0 ? { downloadFailures: [...new Set(fetch.problems.map(problem => problem.reason))] } : {}),
       catalog,
+      ...(scan === undefined || recommended.length > 0 || available.length === 0 ? {} : { nothingFits: explainNoFit(available.map(found => found.pack), scan) }),
     };
   } finally {
     await fetch.release();

@@ -354,11 +354,79 @@ describe("T4 / C4 recommended rule packs", () => {
 
   it("says plainly when no rule pack fits, and when no coding agent was found", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: [], agentsFound: [] }, "agent");
-    expect(text).toContain("Scanned acme-web. None of Rerail’s rule packs fit it.");
+    expect(text).toContain("Scanned acme-web. No packs recommended.");
     expect(text).not.toContain("Rule pack ");
     expect(text).toContain("Start Rerail in acme-web with no rule packs on?");
     expect(text).toContain("  Will connect to: no coding agents found");
     expect(text).not.toContain("Adds /rerail commands");
+  });
+
+  const TEN_PACKS = ["Python", "TypeScript", "JavaScript", "PHP", "Rust", "SQL", "Vue", "React", "Next.js", "Node.js"]
+    .map(name => ({ id: name.toLowerCase(), packageName: `@neralabs/rerail-pack-${name.toLowerCase()}`, version: "0.1.0", name }));
+  const NO_FIT: RecommendedPacksInput = {
+    ...PACKS,
+    repoName: "my-project",
+    packs: [],
+    available: TEN_PACKS,
+    nothingFits: {
+      closest: [{ name: "Python", count: 9, places: [{ place: "tests/", count: 6 }, { place: "scripts/", count: 3 }] }],
+      endings: [{ ending: ".ipynb", count: 12 }, { ending: ".md", count: 4 }, { ending: ".toml", count: 1 }, { ending: ".json", count: 1 }],
+    },
+  };
+  const closestOnly = (closest: NonNullable<RecommendedPacksInput["nothingFits"]>["closest"]): RecommendedPacksInput =>
+    ({ ...NO_FIT, nothingFits: { ...NO_FIT.nothingFits!, closest } });
+
+  it("explains why no pack is recommended: the rule, what was scanned, the closest match and what is available", () => {
+    const block = [
+      "Scanned my-project. No packs recommended.",
+      "  Packs are recommended when their file or dependency checks match.",
+      "",
+      "  Scanned types   .ipynb 12 · .md 4 · .toml 1",
+      "  Closest match   Python — 9 source files found, all in folders",
+      "                  the Python pack ignores: tests/ (6), scripts/ (3)",
+      "",
+      "  Available (10)  Python, TypeScript, JavaScript, PHP, Rust, SQL,",
+      "                  Vue, React, Next.js, Node.js",
+    ].join("\n");
+    expect(stripAnsi(renderRecommendedPacks(NO_FIT, "terminal"))).toContain(`● ${block}`);
+    expect(renderRecommendedPacks(NO_FIT, "agent")).toContain(block);
+  });
+
+  it("says places, not folders, when a pack also ignores files by name", () => {
+    const text = renderRecommendedPacks(closestOnly([{ name: "Python", count: 9, places: [{ place: "tests/", count: 6 }, { place: "setup.py", count: 1 }, { place: "*_test.py", count: 2 }] }]), "agent");
+    expect(text).toContain([
+      "  Closest match   Python — 9 source files found, all in places",
+      "                  the Python pack ignores: tests/ (6), setup.py (1),",
+      "                  *_test.py (2)",
+    ].join("\n"));
+  });
+
+  it("shows at most three places and two packs, counting the other places", () => {
+    const places = ["tests/", "scripts/", "docs/", "tools/", "ci/"].map((place, index) => ({ place, count: 5 - index }));
+    const text = renderRecommendedPacks(closestOnly([
+      { name: "Python", count: 15, places },
+      { name: "Complexity", count: 4, places: [{ place: "tests/", count: 4 }] },
+      { name: "PHP", count: 1, places: [{ place: "tests/", count: 1 }] },
+    ]), "agent");
+    expect(text).toContain([
+      "                  the Python pack ignores: tests/ (5), scripts/ (4),",
+      "                  docs/ (3), +2 more",
+    ].join("\n"));
+    expect(text).not.toContain("tools/");
+    expect(text).toContain("Complexity — 4 source files found");
+    expect(text).not.toContain("PHP — ");
+  });
+
+  it("says none when nothing was scanned and no pack came close", () => {
+    const text = renderRecommendedPacks({ ...NO_FIT, nothingFits: { closest: [], endings: [] } }, "agent");
+    expect(text).toContain("  Scanned types   none\n  Closest match   none\n");
+  });
+
+  it("explains nothing extra when packs are recommended", () => {
+    const text = renderRecommendedPacks({ ...PACKS, nothingFits: NO_FIT.nothingFits! }, "agent");
+    expect(text).not.toContain("No packs recommended");
+    expect(text).not.toContain("Closest match");
+    expect(text).not.toContain("Available (");
   });
 });
 

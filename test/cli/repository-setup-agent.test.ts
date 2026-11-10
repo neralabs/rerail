@@ -174,7 +174,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: docs });
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: docs }));
-    expect(asked.text()).toContain("Scanned docs. None of Rerail’s rule packs fit it.");
+    expect(asked.text()).toContain("Scanned docs. No packs recommended.");
     expect(asked.text()).toContain("Start Rerail in docs with no rule packs on?");
 
     await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: docs }));

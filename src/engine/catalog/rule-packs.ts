@@ -5,12 +5,17 @@ import { loadRuleCatalog } from "./rule-catalog.js";
 import { parseRuleDocument, readJsonDocument } from "./rule-documents.js";
 import {
   DEPENDENCY_ECOSYSTEMS,
+  fileEndings,
   globPattern,
   matchFolder,
   matchReason,
   scanRepository,
+  skippedFiles,
+  type FileEnding,
+  type RepositoryScan,
   type RulePackMatch,
   type RulePackSignal,
+  type SkippedFiles,
 } from "./rule-pack-matcher.js";
 import type { RuleDocument } from "./rule-store.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
@@ -370,8 +375,7 @@ export function rulePackIdOf(ruleId: string, packs: readonly RulePack[] = loadRu
  * `ruleCount` is how many start on. Languages come first, then frameworks, then repository packs. Each comes with the
  * folder it belongs in (see `RulePackRecommendation.folder`).
  */
-export function rulePacksThatFit(repositoryRoot: string, packs: readonly RulePack[]): RulePackRecommendation[] {
-  const scan = scanRepository(repositoryRoot);
+export function rulePacksThatFit(repositoryRoot: string, packs: readonly RulePack[], scan: RepositoryScan = scanRepository(repositoryRoot)): RulePackRecommendation[] {
   return packs.flatMap(pack => {
     const reason = matchReason(pack.match, scan);
     if (reason === undefined) return [];
@@ -379,6 +383,35 @@ export function rulePacksThatFit(repositoryRoot: string, packs: readonly RulePac
     const folder = pack.category === "repository" ? "" : matchFolder(pack.match, scan);
     return [{ pack, ruleCount, reason, folder }];
   });
+}
+
+export interface ClosestPackMatch {
+  readonly name: string;
+  readonly count: number;
+  readonly places: readonly { readonly place: string; readonly count: number }[];
+}
+
+export interface NoFitExplanation {
+  readonly closest: readonly ClosestPackMatch[];
+  readonly endings: readonly FileEnding[];
+}
+
+function closestMatch(pack: RulePack, skipped: readonly SkippedFiles[]): ClosestPackMatch {
+  const byPlace = new Map<string, number>();
+  for (const { rule, count } of skipped.flatMap(files => files.rules)) byPlace.set(rule, (byPlace.get(rule) ?? 0) + count);
+  return {
+    name: pack.name,
+    count: skipped.reduce((total, files) => total + files.count, 0),
+    places: [...byPlace].map(([place, count]) => ({ place, count })).sort((left, right) => right.count - left.count),
+  };
+}
+
+export function explainNoFit(packs: readonly RulePack[], scan: RepositoryScan): NoFitExplanation {
+  const closest = packs.flatMap(pack => {
+    const skipped = skippedFiles(pack.match, scan);
+    return skipped.length === 0 ? [] : [closestMatch(pack, skipped)];
+  });
+  return { closest: closest.sort((left, right) => right.count - left.count), endings: fileEndings(scan) };
 }
 
 /** The packs that fit the repository at `repositoryRoot` (`rulePacksThatFit`) and have a rule that starts on. */

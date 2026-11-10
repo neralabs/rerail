@@ -1,18 +1,18 @@
 /** Set-up and the repository's own lint config, a database from before set-up, `rerail setup` itself, and rule packs from npm. */
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
 // Passed through, and watched: a run that must read no code never matches packs against the repository.
 const readsRepository = vi.hoisted(() => vi.fn<(root: string) => void>());
 vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
-  type Match = (root: string, packs?: readonly unknown[]) => unknown;
+  type Match = (root: string, ...rest: unknown[]) => unknown;
   const actual = await importOriginal<{ recommendRulePacks: Match; rulePacksThatFit: Match }>();
-  const watched = (match: Match): Match => (root, packs) => {
+  const watched = (match: Match): Match => (root, ...rest) => {
     readsRepository(root);
-    return match(root, packs);
+    return match(root, ...rest);
   };
   return { ...actual, recommendRulePacks: watched(actual.recommendRulePacks), rulePacksThatFit: watched(actual.rulePacksThatFit) };
 });
@@ -372,6 +372,26 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: directoryPackStore(packsRoot, ["typescript"]) }), { answer: "yes", repo: setup.repo }));
     expect(asked.text()).toContain("TypeScript would fit, but has no rules yet, so set-up does not offer it.");
+  });
+
+  it("explains why no pack is recommended, naming the closest match", async () => {
+    const setup = await fixture();
+    for (const path of ["tests/test_models.py", "tests/test_views.py", "scripts/release.py"]) {
+      mkdirSync(join(setup.repo, dirname(path)), { recursive: true });
+      writeFileSync(join(setup.repo, path), "x = 1\n");
+    }
+    const asked = agentIo();
+    await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: countingStore(["python"]) }), { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toContain([
+      "Scanned acme-api. No packs recommended.",
+      "  Packs are recommended when their file or dependency checks match.",
+      "",
+      "  Scanned types   .py 3 · .ts 1",
+      "  Closest match   Python — 3 source files found, all in folders",
+      "                  the Python pack ignores: tests/ (2), scripts/ (1)",
+      "",
+      "  Available (1)   Python",
+    ].join("\n"));
     expect(asked.text()).not.toContain("--packs typescript@");
   });
 
@@ -386,7 +406,8 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(io.text()).toContain("Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit acme-api.");
     expect(io.text()).toContain("npm error code E401");
     expect(io.text()).toContain("Try downloading them again?");
-    expect(io.text()).not.toContain("None of Rerail’s rule packs fit");
+    expect(io.text()).not.toContain("No packs recommended");
+    expect(io.text()).not.toContain("Closest match");
     expect(io.text()).not.toContain("with no rule packs on?");
     expect(environment.connections).toEqual([]);
   });
@@ -436,7 +457,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
       const asked = agentIo();
       await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: setup.repo }));
       expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.2\.0/u);
-      expect(asked.text()).toContain("Scanned acme-api. None of Rerail’s rule packs fit it.");
+      expect(asked.text()).toContain("Scanned acme-api. No packs recommended.");
     } finally {
       await rm(current, { recursive: true, force: true });
     }
