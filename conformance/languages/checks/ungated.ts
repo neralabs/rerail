@@ -34,6 +34,8 @@ export interface PackState {
   gatedTools: string[];
   /** Each shipped rule's upstream tool, from its conformance.json entry; absent when it has none. */
   toolOf: Map<string, string>;
+  /** The pack's own rules (conformance.json `own`): no upstream tool, proven by their examples. */
+  own: Set<string>;
   /** `"private": true` in the pack's package.json: never published, so never reaches a user through the gates. */
   isPrivate: boolean;
 }
@@ -47,14 +49,15 @@ export function packStates(root: string): PackState[] {
     .sort(byText)
     .map((pack) => {
       const conformance = join(packs, pack, "conformance.json");
-      const manifest = existsSync(conformance) ? readJson<{ tools?: { name: string }[]; rules?: { id: string; upstream?: { tool?: string } }[] }>(conformance) : {};
+      const manifest = existsSync(conformance) ? readJson<{ tools?: { name: string }[]; rules?: { id: string; upstream?: { tool?: string } }[]; own?: string[] }>(conformance) : {};
       const tools = (manifest.tools ?? []).map((tool) => tool.name);
       const shipped = (readJson<{ rules?: { id: string }[] }>(join(packs, pack, "pack.json")).rules ?? []).map((rule) => rule.id).sort(byText);
       const gatedTools = tools.filter((tool) => existsSync(join(packs, pack, "upstream", tool, GATES_MANIFEST)));
       const toolOf = new Map((manifest.rules ?? []).filter((rule) => typeof rule.upstream?.tool === "string").map((rule) => [rule.id, rule.upstream!.tool!]));
+      const own = new Set(manifest.own ?? []);
       const packageJson = join(packs, pack, "package.json");
       const isPrivate = existsSync(packageJson) && isPrivatePack(readJson<unknown>(packageJson), packageJson);
-      return { pack, tools, shipped, gatedTools, toolOf, isPrivate };
+      return { pack, tools, shipped, gatedTools, toolOf, own, isPrivate };
     });
 }
 
@@ -85,12 +88,13 @@ export async function readAtBase(root: string, base: string, path: string, runne
 }
 
 /**
- * How the gates treat one shipped rule, by its upstream tool: `gated` when the tool has a gates.yaml (the tool-pack run
- * judges it; a rule with no conformance entry in a gated pack is reported there as unmapped), `pending` when pending.json
- * names the tool, else `frozen`: it must be on the frozen list. Decided per (pack, tool), so a gated pack's rule of
- * another tool is never waved through.
+ * How the gates treat one shipped rule, by its upstream tool: `own` when the pack declares it its own (no upstream; its
+ * examples prove it), `gated` when the tool has a gates.yaml (the tool-pack run judges it; a rule with no conformance
+ * entry in a gated pack is reported there as unmapped), `pending` when pending.json names the tool, else `frozen`: it
+ * must be on the frozen list. Decided per (pack, tool), so a gated pack's rule of another tool is never waved through.
  */
-export function shippedRuleTreatment(state: PackState, id: string, pending: Pending): { kind: "gated" | "frozen" } | { kind: "pending"; toolPack: string } {
+export function shippedRuleTreatment(state: PackState, id: string, pending: Pending): { kind: "own" | "gated" | "frozen" } | { kind: "pending"; toolPack: string } {
+  if (state.own.has(id)) return { kind: "own" };
   const tool = state.toolOf.get(id);
   if (tool === undefined) {
     // No conformance entry: a gated tool-pack run reports it as unmapped; in a pack only pending, its tool decides later.
@@ -150,7 +154,7 @@ export async function ungatedChecks(root: string, options: { base?: string; runn
     checks.push({
       id: `frozen-list:${pack}`,
       ok: stale.length === 0,
-      detail: stale.length === 0 ? `${ids.length} listed rule(s), all still shipped and not gated` : `${stale.length} listed rule(s) no longer shipped, now gated or pending, or in a private pack (${stale.slice(0, 5).join(", ")}): remove it from the list`,
+      detail: stale.length === 0 ? `${ids.length} listed rule(s), all still shipped and not gated` : `${stale.length} listed rule(s) no longer shipped, now gated or pending, listed in conformance.json's own, or in a private pack (${stale.slice(0, 5).join(", ")}): remove it from the list`,
     });
   }
   for (const toolPack of Object.keys(pending).sort(byText)) {

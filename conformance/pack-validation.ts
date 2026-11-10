@@ -408,6 +408,16 @@ function suppressionGaps(
   return { unsuppressed, oxlintApart, biomeMissing, biomeAlone };
 }
 
+/** The ids of a rule document's clauses whose violation sets `suppress`; none when the text is no such document (check 1 reports that). */
+function suppressingClauses(text: string): string[] {
+  try {
+    const parsed = suppressingDocumentSchema.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data.clauses.filter(clause => clause.violation?.suppress !== undefined).map(clause => clause.id) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Every file under `directory`, as posix paths relative to `root`, sorted. */
 function filesUnder(root: string, directory: string): string[] {
   if (!existsSync(directory)) return [];
@@ -823,6 +833,21 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       if (result?.kind === "conversation") for (const failure of conversationExampleFailures(result.rule, rule.examples, conversationRegistry)) fail("examples", failure, rule.id);
       if (result?.kind !== "compiled") continue;
       for (const failure of exampleFailures(rule.id, result, rule.examples)) fail("examples", failure, rule.id);
+    }
+    // An own rule (conformance.json `own`) has no port entry, so the check above already asks it for examples. It has no
+    // upstream tool whose comments it honours either: every port carries `violation.suppress`, so one in an own rule's
+    // document is a port moved into `own`, out of the gates that compare it with its upstream.
+    const shipped = new Map(pack.rules.map(rule => [rule.id, rule]));
+    for (const id of loaded?.pack.own ?? []) {
+      const rule = shipped.get(id);
+      if (rule === undefined) {
+        fail("proof", `${CONFORMANCE_FILE} lists own rule ${id}, which pack.json does not ship`);
+        continue;
+      }
+      const path = join(directory, rule.document);
+      // A missing document is check 1's failure.
+      const suppressing = existsSync(path) ? suppressingClauses(readFileSync(path, "utf8")) : [];
+      if (suppressing.length > 0) fail("proof", `${id}: an own rule whose clause(s) ${suppressing.join(", ")} set violation.suppress; an own rule has no upstream tool's comments to honour, so this is a port: give it a port entry in ${CONFORMANCE_FILE}`, id);
     }
   }
   for (const port of loaded?.pack.rules ?? []) {
