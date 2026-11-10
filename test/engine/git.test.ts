@@ -336,6 +336,17 @@ describe("gitCandidates", () => {
     ]));
   });
 
+  it("on Windows looks at each path once, whatever case PATH or the home spells it in", () => {
+    // Windows paths ignore case: `c:\program files\git\cmd` on PATH and a home on `c:` name the C: install again.
+    const search = { platform: "win32" as const, home: String.raw`c:\Users\me`, path: String.raw`c:\program files\git\cmd`, cwd: undefined };
+    expect(gitCandidates(search, disk([]))).toEqual([
+      String.raw`c:\program files\git\cmd\git.exe`,
+      String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
+      String.raw`c:\Users\me\AppData\Local\Programs\Git\cmd\git.exe`,
+      String.raw`c:\Users\me\scoop\apps\git\current\cmd\git.exe`,
+    ]);
+  });
+
   it("keeps every absolute entry outside node_modules when the folder it runs in is in no repository", () => {
     const search = { platform: "linux" as const, home: "/home/me", path: "/home/me/bin", cwd: "/home/me" };
     expect(gitCandidates(search, disk([]))[0]).toBe("/home/me/bin/git");

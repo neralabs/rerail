@@ -38,13 +38,17 @@ function currentSearch(): GitSearch {
   return { platform: process.platform, home: accountHome(), path: process.env.PATH, cwd: currentFolder() };
 }
 
-/** {@link gitCandidates} one at a time, each once, so a search can stop at the first Git that runs. */
+/**
+ * {@link gitCandidates} one at a time, each once, so a search can stop at the first Git that runs. Windows paths ignore
+ * case, so there `C:\Program Files` and `c:\program files` are one candidate, kept as first spelled.
+ */
 function* candidateOrder(search: GitSearch, trust: GitTrust): Generator<string> {
   const seen = new Set<string>();
   for (const candidates of [pathCandidates(search, trust), installLocations(search.platform, search.home)]) {
     for (const candidate of candidates) {
-      if (seen.has(candidate)) continue;
-      seen.add(candidate);
+      const key = trust.windows ? candidate.toLowerCase() : candidate;
+      if (seen.has(key)) continue;
+      seen.add(key);
       yield candidate;
     }
   }
