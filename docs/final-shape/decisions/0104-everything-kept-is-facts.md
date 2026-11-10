@@ -98,6 +98,51 @@ holds it.
 The profile reports every statement that a wave's thread runs, and every wait for the writer, under
 "Forces SQL waits (hazards)". Each is a hazard to remove.
 
+## The tapes are facts
+
+A document's syntax is a cache like any other. Nothing about it is special: its rows are kept as a
+`.cache`'s rows are, written by the writer, and held in memory until they are written.
+
+```text
+// lib/syntax.rr, read by every run.
+// The key: a document's content digest and its grammar (with the grammar's
+// version and the tape format).
+tape_key(h, g) :- doc_text(_, h, g).
+
+// The output: the document's nodes. `parsed_node` is the parser's answer to
+// a request (0065 §2a), and the request is made for new keys only.
+.cache doc_node by tape_key
+doc_node(h, g, n, kind, parent, start, end, flags, field) :-
+    tape_key(h, g), parsed_node(h, g, n, kind, parent, start, end, flags, field).
+```
+
+- **Where it runs.** The syntax program is a part of the run, run by the same engine for each window
+  of documents, before the window's chunks. Its waves are waves like the others.
+- **What a chunk reads.** A chunk binds its documents' node relations from `doc_node`'s rows, in
+  memory. The tape objects and their tables go. (An earlier measurement found a corpus's node rows,
+  stored as column frames, at 12 MB, against 52 MB of tapes.)
+- **Guests.** A guest is the same cache, keyed by its text's digest and its grammar. The guests'
+  own map goes.
+- **No row ids.** A document's content is its digest. A row id that SQLite assigns is never a value
+  that a wave holds, because it would be known only after a write.
+
+## The work
+
+Each step is checked on the slice by the profile's hazards (count and time), the findings (cold,
+warm and after an edit), CPU (user + sys, with the load) and the pins of `facts_only`.
+
+| # | What | Done when |
+|---|---|---|
+| 1 | A `.cache`'s kept rows are read before the first wave, for the run's keys, as column frames; the store's rows of a cache are never read in a wave | no `cache_rows` statement among the hazards |
+| 2 | The tapes as `doc_node` (above), for the files of a run and for guests; contents by digest | no tape or source statement among the hazards; the 4.2 s wait is gone |
+| 3 | The memo's entries are read before the first wave, in one statement; a lookup writes nothing (its pins and leases are queued) | no memo statement among the hazards |
+| 4 | The constants, the statistics and the choices: read before the first wave, written by the writer | no store statement among the hazards |
+| 5 | A program's stated facts and `rdl_int` are bound in the engine, not loaded through SQL tables; inputs are read from where they are held | no statement on the run's connection among the hazards, except `finding` after the last wave |
+| 6 | A test runs a small corpus with the profile on and fails on any hazard | the test passes with none |
+
+Steps 1 and 2 change the typing branch's `.cache` code (`cache_store`, `cache_rows`) only in where
+its rows are read and how they are encoded. The form, the rewrite and the checks stay its own.
+
 ## What is checked
 
 `logic::facts_only` reads the engine's source:
