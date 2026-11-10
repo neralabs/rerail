@@ -645,18 +645,21 @@ fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         let _ = writeln!(r, "{:>8.2} {:>8.2} {:>8.3} {:>8.3} {:>5} {:>6} {:>6} {:>10}  {}", ms(t.cpu), ms(g.host()), ms(g.gpu), ms(t.gpu_estimate), g.runs, g.rules, g.submissions, g.rows, short(key, 60));
     }
     if !refused.is_empty() {
-        let mut by: BTreeMap<&str, (u64, f64)> = BTreeMap::new();
-        for (_, t) in &refused {
+        let mut by: BTreeMap<&str, (u64, f64, Vec<(f64, &str)>)> = BTreeMap::new();
+        for (key, t) in &refused {
             let e = by.entry(t.refused.as_deref().unwrap_or("")).or_default();
             e.0 += 1;
             e.1 += t.cpu;
+            e.2.push((t.cpu, key.as_str()));
         }
         let mut by: Vec<_> = by.into_iter().collect();
         by.sort_by(|a, b| b.1.1.total_cmp(&a.1.1));
-        let _ = writeln!(r, "Placed on the GPU and refused by it (run on the CPU), by reason:");
+        let _ = writeln!(r, "Placed on the GPU and refused by it (run on the CPU), by reason (its costliest strata):");
         let _ = writeln!(r, "{:>9} {:>7}  reason", "cpu s", "strata");
-        for (why, (n, c)) in by {
-            let _ = writeln!(r, "{c:>9.3} {n:>7}  {why}");
+        for (why, (n, c, mut strata)) in by {
+            strata.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let names: Vec<String> = strata.iter().take(3).map(|(c, k)| format!("{} {:.3} s", short(k, 40), c)).collect();
+            let _ = writeln!(r, "{c:>9.3} {n:>7}  {why} ({})", names.join(", "));
         }
     }
 }

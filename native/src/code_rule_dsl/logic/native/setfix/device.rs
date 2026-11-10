@@ -44,8 +44,11 @@ const GUESS_MAX: usize = 1 << 21;
 const TABLE_MAX: usize = 48 << 20;
 /// the most bytes one submission's tables may take: past it the rules after go into the next submission;
 const BATCH_MAX: usize = 64 << 20;
-/// the most bytes the relations kept on the device may take on a thread.
+/// the most bytes the relations kept on the device may take on a thread;
 const RESIDENT_MAX: usize = 80 << 20;
+/// the budget a submission leaves for its stages run again after an overflow: with less left, the rules after go
+/// into the next submission.
+const HEADROOM: usize = 48 << 20;
 
 /// How a stage reads.
 #[derive(Clone)]
@@ -426,6 +429,13 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
                 let n = ids.as_ref().map_or(n_all, Vec::len);
                 let k = rel.k;
                 res.trim(8 * k * n);
+                // The process's device budget short (the syntax side's tapes hold most of it): every relation kept
+                // and the pool's free buffers give theirs back first.
+                if mj::device_bytes_left() < 8 * k * n + HEADROOM {
+                    res.entries.clear();
+                    res.bytes = 0;
+                    mj::give_back();
+                }
                 let dev = mj::DevRel::upload(k, n, |v| {
                     let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
                     if rel.view.is_none() {
@@ -444,7 +454,7 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
                         }
                     }
                 })
-                .map_err(|e| format!("upload: {e:?}"))?;
+                .map_err(|e| format!("{e:?}: an upload of {n} rows, {k} columns"))?;
                 rep.uploads += 1;
                 rep.upload_bytes += dev.bytes() as u64;
                 rep.upload_cpu += thread_cpu() - c0;
@@ -464,7 +474,7 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
             rep.sort_hits += 1;
             return Ok((dev, Some(ix.clone())));
         }
-        let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("sort: {e:?}"))?);
+        let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: a sort of {} rows", dev.rows))?);
         rep.sorts += 1;
         e.bytes += ix.bytes();
         e.indexes.push((cols.to_vec(), ix.clone()));
@@ -553,14 +563,14 @@ impl<'p> Run<'p> {
                     if 8 * self.plan.nslots.max(1) * cap > TABLE_MAX {
                         return Err(format!("a binding table of {cap} rows past the device's budget"));
                     }
-                    let out = mj::Table::new(self.plan.nslots, cap).map_err(|e| format!("{e:?}"))?;
+                    let out = mj::Table::new(self.plan.nslots, cap).map_err(|e| format!("{e:?}: a binding table of {cap} rows, {} slots", self.plan.nslots))?;
                     if let Some(c) = self.counter[k] {
                         for w in c..c + 1 + s.npassed {
                             self.counters.set(w, 0);
                         }
                     }
                     let left = self.tables[i].as_ref().expect("the stage's input");
-                    batch.stage(s.desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out).map_err(|e| format!("{e:?}"))?;
+                    batch.stage(s.desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out).map_err(|e| format!("{e:?}: a stage's space for {cap_in} rows"))?;
                     self.tables[o] = Some(out);
                 }
             }
@@ -568,7 +578,7 @@ impl<'p> Run<'p> {
         // The head rows made distinct, as the store keeps them (fewer rows back to the host).
         let last = self.io.last().map_or(0, |io| io.1);
         let table = self.tables[last].as_ref().expect("the last table");
-        let uniq = mj::Table::new(self.uniq_cols.len(), table.cap).map_err(|e| format!("{e:?}"))?;
+        let uniq = mj::Table::new(self.uniq_cols.len(), table.cap).map_err(|e| format!("{e:?}: the head's table of {} rows", table.cap))?;
         batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}"))?;
         self.uniq = Some(uniq);
         Ok(())
@@ -609,9 +619,14 @@ pub(super) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mu
                 from += rows.len();
                 out.extend(rows);
             }
-            // Out of device buffers: the relations kept resident give theirs back, once, and the group runs again.
+            // Out of device buffers: the relations kept resident and the pool's free buffers give theirs back, once,
+            // and the group runs again.
             Err(e) if !cleared && e.contains("BackendCapacity") => {
-                RESIDENT.with_borrow_mut(|r| r.entries.clear());
+                RESIDENT.with_borrow_mut(|r| {
+                    r.entries.clear();
+                    r.bytes = 0;
+                });
+                mj::give_back();
                 cleared = true;
             }
             Err(e) => return Err(e),
@@ -632,13 +647,13 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]
         let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "encode: uploads, sorts, stages");
         let mut bytes = 0;
         for (plan, _, _) in rules {
+            if !runs.is_empty() && (bytes > BATCH_MAX || mj::device_bytes_left() < HEADROOM) {
+                break;
+            }
             let mut r = Run::new(plan)?;
             r.encode(0, &mut batch, rep)?;
             bytes += r.bytes();
             runs.push(r);
-            if bytes > BATCH_MAX {
-                break;
-            }
         }
     }
     let mut pending: Vec<usize> = (0..runs.len()).collect();

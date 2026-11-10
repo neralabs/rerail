@@ -204,6 +204,14 @@ thread_local! {
 /// The most bytes a thread's pool keeps free.
 const POOL_LIMIT: usize = 64 << 20;
 
+/// Gives this thread's free buffers back to the device's budget.
+pub(super) fn drain_pool() {
+    POOL.with_borrow_mut(|(free, held)| {
+        free.clear();
+        *held = 0;
+    });
+}
+
 /// A device buffer of this thread's pool: a free one of its size class when there is one, returned when dropped.
 /// A buffer Metal has seen is resident already: a new one costs its creation and its mapping into the GPU's space
 /// at its first commit, a pooled one neither. (A buffer dropped while a command buffer still uses it may be handed

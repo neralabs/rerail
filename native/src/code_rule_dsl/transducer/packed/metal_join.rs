@@ -494,6 +494,16 @@ fn hash_bits(rows: usize) -> u32 {
 }
 
 /// A binding table on the device: `slots` columns of `cap` 64-bit values, column-major.
+/// The device buffers' budget left in the process (other lanes hold theirs: the syntax side's tapes most).
+pub(in crate::code_rule_dsl) fn device_bytes_left() -> usize {
+    super::metal_backend::METAL_BUFFER_LIMIT.saturating_sub(super::metal_backend::reserved())
+}
+
+/// Gives this thread's pooled free buffers back to the budget (after a refusal for capacity).
+pub(in crate::code_rule_dsl) fn give_back() {
+    super::metal_sort::drain_pool();
+}
+
 pub(in crate::code_rule_dsl) struct Table {
     buffer: Held,
     pub(in crate::code_rule_dsl) cap: usize,
