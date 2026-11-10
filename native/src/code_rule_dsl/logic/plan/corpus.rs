@@ -1862,6 +1862,13 @@ fn run_observed(
             let (mut prog, demanded) = crate::code_rule_dsl::logic::magic::demand_negated_tests(prog);
             drop(preparing);
             // The `ast` atoms become relations the transducer's matchers fill per chunk (decision 0106).
+            // A Python program's tree-shaped parts become matchers first (decision 0106 §4), unless `RERAIL_AST_PARTS=off`.
+            if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
+                let rewritten = matchers::absorb(&mut prog);
+                if rewritten > 0 {
+                    crate::code_rule_dsl::logic::profile::decision("tree patterns as matchers (decision 0106)", || format!("{rewritten} rules' kind and field parts run as the transducer's matchers"));
+                }
+            }
             let matchers = matchers::lower(&mut prog);
             // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
             let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;

@@ -58,7 +58,7 @@ MATTR(c) :- rr_ast_0(c).
 - **Matchers the transducer refuses.** A matcher it can't lower fails the run and names the reason. An example is a
   metavariable bound twice ("shared binding"), which the slice path refuses too.
 
-### 4. Tree-shaped parts of rules become matchers (the next step)
+### 4. Tree-shaped parts of rules become matchers
 
 `kind(r, "K"), field(r, "F", x), kind(x, "K2")` becomes the matcher
 `{"all": [{"kind": "K"}, {"has": {"field": "F", "kind": "K2", "stopBy": "neighbor"}}]}`, but only where `x`
@@ -89,6 +89,13 @@ child the projection leaves out (an unnamed token) is found by a matcher but not
 - The data-layer programs' `ast` atoms: 248 in 21 files, about 40 with captures. Those programs are written over
   `prelude.rr`'s relations, not `core.rr`'s, so running them in the corpus path is a port of its own (Open). One
   run reached its matchers and stopped on a "shared binding" refusal.
+
+- The lowering (§4), `corpus::matchers::tests::tree_shaped_parts_become_matchers`. In the Python pack's pruned program:
+  - 3 rules rewritten into 2 distinct matchers, 86 ms of CPU for their passes;
+  - violations and policy rows identical with the lowering on and off (`RERAIL_AST_PARTS=off`);
+  - CPU on 39.7 and 38.6 s, off 38.7 and 38.5 s, at load 205 (equal within the noise);
+  - peak footprint 1,939 MB (1,971 MB before).
+  - Few parts qualify: most rules read again the nodes their fields bind, and those parts wait for captures.
 
 ## Prior work consulted
 
