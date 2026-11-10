@@ -4,7 +4,7 @@ import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { Readable, type Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -152,6 +152,15 @@ function requestBody(body: RequestInit["body"]): string | Uint8Array | undefined
   throw new TypeError("A request to an https Rerail daemon carries a string or bytes body");
 }
 
+/** A Node response's headers as `fetch` gives them: each value of a header that repeats appended in turn. */
+function fetchHeaders(incoming: Readonly<Record<string, string | string[] | undefined>>): Headers {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(incoming)) {
+    for (const item of [value ?? []].flat()) headers.append(name, item);
+  }
+  return headers;
+}
+
 /** `fetch` over `agent`, for the request shapes Rerail's own clients send. Redirects are never followed. */
 function pinnedFetch(agent: PinnedDaemonAgent): DaemonFetch {
   return async (endpoint, init) => {
@@ -164,15 +173,11 @@ function pinnedFetch(agent: PinnedDaemonAgent): DaemonFetch {
       agent,
       ...(init.signal === undefined || init.signal === null ? {} : { signal: init.signal }),
     }, (response) => {
-      const headers = new Headers();
-      for (const [name, value] of Object.entries(response.headers)) {
-        for (const item of Array.isArray(value) ? value : [value]) if (item !== undefined) headers.append(name, item);
-      }
       const status = response.statusCode ?? 502;
       const empty = method === "HEAD" || NULL_BODY_STATUSES.has(status);
       if (empty) response.resume();
       answer(new Response(empty ? null : Readable.toWeb(response) as unknown as ReadableStream, {
-        status, statusText: response.statusMessage ?? "", headers,
+        status, statusText: response.statusMessage ?? "", headers: fetchHeaders(response.headers),
       }));
     });
     request.once("error", reject);
@@ -346,21 +351,38 @@ export function processAlive(pid: number, kill?: ProcessSignal): boolean {
   return processState(pid, kill) !== "gone";
 }
 
+const isString = (value: unknown): boolean => typeof value === "string";
+const isOptionalString = (value: unknown): boolean => value === undefined || typeof value === "string";
+
+/** The check each field of daemon.json passes; `kernelSocketPath` is checked for the platform (`isDaemonState`). */
+const DAEMON_STATE_FIELDS: Readonly<Record<string, (value: unknown) => boolean>> = {
+  pid: Number.isInteger,
+  url: isString,
+  host: isString,
+  port: Number.isInteger,
+  version: isString,
+  ui: value => value === "bundled" || value === "dev",
+  nativeToken: isOptionalString,
+  accessToken: isOptionalString,
+  tlsFingerprint256: isOptionalString,
+  startedAt: value => typeof value === "number",
+  packageRoot: isString,
+  workspaceRoot: isOptionalString,
+};
+
 function hasDaemonStateFields(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
-  return Number.isInteger(record.pid)
-    && typeof record.url === "string"
-    && typeof record.host === "string"
-    && Number.isInteger(record.port)
-    && typeof record.version === "string"
-    && (record.ui === "bundled" || record.ui === "dev")
-    && (record.nativeToken === undefined || typeof record.nativeToken === "string")
-    && (record.accessToken === undefined || typeof record.accessToken === "string")
-    && (record.tlsFingerprint256 === undefined || typeof record.tlsFingerprint256 === "string")
-    && typeof record.startedAt === "number"
-    && typeof record.packageRoot === "string"
-    && (record.workspaceRoot === undefined || typeof record.workspaceRoot === "string");
+  return Object.entries(DAEMON_STATE_FIELDS).every(([field, check]) => check(record[field]));
+}
+
+/** The longest Unix socket path, in bytes, where Rerail checks it before a bind fails on it. */
+const MAX_UNIX_SOCKET_PATH_BYTES: Partial<Record<NodeJS.Platform, number>> = { darwin: MAX_MACOS_UNIX_SOCKET_PATH_BYTES };
+
+/** Whether `path` is a named pipe's path with one name after `\\.\pipe\`, and nothing past it. */
+function isSinglePipePath(path: string): boolean {
+  const name = isNamedPipe(path) ? pipeNameOf(path) : "";
+  return name.length > 0 && !name.includes("\\");
 }
 
 export function isUsableEngineSocketPath(
@@ -368,8 +390,8 @@ export function isUsableEngineSocketPath(
   platform: NodeJS.Platform = process.platform,
 ): value is string {
   if (typeof value !== "string" || value.length <= 1 || value.includes("\0")) return false;
-  if (platform === "win32") return isNamedPipe(value) && pipeNameOf(value).length > 0 && !pipeNameOf(value).includes("\\");
-  return isAbsolute(value) && (platform !== "darwin" || Buffer.byteLength(value) <= MAX_MACOS_UNIX_SOCKET_PATH_BYTES);
+  if (platform === "win32") return isSinglePipePath(value);
+  return isAbsolute(value) && Buffer.byteLength(value) <= (MAX_UNIX_SOCKET_PATH_BYTES[platform] ?? Number.POSITIVE_INFINITY);
 }
 
 function isDaemonState(value: unknown, platform: NodeJS.Platform): value is DaemonState {
