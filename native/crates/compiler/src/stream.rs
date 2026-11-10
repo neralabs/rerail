@@ -5,7 +5,6 @@
 //! stream. This file holds the switch tables, the verifier and the interpreter; `native_ir` and
 //! Cranelift lower the same words.
 
-use crate::block;
 use crate::program::*;
 use crate::Error;
 use std::collections::{HashMap, HashSet};

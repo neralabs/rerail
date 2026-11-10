@@ -1,12 +1,12 @@
 //! Tier 2's words (decision 0087), on hand-written programs: what they write, and what the
-//! verifier refuses. The programs are public (`test-hooks`) for the engine's round trip
-//! through its disassembler (`stream_round_trip_tests`).
+//! verifier refuses. Each round trips through the
+//! disassembler (`rir_asm::disassemble`) to the same text.
 
 use crate::stream::*;
 
 /// A root of kind 1 over a run of `a` tokens, each a leaf of kind 2: two states, the second a
 /// loop through `TOKEN`.
-pub const RUN: &str = "program -
+const RUN: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
   block 0 output %0
@@ -81,7 +81,7 @@ fn a_tier2_program_holds_only_its_words() {
 /// A root over `a(`: the `(` wraps the `a` leaf made before it (`WRAP`): the wrap takes the
 /// leaf's place, field and start, and the leaf gets its own field and kind (`NODE_FIELD m=1`,
 /// `RETAG m=1`). The wrap's record is made after the leaf's; at `ACCEPT` it goes before it.
-pub const WRAPPED: &str = "program -
+const WRAPPED: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
   block 0 output %0
@@ -131,7 +131,7 @@ fn a_wrap_goes_before_the_node_it_wraps() {
 
 /// A root with a leaf, then `(`: the `(` relabels the leaf (`NODE_FIELD m=2`, `RETAG m=2`, the
 /// node made last at the root's level), with no node around it.
-pub const RELABELLED: &str = "program -
+const RELABELLED: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
   block 0 output %0
@@ -180,7 +180,7 @@ fn a_relabel_acts_on_the_node_made_last() {
 }
 
 /// `ab(`: the root's two leaves, `a` and `b`, become one at `(` (`MERGE m=1`, `fold`).
-pub const FOLDED: &str = "program -
+const FOLDED: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
   block 0 output %0
@@ -246,7 +246,7 @@ fn a_fold_makes_the_open_nodes_two_leaves_one() {
 
 /// `a(b`: a wrap around `a` at `(`, closed at `b`; then `b` relabels it (`RETAG m=2`) and the
 /// node it holds first (`NODE_FIELD m=3`): an atom whose word turns out a call's.
-pub const RELABELLED_INNER: &str = "program -
+const RELABELLED_INNER: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
   block 0 output %0
@@ -305,7 +305,7 @@ fn an_inner_relabel_acts_on_the_node_a_wrap_holds_first() {
 /// A root over `a a a`, each `a` after the first a call into a level that ends on the token
 /// after: at the stream's end the levels return one after another, each to switch on the end
 /// again (`RETURN m=1`), with no `TOKEN` between.
-pub const CHAINED: &str = "program -
+const CHAINED: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
   block 0 output %0
@@ -352,4 +352,16 @@ fn returns_chain_but_a_call_is_never_popped_at_once() {
     let popped = CHAINED.replace("  0014 GOTO @0009\n", "  0014 GOTO @0015\n");
     let e = crate::rir_asm::assemble(&popped).err().expect("a call popped at once");
     assert!(e.contains("NonProgressingCycle"), "{e}");
+}
+
+/// Each program, disassembled and assembled again, prints the same: the disassembler is the
+/// assembler's inverse on tier 2's rows and words.
+#[test]
+fn tier2_programs_round_trip_through_the_disassembler() {
+    for text in [RUN, WRAPPED, RELABELLED, FOLDED, RELABELLED_INNER, CHAINED] {
+        let first = crate::rir_asm::disassemble(&crate::rir_asm::assemble(text).unwrap_or_else(|e| panic!("{e}")));
+        let again = crate::rir_asm::disassemble(&crate::rir_asm::assemble(&first).unwrap_or_else(|e| panic!("{e}\n{first}")));
+        assert_eq!(again, first);
+        assert!(first.contains(" TOKEN ") && first.contains("  switch 0 at "), "{first}");
+    }
 }

@@ -1,0 +1,14 @@
+[package]
+name = "rerail-parser-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The parsers' tests that need neither the engine nor Metal: the .rr ladder against the engine's .rr parser, and the JSON suite against tree-sitter."
+
+[dependencies]
+rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
+rerail-rr-syntax = { path = "../rr_syntax" }
+bitlex = { path = "../../../tools/bitlex", default-features = false }
+# The JSON suite's comparisons: the grammar the engine links (ast-grep's), at its version.
+tree-sitter = "=0.27.1"
+tree-sitter-json = "=0.24.8"

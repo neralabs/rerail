@@ -17,7 +17,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// The grammar: the ladder's last step.
-const GRAMMAR: &str = include_str!("bitlex_ladder/rr/20-json-depth.bitlex");
+const GRAMMAR: &str = include_str!("../../../../crates/rr_syntax/bitlex_ladder/20-json-depth.bitlex");
 
 /// Ids above the engine's, for the grammar's own names (supertypes, marks) that never reach a
 /// tape.

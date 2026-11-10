@@ -7,14 +7,3 @@
 
 
 pub(in crate::code_rule_dsl) use rerail_compiler::stream::*;
-// Named, so the tests' glob below (the matcher's `Node`) does not hide it.
-pub(in crate::code_rule_dsl) use rerail_compiler::stream::Node;
-
-// The tests read the transducer's names as they did when this file held the code.
-#[cfg(test)]
-#[allow(unused_imports)]
-use super::*;
-
-#[cfg(test)]
-#[path = "stream_round_trip_tests.rs"]
-mod tests;

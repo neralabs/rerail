@@ -5,6 +5,8 @@
 //! matcher's rows beside these and the grammars' names.
 
 use crate::Error;
+use crate::rir_text::{quote, reading_rows, switch_rows};
+use std::fmt::Write as _;
 use crate::program::*;
 
 /// The format's version: the program digest's (`tempo-program-v7`).
@@ -589,4 +591,79 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         return Ok(());
     }
     Err(Error::InvalidOpcode(0))
+}
+
+/// The word program's head rows, in the order the assembler reads them: the mode, the
+/// strings, the labels, the longs, tier 2's switches and readings.
+pub fn head_rows(out: &mut String, program: &Words) {
+    let flag = u8::from;
+    let _ = writeln!(out, "  mode set={} query={}", flag(program.set_mode), flag(program.tree_sitter_query));
+    for (at, string) in program.strings.iter().enumerate() {
+        let _ = writeln!(out, "  string {at} {}", quote(string));
+    }
+    for (at, label) in program.labels.iter().enumerate() {
+        let _ = writeln!(out, "  label {at} s{label}");
+    }
+    for (at, long) in program.longs.iter().enumerate() {
+        let _ = writeln!(out, "  long {at} {long}");
+    }
+    for (at, s) in program.switches.iter().enumerate() {
+        switch_rows(out, at, s);
+    }
+    reading_rows(out, &program.readings);
+}
+
+/// Each block program's rows (`block::block_rows`).
+pub fn block_programs_rows(out: &mut String, program: &Words) {
+    for (at, block) in program.block_programs.iter().enumerate() {
+        crate::block::block_rows(out, at, block);
+    }
+}
+
+/// The words, one row each, with a kind and a field as `kind` and `field` print them (a
+/// grammar's names, or `#id`), and a label's name after it.
+pub fn word_rows(out: &mut String, program: &Words, kind: &dyn Fn(u16) -> String, field: &dyn Fn(u16) -> String) {
+    for (pc, &instruction) in program.words.iter().enumerate() {
+        let (opcode, mode, arg) = split(instruction);
+        let name = OPCODES.iter().find(|(code, _)| *code == opcode).map(|(_, name)| (*name).to_owned());
+        let name = name.unwrap_or_else(|| format!("OP_{opcode:02x}"));
+        let _ = write!(out, "  {pc:04} {name}");
+        if mode != 0 {
+            let _ = write!(out, " m={mode}");
+        }
+        let _ = match operand(opcode, mode) {
+            Operand::Target => write!(out, " @{arg:04}"),
+            Operand::Label => write!(out, " L{arg}"),
+            Operand::Predicate => write!(out, " P{arg}"),
+            Operand::Assert => write!(out, " A{arg}"),
+            Operand::Kind => write!(out, " {}", kind(arg)),
+            Operand::Field => write!(out, " {}", field(arg)),
+            Operand::Number => write!(out, " {arg}"),
+            Operand::String => write!(out, " s{arg}"),
+            Operand::Switch => write!(out, " T{arg}"),
+        };
+        if operand(opcode, mode) == Operand::Label
+            && let Some(name) = label_name(program, arg)
+        {
+            let _ = write!(out, "  ; {name}");
+        }
+        out.push('\n');
+    }
+}
+
+/// Label `label`'s name: the string it names.
+pub fn label_name(program: &Words, label: u16) -> Option<&str> {
+    let string = *program.labels.get(usize::from(label))?;
+    std::str::from_utf8(program.strings.get(usize::from(string))?).ok()
+}
+
+/// A parser's program as `rir` (the inverse of `assemble`): no digest, no grammar, kinds and
+/// fields as `#id`. The engine's disassembler (`rir::disassemble`) prints a matcher's program,
+/// a digest and a grammar's names.
+pub fn disassemble(program: &Words) -> String {
+    let mut out = format!("program - ir={IR} grammar=none\n");
+    head_rows(&mut out, program);
+    block_programs_rows(&mut out, program);
+    word_rows(&mut out, program, &|id| format!("#{id}"), &|id| format!("#{id}"));
+    out
 }

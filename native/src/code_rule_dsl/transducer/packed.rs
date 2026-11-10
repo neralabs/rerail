@@ -292,8 +292,6 @@ mod bitlex_corpus_tests;
 #[cfg(test)]
 mod bitlex_ladder_tests;
 #[cfg(test)]
-mod bitlex_rr_tests;
-#[cfg(test)]
 mod bitlex_json_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
 mod block_monoid;
@@ -2135,8 +2133,7 @@ impl Program {
     }
 
     pub(in crate::code_rule_dsl) fn label_name(&self, label: u16) -> Option<&str> {
-        let string = *self.labels.get(usize::from(label))?;
-        std::str::from_utf8(self.strings.get(usize::from(string))?).ok()
+        rerail_compiler::rir_asm::label_name(self, label)
     }
 
     pub(in crate::code_rule_dsl) fn string_value(&self, string: u16) -> Option<&str> {

@@ -1,5 +1,6 @@
 //! Generated code read as text, for the checks of its shape: the hot loop in Cranelift IR,
-//! an instruction's opcode, the hot loop in machine code and its stack traffic.
+//! an instruction's opcode, the hot loop in machine code and its stack traffic; and a block
+//! program's carried state, as its shape checks count it.
 
 /// The CLIF blocks of the hot loop, each with its instruction lines: the full body (`block2`) and
 /// the blocks it reaches before it leaves for the head (`block4`) or loops back to itself, which
@@ -112,4 +113,50 @@ pub fn loop_costs(lines: &[String]) -> (usize, usize) {
 /// block's. `block0` is the entry, `block1` a file's row, `block2` the body over its blocks.
 pub fn body_of(clif: &str) -> Vec<String> {
     hot_loop(clif).into_iter().flat_map(|(_, lines)| lines).collect()
+}
+
+/// The values a program's `prev`s read, one carried word each, and its other carried operations.
+pub fn carried_words(p: &crate::block::BlockProgram) -> usize {
+    use crate::block::BlockOp::*;
+    let bases: std::collections::BTreeSet<u16> = p.ops.iter().filter_map(|op| if let Prev(a, _) = *op { Some(a) } else { None }).collect();
+    bases.len() + p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count()
+}
+
+/// A program's carried state in bits (decision 0070): one bit per `toggle`, `escaped` and
+/// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
+/// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one
+/// costs `k - 1` more. Every executor carries these bits and no more: Cranelift packs them into
+/// words, never a word per bit.
+pub fn state_bits(p: &crate::block::BlockProgram) -> usize {
+    use crate::block::BlockOp::*;
+    let mut back: std::collections::BTreeMap<u16, u8> = std::collections::BTreeMap::new();
+    for op in &p.ops {
+        if let Prev(a, k) = *op {
+            let m = back.entry(a).or_insert(0);
+            *m = (*m).max(k);
+        }
+    }
+    let ops = p.ops.iter().filter(|op| matches!(op, Toggle(_) | Escaped(_) | Fill(..))).count();
+    let looks: usize = back
+        .iter()
+        .map(|(&a, &k)| match p.ops[usize::from(a)] {
+            Toggle(_) | Fill(..) => usize::from(k) - 1,
+            _ => usize::from(k),
+        })
+        .sum();
+    ops + looks
+}
+
+/// The function's loop-carried values, read from the Cranelift IR: the hot body's parameters
+/// after its block index and its byte and output pointers.
+pub fn carried_params(clif: &str) -> usize {
+    let line = clif.lines().find(|l| l.trim_start().starts_with("block2(")).expect("the body block");
+    line.matches(": i64").count() - 3
+}
+
+/// The sinks' loop-carried values (`native_cpu_block`): a running count per counted output and
+/// no more (a delayed output holds no word).
+pub fn sink_params(native: &crate::block_native::BlockNative) -> usize {
+    // A delayed output's word is not held (`native_cpu_block::delayed_store`).
+    crate::native_cpu_block::counted(native).len()
 }

@@ -38,7 +38,7 @@
 //!   be the program's.
 
 // The assembler's reader and the word program's rows, the compiler crate's (`rerail_compiler::rir_asm`).
-use rerail_compiler::rir_asm::{Line, NameTable, OPCODES, Operand, Token, index, operand, tokens, word_row};
+use rerail_compiler::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
 pub(in crate::code_rule_dsl) use rerail_compiler::rir_asm::IR;
 use super::*;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
@@ -201,20 +201,7 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
     let mut out = String::new();
     let grammar = names.map_or("none".to_owned(), Names::header);
     let _ = writeln!(out, "program sha256:{} ir={IR} grammar={grammar} caps={}", program.plain_digest(), caps(program));
-    let _ = writeln!(out, "  mode set={} query={}", flag(program.set_mode), flag(program.tree_sitter_query));
-    for (at, string) in program.strings.iter().enumerate() {
-        let _ = writeln!(out, "  string {at} {}", quote(string));
-    }
-    for (at, label) in program.labels.iter().enumerate() {
-        let _ = writeln!(out, "  label {at} s{label}");
-    }
-    for (at, long) in program.longs.iter().enumerate() {
-        let _ = writeln!(out, "  long {at} {long}");
-    }
-    for (at, s) in program.switches.iter().enumerate() {
-        switch_rows(&mut out, at, s);
-    }
-    reading_rows(&mut out, &program.readings);
+    head_rows(&mut out, program);
     for (at, predicate) in program.predicates.iter().enumerate() {
         let (kind, source) = match predicate {
             TextPredicate::Equal(source) => ("equal", source),
@@ -224,9 +211,7 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         };
         let _ = writeln!(out, "  predicate {at} {kind} s{source}");
     }
-    for (at, block) in program.block_programs.iter().enumerate() {
-        block_rows(&mut out, at, block);
-    }
+    block_programs_rows(&mut out, program);
     for (at, predicate) in program.capture_predicates.iter().enumerate() {
         let body = match predicate {
             CapturePredicate::Equal { left, right, negated, any } => {
@@ -272,32 +257,7 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         pattern(&mut out, node, names);
         out.push('\n');
     }
-    for (pc, &instruction) in program.words.iter().enumerate() {
-        let (opcode, mode, arg) = split(instruction);
-        let name = OPCODES.iter().find(|(code, _)| *code == opcode).map(|(_, name)| (*name).to_owned());
-        let name = name.unwrap_or_else(|| format!("OP_{opcode:02x}"));
-        let _ = write!(out, "  {pc:04} {name}");
-        if mode != 0 {
-            let _ = write!(out, " m={mode}");
-        }
-        let _ = match operand(opcode, mode) {
-            Operand::Target => write!(out, " @{arg:04}"),
-            Operand::Label => write!(out, " L{arg}"),
-            Operand::Predicate => write!(out, " P{arg}"),
-            Operand::Assert => write!(out, " A{arg}"),
-            Operand::Kind => write!(out, " {}", kind(names, arg)),
-            Operand::Field => write!(out, " {}", field(names, arg)),
-            Operand::Number => write!(out, " {arg}"),
-            Operand::String => write!(out, " s{arg}"),
-            Operand::Switch => write!(out, " T{arg}"),
-        };
-        if operand(opcode, mode) == Operand::Label
-            && let Some(name) = program.label_name(arg)
-        {
-            let _ = write!(out, "  ; {name}");
-        }
-        out.push('\n');
-    }
+    word_rows(&mut out, program, &|id| kind(names, id), &|id| field(names, id));
     out
 }
 

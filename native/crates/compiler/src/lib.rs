@@ -34,9 +34,8 @@ pub mod rir_asm;
 pub mod rir_text;
 pub mod set_mode;
 pub mod stream;
-/// Tier 2's hand-written programs and their tests.
-#[cfg(any(test, feature = "test-hooks"))]
-pub mod stream_tests;
+#[cfg(test)]
+mod stream_tests;
 pub mod stream_ir;
 
 pub use error::Error;
