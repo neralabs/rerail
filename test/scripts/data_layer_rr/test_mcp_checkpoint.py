@@ -47,3 +47,7 @@ class McpCheckpointTests(unittest.TestCase):
     def test_changed_engine_is_rejected(self):
         value=copy.deepcopy(self.value);value['reports']['workspace']['engineSha256']='other'
         with self.assertRaisesRegex(ValueError,'Mixed native cohort'):validate(value)
+
+    def test_new_progress_format_cannot_accept_the_old_syntax_failure(self):
+        value=copy.deepcopy(self.value);value['format']='rerail.mcp-static-progress/v2'
+        with self.assertRaisesRegex(ValueError,'Complete composition DTO differs'):validate(value)
