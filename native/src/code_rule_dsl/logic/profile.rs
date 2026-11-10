@@ -1162,6 +1162,51 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let _ = writeln!(r, "{score}");
     }
 
+    // The cost statistics (decision 0100 §14): the store, the samples read, and the rates learned in place of priors.
+    let _ = writeln!(r, "\n== Cost statistics (RERAIL_COSTS)");
+    r.push_str(&super::costs::summary());
+
+    // Waits that ran others' jobs (decision 0100 §12): a thread waiting on the pool runs queued jobs meanwhile, and a
+    // long one makes its own wait end late. Per site: its waits, the jobs they ran, and how late those made them.
+    let (waits, late_by) = rerail_accel::exec::waits();
+    let _ = writeln!(r, "\n== Waits that ran others' jobs (rerail-accel)");
+    if waits.is_empty() {
+        r.push_str("(no waits)\n");
+    } else {
+        let _ = writeln!(
+            r,
+            "{:<40} {:>7} {:>7} {:>7} {:>10} {:>10} {:>10} {:>6} {:>10} {:>10} {:>10}  longest job run",
+            "wait", "waits", "helped", "jobs", "wait ms", "jobs ms", "jobs cpu", "late", "late ms<=", "late max", "late exact"
+        );
+        for (site, w) in &waits {
+            let _ = writeln!(
+                r,
+                "{:<40} {:>7} {:>7} {:>7} {:>10.1} {:>10.1} {:>10.1} {:>6} {:>10.2} {:>10.2} {:>10.2}  {:.2} ms {}",
+                short(site, 40),
+                w.waits,
+                w.helping,
+                w.jobs,
+                w.wall * 1e3,
+                w.jobs_wall * 1e3,
+                w.jobs_cpu * 1e3,
+                w.late,
+                w.late_wall * 1e3,
+                w.late_max * 1e3,
+                w.late_exact * 1e3,
+                w.longest * 1e3,
+                w.longest_job
+            );
+        }
+        // `late ms<=`: a wait that found its work ready right after a job it ran was late by at most that job's
+        // wall; `late exact` where the waited work said when it ended (a batch's launches, a host job).
+        let mut late_by = late_by;
+        late_by.sort_by(|a, b| b.1.late_wall.total_cmp(&a.1.late_wall));
+        let _ = writeln!(r, "jobs that made waits late: {:<34} {:>7} {:>10} {:>10}", "job", "waits", "late ms<=", "late max");
+        for (job, l) in late_by.iter().take(12) {
+            let _ = writeln!(r, "  {:<58} {:>7} {:>10.2} {:>10.2}", short(job, 58), l.waits, l.late_wall * 1e3, l.late_max * 1e3);
+        }
+    }
+
     // Warnings: the shapes that usually explain a slow rule.
     let _ = writeln!(r, "\n== Warnings");
     let mut warned = 0;

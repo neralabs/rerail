@@ -33,13 +33,13 @@ END;
 "#;
 
 impl TapeId {
-    pub(crate) const fn for_benchmark(value: i64) -> Self {
+    pub const fn for_benchmark(value: i64) -> Self {
         Self(value)
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TapeSearchIndex {
+pub struct TapeSearchIndex {
     pub tape_id: TapeId,
     pub index_version: i64,
     pub node_count: u32,
@@ -49,7 +49,7 @@ pub(crate) struct TapeSearchIndex {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SearchAnchorLookup {
+pub struct SearchAnchorLookup {
     pub tape_id: TapeId,
     pub index_version: i64,
     pub kind_token: String,
@@ -57,7 +57,7 @@ pub(crate) struct SearchAnchorLookup {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum StoredAnchorSelection {
+pub enum StoredAnchorSelection {
     Unknown,
     Candidate,
     Roots(Vec<u32>),
@@ -80,7 +80,7 @@ impl ContentStore {
     /// Publish one query-independent FTS document per immutable tape. The kind stream contains one
     /// token per preorder node. The value stream contains distinct bounded values for file filtering.
     /// All string construction and validation finish before the short write transaction starts.
-    pub(crate) fn put_positional_search_indexes_bulk(&self, indexes: &[TapeSearchIndex]) -> StoreResult<()> {
+    pub fn put_positional_search_indexes_bulk(&self, indexes: &[TapeSearchIndex]) -> StoreResult<()> {
         self.positional_schema()?;
         self.require_write_capacity()?;
         let mut connection = self
@@ -258,7 +258,7 @@ impl ContentStore {
     /// Resolve all requested tape/predicate pairs with one SQL statement. Kind queries return
     /// preorder positions. Exact-value queries return file candidates for terminal confirmation.
     /// Missing index sets remain unknown. A complete noncandidate returns an empty root list.
-    pub(crate) fn get_search_anchors_bulk(
+    pub fn get_search_anchors_bulk(
         &self,
         lookups: &[SearchAnchorLookup],
     ) -> StoreResult<Vec<StoredAnchorSelection>> {
@@ -362,7 +362,7 @@ impl ContentStore {
 
     /// Select exact-value file candidates without returning the file-by-predicate Cartesian product.
     /// The statement returns one status row per tape and one sparse row per positive pair.
-    pub(crate) fn get_exact_value_candidates_bulk(
+    pub fn get_exact_value_candidates_bulk(
         &self,
         tape_ids: &[TapeId],
         index_version: i64,
@@ -438,8 +438,8 @@ impl ContentStore {
     }
 
     /// Return the live SQLite pages for the search-index tables and FTS shadow tables.
-    #[cfg(test)]
-    pub(crate) fn search_index_storage_bytes(&self) -> StoreResult<(u64, [u64; 4])> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn search_index_storage_bytes(&self) -> StoreResult<(u64, [u64; 4])> {
         self.positional_schema()?;
         let connection = self
             .connection
@@ -467,7 +467,7 @@ impl ContentStore {
     /// Use the contentless source-word FTS as a conservative file filter. `Some(false)` is a
     /// complete rejection, `Some(true)` is a candidate, and `None` means that the tape has no
     /// complete search index. Terminal matching must confirm every candidate.
-    pub(crate) fn get_text_candidates_bulk(
+    pub fn get_text_candidates_bulk(
         &self,
         tape_ids: &[TapeId],
         required_words: &[String],

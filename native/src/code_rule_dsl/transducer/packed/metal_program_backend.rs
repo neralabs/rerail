@@ -66,7 +66,9 @@ pub(super) fn release_workspaces() -> bool {
     let released = METAL_WORKSPACE_POOL.lock().map(|mut pool| std::mem::take(&mut *pool)).unwrap_or_default();
     !released.is_empty()
 }
-pub(in crate::code_rule_dsl) static METAL_DEVICE: LazyLock<Option<Device>> = LazyLock::new(Device::system_default);
+// The process's one device (`rerail_accel::gpu::shared`, decision 0100 §2): the executor's lanes and the engine's own
+// programs use the same.
+pub(in crate::code_rule_dsl) static METAL_DEVICE: LazyLock<Option<Device>> = LazyLock::new(|| rerail_accel::gpu::shared::get().map(|s| s.device.clone()));
 
 struct MetalWorkspace {
     totals: WorkspaceTotals,

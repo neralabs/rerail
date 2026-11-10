@@ -34,6 +34,7 @@ use crate::kernel::{Kernel, Output};
 use crate::lanes::{self, Lane};
 use crate::price::{Cost, Load, Prices, WATTS};
 use crate::score::{Item, Score, Scoreboard, Ticket};
+use std::collections::BTreeMap;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -71,18 +72,154 @@ pub fn configure(this_thread: bool) {
 thread_local! {
     /// This thread's CPU seconds in other jobs it ran while it waited (`help_once`).
     static HELPED: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+    /// The name of the last job ([`as_job`]) to end on this thread: the job a wait just ran.
+    static LAST_JOB: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+    /// The wait this thread is in, and the job it last ran for others: (wall, name).
+    static LAST_RUN: std::cell::Cell<(f64, &'static str)> = const { std::cell::Cell::new((0.0, "")) };
+}
+
+/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]).
+pub fn as_job<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
+    let r = f();
+    LAST_JOB.with(|j| j.set(name));
+    r
 }
 
 /// Runs one of the pool's other jobs on this thread, if one is queued (a pool thread's wait): whether it ran one. Its
-/// CPU is counted as helped ([`helped`]), not as the waiter's own.
+/// CPU is counted as helped ([`helped`]), not as the waiter's own, and its wall is the job the wait last ran (how late
+/// the wait may be, if what it waits for was ready during it: [`Waiting`]).
 pub fn help_once() -> bool {
     let c0 = crate::score::thread_cpu();
+    let t0 = Instant::now();
+    LAST_JOB.with(|j| j.set(""));
     let ran = rayon::yield_now() == Some(rayon::Yield::Executed);
     if ran {
         let spent = crate::score::thread_cpu() - c0;
         HELPED.with(|h| h.set(h.get() + spent));
+        let name = LAST_JOB.with(std::cell::Cell::get);
+        LAST_RUN.with(|l| l.set((t0.elapsed().as_secs_f64(), if name.is_empty() { "(unnamed)" } else { name })));
+    } else {
+        LAST_RUN.with(|l| l.set((0.0, "")));
     }
     ran
+}
+
+/// One site's waits ([`Waiting`]): how many ran others' jobs, for how long, and how late those jobs made them.
+#[derive(Clone, Debug, Default)]
+pub struct WaitStats {
+    pub waits: u64,
+    /// Waits that ran at least one job of another's.
+    pub helping: u64,
+    pub jobs: u64,
+    /// Wall and CPU seconds of the jobs run.
+    pub jobs_wall: f64,
+    pub jobs_cpu: f64,
+    /// Wall seconds of the waits, start to end.
+    pub wall: f64,
+    /// Waits that ended right after a job they ran: what they waited for was ready during it, so the job made them
+    /// late by up to its wall (`late`, an upper bound, its longest `late_max`), or by `late_exact` where the waited
+    /// work said when it ended.
+    pub late: u64,
+    pub late_wall: f64,
+    pub late_max: f64,
+    pub late_exact: f64,
+    /// The longest job run in a wait, and its name.
+    pub longest: f64,
+    pub longest_job: &'static str,
+}
+
+/// The jobs that made waits late: by job, how many waits and their late seconds (the bound).
+#[derive(Clone, Debug, Default)]
+pub struct LateBy {
+    pub waits: u64,
+    pub late_wall: f64,
+    pub late_max: f64,
+}
+
+static WAITS: std::sync::Mutex<(BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>)> = std::sync::Mutex::new((BTreeMap::new(), BTreeMap::new()));
+
+/// Every site's waits so far, and the jobs that made them late: for the profile.
+pub fn waits() -> (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>) {
+    let w = WAITS.lock().unwrap_or_else(|p| p.into_inner());
+    (w.0.iter().map(|(k, v)| (*k, v.clone())).collect(), w.1.iter().map(|(k, v)| (*k, v.clone())).collect())
+}
+
+/// A wait at a named site that may run others' jobs ([`help_once`] through [`Waiting::help`]), recorded when it ends
+/// ([`waits`]).
+pub struct Waiting {
+    site: &'static str,
+    began: Instant,
+    s: WaitStats,
+    /// The last job run, if nothing was polled since: (wall, name, when it ended).
+    last: Option<(f64, &'static str, Instant)>,
+}
+
+impl Waiting {
+    pub fn new(site: &'static str) -> Self {
+        Waiting { site, began: Instant::now(), s: WaitStats { waits: 1, ..Default::default() }, last: None }
+    }
+
+    /// Runs one of the pool's other jobs, if one is queued: whether it ran one.
+    pub fn help(&mut self) -> bool {
+        let c0 = HELPED.with(std::cell::Cell::get);
+        let ran = help_once();
+        if ran {
+            let (wall, name) = LAST_RUN.with(std::cell::Cell::get);
+            self.s.jobs += 1;
+            self.s.jobs_wall += wall;
+            self.s.jobs_cpu += HELPED.with(std::cell::Cell::get) - c0;
+            if wall > self.s.longest {
+                self.s.longest = wall;
+                self.s.longest_job = name;
+            }
+            self.last = Some((wall, name, Instant::now()));
+        } else {
+            self.last = None;
+        }
+        ran
+    }
+
+    /// Nothing was ready at a poll: the last job run did not make the wait late.
+    pub fn polled(&mut self) {
+        self.last = None;
+    }
+
+    /// Ends the wait, its waited work ready: at `ready` if the work said when it ended, else some time during the
+    /// last job run, if one was.
+    pub fn end(mut self, ready: Option<Instant>) {
+        self.s.wall = self.began.elapsed().as_secs_f64();
+        self.s.helping = u64::from(self.s.jobs > 0);
+        let mut late_by = None;
+        if let Some((wall, name, ended)) = self.last {
+            self.s.late = 1;
+            self.s.late_wall = wall;
+            self.s.late_max = wall;
+            self.s.late_exact = ready.map_or(0.0, |r| ended.saturating_duration_since(r).as_secs_f64().min(wall));
+            late_by = Some((name, wall));
+        }
+        let mut w = WAITS.lock().unwrap_or_else(|p| p.into_inner());
+        let t = w.0.entry(self.site).or_default();
+        t.waits += self.s.waits;
+        t.helping += self.s.helping;
+        t.jobs += self.s.jobs;
+        t.jobs_wall += self.s.jobs_wall;
+        t.jobs_cpu += self.s.jobs_cpu;
+        t.wall += self.s.wall;
+        t.late += self.s.late;
+        t.late_wall += self.s.late_wall;
+        t.late_max = t.late_max.max(self.s.late_max);
+        t.late_exact += self.s.late_exact;
+        if self.s.longest > t.longest {
+            t.longest = self.s.longest;
+            t.longest_job = self.s.longest_job;
+        }
+        if let Some((name, wall)) = late_by {
+            let l = w.1.entry(name).or_default();
+            l.waits += 1;
+            l.late_wall += wall;
+            l.late_max = l.late_max.max(wall);
+        }
+    }
 }
 
 /// This thread's CPU seconds so far in jobs it ran for others while it waited: a caller that measures its own
@@ -100,14 +237,22 @@ pub fn on_pool() -> bool {
 /// job that waits for others never holds its thread idle while they queue. Between polls with nothing to run, it
 /// sleeps a little more each time (20 µs, up to 1 ms): a wait is bounded, and wakes for what it waits for at most
 /// that late.
-pub fn help_until<T>(mut poll: impl FnMut() -> Option<T>) -> T {
+pub fn help_until<T>(poll: impl FnMut() -> Option<T>) -> T {
+    help_until_as("wait", poll)
+}
+
+/// [`help_until`], its waits recorded under `site` ([`waits`]).
+pub fn help_until_as<T>(site: &'static str, mut poll: impl FnMut() -> Option<T>) -> T {
     let pool = on_pool();
     let mut nap = 20e-6f64;
+    let mut wait = Waiting::new(site);
     loop {
         if let Some(t) = poll() {
+            wait.end(None);
             return t;
         }
-        if pool && help_once() {
+        wait.polled();
+        if pool && wait.help() {
             nap = 20e-6;
             continue;
         }
@@ -416,7 +561,7 @@ impl Claims {
     fn item(&self, i: usize, lane: Lane) -> Item {
         let k = &self.kernels[i];
         let c = self.costs[i][lane.index()].unwrap_or_default();
-        Item { form: k.form().name(), units: k.units(), estimate: c.wall, host: c.host }
+        Item { form: k.name(), units: k.units(), estimate: c.wall, host: c.host }
     }
 
     /// Claims launch `i` for `lane`: its plan's reservation is released.
@@ -546,20 +691,22 @@ pub struct Running {
 /// A host job ([`Executor::spawn`]) the pool is running.
 pub struct Job<R> {
     name: &'static str,
-    take: Receiver<std::thread::Result<R>>,
+    take: Receiver<(std::thread::Result<R>, Instant)>,
 }
 
 impl<R> Job<R> {
     /// Waits for the job: its result, or an error when it panicked. On one of the pool's own threads, the wait runs
     /// the pool's other jobs meanwhile, so jobs that wait for jobs cannot take every thread and stall.
     pub fn wait(self) -> Result<R, String> {
+        let mut wait = Waiting::new(self.name);
         let got = if on_pool() {
             loop {
                 match self.take.try_recv() {
                     Ok(r) => break Ok(r),
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => break Err(()),
                     Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        if !help_once() {
+                        wait.polled();
+                        if !wait.help() {
                             match self.take.recv_timeout(std::time::Duration::from_micros(100)) {
                                 Ok(r) => break Ok(r),
                                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
@@ -574,6 +721,10 @@ impl<R> Job<R> {
         } else {
             self.take.recv().map_err(|_| ())
         };
+        let got = got.map(|(r, ended)| {
+            wait.end(Some(ended));
+            r
+        });
         match got {
             Ok(Ok(r)) => Ok(r),
             Ok(Err(_)) => Err(format!("host job {}: it panicked", self.name)),
@@ -813,7 +964,7 @@ impl Executor {
                     cpu = Some(Arc::clone(b));
                     for _ in 0..per_lane[lane.index()].min(threads()) {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
-                        rayon::spawn_fifo(move || claims.serve_cpu(&*backend));
+                        rayon::spawn_fifo(move || as_job("the cores' launches", || claims.serve_cpu(&*backend)));
                     }
                 }
                 // A device lane: its worker claims its share when it reaches the batch, and a device with nothing
@@ -837,9 +988,9 @@ impl Executor {
         let board = Arc::clone(&self.board);
         rayon::spawn_fifo(move || {
             board.start(&mut ticket);
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            let r = as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
             board.finish(ticket, r.is_ok());
-            let _ = reply.send(r);
+            let _ = reply.send((r, Instant::now()));
         });
         Job { name, take }
     }
@@ -860,6 +1011,7 @@ impl Running {
         let mut ran = [0.0f64; 4];
         let mut got = 0usize;
         let mut helped = 0u64;
+        let mut wait = Waiting::new("a batch's launches");
         let mut store = |(lane, ids, (r, start, end)): Got, got: &mut usize| {
             *got += ids.len();
             let s = &mut span[lane.index()];
@@ -883,10 +1035,14 @@ impl Running {
             match take.try_recv() {
                 Ok(g) => {
                     store(g, &mut got);
+                    // More to wait for: the job last run did not hold up the batch's end.
+                    if got < n {
+                        wait.polled();
+                    }
                     continue;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Empty) => wait.polled(),
             }
             // Free launches the caller can run: the cores' own, or one a lane behind its plan has not reached.
             let mine = cpu.as_ref().and_then(|cpu| {
@@ -901,7 +1057,7 @@ impl Running {
                 continue;
             }
             // On one of the pool's threads, the pool's other jobs meanwhile.
-            if on_pool && help_once() {
+            if on_pool && wait.help() {
                 continue;
             }
             match take.recv_timeout(std::time::Duration::from_micros(100)) {
@@ -916,6 +1072,8 @@ impl Running {
         if got < n {
             return Err(format!("{} of {n} launches were never run: a lane's worker ended", n - got));
         }
+        // Ready when the last lane's launch ended.
+        wait.end(span.iter().flatten().map(|(_, b)| *b).max());
         for lane in Lane::ALL {
             if let Some((a, b)) = span[lane.index()] {
                 report.wall[lane.index()] = b.duration_since(a).as_secs_f64();
@@ -994,6 +1152,9 @@ impl CpuBackend {
     }
 
     fn join(&self, k: &Kernel) -> Result<Output, String> {
+        if let Kernel::Program(p) = k {
+            return p.0.run(Lane::Cpu).map(|r| Output::Program(crate::kernel::ProgramResult(r))).map_err(|e| format!("program {}: {e}", p.0.name()));
+        }
         let Kernel::Join { left, right, right_id, .. } = k else {
             return Ok(crate::cpu::run(k));
         };
@@ -1010,6 +1171,7 @@ impl Backend for CpuBackend {
     fn can(&self, k: &Kernel) -> bool {
         match k {
             Kernel::Join { left, right, .. } => Kernel::join_shape(left, right).is_ok(),
+            Kernel::Program(p) => p.0.per_unit(Lane::Cpu).is_some(),
             _ => true,
         }
     }

@@ -890,12 +890,12 @@ fn cross_reads_base(prog: &crate::code_rule_dsl::logic::front::Program, local: &
 /// variable) or has no node column, and some node is read.
 fn unrestricted(prog: &crate::code_rule_dsl::logic::front::Program, atoms: &[&crate::code_rule_dsl::logic::front::Atom]) -> bool {
     use crate::code_rule_dsl::logic::front::Term;
-    let attribute = |rel: &str| matches!(rel, "docof" | "line" | "end_line" | "col" | "visit_index" | "node" | "doc");
+    let attribute = |rel: &str| matches!(rel, "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "node" | "doc");
     let plain = |a: &crate::code_rule_dsl::logic::front::Atom| {
         let named: Vec<&String> = a.args.iter().filter_map(|t| if let Term::Var(x) = t { Some(x) } else { None }).collect();
         a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && named.iter().collect::<std::collections::BTreeSet<_>>().len() == named.len()
     };
-    atoms.iter().any(|a| matches!(a.rel.as_str(), "docof" | "line" | "end_line" | "col" | "visit_index" | "node"))
+    atoms.iter().any(|a| matches!(a.rel.as_str(), "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "node"))
         && atoms.iter().all(|a| (attribute(&a.rel) && plain(a)) || (!attribute(&a.rel) && !prog.decls.get(&a.rel).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span")))))
 }
 
@@ -905,7 +905,7 @@ fn unrestricted(prog: &crate::code_rule_dsl::logic::front::Program, atoms: &[&cr
 /// fixtures for a cross-file reader that binds `n` from a few hundred asks (`c4_builtin_ask(n, x)`).
 fn descends(atoms: &[&crate::code_rule_dsl::logic::front::Atom]) -> bool {
     use crate::code_rule_dsl::logic::front::Term;
-    let attribute = |rel: &str| matches!(rel, "docof" | "line" | "end_line" | "col" | "visit_index" | "ast_depth");
+    let attribute = |rel: &str| matches!(rel, "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "ast_depth");
     atoms.iter().any(|w| match (w.rel.as_str(), w.args.as_slice()) {
         ("within", [Term::Var(n), a]) if a != &Term::Var(n.clone()) => atoms
             .iter()
@@ -1014,7 +1014,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                     let distinct: BTreeSet<&String> = named.iter().copied().collect();
                     a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && distinct.len() == named.len()
                 };
-                let attribute = |a: &Atom| matches!(a.rel.as_str(), "docof" | "line" | "end_line" | "col" | "visit_index" | "node" | "doc") && plain(a);
+                let attribute = |a: &Atom| matches!(a.rel.as_str(), "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "node" | "doc") && plain(a);
                 let rest: Vec<&&Atom> = atoms.iter().filter(|a| !attribute(a)).collect();
                 if let [a] = rest[..]
                     && plain(a)

@@ -12,6 +12,7 @@ mod calls;
 mod format_args;
 #[cfg(test)]
 mod kit;
+mod json;
 mod rr;
 mod rust;
 mod scope;
@@ -24,6 +25,9 @@ pub(crate) use super::with_adapter;
 pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
 pub(crate) use calls::{CallFeature, CallRules};
 pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
+// Read through `with_adapter!` only, whose arm for a family left out of the build is `unreachable!`.
+#[cfg_attr(not(feature = "lang-json"), allow(unused_imports))]
+pub(crate) use json::Json;
 // Read through `with_adapter!` only, whose arm for a family left out of the build is `unreachable!`.
 #[cfg_attr(not(feature = "lang-rr"), allow(unused_imports))]
 pub(crate) use rr::Rr;

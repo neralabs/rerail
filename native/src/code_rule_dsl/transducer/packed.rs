@@ -12,12 +12,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::ops::Range;
 use std::sync::Arc;
-#[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(target_os = "macos")]
-use std::sync::{LazyLock, mpsc};
-#[cfg(target_os = "macos")]
-use std::time::Duration;
 
 #[cfg(test)]
 mod admission_spike;
@@ -243,7 +237,7 @@ pub(in crate::code_rule_dsl) use compilation::PlanId;
 mod native_cpu;
 mod native_cpu_capture;
 mod native_cpu_capture_pair;
-mod native_cpu_codegen;
+use rerail_tier1::native_cpu_codegen;
 mod native_cpu_lua;
 mod native_cpu_output;
 mod native_cpu_output_sort;
@@ -253,14 +247,15 @@ mod native_cpu_regex;
 mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
-mod native_cpu_block;
-// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2).
-pub(in crate::code_rule_dsl) mod native_cpu_rows;
+use rerail_tier1::native_cpu_block;
+// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), tier 1's.
+#[allow(unused_imports)]
+pub(in crate::code_rule_dsl) use rerail_tier1::native_cpu_rows;
 // Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
 pub(in crate::code_rule_dsl) mod rows_sort;
-mod native_cpu_lanes;
-mod native_cpu_pressure;
-mod native_cpu_shape;
+use rerail_tier1::native_cpu_lanes;
+use rerail_tier1::native_cpu_pressure;
+use rerail_tier1::native_cpu_shape;
 mod native_cpu_stream;
 mod native_ir;
 mod output;
@@ -277,7 +272,7 @@ pub(in crate::code_rule_dsl) mod fusion;
 pub(in crate::code_rule_dsl) mod rir;
 mod value;
 // Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
-pub(in crate::code_rule_dsl) mod block;
+pub(in crate::code_rule_dsl) use rerail_tier1::block;
 pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
 mod block_tests;
@@ -287,6 +282,8 @@ mod block_rows_tests;
 mod bitlex_compile;
 // The `.rr` parser: the Bitlex grammar compiled, the engine's parser for what it refuses.
 pub(in crate::code_rule_dsl) mod rr_parser;
+/// JSON's parser: the ladder's JSONC grammar, with tree-sitter-json's ids (the tape's parse of a JSON file).
+pub(in crate::code_rule_dsl) mod json_parser;
 mod grammar;
 mod bitlex_prove;
 mod bitlex_tier2;
@@ -296,6 +293,10 @@ mod bitlex_compile_tests;
 mod token_local;
 #[cfg(test)]
 mod token_local_tests;
+#[cfg(test)]
+mod gating_rr_tests;
+#[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+mod regex_relocation_tests;
 #[cfg(test)]
 mod bitlex_corpus_tests;
 #[cfg(test)]
@@ -1024,36 +1025,8 @@ pub(super) fn interpreter_reference(
     packed_batch::PackedExecution::interpret_reference(programs, file, roots, limits)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum Error {
-    InvalidOpcode(usize),
-    InvalidMode(usize),
-    InvalidOperand(usize),
-    InvalidTarget(usize),
-    NonProgressingCycle(usize),
-    InvalidGreedyRegion(usize),
-    WorkLimit,
-    UnsupportedPattern,
-    UnsupportedFeature(&'static str),
-    UnknownNodeKind(String),
-    UnknownField(String),
-    UnknownCapture(String),
-    ScmParse { offset: usize, message: String },
-    InvalidAnchor,
-    UnsupportedBackend,
-    BackendCapacity,
-    /// A label run's workspace is over Metal's buffer budget (`label_passes::run` halves its lanes'
-    /// states; past the fewest it is `BackendCapacity`).
-    BackendBudget,
-    BackendLaunchLimit,
-    /// A label run's micro walk outgrew its frames, captures or steps on the device: the run
-    /// again with deep stacks, then interpreted. Not a size refusal: the batch fits; its walks'
-    /// pools do not.
-    WalkFrames,
-    BackendFailure,
-    /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
-    RefusedShape(String),
-}
+// The transducer's errors, shared with tier 1's crate.
+pub(in crate::code_rule_dsl) use rerail_tier1::Error;
 
 #[derive(Clone, Copy)]
 struct Path {
@@ -4325,168 +4298,6 @@ fn execute_with_backend_bounded_limit(
     Ok(BatchOutcome { outputs, errors })
 }
 
-#[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct ProductionDispatchGroup {
-    id: u64,
-    expected_files: usize,
-}
-
-#[cfg(target_os = "macos")]
-static NEXT_PRODUCTION_DISPATCH_GROUP: AtomicU64 = AtomicU64::new(1);
-
-pub(in crate::code_rule_dsl) fn new_production_dispatch_group(expected_files: usize) -> ProductionDispatchGroup {
-    ProductionDispatchGroup {
-        #[cfg(target_os = "macos")]
-        id: NEXT_PRODUCTION_DISPATCH_GROUP.fetch_add(1, Ordering::Relaxed),
-        #[cfg(not(target_os = "macos"))]
-        id: 0,
-        expected_files,
-    }
-}
-
-#[cfg(target_os = "macos")]
-struct ProductionDispatchRequest {
-    group: ProductionDispatchGroup,
-    key: metal_program_backend::ProgramBufferKey,
-    programs: Vec<Program>,
-    file: TapeDoc,
-    anchors: Vec<Vec<u32>>,
-    result_limits: Vec<u32>,
-    response: mpsc::SyncSender<Result<packed_batch::PackedExecution, Error>>,
-}
-
-#[cfg(target_os = "macos")]
-fn production_grid_fits(requests: &[ProductionDispatchRequest]) -> bool {
-    let mut tasks = 0_u64;
-    let mut nodes = 0_u64;
-    let mut source_bytes = 0_u64;
-    for request in requests {
-        tasks = tasks.saturating_add(
-            request
-                .anchors
-                .iter()
-                .map(|roots| roots.len() as u64)
-                .sum::<u64>(),
-        );
-        nodes = nodes.saturating_add(request.file.transducer_len() as u64);
-        source_bytes = source_bytes.saturating_add(request.file.transducer_source().len() as u64);
-    }
-    let maximum_tasks = u64::from(u32::MAX / 2 - 1);
-    tasks <= maximum_tasks && nodes <= u64::from(u32::MAX) && source_bytes <= u64::from(u32::MAX)
-}
-
-#[cfg(target_os = "macos")]
-fn production_grid_partitions(requests: &[ProductionDispatchRequest]) -> Vec<Range<usize>> {
-    let mut pending = Vec::with_capacity(requests.len());
-    pending.push(0..requests.len());
-    let mut partitions = Vec::new();
-    while let Some(range) = pending.pop() {
-        if range.len() <= 1 || production_grid_fits(&requests[range.clone()]) {
-            partitions.push(range);
-            continue;
-        }
-        let middle = range.start + range.len() / 2;
-        pending.push(middle..range.end);
-        pending.push(range.start..middle);
-    }
-    partitions
-}
-
-#[cfg(target_os = "macos")]
-fn execute_production_grid(requests: &[ProductionDispatchRequest]) {
-    for range in production_grid_partitions(requests) {
-        let partition = &requests[range.clone()];
-        let programs = &partition[0].programs;
-        let program_count = programs.len();
-        let files = partition
-            .iter()
-            .map(|request| request.file.clone())
-            .collect::<Vec<_>>();
-        let anchors = partition
-            .iter()
-            .map(|request| request.anchors.clone())
-            .collect::<Vec<_>>();
-        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-            eprintln!(
-                "TEMPO_PRODUCTION_GRID files={} sourceBytes={:?} tasks={:?}",
-                partition.len(),
-                partition
-                    .iter()
-                    .map(|request| request.file.transducer_source().len())
-                    .collect::<Vec<_>>(),
-                partition
-                    .iter()
-                    .map(|request| request.anchors.iter().map(Vec::len).sum::<usize>())
-                    .collect::<Vec<_>>()
-            );
-        }
-        let result = execute_with_backend_packed_result_limits(
-            ExecutionBackend::MetalJit,
-            programs,
-            &files,
-            &anchors,
-            Some(&partition[0].result_limits),
-        );
-        match result {
-            Ok(execution) => {
-                for (file, request) in partition.iter().enumerate() {
-                    let view = execution.view(file, 1, 0, program_count);
-                    let _ = request.response.send(view);
-                }
-            }
-            Err(error) => {
-                for request in partition {
-                    let _ = request.response.send(Err(error.clone()));
-                }
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn production_dispatch_worker(receiver: mpsc::Receiver<ProductionDispatchRequest>) {
-    const MAX_FILES_PER_DISPATCH: usize = 64;
-    const INCOMPLETE_GROUP_TIMEOUT: Duration = Duration::from_millis(100);
-    let mut pending = None;
-    loop {
-        let first = match pending.take().map(Ok).unwrap_or_else(|| receiver.recv()) {
-            Ok(request) => request,
-            Err(_) => return,
-        };
-        let expected_files = first.group.expected_files.clamp(1, MAX_FILES_PER_DISPATCH);
-        let mut requests = vec![first];
-        while requests.len() < expected_files {
-            match receiver.recv_timeout(INCOMPLETE_GROUP_TIMEOUT) {
-                Ok(request)
-                    if request.group.id == requests[0].group.id
-                        && request.key == requests[0].key
-                        && request.result_limits == requests[0].result_limits =>
-                {
-                    requests.push(request);
-                }
-                Ok(request) => {
-                    pending = Some(request);
-                    break;
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => break,
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-        execute_production_grid(&requests);
-    }
-}
-
-#[cfg(target_os = "macos")]
-static PRODUCTION_DISPATCH: LazyLock<mpsc::SyncSender<ProductionDispatchRequest>> =
-    LazyLock::new(|| {
-        let (sender, receiver) = mpsc::sync_channel(64);
-        std::thread::Builder::new()
-            .name("tempo-metal-dispatch".to_owned())
-            .spawn(move || production_dispatch_worker(receiver))
-            .expect("Tempo Metal dispatch worker must start");
-        sender
-    });
-
 pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -> Result<(), Error> {
     #[cfg(target_os = "macos")]
     {
@@ -4498,60 +4309,6 @@ pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -
             native_cpu::warm_jit(program)?;
         }
         Ok(())
-    }
-}
-
-pub(in crate::code_rule_dsl) fn execute_production_packed_result_limits(
-    programs: &[Program],
-    files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
-    result_limits: &[u32],
-    group: ProductionDispatchGroup,
-) -> Result<packed_batch::PackedExecution, Error> {
-    #[cfg(target_os = "macos")]
-    {
-        if files.len() != 1
-            || anchors.len() != 1
-            || anchors[0].len() != programs.len()
-            || result_limits.len() != programs.len()
-        {
-            return Err(Error::InvalidAnchor);
-        }
-        let key = metal_program_backend::program_buffer_key(programs)?;
-        let (response, receive) = mpsc::sync_channel(1);
-        PRODUCTION_DISPATCH
-            .send(ProductionDispatchRequest {
-                group,
-                key,
-                programs: programs.to_vec(),
-                file: files[0].clone(),
-                anchors: anchors[0].clone(),
-                result_limits: result_limits.to_vec(),
-                response,
-            })
-            .map_err(|_| Error::BackendFailure)?;
-        loop {
-            match receive.try_recv() {
-                Ok(result) => break result,
-                Err(mpsc::TryRecvError::Disconnected) => break Err(Error::BackendFailure),
-                Err(mpsc::TryRecvError::Empty) => {
-                    if !matches!(rayon::yield_now(), Some(rayon::Yield::Executed)) {
-                        std::thread::yield_now();
-                    }
-                }
-            }
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = group;
-        execute_with_backend_packed_result_limits(
-            ExecutionBackend::CpuJit,
-            programs,
-            files,
-            anchors,
-            Some(result_limits),
-        )
     }
 }
 

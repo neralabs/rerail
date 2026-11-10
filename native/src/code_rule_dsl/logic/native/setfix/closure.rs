@@ -203,6 +203,12 @@ pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, l
         at += 1;
     }
     let n = nodes.len();
+    // Each row's level (decision 0090), when the relation keeps them: a row is made from the one a hop before it,
+    // so its level is its seed's plus its distance (the least over its seeds), which puts the row it is made from
+    // strictly below it. One push of them all would put every row at one level.
+    if store.rels[0].level.len() == store.rels[0].n {
+        return Some(by_distance(cl, &mut store.rels[0], &index, &nodes, &adj));
+    }
     let chain = adj.iter().all(|a| a.len() <= 1);
     // Each start node's reach, as node ids.
     let reach: Box<dyn Fn(u32, &mut Vec<u32>)> = if chain {
@@ -266,4 +272,66 @@ pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, l
         rows += rel.push(&fresh.data[i * rel.k..][..rel.k]) as usize;
     }
     Some(Ran { nodes: n, rows, how: if chain { "chains" } else { "bit rows" } })
+}
+
+/// The closure's rows with their levels: from each seed row, a search along `adj` gives each node its distance, and a
+/// row's level is the least of its seeds' levels plus their distances.
+fn by_distance(cl: &Closure, rel: &mut super::Rel, index: &HashMap<i64, u32>, nodes: &[i64], adj: &[Vec<u32>]) -> Ran {
+    let seeds = rel.n;
+    // A start node's reach with distances, searched once per distinct start.
+    let mut reach_of: HashMap<u32, Vec<(u32, u32)>> = HashMap::default();
+    let mut seen: Vec<u32> = vec![u32::MAX; nodes.len()];
+    let mut stamp = 0u32;
+    let mut search = |s: u32| -> Vec<(u32, u32)> {
+        stamp += 1;
+        let mut out: Vec<(u32, u32)> = Vec::new();
+        let mut frontier = vec![s];
+        let mut d = 0;
+        while !frontier.is_empty() {
+            d += 1;
+            let mut next = Vec::new();
+            for &v in &frontier {
+                for &w in &adj[v as usize] {
+                    if seen[w as usize] != stamp {
+                        seen[w as usize] = stamp;
+                        out.push((w, d));
+                        next.push(w);
+                    }
+                }
+            }
+            frontier = next;
+        }
+        out
+    };
+    let mut at: HashMap<Vec<i64>, usize> = HashMap::default();
+    let mut made: Vec<(Vec<i64>, u32)> = Vec::new();
+    let mut row = vec![0i64; rel.k];
+    for id in 0..seeds {
+        if rel.dead(id as u32) {
+            continue;
+        }
+        row.copy_from_slice(rel.row(id));
+        let base = rel.level[id];
+        let s = index[&row[cl.col]];
+        let reach = reach_of.entry(s).or_insert_with(|| search(s));
+        for &(z, d) in reach.iter() {
+            row[cl.col] = nodes[z as usize];
+            let level = base + d;
+            match at.get(&row) {
+                Some(&i) => made[i].1 = made[i].1.min(level),
+                None => {
+                    at.insert(row.clone(), made.len());
+                    made.push((row.clone(), level));
+                }
+            }
+        }
+    }
+    let mut rows = 0;
+    for (r, level) in &made {
+        if rel.push(r) {
+            *rel.level.last_mut().expect("a level pushed") = *level;
+            rows += 1;
+        }
+    }
+    Ran { nodes: nodes.len(), rows, how: "levels by distance" }
 }

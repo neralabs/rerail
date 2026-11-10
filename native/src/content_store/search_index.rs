@@ -1,6 +1,6 @@
 //! Query-independent tape search index: publication, backlog cursor, and kind presence.
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::SEARCH_INDEX_FAMILY_WRITES;
 use super::{
     CODEC_ZSTD, ContentStore, HashKey, MAX_PUBLICATION_BATCH, SearchKindLookup, StoreError,
@@ -9,7 +9,7 @@ use super::{
 use rusqlite::{TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
 
 /// The maintenance backlog: stored tapes of one grammar version and tape format after a keyset
@@ -45,7 +45,7 @@ impl ContentStore {
     /// Take `tapes`, which this build can never decode into a search index, out of the maintenance
     /// backlog: each gets an incomplete search-index set, which presence lookups answer as
     /// `Unknown`, so the tape is never narrowed. A tape that already has a set keeps it.
-    pub(crate) fn put_unavailable_search_indexes(
+    pub fn put_unavailable_search_indexes(
         &self,
         tapes: &[TapeId],
         index_version: i64,
@@ -77,7 +77,7 @@ impl ContentStore {
     /// Publish one query-independent FTS document per immutable tape. The kind stream contains one
     /// token per preorder node. All string construction and validation finish before the short
     /// write transaction starts.
-    pub(crate) fn put_search_indexes_bulk(&self, indexes: &[TapeSearchIndex]) -> StoreResult<()> {
+    pub fn put_search_indexes_bulk(&self, indexes: &[TapeSearchIndex]) -> StoreResult<()> {
         if indexes.len() > MAX_PUBLICATION_BATCH {
             return Err(StoreError::Invalid(
                 "search-index publication exceeds 64 tapes".to_owned(),
@@ -120,7 +120,7 @@ impl ContentStore {
             // idempotent without a point lookup or stale FTS segments.
             remove_kind.execute([index.tape_id.0])?;
             put_kind.execute(params![index.tape_id.0, index.kind_tokens])?;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             SEARCH_INDEX_FAMILY_WRITES.fetch_add(1, Ordering::Relaxed);
             put_set.execute(params![
                 index.tape_id.0,
@@ -138,7 +138,7 @@ impl ContentStore {
     /// without a search index: tape id, grammar id, source text and decoded tape image. The caller
     /// retains the keyset cursor across maintenance wakes, so each batch seeks past already-indexed
     /// tapes.
-    pub(crate) fn tapes_without_search_index_after(
+    pub fn tapes_without_search_index_after(
         &self,
         grammar_version: i64,
         tape_format_version: i64,
@@ -214,7 +214,7 @@ impl ContentStore {
 
     /// Returns whether each complete, error-free stored tape contains any requested root kind.
     /// Missing, stale, malformed, and syntax-error index rows remain non-negative answers.
-    pub(crate) fn get_search_kind_presence_bulk(
+    pub fn get_search_kind_presence_bulk(
         &self,
         lookups: &[SearchKindLookup],
     ) -> StoreResult<Vec<StoredKindPresence>> {

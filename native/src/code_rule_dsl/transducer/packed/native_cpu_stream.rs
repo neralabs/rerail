@@ -172,8 +172,12 @@ pub(super) struct CompiledStream {
     pub(super) wraps: bool,
     pub(super) clif: String,
     pub(super) disassembly: String,
-    /// The CLIF blocks of the loops' heads, with their steps (`native_cpu_shape`).
+    /// The CLIF blocks of the loops' heads, with their steps (`native_cpu_shape`): the token
+    /// loop's function's.
     pub(super) heads: Vec<(String, Step)>,
+    /// Its calls, each of an outlined function made from the same program (`outline`): the
+    /// only calls the machine code may have.
+    pub(super) own_calls: usize,
 }
 
 /// Each word's successors, as `stream::validate` reads them, `TOKEN`'s cut.
@@ -448,9 +452,58 @@ struct Reorder {
     before: Option<Value>,
     /// Where the count of records placed goes.
     counts: Value,
-    /// The table's final pass (`table`), one for every `ACCEPT`: the kind and size columns and
-    /// the records.
-    fin: Block,
+}
+
+impl Reorder {
+    /// Its values, as an outlined function's parameters (`outline`).
+    fn values(&self) -> Vec<Value> {
+        [self.nodes, self.supers, self.wraps].into_iter().chain(self.cols).chain(self.out).chain([self.head, self.link, self.place, self.snode, self.counts]).chain(self.before).collect()
+    }
+
+    /// The same, from the parameters `p` of its function.
+    fn of(p: &[Value], before: bool) -> Self {
+        let col = |k: usize| [p[k], p[k + 1], p[k + 2], p[k + 3], p[k + 4]];
+        Reorder { nodes: p[0], supers: p[1], wraps: p[2], cols: col(3), out: col(8), head: p[13], link: p[14], place: p[15], snode: p[16], counts: p[17], before: before.then(|| p[18]) }
+    }
+}
+
+/// A function of tier 2's own, made from the same program and called once per file: `build`
+/// makes its body from its `params` words and gives its heads. Only the token loop is inlined;
+/// the node table's passes run once, at `ACCEPT`, and would only crowd it. Checked: it calls
+/// nothing, and each loop is a stated one.
+fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, build: impl FnOnce(&mut FunctionBuilder<'_>, &[Value], &mut Vec<(Block, Step)>)) -> Result<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
+    let mut signature = module.make_signature();
+    for _ in 0..params {
+        signature.params.push(AbiParam::new(types::I64));
+    }
+    for _ in 0..returns {
+        signature.returns.push(AbiParam::new(types::I64));
+    }
+    let id = module.declare_function(name, Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+    let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), signature.clone());
+    let mut fctx = FunctionBuilderContext::new();
+    let mut heads = Vec::new();
+    {
+        let mut f = FunctionBuilder::new(&mut func, &mut fctx);
+        let entry = f.create_block();
+        f.append_block_params_for_function_params(entry);
+        f.switch_to_block(entry);
+        let p = f.block_params(entry).to_vec();
+        build(&mut f, &p, &mut heads);
+        f.seal_all_blocks();
+        f.finalize();
+    }
+    super::native_cpu_shape::check(&func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
+    Ok((id, signature, func))
+}
+
+/// A call of an outlined function (`outline`), from `f`.
+fn call_own(f: &mut FunctionBuilder<'_>, id: cranelift_module::FuncId, signature: &cranelift_codegen::ir::Signature, args: &[Value]) -> Vec<Value> {
+    let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+    let signature = f.import_signature(signature.clone());
+    let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+    let call = f.ins().call(callee, args);
+    f.inst_results(call).to_vec()
 }
 
 /// At `ACCEPT` with wraps: the node table in preorder. Each record in the order made, a wrap's
@@ -458,7 +511,7 @@ struct Reorder {
 /// supertype's node at its place. A program that rereads leaves the dropped records out, each
 /// node's size less those in its range (from its base, `size` records), counted first. Loops
 /// over the table and one over the supertypes, each step a record (`Step::Node`). Writes the
-/// count placed; returns 0.
+/// count placed. An outlined function of its own (`outline`).
 fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder, heads: &mut Vec<(Block, Step)>) {
     let flags = MemFlags::trusted();
     let at = |f: &mut FunctionBuilder<'_>, c: Value, i: Value| {
@@ -609,11 +662,7 @@ fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder, heads: &mut Vec<(Block, Step
     f.ins().jump(supers, &[BlockArg::from(s1)]);
 
     f.switch_to_block(done);
-    // Without a wrap made, the table is in preorder as made.
-    let placed = f.ins().load(types::I64, flags, r.counts, 0);
-    let kind = f.ins().select(r.wraps, r.out[0], r.cols[0]);
-    let size = f.ins().select(r.wraps, r.out[4], r.cols[4]);
-    f.ins().jump(r.fin, &[BlockArg::from(kind), BlockArg::from(size), BlockArg::from(placed)]);
+    f.ins().return_(&[]);
 }
 
 /// The table's final pass, once it is in preorder: each node's parent and its extra flag, into
@@ -716,6 +765,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
     let mut fctx = FunctionBuilderContext::new();
     let mut heads: Vec<(Block, Step)> = Vec::new();
     let shape;
+    let own;
     {
         let mut f = FunctionBuilder::new(&mut context.func, &mut fctx);
         let entry = f.create_block();
@@ -779,6 +829,9 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
             f.append_block_param(fin, types::I64);
         }
         let mut fin_used = false;
+        // The node table's passes, outlined (`outline`): made where first called.
+        let mut reorder_fn = None;
+        let mut table_fn = None;
         let w: Vec<Value> = if wrapping {
             [FRAME_BASE, FRAME_LAST, FRAME_LAST_BASE, HEAD, LINK, PLACE, OUT_KIND, OUT_FIELD, OUT_START, OUT_END, OUT_SIZE].iter().map(|&at| load(&mut f, at)).collect()
         } else {
@@ -1551,7 +1604,19 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                         let wraps = f.ins().iadd(wraps, dead);
                         f.ins().store(flags, wraps, counts_c, 16);
                         let rereads = words.iter().any(|b| matches!(b.operation, Op::Reread { .. }));
-                        reorder(&mut f, Reorder { nodes, supers, wraps, cols: [kind_c, field_c, start_c, end_c, size_c], out: [wc(6), wc(7), wc(8), wc(9), wc(10)], head: wc(head_c), link: wc(link_c), place: wc(place_c), snode: snode_c, before: rereads.then(|| wc(fbase_c)), counts: counts_c, fin }, &mut heads);
+                        let r = Reorder { nodes, supers, wraps, cols: [kind_c, field_c, start_c, end_c, size_c], out: [wc(6), wc(7), wc(8), wc(9), wc(10)], head: wc(head_c), link: wc(link_c), place: wc(place_c), snode: snode_c, before: rereads.then(|| wc(fbase_c)), counts: counts_c };
+                        let args = r.values();
+                        if reorder_fn.is_none() {
+                            let before = r.before.is_some();
+                            reorder_fn = Some(outline(&mut module, "tempo_stream_reorder", args.len(), 0, |f, p, heads| reorder(f, Reorder::of(p, before), heads))?);
+                        }
+                        let (id, sig, _) = reorder_fn.as_ref().expect("made");
+                        call_own(&mut f, *id, sig, &args);
+                        // Without a wrap made, the table is in preorder as made.
+                        let placed = f.ins().load(types::I64, flags, counts_c, 0);
+                        let kind = f.ins().select(wraps, r.out[0], r.cols[0]);
+                        let size = f.ins().select(wraps, r.out[4], r.cols[4]);
+                        f.ins().jump(fin, &[BlockArg::from(kind), BlockArg::from(size), BlockArg::from(placed)]);
                     } else {
                         f.ins().jump(fin, &[BlockArg::from(kind_c), BlockArg::from(size_c), BlockArg::from(nodes)]);
                     }
@@ -1580,7 +1645,11 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         if fin_used {
             f.switch_to_block(fin);
             let p = f.block_params(fin).to_vec();
-            table(&mut f, [p[0], p[1]], p[2], open_c, [parent_c, extra_c], &native.readings.extras, &mut heads);
+            let extras = &native.readings.extras;
+            let made = outline(&mut module, "tempo_stream_table", 6, 1, |f, q, heads| table(f, [q[0], q[1]], q[2], q[3], [q[4], q[5]], extras, heads))?;
+            let r = call_own(&mut f, made.0, &made.1, &[p[0], p[1], p[2], open_c, parent_c, extra_c]);
+            f.ins().return_(&[r[0]]);
+            table_fn = Some(made);
         }
         f.switch_to_block(off_end);
         let past = f.ins().iconst(types::I64, words.len() as i64 + 1);
@@ -1590,21 +1659,35 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         f.ins().return_(&[pc]);
         f.seal_all_blocks();
         f.finalize();
-        shape = super::native_cpu_shape::check(&context.func, &heads);
+        own = reorder_fn.into_iter().chain(table_fn).collect::<Vec<_>>();
+        let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
+        shape = super::native_cpu_shape::check(&context.func, &heads, &names);
     }
     shape.map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
-    let clif = context.func.display().to_string();
+    let mut clif = context.func.display().to_string();
     super::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
-    let disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
+    let mut disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
     module.clear_context(&mut context);
+    let calls = clif.lines().filter(|l| l.trim().starts_with("call ") || l.contains(" = call ")).count();
+    // The outlined functions, after the token loop's: their IR and machine code appended.
+    for (fid, _, func) in own {
+        let mut c: Context = module.make_context();
+        c.func = func;
+        c.set_disasm(true);
+        clif.push_str(&c.func.display().to_string());
+        super::native_cpu_codegen::define_function(&mut module, fid, &mut c).map_err(|_| Error::BackendFailure)?;
+        disassembly.push_str(&c.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
+        module.clear_context(&mut c);
+    }
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
     let code = module.get_finalized_function(id);
     // SAFETY: `tempo_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     let heads = heads.into_iter().map(|(b, s)| (b.to_string(), s)).collect();
+    let own_calls = calls;
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
-    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, clif, disassembly, heads })
+    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, clif, disassembly, heads, own_calls })
 }
 
 /// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last
@@ -1827,6 +1910,9 @@ pub(in crate::code_rule_dsl) struct Columns {
     pub(in crate::code_rule_dsl) parent: Vec<u32>,
     /// 1 for an extra (a comment).
     pub(in crate::code_rule_dsl) extra: Vec<u8>,
+    /// The supertypes, one row each: the node's record and the supertype's kind.
+    pub(in crate::code_rule_dsl) super_node: Vec<u32>,
+    pub(in crate::code_rule_dsl) super_kind: Vec<u32>,
 }
 
 impl Columns {
@@ -1852,7 +1938,11 @@ impl Tape {
         };
         let (parent, mut extra) = (take(&mut self.parent), std::mem::take(&mut self.extra));
         extra.truncate(n);
-        Columns { kind, field, start, end, size, parent, extra }
+        let s = self.counts[1] as usize;
+        let (mut super_node, mut super_kind) = (std::mem::take(&mut self.super_node), std::mem::take(&mut self.super_kind));
+        super_node.truncate(s);
+        super_kind.truncate(s);
+        Columns { kind, field, start, end, size, parent, extra, super_node, super_kind }
     }
 
     /// The node table as `stream::Node`s.
