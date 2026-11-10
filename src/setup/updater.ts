@@ -681,25 +681,43 @@ export class ManagedUpdater {
     if (lease?.owner === owner) await rm(lockPath, { recursive: true, force: true });
   }
 
+  /** Makes the update lock folder; false when another update holds it, or on Windows is still deleting it as it lets go. */
+  private async makeLockFolder(lockPath: string): Promise<boolean> {
+    try {
+      await mkdir(lockPath, { mode: 0o700 });
+      return true;
+    } catch (error) {
+      if (nameTaken(error, this.platform)) return false;
+      throw error;
+    }
+  }
+
+  /** Takes the update lock, clearing one whose lease has expired; throws when another update holds it. */
+  private async takeLock(lockPath: string): Promise<void> {
+    const running = (): Error => new Error("Another Rerail update is already running");
+    if (await this.makeLockFolder(lockPath)) return;
+    // On Windows a lease being deleted with its folder cannot be read: that update is letting go.
+    const lease = await this.readLockLease(lockPath).catch((readError: unknown) => {
+      if (heldOnWindows(readError, this.platform)) return undefined;
+      throw readError;
+    });
+    if (lease === undefined || Date.parse(lease.expiresAt) > this.now().getTime()) throw running();
+    // Another update clearing the same expired lock at once may be deleting it too (Windows refuses this removal then),
+    // or may make the folder again before this update does: either way that update holds the lock now.
+    try {
+      await rm(lockPath, { recursive: true, force: true });
+    } catch (error) {
+      if (heldOnWindows(error, this.platform)) throw running();
+      throw error;
+    }
+    if (!(await this.makeLockFolder(lockPath))) throw running();
+  }
+
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
     const lockPath = join(this.home, UPDATE_LOCK_DIR);
     const owner = randomUUID();
     await mkdir(this.home, { recursive: true, mode: 0o700 });
-    try {
-      await mkdir(lockPath, { mode: 0o700 });
-    } catch (error) {
-      // Another update holds the lock, or on Windows is still deleting its folder or lease as it lets go.
-      if (!nameTaken(error, this.platform)) throw error;
-      const lease = await this.readLockLease(lockPath).catch((readError: unknown) => {
-        if (heldOnWindows(readError, this.platform)) return undefined;
-        throw readError;
-      });
-      if (lease === undefined || Date.parse(lease.expiresAt) > this.now().getTime()) {
-        throw new Error("Another Rerail update is already running");
-      }
-      await rm(lockPath, { recursive: true, force: true });
-      await mkdir(lockPath, { mode: 0o700 });
-    }
+    await this.takeLock(lockPath);
     await writeFile(
       join(lockPath, "lease.json"),
       `${JSON.stringify({
