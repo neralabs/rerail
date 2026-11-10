@@ -25,6 +25,9 @@ Below, `<id>` is the pack (`packs/<id>/`), `<tool>` the upstream tool, `<rule>` 
 
 A rule the reviewer is not sure of stays a candidate; `candidates/README.md` says what each candidate waits on.
 Whether a shipped port starts on is not a judgement call: `upstream-status` decides it from the tool's declared facts.
+The one exception is a steer that would do harm where no matcher change can tell the cases apart
+([rule quality](../skills/rerail-create/references/rule-quality.md#the-fix-ladder)): the reviewer lists it
+`"on": false` and its section in the pack's README says why.
 This page is for the contributor and for the coding agent working with them.
 
 </details>
