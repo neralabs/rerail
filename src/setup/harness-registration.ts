@@ -722,7 +722,8 @@ function planGroupedHooks(
  * The hooks' recorded-first, PATH-fallback order for the status line: without it, once the recorded node is gone the
  * status line shows the shell's "No such file or directory" in its place. `"$@"` carries the script and, for a
  * project's settings, the settings path after it. Claude Code runs the status line through Git Bash on Windows too, so
- * every word after it is quoted for a POSIX shell there as well (`claudeStatusCommand`).
+ * every word after it is quoted for a POSIX shell there as well (`claudeStatusCommand`). There the `sh` is a second Git
+ * Bash process, about 2% of a status-line run, so Windows keeps the one form registration recognises everywhere.
  */
 const CLAUDE_STATUS_FALLBACK = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' `;
 
