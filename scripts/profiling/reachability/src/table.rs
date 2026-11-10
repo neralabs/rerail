@@ -245,7 +245,7 @@ unsafe impl VTabCursor for Cursor {
     }
     fn column(&self, ctx: &mut Context, column: c_int) -> Result<()> {
         let (root, node) = self.row.ok_or_else(|| failure("cursor exhausted"))?;
-        ctx.set_result(&match column {
+        ctx.set_result(match column {
             0 => root,
             1 => node,
             _ => self.handle,
