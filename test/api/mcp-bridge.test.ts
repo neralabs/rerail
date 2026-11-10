@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +32,8 @@ interface RecordedDaemon {
   pid: number;
   port: number;
   startedAt?: number;
+  /** The engine socket the state records: a Unix socket path unless a test names a Windows pipe. */
+  kernelSocketPath?: string;
 }
 
 interface BridgeSetup {
@@ -68,7 +71,7 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
     url: `http://127.0.0.1:${daemon.port}/`,
     version: "0.0.0",
     databasePath: join(home, "rerail.sqlite"),
-    kernelSocketPath: "/tmp/rerail-bridge-test.sock",
+    kernelSocketPath: daemon.kernelSocketPath ?? "/tmp/rerail-bridge-test.sock",
     ui: "bundled",
     startedAt: daemon.startedAt ?? 0,
     packageRoot: "/tmp/rerail-bridge-test-package",
@@ -315,6 +318,25 @@ describe("Rerail MCP bridge", () => {
     expect(run.requests).toEqual([]);
     expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 5, error: { code: -32000, message: NOT_RUNNING } })]);
     expect(run.stderr).toEqual([`rerail: mcp bridge: ${NOT_RUNNING}`]);
+  });
+
+  it.runIf(process.platform === "win32")("on Windows probes no live pid whose engine pipe is gone, and relays to the daemon that holds it", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-bridge-test-${process.pid}-${Date.now().toString(16)}`;
+    const daemon = { pid: process.pid, port: 4321, kernelSocketPath: pipe };
+    const ping = JSON.stringify({ jsonrpc: "2.0", id: 6, method: "ping" });
+    const pong = JSON.stringify({ jsonrpc: "2.0", id: 6, result: {} });
+    // Windows ends a daemon without its cleanup at logoff and hands its pid on; a live daemon always holds its pipe.
+    const stale = await runBridge([ping], [new Response(pong, { status: 200 })], { daemon });
+    expect(stale.probes).toEqual([]);
+    expect(stale.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 6, error: { code: -32000, message: NOT_RUNNING } })]);
+    const engine = createServer();
+    await new Promise<void>(resolve => engine.listen(pipe, resolve));
+    try {
+      const live = await runBridge([ping], [new Response(pong, { status: 200 })], { daemon });
+      expect(live.stdout).toEqual([pong]);
+    } finally {
+      await new Promise<void>(resolve => engine.close(() => resolve()));
+    }
   });
 
   it("reports a daemon that stopped answering after its health check as not running", async () => {

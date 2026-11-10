@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { Writable } from "node:stream";
 import { isSteerRule, type AdapterDelivery, type RerailHost, type SteerRule } from "../engine/adapter-contract.js";
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
+import { processState } from "../engine/process-liveness.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
 import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
 import { scrubSecrets } from "../engine/secret-scrub.js";
@@ -216,12 +217,7 @@ async function reclaimDeadOwner(path: string): Promise<boolean> {
   } catch {
     return false;
   }
-  try {
-    process.kill(owner.pid, 0);
-    return false;
-  } catch (error) {
-    if (!errno(error, "ESRCH")) return false;
-  }
+  if (processState(owner.pid) !== "gone") return false;
   try {
     if (await readFile(path, "utf8") !== serializedOwner) return false;
     await rm(path);

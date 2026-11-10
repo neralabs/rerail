@@ -18,6 +18,7 @@ import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineHoldsCapability } from "./engine-proof.js";
 import { enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
+import { processState, type ProcessSignal } from "../engine/process-liveness.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
@@ -342,51 +343,8 @@ export interface StartDaemonResult {
 }
 
 /** Whether `pid` is a live process of any user: a process another user runs still holds its pid (`EPERM`). */
-export function processAlive(pid: number, kill: ProcessSignal = process.kill.bind(process)): boolean {
-  return processLiveness(pid, kill) !== "dead";
-}
-
-/**
- * Whether `pid` is a live process this OS user runs, the only kind that can be this user's daemon. A state file whose
- * pid belongs to another user is left over from a daemon that is gone, its pid since reused; probing the URL it records
- * would send the capability to whoever listens there now. On Windows `EPERM` answers alike for another user's
- * process, a SYSTEM service and this user's elevated one, so it counts as not this user's there too; `lookupDaemon`
- * tells this user's elevated daemon apart by its engine's proof.
- */
-export function ownProcessAlive(pid: number, kill: ProcessSignal = process.kill.bind(process)): boolean {
-  return processLiveness(pid, kill) === "own";
-}
-
-/** `process.kill`'s shape, which tests replace. */
-export type ProcessSignal = (pid: number, signal?: string | number) => boolean;
-
-function processLiveness(pid: number, kill: ProcessSignal = process.kill.bind(process)): "own" | "other-user" | "dead" {
-  let owner: "own" | "other-user" = "own";
-  try {
-    kill(pid, 0);
-  } catch (error) {
-    // EPERM means the process exists but this user may not signal it.
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") return "dead";
-    owner = "other-user";
-  }
-  return isZombie(pid) ? "dead" : owner;
-}
-
-/**
- * A process that has exited but was never reaped still answers signal 0. In a container without an init process
- * nothing reaps a detached daemon, so it stays a zombie for as long as the container runs: it holds no port and
- * no socket, and counts as stopped.
- */
-function isZombie(pid: number): boolean {
-  if (process.platform !== "linux") return false;
-  let stat: string;
-  try {
-    stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-  } catch {
-    return false;
-  }
-  // `pid (comm) state …`: the command name may itself hold spaces and parentheses, so the state follows the last `)`.
-  return /^\s*[ZX]/u.test(stat.slice(stat.lastIndexOf(")") + 1));
+export function processAlive(pid: number, kill?: ProcessSignal): boolean {
+  return processState(pid, kill) !== "gone";
 }
 
 function hasDaemonStateFields(value: unknown): value is Record<string, unknown> {
@@ -497,17 +455,22 @@ export function daemonMayHold(pid: number, machine: DaemonMachine = THIS_MACHINE
 }
 
 /**
- * Whether the daemon `state` records may be this user's: a live pid, on Windows one holding its engine pipe, and this
- * user's process. On Windows a pid this user may not signal (`EPERM`) can still be this user's daemon, started from an
- * elevated terminal or an elevated agent session; it counts when its engine proves it holds the capability `state`
- * records, which a process on a reused pid cannot. Nothing is sent to its URL before that.
+ * Whether the daemon `state` records may still run, as this user's: the one check every reader of a state file makes
+ * before it sends the capability the file records to the URL it records. A state file outlives a daemon killed without
+ * its cleanup, and the pid it names can since belong to another process, which would get the capability.
+ *
+ * The pid must be live and this user's to signal; another user's process cannot be this user's daemon. On Windows the
+ * state's own engine pipe must exist too, since a live daemon always holds it and Windows soon reuses a pid. There a
+ * pid this user may not signal (`EPERM`) can still be this user's daemon, started from an elevated terminal or agent
+ * session: it counts when its engine proves it holds the capability (`engineHoldsCapability`), which a process on a
+ * reused pid cannot. Nothing is sent to its URL before that.
  */
-async function recordedDaemonMayBeOwn(state: DaemonState, machine: DaemonMachine): Promise<boolean> {
-  const liveness = processLiveness(state.pid, machine.kill);
-  if (liveness === "dead") return false;
-  if (machine.platform !== "win32") return liveness === "own";
+export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMachine = THIS_MACHINE): Promise<boolean> {
+  const daemon = processState(state.pid, machine.kill);
+  if (daemon === "gone") return false;
+  if (machine.platform !== "win32") return daemon === "running";
   if (!enginePipeExists(state, machine)) return false;
-  return liveness === "own" || (state.accessToken !== undefined && await machine.holdsCapability(state.kernelSocketPath, state.accessToken));
+  return daemon === "running" || (state.accessToken !== undefined && await machine.holdsCapability(state.kernelSocketPath, state.accessToken));
 }
 
 /**
@@ -524,7 +487,7 @@ export async function lookupDaemon(
   if (state === undefined) return { status: "absent" };
   // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe: the
   // state is stale, and its URL is never probed.
-  if (!(await recordedDaemonMayBeOwn(state, machine))) {
+  if (!(await recordedDaemonAlive(state, machine))) {
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }

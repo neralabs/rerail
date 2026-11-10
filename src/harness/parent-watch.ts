@@ -8,6 +8,8 @@
  * the hook by then, so nothing reads what it would answer.
  */
 
+import { processState } from "../engine/process-liveness.js";
+
 /** How often the parent is looked for. */
 const PARENT_POLL_MS = 1_000;
 
@@ -21,14 +23,9 @@ export interface ParentWatch {
   intervalMs?: number;
 }
 
-/** Whether `pid` is a live process of any user: `EPERM` says it exists and this user may not signal it. */
+/** Whether `pid` is a live process of any user. */
 function processLives(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
-  }
+  return processState(pid) !== "gone";
 }
 
 /**

@@ -52,9 +52,9 @@ import {
   launchDetached,
   lookupDaemon,
   openDashboard,
-  ownProcessAlive,
   processAlive,
   readDaemonState,
+  recordedDaemonAlive,
   startDaemon,
   startDaemonForPackage,
   stillRunningMessage,
@@ -514,9 +514,18 @@ describe("a state file Windows left behind", () => {
     throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
   };
 
-  it("counts an EPERM from a pid as not this user's on Windows, so its URL never gets the capability", () => {
+  it("has one rule for whether the daemon a state file records may be alive, which every reader of it asks", async () => {
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability" });
     expect(processAlive(4, denied)).toBe(true);
-    expect(ownProcessAlive(4, denied)).toBe(false);
+    expect(await recordedDaemonAlive(state, windows([PIPE_NAME]))).toBe(true);
+    // A live pid without the daemon's pipe is one Windows gave to another process once the daemon was gone.
+    expect(await recordedDaemonAlive(state, windows(["other"]))).toBe(false);
+    // EPERM is another user's process, or this user's elevated daemon, which alone holds the capability.
+    expect(await recordedDaemonAlive(state, { ...windows([PIPE_NAME]), kill: denied })).toBe(false);
+    expect(await recordedDaemonAlive(state, { ...windows([PIPE_NAME]), kill: denied, holdsCapability: async () => true })).toBe(true);
+    // Elsewhere the pid decides, and an EPERM is another user's process.
+    expect(await recordedDaemonAlive(state, { ...windows([]), platform: "linux" })).toBe(true);
+    expect(await recordedDaemonAlive(state, { ...windows([]), platform: "linux", kill: denied, holdsCapability: async () => true })).toBe(false);
   });
 
   it("keeps the state of a daemon this user started elevated, found by its engine's proof, and drops one nothing proves", async () => {

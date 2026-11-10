@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { spawn } from "../../engine/child-process.js";
 import { gitExecutable } from "../../engine/git.js";
+import { processState } from "../../engine/process-liveness.js";
 import { windowsSystemProgram } from "../../engine/system-programs.js";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
 import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
@@ -141,12 +142,10 @@ export async function runClaudeStatus(
   settingsPath?: string,
 ): Promise<void> {
   const ancestor = Number(process.env[PARENT_PROCESS_KEY]);
-  if (Number.isSafeInteger(ancestor) && ancestor > 0) {
-    try {
-      process.kill(ancestor, 0);
-      input.resume();
-      return;
-    } catch { /* A stale ancestry marker must not disable status. */ }
+  // A stale ancestry marker, whose pid is gone or another user's now, must not disable status.
+  if (Number.isSafeInteger(ancestor) && ancestor > 0 && processState(ancestor) === "running") {
+    input.resume();
+    return;
   }
   let previous: ClaudeStatusLine | undefined;
   try {

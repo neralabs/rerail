@@ -3,7 +3,7 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
-import { DAEMON_STATE_FILE, daemonEndpoint, ownProcessAlive, probeDaemon, readDaemonState, type DaemonEndpoint, type DaemonState } from "../runtime/daemon-control.js";
+import { DAEMON_STATE_FILE, daemonEndpoint, probeDaemon, readDaemonState, recordedDaemonAlive, type DaemonEndpoint, type DaemonState } from "../runtime/daemon-control.js";
 import { CALLER_CWD_HEADER } from "../engine/catalog/repository-model.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -95,8 +95,8 @@ class DaemonLocator {
   /** The `/mcp` endpoint of the home's live daemon and the headers that admit a request to it. */
   async endpoint(): Promise<DaemonEndpoint> {
     const state = await readDaemonState(join(this.home, DAEMON_STATE_FILE));
-    // Another user's process cannot be this user's daemon; its URL is never probed with the capability.
-    if (state === undefined || !ownProcessAlive(state.pid)) throw new Error(DAEMON_NOT_RUNNING);
+    // A pid that cannot be the recorded daemon (`recordedDaemonAlive`) never has its URL probed with the capability.
+    if (state === undefined || !(await recordedDaemonAlive(state))) throw new Error(DAEMON_NOT_RUNNING);
     if (this.#confirmed === undefined || !sameDaemon(this.#confirmed, state)) {
       this.#confirmed = undefined;
       const probe = await probeDaemon(state, this.fetchImpl);
