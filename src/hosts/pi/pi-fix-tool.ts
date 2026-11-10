@@ -69,6 +69,11 @@ const FIX_PROMPT = [
  */
 const BUN_VIRTUAL_ENTRY = /^(?:\/\$bunfs\/root\/|[A-Za-z]:[\\/]~BUN[\\/]root[\\/])/u;
 
+/** Whether `script` is Pi's own entry point on disk, and not the virtual entry of a Bun-compiled binary. */
+function isPiEntryScript(script: string | undefined): script is string {
+  return script !== undefined && !BUN_VIRTUAL_ENTRY.test(script) && existsSync(script);
+}
+
 /**
  * The child `pi` command line for `task`: Pi's own entry point when there is one, the `pi` on PATH otherwise. The child
  * loads no extensions (neither Rerail again nor the user's, headless) and has only Pi's file tools. On Windows the `pi`
@@ -82,12 +87,10 @@ export function piFixInvocation(
   script: string | undefined = process.argv[1],
   system: { platform: NodeJS.Platform; env: NodeJS.ProcessEnv } = { platform: process.platform, env: process.env },
 ): { command: string; args: string[] } {
-  const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", PI_FIX_CHILD_TOOLS.join(",")];
-  if (parent.provider !== undefined) args.push("--provider", parent.provider);
-  if (parent.model !== undefined) args.push("--model", parent.model);
-  if (parent.thinkingLevel !== undefined) args.push("--thinking", parent.thinkingLevel);
-  args.push(`${FIX_PROMPT}\n\n${task}`);
-  if (script !== undefined && !BUN_VIRTUAL_ENTRY.test(script) && existsSync(script)) {
+  const parentFlags = ([["--provider", parent.provider], ["--model", parent.model], ["--thinking", parent.thinkingLevel]] as const)
+    .flatMap(([flag, value]) => (value === undefined ? [] : [flag, value]));
+  const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", PI_FIX_CHILD_TOOLS.join(","), ...parentFlags, `${FIX_PROMPT}\n\n${task}`];
+  if (isPiEntryScript(script)) {
     return { command: execPath, args: [script, ...args] };
   }
   // A compiled `pi` binary is its own entry point; a bare runtime without one falls back to PATH.
@@ -99,6 +102,8 @@ export function piFixInvocation(
 }
 
 const count = z.number().catch(0);
+/** What a message that reports no usage, or none that parses, adds to the fix's. */
+const NO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } };
 /** The one child event a fix reads: an assistant message's end, with whatever usage and text it reports. */
 const assistantEnd = z.object({
   type: z.literal("message_end"),
@@ -111,7 +116,7 @@ const assistantEnd = z.object({
     usage: z.object({
       input: count, output: count, cacheRead: count, cacheWrite: count,
       cost: z.object({ total: count }).catch({ total: 0 }),
-    }).optional().catch(undefined),
+    }).catch(NO_USAGE),
   }),
 });
 
@@ -171,13 +176,11 @@ export class PiFixReader {
     if (!parsed.success) return;
     const { message } = parsed.data;
     this.#usage.turns += 1;
-    if (message.usage !== undefined) {
-      this.#usage.input += message.usage.input;
-      this.#usage.output += message.usage.output;
-      this.#usage.cacheRead += message.usage.cacheRead;
-      this.#usage.cacheWrite += message.usage.cacheWrite;
-      this.#usage.cost += message.usage.cost.total;
-    }
+    this.#usage.input += message.usage.input;
+    this.#usage.output += message.usage.output;
+    this.#usage.cacheRead += message.usage.cacheRead;
+    this.#usage.cacheWrite += message.usage.cacheWrite;
+    this.#usage.cost += message.usage.cost.total;
     this.#model ??= message.model;
     this.#stopReason = message.stopReason;
     this.#errorMessage = message.errorMessage;
@@ -229,14 +232,19 @@ export async function runPiFix(
   clearTimeout(timer);
   clearTimeout(killer);
   signal?.removeEventListener("abort", abort);
-  if (stopped === "aborted") throw new Error(`${PI_FIX_TOOL} was aborted`);
-  if (stopped === "timeout") throw new Error(`${PI_FIX_TOOL} timed out after ${timeoutMs / 1000}s and was stopped`);
+  const stoppedMessage = { aborted: `${PI_FIX_TOOL} was aborted`, timeout: `${PI_FIX_TOOL} timed out after ${timeoutMs / 1000}s and was stopped` };
+  if (stopped !== undefined) throw new Error(stoppedMessage[stopped]);
   const run = stdout.finish(exitCode, options.model);
   if (run.failed) {
     const reason = run.errorMessage ?? (stderr.trim() === "" ? run.text : stderr.trim());
-    throw new Error(`${PI_FIX_TOOL} failed (exit ${run.details.exitCode}): ${reason === "" ? "(no output)" : reason}`);
+    throw new Error(`${PI_FIX_TOOL} failed (exit ${run.details.exitCode}): ${shownText(reason)}`);
   }
-  return { text: run.text === "" ? "(no output)" : run.text, details: run.details };
+  return { text: shownText(run.text), details: run.details };
+}
+
+/** `text` as a fix's result shows it: "(no output)" for none. */
+function shownText(text: string): string {
+  return text === "" ? "(no output)" : text;
 }
 
 /**
