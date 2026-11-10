@@ -3209,6 +3209,7 @@ dependencies = [
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-prof",
+ "rerail-rr-parser",
  "rerail-rr-syntax",
  "ruff_python_ast",
  "ruff_python_parser",
@@ -3262,6 +3263,17 @@ name = "rerail-prof"
 version = "0.1.0"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "rerail-rr-parser"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "libc",
+ "rerail-compiler",
+ "rerail-metal",
+ "rerail-rr-syntax",
 ]
 
 [[package]]

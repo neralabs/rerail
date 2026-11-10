@@ -2,8 +2,14 @@
 //! (`tools/bitlex`): each named mask of the compiled block program equals the evaluator's mask on
 //! every input and every executor (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 
-use super::block_tests::{Executors, executors, inputs};
-use super::*;
+use crate::block_tests::{Executors, executors, inputs};
+#[allow(unused_imports)]
+use rerail_compiler::*;
+use rerail_compiler::program::Words as Program;
+use rerail_compiler::rir_asm as rir;
+use rerail_compiler::bitlex_masks as bitlex_compile;
+#[cfg(target_os = "macos")]
+use rerail_metal as metal_program_backend;
 
 /// The masks the compiler handles so far: classes, logic, `prev`, `starts`, `after`, `span`,
 /// `toggle`, `after_odd_run` and `fill`.
@@ -250,7 +256,7 @@ fn numbers_equal_the_evaluator_on_every_executor() {
 /// The whole of `json.bitlex`: on every input and every executor, a file the evaluator rejects
 /// falls back, and for one that neither rejects, each row's masks equal the evaluator's: the
 /// tree section's starts, ends and facts, and each token kind's starts and last bytes.
-const JSON: &str = include_str!("../../../../../docs/parser-generators/lexers/json.bitlex");
+const JSON: &str = include_str!("../../../../docs/parser-generators/lexers/json.bitlex");
 
 const JSON_CASES: [&[u8]; 12] = [
     br#"{"a": 1, "b": [true, false, null], "c": {"d": "x\"y\\z", "e": -0.5e+10}}"#,
@@ -337,9 +343,8 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
 #[test]
 #[cfg(target_os = "macos")]
 fn json_msl_is_one_kernel() {
-    use ast_grep_language::LanguageExt;
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
+    let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
         0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
         id => Some(id),
@@ -350,7 +355,7 @@ fn json_msl_is_one_kernel() {
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles");
     let text = compiled.text();
     let p = rir::assemble(&text).expect("assembles");
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     for width in LaneWidth::ALL {
         for strategy in ClassStrategy::ALL {
             let msl = generate_with(&native, width, strategy);
@@ -373,9 +378,9 @@ fn json_msl_is_one_kernel() {
 fn a_batch_of_files_and_programs_is_one_launch() {
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_batch};
     let programs = batch_programs();
-    let blocks: Vec<&block::BlockProgram> = programs.iter().map(|p| &p.block_programs()[0]).collect();
-    let natives: Vec<native_ir::BlockNative> = programs.iter().map(|p| native_ir::lower(p).expect("lowers").block_programs.remove(0)).collect();
-    let natives: Vec<&native_ir::BlockNative> = natives.iter().collect();
+    let blocks: Vec<&block::BlockProgram> = programs.iter().map(|p| &p.block_programs[0]).collect();
+    let natives: Vec<block_native::BlockNative> = programs.iter().map(|p| native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0)).collect();
+    let natives: Vec<&block_native::BlockNative> = natives.iter().collect();
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
@@ -399,9 +404,8 @@ fn a_batch_of_files_and_programs_is_one_launch() {
 /// The batch tests' programs: JSON's lexer and tree, three test lexers, simdjson's stage 1, and a
 /// chain of carries.
 fn batch_programs() -> Vec<Program> {
-    use super::block_tests::STAGE1;
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    use crate::block_tests::STAGE1;
+        let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
         0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
         id => Some(id),
@@ -426,7 +430,7 @@ fn batch_programs() -> Vec<Program> {
 /// The batch tests' files: lexer inputs, carry runs, JSON cases, and an empty file.
 fn batch_bytes() -> Vec<Vec<u8>> {
     let mut bytes: Vec<Vec<u8>> = inputs().into_iter().step_by(7).collect();
-    bytes.extend(super::block_tests::runs());
+    bytes.extend(crate::block_tests::runs());
     bytes.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     bytes.push(Vec::new());
     bytes
@@ -443,10 +447,10 @@ fn batch_files(bytes: &[Vec<u8>], programs: usize) -> Vec<block::BatchFile<'_>> 
 #[test]
 fn the_cpu_executors_take_a_batch() {
     let programs = batch_programs();
-    let blocks: Vec<&block::BlockProgram> = programs.iter().map(|p| &p.block_programs()[0]).collect();
+    let blocks: Vec<&block::BlockProgram> = programs.iter().map(|p| &p.block_programs[0]).collect();
     let compiled: Vec<_> = programs
         .iter()
-        .map(|p| native_cpu_block::compile(&native_ir::lower(p).expect("lowers").block_programs.remove(0)).expect("compiles"))
+        .map(|p| native_cpu_block::compile(&native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0)).expect("compiles"))
         .collect();
     let compiled: Vec<&native_cpu_block::CompiledBlock> = compiled.iter().collect();
     let bytes = batch_bytes();
@@ -480,7 +484,7 @@ fn json_batch_cost_per_block() {
         .map(|path| std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}")))
         .collect();
     let program = batch_programs().remove(0);
-    let native = native_ir::lower(&program).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&program, 0, 0).expect("lowers").block_programs.remove(0);
     let files: Vec<block::BatchFile<'_>> = bytes.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
     let total: usize = bytes.iter().map(Vec::len).sum();
     let blocks: usize = bytes.iter().map(|b| b.len().div_ceil(64).max(1)).sum();
@@ -523,37 +527,13 @@ fn json_program() -> Program {
     batch_programs().remove(0)
 }
 
-/// JSON's block program (tier 2's analysis reads it: `block_plan_tests`).
-pub(super) fn json_block_program() -> block::BlockProgram {
-    json_program().block_programs()[0].clone()
-}
-
-/// A JSON-grammar Bitlex text's block program: `json.bitlex` with a change, say.
-pub(super) fn json_variant_block_program(src: &str) -> block::BlockProgram {
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
-    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
-        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
-        id => Some(id),
-    };
-    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let stmts = ::bitlex::syntax::parse(src).expect("parses");
-    let text = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).text();
-    rir::assemble(&text).expect("assembles").block_programs()[0].clone()
-}
-
-/// `json.bitlex`'s text.
-pub(super) const JSON_BITLEX: &str = JSON;
-
 /// JSON's tier 2 tells every token's row by its first byte: no `ROW` word. Its rows share bytes
 /// (a string's text and a number begin with nearly any), but never in one state: a string's
 /// text is read inside a string, a number outside (the toggle's modes, `row_modes`), and a
 /// number never begins with a quote (an escaped one follows a word's `\\`, `bitlex_prove`).
 #[test]
 fn json_tier2_switches_on_the_first_byte_alone() {
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+        let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
         0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
         id => Some(id),
@@ -569,8 +549,7 @@ fn json_tier2_switches_on_the_first_byte_alone() {
 
 /// JSON's fallback outputs (`bitlex_compile::Compiled::fallbacks`).
 fn json_fallbacks() -> Vec<u16> {
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+        let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
         0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
         id => Some(id),
@@ -590,7 +569,7 @@ fn json_fallbacks() -> Vec<u16> {
 
 /// A block program's violations of the shape rules, each a short line.
 fn shape_violations(p: &block::BlockProgram) -> Vec<String> {
-    use super::block::BlockOp::*;
+    use rerail_compiler::block::BlockOp::*;
     let ops = &p.ops;
     // Two byte classes that one class replaces: an `eq` with another, or two of one table. (A
     // class whose products span tables is one lookup per table, ORed.)
@@ -625,11 +604,11 @@ fn shape_violations(p: &block::BlockProgram) -> Vec<String> {
 #[test]
 fn json_compiles_to_simdjsons_shape() {
     let program = json_program();
-    let p = &program.block_programs()[0];
+    let p = &program.block_programs[0];
     let violations = shape_violations(p);
     assert!(violations.is_empty(), "{} violations:\n{}", violations.len(), violations.join("\n"));
     let prevs = p.ops.iter().filter(|op| matches!(op, block::BlockOp::Prev(..))).count();
-    let (ops, words) = (p.ops.len(), super::block_tests::carried_words(p));
+    let (ops, words) = (p.ops.len(), crate::block_tests::carried_words(p));
     eprintln!("json: {ops} operations, {prevs} prevs, {words} carried words, {} outputs", p.outputs.len());
     assert!(ops <= JSON_OPS && words <= JSON_CARRIED_WORDS, "json: {ops} operations (budget {JSON_OPS}), {words} carried words (budget {JSON_CARRIED_WORDS})");
 }
@@ -642,7 +621,7 @@ fn json_compiles_to_simdjsons_shape() {
 #[test]
 fn json_state_is_bits() {
     let program = json_program();
-    let bits = super::block_tests::state_bits(&program.block_programs()[0]);
+    let bits = crate::block_tests::state_bits(&program.block_programs[0]);
     eprintln!("json: {bits} state bits (budget {JSON_STATE_BITS})");
     assert!(bits <= JSON_STATE_BITS, "json: {bits} state bits (budget {JSON_STATE_BITS})");
 }
@@ -669,7 +648,7 @@ const JSON_CARRIED_WORDS: usize = 16;
 #[test]
 #[ignore = "a dump; run by name"]
 fn dump_json_rows() {
-    std::fs::write(std::env::var("RERAIL_DUMP").expect("RERAIL_DUMP"), rir::disassemble(&json_program(), None)).expect("writes");
+    std::fs::write(std::env::var("RERAIL_DUMP").expect("RERAIL_DUMP"), rir::disassemble(&json_program())).expect("writes");
 }
 
 /// JSON's Cranelift loop: no vector `mvn`, one carried word per prev base and per carry, and its
@@ -678,15 +657,15 @@ fn dump_json_rows() {
 #[cfg(target_arch = "aarch64")]
 fn json_loop_keeps_values_in_registers() {
     let program = json_program();
-    let native = native_ir::lower(&program).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&program, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
-    let lines = super::block_tests::machine_loop(&compiled.loops_disassembly());
-    let (stack, mvn) = super::block_tests::loop_costs(&lines);
+    let lines = crate::block_tests::machine_loop(&compiled.loops_disassembly());
+    let (stack, mvn) = crate::block_tests::loop_costs(&lines);
     eprintln!("json loop: {} instructions, {stack} stack loads or stores, {mvn} vector mvn", lines.len());
     assert_eq!(mvn, 0, "json's loop inverts vectors");
     // The state is packed: one carried word per 64 state bits (decision 0070).
-    let bits = super::block_tests::state_bits(&program.block_programs()[0]);
-    assert_eq!(super::block_tests::carried_params(&compiled.clif) - super::block_tests::sink_params(&native), bits.div_ceil(64), "json's carried state is not packed");
+    let bits = crate::block_tests::state_bits(&program.block_programs[0]);
+    assert_eq!(crate::block_tests::carried_params(&compiled.clif) - crate::block_tests::sink_params(&native), bits.div_ceil(64), "json's carried state is not packed");
     assert!(lines.len() <= JSON_LOOP && stack <= JSON_LOOP_STACK, "json loop: {} instructions (budget {JSON_LOOP}), {stack} stack loads or stores (budget {JSON_LOOP_STACK})", lines.len());
 }
 
@@ -716,7 +695,7 @@ const JSON_LOOP_STACK: usize = 4;
 /// `toggle`), a `fill` (a run is a token's; tier 2 reads it from the token's text), or a look-back
 /// past the byte before (a token start looks one byte back, as simdjson's `follows`).
 fn tier1_violations(p: &block::BlockProgram) -> Vec<String> {
-    use super::block::BlockOp::*;
+    use rerail_compiler::block::BlockOp::*;
     let count = |f: fn(&block::BlockOp) -> bool| p.ops.iter().filter(|op| f(op)).count();
     let mut out = Vec::new();
     let runs = count(|op| matches!(op, Escaped(_)));
@@ -749,13 +728,13 @@ fn tier1_violations(p: &block::BlockProgram) -> Vec<String> {
 #[ignore = "red guard (decision 0071): on at step 3, when json.bitlex's dense part is stage 1's"]
 fn json_tier1_is_simdjsons_stage1() {
     let program = json_program();
-    let p = &program.block_programs()[0];
+    let p = &program.block_programs[0];
     let violations = tier1_violations(p);
-    let bits = super::block_tests::state_bits(p);
-    let native = native_ir::lower(&program).expect("lowers").block_programs.remove(0);
+    let bits = crate::block_tests::state_bits(p);
+    let native = native_ir::lower(&program, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
-    let lines = super::block_tests::machine_loop(&compiled.loops_disassembly());
-    let (stack, _) = super::block_tests::loop_costs(&lines);
+    let lines = crate::block_tests::machine_loop(&compiled.loops_disassembly());
+    let (stack, _) = crate::block_tests::loop_costs(&lines);
     eprintln!("json tier 1: {} violations, {bits} state bits, loop {} instructions, {stack} stack", violations.len(), lines.len());
     if std::env::var_os("RERAIL_RIR").is_some() {
         eprintln!("{}", p.ops.iter().enumerate().map(|(i, op)| format!("%{i} = {}", op.text())).collect::<Vec<_>>().join("\n"));
@@ -861,13 +840,16 @@ arm 18 token 3 to 6 do close close leaf\n\
 /// them fails here.
 #[test]
 fn only_the_compiler_reads_tier2s_states() {
-    const ALLOWED: [&str; 4] = ["grammar.rs", "bitlex_compile.rs", "bitlex_tier2.rs", "bitlex_compile_tests.rs"];
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer");
+    // The compiler crate's `grammar` and `bitlex_tier2`, its Bitlex compiler (`bitlex_masks`, which
+    // hands the table to them), and this file, which names them.
+    const ALLOWED: [&str; 4] = ["grammar.rs", "bitlex_masks.rs", "bitlex_tier2.rs", "compile_tests.rs"];
+    // The engine's transducer and every crate beside it.
+    let native = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     // The table's types and its arms (`.states` is a common name; a state row is read through
     // its type).
     let needles = [".arms", "ArmRow", "StateRow", "grammar::Act", "Act::Open", "Act::Close", "Act::Leaf"];
     let mut readers = Vec::new();
-    let mut dirs = vec![root];
+    let mut dirs = vec![native.join("src/code_rule_dsl/transducer"), native.join("crates")];
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(&dir).expect("reads the source") {
             let path = entry.expect("an entry").path();
@@ -905,17 +887,17 @@ fn json_with_check(with: Option<&str>) -> Result<(Program, bitlex_compile::Compi
 /// size is a ratchet: lower it as the compiler improves.
 #[test]
 fn json_number_check_is_tier1_masks() {
-    use super::block::BlockOp::*;
+    use rerail_compiler::block::BlockOp::*;
     let (with, _) = json_compiled();
     let (without, _) = json_with_check(None).expect("compiles without the check");
-    let (a, b) = (&with.block_programs()[0], &without.block_programs()[0]);
+    let (a, b) = (&with.block_programs[0], &without.block_programs[0]);
     let fills = |p: &block::BlockProgram| p.ops.iter().filter(|op| matches!(op, Fill(..))).count();
     let added: Vec<&block::BlockOp> = a.ops.iter().filter(|op| !b.ops.contains(op)).collect();
     let other: Vec<&&block::BlockOp> = added.iter().filter(|op| !matches!(op, Eq(_) | Class { .. } | Const(_) | Within(_) | Not(_) | And(..) | Or(..) | AndNot(..) | Prev(_, 1) | Fill(..))).collect();
     eprintln!("json number check: {} operations, {} fills", a.ops.len() - b.ops.len(), fills(a) - fills(b));
     assert_eq!((fills(a) - fills(b), other.len()), (4, 0), "{other:?}");
     assert!(a.ops.len() - b.ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", a.ops.len() - b.ops.len());
-    let text = rir::disassemble(&with, None);
+    let text = rir::disassemble(&with);
     assert!(!text.lines().any(|l| l.split_whitespace().nth(1) == Some("CHECK")), "tier 2 checks a token");
 }
 
@@ -979,8 +961,7 @@ fn json_compiled() -> (Program, bitlex_compile::Compiled) {
 
 /// A Bitlex text with JSON's tree compiled whole.
 fn json_compiled_text(json: &str) -> Result<(Program, bitlex_compile::Compiled), String> {
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+        let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
         0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
         id => Some(id),
@@ -998,8 +979,7 @@ type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
 
 /// The reference parser's nodes for `bytes` as ids, or `None` where the file goes to tree-sitter.
 fn reference_nodes(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8]) -> Option<Vec<IdNode>> {
-    use ast_grep_language::LanguageExt;
-    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+        let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
         0 => grammar.id_for_node_kind(name, false),
         id => id,
@@ -1043,7 +1023,7 @@ fn json_tier2_files() -> Vec<Vec<u8>> {
 /// Tier 1 on the interpreter, then tier 2's words on theirs: the nodes, or `None` where the file
 /// goes to tree-sitter (a fallback bit, or a word that refuses).
 fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
-    let block = &p.block_programs()[0];
+    let block = &p.block_programs[0];
     let run = block.run_files(&[bytes]).remove(0);
     let nodes = stream::run(p, bytes, &run).ok()?;
     Some(
@@ -1064,8 +1044,9 @@ fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
 #[test]
 fn json_tier2_is_transducer_words() {
     let (p, _) = json_compiled();
-    let text = rir::disassemble(&p, None);
-    assert_eq!(rir::assemble(&text).expect("reassembles").plain_digest(), p.plain_digest(), "the words round trip");
+    let text = rir::disassemble(&p);
+    let again = rir::assemble(&text).expect("reassembles");
+    assert_eq!((&again.words, &again.block_programs, &again.strings), (&p.words, &p.block_programs, &p.strings), "the words round trip");
     let words: Vec<&str> = text.lines().filter(|l| l.trim_start().starts_with(|c: char| c.is_ascii_digit())).collect();
     for want in ["TOKEN", "SWITCH", "OPEN", "LEAF", "CLOSE", "PUSH", "RETURN", "ACCEPT", "WORD"] {
         assert!(words.iter().any(|l| l.split_whitespace().nth(1) == Some(want)), "no {want}:\n{}", words.join("\n"));
@@ -1097,7 +1078,7 @@ fn json_tier2_nodes_equal_the_reference() {
 #[test]
 fn json_compiled_path_equals_the_interpreters() {
     let (p, _) = json_compiled();
-    let native = native_ir::lower(&p).expect("lowers");
+    let native = native_ir::lower(&p, 0, 0).expect("lowers");
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns, no
@@ -1109,7 +1090,7 @@ fn json_compiled_path_equals_the_interpreters() {
     assert_eq!(tier2.own_calls, 1, "the final pass's call alone");
     let files = json_tier2_files();
     for f in &files {
-        let want1 = p.block_programs()[0].run_files(&[f]).remove(0);
+        let want1 = p.block_programs[0].run_files(&[f]).remove(0);
         let got1 = tier1.extract(f);
         assert_eq!(got1, want1, "tier 1: {}", String::from_utf8_lossy(f));
         let want = stream::run(&p, f, &want1).map_err(|r| r.pc);

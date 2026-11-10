@@ -5,61 +5,26 @@
 //! straight bit operations.
 
 // The IR text's helpers, tier 1's (`rerail_compiler::clif_text`).
-pub(super) use rerail_compiler::clif_text::{body_of, carried_params, carried_words, hot_loop, loop_costs, machine_loop, opcode, sink_params, state_bits};
-use super::*;
-use super::block::BlockRun;
+pub use rerail_compiler::clif_text::{body_of, carried_params, carried_words, hot_loop, loop_costs, machine_loop, opcode, sink_params, state_bits};
+#[allow(unused_imports)]
+use rerail_compiler::*;
+use rerail_compiler::block::BlockRun;
+use rerail_compiler::program::Words as Program;
+use rerail_compiler::rir_asm as rir;
+pub use crate::executors::{Executors, executors, inputs, runs};
+#[cfg(target_os = "macos")]
+use rerail_metal as metal_program_backend;
+
+/// What a program's digest covers of its block programs: their canonical bytes (the engine's
+/// digest hashes these, `packed::block_digest_tests`).
+fn bytes_of(p: &Program) -> Vec<Vec<u8>> {
+    p.block_programs.iter().map(block::BlockProgram::canonical_bytes).collect()
+}
 
 /// A transducer program whose walk does nothing and whose block program is `rows`.
 fn program(rows: &str) -> Program {
     let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
     rir::assemble(&text).unwrap_or_else(|error| panic!("{error}\n{text}"))
-}
-
-/// Inputs that put every byte value at every position of a block, and lengths around every
-/// block edge.
-pub(super) fn inputs() -> Vec<Vec<u8>> {
-    let every: Vec<u8> = (0..=255u8).chain((0..=255u8).rev()).chain(0..=255u8).collect();
-    let mut out = vec![vec![], b"\"".to_vec(), every.clone()];
-    for len in [1usize, 2, 63, 64, 65, 127, 128, 129, 200] {
-        out.push(every.iter().copied().cycle().skip(len * 7).take(len).collect());
-    }
-    // A quote at each position of two blocks.
-    for at in 0..128 {
-        let mut v = vec![b'x'; 130];
-        v[at] = b'"';
-        out.push(v);
-    }
-    out.extend(runs());
-    out
-}
-
-/// Runs of backslashes, quotes and other bytes of every length to 200, over enough bytes that
-/// carries cross lanes, SIMD groups and threadgroups at every lane width (a group is 512 to 2048
-/// bytes), with a stretch of one long run.
-pub(super) fn runs() -> Vec<Vec<u8>> {
-    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-    let mut next = move |n: u64| {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        seed % n
-    };
-    let mut out = Vec::new();
-    for len in [700usize, 3000, 20_000] {
-        let mut v = Vec::with_capacity(len);
-        while v.len() < len {
-            let byte = [b'\\', b'"', b'a', b' ', b',', b'\\'][next(6) as usize];
-            let long = next(4) == 0;
-            let run = 1 + next(if long { 200 } else { 5 }) as usize;
-            v.extend(std::iter::repeat_n(byte, run));
-        }
-        v.truncate(len);
-        out.push(v);
-    }
-    let mut long = vec![b'\\'; 9000];
-    long.extend(b"\"x\"");
-    out.push(long);
-    out
 }
 
 /// The reference: bit `j` of word `j / 64` where byte `j` passes.
@@ -69,60 +34,6 @@ fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<u64> {
         words[j / 64] |= u64::from(f(b)) << (j % 64);
     }
     words
-}
-
-/// Every executor's outputs for the program's first block program, with the executor's name.
-pub(super) fn executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
-    let (out, skipped) = Executors::new(p).run(bytes, true);
-    assert!(skipped.is_empty(), "over the launch budget: {skipped:?}");
-    out
-}
-
-/// A program's first block program, lowered and compiled once, for runs over many inputs.
-pub(super) struct Executors<'a> {
-    block: &'a block::BlockProgram,
-    native: native_ir::BlockNative,
-    cranelift: native_cpu_block::CompiledBlock,
-}
-
-impl<'a> Executors<'a> {
-    pub(super) fn new(p: &'a Program) -> Self {
-        let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
-        let cranelift = native_cpu_block::compile(&native).expect("compiles");
-        Executors { block: &p.block_programs()[0], native, cranelift }
-    }
-
-    /// Every executor's outputs over `bytes` (the Metal ones when `metal`), without a Metal
-    /// executor whose run would take more launches than the budget (`metal_launch_budget`):
-    /// those are named in the second list.
-    pub(super) fn run(&self, bytes: &[u8], metal: bool) -> (Vec<(String, Vec<Vec<u64>>)>, Vec<String>) {
-        let mut out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
-        let mut skipped = Vec::new();
-        #[cfg(target_os = "macos")]
-        if metal {
-            use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
-            let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
-                Ok(got) => out.push((name, got)),
-                Err(Error::BackendLaunchLimit) => skipped.push(name),
-                Err(e) => panic!("{name} runs: {e:?}"),
-            };
-            for width in LaneWidth::ALL {
-                let w = width.bytes();
-                keep(format!("metal interpreter, {w}-byte lanes"), interpret(self.block, bytes, width));
-                for strategy in ClassStrategy::ALL {
-                    keep(format!("generated msl, {w}-byte lanes, {strategy:?}"), run_generated_with(&self.native, bytes, width, strategy).map(|(got, _)| got));
-                }
-            }
-            // The forward carry (`metal_block_serial`): segments of three blocks, so that a file of
-            // a few blocks has segments that speculate their start and run again.
-            use metal_program_backend::block_program::serial::{Segments, run_serial_split};
-            let file = [block::BatchFile { bytes, program: 0 }];
-            keep("metal forward carry, segments of 3".to_owned(), run_serial_split(&[&self.native], &file, Segments { blocks: 3, warm: 1 }).map(|mut r| r.run.files.remove(0).outputs));
-        }
-        #[cfg(not(target_os = "macos"))]
-        let _ = metal;
-        (out, skipped)
-    }
 }
 
 /// Check a program's outputs against references on every input and every executor.
@@ -143,16 +54,13 @@ const EQ_QUOTE: &str = "  block 0 %0 = eq 0x22\n  block 0 output %0\n";
 #[test]
 fn eq_round_trips_through_rir() {
     let p = program(EQ_QUOTE);
-    assert_eq!(p.block_programs()[0].ops, [block::BlockOp::Eq(b'"')]);
-    let dump = rir::disassemble(&p, None);
+    assert_eq!(p.block_programs[0].ops, [block::BlockOp::Eq(b'"')]);
+    let dump = rir::disassemble(&p);
     assert!(dump.contains("  block 0 %0 = eq 0x22\n  block 0 output %0\n"), "{dump}");
     let again = rir::assemble(&dump).expect("the dump assembles");
-    assert_eq!(again.plain_digest(), p.plain_digest());
-    // The block program is in the digest.
-    let other = program("  block 0 %0 = eq 0x5c\n  block 0 output %0\n");
-    assert_ne!(other.plain_digest(), p.plain_digest());
-    let none = rir::assemble("program -\n  mode set=0 query=0\n  0000 STOP 0\n").unwrap();
-    assert_ne!(none.plain_digest(), p.plain_digest());
+    assert_eq!(again.block_programs, p.block_programs);
+    // That the block program is in the engine's digest is the engine's test
+    // (`packed::block_digest_tests`).
 }
 
 #[test]
@@ -230,7 +138,7 @@ const BODY_OPCODES: &[&str] = &[
 
 /// Check the lowered forms of a program and print them.
 fn check_lowering(name: &str, p: &Program) {
-    let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     let body = body_of(&compiled.clif);
     println!("== {name}: Cranelift IR of the block body ==\n{}", body.join("\n"));
@@ -254,7 +162,7 @@ fn check_lowering(name: &str, p: &Program) {
     let instructions = compiled.disassembly.lines().filter(|l| l.starts_with("  ") && !l.contains("unwind")).count();
     println!("== {name}: {instructions} machine instructions in the function ==");
     for width in [16usize, 32, 64] {
-        let carried = native.insts.iter().any(native_ir::BlockInst::carried);
+        let carried = native.insts.iter().any(block_native::BlockInst::carried);
         for (strategy, msl) in metal_program_backend_generate(&native, width) {
             println!("== {name}: generated MSL, {width}-byte lanes, {strategy} ==\n{msl}");
             // The lane code (the carry helpers and each program's function) is straight-line;
@@ -306,7 +214,7 @@ fn lane_code(msl: &str) -> Vec<(String, String)> {
 
 /// The generated MSL of every class strategy, from its first line (helpers included).
 #[cfg(target_os = "macos")]
-fn metal_program_backend_generate(native: &native_ir::BlockNative, width: usize) -> Vec<(String, String)> {
+fn metal_program_backend_generate(native: &block_native::BlockNative, width: usize) -> Vec<(String, String)> {
     use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let width = LaneWidth::ALL.into_iter().find(|w| w.bytes() == width).expect("a width");
     ClassStrategy::ALL
@@ -320,7 +228,7 @@ fn metal_program_backend_generate(native: &native_ir::BlockNative, width: usize)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn metal_program_backend_generate(_native: &native_ir::BlockNative, _width: usize) -> Vec<(String, String)> {
+fn metal_program_backend_generate(_native: &block_native::BlockNative, _width: usize) -> Vec<(String, String)> {
     vec![]
 }
 
@@ -334,7 +242,7 @@ fn eq_lowers_to_straight_bit_operations() {
 /// compare and a ballot. Neither loops over bytes.
 #[test]
 fn interpreters_have_no_byte_loops() {
-    let cpu = include_str!("../../../../crates/compiler/src/block.rs");
+    let cpu = include_str!("../../compiler/src/block.rs");
     let kernel = &cpu[cpu.find("pub fn eq(block").expect("the eq kernel")..];
     let kernel = &kernel[..kernel.find("\n}\n").expect("its end")];
     for word in ["for ", "while ", "loop {", ".iter()", "[j]", "[i]"] {
@@ -343,7 +251,7 @@ fn interpreters_have_no_byte_loops() {
     // The Metal interpreter's `interpret_file`: one loop over operations, and loops over the
     // program's outputs and extracts (sizes); a lane's chunks are a loop over `sizeof(M) / 2`.
     // Its only branches leave the group unfinished when a look-back has to wait.
-    let metal = include_str!("../../../../crates/metal/src/block_program.metal");
+    let metal = include_str!("../../metal/src/block_program.metal");
     let run = &metal[metal.find("static bool interpret_file(").expect("interpret_file")..];
     let run = &run[..run.find("\n}\n").expect("its end")];
     let loops: Vec<&str> = run.lines().filter(|l| l.contains("for (")).map(str::trim).collect();
@@ -362,7 +270,7 @@ fn interpreters_have_no_byte_loops() {
         let code = &code[..code.find("\n}\n").expect("its end")];
         assert!(code.contains("for (uint c = 0u; c < uint(sizeof(M)) / 2u; c++)"), "{helper} loops over chunks only");
     }
-    let carry = include_str!("../../../../crates/metal/src/block_carry.metal");
+    let carry = include_str!("../../metal/src/block_carry.metal");
     for word in ["for (", "while", "if (", "?"] {
         assert!(!carry.contains(word), "the carry helpers have `{word}`");
     }
@@ -499,11 +407,11 @@ fn simdjson_want(bytes: &[u8]) -> Vec<Vec<u64>> {
 #[test]
 fn class_round_trips_through_rir() {
     let p = program(&simdjson_classes());
-    let text = rir::disassemble(&p, None);
+    let text = rir::disassemble(&p);
     assert!(text.contains("block 0 table 0 lo=8880c0808080808080909284a1948080 hi=90804902002400040000000000000000"), "{text}");
     assert!(text.contains("block 0 %0 = class t0 0x07"), "{text}");
     let again = rir::assemble(&text).expect("reassembles");
-    assert_eq!(again.canonical_digest("-", b""), p.canonical_digest("-", b""));
+    assert_eq!(again.block_programs, p.block_programs);
 }
 
 #[test]
@@ -585,8 +493,8 @@ fn pair_equals_reference_on_every_executor() {
     };
     check_all(&rows, want);
     let p = program(&rows);
-    let planes = native_ir::lower(&p).expect("lowers").block_programs.remove(0).planes_form();
-    assert!(!planes.insts.iter().any(|i| matches!(i, native_ir::BlockInst::Pair { .. })));
+    let planes = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0).planes_form();
+    assert!(!planes.insts.iter().any(|i| matches!(i, block_native::BlockInst::Pair { .. })));
     let compiled = native_cpu_block::compile(&planes).expect("compiles");
     for bytes in inputs() {
         assert_eq!(compiled.run(&bytes), want(&bytes), "planes form, {} bytes", bytes.len());
@@ -599,14 +507,14 @@ fn pair_equals_reference_on_every_executor() {
 #[test]
 fn class_planes_form_equals_reference() {
     let p = program(&simdjson_classes());
-    let planes = native_ir::lower(&p).expect("lowers").block_programs.remove(0).planes_form();
-    assert!(!planes.insts.iter().any(|i| matches!(i, native_ir::BlockInst::Class { .. })));
+    let planes = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0).planes_form();
+    assert!(!planes.insts.iter().any(|i| matches!(i, block_native::BlockInst::Class { .. })));
     println!("planes form: {} instructions for 5 classes", planes.insts.len());
     let compiled = native_cpu_block::compile(&planes).expect("compiles");
     for bytes in inputs() {
         assert_eq!(compiled.run(&bytes), simdjson_want(&bytes), "{} bytes", bytes.len());
     }
-    let metal = include_str!("../../../../crates/metal/src/block_program.metal");
+    let metal = include_str!("../../metal/src/block_program.metal");
     assert!(!metal.contains("constant uchar") && !metal.contains("tables"), "the Metal interpreter reads a table");
 }
 
@@ -627,16 +535,16 @@ fn class_strategies_gpu_time() {
 "#;
     let bytes: Vec<u8> = sample.iter().copied().cycle().take(64 << 20).collect();
     let p = program(&simdjson_classes());
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let eqs = program(
         "  block 0 %0 = eq 0x2c\n  block 0 %1 = eq 0x20\n  block 0 %2 = eq 0x5c\n  block 0 %3 = eq 0x22\n  block 0 %4 = eq 0x0a\n\
          \x20 block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 output %3\n  block 0 output %4\n",
     );
-    let eq_native = native_ir::lower(&eqs).expect("lowers").block_programs.remove(0);
+    let eq_native = native_ir::lower(&eqs, 0, 0).expect("lowers").block_programs.remove(0);
     let want = simdjson_want(&bytes);
     let gib = bytes.len() as f64 / f64::from(1u32 << 30);
     for width in LaneWidth::ALL {
-        let best = |native: &native_ir::BlockNative, strategy| {
+        let best = |native: &block_native::BlockNative, strategy| {
             (0..5).map(|_| run_generated_with(native, &bytes, width, strategy).expect("runs").1).fold(f64::MAX, f64::min)
         };
         for strategy in ClassStrategy::ALL {
@@ -691,11 +599,11 @@ fn escaped_reference(a: &[bool]) -> Vec<bool> {
 fn carried_round_trip_and_refusals() {
     let rows = "  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 3\n  block 0 %2 = toggle %0\n  block 0 %3 = escaped %0\n  block 0 output %1\n  block 0 output %2\n  block 0 output %3\n";
     let p = program(rows);
-    let text = rir::disassemble(&p, None);
+    let text = rir::disassemble(&p);
     for line in ["%1 = prev %0, 3", "%2 = toggle %0", "%3 = escaped %0"] {
         assert!(text.contains(line), "{line}\n{text}");
     }
-    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    assert_eq!(rir::assemble(&text).expect("reassembles").block_programs, p.block_programs);
     for (rows, why) in [
         ("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 0\n  block 0 output %1\n", "distance 0"),
         ("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, 64\n  block 0 output %1\n", "distance 64"),
@@ -742,9 +650,9 @@ fn fill_round_trips_and_refusals() {
   block 0 %2 = fill %0, %1
   block 0 output %2
 ");
-    let text = rir::disassemble(&p, None);
+    let text = rir::disassemble(&p);
     assert!(text.contains("%2 = fill %0, %1"), "{text}");
-    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    assert_eq!(rir::assemble(&text).expect("reassembles").block_programs, p.block_programs);
     let rows = "  block 0 %0 = eq 0x22
   block 0 %1 = fill %0, %1
   block 0 output %1
@@ -842,11 +750,11 @@ fn back_fill_equals_reference_on_the_cpu_and_the_forward_carry() {
   block 0 output %1
 ";
     let p = program(rows);
-    let block = &p.block_programs()[0];
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let block = &p.block_programs[0];
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let passes = native.passes();
     // Forward (level 0), back, forward (level 1), back, forward (level 2).
-    let kinds: Vec<bool> = passes.passes.iter().map(|q| matches!(q, native_ir::Pass::Back(_))).collect();
+    let kinds: Vec<bool> = passes.passes.iter().map(|q| matches!(q, block_native::Pass::Back(_))).collect();
     assert_eq!(kinds, [false, true, false, true, false], "{passes:?}");
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     let want = |bytes: &[u8]| {
@@ -900,9 +808,9 @@ fn back_fill_round_trips_and_refusals() {
   block 0 %2 = back_fill %0, %1
   block 0 output %2
 ");
-    let text = rir::disassemble(&p, None);
+    let text = rir::disassemble(&p);
     assert!(text.contains("%2 = back_fill %0, %1"), "{text}");
-    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    assert_eq!(rir::assemble(&text).expect("reassembles").block_programs, p.block_programs);
     let rows = "  block 0 %0 = const 0x0000000000000000
   block 0 %1 = carry %0
   block 0 %2 = eq 0x22
@@ -916,7 +824,7 @@ fn back_fill_round_trips_and_refusals() {
     #[cfg(target_os = "macos")]
     {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
-        let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+        let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
         let got = run_generated_with(&native, b"a\"b", LaneWidth::ALL[0], ClassStrategy::ALL[0]).map(|_| ());
         assert!(matches!(got, Err(Error::UnsupportedBackend)), "Metal: {got:?}");
     }
@@ -939,11 +847,11 @@ fn position_planes_equal_the_positions_on_every_executor() {
     }
     rows += &format!("  block 0 output %{}\n", n + 2);
     let p = program(&rows);
-    let text = rir::disassemble(&p, None);
+    let text = rir::disassemble(&p);
     assert!(text.contains("= position 9"), "{text}");
-    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
-    let block = &p.block_programs()[0];
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    assert_eq!(rir::assemble(&text).expect("reassembles").block_programs, p.block_programs);
+    let block = &p.block_programs[0];
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     let want = |bytes: &[u8]| {
         let plane = |j: u8| (0..bytes.len()).map(|i| i >> j & 1 == 1).collect::<Vec<bool>>();
@@ -989,7 +897,7 @@ fn lookback_fallback_equals_reference() {
     let two = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n";
     for (rows, halo) in [(one, false), (two, true)] {
         let p = program(rows);
-        let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+        let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
         for bytes in runs() {
             let escaped = escaped_reference(&bits(&bytes, |b| b == b'\\'));
             let quote: Vec<bool> = bytes.iter().zip(&escaped).map(|(&b, &e)| b == b'"' && !e).collect();
@@ -1017,7 +925,7 @@ fn lookback_fallback_equals_reference() {
 fn generated_msl_is_one_kernel() {
     use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     for width in LaneWidth::ALL {
         for strategy in ClassStrategy::ALL {
             let msl = generate_with(&native, width, strategy);
@@ -1039,14 +947,14 @@ fn carried_lower_to_straight_bit_operations() {
 // --- simdjson's stage 1 ----------------------------------------------------------------------
 
 /// Stage 1, written by hand in `rir` (`fixtures/simdjson-stage1/stage1.rir`).
-pub(super) const STAGE1: &str = include_str!("../../../../../fixtures/simdjson-stage1/stage1.rir");
+pub const STAGE1: &str = include_str!("../../../../fixtures/simdjson-stage1/stage1.rir");
 
 /// simdjson's own stage 1 on each file (`fixtures/simdjson-stage1/stage1_indexes.cpp`): path,
 /// length, number of structural indexes, FNV-1a of the indexes as little-endian u32s.
-const STAGE1_EXPECTED: &str = include_str!("../../../../../fixtures/simdjson-stage1/expected.txt");
+const STAGE1_EXPECTED: &str = include_str!("../../../../fixtures/simdjson-stage1/expected.txt");
 
 fn repo_file(path: &str) -> Vec<u8> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     std::fs::read(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
@@ -1076,8 +984,8 @@ fn fnv(indexes: &[u32]) -> u64 {
 
 /// Every executor's run with the extract pass: the outputs and each extract's positions.
 fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
-    let block = &p.block_programs()[0];
-    let native = native_ir::lower(p).expect("lowers").block_programs.remove(0);
+    let block = &p.block_programs[0];
+    let native = native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0);
     let mut out = vec![
         // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
         ("cpu interpreter".to_owned(), block.run(bytes)),
@@ -1119,7 +1027,7 @@ fn extract_equals_reference_on_every_executor() {
         #[cfg(target_os = "macos")]
         {
             use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
-            let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+            let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
             for width in LaneWidth::ALL {
                 for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
                     let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor, 0).expect("runs");
@@ -1135,11 +1043,11 @@ fn extract_round_trips_and_refusals() {
     let text = "program -\n  mode set=0 query=0\n  block 0 %0 = eq 0x22\n  block 0 %1 = eq 0x5c\n\
                 \x20 block 0 output %0\n  block 0 output %1\n  block 0 extract %1\n  0000 STOP 0\n";
     let p = rir::assemble(text).unwrap_or_else(|e| panic!("{e}"));
-    let dump = rir::disassemble(&p, None);
+    let dump = rir::disassemble(&p);
     assert!(dump.contains("block 0 extract %1"), "{dump}");
-    assert_eq!(rir::assemble(&dump).expect("reassembles").plain_digest(), p.plain_digest());
+    assert_eq!(bytes_of(&rir::assemble(&dump).expect("reassembles")), bytes_of(&p));
     let without = rir::assemble(&text.replace("  block 0 extract %1\n", "")).unwrap();
-    assert_ne!(without.plain_digest(), p.plain_digest(), "the digest covers extracts");
+    assert_ne!(bytes_of(&without), bytes_of(&p), "the digest covers extracts");
     let refused = |rows: &str| {
         rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n"))
             .err()
@@ -1225,7 +1133,7 @@ fn stage1_files() -> Vec<(String, usize, (usize, u64))> {
 #[test]
 fn stage1_equals_simdjson_on_every_executor() {
     let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     for (path, len, want) in stage1_files() {
         let bytes = repo_file(&path);
@@ -1266,7 +1174,7 @@ fn stage1_lowers_to_straight_bit_operations() {
 #[ignore = "a measurement; run by name"]
 fn stage1_cost_per_block() {
     let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     let (path, _, _) = stage1_files().into_iter().last().expect("the large file");
     let bytes = repo_file(&path);
@@ -1317,17 +1225,17 @@ fn next_reference(a: &[bool], k: usize) -> Vec<bool> {
 #[test]
 fn within_and_delay_round_trip_and_refusals() {
     let p = program("  block 0 %0 = within\n  block 0 %1 = eq 0x22\n  block 0 output %1\n  block 0 delay 5\n");
-    let text = rir::disassemble(&p, None);
+    let text = rir::disassemble(&p);
     assert!(text.contains("%0 = within") && text.contains("block 0 delay 5"), "{text}");
-    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    assert_eq!(rir::assemble(&text).expect("reassembles").block_programs, p.block_programs);
     let undelayed = program("  block 0 %0 = within\n  block 0 %1 = eq 0x22\n  block 0 output %1\n");
-    assert_ne!(undelayed.canonical_digest("-", b""), p.canonical_digest("-", b""), "the delay is in the digest");
+    assert_ne!(bytes_of(&undelayed), bytes_of(&p), "the delay is in the digest");
     // `within` at a delay: its own text and digest byte, `within` alone unchanged.
     let at = program("  block 0 %0 = within 5\n  block 0 output %0\n");
-    let text = rir::disassemble(&at, None);
+    let text = rir::disassemble(&at);
     assert!(text.contains("%0 = within 5"), "{text}");
-    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), at.canonical_digest("-", b""));
-    assert_ne!(at.canonical_digest("-", b""), program("  block 0 %0 = within\n  block 0 output %0\n").canonical_digest("-", b""));
+    assert_eq!(rir::assemble(&text).expect("reassembles").block_programs, at.block_programs);
+    assert_ne!(bytes_of(&at), bytes_of(&program("  block 0 %0 = within\n  block 0 output %0\n")));
     assert_eq!(block::within_at(0, 3, 5), 0b1110_0000);
     assert_eq!(block::within_at(1, 70, 5), (1 << 11) - 1);
     for (rows, why) in [
@@ -1379,7 +1287,7 @@ const STAGE1_LOOP_STACK: usize = 9;
 #[cfg(target_arch = "aarch64")]
 fn stage1_loop_keeps_values_in_registers() {
     let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     let lines = machine_loop(&compiled.loops_disassembly());
     let (stack, mvn) = loop_costs(&lines);
@@ -1388,7 +1296,7 @@ fn stage1_loop_keeps_values_in_registers() {
     // 11 stack loads or stores before this session's changes (two vectors reloaded at the
     // head, stored on the back edge), 9 since.
     assert!(stack <= STAGE1_LOOP_STACK && mvn == 0, "stage 1's loop spills ({stack}, budget {STAGE1_LOOP_STACK}) or inverts vectors ({mvn}):\n{}", lines.join("\n"));
-    let block = &p.block_programs()[0];
+    let block = &p.block_programs[0];
     // The state is packed: one carried word per 64 state bits (decision 0048).
     let words = state_bits(block).div_ceil(64);
     assert_eq!(carried_params(&compiled.clif) - sink_params(&native), words, "stage 1's carried state is not packed");
@@ -1401,7 +1309,7 @@ fn stage1_loop_keeps_values_in_registers() {
 #[ignore = "red guard (decision 0071): on at step 2, stage 1's codegen"]
 fn stage1_loop_is_simdjsons_size() {
     let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     let lines = machine_loop(&compiled.loops_disassembly());
     eprintln!("stage 1 loop: {} instructions (at most 150)", lines.len());
@@ -1416,7 +1324,7 @@ fn stage1_loop_is_simdjsons_size() {
 fn rir_loop_size() {
     let text = std::fs::read_to_string(std::env::var("RERAIL_RIR").expect("RERAIL_RIR")).expect("reads");
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}"));
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     let lines = machine_loop(&compiled.loops_disassembly());
     let mut ops: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
@@ -1444,10 +1352,10 @@ fn lanes_equal_the_interpreter() {
         "  block 0 %4 = and %2, %3\n  block 0 %5 = eq 0xc3\n  block 0 %6 = prev %5, 1\n  block 0 %7 = eq 0xa9\n",
         "  block 0 %8 = and %6, %7\n  block 0 %9 = or %4, %8\n  block 0 output %9\n",
     ));
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     assert!(compiled.ascii_branch, "no ASCII test");
-    let block = &p.block_programs()[0];
+    let block = &p.block_programs[0];
     let mut files: Vec<Vec<u8>> = vec![b"b".to_vec(), b"ab".to_vec(), b"bb".to_vec(), b"\xc3\xa9".to_vec()];
     for at in 0..200 {
         let mut f = vec![b'b'; 220];
@@ -1477,14 +1385,14 @@ fn rounds_equal_the_interpreter() {
         "  block 0 %14 = toggle %13\n  block 0 %15 = or %12, %14\n",
         "  block 0 rounds %1 %15\n  block 0 output %15\n  block 0 output %14\n",
     ));
-    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     assert_eq!(native.groups.len(), 1, "one group");
     let compiled = native_cpu_block::compile(&native).expect("compiles");
     // One loop in the full blocks' body (the last block's has its own).
     assert_eq!(compiled.round_branches, 1, "one loop");
-    let block = &p.block_programs()[0];
+    let block = &p.block_programs[0];
     let mut text = String::new();
-    super::rir::block_rows(&mut text, 0, block);
+    rerail_compiler::block::block_rows(&mut text, 0, block);
     assert!(text.contains("  block 0 rounds %1 %15\n"), "the group prints: {text}");
     // Every short string over the bytes that matter, then long ones that cross blocks.
     let alphabet = b"\"\\/\na";

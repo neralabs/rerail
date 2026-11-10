@@ -4,6 +4,13 @@
 //! both on Metal against the CPU (`metal_tests`, the Metal crate's block backend).
 //! The helpers the engine's Metal measurements share are public (`json`).
 
+#[cfg(test)]
+mod block_tests;
+pub mod executors;
+#[cfg(test)]
+mod compile_tests;
+#[cfg(test)]
+mod corpus_tests;
 pub mod json;
 #[cfg(test)]
 mod json_tests;

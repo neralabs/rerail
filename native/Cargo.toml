@@ -60,6 +60,8 @@ cranelift-codegen = "=0.125.4"
 # Tier 1 of the transducer's parsers, a crate of its own so that a change to it rebuilds little.
 rerail-compiler = { path = "crates/compiler" }
 rerail-rr-syntax = { path = "crates/rr_syntax" }
+# The .rr parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
+rerail-rr-parser = { path = "crates/rr_parser" }
 rerail-prof = { path = "crates/prof" }
 cranelift-frontend = "=0.125.4"
 cranelift-module = "=0.125.4"
@@ -156,6 +158,7 @@ rerail-metal = { path = "crates/metal", features = ["test-hooks"] }
 [dev-dependencies]
 # Tier 1's test hooks (the relocations' recording) for the engine's tests.
 rerail-compiler = { path = "crates/compiler", features = ["test-hooks"] }
+# The parsers' tests, and every executor of a block program (`regex_block`'s tests).
 rerail-parser-tests = { path = "crates/parser_tests" }
 # The test-only dialects' grammars: `builtin-parser` without tree-sitter-python,
 # tree-sitter-typescript and tree-sitter-javascript, which Rerail vendors.

@@ -471,8 +471,8 @@ mod tests {
                 rows.push_str(&format!("  block 0 %{i} = {}\n", op.text()));
             }
             rows.push_str(&format!("  block 0 output %{}\n  block 0 delay 1\n", program.outputs[0]));
-            let assembled = super::super::rir::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).unwrap();
-            let executors = super::super::block_tests::Executors::new(&assembled);
+            let assembled = rerail_compiler::rir_asm::assemble(&format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n")).unwrap();
+            let executors = rerail_parser_tests::executors::Executors::new(&assembled);
             for text in TEXTS {
                 let (runs, _) = executors.run(text.as_bytes(), true);
                 let want = p.ends(text.as_bytes());

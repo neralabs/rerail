@@ -250,17 +250,11 @@ mod native_cpu_reduction;
 mod native_cpu_regex;
 mod native_cpu_scheduler;
 mod native_cpu_value;
-// Block programs' Cranelift definer (`block`).
-use rerail_compiler::native_cpu_block;
-use rerail_compiler::native_cpu_lanes;
-use rerail_compiler::native_cpu_pressure;
-use rerail_compiler::native_cpu_shape;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]
 pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_rows;
 // Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
 pub(in crate::code_rule_dsl) mod rows_sort;
-mod native_cpu_stream;
 mod native_ir;
 mod output;
 mod packed_arena;
@@ -279,27 +273,16 @@ mod value;
 pub(in crate::code_rule_dsl) use rerail_compiler::block;
 pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
-mod block_tests;
-#[cfg(test)]
 mod block_rows_tests;
-// The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
-mod bitlex_compile;
-// The tree section's compilers, the compiler crate's.
-use rerail_compiler::{bitlex_prove, bitlex_tier2, grammar};
-// The `.rr` parser: the Bitlex grammar compiled, the engine's parser for what it refuses.
-pub(in crate::code_rule_dsl) mod rr_parser;
+#[cfg(test)]
+mod block_digest_tests;
+// The `.rr` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
+// what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
+#[allow(unused_imports)]
+pub(in crate::code_rule_dsl) use rerail_rr_parser as rr_parser;
 pub(in crate::code_rule_dsl) mod stream;
-#[cfg(test)]
-mod bitlex_compile_tests;
-mod token_local;
-#[cfg(test)]
-mod token_local_tests;
-#[cfg(test)]
-mod gating_rr_tests;
 #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
 mod regex_relocation_tests;
-#[cfg(test)]
-mod bitlex_corpus_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
 mod block_monoid;
 mod block_plan;

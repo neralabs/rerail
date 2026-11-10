@@ -1,8 +1,8 @@
 //! Gated regions on `.rr`'s grammar (tier 1's `gating_tests` has the small ones): its `\\u`
 //! check behind its gate.
 
-use super::native_cpu_block::State;
-use super::native_ir::{BlockNative, Pass};
+use rerail_compiler::native_cpu_block::State;
+use rerail_compiler::block_native::{BlockNative, Pass};
 
 /// Each pass's regions, as the whole program's values: the gate, and what it skips (its
 /// members, and the vector values only they read).
@@ -22,7 +22,7 @@ fn regions(native: &BlockNative) -> Vec<(usize, Vec<usize>)> {
 
 #[test]
 fn rr_gates_its_unicode_escape_check() {
-    let c = super::rr_parser::compiled().expect("compiles");
+    let c = super::compiled().expect("compiles");
     let regions = regions(&c.native);
     let op = |name: &str| usize::from(c.values.iter().find(|v| v.name == name).unwrap_or_else(|| panic!("no `{name}`")).op);
     for name in ["h4", "b_short", "b_four", "b_five", "b_six", "u_ok"] {
@@ -33,7 +33,7 @@ fn rr_gates_its_unicode_escape_check() {
 #[test]
 #[ignore = "a dump: run by hand"]
 fn dump_rr_unicode() {
-    let c = super::rr_parser::compiled().expect("compiles");
+    let c = super::compiled().expect("compiles");
     let passes = c.native.passes_with(&c.native.pure());
     let names = ["uesc", "h4", "u_four", "u_brace", "b_short", "b_four", "b_six", "u_ok"];
     for (k, pass) in passes.passes.iter().enumerate() {
