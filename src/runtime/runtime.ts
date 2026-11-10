@@ -154,6 +154,8 @@ function auditRequestVerdict(auditIds: readonly string[], audits: readonly (Audi
 
 /** The events whose code-rule work needs the session's evaluator open: a tool call, its result, and a turn's end. */
 const CODE_RULE_BOUNDARIES: Partial<Record<AdapterEvent["kind"], true>> = { call: true, result: true, "turn-end": true };
+/** The window `#noteTurnWindow` opens for a turn; no host names a tool call so. */
+const TURN_WINDOW_ID = "rerail:turn";
 
 /** A turn end that waited longer than this on its settle work is written to the daemon log. */
 const SLOW_TURN_END_WAIT_MS = 1_000;
@@ -847,6 +849,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
+    await this.#noteTurnWindow(state, event);
     if (event.kind === "call") {
       const id = event.toolCallId;
       const preimages = await this.#beginCall(state, bridge, event);
@@ -956,6 +959,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
     await state.codeRuleBridge?.unwatchedCall(event.toolCallId);
     return undefined;
+  }
+
+  /**
+   * A host whose own edit tool no hook shows (`observedFileWrite: "shell"`: Codex's `apply_patch`) writes outside every
+   * call's window, so its turn, from the prompt to the turn's end, is one: what is stamped then is the session's own.
+   * Two of its sessions' turns in one folder at once both take a change made then, as overlapping calls do.
+   */
+  async #noteTurnWindow(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
+    if (ADAPTER_CAPABILITIES[state.descriptor.host].observedFileWrite !== "shell") return;
+    if (event.kind === "user-prompt") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID);
+    else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
   }
 
   /** Finishes a tool call on the open evaluator; one answered while it opened only ends its window (`unwatchedResult`). */

@@ -1093,6 +1093,34 @@ describe("source-scoped steers", () => {
     } finally { await test.close(); }
   });
 
+  it("steers a Codex write no hook showed, made between the prompt and the turn's end, as the session's own", async () => {
+    const batches: Parameters<CodeRuleAuditor["auditGeneratedEdits"]>[1][] = [];
+    const test = await fixture({
+      host: "codex",
+      prepare: root => writeFile(join(root, "route.py"), "transaction.fetch_value('SELECT 1')\n"),
+      auditGeneratedEdits: steerDelivery => async (sessionId, batch) => {
+        batches.push(batch);
+        await steerDelivery.requestSteer(sessionId, "steer", `CURSOR_EXECUTE revision ${batch.revision}`, {
+          revision: batch.revision, scope: batch.edits.map(edit => edit.path),
+        });
+        return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+      },
+    });
+    try {
+      const sessionId = test.session.sessionId;
+      expect(await test.runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId, text: "" })).toEqual([]);
+      await test.runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId, text: "use a cursor" });
+      // `apply_patch`: Codex fires no hook for it, so no call opens around the write.
+      await writeFile(join(test.root, "route.py"), "cursor.execute('SELECT 1')\n");
+      const turnEnd = await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId, text: "done" });
+      // Steered, not recorded in Log as another writer's change.
+      expect(batches.map(batch => [batch.mode, batch.edits.map(edit => [edit.path, edit.generatedText])])).toEqual([
+        [undefined, [["route.py", "cursor.execute('SELECT 1')\n"]]],
+      ]);
+      expect(turnEnd).toEqual([expect.objectContaining({ content: "CURSOR_EXECUTE revision 1" })]);
+    } finally { await test.close(); }
+  });
+
   it("discards buffered and late results after session closure", async () => {
     const test = await fixture();
     try {

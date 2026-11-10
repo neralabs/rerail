@@ -548,7 +548,7 @@ async function writtenThisSession(discovery: SourceDiscovery, walk: WalkStart, p
     return false;
   }
 }
-/** The stamp of the nearest folder under `root` that holds, or held, `path`, on the filesystem's clock; undefined when none can be read. */
+/** The stamp of the nearest folder under `root` that holds, or held, `path`, on the filesystem's clock; undefined only when `root` itself cannot be read. */
 async function folderStamp(root: string, path: string): Promise<number | undefined> {
   for (let folder = dirname(path); ; folder = dirname(folder)) {
     try {
@@ -810,7 +810,8 @@ export class CodeRuleBridge {
   /**
    * A call the runtime answered without code rules while the evaluator was still opening: never begun, so nothing of it
    * is captured, but what it writes is the session's own. Its window is taken by the workspace as it opens, so the walk
-   * credits what was stamped while it ran; its result reconciles nothing, and what it wrote is the next walk's.
+   * credits what was stamped while it ran; its result reconciles nothing, and what it wrote is the next walk's. A host
+   * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call.
    */
   async unwatchedCall(toolCallId: string): Promise<void> {
     (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, await filesystemClock());
