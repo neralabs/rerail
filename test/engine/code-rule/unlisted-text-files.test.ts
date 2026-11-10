@@ -12,7 +12,7 @@ import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(removeFolder)); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(async path => await removeFolder(path))); });
 
 /** A regex rule on every file: it reads text, so the files no language lists are read for it. */
 const REGEX_ANYWHERE = codeRuleSchema.parse({

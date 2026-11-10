@@ -108,7 +108,7 @@ afterEach(async () => {
   discovery.directories.clear();
   await Promise.all(passes.splice(0));
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
-  await Promise.all(directories.splice(0).map(removeFolder));
+  await Promise.all(directories.splice(0).map(async path => await removeFolder(path)));
 });
 
 async function workspace(): Promise<string> {

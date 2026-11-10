@@ -46,7 +46,7 @@ afterEach(async () => {
   if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
   else process.env.RERAIL_HOME = originalRerailHome;
   await Promise.all(temporaryConnections.splice(0).reverse().map(async connection => connection.close()));
-  await Promise.all(temporaryDirectories.splice(0).map(removeFolder));
+  await Promise.all(temporaryDirectories.splice(0).map(async path => await removeFolder(path)));
 });
 
 async function temporaryDirectory(): Promise<string> {

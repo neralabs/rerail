@@ -1,0 +1,75 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { once } from "node:events";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
+import { afterEach, describe, expect, it } from "vitest";
+import { removeFolder, removeFolderSync, runningIn } from "./remove-folder.js";
+
+const folders: string[] = [];
+const children: ChildProcess[] = [];
+afterEach(async () => {
+  for (const child of children.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill();
+      await once(child, "exit");
+    }
+  }
+  await Promise.all(folders.splice(0).map(async folder => await removeFolder(folder)));
+});
+
+async function folder(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), "rerail-remove-folder-"));
+  folders.push(path);
+  await writeFile(join(path, "a.txt"), "a\n");
+  return path;
+}
+
+/** A Node process this test starts in `cwd`, once it runs. */
+async function runningProcess(cwd: string): Promise<ChildProcess> {
+  const child = spawn(process.execPath, ["-e", "process.stdout.write('ready'); setInterval(() => {}, 1000);"], {
+    cwd, stdio: ["ignore", "pipe", "ignore"], windowsHide: true,
+  });
+  children.push(child);
+  await once(child.stdout, "data");
+  return child;
+}
+
+describe("removeFolder", () => {
+  it("refuses a folder a process this test started still runs in, naming it, and removes it at once after it exits", async () => {
+    const path = await folder();
+    const child = await runningProcess(path);
+    if (process.platform === "win32") {
+      // The one try every test made before: Windows keeps the folder while the process runs in it.
+      await expect(rm(path, { recursive: true, force: true })).rejects.toMatchObject({ code: "EBUSY" });
+    }
+
+    expect(runningIn(path)).toEqual([expect.stringContaining(`pid ${child.pid}: `)]);
+    await expect(removeFolder(path)).rejects.toThrow(`pid ${child.pid}: `);
+    expect(() => removeFolderSync(path)).toThrow(`pid ${child.pid}: `);
+    child.kill();
+    await once(child, "exit");
+
+    expect(runningIn(path)).toEqual([]);
+    await removeFolder(path, { retry: false });
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("waits out a holder this test did not start, which lets go a moment later", async () => {
+    const path = await folder();
+    // SQLite opens its file so that Windows refuses to delete it; the connection closes 300 ms on, as a late release.
+    const database = new Database(join(path, "held.sqlite"));
+    database.exec("CREATE TABLE t (x)");
+    const closing = setTimeout(() => database.close(), 300);
+    try {
+      if (process.platform === "win32") await expect(removeFolder(path, { retry: false })).rejects.toMatchObject({ code: "EBUSY" });
+      await removeFolder(path);
+      expect(existsSync(path)).toBe(false);
+    } finally {
+      clearTimeout(closing);
+      if (database.open) database.close();
+    }
+  });
+});

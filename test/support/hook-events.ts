@@ -26,7 +26,7 @@ export function temporaryDirectories(prefix: string): (options?: { started?: boo
   afterEach(async () => {
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
-    await Promise.all(paths.splice(0).map(removeFolder));
+    await Promise.all(paths.splice(0).map(async path => await removeFolder(path)));
   });
   return async ({ started = true } = {}) => {
     const path = await mkdtemp(join(tmpdir(), prefix));

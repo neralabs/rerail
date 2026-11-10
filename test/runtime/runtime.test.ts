@@ -23,7 +23,7 @@ import { steerLatitude } from "../support/steers.js";
 const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await Promise.all(directories.splice(0).map(removeFolder));
+  await Promise.all(directories.splice(0).map(async path => await removeFolder(path)));
 });
 
 describe("Rerail session startup", () => {

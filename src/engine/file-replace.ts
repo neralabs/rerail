@@ -184,12 +184,19 @@ async function makeWritable(path: string): Promise<RenameTarget> {
 }
 
 /**
+ * How a folder removal waits out a file Windows holds for a moment, given to `rm` or `rmSync`: 10 more tries, each
+ * 100 ms later than the one before, about 5.5 s in all. A folder a running process keeps open stays held, and the
+ * removal then fails. Every removal that retries uses these, the tests' `removeFolder` included.
+ */
+export const FOLDER_REMOVAL_RETRIES = { maxRetries: 10, retryDelay: 100 } as const;
+
+/**
  * Removes a temporary folder Rerail made, retrying while Windows holds a file in it, and never fails: a leftover folder
  * in the temp directory must not replace the result, or the error, of the work that used it.
  */
 export async function removeScratch(path: string, rm: typeof fsRm = fsRm): Promise<void> {
   try {
-    await rm(path, { recursive: true, force: true, maxRetries: 10 });
+    await rm(path, { recursive: true, force: true, ...FOLDER_REMOVAL_RETRIES });
   } catch {
     // Left for the system's temp cleanup.
   }

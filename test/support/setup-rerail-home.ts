@@ -1,9 +1,10 @@
 import { afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { removeFolder } from "./platform/remove-folder.js";
 import { watchRealAgentSettings } from "./user-home.js";
 
 const priorRerailHome = process.env.RERAIL_HOME;
@@ -92,8 +93,13 @@ afterAll(async () => {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
-    rmSync(rerailHome, { recursive: true, force: true });
-    rmSync(contentStoreDirectory, { recursive: true, force: true });
-    rmSync(userHome, { recursive: true, force: true });
+    await removeFolders([rerailHome, contentStoreDirectory, userHome]);
   }
 });
+
+/** Removes every one of `folders`, each tried whatever happens to the others; fails naming each that stays. */
+async function removeFolders(folders: readonly string[]): Promise<void> {
+  const outcomes = await Promise.allSettled(folders.map(async folder => await removeFolder(folder)));
+  const failures: unknown[] = outcomes.flatMap(outcome => (outcome.status === "rejected" ? [outcome.reason] : []));
+  if (failures.length > 0) throw new AggregateError(failures, `This test file's own folders were not all removed: ${failures.map(String).join("; ")}`);
+}
