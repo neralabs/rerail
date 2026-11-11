@@ -137,7 +137,8 @@ fn keyed<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
             Some(key) => Keyed::Computed(key, Role::ArrayKey),
             None => Keyed::Nameless,
         },
-        "subscript_expression" if node.has_token("[") || node.has_token("{") => {
+        // `$a[k]` or `$a{k}`: always bracketed (a named-only tape leaves out the brackets the grammar implies).
+        "subscript_expression" => {
             match node.named_code().nth(1) {
                 Some(index) => Keyed::Computed(index, Role::ArrayKey),
                 None => Keyed::Nameless,
