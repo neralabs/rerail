@@ -176,3 +176,83 @@ Fewer statements a block (7) lowers the pressure.
 The lean parser is the reference for each:
 its lexer is the token records' writer,
 its functions the shape of a rule's.
+
+## After the three changes
+
+All three are built:
+
+- **Token records.** Tier 1 writes each token's first and last bytes (two zipped streams)
+  and a code: the kind by one table load, the word by a hashed table.
+  Tier 2's `TOKEN` reads the record, `SPAN` takes its end, `WORD` is one compare,
+  and a switch on the first byte is a switch on the kind.
+- **A function a rule.** A call of the grammar is a native call, its return a native return.
+  Code that several rules reach is a function of its own, entered by a tail call:
+  435 functions, no word lowered twice. The optimizer is on.
+- **The tape's bound.** Room for half again as many nodes as tokens, not zeroed.
+
+The same corpus, least of 7 rounds:
+
+| | instructions | cycles | IPC | a token |
+|---|---|---|---|---|
+| tier 1 | 659M (560M) | 124M (109M) | 5.3 | 428 / 80 |
+| tier 2 | 447M (555M) | 88M (139M) | 5.1 | 290 / 57 |
+| **compiled, both** | **1,106M** (1,115M) | **212M** (248M) | | 718 / 137 |
+| **lean, both** | **357M** | **69M** | 5.2 | 232 / 45 |
+
+In brackets: before.
+
+- **Tier 2 against the lean parse:** 2.0 times the instructions (was 2.5),
+  2.4 times the cycles (was 3.9).
+- **Tier 1 against the lean lexer:** 5.0 times the instructions (was 4.2),
+  3.8 times the cycles (was 3.3). The record pass and the second stream cost 99M.
+- **Both:** 3.1 times the instructions, 3.1 times the cycles (was 3.6).
+- The tape's allocation: 7.8 ms to 1.6 ms a pass.
+
+Tier 2's words, in Cranelift instructions a token (269 in all, was 452):
+
+| word | a token | instructions each | a token |
+|---|---|---|---|
+| `SWITCH` | 1.62 | 48 | 78 |
+| `TOKEN` | 1.00 | 61 | 61 |
+| `MARK` | 1.68 | 25 | 42 |
+| `LEAF` | 0.42 | 36 | 15 |
+| `PUSH` (the call) | 0.76 | 19 | 15 |
+| `CLOSE` | 0.34 | 35 | 12 |
+| `RETURN` | 0.76 | 10 | 8 |
+
+Two tries were measured and dropped:
+
+- **A jump table on the kind.** Tier 2 went from 146M to 258M cycles:
+  its indirect branch mispredicts. The compare tree stays.
+- **The state as SSA values in each function.** At every set of fields, more instructions
+  (691M to 908M) and more cycles:
+  each call stores the values and loads them back, and the joins spill them.
+  The state stays in memory, one register away.
+
+## What to build next
+
+1. **Marks from the records** (3, 7).
+   `MARK` still tests tier 1's bit masks: 42 instructions a token.
+   Tier 1 still finds keywords a byte at a time, for those marks.
+   A mark becomes a bit of the record, or a look at the next record's code.
+   Then the keyword masks leave tier 1: about 180 of its 865 operations a block.
+2. **A cheaper `TOKEN`.** 61 instructions:
+   three column loads, a choice at the stream's end, three room checks,
+   and eight fields stored.
+   The lean parser reads a record and moves a pointer.
+   - An end record, a kind of its own, in place of the choice.
+   - The room checked once for each rule's call, not at each token.
+   - Fewer fields: a token's start, end and limit are its record's, read where used.
+3. **The state across calls in registers.** The token's place and the tape's end
+   passed to a rule and given back by it (a call's arguments and results),
+   not stored and loaded around each call.
+4. **The record pass into the extract pass.** The kind and the word read
+   where tier 1 writes the starts, as the lean lexer does, not in a pass of their own.
+   For JSON, the second stream costs 124 instructions a block;
+   a record with no end for a one-byte token would save it.
+5. **Small functions.** 244 of the 435 are one or two words: a tail call on.
+   Code: 175,768 machine instructions (15,740 stack loads and stores);
+   the lean parser is about 12,000.
+   A piece that small is copied into its callers, not called.
+6. **Switches on the kind.** 48 instructions each.
+   Kinds numbered so a switch's targets are few runs, and the hot arm first.
