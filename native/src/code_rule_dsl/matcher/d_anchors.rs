@@ -3,7 +3,7 @@ use super::{AstMatcher, StopBy, UtilRef};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
 #[cfg(test)]
-use crate::code_rule_dsl::test_support::{Walk, record_walk};
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 mod semantic;
 #[cfg(test)]
 use crate::code_rule_dsl::language::GrammarDialect;

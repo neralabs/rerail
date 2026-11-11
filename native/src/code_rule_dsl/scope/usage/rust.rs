@@ -8,7 +8,7 @@ use super::super::{Access, Import, NodeRef, Reference, ScopeKind, ScopeTable, TY
 use super::{Facts, Steps};
 use crate::code_rule_dsl::scope::BuildError;
 #[cfg(test)]
-use crate::code_rule_dsl::test_support::{Walk, record_walk};
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 use ast_grep_core::{Doc, Node};
 use foldhash::HashMap;
 

@@ -4,7 +4,7 @@ use super::matcher::{AstMatcher, GrammarMatcher, UtilRef, UtilitySummary, stop_r
 use super::origin::Origin;
 use super::tape::TapeDoc;
 #[cfg(test)]
-use super::test_support::{Walk, record_walk};
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 use std::collections::BTreeSet;
 use std::ops::Range;
 

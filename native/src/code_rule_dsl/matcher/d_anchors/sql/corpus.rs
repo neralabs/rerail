@@ -183,8 +183,8 @@ impl Corpus {
             return Ok(file.fid);
         }
         #[cfg(test)]
-        crate::code_rule_dsl::test_support::record_walk(
-            crate::code_rule_dsl::test_support::Walk::AnchorBuild,
+        crate::code_rule_dsl::walks::record_walk(
+            crate::code_rule_dsl::walks::Walk::AnchorBuild,
         );
         let fid = state.writer.put_known(
             path,

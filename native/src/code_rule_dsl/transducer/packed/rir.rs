@@ -96,7 +96,7 @@ impl Names {
                 digest.update([0]);
             }
         }
-        let digest = crate::lower_hex(&digest.finalize())[..16].to_owned();
+        let digest = crate::code_rule_dsl::prof::lower_hex(&digest.finalize())[..16].to_owned();
         Self { dialect, catalog, kinds, digest }
     }
 

@@ -127,7 +127,7 @@ fn interpreter_snapshot_matches_the_current_independent_oracle() {
             .find("\n}\n\n/// Executes several programs")
             .unwrap();
     assert_eq!(
-        crate::lower_hex(&Sha256::digest(&source.as_bytes()[start..end])),
+        crate::code_rule_dsl::prof::lower_hex(&Sha256::digest(&source.as_bytes()[start..end])),
         interpreter::ORACLE_SHA256,
         "regenerate and inspect the isolated experiment after any oracle change"
     );

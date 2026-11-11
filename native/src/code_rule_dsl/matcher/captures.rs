@@ -6,7 +6,7 @@ mod semantic;
 
 use super::{AstMatcher, Comparison, UtilRef, UtilitySummary};
 #[cfg(test)]
-use crate::code_rule_dsl::test_support::{Walk, record_walk};
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 use ast_grep_core::matcher::PatternNode;
 use ast_grep_core::meta_var::MetaVariable;
 pub(in crate::code_rule_dsl) use semantic::parse_exported;

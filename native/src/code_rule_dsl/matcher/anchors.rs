@@ -1,7 +1,7 @@
 use super::{AstMatcher, StopBy, UtilRef};
 use crate::code_rule_dsl::budget;
 #[cfg(test)]
-use crate::code_rule_dsl::test_support::{Walk, record_walk};
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 mod semantic;
 use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_core::matcher::{Matcher, PatternNode, kind_utils};

@@ -22,7 +22,7 @@ use super::model::{
     Anchor, ClauseKind, FIX_TEXT_PREFIX, FixPlan, Query, RegexSource, Template, ViolationSpec,
 };
 #[cfg(test)]
-use super::test_support::{Walk, record_walk};
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 /// P's column batches for projected facts: P's typed evidence projections (its `violations` delta).
 pub(crate) mod projection;
 mod semantic;

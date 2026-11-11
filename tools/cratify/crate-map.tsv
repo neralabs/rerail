@@ -271,3 +271,5 @@ matcher::format_args::scanf	rerail-lang-php
 compile::resolve::php	rerail-lang-php
 search_index	rerail-facts
 facts::nearest	rerail-facts
+walks	rerail-w
+semver	rerail-lang

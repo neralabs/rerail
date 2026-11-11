@@ -194,7 +194,7 @@ impl CallsCollector {
         };
         let digest = |canonical: serde_json::Result<String>| -> Result<Arc<str>> {
             let canonical = canonical.map_err(|error| invalid(error.to_string()))?;
-            Ok(crate::lower_hex(&Sha256::digest(canonical.as_bytes())).into())
+            Ok(crate::code_rule_dsl::prof::lower_hex(&Sha256::digest(canonical.as_bytes())).into())
         };
         let key = digest(serde_json::to_string(&(
             through_name(through),

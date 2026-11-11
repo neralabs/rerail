@@ -9,7 +9,7 @@ use crate::code_rule_dsl::matcher::{
     Collation, CompareOp, CompareText, Comparison, CountBinding, UtilitySummary,
 };
 #[cfg(test)]
-use crate::code_rule_dsl::test_support::{Walk, record_walk};
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 use napi::Result;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};

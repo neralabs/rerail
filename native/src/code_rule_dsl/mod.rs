@@ -69,6 +69,8 @@ mod query;
 #[allow(dead_code)]
 mod resolution;
 mod search_index;
+#[cfg(test)]
+mod walks;
 mod residency;
 // P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
 use residency::admission::relational;

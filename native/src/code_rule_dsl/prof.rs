@@ -214,3 +214,14 @@ pub(crate) fn thread_usage() -> (f64, f64) {
         (s(u.ru_utime), s(u.ru_stime))
     }
 }
+
+/// `bytes` as lower-case hex, two digits a byte: how a SHA-256 digest is written.
+pub(crate) fn lower_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}

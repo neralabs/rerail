@@ -1349,7 +1349,7 @@ mod tests {
                 .and_then(|name| pinned_nvim.get(name))
             {
                 assert_eq!(
-                    crate::lower_hex(&Sha256::digest(source.as_bytes())),
+                    crate::code_rule_dsl::prof::lower_hex(&Sha256::digest(source.as_bytes())),
                     *expected
                 );
             }
