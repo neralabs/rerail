@@ -2,7 +2,7 @@ use super::identity::UtilityDefinitionId;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl::demand::driver::catalog) enum FactFamilyContract {
+pub enum FactFamilyContract {
     Semantic,
     Value,
     Parse,
@@ -10,13 +10,13 @@ pub(in crate::code_rule_dsl::demand::driver::catalog) enum FactFamilyContract {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::demand::driver::catalog) struct StatementRelations {
+pub struct StatementRelations {
     fact_families: BTreeSet<FactFamilyContract>,
     utility_definitions: BTreeSet<UtilityDefinitionId>,
 }
 
 impl StatementRelations {
-    pub(in crate::code_rule_dsl::demand::driver::catalog) fn from_fact_families(
+    pub fn from_fact_families(
         families: impl IntoIterator<Item = FactFamilyContract>,
     ) -> Self {
         let mut fact_families = families.into_iter().collect::<BTreeSet<_>>();
@@ -29,7 +29,7 @@ impl StatementRelations {
         }
     }
 
-    pub(in crate::code_rule_dsl::demand::driver::catalog) fn with_utility_definitions(
+    pub fn with_utility_definitions(
         mut self,
         definitions: impl IntoIterator<Item = UtilityDefinitionId>,
     ) -> Self {
@@ -51,7 +51,7 @@ impl StatementRelations {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{FactFamilyContract, StatementRelations};
 
     #[test]

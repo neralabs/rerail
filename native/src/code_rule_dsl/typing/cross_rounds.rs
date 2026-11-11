@@ -42,17 +42,9 @@ pub(crate) const K: usize = 4;
 /// that read `unconverged(1)` make unknown what a missing row would otherwise decide.
 pub(crate) const UNCONVERGED: &str = "unconverged";
 
-/// The pragma by which a program asks for bounded rounds (decision 0056): `.pragma "cross-rounds" "4"`. A typing
-/// program declares it: its cross-file recursion is over interface summaries, cut at `k` file crossings, with the
-/// pending round when it also declares `unconverged`. A program that does not declare it (a rule) has its
-/// cross-file part run as one fixpoint, which no chain length cuts.
-pub(crate) const PRAGMA: &str = "cross-rounds";
+pub use crate::code_rule_dsl::logic::front::PRAGMA;
 
 /// The rounds `prog` declares (`PRAGMA`), if it declares them.
-/// The program setting `.pragma "cross-rounds" "k"` lowers to (from `.rr`, or the `.rdl` copies' same line).
-pub(crate) fn setting(k: &str) -> (String, String) {
-    ("pragma".to_owned(), format!("\"{PRAGMA}\" \"{k}\""))
-}
 
 pub(crate) fn declared(prog: &Program) -> Option<usize> {
     prog.settings.iter().filter(|(key, _)| key == "pragma").find_map(|(_, text)| {
@@ -67,20 +59,20 @@ pub(crate) fn declared(prog: &Program) -> Option<usize> {
 /// The rounds bound of a program that declares `declared` rounds: that, or `RERAIL_CROSS_ROUNDS` (a diagnostic: how
 /// many rounds a corpus needs), or a test's `with_k` on this thread.
 pub(crate) fn k(declared: usize) -> usize {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(k) = TEST_K.with(std::cell::Cell::get) {
         return k;
     }
     std::env::var("RERAIL_CROSS_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(declared)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static TEST_K: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 /// Runs `f` with the rounds bound `k` on this thread (tests: the environment variable would reach every test).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn with_k<T>(k: usize, f: impl FnOnce() -> T) -> T {
     TEST_K.with(|c| c.set(Some(k)));
     let out = f();
@@ -367,14 +359,14 @@ pub(crate) fn digest_sorted(rows: &BTreeMap<String, Vec<Vec<i64>>>) -> u64 {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Rounds {
     /// Rounds run, round 0 included.
-    pub(crate) run: usize,
+    pub run: usize,
     /// The hop relations' rows stopped changing within `K` rounds: the result is the fixpoint.
-    pub(crate) converged: bool,
+    pub converged: bool,
     /// Each round's hop rows, summed over the hop relations.
     pub(crate) rows: Vec<usize>,
     /// The rounds did not converge, and the pending round ran (`UNCONVERGED`).
-    pub(crate) pending: bool,
+    pub pending: bool,
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

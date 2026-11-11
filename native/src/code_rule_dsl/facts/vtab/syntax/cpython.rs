@@ -30,18 +30,9 @@ use super::{Dialect, Projected};
 use crate::code_rule_dsl::cpython::printed::{Printed, Want, by_start, of_kind, printed};
 use std::collections::{BTreeSet, HashMap};
 
-/// The relation the corpus binds for CPython's verdict (core.rr's `syntax_error(d, l, msg)`).
-pub(crate) const SYNTAX_ERROR: &str = "cpython_syntax_error";
-/// W's `literal_json` (`cpython::literal`).
-pub(crate) const LITERAL_JSON: &str = "literal_json";
-/// core.rr's `@py_unparse(n)` (`cpython::unparse`).
-pub(crate) const UNPARSE: &str = "cpython_unparse";
-/// core.rr's `@ast_dump(n)` (`cpython::dump`).
-pub(crate) const AST_DUMP: &str = "cpython_ast_dump";
-/// W's `dump_sha256`, `body_sha256` and `signature_sha256` (`cpython::dump`).
-pub(crate) const DUMP_SHA256: &str = "dump_sha256";
-pub(crate) const BODY_SHA256: &str = "body_sha256";
-pub(crate) const SIGNATURE_SHA256: &str = "signature_sha256";
+pub use crate::code_rule_dsl::facts::core::cpython_relations::{
+    AST_DUMP, BODY_SHA256, DUMP_SHA256, LITERAL_JSON, SIGNATURE_SHA256, SYNTAX_ERROR, UNPARSE, columns,
+};
 
 #[derive(Default)]
 pub(super) struct CPython {
@@ -58,7 +49,7 @@ pub(super) struct CPython {
 const PRINTED: [&str; 5] = [UNPARSE, AST_DUMP, DUMP_SHA256, BODY_SHA256, SIGNATURE_SHA256];
 
 impl CPython {
-    pub(super) fn new(reads: &BTreeSet<String>) -> Self {
+    pub(super) fn start(reads: &BTreeSet<String>) -> Self {
         let want = Want {
             unparse: reads.contains(UNPARSE),
             dump: reads.contains(AST_DUMP),
@@ -177,11 +168,24 @@ impl CPython {
     }
 }
 
-/// A printed relation's columns.
-pub(crate) fn columns(rel: &str) -> &'static [&'static str] {
-    match rel {
-        UNPARSE | AST_DUMP => &["n", "s"],
-        DUMP_SHA256 => &["n", "h"],
-        _ => &["f", "h"],
+
+/// CPython's syntax verdicts, `ast.unparse` and `ast.dump` as a batch's producer (`syntax::Producer`).
+pub struct Producer;
+
+impl super::Producer for Producer {
+    fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn start(&self, reads: &BTreeSet<String>, _: &[String]) -> Box<dyn super::ProducerRun> {
+        Box::new(CPython::start(reads))
+    }
+}
+
+impl super::ProducerRun for CPython {
+    fn document(&mut self, p: &super::Projected, d: &super::Document, dialect: Option<&super::Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> crate::content_store::StoreResult<()> {
+        CPython::document(self, p, &d.path, dialect, own, string)
+    }
+    fn relations(self: Box<Self>, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
+        CPython::relations(*self, atom)
     }
 }

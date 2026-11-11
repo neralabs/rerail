@@ -102,4 +102,4 @@ fn a_collected_last_root_relists_every_path_but_rebinds_only_changes() {
     assert_eq!(trees_read, 1);
 }
 
-mod recovery;
+pub mod recovery;

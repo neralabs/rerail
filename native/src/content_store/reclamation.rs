@@ -160,6 +160,13 @@ impl ContentStore {
         })
     }
 
+    /// Ends this handle's holding under `owner` (`hold_sources`), in memory only: `release_pins` deletes its pins.
+    pub fn release_holder(&self, owner: &str) {
+        if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
+            *self.holder.lock() = None;
+        }
+    }
+
     pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
         if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
             *self.holder.lock() = None;

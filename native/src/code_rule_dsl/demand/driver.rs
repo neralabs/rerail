@@ -29,7 +29,7 @@ struct SqlFixRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct SqlViolationRow {
+pub struct SqlViolationRow {
     rule_id: String,
     clause_id: String,
     code: String,
@@ -61,7 +61,7 @@ impl SqlViolationRow {
         })
     }
 
-    fn from_sql_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+    pub fn from_sql_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         let span: crate::code_rule_dsl::lines::Span =
             Self::json_column(row, "span", row.get("span")?)?;
         let captures: BTreeMap<String, Vec<crate::code_rule_dsl::lines::Span>> =
@@ -139,7 +139,7 @@ impl SqlViolationRow {
         (&self.rule_id, &self.clause_id, &self.path)
     }
 
-    pub(in crate::code_rule_dsl) fn into_witness(self) -> crate::code_rule_dsl::violations::Witness {
+    pub fn into_witness(self) -> crate::code_rule_dsl::violations::Witness {
         crate::code_rule_dsl::violations::Witness {
             sql_violation: None,
             path: self.path,
@@ -153,7 +153,7 @@ impl SqlViolationRow {
         }
     }
 
-    pub(in crate::code_rule_dsl) fn to_value(&self) -> Value {
+    pub fn to_value(&self) -> Value {
         let mut id = crate::code_rule_dsl::eval::violation_id(
             &self.rule_id,
             &self.clause_id,
@@ -227,7 +227,7 @@ pub(in crate::code_rule_dsl) struct QueryCounters {
     pub(in crate::code_rule_dsl) host_callbacks: usize,
 }
 
-fn split_measured_statement_packets(
+pub fn split_measured_statement_packets(
     ordinals: &[usize],
     byte_limit: usize,
     mut render: impl FnMut(&[usize]) -> Result<String, String>,
@@ -265,10 +265,10 @@ fn split_measured_statement_packets(
 
 /// One lowered statement: its SQL, the (rule, clause) keys it answers as a JSON array (bound to
 /// `:clauses`), and the temporary table it fills, if it fills one.
-pub(in crate::code_rule_dsl) struct ExecutionStatement {
-    pub(in crate::code_rule_dsl) sql: String,
-    pub(in crate::code_rule_dsl) clauses: String,
-    pub(in crate::code_rule_dsl) materialization: Option<String>,
+pub struct ExecutionStatement {
+    pub sql: String,
+    pub clauses: String,
+    pub materialization: Option<String>,
 }
 
 fn production_backend() -> ExecutionBackend {
@@ -286,7 +286,7 @@ fn production_backend() -> ExecutionBackend {
 /// the one way a batch is driven, by the wave's chunks (`waves::schedule::run_over`) and by
 /// `drive`. With `status`, a batch that did not complete fails, since the relations the
 /// statements read of it would be silently short. The batch is removed however `run` ends.
-pub(in crate::code_rule_dsl) fn with_batch<T>(
+pub fn with_batch<T>(
     registry: &MatchRegistry,
     demand: Option<PackedDemand>,
     status: Option<(&Connection, &str)>,
@@ -318,7 +318,7 @@ pub(in crate::code_rule_dsl) fn with_batch<T>(
 /// Registers `demand` and runs `statements` over it in one transaction on `store`. Each
 /// statement either fills a temporary table (`materialization`) or returns output rows
 /// (`output_kind` 1: violation, 2: failure) or, failing those, relation rows.
-pub(in crate::code_rule_dsl) fn drive(
+pub fn drive(
     store: &ContentStore,
     demand: PackedDemand,
     statements: &[ExecutionStatement],
@@ -458,7 +458,6 @@ fn run(
     })
 }
 
-#[cfg(test)]
-pub(in crate::code_rule_dsl) mod catalog;
-#[cfg(test)]
-mod tests;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod catalog;
+// cratify: `tests` is rerail-engine's (it mounts it)

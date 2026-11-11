@@ -25,7 +25,7 @@ impl Retained {
         };
         Decision::new(false, reason)
     }
-    pub(in crate::code_rule_dsl::sql_executor) fn explain(&self) -> Value {
+    pub fn explain(&self) -> Value {
         json!({"relation":self.output,"support_uniqueness":self.support_uniqueness(),"full_rebuild_grouping_elided":self.support_uniqueness().proven,"incremental_support":if self.lattice.is_none() && self.support_uniqueness().proven {"The unique witness proof permits old/new set reconciliation without grouping in SQL phases; fallback paths retain signed counts"} else {"Signed old/new contributions require aggregation"},"cold_reuse":self.cold_reuse,"scalar_support_phase":self.scalar_phase_analysis(),"cold_initialized":self.cold_initialized,"rules":self.rules.iter().map(|r|json!({"uniqueness":r.uniqueness.as_ref(),"contribution_storage":r.contribution_storage,"contributions_reconstructed":r.contribution_view,"contribution_choice":self.contribution_choice(r),"context_store":r.contexts,"contribution_store":if r.contribution_view {None}else{Some(&r.contributions)},"scalar_summaries":r.scalar_analysis.as_ref(),"initial_evaluation":r.initial_evaluation,"evaluation_order":r.evaluation_order,"summary_storage":r.reducers.iter().map(|s|s.storage_explain()).collect::<Vec<_>>(),"shared_summary_lookups":r.reducers.iter().filter(|s|s.shared_lookup_owner()).count()})).collect::<Vec<_>>()})
     }
 }

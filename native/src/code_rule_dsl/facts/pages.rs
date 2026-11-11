@@ -59,4 +59,4 @@ pub(crate) fn evaluate_pages(
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

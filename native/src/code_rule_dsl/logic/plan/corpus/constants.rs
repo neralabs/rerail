@@ -200,7 +200,7 @@ fn key(programs: &[&str], root: &Path, options: &serde_json::Value, wanted: &BTr
     h.update(options.to_string().as_bytes());
     h.update([0]);
     h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
-    h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 

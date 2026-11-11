@@ -81,7 +81,7 @@ pub(super) fn encode_composed(
 
 /// Standalone conformance entry point for independently constructed producer fixtures.
 /// Production composition must carry producer statuses through `encode_composed`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn encode(
     device: &Device,
     command: &CommandBufferRef,

@@ -41,7 +41,7 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
-    h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.update([u8::from(crate::code_rule_dsl::facts::vtab::syntax::definition_ids())]);
     // What can change the outputs from outside the text: every engine switch (a sample of the corpus, decision 0091's
     // guards, the matcher and planner switches). Listing only some reused a run made under others: a run with
@@ -63,8 +63,8 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
 /// The programs with the root's settings (`<root>/rerail.env`, the `env` option), as the run reads them.
 fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) -> Result<Vec<String>> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::tools::settings(root, &flags).map_err(Error::Plan)?;
-    Ok(programs.iter().map(|p| crate::code_rule_dsl::tools::with_settings(p, &settings)).collect())
+    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    Ok(programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect())
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
@@ -181,7 +181,7 @@ pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::typing::file_local::Binding;
 
     /// An unchanged run is kept; a document's edit, a new document, the root's settings (read by `env`) and the text

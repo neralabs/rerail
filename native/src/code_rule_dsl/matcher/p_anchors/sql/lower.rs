@@ -3,19 +3,19 @@ use super::super::{AnchorPlan, Condition, Direction, Required};
 use rusqlite::types::Value;
 use std::collections::{BTreeSet, HashMap};
 #[path = "access.rs"]
-mod access;
+pub mod access;
 #[path = "decode.rs"]
-mod decode;
+pub mod decode;
 use decode::Property;
 #[path = "lower/render.rs"]
-mod render;
+pub mod render;
 use render::Definitions;
-mod children;
-pub(super) mod lifetime;
-pub(super) mod ownership;
-mod waves;
+pub mod children;
+pub mod lifetime;
+pub mod ownership;
+pub mod waves;
 #[cfg(feature = "code-rule-profile")]
-pub(super) mod working_set;
+pub mod working_set;
 
 #[derive(Clone)]
 struct Set {
@@ -75,7 +75,7 @@ impl Statement {
         self.schedule = compiled.schedule;
         self.ownership = compiled.layout;
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn reschedule(&mut self) {
         self.schedule = lifetime::Schedule::new(
             &self
@@ -845,11 +845,11 @@ impl Lower {
     }
 }
 
-pub(super) fn batch_files(plans: &[&AnchorPlan], lang: u32, files: &[i64]) -> Statement {
+pub fn batch_files(plans: &[&AnchorPlan], lang: u32, files: &[i64]) -> Statement {
     batch_scope(plans, lang, Some(files), None)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn batch(
     plans: &[&AnchorPlan],
     lang: u32,
@@ -1118,7 +1118,7 @@ pub(super) struct Stage {
 
 /// SQLite expands CTE references during preparation, including AS MATERIALIZED CTEs.
 /// Cut shared dependencies into real SQL tables before that expansion becomes exponential.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn finish(
     ctes: Vec<String>,
     query: String,
@@ -1128,7 +1128,7 @@ pub(super) fn finish(
     finish_decoded(ctes, vec![query], parameters, indexed, HashMap::new())
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn finish_decoded(
     ctes: Vec<String>,
     queries: Vec<String>,
@@ -1365,4 +1365,4 @@ fn prepare_decoded(
 
 #[cfg(test)]
 #[path = "lower_tests.rs"]
-mod tests;
+pub mod tests;

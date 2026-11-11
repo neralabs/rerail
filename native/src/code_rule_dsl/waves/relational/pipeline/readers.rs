@@ -82,7 +82,7 @@ pub(super) fn occurrences(query: &str, name: &str) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn column_qualifiers_and_literal_mentions_do_not_invent_second_readers() {

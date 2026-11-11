@@ -16,7 +16,7 @@ use super::unparenthesized;
 
 use super::super::options::PythonTyping;
 use super::super::{
-    Annotation, BuildError, Builder, DEADLINE_INTERVAL, Import, MAX_BUILD_DEPTH, NodeRef, Reading,
+    Annotation, BuildError, Builder, DEADLINE_INTERVAL, Import, MAX_BUILD_DEPTH, Reading,
     ScopeTable, annotation_offset,
 };
 use super::super::{Origin, ScopeKind};
@@ -124,20 +124,7 @@ pub(super) const SUBSCRIPT_MEMBERS: &[&str] = &[
     "WeakValueDictionary",
 ];
 
-/// Where a type definition may start: recorded while the table is built, classified after.
-pub(crate) struct TypeRoot {
-    pub(super) node: NodeRef,
-    pub(super) kind: RootKind,
-}
-
-pub(super) enum RootKind {
-    /// An annotation, a `type` statement's value, a type parameter's bound.
-    Definition,
-    /// A subscript or call whose name may be a typing generic or callable.
-    Candidate,
-    /// The value of `x: A = value`, a type definition where `A` is `TypeAlias`.
-    AliasValue(NodeRef),
-}
+pub use crate::code_rule_dsl::scope::{RootKind, TypeRoot};
 
 /// The name a subscript's value or a call's callee ends with.
 pub(super) fn last_segment<D: Doc>(node: &Node<'_, D>) -> String {
@@ -890,7 +877,7 @@ impl Classifier<'_> {
 /// Classifies the string type definitions under the recorded roots, parses them, reads their
 /// names in the scopes they occur in, and repeats for the strings nested in them. Their names are
 /// deferred forward references: they see every binding, the module's first.
-pub(crate) fn string_type_definitions<D: Doc>(
+pub fn string_type_definitions<D: Doc>(
     builder: &mut Builder,
     root: &Node<'_, D>,
     reading: Reading,

@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 fn src() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
 }
 
 /// The non-test Rust files under `dir`.

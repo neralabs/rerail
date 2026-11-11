@@ -3,9 +3,11 @@
 //!
 //! - **Written back** by a thread of its own, which sleeps a second between writes: it takes the samples the
 //!   executor kept and writes them in one transaction. A run's end flushes what is left ([`flush`]).
-//! - **Read lazily, on another thread.** When the first executor is made, a job on the pool reads this machine's
-//!   recent samples and fits the prices' per-unit rates from them (`rerail_accel::price::learn_from`). Until it
-//!   has, the prices are the priors.
+//! - **Read before the first wave** (decision 0104), when the statistics start (`start`, which a corpus run calls
+//!   before its first wave): this machine's recent samples, and the prices' per-unit rates fitted from them
+//!   (`rerail_accel::price::learn_from`). Without samples, the prices are the priors.
+//!
+//! The writer's thread and the training's work behind the run: what they send to SQLite no wave waits for.
 //!
 //! - **The learned model** (`rerail_accel::cost_model`): after the rates, the model saved for this machine (table
 //!   `models`) is put in place, and a thread of its own, at the background quality of service and in a pool of two
@@ -35,7 +37,7 @@ fn path() -> Option<PathBuf> {
         Ok(v) if v == "off" || v.is_empty() => None,
         Ok(v) => Some(PathBuf::from(v)),
         // Tests write no statistics unless asked to.
-        Err(_) if cfg!(test) => None,
+        Err(_) if cfg!(any(test, feature = "test-hooks")) => None,
         Err(_) => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/rerail/costs.sqlite")),
     }
 }
@@ -206,6 +208,7 @@ fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>) {
     WRITTEN.store(0, Ordering::Relaxed);
     *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
     let spawned = std::thread::Builder::new().name("rerail-cost-model".into()).spawn(move || {
+        crate::code_rule_dsl::logic::profile::behind_the_run();
         rerail_accel::cost_model::set_background_qos();
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(2)
@@ -296,16 +299,14 @@ pub(in crate::code_rule_dsl) fn start() {
         }
         rerail_accel::score::keep_samples(true);
         let _ = std::thread::Builder::new().name("rerail-costs".into()).spawn(|| {
+            crate::code_rule_dsl::logic::profile::behind_the_run();
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 write();
                 maybe_retrain();
             }
         });
-        #[cfg(not(target_family = "wasm"))]
-        rayon::spawn(|| rerail_accel::exec::as_job("the cost statistics read", || {
-            let _ = std::panic::catch_unwind(read);
-        }));
+        let _ = std::panic::catch_unwind(read);
     });
 }
 
@@ -333,7 +334,7 @@ pub(in crate::code_rule_dsl) fn summary() -> String {
 }
 
 #[cfg(all(test, target_os = "macos"))]
-mod tests {
+pub mod tests {
     /// The learned model against the rates on this machine's samples (decision 0100 §14): the store at
     /// `RERAIL_COSTS`, read only. Prints the comparison; asserts nothing about who wins.
     #[test]

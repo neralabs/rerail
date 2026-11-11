@@ -9,10 +9,10 @@ use super::*;
 /// the source's digest: the store pairs a tape with its source.)
 const HEADER: usize = HEADER_BYTES;
 /// `HEADER`, for a reader that decodes the header alone first.
-pub(in crate::code_rule_dsl) const HEADER_LEN: usize = HEADER;
+pub const HEADER_LEN: usize = HEADER;
 
 /// The node and code counts an image's header declares, after its magic and version.
-pub(in crate::code_rule_dsl) fn header_counts(header: &[u8]) -> Result<(usize, usize), String> {
+pub fn header_counts(header: &[u8]) -> Result<(usize, usize), String> {
     if header.len() < HEADER || &header[..8] != TAPE_MAGIC {
         return Err("wrong tape image magic".into());
     }
@@ -25,35 +25,35 @@ const _: () = assert!(HEADER == HEADER_BYTES && HEADER % COLUMN_ALIGN == 0);
 
 /// Where an image's columns and tables are, as byte offsets from the image's start.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct Layout {
-    pub(in crate::code_rule_dsl) nodes: u32,
+pub struct Layout {
+    pub nodes: u32,
     /// The widths of `size`, `off` and `tail` (2 or 4).
-    pub(in crate::code_rule_dsl) widths: [u8; 3],
+    pub widths: [u8; 3],
     /// Tails are measured from the node's own start (`TAIL_FROM_START`).
-    pub(in crate::code_rule_dsl) from_start: bool,
-    pub(in crate::code_rule_dsl) code: usize,
-    pub(in crate::code_rule_dsl) size: usize,
-    pub(in crate::code_rule_dsl) base: usize,
-    pub(in crate::code_rule_dsl) off: usize,
-    pub(in crate::code_rule_dsl) tail: usize,
+    pub from_start: bool,
+    pub code: usize,
+    pub size: usize,
+    pub base: usize,
+    pub off: usize,
+    pub tail: usize,
     pub(in crate::code_rule_dsl) codes: usize,
-    pub(in crate::code_rule_dsl) code_count: usize,
+    pub code_count: usize,
     aliases: usize,
     alias_count: usize,
-    pub(in crate::code_rule_dsl) source_len: usize,
+    pub source_len: usize,
 }
 
 /// A code as the device reads it: 24 bytes, fixed. `flags` are `TapeDoc::transducer_flags`' bits
 /// (named, extra, missing, error); `kind` is `transducer_kind`'s (ERROR is `ERROR_SYMBOL`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct DeviceCode {
-    pub(in crate::code_rule_dsl) kind: u16,
+pub struct DeviceCode {
+    pub kind: u16,
     pub(in crate::code_rule_dsl) field: u16,
     pub(in crate::code_rule_dsl) flags: u8,
-    pub(in crate::code_rule_dsl) class_count: u8,
+    pub class_count: u8,
     pub(in crate::code_rule_dsl) reserved: u16,
-    pub(in crate::code_rule_dsl) classes: [u16; MAX_NODE_SUPERTYPES],
+    pub classes: [u16; MAX_NODE_SUPERTYPES],
 }
 const _: () = assert!(std::mem::size_of::<DeviceCode>() == 24);
 
@@ -64,7 +64,7 @@ fn u64_at(bytes: &[u8], at: usize) -> Result<usize, String> {
 
 /// The layout of the image `bytes`, checked against its header: magic, version, widths and every
 /// length, as `TapeImage::from_bytes` checks them, without copying a column.
-pub(in crate::code_rule_dsl) fn layout(bytes: &[u8]) -> Result<Layout, String> {
+pub fn layout(bytes: &[u8]) -> Result<Layout, String> {
     if bytes.len() < HEADER || &bytes[..8] != TAPE_MAGIC {
         return Err("wrong tape image magic".into());
     }
@@ -118,7 +118,7 @@ pub(in crate::code_rule_dsl) fn layout(bytes: &[u8]) -> Result<Layout, String> {
 
 /// The image's codes as the device reads them, named as `TapeDoc` names its nodes (an alias's
 /// flag, else the grammar's).
-pub(in crate::code_rule_dsl) fn device_codes(bytes: &[u8], layout: &Layout, grammar: &Grammar) -> Result<Vec<DeviceCode>, String> {
+pub fn device_codes(bytes: &[u8], layout: &Layout, grammar: &Grammar) -> Result<Vec<DeviceCode>, String> {
     let truncated = || "truncated tape image".to_owned();
     // The aliases' named flags, in order.
     let mut named = Vec::with_capacity(layout.alias_count);
@@ -177,7 +177,7 @@ pub(in crate::code_rule_dsl) fn size_at(bytes: &[u8], layout: &Layout, i: usize)
 
 /// Each node's parent (`u32::MAX` at the root) into `out`, from the sizes: the enclosing subtree on
 /// a stack, as `restore_tree` rebuilds them. Fails on a size past the tape's end.
-pub(in crate::code_rule_dsl) fn parents(bytes: &[u8], layout: &Layout, out: &mut [u32]) -> Result<(), String> {
+pub fn parents(bytes: &[u8], layout: &Layout, out: &mut [u32]) -> Result<(), String> {
     let count = layout.nodes as usize;
     if out.len() != count {
         return Err("parent column length".into());
@@ -198,7 +198,7 @@ pub(in crate::code_rule_dsl) fn parents(bytes: &[u8], layout: &Layout, out: &mut
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// Node `i` read from the image's bytes in place, as the device reads it.

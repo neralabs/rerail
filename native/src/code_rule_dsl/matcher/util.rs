@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 /// `matches` recursion deeper than this fails the clause for the file instead of risking the stack.
 /// Utilities recurse only through relations, so real rules recurse as deep as the syntax they walk.
-pub(crate) const MAX_UTIL_DEPTH: u32 = 256;
+pub const MAX_UTIL_DEPTH: u32 = 256;
 
 /// Stack a root's `matches` recursion may use, measured from `begin_clause`. A level's frames grow
 /// with how much rule it nests and with the build (a small recursive rule takes about 2 KiB per
@@ -26,13 +26,13 @@ thread_local! {
     /// as it found it; one that fails leaves it set if it was set on entry or its own failure is
     /// unknown. Readers (`not`, relations, `count`) clear it before the sub-rule they read and
     /// restore it after.
-    pub(super) static UNKNOWN: Cell<bool> = const { Cell::new(false) };
+    pub static UNKNOWN: Cell<bool> = const { Cell::new(false) };
     /// Whether the root being matched can reach an unknown verdict (it reads values). Without one,
     /// no matcher touches `UNKNOWN`, so rules that read no values match exactly as they did.
     pub(super) static THREE_VALUED: Cell<bool> = const { Cell::new(false) };
 }
 
-pub(super) use crate::code_rule_dsl::language::adapter::{is_comment_kind, is_paren_kind};
+pub use crate::code_rule_dsl::language::adapter::{is_comment_kind, is_paren_kind};
 
 /// An address in the current stack frame.
 #[inline(always)]
@@ -44,7 +44,7 @@ pub(super) fn stack_address() -> usize {
 /// A limit `matches` recursion hit. The root's verdict is then unknown (a `not` above the cut-off
 /// reference would read its failure as a non-match), so the clause fails for the file.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum UtilLimit {
+pub enum UtilLimit {
     /// `MAX_UTIL_DEPTH` or `MAX_UTIL_STACK_BYTES`.
     Depth,
     /// More utility evaluations and counted nodes than the query's `maxVisitedNodes` in one file.
@@ -60,7 +60,7 @@ pub(crate) enum UtilLimit {
 }
 
 impl UtilLimit {
-    pub(crate) fn message(self) -> &'static str {
+    pub fn message(self) -> &'static str {
         match self {
             Self::Depth => {
                 "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)"
@@ -83,10 +83,10 @@ impl UtilLimit {
 
 /// Distinct parameterized calls (a utility and a mapping of its parameters) one query may make per
 /// grammar. Each is compiled once, as a frame plan over the utility's one compiled rule.
-pub(crate) const MAX_UTIL_INSTANCES: usize = 1024;
+pub const MAX_UTIL_INSTANCES: usize = 1024;
 
 /// A parameterized call's mapping: each parameter and the caller's capture it names.
-pub(crate) type CallArgs = Vec<(String, String)>;
+pub type CallArgs = Vec<(String, String)>;
 
 /// A utility's memo scope: capture names, sorted (`UtilRef::scope`).
 pub(super) type Scope = Arc<[Arc<str>]>;
@@ -95,7 +95,7 @@ pub(super) type Scope = Arc<[Arc<str>]>;
 /// (id, parameters, rule). Equal utilities of any query or document compile alike wherever nothing
 /// of the query shapes them (`context_free`): their verdicts are one (`UtilRef::memo_term`).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct UtilOrigin {
+pub struct UtilOrigin {
     pub(crate) digest: [u8; 32],
 }
 
@@ -104,7 +104,7 @@ pub(crate) struct UtilOrigin {
 /// reaches compiled, so utilities can refer to each other and to themselves: a query's own table
 /// fills them all at once, a document's shared table the ones its queries reach, as they reach
 /// them (`compile::shared`).
-pub(crate) struct UtilTable {
+pub struct UtilTable {
     #[cfg_attr(not(feature = "code-rule-profile"), allow(dead_code))]
     pub(crate) names: Vec<String>,
     /// Whether each utility has parameters: it runs in a frame of its own, never in its caller's
@@ -222,10 +222,10 @@ impl UtilTable {
 /// recurse over captures, a pair of nodes at a time, to any depth: each level's captures are its
 /// own.
 #[derive(Clone)]
-pub(crate) struct UtilCall {
-    pub(crate) util: UtilRef,
+pub struct UtilCall {
+    pub util: UtilRef,
     /// Each parameter and the caller's capture it names, in the utility's parameter order.
-    pub(crate) args: CallArgs,
+    pub args: CallArgs,
 }
 
 impl UtilCall {
@@ -261,7 +261,7 @@ impl UtilCall {
 /// again until no value it read changes. Tarjan's low links tell where a component ends; until
 /// then its keys' values hold for this walk only, and nothing outside the component reuses them.
 /// A key on no cycle is summarized once.
-pub(crate) struct UtilitySummary<K: Ord, T> {
+pub struct UtilitySummary<K: Ord, T> {
     completed: BTreeMap<K, T>,
     /// The keys being summarized, outermost first, with where each sits.
     stack: Vec<Frame>,
@@ -421,22 +421,22 @@ impl<K: Ord + Clone, T: Clone + PartialEq> Default for UtilitySummary<K, T> {
 }
 
 #[derive(Clone)]
-pub(crate) struct UtilRef {
-    pub(crate) table: Weak<UtilTable>,
-    pub(crate) index: usize,
+pub struct UtilRef {
+    pub table: Weak<UtilTable>,
+    pub index: usize,
 }
 
 impl UtilRef {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     /// The deterministic identity of the compiled utility closure.
-    pub(crate) fn semantic_key(&self) -> Option<[u8; 32]> {
+    pub fn semantic_key(&self) -> Option<[u8; 32]> {
         let table = self.table.upgrade()?;
         table.origins.get(self.index)?.as_ref().map(|origin| origin.digest)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     /// A deterministic SQL component name from the compiled utility closure.
-    pub(crate) fn component_name(&self) -> Option<String> {
+    pub fn component_name(&self) -> Option<String> {
         let table = self.table.upgrade()?;
         let digest = table.origins.get(self.index)?.as_ref()?.digest;
         Some(format!(
@@ -561,7 +561,7 @@ fn context_free(matcher: &AstMatcher, read: &mut BTreeMap<(usize, usize), Option
         AstMatcher::Util(util) => util.context_free_within(read),
         AstMatcher::Call(call) => call.util.context_free_within(read),
         AstMatcher::Semantic(_) => false,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => false,
     }
 }
@@ -569,7 +569,7 @@ fn context_free(matcher: &AstMatcher, read: &mut BTreeMap<(usize, usize), Option
 impl UtilRef {
     /// The referenced rule, or its draft while it is being compiled; `None` before it is drafted
     /// (which the table records) or after the table is dropped.
-    pub(crate) fn with_target<T>(&self, visit: impl FnOnce(&AstMatcher) -> T) -> Option<T> {
+    pub fn with_target<T>(&self, visit: impl FnOnce(&AstMatcher) -> T) -> Option<T> {
         let table = self.table.upgrade()?;
         let (rule, draft) = (table.rules.get(self.index)?, table.draft.get(self.index)?);
         let Some(rule) = rule.get().or_else(|| draft.get()) else {
@@ -608,7 +608,7 @@ impl UtilRef {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::test_support::*;
     use serde_json::json;

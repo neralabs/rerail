@@ -53,11 +53,11 @@ impl Work {
     pub(super) fn heads(&self) -> Option<&MappedBuffer> {
         self.active.as_ref().map(|work| &work.heads)
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn offers(&self) -> Option<&MappedBuffer> {
         self.pending.as_ref().map(|work| &work.offers)
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn alive(&self) -> Option<&MappedBuffer> {
         self.pending.as_ref().map(|work| &work.alive)
     }

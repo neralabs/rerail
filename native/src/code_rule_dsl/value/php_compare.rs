@@ -610,4 +610,4 @@ pub(crate) fn same_reference<D: Doc>(
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

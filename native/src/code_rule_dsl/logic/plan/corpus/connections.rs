@@ -120,6 +120,19 @@ impl Cone {
         Ok(db)
     }
 
+    /// Opens the cone's connection on `path` and its handle on the store at `store` before the run's first wave
+    /// (decision 0104: opening one reads the store), kept in the slot for `take_db` and `take_store`.
+    pub(super) fn ready(slot: &parking_lot::Mutex<Cone>, path: &Path, store: Option<&Path>) -> super::Result<()> {
+        let db = Self::take_db(slot, path)?;
+        let handle = store.map(|p| Self::take_store(slot, p).map(|s| (p.to_path_buf(), s))).transpose().map_err(|e| super::Error::Plan(e.to_string()))?;
+        let mut cone = slot.lock();
+        cone.db = Some((path.to_path_buf(), db));
+        if handle.is_some() {
+            cone.store = handle;
+        }
+        Ok(())
+    }
+
     /// The cone's handle on the store at `path`: the kept one, or one opened.
     pub(super) fn take_store(slot: &parking_lot::Mutex<Cone>, path: &Path) -> std::result::Result<ContentStore, StoreError> {
         match slot.lock().store.take() {

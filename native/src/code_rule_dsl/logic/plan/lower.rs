@@ -14,7 +14,7 @@ use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, tape_tag};
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Domain {
+pub enum Domain {
     Int,
     Node,
     Kind,
@@ -216,7 +216,7 @@ fn rule_vars(prog: &Program, cols: &BTreeMap<String, Vec<Option<Domain>>>, rule:
 }
 
 /// Every column's domain (see the module comment).
-pub(in crate::code_rule_dsl) fn domains(prog: &Program) -> Result<Domains> {
+pub fn domains(prog: &Program) -> Result<Domains> {
     let mut cols: BTreeMap<String, Vec<Option<Domain>>> = BTreeMap::new();
     let inputs: std::collections::HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
     for (rel, decl) in &prog.decls {
@@ -277,8 +277,8 @@ pub(in crate::code_rule_dsl) fn domains(prog: &Program) -> Result<Domains> {
 
 /// A program lowered for one dialect.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Lowered {
-    pub(in crate::code_rule_dsl) program: Program,
+pub struct Lowered {
+    pub program: Program,
     pub(in crate::code_rule_dsl) domains: Domains,
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
     pub(in crate::code_rule_dsl) ops: [i64; 3],
@@ -339,7 +339,7 @@ fn strings(t: &Term, out: &mut Vec<String>) {
 }
 
 /// Lowers `prog` for `dialect`; `intern` gives the name atoms of strings, interning new ones.
-pub(in crate::code_rule_dsl) fn lower(
+pub fn lower(
     prog: &Program,
     dialect: GrammarDialect,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
@@ -462,7 +462,7 @@ impl Lowered {
     /// the input atom `nearest_<set>($n, $a)`, which the run binds beside the base relations
     /// (`facts::vtab::syntax::with_nearest`). The relations the run must make (`nearest_<set>`, and the tree
     /// axes' `rr_inside_<set>` and `rr_has_<set>`), each with its set's kind atoms.
-    pub(in crate::code_rule_dsl) fn transduce_nearest(&mut self) -> Vec<(String, Vec<i64>)> {
+    pub fn transduce_nearest(&mut self) -> Vec<(String, Vec<i64>)> {
         let prog = &mut self.program;
         let mut used = std::collections::BTreeSet::new();
         for rule in &mut prog.rules {
@@ -502,4 +502,4 @@ impl Lowered {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

@@ -6,8 +6,8 @@ use super::super::logic::sql::{
 };
 use super::*;
 use maintenance::Work;
-mod nullable;
-mod targets;
+pub mod nullable;
+pub mod targets;
 use nullable::Layout;
 
 pub(super) fn optimize(e: &mut plan::emit::Emitted) {

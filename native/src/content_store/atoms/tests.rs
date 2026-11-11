@@ -317,7 +317,7 @@ fn a_hash_collision_finds_the_right_atom() {
 
 /// A store from before the key (its segments alone): keyed once, when an atom is first looked up.
 #[test]
-fn an_older_store_is_keyed_when_first_looked_up() {
+fn an_older_store_is_keyed_with_its_next_write() {
     let path = path("older");
     let store = ContentStore::open(&path).unwrap();
     assert_eq!(store.intern_atoms(&["a", "b", "c"]).unwrap(), [1, 2, 3]);
@@ -325,9 +325,12 @@ fn an_older_store_is_keyed_when_first_looked_up() {
     rusqlite::Connection::open(&path).unwrap().execute_batch("DROP TABLE atom_key; DROP TABLE atom_key_end;").unwrap();
     let path = elsewhere(&path, "older-again");
     let store = ContentStore::open(&path).unwrap();
+    // A lookup reads the segments, and writes nothing (decision 0104): the store has no key yet.
     assert_eq!(store.atom("b").unwrap(), Some(2));
-    assert_eq!(key_rows(&path), (4, Some(4)));
     assert_eq!(store.intern_atoms(&["d"]).unwrap(), [4]);
+    // The next write keys every segment before it, then appends its own.
+    store.flush_atoms().unwrap();
+    assert_eq!(key_rows(&path), (5, Some(5)));
 }
 
 /// Decision 0111's measurement, by hand: `RERAIL_ATOMS_PROBE=<store>` times a process's first lookup, an id's

@@ -76,7 +76,7 @@ pub(in crate::code_rule_dsl) fn check(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::{CodeRuleDslRuntime, budget::Context, model::FileInput};
     use std::{

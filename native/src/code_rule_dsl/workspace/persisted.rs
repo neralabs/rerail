@@ -1,7 +1,7 @@
 //! Stored per-file results: engine and grammar identities, the local-result encoding, restoring a
 //! file from the store, and publishing evaluated files.
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::TEST_ENGINE_BUILD_ID;
 use super::calls_state::Consumers;
 use super::crossfile::CrossFileScheduler;
@@ -34,15 +34,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Weak};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Runs on the apply's thread once `persist_files` has published its files, before it
     /// promotes them and renews the lease: a test takes the store there.
-    pub(super) static AFTER_FILES_PUBLISHED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+    pub static AFTER_FILES_PUBLISHED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
     /// Lease renewals `persist_files` attempted on this thread: a test shows a busy promotion
     /// leaves the renewal unattempted.
-    pub(super) static LEASE_RENEWAL_ATTEMPTS: std::cell::Cell<usize> =
+    pub static LEASE_RENEWAL_ATTEMPTS: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
@@ -122,7 +122,7 @@ fn serialize_witnesses<S: serde::Serializer>(
     }))
 }
 
-pub(super) fn encode_local_result(
+pub fn encode_local_result(
     witnesses: &[Witness],
     failure: Option<LocalFailure>,
     syntax: Option<&str>,
@@ -179,7 +179,7 @@ fn persisted_failure(code: &str, message: &str) -> Option<LocalFailure> {
 
 /// A stored result, or `None` when it is from another encoding or cannot be read: a cache miss
 /// the caller answers by evaluating.
-pub(super) fn decode_local_result(
+pub fn decode_local_result(
     bytes: &[u8],
     path: &str,
 ) -> Option<(Vec<Witness>, Option<LocalFailure>, Option<String>)> {
@@ -362,10 +362,10 @@ pub(super) fn restore_persisted_file(
             let kinds = matcher.anchors.root_kinds()?;
             Some(crate::content_store::SearchKindLookup {
                 tape_id,
-                index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
+                index_version: crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
                 kind_tokens: kinds
                     .iter()
-                    .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(matcher.language, kind))
+                    .map(|&kind| crate::code_rule_dsl::search_index::kind_index_token(matcher.language, kind))
                     .collect::<Option<_>>()?,
             })
         })
@@ -507,23 +507,18 @@ fn candidate_identities(
 /// The engine build a stored clause result was computed by (see `build.rs`): any engine source or
 /// dependency change can change a clause's violations, so it changes the result catalog.
 fn engine_build_id() -> &'static str {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(engine) = TEST_ENGINE_BUILD_ID.get() {
         return engine;
     }
-    env!("RERAIL_ENGINE_BUILD_ID")
+    crate::code_rule_dsl::build_ids::engine()
 }
-
-/// The parser and grammar versions a stored tape was parsed with (see `build.rs`).
-const GRAMMAR_BUILD_ID: &str = env!("RERAIL_GRAMMAR_BUILD_ID");
 
 /// The stored tapes' grammar version column: the grammar build identity as a positive integer.
-pub(in crate::code_rule_dsl) fn grammar_version() -> i64 {
-    i64::from_str_radix(&GRAMMAR_BUILD_ID[..15], 16).expect("grammar build identity is hex")
-}
+pub use crate::code_rule_dsl::build_ids::grammar_version;
 
 pub(super) fn grammar_set() -> HashKey {
-    HashKey::sha256(GRAMMAR_BUILD_ID.as_bytes())
+    HashKey::sha256(crate::code_rule_dsl::build_ids::grammar().as_bytes())
 }
 
 /// The inputs besides source content that one file's clause results depend on: its path (and so
@@ -560,7 +555,7 @@ type CatalogMemo = (
 static CATALOGS: LazyLock<parking_lot::Mutex<Vec<CatalogMemo>>> = LazyLock::new(Default::default);
 
 /// The result catalog of `code_rules`: every apply reads it, so it is hashed once per code-rule set.
-pub(super) fn candidate_catalog(
+pub fn candidate_catalog(
     code_rules: &[Arc<CompiledCodeRule>],
 ) -> Result<CandidateCatalogIdentity> {
     let engine = engine_build_id();
@@ -816,7 +811,7 @@ pub(super) fn persist_files(
     if closed.load(Ordering::Acquire) {
         return Err(invalid("policy workspace is closed"));
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(published) = AFTER_FILES_PUBLISHED.take() {
         published();
     }
@@ -845,7 +840,7 @@ pub(super) fn persist_files(
     )?;
     if busy_during.is_none() {
         let now = unix_seconds()?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         LEASE_RENEWAL_ATTEMPTS.set(LEASE_RENEWAL_ATTEMPTS.get() + 1);
         busy_during = busy_store(
             storage

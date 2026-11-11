@@ -144,19 +144,19 @@ impl View {
     }
 
     /// The grammar the program is written in.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn dialect(&self) -> GrammarDialect {
         self.dialect
     }
 
     /// The program's root node.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn root(&self) -> Node<'_> {
         self.tree.root_node()
     }
 
     /// The program's text.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
@@ -164,7 +164,7 @@ impl View {
     /// Where the program's text stands in the file. Its placeholders the tape leaves out are the
     /// parameters it writes in an empty `v-for` alias slot (`(,a)`); every other token the view
     /// writes stands for script, a template expression or the Vue syntax around one.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn segments(&self) -> &SegmentMap {
         &self.segments
     }
@@ -172,7 +172,7 @@ impl View {
     /// A node's extent in the program: from the first of its leaves standing for file bytes to
     /// the last; a node none of whose leaves does, from its first leaf to its last
     /// (`tape::node_extents`).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn extent(&self, node: Node<'_>) -> Range<usize> {
         let mut leaves = Vec::new();
         let mut stack = vec![node];
@@ -196,7 +196,7 @@ impl View {
 
     /// The ranges of `source`, the `.vue` file, a node of the program stands for, in file order,
     /// as its tape's document places them (`tape::TapeDoc`'s `Origin`).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn ranges(&self, node: Node<'_>, source: &str) -> Vec<Range<usize>> {
         self.segments
             .file_ranges(self.extent(node))
@@ -208,7 +208,7 @@ impl View {
 
     /// The bytes of `source` a node of the program reports: its primary range
     /// (`FileRanges::primary`).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn span(&self, node: Node<'_>, source: &str) -> Range<usize> {
         self.segments
             .file_ranges(self.extent(node))
@@ -217,7 +217,7 @@ impl View {
     }
 
     /// The file ranges the program copies byte for byte, in program order.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.segments.copied()
     }
@@ -869,7 +869,7 @@ impl<'t> Emitter<'t> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{NATIVE_TAGS, View};
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::vue::template::Directive;

@@ -612,7 +612,7 @@ fn the_slice_finds_ws_findings_on_real_files() {
                 )
             };
             eprintln!("S7 jemalloc: {}", jemalloc());
-            crate::purge_allocator_pages();
+            crate::code_rule_dsl::prof::purge_allocator_pages();
             eprintln!("S7 after purge: jemalloc {}; footprint {} MB", jemalloc(), footprint());
             eprintln!("S7 holding, pid {}", std::process::id());
             while !std::path::Path::new(&path).exists() {

@@ -18,6 +18,7 @@
 //! expression), as the global name where PHP 8.5.11 defines it (`data/php_builtins.generated.json`), and as
 //! unknown otherwise: another file may declare it.
 
+use std::sync::Arc;
 use crate::code_rule_dsl::tree::Tree;
 use super::{BuildError, NodeRef};
 use crate::code_rule_dsl::value::php_compare::{ImportKind, import_kind};
@@ -99,7 +100,22 @@ pub(crate) struct PhpNames {
 /// once.
 type Declared = HashMap<String, Option<NodeRef>>;
 
+/// PHP's names, as the shared code carries them (`scope::FileNames`).
+impl super::FileNames for PhpNames {
+    fn cost(&self) -> usize {
+        self.cost
+    }
+    fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+}
+
 impl PhpNames {
+    /// `names` as PHP's own, where they are.
+    pub(crate) fn of(names: &super::NameTable) -> Option<Arc<Self>> {
+        Arc::clone(names).into_any().downcast().ok()
+    }
+
     /// Reads the references of `root`'s file, visiting at most `cap` nodes.
     pub(crate) fn build<D: Doc>(
         root: Node<'_, D>,
@@ -147,7 +163,7 @@ impl PhpNames {
             .map(|(kind, name)| (*kind, &**name))
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn imports(&self) -> impl Iterator<Item = (Range<usize>, NameKind, &str)> {
         self.imports
             .iter()
@@ -340,7 +356,7 @@ impl PhpNames {
         found
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn references(&self) -> impl Iterator<Item = (Range<usize>, &Reference)> {
         self.references
             .iter()
@@ -977,14 +993,8 @@ fn parse<D: Doc>(node: &Node<'_, D>) -> Option<(Form, Vec<String>)> {
         .then_some((form, parts))
 }
 
-/// A PHP label: a letter, `_` or a byte from 0x80, then those or digits.
-pub(crate) fn is_label(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_' || !first.is_ascii())
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii())
-}
+/// A PHP label (`identifier::php_label`).
+pub use crate::code_rule_dsl::identifier::php_label as is_label;
 
 /// A namespace name's segments joined by `\`, without whitespace or comments between them.
 fn segments_text<D: Doc>(node: &Node<'_, D>) -> String {
@@ -1083,4 +1093,4 @@ fn builtin_constant(name: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

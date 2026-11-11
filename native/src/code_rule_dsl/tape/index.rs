@@ -1,7 +1,7 @@
 //! The spike's rec6, span checkpoint, and overflow columns, without a row per node.
 use super::*;
 
-pub(in crate::code_rule_dsl) struct IndexImage {
+pub struct IndexImage {
     pub rec: Vec<u8>,
     pub spans: Vec<u8>,
     pub checkpoints: Vec<u8>,
@@ -11,7 +11,7 @@ pub(in crate::code_rule_dsl) struct IndexImage {
 }
 
 impl TapeDoc {
-    pub(in crate::code_rule_dsl) fn index_image(
+    pub fn index_image(
         &self,
         interrupted: &impl Fn() -> bool,
     ) -> Result<IndexImage, String> {

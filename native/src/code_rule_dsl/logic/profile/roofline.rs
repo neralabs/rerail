@@ -16,7 +16,7 @@ use std::time::Instant;
 
 /// A kind of work a span is charged with.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(in crate::code_rule_dsl) enum Unit {
+pub enum Unit {
     /// A SQLite VM step (charged from each statement's `SQLITE_STMTSTATUS_VM_STEP`).
     VmStep,
     /// A row into a step of a native join (`native::setfix` step counts).
@@ -102,7 +102,7 @@ pub(super) fn calibrate(units: &std::collections::BTreeSet<Unit>) -> (BTreeMap<U
     let missing: Vec<Unit> = units.iter().copied().filter(|u| !known.contains_key(u)).collect();
     // Phase 0's run (`bootstrap.rr`, inside a run) measures none: its profile is a part of the run's, whose own report
     // measures them after every phase, so the loops (seconds in a debug build) are not charged to the run's loading.
-    if !missing.is_empty() && crate::code_rule_dsl::logic::plan::corpus::phase0::active() {
+    if !missing.is_empty() && crate::code_rule_dsl::phase_clock::active() {
         source = "not measured in phase 0's run (the run's own profile measures them)";
     } else if !missing.is_empty() {
         known.extend(measure(&missing));
@@ -318,7 +318,7 @@ struct Line {
 }
 
 /// The roofline section of the report. `work` holds what was charged by span; `own` each span's own CPU.
-pub(super) fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMap<(String, Unit), u64>, joins: &BTreeMap<String, (u64, u64)>) {
+pub fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMap<(String, Unit), u64>, joins: &BTreeMap<String, (u64, u64)>) {
     let t = Instant::now();
     let charged: std::collections::BTreeSet<Unit> = work.keys().map(|(_, u)| *u).collect();
     let (roofs, source) = calibrate(&charged);
@@ -429,7 +429,7 @@ pub(super) fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMa
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// Roofs written to the cache read back by unit name, `None` included; an unknown name is skipped.

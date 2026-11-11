@@ -25,7 +25,6 @@
 
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::facts::vtab::syntax::{self, Document, Guest, Made, Placement};
-use crate::code_rule_dsl::model::FileInput;
 use crate::content_store::ContentStore;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -421,7 +420,7 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
         crate::code_rule_dsl::prof::count("guests.parse_kept", 1);
         return Ok(hit.clone());
     }
-    let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(key.2.clone()), None, None, "guest").map_err(|e| format!("{path}: {e:?}"))?;
+    let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone()) };
     // A guest is made in a wave, so no SQL is read or written for it (decision 0104): its tape is one this process
     // queued, else it is parsed and its source and tape are the store's writer's, behind the run.
     let built = match cache.map(|cache| core::build_in_wave(&file, cache, None, None, None)) {

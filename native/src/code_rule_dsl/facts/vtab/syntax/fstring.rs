@@ -25,6 +25,30 @@ use std::collections::BTreeSet;
 /// The relations' names.
 pub(crate) const RELATIONS: [&str; 2] = ["fstring_piece", "fstring_template"];
 
+/// Python's f-string trees as a batch's producer (`syntax::Producer`).
+pub struct Producer;
+
+impl super::Producer for Producer {
+    fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn taped(&self) -> &'static [&'static str] {
+        &RELATIONS
+    }
+    fn start(&self, reads: &BTreeSet<String>, markers: &[String]) -> Box<dyn super::ProducerRun> {
+        Box::new(FStrings::new(reads, markers))
+    }
+}
+
+impl super::ProducerRun for FStrings {
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+        FStrings::document(self, p, d, dialect, own, string)
+    }
+    fn relations(self: Box<Self>, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
+        FStrings::relations(*self, atom)
+    }
+}
+
 /// W's hosts of `pythonFString` (`compile::parse`'s host kinds).
 const HOSTS: [&str; 3] = ["string", "concatenated_string", "format_specifier"];
 
@@ -70,12 +94,12 @@ impl FStrings {
             let n = p.global(local);
             let node = crate::code_rule_dsl::matcher::node_at(&root, id);
             if self.piece {
-                for (i, kind, v) in literal::fstring_pieces(&node).unwrap_or_default() {
+                for (i, kind, v) in literal::python_fstring::pieces(&node).unwrap_or_default() {
                     self.pieces.push([n, i as i64, string(kind.name()) as i64, string(&v) as i64]);
                 }
             }
             for (marker, &m) in self.markers.iter().zip(&markers) {
-                if let Some(v) = literal::fstring_template(&node, marker) {
+                if let Some(v) = literal::python_fstring::template(&node, marker) {
                     self.templates.push([n, m, string(&v) as i64]);
                 }
             }

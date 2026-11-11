@@ -18,15 +18,16 @@ mod test_watchdog;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
+#[cfg(any(test, feature = "test-hooks"))]
+pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
-pub mod git_ignore;
+pub use rerail_w::git_ignore;
 pub use rerail_store::git_workspace;
 mod main_instance;
 mod model;
-mod panic_boundary;
+pub use rerail_w::panic_boundary;
 pub mod process;
-/// The most threads the process uses (`RERAIL_THREADS`).
-pub mod threads;
+pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
 #[cfg(target_family = "wasm")]
 pub mod reactor;
@@ -66,6 +67,9 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 /// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
 /// and the prefilter's tapes. Set as the library loads, before any store is opened.
 fn install_store_functions() {
+    code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
+    code_rule_dsl::install_devices();
+    code_rule_dsl::install_languages();
     content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
     content_store::set_connection_functions(|db| {
         code_rule_dsl::text::install(db)?;
@@ -77,7 +81,9 @@ fn install_store_functions() {
         sql_in_wave: code_rule_dsl::sql_hazards::sql_in_wave,
         wait_in_wave: code_rule_dsl::sql_hazards::wait_in_wave,
         behind_the_run: code_rule_dsl::sql_hazards::behind_the_run,
+        statement: code_rule_dsl::sql_hazards::strict_statement,
     });
+    code_rule_dsl::sql_hazards::strict_on_every_connection();
 }
 
 /// Windows has no jemalloc hook (below): the store's functions alone, as the library loads.
@@ -273,29 +279,6 @@ static SQLITE_ALLOCATOR: extern "C" fn() = {
     install
 };
 
-/// Return allocator pages after eviction closes idle SQLite connections.
-pub(crate) fn release_allocator_memory() {
-    // Background threads, where available, decay pages between applies too.
-    #[cfg(not(any(windows, target_family = "wasm")))]
-    let _ = tikv_jemalloc_ctl::background_thread::write(true);
-    purge_allocator_pages();
-}
-
-/// Return every arena's freed pages to the system.
-pub(crate) fn purge_allocator_pages() {
-    // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
-    // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
-    #[cfg(not(any(windows, target_family = "wasm")))]
-    unsafe {
-        tikv_jemalloc_sys::mallctl(
-            c"arena.4096.purge".as_ptr(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            0,
-        );
-    }
-}
 
 #[napi]
 pub struct ConversationEngine {
@@ -482,16 +465,7 @@ impl ConversationEngine {
     }
 }
 
-/// `bytes` as lower-case hex, two digits a byte: how a SHA-256 digest is written.
-pub(crate) fn lower_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
-}
+pub(crate) use code_rule_dsl::prof::lower_hex;
 
 #[cfg(all(test, not(windows)))]
 mod tests {

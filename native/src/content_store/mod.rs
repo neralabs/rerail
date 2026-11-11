@@ -64,6 +64,7 @@ pub mod write_back;
 pub mod hazards;
 
 pub use compression::compress;
+pub use frames::forget_snapshot as forget_frames_snapshot;
 pub use frames::{Admitted as AdmittedFrame, Put as FramePut, Rel as FrameRel, Rows as FrameRows, Stored as FrameStored, local_space};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;

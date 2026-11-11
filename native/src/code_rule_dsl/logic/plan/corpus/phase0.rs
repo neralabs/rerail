@@ -20,24 +20,16 @@
 
 use super::{Error as PlanError, Result};
 use crate::code_rule_dsl::logic::front::Error;
-use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-thread_local! {
-    /// Set while this thread runs phase 0: `bootstrap.rr` itself is read by the builtin reader.
-    static IN_PHASE_0: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Whether this thread is running phase 0 (`bootstrap.rr` and `core.rr` are then read by the builtin reader).
-pub(in crate::code_rule_dsl) fn active() -> bool {
-    IN_PHASE_0.with(Cell::get)
-}
+// Whether this thread runs phase 0: the flag is the profiler's (`phase_clock`), which reads it too.
+pub use crate::code_rule_dsl::phase_clock::{IN_PHASE_0, active};
 
 /// What phase 0 starts from for one program: its text's includes, or its file.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(in crate::code_rule_dsl) enum Seed {
+pub enum Seed {
     /// A program text: in T's shape, and its includes as (offset, name).
     Text { t_shape: bool, includes: Vec<(i64, String)> },
     /// A program file (canonical).
@@ -126,7 +118,7 @@ pub(in crate::code_rule_dsl) fn graph(seed: &Seed) -> std::result::Result<Arc<Gr
 /// of `bootstrap.rr` over all of them (a pack's programs are one run, not one each).
 static KEPT: OnceLock<Mutex<HashMap<Seed, Arc<Graph>>>> = OnceLock::new();
 
-pub(in crate::code_rule_dsl) fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
+pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     let kept = KEPT.get_or_init(Default::default);
     let mut found: Vec<Option<Arc<Graph>>> = {
         let map = kept.lock().expect("phase 0's graphs");
@@ -319,7 +311,7 @@ fn derive(seeds: &[Seed]) -> Result<Graph> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::path::PathBuf;
 
     /// Each library module's text, included by a program: the files phase 0's graph gives, in its order, are the
@@ -356,9 +348,9 @@ mod tests {
             assert_eq!(graph, builtin, "{text}");
         }
         // A text made from a program file keeps the graph a run of `bootstrap.rr` would give it (`keep_text`).
-        let programs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs");
+        let programs = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
         for file in [programs.join("calls_cx.rr"), lib.join("python/conditions.rr")] {
-            let text = crate::code_rule_dsl::tools::program_text(&file).unwrap();
+            let text = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
             let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
             let kept = super::graph(&seed).unwrap().digest();
             let derived = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0).digest();
@@ -372,7 +364,7 @@ mod tests {
 
 
 #[cfg(test)]
-mod benchmarks {
+pub mod benchmarks {
     /// Phase 0 over every `.rr` file of `RERAIL_P0_RULES` (a pack's directory), as a pack's run reads them
     /// (`tools::program_texts`): one run of `bootstrap.rr` for all. Run it twice for the warm figure.
     #[test]
@@ -387,7 +379,7 @@ mod benchmarks {
         });
         let start = super::super::thread_usage();
         let refs: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
-        let texts = crate::code_rule_dsl::tools::program_texts(&refs).unwrap();
+        let texts = crate::code_rule_dsl::logic::settings::program_texts(&refs).unwrap();
         let resolved = super::super::thread_usage();
         let seeds: Vec<super::Seed> = texts.iter().filter_map(|t| crate::code_rule_dsl::logic::rr::text_seed(t).unwrap()).collect();
         let graphs = super::graphs(&seeds).unwrap();

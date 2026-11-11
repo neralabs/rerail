@@ -2,169 +2,14 @@
 //! honoured as that linter honours them. The engine never reads them otherwise. Rerail's own
 //! `rerail-ignore` comments (`rerail`) are read for every code rule.
 
-use super::json::{invalid, object, reject_unknown};
 use ast_grep_core::{Doc, Node};
-pub(crate) use biome::BiomeSuppressions;
-use clippy::Clippy;
-pub(crate) use clippy::ClippyIndex;
-pub(crate) use eslint::EslintDirectives;
-use napi::Result;
-use noqa::Noqa;
-pub(crate) use noqa::{NoqaIndex, PARENT_KINDS, parent_statement};
-pub(crate) use nosec::NosecIndex;
-pub(crate) use oxlint::OxlintDirectives;
-use phpcs::Phpcs;
-pub(crate) use phpcs::PhpcsIndex;
-pub(crate) use phpstan::PhpstanIndex;
-use psalm::Psalm;
-pub(crate) use psalm::PsalmIndex;
-pub(crate) use rerail::RerailIgnores;
-use serde_json::Value;
-pub(crate) use sqlfluff::SqlfluffIndex;
-pub(crate) use vue::{VueDirectives, script_directives as vue_script_directives};
-
-/// Names a `rules` or `codes` list may hold.
-const MAX_NAMES: usize = 256;
-
-/// Declares the suppression kinds from the rows below: the `Suppression` enum, the `Suppress` a
-/// violation's `suppress` parses to, and `parse`.
-macro_rules! suppression_kinds {
-    ($($(#[doc = $doc:literal])* $variant:ident $key:ident: $spec:ty = $parse:path, $detail:literal;)+) => {
-        /// A linter's suppressions a family may honour (the registry's `suppressions`, each the
-        /// PascalCase of its name).
-        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-        pub(crate) enum Suppression {
-            $($(#[doc = $doc])* $variant,)+
-        }
-
-        impl Suppression {
-            /// Every kind, in the table's order: the order `suppress` is parsed and checked in.
-            pub(crate) const ALL: &'static [Self] = &[$(Self::$variant,)+];
-
-            /// Its `suppress` key, which is also its name in the registry's `suppressions`.
-            pub(crate) const fn key(self) -> &'static str {
-                match self {
-                    $(Self::$variant => stringify!($key),)+
-                }
-            }
-
-            /// Why only a family that honours it may ask for it: `key: detail`.
-            pub(crate) const fn detail(self) -> &'static str {
-                match self {
-                    $(Self::$variant => concat!(stringify!($key), ": ", $detail),)+
-                }
-            }
-        }
-
-        /// `suppress` on a violation spec: per kind, what the violation asks for.
-        #[derive(Clone, Debug, Default, PartialEq, Eq)]
-        pub(super) struct Suppress {
-            $($(#[doc = $doc])* pub(super) $key: Option<$spec>,)+
-        }
-
-        impl Suppress {
-            /// The kinds the violation asks for, in the table's order.
-            pub(super) fn requested(&self) -> impl Iterator<Item = Suppression> {
-                [$((self.$key.is_some(), Suppression::$variant),)+]
-                    .into_iter()
-                    .filter_map(|(set, kind)| set.then_some(kind))
-            }
-        }
-
-        pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
-            let suppress = object(value, path)?;
-            reject_unknown(suppress, &[$(stringify!($key),)+], path)?;
-            // A struct expression evaluates its fields in order: kinds are parsed in table order.
-            let parsed = Suppress {
-                $($key: suppress
-                    .get(stringify!($key))
-                    .map(|spec| $parse(spec, &format!("{path}/{}", stringify!($key))))
-                    .transpose()?,)+
-            };
-            if parsed.requested().next().is_none() {
-                return Err(invalid(format!("{path} must hold {}", one_of(Suppression::ALL))));
-            }
-            Ok(parsed)
-        }
-    };
-}
-
-// The suppression kinds, one row each, in the order `suppress` is parsed and checked. A row is
-// `Variant key: Spec = linter::spec, "detail";` under the kind's doc comment:
-// - `Variant` is the `Suppression` variant, the PascalCase of the registry name, which the
-//   generated `Family::honours` names;
-// - `key` is the `suppress` key and the registry name (`languages/*.json` `suppressions`);
-// - `Spec` is what `suppress.<key>` parses to: the `Suppress` field the family adapter's
-//   `Adapter::suppresses` reads;
-// - `linter::spec`, `fn(&Value, at: &str) -> napi::Result<Spec>`, parses it, in
-//   `suppress/<linter>.rs` beside the reader of the linter's suppressions;
-// - `"detail"` says whose they are, for a query of a family that does not honour them.
-// Nothing here assumes comments: Clippy's are attributes.
-// The host's twin is `suppressionKinds` in `src/engine/code-rule/code-rule-schema-semantic.ts`.
-suppression_kinds! {
-    /// ESLint's `eslint-disable` comments: the rule names a comment must name (or name none).
-    Eslint eslint: Vec<String> = eslint::spec, "eslint-disable comments are ESLint's";
-    /// Ruff's `# noqa` comments.
-    Noqa noqa: Noqa = noqa::spec, "noqa comments are Ruff's";
-    /// Bandit's `# nosec` comments: the test ids a list must name (or name none).
-    Nosec nosec: Vec<String> = nosec::spec, "nosec comments are Bandit's";
-    /// Oxlint's `oxlint-disable` comments: oxlint's names of the rule (without a plugin), which a
-    /// directive must name (after its last `/`, or name none).
-    Oxlint oxlint: Vec<String> = oxlint::spec, "oxlint-disable comments are Oxlint's";
-    /// Biome's `biome-ignore` comments: the lint rules (`lint/<group>/<rule>`) a comment must
-    /// name, or their group, or `lint`.
-    Biome biome: Vec<String> = biome::spec, "biome-ignore comments are Biome's";
-    /// PHPStan's `@phpstan-ignore` comments: the identifiers a local ignore must name.
-    Phpstan phpstan: Vec<String> = phpstan::spec, "@phpstan-ignore comments are PHPStan's";
-    /// Psalm's `@psalm-suppress` tags.
-    Psalm psalm: Psalm = psalm::spec, "@psalm-suppress tags are Psalm's";
-    /// PHP_CodeSniffer's `phpcs:` annotations.
-    Phpcs phpcs: Phpcs = phpcs::spec, "phpcs: annotations are PHP_CodeSniffer's";
-    /// rustc's and Clippy's lint-level attributes (`#[allow]`, `#[expect]`): the lint and group
-    /// names that silence the violation.
-    Clippy clippy: Clippy = clippy::spec, "#[allow] and #[expect] attributes are Clippy's";
-    /// SQLFluff's `-- noqa` comments, a linter other than Ruff: the references a directive may
-    /// name the violation's rule by.
-    Sqlfluff sqlfluff: Vec<String> = sqlfluff::spec, "-- noqa comments are SQLFluff's";
-}
-
-/// `a, b, or c`: the keys a `suppress` may hold.
-fn one_of(kinds: &[Suppression]) -> String {
-    let keys = kinds.iter().map(|kind| kind.key()).collect::<Vec<_>>();
-    match keys.split_last() {
-        Some((last, [])) => (*last).to_owned(),
-        Some((last, rest)) => format!("{}, or {last}", rest.join(", ")),
-        None => String::new(),
-    }
-}
-
-/// A non-empty list of at most `MAX_NAMES` strings, each passing `valid`: `what` names the list's
-/// items, `each` one item.
-fn names(
-    value: Option<&Value>,
-    path: &str,
-    valid: fn(&str) -> bool,
-    what: &str,
-    each: &str,
-) -> Result<Vec<String>> {
-    let items = value
-        .and_then(Value::as_array)
-        .filter(|items| !items.is_empty() && items.len() <= MAX_NAMES)
-        .ok_or_else(|| invalid(format!("{path} must be a list of 1 to {MAX_NAMES} {what}")))?;
-    items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            item.as_str()
-                .filter(|name| valid(name))
-                .map(str::to_owned)
-                .ok_or_else(|| invalid(format!("{path}/{index} must be {each}")))
-        })
-        .collect()
-}
+pub use rerail::RerailIgnores;
+// The kinds and what a violation asks of them, below the linters (`kinds`, the lang crate's).
+pub use rerail_lang::code_rule_dsl::suppress::kinds;
+pub use kinds::*;
 
 /// The root of the tree a node belongs to.
-pub(crate) fn root<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
+pub fn root<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
     let mut root = node.clone();
     while let Some(parent) = root.parent() {
         root = parent;
@@ -174,7 +19,7 @@ pub(crate) fn root<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
 
 /// The end of PHP's comment token for a tree-sitter-php `comment` node: the grammar's `//` or `#`
 /// comment that ends in `?` takes the line break after it, which PHP leaves to white space.
-fn php_comment_end(source: &str, range: &std::ops::Range<usize>) -> usize {
+pub fn php_comment_end(source: &str, range: &std::ops::Range<usize>) -> usize {
     let text = &source[range.clone()];
     if text.starts_with("/*") {
         return range.end;
@@ -185,27 +30,25 @@ fn php_comment_end(source: &str, range: &std::ops::Range<usize>) -> usize {
     range.start + text.len()
 }
 
-mod biome;
-mod clippy;
-mod eslint;
+// cratify: `biome` is rerail-lang-ecma's (it mounts it)
+// cratify: `clippy` is rerail-lang-rust's (it mounts it)
+// cratify: `eslint` is rerail-lang-ecma's (it mounts it)
 #[cfg(test)]
-mod eslint_tests;
-mod noqa;
-mod nosec;
-mod oxlint;
-#[cfg(test)]
-mod php_corpus_tests;
-mod phpcs;
-mod phpstan;
-mod psalm;
-mod rerail;
-#[cfg(test)]
-mod ruff;
-mod sqlfluff;
-mod vue;
+pub mod eslint_tests;
+// cratify: `noqa` is rerail-lang-python's (it mounts it)
+// cratify: `nosec` is rerail-lang-python's (it mounts it)
+// cratify: `oxlint` is rerail-lang-ecma's (it mounts it)
+// cratify: `php_corpus_tests` is rerail-lang-php's (it mounts it)
+// cratify: `phpcs` is rerail-lang-php's (it mounts it)
+// cratify: `phpstan` is rerail-lang-php's (it mounts it)
+// cratify: `psalm` is rerail-lang-php's (it mounts it)
+pub mod rerail;
+// cratify: `ruff` is rerail-lang-python's (it mounts it)
+// cratify: `sqlfluff` is rerail-lang-sql's (it mounts it)
+// cratify: `vue` is rerail-lang-ecma's (it mounts it)
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
 
@@ -228,12 +71,12 @@ mod tests {
         )
     }
 
-    /// The table's kinds, in order, each named as the registry names it: its key, the PascalCase
-    /// of which is its variant (the generated `Family::honours` relies on it).
+    /// The registered kinds, in order, each named as the registry names it: its key (the generated
+    /// `Family::honours` matches on it).
     #[test]
     fn every_kind_is_one_row_named_as_the_registry_names_it() {
         use super::Suppression;
-        let keys = Suppression::ALL
+        let keys = Suppression::all()
             .iter()
             .map(|kind| kind.key())
             .collect::<Vec<_>>();
@@ -244,10 +87,9 @@ mod tests {
                 "clippy", "sqlfluff"
             ]
         );
-        for kind in Suppression::ALL {
+        for kind in Suppression::all() {
             let key = kind.key();
-            let pascal = key[..1].to_ascii_uppercase() + &key[1..];
-            assert_eq!(format!("{kind:?}"), pascal);
+            assert_eq!(format!("{kind:?}"), key);
             assert!(kind.detail().starts_with(&format!("{key}: ")), "{key}");
         }
     }

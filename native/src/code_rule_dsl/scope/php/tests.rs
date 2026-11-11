@@ -123,7 +123,7 @@ fn compare_definedness(
             return;
         }
     };
-    let flow = table.php.as_deref().expect("a PHP flow");
+    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
     let mut ours: BTreeMap<(u64, String), Vec<(Defined, Quiet)>> = BTreeMap::new();
     for (start, read) in &flow.reads {
         if read.superglobal {
@@ -946,7 +946,7 @@ fn benchmark_php_usage_corpus() {
 fn a_switch_enters_default_after_every_case_value() {
     let source = "<?php\nfunction d(int $n) {\n    switch ($n) {\n        default:\n            echo $late;\n            break;\n        case 1:\n            echo $late;\n            break;\n        case $late = 2:\n            echo $late;\n    }\n}\n";
     let table = table(source);
-    let flow = table.php.as_deref().expect("a PHP flow");
+    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
     let defined: BTreeMap<usize, Defined> = flow
         .reads
         .iter()
@@ -968,7 +968,7 @@ fn a_switch_enters_default_after_every_case_value() {
 fn a_catch_sees_what_a_throwing_call_evaluated() {
     let source = "<?php\nfunction g($db) {\n    $x = null;\n    try {\n        return f($b = 2, function () use (&$x) {\n            $x = 1;\n        });\n    } catch (Exception $e) {\n        echo $b;\n        echo $x;\n    }\n}\n";
     let table = table(source);
-    let flow = table.php.as_deref().expect("a PHP flow");
+    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
     // The catch's reads: the last occurrence of each name in the source.
     let read = |name: &str| {
         let start = source
@@ -993,7 +993,7 @@ fn a_catch_sees_what_a_throwing_call_evaluated() {
 fn a_throw_in_a_catch_runs_the_finally() {
     let source = "<?php\nfunction bar() {\n    try {\n        throw new Exception('x');\n    } catch (Exception $e) {\n        $b = 4;\n        throw new Exception('bad');\n    } finally {\n        echo $b;\n    }\n}\n";
     let table = table(source);
-    let flow = table.php.as_deref().expect("a PHP flow");
+    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
     let read = flow
         .reads()
         .find(|read| &*read.name == "$b")
@@ -1158,7 +1158,7 @@ fn a_long_method_chain_runs_from_the_inside_out() {
     }
     source.push_str("\n        ->c($x, $u);\n}\n");
     let table = try_table(&source).expect("the chain builds within the budget");
-    let flow = table.php.as_deref().expect("a PHP flow");
+    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
     let read = |name: &str| {
         let start = source.rfind(name).expect("the outermost call's argument");
         flow.read(start).expect("a read").defined
@@ -1263,7 +1263,7 @@ fn php_use_copy_of_an_array_is_unused_when_only_appended_to() {
 fn code_that_may_unset_leaves_definedness_unknown() {
     let defined = |source: &str| {
         let table = table(source);
-        let flow = table.php.as_deref().expect("a PHP flow");
+        let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
         let start = source.find("echo $x").expect("a read") + "echo ".len();
         flow.read(start).expect("the read").defined
     };
@@ -1291,7 +1291,7 @@ fn named_by_reference_builtin_arguments_bind() {
         "<?php\nfunction f(string $s) { preg_match(subject: $s, matches: $m, pattern: '/x/'); echo $m; }\n",
     ] {
         let table = table(source);
-        let flow = table.php.as_deref().expect("a PHP flow");
+        let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
         let start = source.find("echo $m").expect("a read") + "echo ".len();
         assert_eq!(
             flow.read(start).expect("the read").defined,

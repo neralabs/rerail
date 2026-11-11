@@ -1,0 +1,24 @@
+# Each family's adapter, out of the shared trait files: the language crates own them (the orphan rule needs
+# the marker type beside its impls).
+language/adapter.rs	language/adapter/python.rs	struct Python; impl Adapter for Python
+language/adapter.rs	language/adapter/ecma.rs	struct Ecma; impl Adapter for Ecma; impl Ecma
+language/adapter.rs	language/adapter/php.rs	struct Php; impl Adapter for Php
+language/adapter.rs	language/adapter/blade.rs	struct Blade; impl Adapter for Blade
+language/adapter/scope.rs	language/adapter/scope/python.rs	impl ScopeRules for Python
+language/adapter/scope.rs	language/adapter/scope/ecma.rs	impl ScopeRules for Ecma
+language/adapter/scope.rs	language/adapter/scope/php.rs	fn php_feature; impl ScopeRules for Php
+language/adapter/value.rs	language/adapter/value/python.rs	impl ValueRules for Python
+language/adapter/value.rs	language/adapter/value/ecma.rs	impl ValueRules for Ecma
+language/adapter/value.rs	language/adapter/value/php.rs	impl ValueRules for Php
+language/adapter/calls.rs	language/adapter/calls/python.rs	impl CallRules for Python
+language/adapter/calls.rs	language/adapter/calls/php.rs	impl CallRules for Php
+language/adapter/calls.rs	language/adapter/calls/blade.rs	impl CallRules for Blade
+language/adapter/arguments.rs	language/adapter/arguments/python.rs	impl ArgumentRules for Python
+language/adapter/arguments.rs	language/adapter/arguments/ecma.rs	impl ArgumentRules for Ecma
+language/adapter/arguments.rs	language/adapter/arguments/php.rs	impl ArgumentRules for Php
+language/adapter/format_args.rs	language/adapter/format_args/python.rs	impl FormatArgRules for Python
+language/adapter/format_args.rs	language/adapter/format_args/php.rs	impl FormatArgRules for Php
+language/adapter/syntax.rs	language/adapter/syntax/python.rs	impl SyntaxRules for Python
+language/adapter/syntax.rs	language/adapter/syntax/ecma.rs	impl SyntaxRules for Ecma
+language/adapter/syntax.rs	language/adapter/syntax/php.rs	impl SyntaxRules for Php
+language/adapter/syntax.rs	language/adapter/syntax/blade.rs	impl SyntaxRules for Blade

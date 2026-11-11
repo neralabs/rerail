@@ -1,12 +1,12 @@
 //! Reconstructible contribution rows: retain a complete context key and project pure fields.
 use super::{Decision, scalars::Expression};
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Projection {
+pub struct Projection {
     pub context_width: usize,
     pub heads: Vec<Expression>,
     pub decision: Decision,
 }
-pub(in crate::code_rule_dsl) fn projection(
+pub fn projection(
     context_width: usize,
     heads: Vec<Expression>,
     predicates: Vec<Expression>,

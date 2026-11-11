@@ -1240,7 +1240,7 @@ fn rounded(mantissa: &BigInt, exponent: i64, scale: i64) -> BigInt {
 /// §21.1.3.5): the `precision` significant digits `n` and exponent `e` for which
 /// `n * 10^(e - precision + 1)` is nearest the number, the larger on a tie, laid out in fixed
 /// notation for `-6 <= e < precision` and in exponential notation otherwise.
-pub(crate) fn to_precision(number: f64, precision: u32) -> String {
+pub fn to_precision(number: f64, precision: u32) -> String {
     debug_assert!(number.is_finite() && (1..=100).contains(&precision));
     let sign = if number < 0.0 { "-" } else { "" };
     let magnitude = number.abs();
@@ -1453,7 +1453,7 @@ fn join(items: &[Value], separator: &[u16], depth: usize) -> Option<Vec<u16>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// `Number.prototype.toPrecision` as Node.js 25 (V8) computes it, exactly: ties go to the

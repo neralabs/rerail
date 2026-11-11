@@ -1,61 +1,61 @@
+#[cfg(any(test, feature = "test-hooks"))]
 use super::tape::TapeDoc;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use ast_grep_core::MatchStrictness;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use ast_grep_core::matcher::{Pattern, PatternNode};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use regex::Regex;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::collections::{BTreeMap, BTreeSet};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::ops::Range;
 
 // The packed runtime (05 Phase 4, from ner-1562-scale-test-the-re-railer): every backend over one
 // program. Nothing outside its tests calls it until the demand vtab (Phase 5) drives it.
 #[allow(dead_code)]
-pub(super) mod packed;
+pub mod packed;
 // N's semantic fact rows, which the matcher's families emit for N's catalog backend (tests).
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) mod semantic_facts;
+pub use rerail_w::code_rule_dsl::transducer::semantic_facts;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const STOP: u8 = 0x00;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const KIND: u8 = 0x01;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const FIELD: u8 = 0x02;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const FLAGS: u8 = 0x03;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const TEXT: u8 = 0x04;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const SIZE: u8 = 0x05;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const CHILD: u8 = 0x10;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const NEXT: u8 = 0x11;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const PARENT: u8 = 0x12;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const DESCEND: u8 = 0x13;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const CAPTURE: u8 = 0x20;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const FORK: u8 = 0x30;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const GOTO: u8 = 0x31;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const EMIT: u8 = 0x40;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const NAMED: u8 = 1;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const SIZE_LONG: u8 = 0x80;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const MAX_STEPS_PER_PATH: usize = 1 << 20;
 
 /// A `TEXT` test.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone)]
 pub(super) enum TextPredicate {
     Equal(u16),
@@ -63,7 +63,7 @@ pub(super) enum TextPredicate {
     Regex { source: u16, compiled: Regex },
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl TextPredicate {
     fn string_index(&self) -> u16 {
         match self {
@@ -73,7 +73,7 @@ impl TextPredicate {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone)]
 pub(super) struct Program {
     words: Vec<u32>,
@@ -83,7 +83,7 @@ pub(super) struct Program {
     longs: Vec<u64>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Capture {
     pub(super) label: u16,
@@ -91,7 +91,7 @@ pub(super) struct Capture {
     pub(super) span: Range<usize>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Output {
     pub(super) start: u32,
@@ -99,7 +99,7 @@ pub(super) struct Output {
     pub(super) captures: Vec<Capture>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum Error {
     InvalidOpcode(usize),
@@ -112,7 +112,7 @@ pub(super) enum Error {
     InvalidAnchor,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone)]
 struct Path {
     pc: u16,
@@ -122,17 +122,17 @@ struct Path {
     steps: usize,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn split(word: u32) -> (u8, u8, u16) {
     (word as u8, (word >> 8) as u8, (word >> 16) as u16)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
     opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Program {
     /// Compiles the exact root-terminal subset of ast-grep patterns. Structural patterns and
     /// metavariables are rejected rather than delegated to ast-grep inside the transducer.
@@ -457,7 +457,7 @@ impl Program {
 
 /// Executes several programs after one tape scan. A leading kind test becomes dispatch data;
 /// every other instruction retains the ordinary transducer semantics.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn execute_batch(
     programs: &[Program],
     files: &[TapeDoc],
@@ -495,68 +495,10 @@ pub(super) fn execute_batch(
         .collect()
 }
 
-/// Version 3: kind tokens are kind atoms (the prefilter's `kind_token`), as Pulling-it-all-together's
-/// `ftsk` spelled them, so dialects never share a token. Version 5: the stream is a tape's
-/// records, which hold no implied token (RER-131), so positions renumber.
-pub(crate) const POSITIONAL_INDEX_VERSION: i64 = 5;
+#[cfg(any(test, feature = "test-hooks"))]
+use super::search_index::persist_search_index_batch;
 
-/// The token of `lang`'s kind `kind` in the positional kind stream: its atom (`tape tag · 1024 +
-/// kind code`) in the prefilter's spelling. `None` for a dialect without a tape tag.
-pub(crate) fn kind_index_token(lang: crate::code_rule_dsl::language::GrammarDialect, kind: u16) -> Option<String> {
-    let tag = crate::code_rule_dsl::language::tape_tag(lang)?;
-    Some(crate::code_rule_dsl::prefilter::kind_token(
-        crate::code_rule_dsl::facts::core::kind_atom(tag, kind),
-    ))
-}
-
-fn search_index_document(
-    tape_id: crate::content_store::TapeId,
-    file: &TapeDoc,
-) -> crate::content_store::TapeSearchIndex {
-    use ast_grep_core::Doc;
-    let lang = *file.get_lang();
-    let mut kinds = String::new();
-    for node in 0..file.transducer_len() as u32 {
-        if node != 0 {
-            kinds.push(' ');
-        }
-        kinds.push_str(
-            &kind_index_token(lang, file.transducer_kind(node)).expect("a stored tape's dialect has a tape tag"),
-        );
-    }
-    crate::content_store::TapeSearchIndex {
-        tape_id,
-        index_version: POSITIONAL_INDEX_VERSION,
-        node_count: u32::try_from(file.transducer_len())
-            .expect("tape node count is limited to u32"),
-        has_errors: !file.syntax_error_ranges().is_empty(),
-        kind_tokens: kinds,
-    }
-}
-
-/// Build query-independent kind streams. The stream preserves preorder positions.
-pub(crate) fn persist_search_index_batch(
-    store: &crate::content_store::ContentStore,
-    tape_ids: &[crate::content_store::TapeId],
-    files: &[TapeDoc],
-) -> crate::content_store::StoreResult<()> {
-    if tape_ids.len() != files.len() {
-        return Err(crate::content_store::StoreError::Invalid(
-            "tape identity count does not match anchor files".to_owned(),
-        ));
-    }
-    for (files, tape_ids) in files.chunks(64).zip(tape_ids.chunks(64)) {
-        let indexes = files
-            .iter()
-            .zip(tape_ids)
-            .map(|(file, &tape_id)| search_index_document(tape_id, file))
-            .collect::<Vec<_>>();
-        store.put_search_indexes_bulk(&indexes)?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn execute_many(
     programs: &[Program],
     tape: &TapeDoc,
@@ -597,7 +539,7 @@ pub(super) fn execute_many(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage};
@@ -1050,7 +992,7 @@ mod tests {
             digest.update((range.start as u64).to_le_bytes());
             digest.update((range.end as u64).to_le_bytes());
         }
-        crate::lower_hex(&digest.finalize())
+        crate::code_rule_dsl::prof::lower_hex(&digest.finalize())
     }
 
     fn median(mut values: Vec<Duration>) -> Duration {

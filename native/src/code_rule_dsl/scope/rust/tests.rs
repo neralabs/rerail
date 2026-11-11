@@ -1,5 +1,5 @@
 use super::{build_for_test, resolve_index};
-use crate::code_rule_dsl::oracle;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::Value;
 use std::collections::HashMap;
 use std::ops::Range;

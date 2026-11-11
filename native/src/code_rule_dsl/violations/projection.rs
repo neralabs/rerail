@@ -28,12 +28,12 @@ struct Data {
     owned: Vec<bool>,
 }
 #[derive(Clone, Debug)]
-pub(crate) struct Row {
+pub struct Row {
     data: Arc<OnceLock<Data>>,
     row: usize,
 }
 
-pub(crate) enum Input<'a> {
+pub enum Input<'a> {
     Null,
     Integer(i64),
     Text(Cow<'a, str>),
@@ -168,9 +168,9 @@ struct Arena {
     builders: HashMap<(usize, usize, usize), Builder>,
 }
 thread_local! {static CURRENT: RefCell<Option<Arena>>=const {RefCell::new(None)};}
-pub(crate) struct Scope(Option<Arena>);
+pub struct Scope(Option<Arena>);
 impl Scope {
-    pub(crate) fn enter() -> Self {
+    pub fn enter() -> Self {
         Self(CURRENT.replace(Some(Arena::default())))
     }
 }
@@ -186,7 +186,7 @@ impl Drop for Scope {
         });
     }
 }
-pub(crate) fn append<'a>(
+pub fn append<'a>(
     key: (usize, usize, usize),
     names: impl FnOnce() -> Vec<String>,
     values: impl Iterator<Item = Input<'a>>,
@@ -207,7 +207,7 @@ pub(crate) fn append<'a>(
     })
 }
 // Some of P's row accessors are read only by P's relational stage (test-only, open item O18).
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 impl Row {
     fn data(&self) -> &Data {
         self.data
@@ -259,8 +259,8 @@ impl Row {
             .map(|(c, n)| (n.clone(), self.value(c)))
             .collect()
     }
-    #[cfg(test)]
-    pub(crate) fn json(&self) -> Value {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn json(&self) -> Value {
         self.data()
             .raw
             .clone()
@@ -378,4 +378,4 @@ impl Serialize for Serialized<'_> {
     }
 }
 #[cfg(test)]
-mod tests;
+pub mod tests;

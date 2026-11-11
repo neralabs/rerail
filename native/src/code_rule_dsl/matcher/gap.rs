@@ -21,10 +21,10 @@
 
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::AstMatcher;
-use crate::code_rule_dsl::tape::tokens::{Gaps, TokenGrammar};
+use crate::code_rule_dsl::tape::tokens::TokenGrammar;
+pub use crate::code_rule_dsl::tape::tokens::stored_gaps;
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Where, relative to the node, the token is looked for.
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) enum Place {
 }
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct GapTest {
+pub struct GapTest {
     pub(in crate::code_rule_dsl) place: Place,
     pub(in crate::code_rule_dsl) regex: Regex,
     pub(in crate::code_rule_dsl) grammar: Arc<TokenGrammar>,
@@ -154,19 +154,4 @@ impl GapTest {
             _ => None,
         }
     }
-}
-
-/// `parent`'s stored children and its gaps; `None` where its kind has no automaton.
-pub(in crate::code_rule_dsl) fn stored_gaps<'t, 'g, D: Doc>(grammar: &'g TokenGrammar, parent: &Node<'t, D>) -> Option<(Vec<Node<'t, D>>, Gaps<'g>)> {
-    let kind = parent.kind();
-    let mut fields: HashMap<usize, &str> = HashMap::new();
-    for field in grammar.fields_of(&kind) {
-        for child in parent.field_children(field) {
-            fields.insert(child.node_id(), field);
-        }
-    }
-    let children: Vec<Node<'t, D>> = parent.children().collect();
-    let kinds: Vec<(bool, String, &str)> = children.iter().map(|child| (child.is_named(), child.kind().into_owned(), fields.get(&child.node_id()).copied().unwrap_or(""))).collect();
-    let gaps = grammar.gaps(&kind, kinds.iter().map(|(named, kind, field)| (*named, kind.as_str(), *field)))?;
-    Some((children, gaps))
 }

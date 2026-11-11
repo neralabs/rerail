@@ -829,7 +829,7 @@ fn sibling_projections_are_exact_in_both_blade_documents() {
     ];
     for source in sources {
         let grammar = Grammar::new(GrammarDialect::Blade).unwrap();
-        let image = TapeImage::encode_template(&grammar, source, &|| false).unwrap();
+        let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).unwrap();
         let host =
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
         let guests = host.guests().unwrap();
@@ -908,7 +908,7 @@ fn tape_sibling_walks_match_native_around_zero_width_nodes() {
 /// projects exactly what the matcher matches.
 #[test]
 fn zero_width_end_sibling_selection_is_linear_in_the_run() {
-    use crate::code_rule_dsl::test_support::{Walk, reset_walks, walks};
+    use crate::code_rule_dsl::walks::{Walk, reset_walks, walks};
     let statements = 2000;
     // The unclosed body's statements run from its `{` to a zero-width MISSING `}`.
     let source = format!("function f() {{\n{}", "a();\n".repeat(statements));
@@ -1263,7 +1263,7 @@ fn utility_diamonds_select_in_linear_visits() {
 /// scope evaluates the roots the earlier evaluations missed, never every node of the file.
 #[test]
 fn utility_plans_reached_from_disjoint_scopes_test_only_those_scopes() {
-    use crate::code_rule_dsl::test_support::{Walk, reset_walks, walks};
+    use crate::code_rule_dsl::walks::{Walk, reset_walks, walks};
     let mut source: String = (0..400)
         .map(|n| format!("function f{n}(a{n}) {{ return a{n}.p{n}.q + [n{n}, {n}]; }}\n"))
         .collect();

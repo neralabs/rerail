@@ -14,7 +14,7 @@
 //! sweeps follow the recursion's direction rather than one tree edge per round.
 
 #[path = "metal_label_patterns.rs"]
-mod patterns;
+pub mod patterns;
 
 use super::super::PackedPattern;
 use super::super::metal_batch_abi::MetalSupertype;
@@ -25,6 +25,7 @@ use metal::{Buffer, CommandBuffer};
 use std::collections::HashMap;
 use crate::code_rule_dsl::residency::slabs::ResidentParts as _;
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
+pub use crate::code_rule_dsl::transducer::packed::device::{Outcome, RootJobs, RootsFound};
 
 /// A pass writes the label `target` (an index, not a class); labels it reads are its classes.
 pub(in crate::code_rule_dsl) enum Pass<'a> {
@@ -231,17 +232,6 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     /// (`root_records_*`, decision 0024 §3): `Outcome::records`.
     pub(in crate::code_rule_dsl) roots: Option<&'a RootJobs<'a>>,
 }
-
-/// Root programs and, per program, per file, their starts (an anchor a task).
-pub(in crate::code_rule_dsl) struct RootJobs<'a> {
-    pub(in crate::code_rule_dsl) programs: Vec<&'a Program>,
-    pub(in crate::code_rule_dsl) starts: Vec<Vec<Vec<u32>>>,
-}
-
-/// Per root program: per file its (task, record)s in task then walk order, or `None` where the
-/// program did not run on the device (not a micro walk of at most 32 frames, a walk that
-/// overflowed, or records past the buffer); the host walks those.
-pub(in crate::code_rule_dsl) type RootsFound = Vec<Option<Vec<Vec<(u32, super::super::RootRecord)>>>>;
 
 /// The root walks' kernels in `KERNELS`: 8 and 32 frames.
 const ROOT_KERNELS: [usize; 2] = [9, 10];
@@ -512,28 +502,6 @@ const NARROW: (usize, Option<u32>) = (1024, Some(4096));
 const WIDE: (usize, Option<u32>) = (EXECUTION_LANES, None);
 /// The fewest states per lane a run over the buffer budget takes (`Error::BackendBudget`).
 const MIN_STATES: u32 = 512;
-
-#[derive(Debug, Default)]
-pub(in crate::code_rule_dsl) struct Outcome {
-    /// Every label's words after the passes.
-    pub(in crate::code_rule_dsl) labels: Vec<u32>,
-    pub(in crate::code_rule_dsl) words: usize,
-    pub(in crate::code_rule_dsl) command_buffers: usize,
-    pub(in crate::code_rule_dsl) dispatches: usize,
-    /// Why the host waited before the end: workspace growth, a recursive group that needed more
-    /// rounds than were encoded (the whole clause again), the upload budget.
-    pub(in crate::code_rule_dsl) waits: [usize; 3],
-    /// Rounds encoded per recursive group.
-    pub(in crate::code_rule_dsl) rounds: usize,
-    /// Whether a task outgrew `NARROW`'s states, so the batch ran again with `WIDE`'s.
-    pub(in crate::code_rule_dsl) widened: bool,
-    /// Whether a micro walk outgrew its frames, so every program ran on the interpreter.
-    pub(in crate::code_rule_dsl) interpreted: bool,
-    /// The plan's root records (`Plan::roots`); empty without roots.
-    pub(in crate::code_rule_dsl) records: RootsFound,
-    /// The command buffers' seconds on the GPU (`GPUStartTime` to `GPUEndTime`), summed.
-    pub(in crate::code_rule_dsl) device: f64,
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -974,16 +942,16 @@ struct Runner<'a> {
     roots: Option<RootsEncoded>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Tests: the passes run on the interpreter, as a run whose walks outgrew their frames does.
-    pub(in crate::code_rule_dsl) static INTERPRET_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static INTERPRET_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn interpret_only() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     return INTERPRET_ONLY.get();
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     false
 }
 

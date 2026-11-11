@@ -2,30 +2,30 @@
 //! (shared with the engine's crates); here are the engine's memory readings.
 
 #[allow(unused_imports)]
-pub(crate) use rerail_prof::{Stage, count, count_named, on, report, time};
+pub use rerail_prof::{Stage, count, count_named, on, report, time};
 #[cfg(target_family = "wasm")]
-pub(crate) use rerail_prof::single_thread_cpu;
+pub use rerail_prof::single_thread_cpu;
 #[cfg(windows)]
-pub(crate) use rerail_prof::{windows_cpu, windows_peak_working_set};
+pub use rerail_prof::{windows_cpu, windows_peak_working_set};
 
 /// Records the process's peak resident memory so far, in MB, as `stage`'s count (the largest seen).
 /// Return the heap's freed pages to the system at a stage's end. jemalloc keeps freed pages a
 /// second (`lib.rs`) and an audit's stages free hundreds of MB within one: S7 on Metal held
 /// 0.96 GB of footprint against 283 MB live heap and 101 MB of buffers (O30).
-pub(in crate::code_rule_dsl) fn release() {
+pub fn release() {
     let _stage = Stage::start("heap.release");
-    crate::purge_allocator_pages();
+    purge_allocator_pages();
     // The system allocator's freed pages too (SQLite's and the Metal runtime's allocations).
     #[cfg(target_os = "macos")]
     {
         unsafe extern "C" {
-            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+            pub fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
         }
         unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
     }
 }
 
-pub(in crate::code_rule_dsl) fn peak(stage: &str) {
+pub fn peak(stage: &str) {
     if on() {
         // No resident-set counter on wasm32: its peak reads 0.
         #[cfg(target_family = "wasm")]
@@ -79,8 +79,8 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
                         info.ri_phys_footprint >> 20,
                         tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
                         tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20,
-                        crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
-                        crate::code_rule_dsl::transducer::packed::metal_backend::driver_mb()
+                        device_memory().0,
+                        device_memory().1
                     );
                 }
             }
@@ -118,7 +118,7 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
 
 /// The process's physical footprint now, in MB (macOS; 0 elsewhere).
 /// What the heap holds live, in MB (jemalloc's allocated bytes); 0 where the system allocator runs (Windows, wasm).
-pub(in crate::code_rule_dsl) fn live_heap_mb() -> usize {
+pub fn live_heap_mb() -> usize {
     #[cfg(not(any(windows, target_family = "wasm")))]
     {
         let _ = tikv_jemalloc_ctl::epoch::advance();
@@ -128,7 +128,7 @@ pub(in crate::code_rule_dsl) fn live_heap_mb() -> usize {
     0
 }
 
-pub(in crate::code_rule_dsl) fn footprint_mb() -> usize {
+pub fn footprint_mb() -> usize {
     #[cfg(target_os = "macos")]
     {
         let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v2>() };
@@ -141,7 +141,7 @@ pub(in crate::code_rule_dsl) fn footprint_mb() -> usize {
 }
 
 /// The process's footprint high-water mark, in MB (0 off macOS).
-pub(in crate::code_rule_dsl) fn max_footprint_mb() -> usize {
+pub fn max_footprint_mb() -> usize {
     #[cfg(target_os = "macos")]
     {
         let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
@@ -151,4 +151,85 @@ pub(in crate::code_rule_dsl) fn max_footprint_mb() -> usize {
         }
     }
     0
+}
+
+/// Return every arena's freed pages to the system.
+pub fn purge_allocator_pages() {
+    // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
+    // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    unsafe {
+        tikv_jemalloc_sys::mallctl(
+            c"arena.4096.purge".as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        );
+    }
+}
+
+/// The device's buffers in MB (reserved by the engine, held by the driver), read by the stage reports; the
+/// device registers the reader as the engine loads (`register_device_memory`, Metal's `device_metal::register`).
+static DEVICE_MEMORY: std::sync::OnceLock<fn() -> (usize, usize)> = std::sync::OnceLock::new();
+
+/// Registers the device's buffer reader; the first registration holds.
+pub fn register_device_memory(read: fn() -> (usize, usize)) {
+    let _ = DEVICE_MEMORY.set(read);
+}
+
+/// The device's buffers in MB (reserved, driver); none without a device.
+fn device_memory() -> (usize, usize) {
+    DEVICE_MEMORY.get().map_or((0, 0), |read| read())
+}
+
+/// The calling thread's CPU (user, system) seconds.
+pub fn thread_usage() -> (f64, f64) {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info: libc::thread_basic_info = unsafe { std::mem::zeroed() };
+        let mut count = (std::mem::size_of::<libc::thread_basic_info>() / std::mem::size_of::<libc::integer_t>()) as libc::mach_msg_type_number_t;
+        // SAFETY: THREAD_BASIC_INFO fills a `thread_basic_info` of `count` integers for this thread's port (the
+        // pthread's own, so no port right is taken).
+        let port = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
+        unsafe { libc::thread_info(port, libc::THREAD_BASIC_INFO as libc::thread_flavor_t, (&raw mut info).cast(), &mut count) };
+        let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
+        (t(info.user_time), t(info.system_time))
+    }
+    // The browser build's one thread (`prof::single_thread_cpu`), all of it user time.
+    #[cfg(target_family = "wasm")]
+    {
+        (single_thread_cpu().as_secs_f64(), 0.0)
+    }
+    #[cfg(windows)]
+    {
+        let (user, kernel) = windows_cpu(true);
+        (user.as_secs_f64(), kernel.as_secs_f64())
+    }
+    #[cfg(not(any(target_os = "macos", target_family = "wasm", windows)))]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        (s(u.ru_utime), s(u.ru_stime))
+    }
+}
+
+/// `bytes` as lower-case hex, two digits a byte: how a SHA-256 digest is written.
+pub fn lower_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
+/// Return allocator pages after eviction closes idle SQLite connections.
+pub fn release_allocator_memory() {
+    // Background threads, where available, decay pages between applies too.
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    let _ = tikv_jemalloc_ctl::background_thread::write(true);
+    purge_allocator_pages();
 }

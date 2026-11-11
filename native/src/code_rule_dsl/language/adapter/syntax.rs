@@ -1,19 +1,24 @@
 //! A family's syntax beyond its semantics: the literals `parse` reads, the options a policy
 //! declares (`languageOptions`, `when`), and how its patterns are spelled and parsed.
 
-use super::{Adapter, Blade, Ecma, Php, Python, Refusal};
+use super::{Adapter, Refusal};
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::SourceType;
-use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
+use crate::code_rule_dsl::literal::Grammar;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
+use ast_grep_core::{Doc, Node};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::sync::Arc;
+// cratify: `lang_python` is rerail-lang-python's (it mounts it)
+// cratify: `lang_ecma` is rerail-lang-ecma's (it mounts it)
+// cratify: `lang_php` is rerail-lang-php's (it mounts it)
+// cratify: `lang_blade` is rerail-lang-php's (it mounts it)
 
 /// An option of a policy a family may not read.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum SyntaxFeature {
+pub enum SyntaxFeature {
     /// `parse` with a grammar: the family's literals the grammar's trees are parsed from.
     Parse(Grammar),
     /// A policy's `languageOptions`.
@@ -21,14 +26,27 @@ pub(crate) enum SyntaxFeature {
 }
 
 /// An ast query's compiled `languageOptions`: ESLint's settings, and Ruff's.
-pub(crate) type QueryOptions = (Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>);
+pub type QueryOptions = (Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>);
 
 /// Whether an ast query applies by its `when`, and the source types a file must have where the
 /// query leaves `sourceType` to each file (`SourceType::of_file`; `run_clause` checks them).
-pub(crate) type QueryWhen = (bool, Option<Vec<SourceType>>);
+pub type QueryWhen = (bool, Option<Vec<SourceType>>);
 
 /// A family's syntax.
-pub(crate) trait SyntaxRules: Adapter {
+pub trait SyntaxRules: Adapter {
+    /// `node`'s tree under `grammar`, a grammar of this family's literals (`LiteralGrammar::host_language`):
+    /// `interpolation` marks an interpolated literal's fields. Spends one step of `spend` per byte and tree node;
+    /// `None` when the budget ran out.
+    fn parse_literal<D: Doc>(
+        grammar: Grammar,
+        node: &Node<'_, D>,
+        interpolation: &str,
+        spend: &mut dyn FnMut(usize) -> bool,
+    ) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        let _ = (grammar, node, interpolation, spend);
+        Some(crate::code_rule_dsl::literal::Parsed::NotString)
+    }
+
     /// Whether a pattern's `$`-prefixed leaf that is no metavariable is a name of the language
     /// (Python's `$At` an identifier, PHP's `$x` a variable), spelled back with `$`.
     const DOLLAR_NAMES: bool;
@@ -51,7 +69,7 @@ pub(crate) trait SyntaxRules: Adapter {
 
 /// The refusal of `parse` with `grammar` by a family whose literals it does not read (`reason`
 /// naming the family's counterpart, if any).
-fn unhosted(grammar: Grammar, reason: &str) -> Result<(), Refusal> {
+pub fn unhosted(grammar: Grammar, reason: &str) -> Result<(), Refusal> {
     Err(Refusal::Refused(Cow::Owned(format!(
         "`{}` parses {}{reason}",
         grammar.name(),
@@ -59,168 +77,13 @@ fn unhosted(grammar: Grammar, reason: &str) -> Result<(), Refusal> {
     ))))
 }
 
-fn refused(message: &'static str) -> Result<(), Refusal> {
+pub fn refused(message: &'static str) -> Result<(), Refusal> {
     Err(Refusal::Refused(Cow::Borrowed(message)))
-}
-
-/// String literals: formats and annotations.
-impl SyntaxRules for Python {
-    const DOLLAR_NAMES: bool = true;
-
-    fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
-        match feature {
-            SyntaxFeature::LanguageOptions => Ok(()),
-            SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
-                LiteralHost::PythonString => Ok(()),
-                LiteralHost::EcmaComment | LiteralHost::PhpComment | LiteralHost::RustString => {
-                    unhosted(grammar, "")
-                }
-                LiteralHost::PhpString => match grammar {
-                    Grammar::Scanf => unhosted(grammar, "; Python has no scanf formats"),
-                    _ => unhosted(grammar, "; Python's printf formats are `percentFormat`"),
-                },
-            },
-        }
-    }
-
-    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
-        let python = options::compile_python_options(value, path)?;
-        Ok((None, Some(Arc::new(python))))
-    }
-
-    fn compile_when(
-        value: &Value,
-        path: &str,
-        _: Option<&LanguageOptions>,
-        python: Option<&PythonOptions>,
-        document: &Options,
-    ) -> napi::Result<QueryWhen> {
-        Ok((
-            options::compile_python_when(value, path, python, document)?,
-            None,
-        ))
-    }
-}
-
-/// Comments: ESLint's directives.
-impl SyntaxRules for Ecma {
-    const DOLLAR_NAMES: bool = false;
-
-    fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
-        match feature {
-            SyntaxFeature::LanguageOptions => Ok(()),
-            SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
-                LiteralHost::EcmaComment => Ok(()),
-                LiteralHost::PythonString
-                | LiteralHost::PhpString
-                | LiteralHost::PhpComment
-                | LiteralHost::RustString => unhosted(grammar, ""),
-            },
-        }
-    }
-
-    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
-        let options = options::compile_language_options(value, path)?;
-        Ok((Some(Arc::new(options)), None))
-    }
-
-    fn compile_when(
-        value: &Value,
-        path: &str,
-        options: Option<&LanguageOptions>,
-        _: Option<&PythonOptions>,
-        document: &Options,
-    ) -> napi::Result<QueryWhen> {
-        options::compile_ecma_when(value, path, options, document)
-    }
-}
-
-/// Strings (printf and scanf formats) and doc comments.
-impl SyntaxRules for Php {
-    const DOLLAR_NAMES: bool = true;
-
-    fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
-        match feature {
-            SyntaxFeature::LanguageOptions => {
-                refused("`languageOptions` is not available for php policies")
-            }
-            SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
-                LiteralHost::PhpString | LiteralHost::PhpComment => Ok(()),
-                LiteralHost::EcmaComment | LiteralHost::RustString => unhosted(grammar, ""),
-                LiteralHost::PythonString => match grammar {
-                    Grammar::Percent => {
-                        unhosted(grammar, "; PHP's printf formats are `printfFormat`")
-                    }
-                    Grammar::Brace => unhosted(
-                        grammar,
-                        "; PHP has no str.format templates (its printf formats are `printfFormat`)",
-                    ),
-                    Grammar::Annotation => unhosted(
-                        grammar,
-                        "; PHP holds no type in a string: its declared types are syntax, and its PHPDoc types are `phpDoc`",
-                    ),
-                    _ => unhosted(grammar, ""),
-                },
-            },
-        }
-    }
-
-    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
-        <Ecma as SyntaxRules>::compile_language_options(value, path)
-    }
-
-    fn compile_when(
-        value: &Value,
-        path: &str,
-        options: Option<&LanguageOptions>,
-        python: Option<&PythonOptions>,
-        document: &Options,
-    ) -> napi::Result<QueryWhen> {
-        // A PHP file has no module system: a `when.sourceType` reads ESLint's default, a module.
-        let (applies, types) =
-            <Ecma as SyntaxRules>::compile_when(value, path, options, python, document)?;
-        Ok((
-            applies && types.is_none_or(|types| types.contains(&SourceType::Module)),
-            None,
-        ))
-    }
-}
-
-/// A template's own tree holds no literal `parse` reads: its PHP's are the embedded program's
-/// (`blade::view`), a PHP document (`ast.embedded`, `embedded`).
-impl SyntaxRules for Blade {
-    const DOLLAR_NAMES: bool = false;
-
-    fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
-        match feature {
-            SyntaxFeature::LanguageOptions => {
-                refused("`languageOptions` is not available for blade policies")
-            }
-            SyntaxFeature::Parse(grammar) => unhosted(
-                grammar,
-                "; a template's PHP is its embedded program's: read it with `ast.embedded: compiled-view` or `embedded`",
-            ),
-        }
-    }
-
-    fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions> {
-        <Php as SyntaxRules>::compile_language_options(value, path)
-    }
-
-    fn compile_when(
-        value: &Value,
-        path: &str,
-        options: Option<&LanguageOptions>,
-        python: Option<&PythonOptions>,
-        document: &Options,
-    ) -> napi::Result<QueryWhen> {
-        <Php as SyntaxRules>::compile_when(value, path, options, python, document)
-    }
 }
 
 /// The kit's check of a family's `SyntaxRules`.
 #[cfg(test)]
-pub(super) mod kit {
+pub mod kit {
     use super::{SyntaxFeature, SyntaxRules};
     use crate::code_rule_dsl::compile::config::Options;
     use crate::code_rule_dsl::language::SourceType;
@@ -235,17 +98,17 @@ pub(super) mod kit {
     );
 
     /// What a family's `SyntaxRules` answer.
-    pub(in super::super) struct Expect {
-        pub(in super::super) dollar_names: bool,
+    pub struct Expect {
+        pub dollar_names: bool,
         /// The refusal of `languageOptions`; `None` where read.
-        pub(in super::super) language_options: Option<&'static str>,
+        pub language_options: Option<&'static str>,
         /// Where read, a `languageOptions`, and the ESLint `ecmaVersion` and Python minor it
         /// compiles to.
-        pub(in super::super) compiled_options: Option<(&'static str, Option<u16>, Option<u8>)>,
-        pub(in super::super) when: &'static [When],
-        /// The refusals of `parse` with each grammar, in `Grammar::ALL`'s order; `None` where
+        pub compiled_options: Option<(&'static str, Option<u16>, Option<u8>)>,
+        pub when: &'static [When],
+        /// The refusals of `parse` with each grammar, in the registration order (`Grammar::all`); `None` where
         /// the family's literals host it.
-        pub(in super::super) parse: [Option<&'static str>; 8],
+        pub parse: [Option<&'static str>; 8],
     }
 
     /// A verdict as the kit compares it: `None` where read, else the refusal's message,
@@ -258,7 +121,7 @@ pub(super) mod kit {
         }
     }
 
-    pub(in super::super) fn check<A: SyntaxRules>(expect: &Expect) {
+    pub fn check<A: SyntaxRules>(expect: &Expect) {
         if let Some((source, ecma_version, python_minor)) = expect.compiled_options {
             let value = serde_json::from_str(source).expect("JSON");
             let (options, python) =
@@ -289,15 +152,16 @@ pub(super) mod kit {
             expect.language_options.map(str::to_owned)
         );
         let parse = [
-            Grammar::Percent,
-            Grammar::Brace,
-            Grammar::Annotation,
-            Grammar::EslintDirective,
-            Grammar::Printf,
-            Grammar::Scanf,
-            Grammar::PhpDoc,
-            Grammar::RustFormat,
+            "percentFormat",
+            "braceFormat",
+            "annotation",
+            "eslintDirective",
+            "printfFormat",
+            "scanfFormat",
+            "phpDoc",
+            "rustFormat",
         ]
+        .map(Grammar::expect)
         .map(|grammar| refusal(A::feature(SyntaxFeature::Parse(grammar))));
         assert_eq!(parse, expect.parse.map(|m| m.map(str::to_owned)));
     }

@@ -2,7 +2,7 @@ use super::*;
 use crate::code_rule_dsl::logic::rr::parse;
 
 fn packs() -> Vec<(String, Value)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
+    let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../packs");
     let mut out = Vec::new();
     for pack in std::fs::read_dir(root).unwrap() {
         let rules = pack.unwrap().path().join("rules");

@@ -4,8 +4,8 @@ use std::{
     cell::Cell,
     sync::{Arc, atomic::AtomicUsize},
 };
-mod completed;
-pub(in crate::code_rule_dsl) mod layout;
+pub mod completed;
+pub mod layout;
 const MAX_STAGES: usize = 100;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
 thread_local! { static READERS: Cell<usize> = const { Cell::new(0) }; }
@@ -109,7 +109,7 @@ struct Resident {
     retained: Vec<Tree>,
     resident_bytes: usize,
 }
-pub(in crate::code_rule_dsl) const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
 fn capacity(bytes: Option<usize>, limit: usize) -> Result<usize> {
     bytes
         .filter(|&n| n <= limit)
@@ -328,7 +328,7 @@ pub(in crate::code_rule_dsl) fn execute(
     outputs
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn callback_cannot_reserve_producer_work() {

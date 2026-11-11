@@ -13,7 +13,4 @@ pub(super) fn error(source: &str) -> Result<Option<(u32, String)>, String> {
         .map_err(|r| format!("{}: {}", r.class, r.message))
 }
 
-/// The error a batch reading CPython's facts of document `path` fails with, where `ast.parse` raises no `SyntaxError`.
-pub(super) fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
-    crate::content_store::StoreError::Invalid(format!("{path}: CPython's ast.parse raises {raised}"))
-}
+pub use super::core_rr::failure;

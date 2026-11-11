@@ -8,7 +8,7 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
             AnchorPlan::unrestricted()
         }
         // An import target is a string's own value; its kinds are the strings the test lists.
-        Semantic::ImportTarget(_) => AnchorPlan::unrestricted(),
+        Semantic::Term(_) => AnchorPlan::unrestricted(),
         // Every value predicate except `constant: false` needs a known value, which only the
         // kinds the decoder reads can have. Following bindings, a name has a value too, and in
         // PHP a named or class constant.
@@ -98,7 +98,7 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
                 let pattern = format!(r"^(?:{names}|\((?s:.*))$");
                 match Regex::new(&pattern) {
                     Ok(regex) => Condition::Text {
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "test-hooks"))]
                         probe: TextProbe::compile(regex.as_str()),
                         regex,
                     },

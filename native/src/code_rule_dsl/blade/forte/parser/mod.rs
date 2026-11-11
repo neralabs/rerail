@@ -16,20 +16,20 @@
 //! the open conditional comments on a stack (`conditional_comments`) and `build_tree`'s one
 //! loop runs each one's contents, then its epilogue, as the nested loops would.
 
-mod comments;
-mod conditional_pairing;
-mod construct_scanner;
-mod directives;
-mod echoes;
-mod element_attributes;
-mod element_auto_closing;
-mod element_names;
-mod elements;
-mod markup;
-mod optional_tags;
-mod php;
-mod switch;
-mod void_elements;
+pub mod comments;
+pub mod conditional_pairing;
+pub mod construct_scanner;
+pub mod directives;
+pub mod echoes;
+pub mod element_attributes;
+pub mod element_auto_closing;
+pub mod element_names;
+pub mod elements;
+pub mod markup;
+pub mod optional_tags;
+pub mod php;
+pub mod switch;
+pub mod void_elements;
 
 use super::directives::Directives;
 use super::directives::token_index::{DirectiveTokenIndex, NameSet};

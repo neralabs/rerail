@@ -700,14 +700,29 @@ impl ContentStore {
     pub(super) fn initialize(connection: &mut Connection) -> StoreResult<i64> {
         configure_connection(connection)?;
         if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? {
-            let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
-            // Another open may have created the store since the read above.
-            let version = compatible_version(&transaction)?;
-            transaction.execute_batch(SCHEMA)?;
-            if version != SCHEMA_VERSION {
-                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
+            // before anything reads it.
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| -> StoreResult<()> {
+                        super::hazards::behind_the_run();
+                        let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
+                        // Another open may have created the store since the read above.
+                        let version = compatible_version(&transaction)?;
+                        transaction.execute_batch(SCHEMA)?;
+                        if version != SCHEMA_VERSION {
+                            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                        }
+                        transaction.commit()?;
+                        Ok(())
+                    })
+                    .join()
+                    .unwrap_or_else(|p| std::panic::resume_unwind(p))
+            })?;
+            if let Some(path) = connection.path() {
+                super::atoms::forget_identity(path);
+                super::frames::forget_snapshot(path);
             }
-            transaction.commit()?;
         }
         Ok(connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
     }
@@ -744,12 +759,19 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 
 /// Every object SCHEMA creates, as `(type, name)`: read once from SCHEMA applied to an in-memory
 /// database, so it cannot drift from SCHEMA.
+/// Made on a writer's thread (decision 0104: a run's own threads only read).
 static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| {
-    let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
-    connection
-        .execute_batch(SCHEMA)
-        .map_err(|error| error.to_string())?;
-    schema_object_names(&connection).map_err(|error| error.to_string())
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                super::hazards::behind_the_run();
+                let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
+                connection.execute_batch(SCHEMA).map_err(|error| error.to_string())?;
+                schema_object_names(&connection).map_err(|error| error.to_string())
+            })
+            .join()
+            .unwrap_or_else(|p| std::panic::resume_unwind(p))
+    })
 });
 
 fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, String)>> {

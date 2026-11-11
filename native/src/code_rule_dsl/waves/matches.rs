@@ -18,15 +18,13 @@ use crate::content_store::ContentStore;
 use std::collections::HashMap;
 use crate::code_rule_dsl::demand::vtab::PackedDemand;
 use crate::code_rule_dsl::facts::Graph;
-use crate::code_rule_dsl::facts::core;
-use crate::code_rule_dsl::facts::families::{Families, Tape, core_name};
-use crate::code_rule_dsl::facts::observe::path_name;
+use crate::code_rule_dsl::facts::families::{Families, Tape};
 use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::language::{GrammarDialect, tape_tag};
 use crate::code_rule_dsl::matcher::AnchorPlan;
 use crate::code_rule_dsl::transducer::packed::{ExecutionBackend, LoweredMatcher, LoweredWave, PlanId};
 use crate::content_store::{StoreError, StoreResult};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -147,7 +145,7 @@ impl Wave {
 
     /// Whether the demand statement reads a `py.*` family: the wave then reads it before its batch.
     pub(in crate::code_rule_dsl) fn demand_reads_py(&self) -> bool {
-        let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::PY.contains(&rel);
+        let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::is_family(rel);
         self.logic.demand.as_ref().is_some_and(|p| p.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| py(&a.rel)))))
     }
 
@@ -542,23 +540,7 @@ impl Wave {
     }
 }
 
-/// The documents of `paths` in `scope` whose core facts are bound, each keyed by its path name's
-/// atom, its facts rebuilt from its stored tape.
-pub(in crate::code_rule_dsl) fn documents(graph: &(impl Graph + ?Sized), scope: &str, paths: &[String]) -> StoreResult<Vec<Document>> {
-    let mut out = Vec::new();
-    for path in paths {
-        let core = core_name(scope, path);
-        let Some(digest) = graph.binding(&core)? else { continue };
-        let Some(tape) = Families::stored(graph, scope, path)? else { continue };
-        let facts = core::from_tape(&tape.doc, Arc::clone(&tape.lines)).map_err(StoreError::Invalid)?;
-        if core::digest(&facts) != digest {
-            return Err(StoreError::Invalid(format!("stale core facts for {core}")));
-        }
-        let key = graph.store().atom(&path_name(scope, path))?.ok_or_else(|| StoreError::Corrupt(format!("{path} has no atom")))?;
-        out.push(Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), tape: None, guest: None, module: None });
-    }
-    Ok(out)
-}
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::families::stored_documents as documents;
 
 /// The tapes labelled on Metal, all at once or, where their label levels outgrow a workspace
 /// (06 S7: 250 files in one chunk) or the evaluation's launch bound, each half on its own: a file's labels read only that file.

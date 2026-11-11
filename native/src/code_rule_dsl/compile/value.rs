@@ -1,6 +1,6 @@
 use crate::code_rule_dsl::json::{bounded_text, invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::{
-    Adapter, ValueFeature, ValueRules, gate, with_adapter,
+    ValueFeature, gate,
 };
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::{AstMatcher, Bound, Reading, ValueTest};
@@ -12,6 +12,7 @@ use crate::code_rule_dsl::value::text_regex::TextRegex;
 use napi::Result;
 use serde_json::Value as Json;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 const VALUE_KEYS: &[&str] = &[
     "eq",
@@ -149,12 +150,12 @@ pub(super) fn validate_value(value: &Json, path: &str, limits: &Limits) -> Resul
 }
 
 /// A JSON scalar as a value of `A`'s language (`ValueRules::string`, `ValueRules::number`).
-fn literal<A: Adapter>(value: &Json) -> Value {
+fn literal(pack: &dyn language_pack::LanguagePack, value: &Json) -> Value {
     match value {
-        Json::String(text) => <A::Value as ValueRules>::string(text),
+        Json::String(text) => pack.value_string(text),
         Json::Bool(flag) => Value::Bool(*flag),
         Json::Null => Value::None,
-        Json::Number(number) => <A::Value as ValueRules>::number(number),
+        Json::Number(number) => pack.value_number(number),
         _ => Value::Unknown,
     }
 }
@@ -181,16 +182,16 @@ pub(super) fn compile_value_with(
     path: &str,
     reading: Reading,
 ) -> Result<AstMatcher> {
-    with_adapter!(Family::of(language), A => compile_value_in::<A>(value, path, reading))
+    { let pack = language_pack::pack(Family::of(language)); compile_value_in(pack, value, path, reading) }
 }
 
 /// `compile_value_with` for a grammar whose family's adapter is `A`.
-fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> Result<AstMatcher> {
+fn compile_value_in(pack: &dyn language_pack::LanguagePack, value: &Json, path: &str, reading: Reading) -> Result<AstMatcher> {
     let name = value.get("name").and_then(Json::as_bool) == Some(true);
     if name {
         gate(
             &format!("{path}/name"),
-            <A::Value as ValueRules>::feature(ValueFeature::Compare(SemanticText::Name, "name")),
+            pack.value_feature(ValueFeature::Compare(SemanticText::Name, "name")),
         )?;
     }
     let types = value
@@ -201,7 +202,7 @@ fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> R
     for (index, name) in types.iter().enumerate() {
         gate(
             &format!("{path}/type/{index}"),
-            <A::Value as ValueRules>::feature(ValueFeature::Type(name)),
+            pack.value_feature(ValueFeature::Type(name)),
         )?;
     }
     let starts_with = value
@@ -210,7 +211,7 @@ fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> R
         .transpose()?
         .unwrap_or_default()
         .into_iter()
-        .map(|prefix| literal::<A>(&Json::String(prefix.to_owned())))
+        .map(|prefix| literal(pack, &Json::String(prefix.to_owned())))
         .collect();
     let regex = value
         .get("regex")
@@ -227,11 +228,11 @@ fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> R
         ("le", Bound::Le),
     ]
     .into_iter()
-    .filter_map(|(key, bound)| value.get(key).map(|limit| (bound, literal::<A>(limit))))
+    .filter_map(|(key, bound)| value.get(key).map(|limit| (bound, literal(pack, limit))))
     .collect();
     Ok(AstMatcher::Semantic(Semantic::Value(Box::new(ValueTest {
         reading,
-        eq: value.get("eq").map(literal::<A>),
+        eq: value.get("eq").map(|limit| literal(pack, limit)),
         types: types.into_iter().map(str::to_owned).collect(),
         constant: value.get("constant").and_then(Json::as_bool),
         starts_with,
@@ -244,4 +245,4 @@ fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> R
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

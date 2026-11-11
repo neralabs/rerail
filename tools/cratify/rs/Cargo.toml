@@ -1,0 +1,13 @@
+[package]
+name = "cratify"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace: a dev tool, not part of the engine's build.
+[workspace]
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"

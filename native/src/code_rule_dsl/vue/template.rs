@@ -1,8 +1,8 @@
 //! Vue template expressions and regions, matching compiler-dom 3.5.43.
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::code_rule_dsl::language::GrammarDialect;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
 use tree_sitter::{Node, Parser};
@@ -166,7 +166,7 @@ pub(crate) struct ForParse {
     pub(crate) alias: Range<usize>,
     pub(crate) parenthesized: bool,
     /// The value, key and index, as `parseFor` finds them (the oracle's `for-alias` regions).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub(crate) items: Vec<Range<usize>>,
     pub(crate) source: Range<usize>,
 }
@@ -238,10 +238,10 @@ pub(crate) fn parse_for(source: &str, value: Range<usize>) -> Option<ForParse> {
 /// How compiler-dom treats a directive expression.
 pub(crate) enum Parse {
     /// An expression (the oracle's regions; the view writes expressions without asking).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     Expression,
     /// Parameters (the oracle's regions).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     Params,
     HandlerMember,
     HandlerFunction,
@@ -253,7 +253,7 @@ pub(crate) enum Parse {
 /// anything else (a call, an assignment, several statements, text that is no expression) runs as
 /// inline statements. Both checks look through parentheses and TypeScript's `as`, `satisfies`,
 /// `!`, `<T>x` and `x<T>` (`unwrapTSNode`).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn handler(text: &str, dialect: GrammarDialect) -> Parse {
     let mut parser = Parser::new();
     if parser.set_language(&dialect.get_ts_language()).is_err() {
@@ -310,14 +310,14 @@ fn unwrapped(node: Node<'_>) -> Option<Node<'_>> {
 }
 
 /// A template expression as the view oracle lists it.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) struct Region {
     pub(crate) kind: String,
     pub(crate) range: Range<usize>,
     pub(crate) parse: Parse,
 }
 /// The template's expressions as the view oracle lists them, sorted.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> Vec<Region> {
     let mut out = Vec::new();
     fn trim(r: Range<usize>, s: &str) -> Option<Range<usize>> {
@@ -397,7 +397,7 @@ pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> 
     out
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn for_cases() {

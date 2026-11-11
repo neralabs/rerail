@@ -11,38 +11,58 @@
 //! A file read with `parse_file` has `core.rr` before it, included or not. An included file's `.output`s are its own,
 //! not the program's: they are left out (`python/calls.rr`'s).
 
-mod check;
-mod aggregate_demand;
-mod from_tape;
-mod lower;
-mod print;
+pub use rerail_rr::code_rule_dsl::logic::rr::check;
+#[path = "rr/aggregate_demand"]
+pub mod aggregate_demand {
+    pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
+    #[cfg(test)]
+    pub mod tests;
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Program, Rule, Term};
+    #[allow(unused_imports)]
+    use std::collections::{BTreeMap, BTreeSet};
+}
+pub mod from_tape;
+pub use rerail_rr::code_rule_dsl::logic::rr::lower;
+pub use rerail_rr::code_rule_dsl::logic::rr::print;
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
-pub(in crate::code_rule_dsl) use rerail_rr_syntax::tape;
-mod tape_type;
-mod token_reads;
-mod translate;
+pub use rerail_rr_syntax::tape;
+#[path = "rr/tape_type"]
+pub mod tape_type {
+    pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
+    #[cfg(test)]
+    #[path = "../tape_type_tests.rs"]
+    pub mod tests;
+    #[allow(unused_imports)]
+    use std::collections::{BTreeMap, BTreeSet};
+    #[allow(unused_imports)]
+    use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::front::Error;
+}
+pub mod token_reads;
+pub use rerail_rr::code_rule_dsl::logic::rr::translate;
 
-#[cfg(test)]
-mod tape_tests;
-#[cfg(test)]
-mod tests;
+// cratify: `tape_tests` is rerail-engine's (it mounts it)
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-pub(in crate::code_rule_dsl) use super::front::Error;
+pub use super::front::Error;
 use super::front::Program;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use lower::drop_unread_core;
-pub(in crate::code_rule_dsl) use lower::is_core;
-pub(in crate::code_rule_dsl) use lower::WORLD;
-pub(in crate::code_rule_dsl) use print::print;
-pub(in crate::code_rule_dsl) use syntax::quote;
-pub(in crate::code_rule_dsl) use translate::translate;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use lower::drop_unread_core;
+pub use aggregate_demand::retype_helpers;
+pub use lower::is_core;
+pub use lower::WORLD;
+pub use print::print;
+pub use syntax::quote;
+pub use translate::translate;
 
 /// The relations `core.rr` declares: the engine's names (decision 0047). Empty when `core.rr` does not read.
-pub(in crate::code_rule_dsl) fn core_names() -> &'static std::collections::BTreeSet<String> {
+pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static CORE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
     CORE.get_or_init(|| {
         std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse(&src).ok()).map(|p| p.decls.into_keys().collect()).unwrap_or_default()
@@ -50,24 +70,24 @@ pub(in crate::code_rule_dsl) fn core_names() -> &'static std::collections::BTree
 }
 
 /// The library `#include` reads from.
-pub(in crate::code_rule_dsl) fn library() -> PathBuf {
+pub fn library() -> PathBuf {
     // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
     std::env::var_os("RERAIL_RR_LIB")
         .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/lib"))
+        .unwrap_or_else(|| Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/lib"))
 }
 
 /// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file` reads them:
 /// `core.rr` first unless the text is in T's shape, each file once, includes first. A text that includes nothing is
 /// read as it is, without `core.rr`.
-pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
+pub fn parse(src: &str) -> Result<Program, Error> {
     parse_with(src, true)
 }
 
 /// A program's `.rr` text as `parse` reads it, but with only its libraries' declarations, not their clauses: what a
 /// run that holds the libraries once (decision 0089 §5) needs of a program that adds to no library relation. Its own
 /// rules are lowered against the library's names; the library's rules are the run's, lowered once.
-pub(in crate::code_rule_dsl) fn parse_own(src: &str) -> Result<Program, Error> {
+pub fn parse_own(src: &str) -> Result<Program, Error> {
     parse_with(src, false)
 }
 
@@ -89,7 +109,7 @@ enum Read {
 }
 
 /// `src` read once, its includes resolved (`Text`).
-pub(in crate::code_rule_dsl) fn read_text(src: &str) -> Result<Text, Error> {
+pub fn read_text(src: &str) -> Result<Text, Error> {
     let statements = from_tape::statements(src, &tape(src))?;
     if !statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
         refuse_ungrounded(&statements, &BTreeSet::new())?;
@@ -128,7 +148,7 @@ fn refuse_ungrounded(statements: &[syntax::Statement], given: &BTreeSet<String>)
 
 impl Text {
     /// The text's library modules (`modules`).
-    pub(in crate::code_rule_dsl) fn modules(&self) -> Option<Modules> {
+    pub fn modules(&self) -> Option<Modules> {
         let Read::Modular { files, own } = &self.0 else { return None };
         let declares = |statements: &[syntax::Statement]| -> std::collections::BTreeSet<String> {
             statements
@@ -150,7 +170,7 @@ impl Text {
     }
 
     /// The text's program, as `parse` (`clauses`) or `parse_own` reads it.
-    pub(in crate::code_rule_dsl) fn lower(self, clauses: bool) -> Result<Program, Error> {
+    pub fn lower(self, clauses: bool) -> Result<Program, Error> {
         let (files, own) = match self.0 {
             Read::Plain(statements) => return lower::lower(statements),
             Read::Modular { files, own } => (files, own),
@@ -197,7 +217,7 @@ pub(in crate::code_rule_dsl) struct Modules {
     pub declared: std::collections::BTreeSet<String>,
 }
 
-pub(in crate::code_rule_dsl) fn modules(src: &str) -> Result<Option<Modules>, Error> {
+pub fn modules(src: &str) -> Result<Option<Modules>, Error> {
     Ok(read_text(src)?.modules())
 }
 
@@ -360,7 +380,7 @@ fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syn
 
 /// The first error a `.rr` file's parse gives, as running it would report it: its line and message
 /// (`syntax_error/3`). `None` when it parses.
-pub(in crate::code_rule_dsl) fn syntax_error(src: &str) -> Option<(usize, String)> {
+pub fn syntax_error(src: &str) -> Option<(usize, String)> {
     let error = match syntax::Parser::new(src).and_then(|mut parser| parser.statements()) {
         Ok(_) => return None,
         Err(error) => error,
@@ -389,7 +409,7 @@ pub(in crate::code_rule_dsl) fn code_body(text: &str) -> &str {
 }
 
 /// The compiler's named policy headers and settings, without reparsing rule source in a host adapter.
-pub(in crate::code_rule_dsl) fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
+pub fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
     use syntax::Tok;
     let mut policies = program.policies.clone();
     for (_, text) in program.settings.iter().filter(|(key, _)| key == "policy") {
@@ -408,7 +428,7 @@ pub(in crate::code_rule_dsl) fn metadata(program: &Program) -> Result<serde_json
 
 /// A lowered program run over files a caller gives (a test's), not found by walking a repository: its
 /// `.scope` filter on findings is taken out, as `.scope given` leaves it out when lowering.
-pub(in crate::code_rule_dsl) fn files_given(program: &mut Program) {
+pub fn files_given(program: &mut Program) {
     let filter = ["rr_scope_drop", "rr_scope_in", "rr_report_in"];
     program.rules.retain(|r| !filter.contains(&r.head.rel.as_str()));
     for r in &mut program.rules {
@@ -422,7 +442,7 @@ pub(in crate::code_rule_dsl) fn files_given(program: &mut Program) {
 }
 
 /// A program's `.rr` file, with what it includes.
-pub(in crate::code_rule_dsl) fn parse_file(path: &Path) -> Result<Program, Error> {
+pub fn parse_file(path: &Path) -> Result<Program, Error> {
     read_file(path).map(|(program, _)| program)
 }
 
@@ -430,7 +450,7 @@ pub(in crate::code_rule_dsl) fn parse_file(path: &Path) -> Result<Program, Error
 /// is of the file's bytes, or `None` where an `#include` looked and found no file (a file
 /// appearing there changes what the program reads).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct LibraryFile {
+pub struct LibraryFile {
     pub path: PathBuf,
     pub sha256: Option<[u8; 32]>,
 }
@@ -444,7 +464,7 @@ impl LibraryFile {
     /// The seeded fact, for a file that exists.
     // Read by the runner's record when it seeds the store (0044 step 2).
     #[allow(dead_code)]
-    pub(in crate::code_rule_dsl) fn fact(&self) -> Option<String> {
+    pub fn fact(&self) -> Option<String> {
         let hash = self.sha256?;
         let hex = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
         Some(format!("library_file({}, \"sha256:{hex}\").", quote(&self.path.to_string_lossy())))
@@ -463,7 +483,7 @@ const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
-pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
+pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
@@ -583,7 +603,7 @@ impl LibraryFile {
     }
 }
 
-fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
+pub fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
     read_shared(path).map(|(statements, file)| ((*statements).clone(), file))
 }
 
@@ -624,12 +644,11 @@ pub(in crate::code_rule_dsl) fn parse_stored(name: &str, src: String) -> Result<
     lower::lower(stored_statements(Path::new(name), src)?)
 }
 
-fn stored_statements(path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
+fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
     let store = if cfg!(feature = "tape-cache") { super::plan::corpus::tape_cache().ok().flatten() } else { None };
     if let Some(store) = store {
         let src = std::sync::Arc::new(src);
-        let file = crate::code_rule_dsl::model::FileInput::new(path.display().to_string(), "rr".to_owned(), std::sync::Arc::clone(&src), None, None, "core")
-            .map_err(|e| Error::Syntax(format!("{e:?}")))?;
+        let file = crate::code_rule_dsl::facts::core::Source { language: "rr".to_owned(), source: std::sync::Arc::clone(&src) };
         if let Ok(crate::code_rule_dsl::facts::core::Built::Facts(facts)) = crate::code_rule_dsl::facts::core::build_cached(&file, &store) {
             crate::code_rule_dsl::prof::count("rr.statements_from_stored_tape", 1);
             return from_tape::statements(&src, &from_tape::nodes_of_facts(&facts));
@@ -678,7 +697,7 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
 
 /// A file and everything it includes, each once, includes first: (path, statements without the
 /// includes, the included files' `.output`s left out); and every library file read or probed, in reading order.
-fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
+pub fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     use super::plan::corpus::phase0;
     if phase0::active() {
         return builtin_program(path);
@@ -755,26 +774,4 @@ fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     Ok((out, read_files))
 }
 
-/// A pattern's single-node metavariables (`$X`, not `$$$X` nor `$_X`), each once, in order.
-pub(in crate::code_rule_dsl) fn single_metavars(pattern: &str) -> Vec<String> {
-    let b = pattern.as_bytes();
-    let mut out: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] != b'$' {
-            i += 1;
-            continue;
-        }
-        let mut j = i;
-        while j < b.len() && b[j] == b'$' {
-            j += 1;
-        }
-        let k = j + b[j..].iter().take_while(|c| c.is_ascii_alphanumeric() || **c == b'_').count();
-        let name = &pattern[j..k];
-        if j - i == 1 && name.starts_with(|c: char| c.is_ascii_uppercase()) && !out.iter().any(|x| x == name) {
-            out.push(name.to_owned());
-        }
-        i = k.max(i + 1);
-    }
-    out
-}
+pub use crate::code_rule_dsl::facts::vtab::syntax::core_rr::single_metavars;

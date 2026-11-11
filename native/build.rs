@@ -39,23 +39,7 @@ fn main() {
 /// `lang-<id>` (all are by default; the browser build picks the ones a page needs, `wasm/README.md`).
 fn omitted_languages() -> Vec<String> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let directory = manifest.parent().expect("repository root").join("languages");
-    let mut omitted = Vec::new();
-    for entry in std::fs::read_dir(&directory).expect("languages/ is readable") {
-        let path = entry.expect("languages/ entry").path();
-        if path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).expect("registry file")).expect("registry JSON");
-        let (Some(id), Some("supported")) = (value["id"].as_str(), value["status"].as_str()) else { continue };
-        let feature = format!("CARGO_FEATURE_LANG_{}", id.to_ascii_uppercase().replace('-', "_"));
-        if std::env::var_os(&feature).is_none() {
-            omitted.push(id.to_owned());
-        }
-    }
-    omitted.sort();
-    omitted
+    languages::omitted_languages(&manifest.parent().expect("repository root").join("languages"))
 }
 
 /// The vendored grammars (`GRAMMARS` names) the `omitted` languages' dialects are parsed with.
@@ -86,23 +70,10 @@ fn vendored_of(omitted: &[String]) -> Vec<String> {
 /// The `omitted` languages keep their tables but no grammar (`language_registry.rs`'s `built`).
 fn generate_languages(omitted: &[String]) -> Vec<(String, Vec<u8>)> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let root = manifest.parent().expect("repository root");
-    let directory = root.join("languages");
-    let test_directory = manifest.join("test-languages");
-    println!("cargo:rerun-if-changed={}", directory.display());
-    println!("cargo:rerun-if-changed={}", test_directory.display());
-    let vendored = GRAMMARS
-        .iter()
-        .map(|grammar| grammar.name)
-        .collect::<Vec<_>>();
+    let vendored = GRAMMARS.iter().map(|grammar| grammar.name).collect::<Vec<_>>();
+    assert_eq!(vendored, languages::VENDORED, "GRAMMARS and build_languages.rs's VENDORED name the same grammars");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
-    languages::generate(
-        &directory,
-        test_directory.is_dir().then_some(test_directory.as_path()),
-        &vendored,
-        omitted,
-        &out,
-    )
+    languages::generate_registry(&manifest, omitted, &out)
 }
 
 /// A grammar vendored under `grammars/`. Its generated parser is not vendored (TypeScript's and
@@ -436,6 +407,9 @@ fn configure_fixtures() {
         .canonicalize()
         .expect("fixtures directory is readable");
     println!("cargo:rustc-env=RERAIL_ORACLES_DIR={}", directory.display());
+    // What the tests' `fixtures_dir!` reads (`code_rule_dsl/fixtures.rs`); the engine's crates have it from
+    // `.cargo/config.toml`, the engine from here, so an `RERAIL_ORACLES_DIR` override holds for its tests.
+    println!("cargo:rustc-env=RERAIL_FIXTURES_DIR={}", directory.display());
     println!("cargo:rerun-if-changed={}", directory.display());
 }
 

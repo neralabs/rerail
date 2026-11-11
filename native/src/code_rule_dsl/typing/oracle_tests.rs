@@ -158,7 +158,7 @@ fn calls_name() -> String {
 }
 
 fn program(name: &str) -> String {
-    crate::code_rule_dsl::tools::program_text(&Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
+    crate::code_rule_dsl::logic::settings::program_text(&Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
 }
 
 /// Where `calls.rr` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
@@ -1322,7 +1322,7 @@ fn benchmark_python_calls_program_corpus() {
     // `RERAIL_PYTHON_PROGRAM_FILE`: the program read from that file, in place of `RERAIL_PYTHON_PROGRAM`'s (to compare a
     // rule's earlier form).
     let source = match std::env::var("RERAIL_PYTHON_PROGRAM_FILE") {
-        Ok(f) => crate::code_rule_dsl::tools::program_text(Path::new(&f)).unwrap(),
+        Ok(f) => crate::code_rule_dsl::logic::settings::program_text(Path::new(&f)).unwrap(),
         Err(_) => program(&calls_name()),
     };
     let mut text = format!("{source}\n{JEDI_SPANS}");

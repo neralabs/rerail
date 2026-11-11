@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum TerminalKind {
+pub enum TerminalKind {
     Universe,
     Pattern,
     Kind,
@@ -23,13 +23,13 @@ pub(super) enum TerminalKind {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) struct TerminalSpec {
+pub struct TerminalSpec {
     kind: TerminalKind,
     semantic_key: String,
 }
 
 impl TerminalSpec {
-    pub(super) fn new(kind: TerminalKind, semantic_key: impl Into<String>) -> Self {
+    pub fn new(kind: TerminalKind, semantic_key: impl Into<String>) -> Self {
         Self {
             kind,
             semantic_key: semantic_key.into(),
@@ -38,7 +38,7 @@ impl TerminalSpec {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum SqlOperation {
+pub enum SqlOperation {
     PackedMaterialized,
     StatusJoin,
     ScanTerminal,
@@ -143,7 +143,7 @@ impl SqlOperation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum NavigationAxis {
+pub enum NavigationAxis {
     Ancestor,
     Descendant,
     FollowingSibling,
@@ -151,53 +151,53 @@ pub(super) enum NavigationAxis {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum NavigationStop {
+pub enum NavigationStop {
     Neighbor,
     End,
     Rule,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct NavigationSpec {
-    pub(super) axis: NavigationAxis,
-    pub(super) stop: NavigationStop,
-    pub(super) field: Option<u16>,
-    pub(super) field_stop_children_only: bool,
-    pub(super) producer: usize,
-    pub(super) enumerate: bool,
+pub struct NavigationSpec {
+    pub axis: NavigationAxis,
+    pub stop: NavigationStop,
+    pub field: Option<u16>,
+    pub field_stop_children_only: bool,
+    pub producer: usize,
+    pub enumerate: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct NthChildSpec {
-    pub(super) step: i32,
-    pub(super) offset: i32,
-    pub(super) reverse: bool,
-    pub(super) producer: usize,
+pub struct NthChildSpec {
+    pub step: i32,
+    pub offset: i32,
+    pub reverse: bool,
+    pub producer: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct CountSpec {
-    pub(super) navigation: NavigationSpec,
-    pub(super) minimum: usize,
-    pub(super) maximum: Option<usize>,
-    pub(super) binding: Option<(String, i64)>,
+pub struct CountSpec {
+    pub navigation: NavigationSpec,
+    pub minimum: usize,
+    pub maximum: Option<usize>,
+    pub binding: Option<(String, i64)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ComparisonSpec {
-    pub(super) left: String,
-    pub(super) left_source: String,
-    pub(super) left_transform: Option<usize>,
-    pub(super) op: CompareOp,
-    pub(super) right: String,
-    pub(super) right_source: String,
-    pub(super) right_transform: Option<usize>,
-    pub(super) collation: Collation,
-    pub(super) text: CompareText,
+pub struct ComparisonSpec {
+    pub left: String,
+    pub left_source: String,
+    pub left_transform: Option<usize>,
+    pub op: CompareOp,
+    pub right: String,
+    pub right_source: String,
+    pub right_transform: Option<usize>,
+    pub collation: Collation,
+    pub text: CompareText,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum ValueLiteral {
+pub enum ValueLiteral {
     Null,
     Bool(bool),
     Integer(String),
@@ -206,75 +206,75 @@ pub(super) enum ValueLiteral {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ValuePredicateSpec {
-    pub(super) producer: usize,
-    pub(super) language: crate::code_rule_dsl::language::GrammarDialect,
-    pub(super) eq: Option<ValueLiteral>,
+pub struct ValuePredicateSpec {
+    pub producer: usize,
+    pub language: crate::code_rule_dsl::language::GrammarDialect,
+    pub eq: Option<ValueLiteral>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct SemanticRuleSpec {
-    pub(super) slot: u16,
-    pub(super) target_kind: Option<u16>,
-    pub(super) relation: Option<Box<RelationalIr>>,
-    pub(super) incomplete_position: Option<u32>,
-    pub(super) deduplicate_source: bool,
+pub struct SemanticRuleSpec {
+    pub slot: u16,
+    pub target_kind: Option<u16>,
+    pub relation: Option<Box<RelationalIr>>,
+    pub incomplete_position: Option<u32>,
+    pub deduplicate_source: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ParseFactSpec {
-    pub(super) producer: usize,
-    pub(super) host_producer: usize,
-    pub(super) required_host_producer: Option<usize>,
-    pub(super) target_kind: u16,
-    pub(super) export: Option<String>,
+pub struct ParseFactSpec {
+    pub producer: usize,
+    pub host_producer: usize,
+    pub required_host_producer: Option<usize>,
+    pub target_kind: u16,
+    pub export: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct SemanticFactSpec {
-    pub(super) producer: usize,
-    pub(super) argument_labels: Vec<String>,
-    pub(super) rules: Vec<SemanticRuleSpec>,
-    pub(super) require_all_candidates: bool,
+pub struct SemanticFactSpec {
+    pub producer: usize,
+    pub argument_labels: Vec<String>,
+    pub rules: Vec<SemanticRuleSpec>,
+    pub require_all_candidates: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct UtilitySpec {
-    pub(super) definition: super::plan::UtilityDefinitionId,
-    pub(super) component: String,
-    pub(super) universe_producer: usize,
-    pub(super) depth: u32,
-    pub(super) max_depth: u32,
-    pub(super) max_work: usize,
+pub struct UtilitySpec {
+    pub definition: super::plan::UtilityDefinitionId,
+    pub component: String,
+    pub universe_producer: usize,
+    pub depth: u32,
+    pub max_depth: u32,
+    pub max_work: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct UtilityFrameSpec {
-    pub(super) utility: UtilitySpec,
-    pub(super) arguments: Vec<(String, String)>,
+pub struct UtilityFrameSpec {
+    pub utility: UtilitySpec,
+    pub arguments: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct RecursiveUtilityTransition {
-    pub(super) caller: usize,
-    pub(super) target: usize,
-    pub(super) arguments: Vec<(String, String)>,
-    pub(super) steps: Vec<NavigationSpec>,
-    pub(super) stops: Vec<(usize, RelationalIr)>,
-    pub(super) guards: Vec<(usize, RelationalIr)>,
+pub struct RecursiveUtilityTransition {
+    pub caller: usize,
+    pub target: usize,
+    pub arguments: Vec<(String, String)>,
+    pub steps: Vec<NavigationSpec>,
+    pub stops: Vec<(usize, RelationalIr)>,
+    pub guards: Vec<(usize, RelationalIr)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct RecursiveUtilitySpec {
-    pub(super) definition: super::plan::UtilityDefinitionId,
-    pub(super) component: String,
-    pub(super) root: usize,
-    pub(super) complement: bool,
-    pub(super) universe_producer: usize,
-    pub(super) navigation_producer: usize,
-    pub(super) max_depth: u32,
-    pub(super) max_work: usize,
-    pub(super) transitions: Vec<RecursiveUtilityTransition>,
+pub struct RecursiveUtilitySpec {
+    pub definition: super::plan::UtilityDefinitionId,
+    pub component: String,
+    pub root: usize,
+    pub complement: bool,
+    pub universe_producer: usize,
+    pub navigation_producer: usize,
+    pub max_depth: u32,
+    pub max_work: usize,
+    pub transitions: Vec<RecursiveUtilityTransition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1838,14 +1838,14 @@ struct SharedUtility {
 }
 
 #[derive(Default)]
-pub(super) struct UtilityCatalog {
+pub struct UtilityCatalog {
     utilities: BTreeMap<super::plan::UtilityDefinitionId, SharedUtility>,
     recursive: HashMap<String, (String, String)>,
     call_counts: BTreeMap<super::plan::UtilityDefinitionId, usize>,
 }
 
 impl UtilityCatalog {
-    pub(super) fn new(call_counts: BTreeMap<super::plan::UtilityDefinitionId, usize>) -> Self {
+    pub fn new(call_counts: BTreeMap<super::plan::UtilityDefinitionId, usize>) -> Self {
         Self {
             utilities: BTreeMap::new(),
             recursive: HashMap::new(),
@@ -1899,10 +1899,10 @@ impl UtilityCatalog {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct SqlMaterialization {
-    pub(super) table: String,
-    pub(super) ctes: Vec<String>,
-    pub(super) root: String,
+pub struct SqlMaterialization {
+    pub table: String,
+    pub ctes: Vec<String>,
+    pub root: String,
 }
 
 struct SqlRenderer<'a> {
@@ -4480,11 +4480,11 @@ fn qualified_row_columns_with_node(alias: &str, node: &str) -> String {
         .join(", ")
 }
 
-pub(super) fn qualified_row_columns(alias: &str) -> String {
+pub fn qualified_row_columns(alias: &str) -> String {
     qualified_row_columns_with_overrides(alias, &[])
 }
 
-pub(super) fn qualified_failure_columns(alias: &str) -> String {
+pub fn qualified_failure_columns(alias: &str) -> String {
     qualified_row_columns_with_overrides(alias, &[("row_kind", "8")])
 }
 
@@ -4505,14 +4505,14 @@ fn qualified_row_columns_with_overrides(alias: &str, overrides: &[(&str, &str)])
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct SharedRelationalIr {
+pub struct SharedRelationalIr {
     roots: Vec<Arc<RelationNode>>,
     terminal_kinds: Vec<TerminalKind>,
     operations: Vec<SqlOperation>,
 }
 
 impl SharedRelationalIr {
-    pub(super) fn instantiate(&self) -> RelationalIr {
+    pub fn instantiate(&self) -> RelationalIr {
         RelationalIr {
             roots: self
                 .roots
@@ -4526,7 +4526,7 @@ impl SharedRelationalIr {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct RelationalIr {
+pub struct RelationalIr {
     roots: Vec<RelationNode>,
     terminal_kinds: Vec<TerminalKind>,
     operations: Vec<SqlOperation>,
@@ -4539,7 +4539,7 @@ impl Default for RelationalIr {
 }
 
 impl RelationalIr {
-    pub(super) fn into_shared(self) -> SharedRelationalIr {
+    pub fn into_shared(self) -> SharedRelationalIr {
         SharedRelationalIr {
             roots: self.roots.into_iter().map(Arc::new).collect(),
             terminal_kinds: self.terminal_kinds,
@@ -4547,7 +4547,7 @@ impl RelationalIr {
         }
     }
 
-    pub(super) fn empty() -> Self {
+    pub fn empty() -> Self {
         Self {
             roots: Vec::new(),
             terminal_kinds: Vec::new(),
@@ -4555,7 +4555,7 @@ impl RelationalIr {
         }
     }
 
-    pub(super) fn empty_relation() -> Self {
+    pub fn empty_relation() -> Self {
         let mut relation = Self {
             roots: vec![RelationNode::Empty],
             terminal_kinds: Vec::new(),
@@ -4565,7 +4565,7 @@ impl RelationalIr {
         relation
     }
 
-    pub(super) fn comparison(spec: ComparisonSpec) -> Self {
+    pub fn comparison(spec: ComparisonSpec) -> Self {
         let mut relation = Self {
             roots: vec![RelationNode::Compare {
                 spec,
@@ -4578,7 +4578,7 @@ impl RelationalIr {
         relation
     }
 
-    pub(super) fn value(spec: ValuePredicateSpec) -> Self {
+    pub fn value(spec: ValuePredicateSpec) -> Self {
         let mut relation = Self {
             roots: vec![RelationNode::Value {
                 spec,
@@ -4591,7 +4591,7 @@ impl RelationalIr {
         relation
     }
 
-    pub(super) fn parsed(spec: ParseFactSpec) -> Self {
+    pub fn parsed(spec: ParseFactSpec) -> Self {
         Self {
             roots: vec![RelationNode::Parsed { spec }],
             terminal_kinds: vec![TerminalKind::Parse],
@@ -4604,7 +4604,7 @@ impl RelationalIr {
         }
     }
 
-    pub(super) fn semantic(spec: SemanticFactSpec) -> Self {
+    pub fn semantic(spec: SemanticFactSpec) -> Self {
         let mut relation = Self {
             roots: vec![RelationNode::Semantic { spec }],
             terminal_kinds: Vec::new(),
@@ -4614,7 +4614,7 @@ impl RelationalIr {
         relation
     }
 
-    pub(super) fn utility(spec: UtilitySpec, body: Self) -> Result<Self, String> {
+    pub fn utility(spec: UtilitySpec, body: Self) -> Result<Self, String> {
         let source = RelationNode::Apply {
             operation: SqlOperation::ScanTerminal,
             inputs: vec![RelationNode::Producer(TerminalSpec::new(
@@ -4636,7 +4636,7 @@ impl RelationalIr {
         Ok(relation)
     }
 
-    pub(super) fn utility_frame(spec: UtilityFrameSpec, body: Self) -> Result<Self, String> {
+    pub fn utility_frame(spec: UtilityFrameSpec, body: Self) -> Result<Self, String> {
         let source = RelationNode::Apply {
             operation: SqlOperation::ScanTerminal,
             inputs: vec![RelationNode::Producer(TerminalSpec::new(
@@ -4658,7 +4658,7 @@ impl RelationalIr {
         Ok(relation)
     }
 
-    pub(super) fn recursive_utility(
+    pub fn recursive_utility(
         spec: RecursiveUtilitySpec,
         bases: Vec<(usize, Self)>,
     ) -> Result<Self, String> {
@@ -4680,7 +4680,7 @@ impl RelationalIr {
         Ok(relation)
     }
 
-    pub(super) fn union_all(relations: Vec<Self>) -> Result<Self, String> {
+    pub fn union_all(relations: Vec<Self>) -> Result<Self, String> {
         let roots = relations
             .into_iter()
             .map(Self::one_root)
@@ -4694,7 +4694,7 @@ impl RelationalIr {
         Ok(relation)
     }
 
-    pub(super) fn select_when(select: Self, exists: Self) -> Result<Self, String> {
+    pub fn select_when(select: Self, exists: Self) -> Result<Self, String> {
         let mut relation = Self {
             roots: vec![RelationNode::SelectWhen {
                 select: Box::new(select.one_root()?),
@@ -4707,7 +4707,7 @@ impl RelationalIr {
         Ok(relation)
     }
 
-    pub(super) fn require_each(
+    pub fn require_each(
         subject: Self,
         evidence: Self,
         keys: Vec<(String, String)>,
@@ -4725,7 +4725,7 @@ impl RelationalIr {
         Ok(relation)
     }
 
-    pub(super) fn budget(
+    pub fn budget(
         source: Self,
         group_by: Vec<String>,
         distinct: Vec<String>,
@@ -4745,7 +4745,7 @@ impl RelationalIr {
         Ok(relation)
     }
 
-    pub(super) fn terminal_spec(
+    pub fn terminal_spec(
         &mut self,
         terminal: TerminalKind,
         semantic_key: impl Into<String>,
@@ -4765,7 +4765,7 @@ impl RelationalIr {
         Ok(root)
     }
 
-    pub(super) fn navigate(
+    pub fn navigate(
         spec: NavigationSpec,
         source: Self,
         related: Self,
@@ -4786,7 +4786,7 @@ impl RelationalIr {
         Ok(ir)
     }
 
-    pub(super) fn nth_child(
+    pub fn nth_child(
         spec: NthChildSpec,
         source: Self,
         of_rule: Option<Self>,
@@ -4805,7 +4805,7 @@ impl RelationalIr {
         Ok(ir)
     }
 
-    pub(super) fn constrain(
+    pub fn constrain(
         source: Self,
         constraints: Vec<(String, Self)>,
     ) -> Result<Self, String> {
@@ -4826,7 +4826,7 @@ impl RelationalIr {
         Ok(ir)
     }
 
-    pub(super) fn count(
+    pub fn count(
         spec: CountSpec,
         source: Self,
         related: Self,
@@ -4847,7 +4847,7 @@ impl RelationalIr {
         Ok(ir)
     }
 
-    pub(super) fn combine(operation: SqlOperation, parts: Vec<Self>) -> Result<Self, String> {
+    pub fn combine(operation: SqlOperation, parts: Vec<Self>) -> Result<Self, String> {
         if parts.is_empty() {
             return Err(format!(
                 "{operation:?} requires at least one relational operand"
@@ -4903,7 +4903,7 @@ impl RelationalIr {
         })
     }
 
-    pub(super) fn operation(&mut self, operation: SqlOperation) {
+    pub fn operation(&mut self, operation: SqlOperation) {
         assert!(
             !matches!(
                 operation,
@@ -5070,15 +5070,15 @@ impl RelationalIr {
         (specs, shared.len())
     }
 
-    pub(super) fn terminal_specs(&self) -> BTreeSet<TerminalSpec> {
+    pub fn terminal_specs(&self) -> BTreeSet<TerminalSpec> {
         self.terminal_specs_with_shared_visits().0
     }
 
-    pub(super) fn operations(&self) -> &[SqlOperation] {
+    pub fn operations(&self) -> &[SqlOperation] {
         &self.operations
     }
 
-    pub(super) fn utility_definitions(&self) -> BTreeSet<super::plan::UtilityDefinitionId> {
+    pub fn utility_definitions(&self) -> BTreeSet<super::plan::UtilityDefinitionId> {
         let mut definitions = BTreeSet::new();
         for root in &self.roots {
             root.collect_utility_definitions(&mut definitions);
@@ -5086,11 +5086,11 @@ impl RelationalIr {
         definitions
     }
 
-    pub(super) fn requires_recursive_cte(&self) -> bool {
+    pub fn requires_recursive_cte(&self) -> bool {
         self.operations.contains(&SqlOperation::RecursiveCte)
     }
 
-    pub(super) fn render_clause_relations(
+    pub fn render_clause_relations(
         &self,
         clause_ordinal: usize,
         each: Option<&str>,
@@ -5142,7 +5142,7 @@ impl RelationalIr {
         Ok((renderer.ctes, selected, renderer.materializations))
     }
 
-    pub(super) fn render_utility_catalog(
+    pub fn render_utility_catalog(
         utilities: &mut UtilityCatalog,
         packetize: bool,
     ) -> Result<(Vec<String>, Vec<SqlMaterialization>), String> {
@@ -5214,7 +5214,7 @@ impl RelationalIr {
         Ok((ctes, materializations))
     }
 
-    pub(super) fn normalized_sql(&self) -> String {
+    pub fn normalized_sql(&self) -> String {
         self.operations
             .iter()
             .map(|operation| operation.fragment())
@@ -5222,7 +5222,7 @@ impl RelationalIr {
             .join(" -> ")
     }
 
-    pub(super) fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         if self.operations.first() != Some(&SqlOperation::PackedMaterialized) {
             return Err("relational IR must start with a materialized packed scan".to_owned());
         }
@@ -5247,7 +5247,7 @@ impl RelationalIr {
         Ok(())
     }
 
-    pub(super) fn refresh_explanation(&mut self) {
+    pub fn refresh_explanation(&mut self) {
         let mut terminals = Vec::new();
         let mut operations = vec![SqlOperation::PackedMaterialized, SqlOperation::StatusJoin];
         for root in &self.roots {
@@ -5260,7 +5260,7 @@ impl RelationalIr {
 }
 
 #[cfg(test)]
-mod layout_tests {
+pub mod layout_tests {
     use super::{
         NavigationAxis, NavigationSpec, NavigationStop, RelationNode, RelationalIr, SqlOperation,
         SqlRenderer, TerminalKind, TerminalSpec, UtilityCatalog, compact_large_utility_base_names,

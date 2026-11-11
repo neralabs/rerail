@@ -22,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// failing test cannot fail every test that takes the slot after it.
 pub(super) static WORKSPACE_TEST_SLOT: Mutex<()> = Mutex::new(());
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 /// Build a Git fixture repository. Tests only: production discovery reads Git through gix.
 pub(super) fn git(root: &std::path::Path, arguments: &[&str]) {
     let status = std::process::Command::new("git")
@@ -840,8 +840,8 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
     let lookups = [stored.tape.unwrap(), irrelevant_tape].map(|tape_id| {
         crate::content_store::SearchKindLookup {
             tape_id,
-            index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
-            kind_tokens: vec![crate::code_rule_dsl::transducer::kind_index_token(
+            index_version: crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
+            kind_tokens: vec![crate::code_rule_dsl::search_index::kind_index_token(
                 crate::code_rule_dsl::language::GrammarDialect::Python,
                 call,
             )

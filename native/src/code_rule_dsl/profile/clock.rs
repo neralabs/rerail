@@ -1,6 +1,6 @@
 //! Thread CPU clock shared by profiling hosts.
 #[cfg(unix)]
-pub(crate) fn thread_cpu_ns() -> Option<u128> {
+pub fn thread_cpu_ns() -> Option<u128> {
     let mut time = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,

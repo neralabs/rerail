@@ -260,6 +260,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "READS"),
     ("code_rule_dsl/logic/derived.rs", "KEYS"),
     ("content_store/atoms.rs", "CANONICAL"),
+    // Each database file's identity, read once a file: a registry, as CANONICAL is.
+    ("content_store/atoms.rs", "IDENTITIES"),
     ("content_store/atoms.rs", "MEMORY"),
     ("content_store/atoms.rs", "REGISTRY"),
     ("content_store/compression.rs", "ENCODER"),
@@ -276,6 +278,9 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/hazards.rs", "HAZARDS"),
     // The run each frame space last counted in this process, so a run's programs count it once.
     ("content_store/frames.rs", "COUNTED"),
+    // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
+    // once before a run's first wave, not a cache of anything else.
+    ("content_store/frames.rs", "SNAPSHOTS"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
@@ -315,7 +320,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
 const NOT_YET_MAPS_PIN: usize = 24;
 
 fn src() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
 }
 
 /// The crate's source files, tests left out: a test may make what it likes.

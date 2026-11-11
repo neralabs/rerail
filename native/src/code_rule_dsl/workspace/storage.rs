@@ -22,10 +22,10 @@ pub(super) struct StoreRegistryEntry {
     maintenance: std::sync::Weak<StorageMaintenance>,
 }
 
-pub(super) static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>> =
+pub static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub(super) fn shared_content_store(
+pub fn shared_content_store(
     path: std::path::PathBuf,
 ) -> StoreResult<(StdArc<ContentStore>, StdArc<StorageMaintenance>)> {
     let mut stores = CONTENT_STORES
@@ -150,7 +150,7 @@ impl StorageMaintenance {
 /// The keyset cursor only moves forward until the backlog after it is empty, so a batch this build
 /// cannot index never pins it; then it starts over and picks up tapes stored below it meanwhile.
 /// A tape this build can never decode leaves the backlog with an incomplete index set.
-pub(super) fn index_stored_tapes(
+pub fn index_stored_tapes(
     store: &ContentStore,
     stop: &AtomicBool,
     cursor: &mut Option<crate::content_store::TapeId>,
@@ -192,14 +192,14 @@ pub(super) fn index_stored_tapes(
             && store
                 .put_unavailable_search_indexes(
                     &undecodable,
-                    crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
+                    crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
                 )
                 .is_err()
         {
             return;
         }
         if !tapes.is_empty()
-            && crate::code_rule_dsl::transducer::persist_search_index_batch(
+            && crate::code_rule_dsl::search_index::persist_search_index_batch(
                 store, &tapes, &documents,
             )
             .is_err()
@@ -262,18 +262,18 @@ impl Drop for StorageRegistration {
 }
 
 #[derive(Clone)]
-pub(super) struct StorageContext {
-    pub(super) store: StdArc<ContentStore>,
-    pub(super) repository: Option<StdArc<git_workspace::GitWorkspace>>,
+pub struct StorageContext {
+    pub store: StdArc<ContentStore>,
+    pub repository: Option<StdArc<git_workspace::GitWorkspace>>,
     /// The workspace root relative to the repository worktree (`""`, or `dir/` with a trailing
     /// slash). Workspace paths are root-relative; `repository_prefix + path` is the repository path.
-    pub(super) repository_prefix: String,
-    pub(super) workspace_id: WorkspaceId,
-    pub(super) snapshot_id: SnapshotId,
-    pub(super) owner: String,
+    pub repository_prefix: String,
+    pub workspace_id: WorkspaceId,
+    pub snapshot_id: SnapshotId,
+    pub owner: String,
     /// The names the host judges secret-like: a file so named is never written to the store.
-    pub(super) secret_names: StdArc<SecretNames>,
-    pub(super) _maintenance: Option<StdArc<StorageRegistration>>,
+    pub secret_names: StdArc<SecretNames>,
+    pub _maintenance: Option<StdArc<StorageRegistration>>,
 }
 
 impl StorageContext {
@@ -290,8 +290,8 @@ pub(super) fn unix_seconds() -> Result<i64> {
 
 /// A workspace's storage context over an explicit store file, discovering its Git worktree, with
 /// no secret-like names.
-#[cfg(test)]
-pub(super) fn storage_context_in(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn storage_context_in(
     root: &str,
     store_path: std::path::PathBuf,
 ) -> Result<StorageContext> {

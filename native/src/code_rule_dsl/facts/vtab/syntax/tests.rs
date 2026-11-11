@@ -1,4 +1,5 @@
 use super::*;
+use super::candidates::PythonCandidates as _;
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label, tape_tag};
 use crate::code_rule_dsl::model::FileInput;
@@ -247,7 +248,7 @@ fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
     let (core::Built::Facts(facts), Some(tape)) = core::build_with_tape(&file, true).unwrap() else { panic!("{path} did not parse") };
     let facts = Arc::new(facts);
-    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, file)), guest: None, module: None }
+    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, Arc::new(file))), guest: None, module: None }
 }
 
 /// `core.rr`'s relations of `docs` for a program that includes `core.rr` and reads them (`Projection::of`'s shape
@@ -459,7 +460,7 @@ fn within_holds_exactly_the_contained_pairs() {
     };
     let zero = (0..nodes).filter(|&r| at(r).4 == at(r).5).count();
     assert!(zero > 0, "the broken documents have nodes of zero width");
-    let cpu = || { let (u, s) = crate::code_rule_dsl::logic::plan::corpus::thread_usage(); u + s };
+    let cpu = || { let (u, s) = crate::code_rule_dsl::prof::thread_usage(); u + s };
     let (mut reference_cpu, mut relation_cpu) = (0.0, 0.0);
     for mode in [within::Mode::Tree, within::Mode::Span] {
         let before_reference = cpu();

@@ -19,7 +19,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// The crates whose paths name library code, not the crate itself.
 pub(crate) const LIBRARY_ROOTS: &[&str] = &["std", "core", "alloc"];
@@ -49,7 +49,7 @@ pub(crate) struct Known {
 
 impl Known {
     /// The crate's `definitions` of every file, and its `trait_names`.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub(crate) fn new(
         definitions: impl IntoIterator<Item = String>,
         traits: impl IntoIterator<Item = String>,
@@ -296,7 +296,7 @@ fn enclosing_module<D: Doc>(node: &Node<'_, D>, module: &[String]) -> Vec<String
 /// `impl` whose type is no struct, enum or union path of the crate (a generic parameter, a
 /// reference, a library type) defines nothing here. `module` is the file's `module_of`; `table` its
 /// scope table.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub(crate) fn definitions<D: Doc>(
     root: &Node<'_, D>,
     module: &[String],
@@ -312,7 +312,7 @@ pub(crate) fn definitions<D: Doc>(
 }
 
 /// The qualified names of the traits a file declares (`Known::new`'s second argument).
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub(crate) fn trait_names<D: Doc>(
     root: &Node<'_, D>,
     module: &[String],
@@ -333,7 +333,7 @@ pub(crate) fn trait_names<D: Doc>(
 /// Calls that build a value (a tuple struct or variant) have no entry; a macro invocation that may
 /// call a function of the crate (`macro_may_call`) is `Open` at its macro's path. `module` is the
 /// file's `module_of`; `table` its scope table; `known` the crate's definitions.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub(crate) fn callees<D: Doc>(
     root: &Node<'_, D>,
     module: &[String],

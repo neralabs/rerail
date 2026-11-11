@@ -280,7 +280,7 @@ pub(super) fn optimize(q: &mut Query) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::super::super::super::logic::sql::select::Cte;
     use super::*;
     fn equal(a: E, b: E) -> E {

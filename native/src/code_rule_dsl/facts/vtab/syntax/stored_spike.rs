@@ -135,7 +135,7 @@ pub(super) fn run(db: &std::ffi::OsStr, sources: &[(String, Arc<dyn Source>, Kin
     // 4. Read back, by document, each relation the program reads; 5. decode; 6. make the relations again.
     let (mut read_s, mut decode_s, mut build_s) = (0.0, 0.0, 0.0);
     let cpu = || {
-        let (user, sys) = crate::code_rule_dsl::logic::plan::corpus::thread_usage();
+        let (user, sys) = crate::code_rule_dsl::prof::thread_usage();
         user + sys
     };
     let reading = span(|| "spike read back".into());
@@ -179,7 +179,7 @@ pub(super) fn run(db: &std::ffi::OsStr, sources: &[(String, Arc<dyn Source>, Kin
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     #[test]
     fn columns_round_trip() {
         let cols = vec![vec![5, 3, i64::MAX, -7, 0], vec![1 << 40, (1 << 40) + 3, 2, 2, -1]];

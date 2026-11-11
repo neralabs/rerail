@@ -43,8 +43,8 @@ const PATH: &str = "rerail/prepared";
 fn pointer_plan(key: &[u8; 32]) -> FactsPlanSet {
     let mut hash = Sha256::new();
     hash.update(b"rerail.prepared/v2\0");
-    hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
-    hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     hash.update(key);
     FactsPlanSet::new(vec![hash.finalize().into()])
 }
@@ -60,7 +60,7 @@ pub(super) fn plans(key: &[u8; 32]) -> Vec<[u8; 32]> {
 fn facts_plan() -> FactsPlanSet {
     let mut hash = Sha256::new();
     hash.update(b"rerail.program-facts/v1\0");
-    hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     FactsPlanSet::new(vec![hash.finalize().into()])
 }
 
@@ -119,7 +119,7 @@ fn domain_of(name: &str) -> Option<lower::Domain> {
 }
 
 /// `prepared` as facts.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn facts_of(prepared: &Prepared) -> Facts {
     let mut facts = Facts::new();
     for group in groups(prepared) {
@@ -521,11 +521,11 @@ fn dfa_plan() -> FactsPlanSet {
 /// process reads a group's DFA instead of determinizing it. An entry is a tag (1: a DFA follows; 0: the group does
 /// not determinize within the limit) and the DFA's bytes.
 /// Its second field lists the sources of every group read or stored, for the run's manifest: no other root holds them.
-pub(super) struct StoredDfas<'a>(pub(super) &'a ContentStore, pub(super) std::sync::Mutex<Vec<SourceId>>);
+pub(super) struct StoredDfas<'a>(pub(super) &'a ContentStore, pub(super) std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>);
 
 impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
     fn get(&self, key: &str) -> Option<Option<Vec<u8>>> {
-        let source = self.0.held_source_by_hash(HashKey::sha256(key.as_bytes())).ok()??;
+        let source = super::memo::stored_source(self.0, key).ok()??;
         self.1.lock().expect("the groups' sources").push(source);
         let memo = self.0.facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }).ok()?;
         match memo.results.get(&dfa_plan().plans[0])?.entry.split_first() {
@@ -536,19 +536,29 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
     }
 
     fn put(&self, key: &str, dfa: Option<&[u8]>) {
-        // A group not kept is compiled again by the next process: nothing to report.
-        let Ok(source) = super::memo::source(self.0, key) else { return };
-        self.1.lock().expect("the groups' sources").push(source);
         let mut entry = vec![u8::from(dfa.is_some())];
         entry.extend_from_slice(dfa.unwrap_or_default());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
-        let set = dfa_plan();
-        let _ = self.0.put_facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[]);
+        // Stored by the store's writer, behind the run (decision 0104); its source reaches the manifest, queued after.
+        // A group not kept is compiled again by the next process.
+        let (key, sources) = (key.to_owned(), std::sync::Arc::clone(&self.1));
+        self.0.write_back(
+            "a group of automata",
+            entry.len() + key.len(),
+            Vec::new(),
+            Box::new(move |store| {
+                let source = super::memo::source(store, &key)?;
+                let set = dfa_plan();
+                store.put_facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.clone() }], &[])?;
+                sources.lock().expect("the groups' sources").push(source);
+                Ok(())
+            }),
+        );
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// A program one process prepared is read from the store by the next (decision 0073). With this process's
     /// prepared programs dropped, as a new process starts without them, the second run reads it from the store and
     /// gives the first run's rows. A third run finds it in memory.
@@ -594,7 +604,7 @@ mod tests {
     /// its tape (decision 0074). A pack rule, prepared, both of its programs.
     #[test]
     fn a_prepared_program_reads_back_from_its_facts_and_its_tape() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rr");
+        let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rr");
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("prepared-facts");
         std::fs::create_dir_all(&dir).unwrap();
@@ -684,4 +694,4 @@ mod tests {
 }
 
 #[cfg(test)]
-mod identity_tests;
+pub mod identity_tests;

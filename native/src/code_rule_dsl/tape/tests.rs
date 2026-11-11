@@ -1830,7 +1830,7 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
 fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     let columns = crate::code_rule_dsl::transducer::packed::json_parser::columns(source)?;
-    let ours = TapeImage::encode_columns(&grammar, source, &columns, &|| false).unwrap().to_bytes().unwrap();
+    let ours = crate::code_rule_dsl::transducer::packed::json_parser::tape::encode_columns(&grammar, source, &columns, &|| false).unwrap().to_bytes().unwrap();
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
     let tree = parser.parse(source, None).unwrap();

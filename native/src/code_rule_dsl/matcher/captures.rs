@@ -2,14 +2,14 @@
 //! mentions (capture ordering, `all` order checks, three-valued `all`, memoized utility scopes),
 //! and the metavariables its patterns define (violation templates, `violation.each`).
 
-mod semantic;
+pub mod semantic;
 
 use super::{AstMatcher, Comparison, UtilRef, UtilitySummary};
-#[cfg(test)]
-use crate::code_rule_dsl::test_support::{Walk, record_walk};
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 use ast_grep_core::matcher::PatternNode;
 use ast_grep_core::meta_var::MetaVariable;
-pub(in crate::code_rule_dsl) use semantic::parse_exported;
+pub use semantic::parse_exported;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A utility's summary key in a `CaptureAnalysis` (`UtilRef::summary_key`).
@@ -21,7 +21,7 @@ type Names = BTreeSet<String>;
 /// and paths reach it. An analysis may span a whole compilation: a utility's summaries are keyed
 /// by which of its compilations they read.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct CaptureAnalysis {
+pub struct CaptureAnalysis {
     binds: UtilitySummary<UtilKey, Names>,
     reads: UtilitySummary<UtilKey, Names>,
     mentions: UtilitySummary<UtilKey, Names>,
@@ -122,7 +122,7 @@ fn collect_counts(
         | AstMatcher::Call(_)
         | AstMatcher::Semantic(_)
         | AstMatcher::Never => {}
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
@@ -174,7 +174,7 @@ fn collect_binds(
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Never => {}
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
@@ -182,7 +182,7 @@ fn collect_binds(
 /// What a utility's rule binds, in the utility's own names.
 fn utility_binds(util: &UtilRef, summaries: &mut UtilitySummary<UtilKey, Names>) -> Names {
     summaries.summarize(util.summary_key(), Names::new(), |summaries| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::OrderBinds);
         let mut names = Names::new();
         util.with_target(|rule| collect_binds(rule, summaries, &mut names));
@@ -293,7 +293,7 @@ fn binds_and_reads(
         AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
             (Names::new(), Names::new())
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => (Names::new(), Names::new()),
     }
 }
@@ -305,7 +305,7 @@ fn utility_reads(
     reads: &mut UtilitySummary<UtilKey, Names>,
 ) -> Names {
     reads.summarize(util.summary_key(), Names::new(), |reads| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::OrderReads);
         util.with_target(|rule| binds_and_reads(rule, binds, reads).1)
             .unwrap_or_default()
@@ -362,7 +362,7 @@ fn collect_mentions(
         AstMatcher::Util(util) => {
             names.extend(
                 summaries.summarize(util.summary_key(), Names::new(), |summaries| {
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-hooks"))]
                     record_walk(Walk::OrderMentions);
                     let mut names = Names::new();
                     util.with_target(|rule| collect_mentions(rule, summaries, &mut names));
@@ -380,13 +380,13 @@ fn collect_mentions(
             }
         }
         AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {}
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum Capture {
+pub enum Capture {
     Single,
     Multiple,
 }
@@ -400,7 +400,7 @@ fn merge_capture(variables: &mut BTreeMap<String, Capture>, name: &str, capture:
 
 /// Metavariables the matcher's patterns define, as ast-grep's `defined_vars`: patterns under `not`
 /// count, `matches` references do not (their utilities are collected on their own).
-pub(crate) fn collect_variables(matcher: &AstMatcher, variables: &mut BTreeMap<String, Capture>) {
+pub fn collect_variables(matcher: &AstMatcher, variables: &mut BTreeMap<String, Capture>) {
     collect_in(matcher, variables, &mut UtilitySummary::new(), false);
 }
 
@@ -457,7 +457,7 @@ fn collect_in(
                 }
             }
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             for item in items {
@@ -490,7 +490,7 @@ fn framed_variables(
     summaries: &mut UtilitySummary<usize, BTreeMap<String, Capture>>,
 ) -> BTreeMap<String, Capture> {
     summaries.summarize(util.index, BTreeMap::new(), |summaries| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::CaptureVariables);
         let mut summary = BTreeMap::new();
         util.with_target(|rule| collect_in(rule, &mut summary, summaries, true));

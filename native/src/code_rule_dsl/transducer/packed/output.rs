@@ -2,7 +2,7 @@ use super::{Directive, Error, value::ByteNfa};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct OutputProgram {
-    pub(super) instructions: Vec<OutputInstruction>,
+    pub instructions: Vec<OutputInstruction>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

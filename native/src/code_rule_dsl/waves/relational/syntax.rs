@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     violations::Span,
 };
 use ast_grep_core::source::SgNode;
-mod packed;
+pub mod packed;
 use packed::{Columns, Fields, Postings};
 use rusqlite::{Connection, types::Value, vtab::Context};
 use std::{

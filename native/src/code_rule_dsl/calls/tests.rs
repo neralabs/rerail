@@ -1,7 +1,7 @@
 use super::closure::{Bits, Closure, Graph, Hop, Seed, Status};
 use super::names::Name;
 use super::python::path_module;
-use super::summary::{ASYNC, CLASS, Callee, OPEN, Summary, callee_at};
+use super::summary::{ASYNC, CLASS, Callee, OPEN, Summary, python::callee_at};
 use super::{CallsView, FileSeeds, SeedScope, Through};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
@@ -29,7 +29,7 @@ fn summarize(module: &str, source: &str) -> Summary {
     let module = ModulePath::dotted(module).expect("module path");
     let errors = root.root().get_doc().tree.root_node().has_error();
     let table = table(root.root(), &module);
-    Summary::extract(&root.root(), Some(&table), Some(&module), errors)
+    crate::code_rule_dsl::calls::summary::python::extract(&root.root(), Some(&table), Some(&module), errors)
 }
 
 /// `(caller, callee)` for every edge.
@@ -196,7 +196,7 @@ fn a_call_site_names_what_extraction_recorded() {
     let root = GrammarDialect::Python.ast_grep(SERVICE);
     let module = ModulePath::dotted("pkg.sub.api").expect("module path");
     let table = table(root.root(), &module);
-    let summary = Summary::extract(&root.root(), Some(&table), Some(&module), false);
+    let summary = crate::code_rule_dsl::calls::summary::python::extract(&root.root(), Some(&table), Some(&module), false);
     let mut named = std::collections::BTreeSet::new();
     let mut open = 0;
     for node in root.root().dfs().filter(|node| node.kind() == "call") {
@@ -1472,7 +1472,7 @@ fn corpus() {
         .ok();
         table_time += started.elapsed().as_micros();
         let started = Instant::now();
-        let summary = Summary::extract(&tree.root(), table.as_ref(), module.as_ref(), errors);
+        let summary = crate::code_rule_dsl::calls::summary::python::extract(&tree.root(), table.as_ref(), module.as_ref(), errors);
         extract += started.elapsed().as_micros();
         bytes += summary.encode().len();
         let relative = path.strip_prefix(&root).unwrap_or(path).to_string_lossy();

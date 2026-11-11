@@ -9,9 +9,8 @@ use super::{
     CLAUSE_WORK_BUDGET_EXCEEDED, ClauseId, FILE_CLAUSE_WORK_EXCEEDED, FileState, LocalFailure,
     REUSE_LOCAL_RESULTS, check_closed, clause_work_budget, clause_work_ceiling, file_work_budget,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::{TEST_STORAGE_PREFETCH_FAILURE, pass_deadline_at_test_phase, pause_at_test_phase};
-use crate::code_rule_dsl::blade::forte::tree::parse_tree;
 use crate::code_rule_dsl::budget::{
     MatchBudget, matcher_budget_exhausted, matcher_budget_observed, with_allowance,
 };
@@ -19,14 +18,11 @@ use crate::code_rule_dsl::eval::{
     WitnessError, document_matcher, file_language, grammar_matcher, witness_from_match,
     witnesses_from_match,
 };
-use crate::code_rule_dsl::import_target::ViewSlot;
-use crate::code_rule_dsl::import_target::fs::View;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::language::adapter::parsed_by_forte;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{FileGates, FileScopeSlot, GrammarMatcher, UtilLimit};
-#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+#[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
 use crate::code_rule_dsl::matcher::{AnchorPlan, FileAnchorIndex, Selection};
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FILE_BUDGET_EXCEEDED, FileInput, INPUT_LIMIT, Metrics, Query,
@@ -68,7 +64,7 @@ pub(super) fn candidate_grammar<'a>(
 
 /// A file prepared before the workers run: its document, line table and the budget and metrics of
 /// its preparation. Only the `p-anchor-corpus` path prepares files (open item O20).
-#[cfg_attr(not(all(test, feature = "p-anchor-corpus")), allow(dead_code))]
+#[cfg_attr(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")), allow(dead_code))]
 pub(super) struct PreparedAst {
     doc: Option<tape::TapeDoc>,
     lines: Arc<LineTable>,
@@ -78,7 +74,7 @@ pub(super) struct PreparedAst {
     had_tape: bool,
 }
 
-#[cfg(all(test, feature = "p-anchor-corpus"))]
+#[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
 fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> {
     use crate::code_rule_dsl::{budget::Context, matcher::CorpusSlot};
     let _corpus = CorpusSlot::install(Arc::clone(context.anchor_corpus));
@@ -101,7 +97,7 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
             &file.input.source,
             Terminators::of(language),
         ));
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         crate::code_rule_dsl::matcher::note_line_table_construction();
         let old_failures = std::mem::take(&mut file.failures);
         let had_tape = file.tape.is_some();
@@ -191,10 +187,10 @@ pub(super) struct JobContext<'a> {
     /// Extract each Python file's call summary (a code rule holds `calls` terms).
     pub(super) summarize: bool,
     /// P's anchor corpus (the `p-anchor-corpus` path, open item O20).
-    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
     pub(super) anchor_corpus: &'a Arc<crate::code_rule_dsl::matcher::Corpus>,
-    /// What import targets resolve among (`import_target::fs::View`), where a clause reads them.
-    pub(super) import_view: Option<&'a Arc<View>>,
+    /// What import targets resolve among (`resolution::ResolutionView`), where a clause reads them.
+    pub(super) import_view: Option<&'a Arc<dyn crate::code_rule_dsl::resolution::ResolutionView>>,
     /// The clauses that read import targets: their results are never stored.
     pub(super) import_clauses: &'a HashSet<ClauseId>,
 }
@@ -212,7 +208,7 @@ struct Prefetched {
 
 /// Restores what the store holds for each job and evaluates the rest: serially for a few files,
 /// on the worker pool for more.
-#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+#[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
 pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<Evaluated> {
     let catalog = candidate_catalog(context.code_rules)?;
     let prefetched = Prefetched {
@@ -254,7 +250,7 @@ fn prefetch_results(
                     )
                 })
                 .collect::<Vec<_>>();
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             if TEST_STORAGE_PREFETCH_FAILURE.replace(false) {
                 return Err(invalid("injected local-result storage failure"));
             }
@@ -289,7 +285,7 @@ fn prefetch_documents(
 /// P's: every file's stored state is read first, then its document published to the anchor
 /// corpus and the corpus prepared for all rules, before workers consume any candidates (the
 /// `p-anchor-corpus` path, open item O20).
-#[cfg(all(test, feature = "p-anchor-corpus"))]
+#[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
 pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<Evaluated> {
     let catalog = candidate_catalog(context.code_rules)?;
     let prefetched = Prefetched {
@@ -348,7 +344,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
 
 /// Restores and evaluates one job's file unless the workspace closed, then keeps the scopes its
 /// consumers' pass reads.
-#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+#[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
 fn run_job(
     job: Job,
     grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
@@ -371,7 +367,7 @@ fn run_job(
 }
 
 /// Restores what the store holds for the job's file, then evaluates it.
-#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+#[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
 fn restore_and_evaluate(
     path: &str,
     file: &mut FileState,
@@ -470,7 +466,7 @@ fn evaluate_job(
     // A consumers' pass, or a pass over the clauses the store did not answer, runs some of the
     // file's clauses only.
     let partial = crossfile.is_some() || !file.restored_result_ids.is_empty();
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let consumer_budget = crossfile.is_some().then(|| {
         super::TEST_CLAUSE_WORK_BUDGET.replace(
             super::TEST_CONSUMER_CLAUSE_WORK_BUDGET
@@ -479,7 +475,7 @@ fn evaluate_job(
         )
     });
     let _consumer = CrossFileScheduler::install(crossfile);
-    let _view = ViewSlot::install(context.import_view.cloned());
+    let _view = context.import_view.map(|view| Arc::clone(view).install());
     let mut restored = None;
     let evaluated = evaluate_file(
         file,
@@ -490,7 +486,7 @@ fn evaluate_job(
         &budget,
         &mut restored,
     );
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(previous) = consumer_budget {
         super::TEST_CLAUSE_WORK_BUDGET.set(previous);
     }
@@ -549,7 +545,7 @@ fn summarize_calls(
 /// Evaluates `file`'s candidates. `restored` receives the document its AST clauses were read on,
 /// for the job's summary pass to read rather than restore the tape again. `partial`: the pass runs
 /// some of the file's clauses only (`FileState::unstored`).
-pub(super) fn evaluate_file(
+pub fn evaluate_file(
     file: &mut FileState,
     code_rules: &[Arc<CompiledCodeRule>],
     grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
@@ -613,7 +609,7 @@ pub(super) fn evaluate_file(
             .clone()
             .unwrap_or_else(|| Arc::new(LineTable::new(&file.input.source, terminators)))
     });
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if lines.is_some() && prepared_lines.is_none() {
         crate::code_rule_dsl::matcher::note_line_table_construction();
     }
@@ -1043,7 +1039,7 @@ fn evaluate_document(
     // The gates' file facts are read once for the document, whichever candidate reads them.
     let gates = FileGates::new(&file.input, root.root());
     fail_incomplete_candidates(&mut file.failures, &file.candidates.ast, slots, &gates, &errors, file_errors);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pause_at_test_phase("restored-doc", &file.input.source);
     // A document's node and utility visits grow with it (`Limits::visits_for`).
     let nodes = doc.transducer_len();
@@ -1071,7 +1067,7 @@ fn evaluate_document(
                 && gates.admit(grammar)
         })
         .collect::<Vec<_>>();
-    #[cfg(not(all(test, feature = "p-anchor-corpus")))]
+    #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
     let plans = slots
         .iter()
         .zip(&runs)
@@ -1079,22 +1075,22 @@ fn evaluate_document(
         .map(|((_, grammar), _)| grammar.anchors.as_ref())
         .collect::<Vec<_>>();
     // P's plans for W's grammars, as P's corpus keys them (the `p-anchor-corpus` path, O20).
-    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
     let p_plans = slots
         .iter()
         .zip(&runs)
         .filter(|(_, runs)| **runs)
         .map(|((_, grammar), _)| crate::code_rule_dsl::matcher::p_anchors::plan_for(grammar))
         .collect::<Vec<_>>();
-    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
     let plans = p_plans.iter().map(Arc::as_ref).collect::<Vec<_>>();
     #[cfg(feature = "code-rule-profile")]
     let index_timer = profile::PhaseTimer::start(profile::Phase::Index);
-    #[cfg(not(all(test, feature = "p-anchor-corpus")))]
+    #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
     let index = FileAnchorIndex::build(&root, &plans, max_nodes, matcher_budget_exhausted);
     // The corpus holds each file's primary document under its path; a document it does not
     // hold (an embedded program, whose digest differs) selects no roots and is walked whole.
-    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
     let index = crate::code_rule_dsl::matcher::p_anchors::sql::FileAnchorIndex::build_at(
         &root,
         &plans,
@@ -1108,14 +1104,14 @@ fn evaluate_document(
     #[cfg(feature = "code-rule-profile")]
     profile::record_index(index.len(), index.estimated_bytes(), index.complete());
     // A clause's anchor selection is its own work: it runs under the clause's allowance.
-    #[cfg(not(all(test, feature = "p-anchor-corpus")))]
+    #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
     let select = |position: usize| -> Option<Arc<[u32]>> {
         if !runs[position] {
             return Some(Arc::from([]));
         }
         select_roots(&index, &slots[position].1.anchors)
     };
-    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
     let select = |position: usize| -> Option<Arc<[u32]>> {
         if !runs[position] {
             return Some(Arc::from([]));
@@ -1166,7 +1162,7 @@ fn evaluate_document(
     }
     keep_scope_tables(file, scopes.tables());
     metrics.ast_match_nanoseconds += match_started.elapsed().as_nanos() as u64;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pass_deadline_at_test_phase("checks-done");
     Ok(())
 }
@@ -1225,7 +1221,7 @@ fn fail_incomplete_candidates(
 }
 
 /// The node ids of the roots `index` selects for a clause's anchor `plan`; `None` for every root.
-#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+#[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
 fn select_roots(
     index: &FileAnchorIndex<'_, tape::TapeDoc>,
     plan: &AnchorPlan,
@@ -1289,11 +1285,14 @@ pub(super) fn encode_tape(
     // Parser and the only native tree are scoped to this one source revision.
     // Neither can overlap with the restored document during selection.
     let interrupted = || closed.load(Ordering::Relaxed) || matcher_budget_exhausted();
-    let image = if parsed_by_forte(language) {
-        match encode_forte_image(file, grammar, &interrupted, metrics) {
-            Ok(image) => Some(image),
-            Err(failure) => return Ok(Err(failure)),
-        }
+    let own = tape::tree_parser(language).filter(|parser| !parser.stands_in_for_tree_sitter());
+    let own_image = match own.map(|parser| encode_own_image(file, grammar, parser, &interrupted, metrics)) {
+        Some(Err(failure)) => return Ok(Err(failure)),
+        Some(Ok(image)) => image,
+        None => None,
+    };
+    let image = if let Some(image) = own_image {
+        Some(image)
     } else if language == GrammarDialect::Rr {
         // A `.rr` file: the rule engine's own parser (decision 0061).
         tape::TapeImage::parse(grammar, &file.input.source, &interrupted)
@@ -1303,38 +1302,34 @@ pub(super) fn encode_tape(
     Ok(keep_tape(file, image))
 }
 
-/// Parses `file`'s template with Forte and encodes its tape. `Err(failure)` where Forte stopped
-/// at a limit.
-fn encode_forte_image(
+/// Parses `file` with its dialect's own parser (Blade's Forte, `tape::TreeParser`) and encodes its tape.
+/// `Err(failure)` where the parser stopped at a limit; `None` where it left the file to tree-sitter.
+fn encode_own_image(
     file: &FileState,
     grammar: &Arc<tape::Grammar>,
+    parser: &dyn tape::TreeParser,
     interrupted: &impl Fn() -> bool,
     metrics: &mut Metrics,
-) -> std::result::Result<std::result::Result<tape::FileImage, String>, LocalFailure> {
-    // Forte's step budget bounds the parse; closing the workspace or the matcher budget
-    // interrupts the view and the encoding.
+) -> std::result::Result<Option<std::result::Result<tape::FileImage, String>>, LocalFailure> {
+    // The parser's own limits bound the parse; closing the workspace or the matcher budget
+    // interrupts the encoding.
     #[cfg(feature = "code-rule-profile")]
     let _native_owner = profile::NativeOwner::start();
     #[cfg(feature = "code-rule-profile")]
     let parse_timer = profile::PhaseTimer::start(profile::Phase::Parse);
     let parse_started = Instant::now();
-    let parsed = parse_tree(file.input.source.as_bytes());
+    #[cfg(any(test, feature = "test-hooks"))]
+    pause_at_test_phase("native-tree", &file.input.source);
+    let parsed = parser.parse(grammar, &file.input.source, interrupted);
     #[cfg(feature = "code-rule-profile")]
     drop(parse_timer);
     metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;
-    // Forte stopping at a limit says nothing about the template: no tape, and no clause runs.
-    let tree = match parsed {
-        Ok(tree) => tree,
-        Err(error) => return Err((FILE_BUDGET_EXCEEDED, error.message())),
-    };
-    #[cfg(test)]
-    pause_at_test_phase("native-tree", &file.input.source);
-    #[cfg(feature = "code-rule-profile")]
-    let _encode_timer = profile::PhaseTimer::start(profile::Phase::TapeEncode);
-    match tape::TapeImage::encode_blade(&tree, grammar, &file.input.source, interrupted) {
-        Ok(image) => Ok(Ok(image)),
-        Err(tape::TemplateError::Parser(error)) => Err((FILE_BUDGET_EXCEEDED, error.message())),
-        Err(tape::TemplateError::Encode(error)) => Ok(Err(error)),
+    match parsed {
+        None => Ok(None),
+        Some(Ok(image)) => Ok(Some(Ok(image))),
+        // The parser stopping at a limit says nothing about the file: no tape, and no clause runs.
+        Some(Err(tape::TemplateError::Parser(error))) => Err((FILE_BUDGET_EXCEEDED, error)),
+        Some(Err(tape::TemplateError::Encode(error))) => Ok(Some(Err(error))),
     }
 }
 
@@ -1380,7 +1375,7 @@ fn encode_tree_sitter_image(
         // Damaged trees are taped too: ERROR and MISSING nodes stay on the tape,
         // so their regions are rederived from each restored document.
         Some(tree) => {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             pause_at_test_phase("native-tree", &file.input.source);
             #[cfg(feature = "code-rule-profile")]
             let _encode_timer = profile::PhaseTimer::start(profile::Phase::TapeEncode);
@@ -1492,7 +1487,7 @@ fn evaluate_clauses(
     with_file_memo(&target, || -> Result<()> {
         for (position, &(slot, grammar)) in slots.iter().enumerate() {
             let id = file.candidates.ast[slot];
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             if position > 0 {
                 pass_deadline_at_test_phase("clause-done");
             }

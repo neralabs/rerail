@@ -1,8 +1,8 @@
 //! Batched semantic facts over explicit SQL demands. State belongs to one immutable document batch.
-use super::{Batch, NONE, Projected, py};
+use super::{Batch, NONE, Projected};
+use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::{
     facts::producers::python::{
-        import_screen::Imports,
         python_facts::{self, Fact, NodeFacts, Qualification},
     },
     language::GrammarDialect,
@@ -19,7 +19,7 @@ use std::{
     sync::Arc,
 };
 
-pub(super) struct Semantics {
+pub(crate) struct Semantics {
     root: AstGrep<TapeDoc>,
     table: ScopeTable,
     facts: BTreeMap<u32, NodeFacts>,
@@ -98,9 +98,20 @@ impl Semantics {
     }
 }
 
-impl Batch {
+/// Python's semantic facts over a batch's demands (`SemanticProducer::project`).
+pub(crate) trait PythonProject {
     /// Operations return facts, never rule findings. Node IDs include document and world identity.
-    pub(crate) fn python_project(
+    fn python_project(
+        &self,
+        kind: &str,
+        requests: &[i64],
+        targets: &BTreeSet<String>,
+    ) -> Result<Vec<Vec<Value>>, String>;
+}
+
+impl PythonProject for Batch {
+    /// Operations return facts, never rule findings. Node IDs include document and world identity.
+    fn python_project(
         &self,
         kind: &str,
         requests: &[i64],
@@ -127,7 +138,8 @@ impl Batch {
             {
                 return Err("Python producer received another grammar".into());
             }
-            let grammar = &self.py.as_ref().ok_or("Python facts unavailable")?.grammar;
+            let py_families = self.bound::<super::py_families::Py>().ok_or("Python facts unavailable")?;
+            let grammar = &py_families.grammar;
             let mut ids = BTreeSet::new();
             for n in low {
                 let local = p
@@ -194,9 +206,7 @@ impl Batch {
                 .iter()
                 .filter_map(|s| s.strip_prefix("builtins.").map(str::to_owned))
                 .collect();
-            let imports = p.python_imports.get_or_init(|| {
-                Imports::from_core(&p.facts, &self.dialects[&p.tag].catalog, p.module.as_ref())
-            });
+            let imports = py_families.imports(self, p);
             if kind == "qualified" {
                 ids.retain(|&n| {
                     py::qualification_chain(grammar, &p.facts, n).is_none_or(|(head, tail)| {
@@ -220,8 +230,7 @@ impl Batch {
                 .copied()
                 .filter(|&n| py::qualification_chain(grammar, &p.facts, n).is_some())
                 .collect();
-            let mut state = p
-                .python_semantics
+            let mut state = py_families.semantics[index]
                 .lock()
                 .map_err(|_| "Python semantic cache poisoned")?;
             if !references.is_empty() {
@@ -295,10 +304,24 @@ impl Batch {
     }
 }
 
+/// Python's semantic facts as the batch's registered producer (`syntax::SemanticProducer`).
+pub struct Semantic;
+
+impl super::SemanticProducer for Semantic {
+    fn project(&self, batch: &Batch, kind: &str, requests: &[i64], targets: &BTreeSet<String>) -> Result<Vec<Vec<Value>>, String> {
+        batch.python_project(kind, requests, targets)
+    }
+    fn candidates(&self, batch: &Batch, scope: &[i64], targets: &BTreeSet<String>, context: &str, member: &str) -> Result<Vec<Vec<Value>>, String> {
+        use super::candidates::PythonCandidates as _;
+        batch.python_candidates(scope, targets, context, member)
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::super::{Document, Projection};
     use super::*;
+use crate::code_rule_dsl::facts::producers::python::families as py;
     use crate::{
         code_rule_dsl::{facts::core, model::FileInput},
         content_store::ContentStore,
@@ -343,7 +366,7 @@ mod tests {
             })
             .collect();
         let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-        let grammar = &batch.py.as_ref().unwrap().grammar;
+        let grammar = &batch.bound::<super::super::py_families::Py>().unwrap().grammar;
         let mut requests = Vec::new();
         let mut calls = Vec::new();
         for p in &batch.docs {
@@ -364,8 +387,8 @@ mod tests {
             "only the unshadowed first document qualifies"
         );
         assert!(matches!(rows[0][0],Value::Integer(n) if n>>32==0));
-        for (i, p) in batch.docs.iter().enumerate() {
-            let state = p.python_semantics.lock().unwrap();
+        for (i, _) in batch.docs.iter().enumerate() {
+            let state = batch.bound::<super::super::py_families::Py>().unwrap().semantics[i].lock().unwrap();
             if i == 2 {
                 assert!(state.is_none(), "screened document built scopes");
             } else {
@@ -382,13 +405,13 @@ mod tests {
                 .unwrap(),
             rows
         );
-        assert!(batch.py.as_ref().unwrap().argument_rows.get().is_none());
+        assert!(batch.bound::<super::super::py_families::Py>().unwrap().argument_rows.get().is_none());
         let args = batch
             .python_project("arguments", &calls, &BTreeSet::new())
             .unwrap();
         assert_eq!(args.len(), 1, "arguments from undemanded calls leaked");
         assert!(
-            batch.py.as_ref().unwrap().argument_rows.get().is_none(),
+            batch.bound::<super::super::py_families::Py>().unwrap().argument_rows.get().is_none(),
             "demand filled the global argument relation"
         );
         assert!(

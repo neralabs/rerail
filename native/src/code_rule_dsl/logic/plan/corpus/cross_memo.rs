@@ -233,8 +233,8 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     // The plan: the engine, the grammars, the file-local part (what the exports are) and the cross-file part.
     let mut hash = Sha256::new();
     hash.update(SCHEMA.as_bytes());
-    hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
-    hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     hash.update(local);
     // A relation with no facts is left out: a program prepared afresh has `dir_entry: []` where the one read back from
     // the store (decision 0073) has nothing, and the two must store under one plan.

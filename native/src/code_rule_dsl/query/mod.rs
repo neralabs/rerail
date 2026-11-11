@@ -2,14 +2,13 @@
 //! `select_when` (`select_when`) and cross-file relations (`crossfile`). AST rules are matched by
 //! the grammar matcher (`matcher::run_clause`).
 
-pub(in crate::code_rule_dsl) mod crossfile;
-mod line_state;
+pub mod crossfile;
+pub mod line_state;
 // Qualification laboratory for the shared structural execution replacement. The
 // production dispatcher changes once, after the complete catalog qualifies.
-#[cfg(test)]
-pub(crate) mod plan;
-pub(in crate::code_rule_dsl) mod name_closure;
-pub(in crate::code_rule_dsl) mod select_when;
+// cratify: `plan` is rerail-engine's (it mounts it)
+pub mod name_closure;
+pub mod select_when;
 
 use super::model::RegexOptions;
 use crate::code_rule_dsl::language::adapter::strips_bom;
@@ -20,11 +19,11 @@ use std::ops::Range;
 /// A match local to its context (the complete source or one independent line).
 pub(in crate::code_rule_dsl) struct RegexMatch {
     pub(in crate::code_rule_dsl) range: Range<usize>,
-    pub(in crate::code_rule_dsl) context: Range<usize>,
-    pub(in crate::code_rule_dsl) line: Option<usize>,
+    pub context: Range<usize>,
+    pub line: Option<usize>,
 }
 
-pub(in crate::code_rule_dsl) fn regex_query_matches(
+pub fn regex_query_matches(
     regex: &Regex,
     source: &RegexSource,
     haystack: &str,
@@ -158,8 +157,8 @@ pub(in crate::code_rule_dsl) fn regex_haystack<'a>(
 /// It stops unfinished at a match past `limit`, or once this thread's match deadline is exhausted
 /// (polled before each match is kept). A `file.path` regex keeps its first match alone: the path
 /// names one file, which matches once or not at all.
-#[cfg(test)]
-pub(in crate::code_rule_dsl) fn regex_matches(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn regex_matches(
     regex: &Regex,
     source: &RegexSource,
     haystack: &str,
@@ -172,5 +171,4 @@ pub(in crate::code_rule_dsl) fn regex_matches(
     )
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

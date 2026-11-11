@@ -1,7 +1,8 @@
 //! Opt-in comparison of this worktree's tape executor with native trees.
 //! Reports unsupported corpus forms explicitly; never substitutes the spike executor.
 use super::*;
-use crate::code_rule_dsl::blade::forte::tree::{BladeDoc, BladeLang};
+use crate::code_rule_dsl::blade::forte::tree::{BladeDoc, BladeLang, BladeTree, parse_tree};
+use crate::code_rule_dsl::blade::view::View;
 use ast_grep_core::{
     AstGrep, Doc,
     matcher::{KindMatcher, Pattern},
@@ -375,7 +376,7 @@ fn view_records(
 /// built from it (`blade_tree_parity`).
 fn blade_tape_parity(source: &str) -> Result<(usize, usize), String> {
     let grammar = Grammar::new(GrammarDialect::Blade).map_err(|error| error.to_string())?;
-    let image = TapeImage::encode_template(&grammar, source, &|| false)
+    let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false)
         .map_err(|error| format!("{error:?}"))?;
     let bytes = image.primary.to_bytes()?;
     let decoded = image.round_trip(&grammar)?;
@@ -474,7 +475,7 @@ fn blade_tree_parity(
         .syntax_errors
         .iter()
         .map(|error| {
-            let (node, before) = super::error_place(tree.root(), error);
+            let (node, before) = crate::code_rule_dsl::blade::tape::error_place(tree.root(), error);
             (node, before, error.clone())
         })
         .collect::<Vec<_>>();
@@ -798,7 +799,7 @@ fn persisted_blade_structural_captures_match_native() {
     let mut matched = 0;
     for &source in BLADE_RISKY_FIXTURES {
         let native = BladeLang.doc(source.as_bytes()).expect("Forte parses it");
-        let image = TapeImage::encode_template(&grammar, source, &|| false).unwrap();
+        let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).unwrap();
         let decoded = image.round_trip(&grammar).unwrap();
         let tape = TapeDoc::restore(Arc::new(source.into()), grammar.clone(), &decoded, &|| {
             false
@@ -997,7 +998,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
                 continue;
             }
         };
-        let hash = crate::lower_hex(&Sha256::digest(&bytes));
+        let hash = crate::code_rule_dsl::prof::lower_hex(&Sha256::digest(&bytes));
         let reason = if bytes.is_empty() {
             Some("empty")
         } else if bytes.len() > 4_000_000 {
@@ -1055,7 +1056,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
             Native::TreeSitter(doc) => {
                 TapeImage::encode(doc.tree.root_node(), &grammar, &source, &|| false)
             }
-            Native::Blade(_) => TapeImage::encode_template(&grammar, &source, &|| false)
+            Native::Blade(_) => crate::code_rule_dsl::blade::tape::encode_template(&grammar, &source, &|| false)
                 .map_err(|error| format!("{error:?}")),
         };
         let image = match encoded {
@@ -1172,7 +1173,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
             "nodes": node_count,
             "tapeBytes": tape_bytes,
             "filesWithSyntaxErrors": syntax_error_files,
-            "manifestSha256": crate::lower_hex(&manifest_digest.finalize()),
+            "manifestSha256": crate::code_rule_dsl::prof::lower_hex(&manifest_digest.finalize()),
             "sourceIdentity": "SHA-256 over the ordered (relative path, file SHA-256) pairs of eligible files",
             "excluded": excluded,
             "largest": largest,
@@ -1182,7 +1183,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
         "encodeMs": encode_ms,
         "restoreMs": restore_ms,
         "serializeDecodeMs": serialize_ms,
-        "orderedResultSha256": crate::lower_hex(&result_digest.finalize()),
+        "orderedResultSha256": crate::code_rule_dsl::prof::lower_hex(&result_digest.finalize()),
         "wallMs": started.elapsed().as_secs_f64() * 1000.0,
         "kindQueries": queries.iter().enumerate().map(|(i, (kind, _, _))| json!({"query":format!("({kind}) @root"),"matches":counts[i],"nativeMs":native_ms[i],"rerailMs":tape_ms[i]})).collect::<Vec<_>>(),
         "structuralPatterns": corpus.patterns.iter().enumerate().map(|(i, p)| json!({"pattern":p,"matches":pattern_counts[i],"nativeMs":pattern_native_ms[i],"rerailMs":pattern_tape_ms[i]})).collect::<Vec<_>>(),

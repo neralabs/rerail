@@ -6,17 +6,17 @@ use crate::code_rule_dsl::language::Family;
 
 #[rustfmt::skip]
 #[path = "ecma/builtins.generated.rs"]
-pub(crate) mod builtins;
-mod calls;
-mod destructure;
+pub mod builtins;
+pub mod calls;
+pub mod destructure;
 #[path = "ecma/entities.generated.rs"]
-mod entities;
-pub(crate) mod ops;
+pub mod entities;
+pub mod ops;
 
 use super::{ContainerKind, Context, MAX_ELEMENTS, MAX_STRING_BYTES, Value};
 use ast_grep_core::{Doc, Node};
-pub(crate) use calls::to_precision;
-pub(crate) use destructure::destructured;
+pub use calls::to_precision;
+pub use destructure::destructured;
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
 pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
@@ -120,7 +120,7 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 /// (tree-sitter-typescript 0.23.2 `node-types.json`, TSX's JSX elements included), sequences, and
 /// shorthand properties. Only an expression has a value; on any other node (a statement, a type,
 /// a property name, punctuation) every value predicate fails.
-pub(crate) const EXPRESSION_KINDS: &[&str] = &[
+pub const EXPRESSION_KINDS: &[&str] = &[
     "array",
     "arrow_function",
     "as_expression",
@@ -165,7 +165,7 @@ pub(crate) const EXPRESSION_KINDS: &[&str] = &[
 ];
 
 /// Kinds whose value `decode` can know; any other expression is `Unknown`.
-pub(crate) const VALUE_KINDS: &[&str] = &[
+pub const VALUE_KINDS: &[&str] = &[
     "number",
     "string",
     "template_string",
@@ -753,4 +753,35 @@ fn object<D: Doc>(node: &Node<'_, D>) -> Value {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
+
+/// ECMAScript's numbers as `toPrecision` reads them (`matcher::transform::NumberText`).
+pub struct Numbers;
+
+impl crate::code_rule_dsl::matcher::NumberText for Numbers {
+    fn to_precision(&self, text: &str, digits: u32) -> Option<String> {
+        let number = ecma_number(text)?;
+        Some(if number.is_finite() { to_precision(number, digits) } else { crate::code_rule_dsl::matcher::number_to_string(number) })
+    }
+}
+
+/// The number an ECMAScript numeric literal's text (`value::ecma::number`) or a value's `String(v)`
+/// (signed, `Infinity`, `NaN`) denotes; `None` for any other text, a BigInt included, whose
+/// `toPrecision` throws.
+fn ecma_number(text: &str) -> Option<f64> {
+    let text = text.trim();
+    let (negative, unsigned) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    };
+    let magnitude = match unsigned {
+        "Infinity" => f64::INFINITY,
+        "NaN" => f64::NAN,
+        _ => match number(unsigned) {
+            Value::Float(magnitude) => magnitude,
+            _ => return None,
+        },
+    };
+    Some(if negative { -magnitude } else { magnitude })
+}
+

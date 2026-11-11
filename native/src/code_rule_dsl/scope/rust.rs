@@ -1293,7 +1293,7 @@ fn defines_items<D: Doc>(node: &Node<'_, D>) -> bool {
 }
 
 /// A Rust file's table, as `ScopeTable::build` builds it.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn build_for_test(source: &str) -> ScopeTable {
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::tree_sitter::LanguageExt;
@@ -1303,4 +1303,4 @@ pub(crate) fn build_for_test(source: &str) -> ScopeTable {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

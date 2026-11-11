@@ -3,14 +3,14 @@
 //! `query/plan/physical.rs`: a SQL AST rendered and checked against the relations a statement may
 //! read, so emitted SQL names only declared fact families. N's `relational_ir.rs`/`relational.rs`
 //! (tree axes in SQL) are not kept: tree navigation is the transducer's.
-pub(in crate::code_rule_dsl) mod physical;
-pub(in crate::code_rule_dsl) mod select;
-pub(in crate::code_rule_dsl) mod sql_ast;
-pub(in crate::code_rule_dsl) mod typed_boundary;
+pub mod physical;
+pub mod select;
+pub mod sql_ast;
+pub mod typed_boundary;
 
-pub(in crate::code_rule_dsl) mod program;
-pub(in crate::code_rule_dsl) mod lattices;
-pub(in crate::code_rule_dsl) mod properties;
+pub mod program;
+pub mod lattices;
+pub mod properties;
 
 /// SQLite's keywords (sqlite.org/lang_keywords.html, 147 of them), sorted.
 const SQLITE_KEYWORDS: [&str; 147] = [

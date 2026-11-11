@@ -3,12 +3,12 @@ use super::lines::LineTable;
 use super::matcher::{AstMatcher, GrammarMatcher, UtilRef, UtilitySummary, stop_rule};
 use super::origin::Origin;
 use super::tape::TapeDoc;
-#[cfg(test)]
-use super::test_support::{Walk, record_walk};
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 use std::collections::BTreeSet;
 use std::ops::Range;
 
-mod semantic;
+pub mod semantic;
 
 type SoundMemo<T> = UtilitySummary<(usize, bool, bool), T>;
 
@@ -59,7 +59,7 @@ fn optional_outward_captures(
         AstMatcher::Semantic(semantic) => {
             semantic::optional_outward_captures(semantic, under_any, outward, memo, names)
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
         AstMatcher::All(items) => items.iter().for_each(|item| walk(item, under_any, outward)),
         AstMatcher::Any(items) => items.iter().for_each(|item| walk(item, true, outward)),
@@ -118,7 +118,7 @@ fn optional_utility_captures(
     memo: &mut SoundMemo<BTreeSet<String>>,
 ) -> BTreeSet<String> {
     memo.summarize((util.index, under_any, outward), BTreeSet::new(), |memo| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::OptionalCaptures);
         let mut found = BTreeSet::new();
         util.with_target(|rule| {
@@ -151,7 +151,7 @@ fn sound(
         AstMatcher::Semantic(semantic) => {
             semantic::sound(semantic, negated, outside, optional, memo)
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => true,
         // A position counts the siblings before the node, and an error region among them can hide
         // or add one.
@@ -231,7 +231,7 @@ fn utility_sound(
     memo: &mut SoundMemo<bool>,
 ) -> bool {
     memo.summarize((util.index, negated, outside), true, |memo| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::SoundVerdict);
         util.with_target(|rule| sound(rule, negated, outside, optional, memo))
             .unwrap_or(true)
@@ -248,7 +248,7 @@ fn leaves_witness(matcher: &AstMatcher, memo: &mut UtilitySummary<usize, bool>) 
         | AstMatcher::Compare(_)
         | AstMatcher::Never => false,
         AstMatcher::Semantic(semantic) => semantic::leaves_witness(semantic, memo),
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => false,
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             items.iter().any(|item| leaves_witness(item, memo))
@@ -287,7 +287,7 @@ fn utility_leaves_witness(util: &UtilRef, memo: &mut UtilitySummary<usize, bool>
 /// host's errors it reads through (`TapeDoc::host_errors`). Sorted by start; overlapping ranges
 /// are merged, so range ends never decrease. Each document of a file has its own: a host's errors
 /// are not a guest's, unless the guest reads the host through them (a Blade view).
-pub(super) struct SyntaxErrors {
+pub struct SyntaxErrors {
     regions: Vec<Range<usize>>,
 }
 
@@ -304,7 +304,7 @@ pub(super) const UNREAD: &str = "file did not parse";
 pub(super) const SYNTAX_ERRORS: &str = "file has syntax errors";
 
 /// How much of a file with syntax errors its AST clauses read, with the message to report.
-pub(super) enum SyntaxReading {
+pub enum SyntaxReading {
     /// Sound clauses ran outside the error regions (`source-partial`).
     Partial(String),
     /// The regions cover at least `UNREAD_PERCENT` of the file: no AST clause ran there
@@ -328,8 +328,8 @@ fn file_ranges(doc: &TapeDoc) -> Vec<std::ops::Range<usize>> {
 
 impl SyntaxErrors {
     /// The native tree's regions, which tapes record (`TapeDoc::syntax_error_ranges`).
-    #[cfg(test)]
-    pub(super) fn collect(root: tree_sitter::Node<'_>) -> Self {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn collect(root: tree_sitter::Node<'_>) -> Self {
         let mut found = Vec::new();
         // `has_error` covers the whole subtree, so clean subtrees are never entered.
         let mut stack = if root.has_error() {
@@ -349,7 +349,7 @@ impl SyntaxErrors {
     }
 
     /// Regions from ERROR and MISSING node ranges, in any order.
-    pub(super) fn from_ranges(mut found: Vec<Range<usize>>) -> Self {
+    pub fn from_ranges(mut found: Vec<Range<usize>>) -> Self {
         found.sort_by_key(|range| (range.start, range.end));
         let mut regions: Vec<Range<usize>> = Vec::with_capacity(found.len());
         for range in found {
@@ -364,7 +364,7 @@ impl SyntaxErrors {
     }
 
     /// The regions of a restored document, as ranges of the file.
-    pub(super) fn of_doc(doc: &TapeDoc) -> Self {
+    pub fn of_doc(doc: &TapeDoc) -> Self {
         Self::from_ranges(file_ranges(doc))
     }
 
@@ -380,31 +380,31 @@ impl SyntaxErrors {
 
     /// Whether the errors leave a clause of `grammar` incomplete: one not sound under them
     /// (`sound_under_errors`).
-    pub(super) fn incomplete(&self, grammar: &GrammarMatcher) -> bool {
+    pub fn incomplete(&self, grammar: &GrammarMatcher) -> bool {
         !self.is_empty() && !grammar.sound_under_errors
     }
 
     /// Whether a binding may hide in an error region from the document's scope tables.
-    pub(super) fn hide_bindings(&self) -> bool {
+    pub fn hide_bindings(&self) -> bool {
         !self.is_empty()
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.regions.is_empty()
     }
 
     /// The merged regions, by start.
-    pub(super) fn regions(&self) -> &[Range<usize>] {
+    pub fn regions(&self) -> &[Range<usize>] {
         &self.regions
     }
 
     /// Whether any of the file ranges a node stands for meets a region (`overlaps`).
-    pub(super) fn meets(&self, ranges: &FileRanges) -> bool {
+    pub fn meets(&self, ranges: &FileRanges) -> bool {
         ranges.iter().any(|range| self.overlaps(range))
     }
 
     /// Whether `range` meets any region; a zero-width MISSING point meets a range that touches it.
-    pub(super) fn overlaps(&self, range: &Range<usize>) -> bool {
+    pub fn overlaps(&self, range: &Range<usize>) -> bool {
         let first = self
             .regions
             .partition_point(|region| region.end < range.start);
@@ -422,7 +422,7 @@ impl SyntaxErrors {
             })
     }
 
-    pub(super) fn partial_message(&self, lines: &LineTable) -> String {
+    pub fn partial_message(&self, lines: &LineTable) -> String {
         let (line, column) = lines.point(self.regions[0].start);
         format!(
             "file has syntax errors; AST clauses ran outside {} error region(s), first at line {}, column {}",
@@ -442,7 +442,7 @@ impl SyntaxErrors {
 
     /// How a file of `source_len` bytes with these (non-empty) regions is read. An empty file's
     /// regions (zero-width MISSING tokens) cover none of it.
-    pub(super) fn reading(&self, lines: &LineTable, source_len: usize) -> SyntaxReading {
+    pub fn reading(&self, lines: &LineTable, source_len: usize) -> SyntaxReading {
         let covered = self.covered_bytes();
         if source_len == 0 || covered * 100 < source_len * UNREAD_PERCENT {
             return SyntaxReading::Partial(self.partial_message(lines));
@@ -458,7 +458,7 @@ impl SyntaxErrors {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::model::{ClauseKind, Query};
@@ -604,7 +604,7 @@ mod tests {
         let grammar = crate::code_rule_dsl::tape::Grammar::new(GrammarDialect::Blade).unwrap();
         let source = "{{ $a + }}\n{{-- open\n";
         let image =
-            crate::code_rule_dsl::tape::TapeImage::encode_template(&grammar, source, &|| false)
+            crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false)
                 .unwrap();
         let blade =
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();

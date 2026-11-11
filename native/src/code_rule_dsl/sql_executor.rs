@@ -15,35 +15,35 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
-mod catalog;
-mod compiler;
-mod explain;
-mod constants;
+pub mod catalog;
+pub mod compiler;
+pub mod explain;
+pub mod constants;
 // A row of a corpus binding is `PROBE | document << 32 | row`: a 64-bit target only.
 #[cfg(target_pointer_width = "64")]
-mod corpus;
-mod documents;
-mod indexes;
-mod live;
-mod maintenance;
-mod overlay;
-mod phase;
-mod producers;
-mod profiling;
-mod recursive;
-mod reductions;
-mod scratch;
-mod temporal;
-mod updates;
-#[cfg(any(test, feature = "headless"))]
-mod verification;
-mod versions;
-mod walks;
+pub mod corpus;
+pub mod documents;
+pub mod indexes;
+pub mod live;
+pub mod maintenance;
+pub mod overlay;
+pub mod phase;
+pub mod producers;
+pub mod profiling;
+pub mod recursive;
+pub mod reductions;
+pub mod scratch;
+pub mod temporal;
+pub mod updates;
+#[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
+pub mod verification;
+pub mod versions;
+pub mod walks;
 use super::logic::sql::lattices;
 use super::logic::sql::program;
-mod runtime;
-mod session;
-mod wire;
+pub mod runtime;
+pub mod session;
+pub mod wire;
 
 fn error(e: impl std::fmt::Display) -> Error {
     Error::from_reason(e.to_string())
@@ -68,26 +68,26 @@ fn quote(name: &str) -> String {
 /// the session closes. Independent results survive other input changes.
 #[napi]
 pub struct CodeRuleSqlExecutor {
-    db: Database,
-    store: ContentStore,
-    inputs: BTreeMap<String, Arc<dyn Source>>,
-    generated: Vec<(String, bool)>,
-    executions: Vec<session::Execution>,
+    #[napi(skip)] pub db: Database,
+    #[napi(skip)] pub store: ContentStore,
+    #[napi(skip)] pub inputs: BTreeMap<String, Arc<dyn Source>>,
+    #[napi(skip)] pub generated: Vec<(String, bool)>,
+    #[napi(skip)] pub executions: Vec<session::Execution>,
     limits: runtime::Limits,
     lattice_extensions: BTreeMap<String, schedule::LatticeOperations>,
     input_shapes: BTreeMap<String, (usize, Option<Vec<String>>)>,
     mutable_inputs: BTreeSet<String>,
-    live_inputs: BTreeMap<String, Arc<live::Live>>,
-    documents: Option<documents::Documents>,
-    scratch: scratch::Pool,
-    versions: versions::Store,
+    #[napi(skip)] pub live_inputs: BTreeMap<String, Arc<live::Live>>,
+    #[napi(skip)] pub documents: Option<documents::Documents>,
+    #[napi(skip)] pub scratch: scratch::Pool,
+    #[napi(skip)] pub versions: versions::Store,
     next_trace: usize,
     stats_ready: std::cell::Cell<bool>,
-    statistics: session::Statistics,
+    #[napi(skip)] pub statistics: session::Statistics,
     catalog_dirty: std::cell::Cell<bool>,
     control_ready: std::cell::Cell<bool>,
-    #[cfg(any(test, feature = "headless"))]
-    cold_oracle: bool,
+    #[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
+    #[napi(skip)] pub cold_oracle: bool,
 }
 
 #[napi]
@@ -120,7 +120,7 @@ impl CodeRuleSqlExecutor {
             statistics: session::Statistics::default(),
             catalog_dirty: std::cell::Cell::new(true),
             control_ready: std::cell::Cell::new(false),
-            #[cfg(any(test, feature = "headless"))]
+            #[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
             cold_oracle: false,
         })
     }
@@ -181,7 +181,7 @@ impl CodeRuleSqlExecutor {
                 return Err(error("stored document paths must be distinct"));
             }
             let documents =
-                super::waves::matches::documents(&this.store, &scope, &paths).map_err(error)?;
+                super::facts::families::stored_documents(&this.store, &scope, &paths).map_err(error)?;
             if documents.len() != paths.len() || documents.iter().any(|d| d.facts.syntax_errors) {
                 return Err(error(
                     "requested stored documents have missing or incomplete core facts",
@@ -593,7 +593,7 @@ impl CodeRuleSqlExecutor {
         &self.db
     }
 
-    fn replace_sources(&mut self, sources: Vec<(String, Arc<dyn Source>)>) -> Result<()> {
+    pub fn replace_sources(&mut self, sources: Vec<(String, Arc<dyn Source>)>) -> Result<()> {
         self.clear_results()?;
         self.db.remove_bindings().map_err(error)?;
         self.inputs.clear();
@@ -694,9 +694,9 @@ impl CodeRuleSqlExecutor {
                 }
                 self.db.execute_batch(statement).map_err(error)?;
             }
-            #[cfg(any(test, feature = "headless"))]
+            #[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
             let retained = !self.cold_oracle;
-            #[cfg(not(any(test, feature = "headless")))]
+            #[cfg(not(any(any(test, feature = "test-hooks"), feature = "headless")))]
             let retained = true;
             let minimal_setup = emitted.queries.iter().all(Option::is_some);
             if minimal_setup { schedule::declare_outputs(&self.db, &emitted.program).map_err(error)?; }
@@ -762,9 +762,9 @@ impl CodeRuleSqlExecutor {
                         session::index(&self.db, table, columns).map_err(error)?;
                     }
                 }
-                #[cfg(any(test, feature = "headless"))]
+                #[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
                 let retain = !self.cold_oracle;
-                #[cfg(not(any(test, feature = "headless")))]
+                #[cfg(not(any(any(test, feature = "test-hooks"), feature = "headless")))]
                 let retain = true;
                 let waves = if retain {
                     let (waves, initialized) = reductions::cold::execute(&self.db, &mut work, &mut execution, max_waves)?;
@@ -886,5 +886,4 @@ impl CodeRuleSqlExecutor {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

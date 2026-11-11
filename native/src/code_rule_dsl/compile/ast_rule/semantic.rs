@@ -1,7 +1,6 @@
 use super::super::arguments::{compile_arguments, validate_arguments};
 use super::super::binds::{compile_binds, validate_binds};
 use super::super::format_args::{compile_format_args, validate_format_args};
-use super::super::import_target::{compile_import_target, validate_import_target};
 use super::super::layout::{compile_layout, validate_layout};
 use super::super::parse::{capture_name, compile_parse, validate_parse};
 use super::super::resolve::{
@@ -11,9 +10,10 @@ use super::super::value::{compile_value, validate_value};
 use super::*;
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::language::adapter::{
-    Adapter, ValueFeature, ValueRules, gate, with_adapter,
+    ValueFeature, gate,
 };
 use crate::code_rule_dsl::matcher::{Comparison, Semantic, SemanticText};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The semantic keys' grammar-independent checks, in `validate_ast_rule`'s order.
 pub(super) fn validate(
@@ -63,8 +63,10 @@ pub(super) fn validate(
     if let Some(layout) = rule.get("layout") {
         validate_layout(layout, &format!("{path}/layout"), limits)?;
     }
-    if let Some(target) = rule.get("importTarget") {
-        validate_import_target(target, &format!("{path}/importTarget"))?;
+    for term in crate::code_rule_dsl::matcher::term::terms() {
+        if let Some(value) = rule.get(term.key) {
+            (term.validate)(value, &format!("{path}/{}", term.key))?;
+        }
     }
     if let Some(calls) = rule.get("calls") {
         let calls_path = format!("{path}/calls");
@@ -94,9 +96,9 @@ pub(super) fn compare_reading(
         .unwrap_or("source");
     gate(
         &format!("{compare_path}/text"),
-        with_adapter!(Family::of(language), A => <<A as Adapter>::Value as ValueRules>::feature(
+        { let pack = language_pack::pack(Family::of(language)); pack.value_feature(
             ValueFeature::Compare(text, name)
-        )),
+        ) },
     )?;
     let reading = Reading::new(language, utils.options.clone(), utils.python.clone());
     comparison.reading = Some(match text {
@@ -148,12 +150,10 @@ pub(super) fn compile_key(
             }),
         ),
         (Stage::Late, "layout") => Some(compile_layout(value, path)),
-        (Stage::Late, "importTarget") => Some(compile_import_target(
-            value,
-            language,
-            path,
-            utils.options.as_ref(),
-        )),
+        (Stage::Late, key) if crate::code_rule_dsl::matcher::term::term(key).is_some() => {
+            let term = crate::code_rule_dsl::matcher::term::term(key).expect("registered");
+            Some((term.compile)(value, language, path, utils.options.as_ref()))
+        }
         (Stage::Late, "value") => Some(compile_value(
             value,
             language,
@@ -229,14 +229,14 @@ fn compile_calls(
     utils: &UtilScope,
 ) -> Result<AstMatcher> {
     use crate::code_rule_dsl::language::adapter::{
-        Adapter, CallFeature, CallRules, gate, with_adapter,
+        CallFeature, gate,
     };
     let definition = crate::code_rule_dsl::calls::split(calls, path)?.definition;
-    let (verdict, kinds) = with_adapter!(Family::of(language), A => (
-        <<A as Adapter>::Calls as CallRules>::feature(CallFeature::Calls),
-        if definition { <<A as Adapter>::Calls as CallRules>::FUNCTION_KINDS }
-        else { <<A as Adapter>::Calls as CallRules>::CALL_KINDS },
-    ));
+    let (verdict, kinds) = { let pack = language_pack::pack(Family::of(language)); (
+        pack.calls_feature(CallFeature::Calls),
+        if definition { pack.calls_function_kinds() }
+        else { pack.calls_call_kinds() },
+    ) };
     gate(path, verdict)?;
     let collector = utils.calls.ok_or_else(|| {
         invalid(format!(

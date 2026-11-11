@@ -11,14 +11,14 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_core::{Doc, Node};
 use std::sync::OnceLock;
 
-mod typedefs;
+pub mod typedefs;
 
 use super::options::PythonTyping;
 use typedefs::{
     RootKind, SUBSCRIPT_MEMBERS, SubscriptKind, TYPING_CALLABLES, last_segment, subscript_kind,
     typing as typing_member,
 };
-pub(super) use typedefs::{TypeRoot, string_type_definitions};
+pub use typedefs::{TypeRoot, string_type_definitions};
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Tag {

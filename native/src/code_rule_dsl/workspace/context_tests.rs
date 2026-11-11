@@ -384,7 +384,7 @@ fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
     let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(root.clone());
     let mut indexed = |path: &str, language: &str| {
         repository_package(&mut manifests, &repository, path, language)
-            .map(|manifest| manifest.to_wire())
+            .map(|manifest| crate::code_rule_dsl::package_manifest::of_file(&manifest).expect("an ECMA manifest").to_wire())
     };
     // A workspace or snapshot holding the same texts (the symlink is not one of its entries).
     let entries = files
@@ -404,7 +404,7 @@ fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
         crate::code_rule_dsl::package_manifest::manifest_in(path, |directory| {
             entries.get(directory)
         })
-        .map(|manifest| manifest.to_wire())
+        .map(|manifest| crate::code_rule_dsl::package_manifest::of_file(&manifest).expect("an ECMA manifest").to_wire())
     };
     // The nearest manifest decides. `bin` targets resolve against its folder (an absolute one or
     // one outside it never names a file below it); an unparsable `engines.node` falls through to
@@ -3813,7 +3813,7 @@ fn stateless_regex_clauses_report_snapshot_matches() {
 fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor() {
     use super::persisted::grammar_version;
     use super::storage::index_stored_tapes;
-    use crate::code_rule_dsl::transducer::{POSITIONAL_INDEX_VERSION, kind_index_token};
+    use crate::code_rule_dsl::search_index::{POSITIONAL_INDEX_VERSION, kind_index_token};
     use crate::content_store::{SearchKindLookup, StoredKindPresence};
     use std::sync::atomic::AtomicBool;
     let _slot = WORKSPACE_TEST_SLOT.lock();
@@ -4407,11 +4407,12 @@ fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
     assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
     let context = || {
         let state = workspace.state.lock().unwrap();
+        let project = state.project.as_any().downcast_ref::<super::ingest::ecma::EcmaProject>().expect("ECMAScript's project context");
         (
-            state.graph_entries.keys().cloned().collect::<Vec<_>>(),
-            state.server_graph_directories.clone(),
-            state.module_configs.clone(),
-            state
+            project.graph_entries.keys().cloned().collect::<Vec<_>>(),
+            project.server_graph_directories.clone(),
+            project.module_configs.clone(),
+            project
                 .manifests
                 .iter()
                 .map(|(directory, manifest)| (directory.clone(), *manifest.digest()))

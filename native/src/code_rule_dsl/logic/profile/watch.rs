@@ -34,7 +34,7 @@ pub(in crate::code_rule_dsl) fn dump(dir: &Path, why: &str, started: std::time::
     );
     header.push_str(&super::open_spans());
     header.push('\n');
-    super::write(dir, &header)
+    super::report::write(dir, &header)
 }
 
 /// Every thread's native stack into `out`; says how it was made.

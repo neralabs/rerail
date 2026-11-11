@@ -1,12 +1,12 @@
 //! The SQLite layout from ast-index-spike's tape_store.py: rec6 file rows and positional FTS.
 use crate::code_rule_dsl::{budget, language, tape::TapeDoc};
 use ast_grep_core::Doc;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use rusqlite::OptionalExtension;
 use rusqlite::{Connection, Result, params};
 use std::path::Path;
 #[path = "store/publication.rs"]
-pub(super) mod publication;
+pub mod publication;
 
 pub(super) const LANG_STRIDE: u32 = 1024;
 
@@ -100,11 +100,11 @@ impl Store {
             _temporary: None,
         })
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn put(&self, path: &str, doc: &TapeDoc) -> Result<i64> {
         self.put_with(path, doc, &budget::matcher_budget_exhausted)
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn put_with(&self, path: &str, doc: &TapeDoc, interrupted: &impl Fn() -> bool) -> Result<i64> {
         let lang = u32::from(language::tape_tag(*doc.get_lang()).expect("tape language"));
         if let Some(fid) = self
@@ -293,7 +293,7 @@ impl Store {
         crate::code_rule_dsl::profile::record_sql_index_write(doc.transducer_len());
         Ok(fid)
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn remove(&self, path: &str) -> Result<()> {
         if let Some(fid) = self
             .db
@@ -305,7 +305,7 @@ impl Store {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn remove_known(&self, fid: i64) -> Result<()> {
         self.readers.clear();
         let tx = self.db.unchecked_transaction()?;
@@ -340,7 +340,7 @@ impl Store {
         }
         Ok(())
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn resident_bytes(&self) -> Result<usize> {
         self.db.resident_bytes()
     }

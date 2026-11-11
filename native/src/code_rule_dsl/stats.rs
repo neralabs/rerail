@@ -2,8 +2,8 @@
 //! SQL-owned summaries in one batch (`inputs`), the summaries ingestion maintains (`ingest`), and
 //! compiled plans with their validity, feedback and SQLite statistics (`plans`, over the bounded
 //! cache in `cache`).
-pub(in crate::code_rule_dsl) mod cache;
-pub(in crate::code_rule_dsl) mod identity;
-pub(in crate::code_rule_dsl) mod ingest;
-pub(in crate::code_rule_dsl) mod inputs;
-pub(in crate::code_rule_dsl) mod plans;
+pub mod cache;
+pub use rerail_facts::code_rule_dsl::stats::identity;
+pub mod ingest;
+pub mod inputs;
+pub mod plans;

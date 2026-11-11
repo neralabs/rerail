@@ -198,7 +198,7 @@ impl RegexProgram {
             },
         )
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn execute_with_unit_size(
         &self,
         device: &Device,
@@ -246,7 +246,7 @@ impl RegexProgram {
             },
         )
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn execute_strip_in_units(
         &self,
         device: &Device,

@@ -318,7 +318,7 @@ impl<'a> Tree<'a> {
 
 /// The statements of `src` from its tape `nodes` (`super::tape`, or a stored tape's facts: `nodes_of_facts`). A tape
 /// with an ERROR gives the error running the file gives (`super::syntax_error`).
-pub(super) fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
+pub fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
     if nodes.iter().any(Node::is_error) {
         let (_, message) = super::syntax_error(src).unwrap_or((0, "a statement that does not parse".to_owned()));
         return Err(Error::Syntax(message));

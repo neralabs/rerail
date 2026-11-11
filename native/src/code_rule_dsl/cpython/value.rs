@@ -7,7 +7,7 @@ use std::fmt::Write;
 
 /// A Python str: UTF-8, or code points where it holds a lone surrogate.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum PyStr {
+pub enum PyStr {
     Text(String),
     Points(Vec<u32>),
 }
@@ -269,7 +269,7 @@ impl Int {
 
 /// `repr(s)` of a str: `'` quotes unless it holds `'` and no `"`; the quote and `\\` escaped, `\t \n \r`, other
 /// controls and DEL as `\xhh`, a character `str.isprintable` rejects as `\xhh`, `\uhhhh` or `\Uhhhhhhhh`.
-pub(crate) fn str_repr(s: &PyStr) -> String {
+pub fn str_repr(s: &PyStr) -> String {
     let (single, double) = s.points().fold((false, false), |(a, b), p| (a || p == 0x27, b || p == 0x22));
     let quote = if single && !double { 0x22 } else { 0x27 };
     let mut out = String::with_capacity(s.points().count() + 2);

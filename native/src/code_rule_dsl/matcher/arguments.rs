@@ -2,18 +2,18 @@ use crate::code_rule_dsl::tree::Tree;
 use super::util::UNKNOWN;
 use super::value::spend_step;
 use crate::code_rule_dsl::identifier::python_identifier;
-use crate::code_rule_dsl::language::adapter::{Adapter, ArgumentRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::value::{Context, Value};
-use crate::code_rule_dsl::value::{php, python};
+// cratify: a re-export of rerail-lang-php's, which its facades of this module make
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// How a signature slot may be passed.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum SlotKind {
+pub enum SlotKind {
     /// Before `/`: by position only.
     PositionalOnly,
     /// By position or by keyword.
@@ -30,39 +30,39 @@ pub(crate) enum SlotKind {
 /// in a slot and `absent` asserts a slot was not passed; where a slot is not known either way the
 /// verdict is unknown.
 #[derive(Clone)]
-pub(crate) struct Arguments {
-    pub(crate) language: GrammarDialect,
-    pub(crate) slots: Vec<(String, SlotKind)>,
+pub struct Arguments {
+    pub language: GrammarDialect,
+    pub slots: Vec<(String, SlotKind)>,
     /// Capture names and the slot each binds, by slot index.
-    pub(crate) bind: Vec<(String, usize)>,
+    pub bind: Vec<(String, usize)>,
     /// Slots that must not be passed, by index.
-    pub(crate) absent: Vec<usize>,
+    pub absent: Vec<usize>,
     /// Call kinds: Python `call`; TypeScript `call_expression` and `new_expression`; PHP function,
     /// method, nullsafe method and static calls and `new`.
-    pub(crate) call_kinds: BTreeSet<u16>,
+    pub call_kinds: BTreeSet<u16>,
     /// Python and PHP: find each slot as Ruff's `find_argument` does, by the argument list's
     /// syntax alone (`mode: "syntactic"`), rather than as the call binds it.
-    pub(crate) syntactic: bool,
+    pub syntactic: bool,
     /// TypeScript: each slot is ESLint's `node.arguments[i]`, a spread element included
     /// (`mode: "estree"`), and a tagged template is no call.
-    pub(crate) estree: bool,
+    pub estree: bool,
 }
 
 /// What a call passes for a slot.
-pub(crate) enum Passed<'r, D: Doc> {
+pub enum Passed<'r, D: Doc> {
     Absent,
     Value(Node<'r, D>),
     /// A starred argument or a spread keyword dict may pass it, or a TypeError may be raised.
     Unknown,
 }
 
-fn every<'r, D: Doc>(count: usize, make: impl Fn() -> Passed<'r, D>) -> Vec<Passed<'r, D>> {
+pub fn every<'r, D: Doc>(count: usize, make: impl Fn() -> Passed<'r, D>) -> Vec<Passed<'r, D>> {
     (0..count).map(|_| make()).collect()
 }
 
 
 impl Arguments {
-    pub(super) fn match_node<'tree, D: Doc>(
+    pub fn match_node<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
         env: &mut Cow<MetaVarEnv<'tree, D>>,
@@ -78,7 +78,7 @@ impl Arguments {
         {
             return None;
         }
-        let passed = with_adapter!(Family::of(self.language), A => passed::<A, D>(self, &node))?;
+        let passed = { let pack = language_pack::pack(Family::of(self.language)); passed::<D>(pack, self, &node) }?;
         let mut unknown = false;
         for &slot in &self.absent {
             match passed[slot] {
@@ -108,7 +108,7 @@ impl Arguments {
     }
 
     /// Positional slots, in order.
-    fn positional(&self) -> impl Iterator<Item = usize> + '_ {
+    pub fn positional(&self) -> impl Iterator<Item = usize> + '_ {
         self.slots
             .iter()
             .enumerate()
@@ -116,80 +116,17 @@ impl Arguments {
             .map(|(index, _)| index)
     }
 
-    fn keyword_slot(&self, name: &str) -> Option<usize> {
+    pub fn keyword_slot(&self, name: &str) -> Option<usize> {
         self.slots
             .iter()
             .position(|(slot, kind)| slot == name && *kind != SlotKind::PositionalOnly)
-    }
-
-    pub(crate) fn python<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
-        let mut passed = every(self.slots.len(), || Passed::Absent);
-        let Some(arguments) = call.field("arguments") else {
-            return every(self.slots.len(), || Passed::Unknown);
-        };
-        // `f(x for x in y)` passes the generator as its one positional argument.
-        if arguments.kind() == "generator_expression" {
-            if let Some(first) = self.positional().next() {
-                passed[first] = Passed::Value(arguments);
-            }
-            return passed;
-        }
-        let mut positions = self.positional();
-        let mut starred = false;
-        let mut keywords = Vec::new();
-        let mut spread_keywords = false;
-        for argument in arguments.named_code().collect::<Vec<_>>() {
-            match argument.kind().as_ref() {
-                "keyword_argument" => {
-                    if let (Some(name), Some(value)) =
-                        (argument.field("name"), argument.field("value"))
-                    {
-                        keywords.push((python_identifier(&name).into_owned(), value));
-                    }
-                }
-                "dictionary_splat" => match literal_keywords(&argument) {
-                    Some(pairs) => keywords.extend(pairs),
-                    None => spread_keywords = true,
-                },
-                "list_splat" | "parenthesized_list_splat" => starred = true,
-                _ if starred => {}
-                _ => {
-                    if let Some(slot) = positions.next() {
-                        passed[slot] = Passed::Value(argument);
-                    }
-                }
-            }
-        }
-        if starred {
-            for slot in positions {
-                passed[slot] = Passed::Unknown;
-            }
-        }
-        for (name, value) in keywords {
-            if let Some(slot) = self.keyword_slot(&name) {
-                // The same slot twice is a TypeError; the call binds nothing.
-                passed[slot] = match passed[slot] {
-                    Passed::Absent => Passed::Value(value),
-                    Passed::Value(_) => Passed::Unknown,
-                    Passed::Unknown => Passed::Value(value),
-                };
-            }
-        }
-        if spread_keywords {
-            for (slot, (_, kind)) in self.slots.iter().enumerate() {
-                if *kind != SlotKind::PositionalOnly && matches!(passed[slot], Passed::Absent) {
-                    passed[slot] = Passed::Unknown;
-                }
-            }
-        }
-        passed
     }
 
     /// Ruff's `Arguments::find_argument`: a keyword of the slot's name (the first one), else the
     /// positional argument at the slot's position among the arguments before the first starred
     /// one. `**kw` and `**{...}` name no keyword. Positional-only slots take no keyword and
     /// keyword-only slots no position. Nothing is unknown.
-    pub(crate) fn syntactic<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+    pub fn syntactic<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
         let mut passed = every(self.slots.len(), || Passed::Absent);
         let Some(arguments) = call.field("arguments") else {
             return passed;
@@ -232,190 +169,7 @@ impl Arguments {
         passed
     }
 
-    /// PHP 8.5's call binding: positional arguments fill the slots in order; `name: value` the
-    /// slot of that name (case-sensitive; a name outside the signature binds a parameter it does
-    /// not list); `...[...]` unpacks an array literal, its integer keys by position and its string
-    /// keys by name; `...$x` may pass any slot not otherwise passed. A call PHP refuses — a
-    /// positional argument after a named one or after unpacking, unpacking after a named argument,
-    /// a name passed twice (listed or not), a slot passed by position and by name, a by-reference
-    /// argument — passes nothing known: every slot is unknown. `f(...)` is a first-class
-    /// callable, not a call: `None`.
-    pub(crate) fn php<'r, D: Doc>(&self, call: &Node<'r, D>) -> Option<Vec<Passed<'r, D>>> {
-        let refused = || Some(every(self.slots.len(), || Passed::Unknown));
-        let mut passed = every(self.slots.len(), || Passed::Absent);
-        let Some(arguments) = php_arguments(call) else {
-            return Some(passed);
-        };
-        // An argument list PHP cannot parse passes nothing known.
-        if arguments
-            .dfs()
-            .any(|node| node.is_error() || node.is_missing())
-        {
-            return refused();
-        }
-        let mut positions = self.positional();
-        let (mut named, mut unpacked, mut unpacked_named) = (false, false, false);
-        // Every name passed so far, literal or unpacked, whether or not the signature lists it.
-        let mut names = BTreeSet::new();
-        // After `...$x`, no slot's position is known, and a slot `$x` may pass by name is
-        // unknown whatever else passes it.
-        let mut spread = false;
-        for argument in arguments.named_code().collect::<Vec<_>>() {
-            match argument.kind().as_ref() {
-                "variadic_placeholder" => return None,
-                "argument" => {}
-                _ => return refused(),
-            }
-            if argument.field("reference_modifier").is_some() {
-                return refused();
-            }
-            let name = argument.field("name");
-            let parts: Vec<_> = argument.named_code().collect::<Vec<_>>()
-                .into_iter()
-                .filter(|part| {
-                    name.as_ref()
-                        .is_none_or(|name| part.range() != name.range())
-                })
-                .collect();
-            let [value] = parts.as_slice() else {
-                return refused();
-            };
-            if value.kind() == "variadic_unpacking" {
-                if named {
-                    return refused();
-                }
-                unpacked = true;
-                let Some(inner) = value.named_code().collect::<Vec<_>>().into_iter().next() else {
-                    return refused();
-                };
-                let mut spend = || spend_step();
-                let mut context = Context::new(&mut spend);
-                let Some(entries) = php::array_entries(&inner, &mut context) else {
-                    spread = true;
-                    continue;
-                };
-                for (key, element) in entries {
-                    match key {
-                        php::Key::Int(_) if unpacked_named => return refused(),
-                        // A position after `...$x` is not known.
-                        php::Key::Int(_) if spread => {}
-                        php::Key::Int(_) => {
-                            if let Some(slot) = positions.next() {
-                                passed[slot] = Passed::Value(element);
-                            }
-                        }
-                        php::Key::Str(name) => {
-                            unpacked_named = true;
-                            let slot = std::str::from_utf8(&name)
-                                .ok()
-                                .and_then(|name| self.keyword_slot(name));
-                            if !pass_by_name(&mut passed, &mut names, &name, slot, element, spread)
-                            {
-                                return refused();
-                            }
-                        }
-                    }
-                }
-            } else if let Some(name) = name {
-                named = true;
-                let name = name.text();
-                let slot = self.keyword_slot(&name);
-                if !pass_by_name(
-                    &mut passed,
-                    &mut names,
-                    name.as_bytes(),
-                    slot,
-                    value.clone(),
-                    spread,
-                ) {
-                    return refused();
-                }
-            } else {
-                if named || unpacked {
-                    return refused();
-                }
-                if let Some(slot) = positions.next() {
-                    passed[slot] = Passed::Value(value.clone());
-                }
-            }
-        }
-        if spread {
-            for item in &mut passed {
-                if matches!(item, Passed::Absent) {
-                    *item = Passed::Unknown;
-                }
-            }
-        }
-        Some(passed)
-    }
-
-    /// PHP's counterpart of Ruff's `find_argument`, over nikic/PHP-Parser's `args`: the first
-    /// named argument of the slot's name (case-sensitive), else the positional argument at the
-    /// slot's position among those before the first unpacking (`...`), parentheses unwrapped as
-    /// PHP-Parser has none. Nothing is bound as PHP binds it: a call PHP refuses (a positional
-    /// argument after a named one, a name passed twice) is read as written. An argument list PHP
-    /// cannot parse (a syntax error, `&$x`) passes nothing known: every slot is unknown.
-    /// `f(...)` is a first-class callable, not a call: `None`.
-    pub(crate) fn php_syntactic<'r, D: Doc>(
-        &self,
-        call: &Node<'r, D>,
-    ) -> Option<Vec<Passed<'r, D>>> {
-        let mut passed = every(self.slots.len(), || Passed::Absent);
-        let Some(arguments) = php_arguments(call) else {
-            return Some(passed);
-        };
-        let refused = || Some(every(self.slots.len(), || Passed::Unknown));
-        if arguments
-            .dfs()
-            .any(|node| node.is_error() || node.is_missing())
-        {
-            return refused();
-        }
-        let mut positional = Vec::new();
-        let mut named = Vec::new();
-        let mut unpacked = false;
-        for argument in arguments.named_code().collect::<Vec<_>>() {
-            match argument.kind().as_ref() {
-                "variadic_placeholder" => return None,
-                "argument" => {}
-                _ => return refused(),
-            }
-            if argument.field("reference_modifier").is_some() {
-                return refused();
-            }
-            let name = argument.field("name");
-            let parts: Vec<_> = argument.named_code().collect::<Vec<_>>()
-                .into_iter()
-                .filter(|part| {
-                    name.as_ref()
-                        .is_none_or(|name| part.range() != name.range())
-                })
-                .collect();
-            let [value] = parts.as_slice() else {
-                return refused();
-            };
-            if value.kind() == "variadic_unpacking" {
-                unpacked = true;
-            } else if let Some(name) = name {
-                named.push((name, unparenthesized(value.clone())));
-            } else if !unpacked {
-                positional.push(unparenthesized(value.clone()));
-            }
-        }
-        for (position, slot) in self.positional().enumerate() {
-            if let Some(argument) = positional.get(position) {
-                passed[slot] = Passed::Value(argument.clone());
-            }
-        }
-        for (slot, (slot_name, _)) in self.slots.iter().enumerate() {
-            if let Some((_, value)) = named.iter().find(|(name, _)| name.text() == *slot_name) {
-                passed[slot] = Passed::Value(value.clone());
-            }
-        }
-        Some(passed)
-    }
-
-    pub(crate) fn typescript<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+    pub fn typescript<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
         let mut passed = every(self.slots.len(), || Passed::Absent);
         let Some(arguments) = call.field("arguments") else {
             return passed;
@@ -444,32 +198,19 @@ impl Arguments {
 }
 
 /// What `call` passes for `arguments`' slots, as `A`'s family binds a call's arguments.
-fn passed<'r, A: Adapter, D: Doc>(
-    arguments: &Arguments,
+fn passed<'r, D: Doc>(
+    pack: &dyn language_pack::LanguagePack, arguments: &Arguments,
     call: &Node<'r, D>,
 ) -> Option<Vec<Passed<'r, D>>> {
-    <A::Arguments as ArgumentRules>::passed(arguments, call)
+    language_pack::arguments_passed(pack, arguments, call)
 }
 
-/// A PHP call's argument list: a function or method call's `arguments`, or the `arguments` of
-/// `new C(...)` or of the anonymous class `new class(...) {...}` owns. `None` where `new` has
-/// none (`new C`, `new class {}`).
-fn php_arguments<'r, D: Doc>(call: &Node<'r, D>) -> Option<Node<'r, D>> {
-    if let Some(arguments) = call.field("arguments") {
-        return Some(arguments);
-    }
-    let owner = call
-        .children()
-        .find(|child| child.kind() == "anonymous_class")
-        .unwrap_or_else(|| call.clone());
-    owner.children().find(|child| child.kind() == "arguments")
-}
 
 /// Passes `value` by `name`, to `slot` where the signature lists the name; a name outside it
 /// binds a parameter the signature does not list. `false` where PHP refuses the call: the name
 /// is in `names` already, or the slot was passed by position. After `...$x`, which may pass the
 /// slot too, it is unknown.
-fn pass_by_name<'r, D: Doc>(
+pub fn pass_by_name<'r, D: Doc>(
     passed: &mut [Passed<'r, D>],
     names: &mut BTreeSet<Vec<u8>>,
     name: &[u8],
@@ -496,7 +237,7 @@ fn pass_by_name<'r, D: Doc>(
 
 /// The expression inside any parentheses: neither ESTree nor PHP-Parser has a parenthesized
 /// expression, so `super((a))`'s `arguments[0]` is `a`, as `f((a))`'s PHP argument is.
-fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
+pub fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
     while super::util::is_paren_kind(&node.kind()) {
         match node.named_code().collect::<Vec<_>>().as_slice() {
             [inner] => node = inner.clone(),
@@ -506,36 +247,11 @@ fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
     node
 }
 
-/// The pairs of `**{'a': 1}`: a dict display whose keys are all string literals, without `**`
-/// of its own.
-fn literal_keywords<'r, D: Doc>(splat: &Node<'r, D>) -> Option<Vec<(String, Node<'r, D>)>> {
-    let [dictionary] = splat.named_code().collect::<Vec<_>>().try_into().ok()?;
-    if dictionary.kind() != "dictionary" {
-        return None;
-    }
-    let mut pairs = Vec::new();
-    for pair in dictionary.named_code().collect::<Vec<_>>() {
-        if pair.kind() != "pair" {
-            return None;
-        }
-        let (key, value) = (pair.field("key")?, pair.field("value")?);
-        if !matches!(key.kind().as_ref(), "string" | "concatenated_string") {
-            return None;
-        }
-        let mut spend = spend_step;
-        let mut global = |_: std::ops::Range<usize>, _: &str| None;
-        let mut context = Context::with_globals(&mut spend, &mut global);
-        let Value::Str(name) = python::decode(&key, &mut context) else {
-            return None;
-        };
-        pairs.push((name, value));
-    }
-    Some(pairs)
-}
 
 #[cfg(test)]
-mod tests {
-    use super::literal_keywords;
+pub mod tests {
+    use super::lang_python::literal_keywords;
+    use super::lang_php::PhpArguments as _;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::matcher::util::{UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
     use ast_grep_core::tree_sitter::LanguageExt;
@@ -666,8 +382,12 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod php_syntactic_tests;
-mod rust;
-#[cfg(test)]
-mod rust_tests;
+// cratify: `php_syntactic_tests` is rerail-lang-php's (it mounts it)
+// cratify: `rust` is rerail-lang-rust's (it mounts it)
+// cratify: `rust_tests` is rerail-lang-rust's (it mounts it)
+
+// Python's argument binding (moved from `arguments.rs` by the crate split). (`lang_python`, its crate's).
+// cratify: `lang_python` is rerail-lang-python's (it mounts it)
+
+// PHP's argument binding (moved from `arguments.rs` by the crate split). (`lang_php`, its crate's).
+// cratify: `lang_php` is rerail-lang-php's (it mounts it)

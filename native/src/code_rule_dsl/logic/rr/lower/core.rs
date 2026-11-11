@@ -26,7 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-use super::super::syntax::{Item, Parser, Term as STerm};
+use rerail_rr_syntax::syntax::{Item, Parser, Term as STerm};
 use super::{Lowerer, ty};
 use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Rule, Term, is_axis};
 
@@ -49,7 +49,7 @@ pub(super) static DECLS: LazyLock<BTreeMap<String, Vec<(String, String)>>> = Laz
 pub(super) const REWRITTEN: [&str; 3] = ["next_sibling", "precedes", "earlier"];
 
 /// Whether core.rr declares `rel`.
-pub(in crate::code_rule_dsl) fn is_core(rel: &str) -> bool {
+pub fn is_core(rel: &str) -> bool {
     DECLS.contains_key(rel)
 }
 
@@ -187,8 +187,8 @@ impl Lowerer {
 /// Takes out core.rr's relations `prog` neither reads, derives nor outputs, declared as core.rr declares them: the
 /// prelude's declarations and inputs, which are no relations of the program. The converter's overlay reads an
 /// authored file so (`logic::convert::overlay`), its declarations checked against the converter's.
-#[cfg(test)]
-pub(in crate::code_rule_dsl) fn drop_unread_core(prog: &mut crate::code_rule_dsl::logic::front::Program) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn drop_unread_core(prog: &mut crate::code_rule_dsl::logic::front::Program) {
     let used: BTreeSet<String> = prog
         .rules
         .iter()

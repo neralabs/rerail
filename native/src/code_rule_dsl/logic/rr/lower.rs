@@ -54,18 +54,18 @@
 //! `dfs_first`/`dfs_first_memo`, and a negated built-in with its other node unnamed (`!within_stop(n, _, s)`,
 //! `!split_dot(q, _, x)`).
 
-mod core;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use self::core::drop_unread_core;
-pub(in crate::code_rule_dsl) use self::core::is_core;
+pub mod core;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use self::core::drop_unread_core;
+pub use self::core::is_core;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::syntax::{Code, Fix, Head, Item, Lit, Statement, Suppress, Term as STerm, quote};
+use rerail_rr_syntax::syntax::{Code, Fix, Head, Item, Lit, Statement, Suppress, Term as STerm, quote};
 use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, LatticeDecl, Literal, Native, Program, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
-mod findings;
+pub mod findings;
 
 /// The text tests: their `.rr` names and the engine's.
 pub(super) const TESTS: [(&str, &str); 11] = [
@@ -218,9 +218,9 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
     let (mut within, mut out) = (Vec::new(), Vec::new());
     for (_, text) in settings.iter().filter(|(k, _)| k == "scope") {
         // The setting's tokens: comments are not in them.
-        let Ok(tokens) = super::syntax::tokens(text) else { continue };
-        let tokens: Vec<&super::syntax::Tok> = tokens.iter().map(|t| &t.0).collect();
-        let words: Vec<&str> = tokens.iter().filter_map(|t| if let super::syntax::Tok::Id(w) = t { Some(w.as_str()) } else { None }).collect();
+        let Ok(tokens) = rerail_rr_syntax::syntax::tokens(text) else { continue };
+        let tokens: Vec<&rerail_rr_syntax::syntax::Tok> = tokens.iter().map(|t| &t.0).collect();
+        let words: Vec<&str> = tokens.iter().filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Id(w) = t { Some(w.as_str()) } else { None }).collect();
         // `report dirs` and `text` say where findings land and how files are read, not which.
         if words.first().is_some_and(|w| matches!(*w, "report" | "text" | "embedded")) {
             continue;
@@ -230,8 +230,8 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
             match t {
                 // `option("…")`: an entry from a policy option, kept by name until the run's options are known
                 // (`front::OPTION_GLOB`); the form before it (`dirs`, `include`, `exclude`) stays the word.
-                super::syntax::Tok::Id(w) if w == "option" && matches!(tokens.get(k + 1), Some(super::syntax::Tok::P("("))) => {
-                    if let Some(super::syntax::Tok::Str(name)) = tokens.get(k + 2) {
+                rerail_rr_syntax::syntax::Tok::Id(w) if w == "option" && matches!(tokens.get(k + 1), Some(rerail_rr_syntax::syntax::Tok::P("("))) => {
+                    if let Some(rerail_rr_syntax::syntax::Tok::Str(name)) = tokens.get(k + 2) {
                         let entry = format!("{}{word}:{name}", crate::code_rule_dsl::logic::front::OPTION_GLOB);
                         match word {
                             "dirs" | "include" => within.push(entry),
@@ -240,14 +240,14 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
                         }
                     }
                 }
-                super::syntax::Tok::Id(_) if matches!(tokens.get(k + 1), Some(super::syntax::Tok::P("("))) => word = "",
-                super::syntax::Tok::Id(w) => {
+                rerail_rr_syntax::syntax::Tok::Id(_) if matches!(tokens.get(k + 1), Some(rerail_rr_syntax::syntax::Tok::P("("))) => word = "",
+                rerail_rr_syntax::syntax::Tok::Id(w) => {
                     if w == "false" && word == "tests" {
                         out.extend(["test/**", "**/test/**", "tests/**", "**/tests/**"].map(str::to_owned));
                     }
                     word = w.as_str();
                 }
-                super::syntax::Tok::Str(g) if !matches!(tokens.get(k.wrapping_sub(1)), Some(super::syntax::Tok::P("("))) => match word {
+                rerail_rr_syntax::syntax::Tok::Str(g) if !matches!(tokens.get(k.wrapping_sub(1)), Some(rerail_rr_syntax::syntax::Tok::P("("))) => match word {
                     "dirs" => within.push(format!("{}/**", g.trim_end_matches('/'))),
                     "include" => within.push(g.clone()),
                     "exclude" => out.push(g.clone()),
@@ -268,12 +268,12 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
 fn scope_list(settings: &[(String, String)], form: &[&str]) -> Vec<String> {
     let mut found = Vec::new();
     for (_, text) in settings.iter().filter(|(k, _)| k == "scope") {
-        let Ok(tokens) = super::syntax::tokens(text) else { continue };
-        let words: Vec<&str> = tokens.iter().take(form.len()).filter_map(|t| if let super::syntax::Tok::Id(w) = &t.0 { Some(w.as_str()) } else { None }).collect();
+        let Ok(tokens) = rerail_rr_syntax::syntax::tokens(text) else { continue };
+        let words: Vec<&str> = tokens.iter().take(form.len()).filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Id(w) = &t.0 { Some(w.as_str()) } else { None }).collect();
         if words != form {
             continue;
         }
-        found.extend(tokens.iter().filter_map(|t| if let super::syntax::Tok::Str(g) = &t.0 { Some(g.clone()) } else { None }));
+        found.extend(tokens.iter().filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Str(g) = &t.0 { Some(g.clone()) } else { None }));
     }
     found
 }
@@ -288,7 +288,7 @@ fn scope_report_globs(settings: &[(String, String)]) -> Vec<String> {
     scope_list(settings, &["report", "dirs"]).into_iter().map(|d| format!("{}/**", d.trim_end_matches('/'))).collect()
 }
 
-pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
+pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     super::tape_type::check(&statements)?;
     let mut l = Lowerer::default();
     let mut clauses = Vec::new();
@@ -320,8 +320,8 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                     l.prog.demand.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned));
                 }
                 // `.pragma "cross-rounds" "k"` (decision 0056): kept as written, for the corpus runner.
-                [key, k] if key == crate::code_rule_dsl::typing::cross_rounds::PRAGMA && k.parse::<usize>().is_ok() => {
-                    l.prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(k));
+                [key, k] if key == crate::code_rule_dsl::logic::front::PRAGMA && k.parse::<usize>().is_ok() => {
+                    l.prog.settings.push(crate::code_rule_dsl::logic::front::setting(k));
                 }
                 // `.pragma "cross-memo" "r s"` (decision 0076): cross-file relations memoised per import component.
                 [key, rels] if key == "cross-memo" => {
@@ -1230,7 +1230,7 @@ impl Lowerer {
             let loc = self.siblings.iter().find_map(|l| match l {
                 Lit::Atom { rel, args, neg: false } => {
                     let decl = self.prog.decls.get(rel);
-                    let doc = crate::code_rule_dsl::typing::file_local::document_column(rel);
+                    let doc = crate::code_rule_dsl::logic::front::document_column(rel);
                     args.iter().enumerate().find_map(|(c, a)| match a {
                         STerm::Var(v) if Some(c) == doc || decl.and_then(|d| d.get(c)).is_some_and(|(_, t)| t == "node") => Some(v.clone()),
                         _ => None,
@@ -2058,7 +2058,7 @@ impl Lowerer {
                 let name=|t:&STerm|match t{STerm::Var(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate inputs are relation names".into()))};
                 let literal=|t:&STerm|match t{STerm::Str(v)=>Ok(v.clone()),_=>Err(Error::Syntax("Python candidate context and member must be string literals".into()))};
                 let (input,targets,context,member)=(name(input)?,name(targets)?,literal(context)?,literal(member)?);
-                if !crate::code_rule_dsl::facts::producers::python::families::CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
+                if !crate::code_rule_dsl::logic::front::PYTHON_CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
                 for name in [&input,&targets] {
                     if !self.prog.decls.get(name).is_some_and(|cols|cols.len()==1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
                 }
@@ -2307,7 +2307,7 @@ impl Lowerer {
         // Only the literals tied to `vars` through shared variables: one tied to none tests that some row exists
         // anywhere (`ann_root(_)` once `(s = a ; within(s, a))` is left out), which makes every row of the context
         // depend on every document. Leaving it out widens the context, which the rule joins with its own literals.
-        let context = Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars);
+        let context = Self::covering(Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars), vars);
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
@@ -2362,6 +2362,55 @@ impl Lowerer {
             }
         }
         context.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
+    }
+
+    /// Of a context's groups of literals (joined through variables other than `vars`), those that bind a variable of
+    /// `vars` no group before them does. Another group only tests that rows exist, and joined in it multiplies the
+    /// context's rows by its own: `within(c1, n), within(c2, n)` asked for `n` is every pair of n's descendants (1.3 G
+    /// rows on 20 files). The context may hold more rows than the rule, which joins it with its own literals.
+    fn covering(context: Vec<Lit>, vars: &[String]) -> Vec<Lit> {
+        let asked: BTreeSet<String> = vars.iter().cloned().collect();
+        let of: Vec<BTreeSet<String>> = context.iter().map(|l| body_vars(std::slice::from_ref(l))).collect();
+        // Each literal's group: literals sharing a variable not asked about are one group.
+        let mut group: Vec<usize> = (0..context.len()).collect();
+        fn root(g: &mut [usize], mut i: usize) -> usize {
+            while g[i] != i {
+                g[i] = g[g[i]];
+                i = g[i];
+            }
+            i
+        }
+        for i in 0..context.len() {
+            for j in 0..i {
+                if of[i].iter().any(|v| !asked.contains(v) && of[j].contains(v)) {
+                    let (a, b) = (root(&mut group, i), root(&mut group, j));
+                    group[a] = b;
+                }
+            }
+        }
+        let binds = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier");
+        let mut covered: BTreeSet<String> = BTreeSet::new();
+        let mut kept: BTreeSet<usize> = BTreeSet::new();
+        for i in 0..context.len() {
+            let g = root(&mut group, i);
+            if kept.contains(&g) {
+                continue;
+            }
+            let bound: BTreeSet<String> = (0..context.len())
+                .filter(|&k| root(&mut group, k) == g && binds(&context[k]))
+                .flat_map(|k| of[k].iter().filter(|v| asked.contains(*v)).cloned().collect::<Vec<_>>())
+                .collect();
+            if !bound.is_subset(&covered) {
+                covered.extend(bound);
+                kept.insert(g);
+            }
+        }
+        // A variable no group binds is left to the context as it was.
+        if !asked.is_subset(&covered) {
+            return context;
+        }
+        let groups: Vec<usize> = (0..context.len()).map(|k| root(&mut group, k)).collect();
+        context.into_iter().zip(groups).filter(|(_, g)| kept.contains(g)).map(|(l, _)| l).collect()
     }
 
     /// A context's atoms and the comparisons it can evaluate, in order, and the variables they bind.
@@ -2986,7 +3035,7 @@ const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
 /// The relations of the file system a rule may read (t21 E1), each with the request its reads make: a directory's
 /// entries, `dir_entry(dir, name, is_dir)`, a file's lines, `file_line(path, i, text)` (from 1), and a file's content
 /// digest, `file_digest(path, c)` (a cache key's, decision 0103: a library's tape is kept by it).
-pub(in crate::code_rule_dsl) const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
+pub const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
 
 fn world_demand(rel: &str) -> Option<&'static str> {
     WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
@@ -3051,7 +3100,7 @@ fn binds_columns(l: &Lit) -> bool {
 }
 
 /// Adjacent negations of one test of one string, `!glob("a", s), !glob("b", s)`, as one negated test of the set.
-pub(super) fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
+pub fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
     let mut out: Vec<Literal> = Vec::new();
     for literal in body {
         let negated_test = |l: &Literal| match l {

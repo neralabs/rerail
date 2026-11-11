@@ -46,7 +46,7 @@ pub(super) fn collect_binds(
         | Semantic::FilePath(_)
         | Semantic::Gap(_)
         | Semantic::Host(_)
-        | Semantic::ImportTarget(_) => {}
+        | Semantic::Term(_) => {}
     }
 }
 
@@ -96,7 +96,7 @@ pub(super) fn reads(
         | Semantic::Capture(_)
         | Semantic::FilePath(_)
         | Semantic::Gap(_)
-        | Semantic::ImportTarget(_) => Names::new(),
+        | Semantic::Term(_) => Names::new(),
     }
 }
 
@@ -149,7 +149,7 @@ pub(super) fn collect_mentions(
         | Semantic::FilePath(_)
         | Semantic::Gap(_)
         | Semantic::Host(_)
-        | Semantic::ImportTarget(_) => {}
+        | Semantic::Term(_) => {}
     }
 }
 
@@ -167,7 +167,7 @@ pub(super) fn collect_in(
         | Semantic::Gap(_)
         | Semantic::Host(_)
         | Semantic::Value(_)
-        | Semantic::ImportTarget(_) => {}
+        | Semantic::Term(_) => {}
         Semantic::Calls(test) => {
             if let Some(name) = &test.chain {
                 merge_capture(variables, name, Capture::Single);
@@ -221,7 +221,7 @@ fn within(count: Option<&BindingCount>) -> Names {
 /// in environments of their own. A nested parse's exports pass through, and so do those of the
 /// utilities the rule calls, at any depth: a utility compiled before the table was filled reads its
 /// draft (`UtilTable::draft`).
-pub(in crate::code_rule_dsl) fn parse_exported(matcher: &AstMatcher, names: &mut Names) {
+pub fn parse_exported(matcher: &AstMatcher, names: &mut Names) {
     exported_in(matcher, &mut UtilitySummary::new(), names);
 }
 

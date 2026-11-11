@@ -117,11 +117,59 @@ impl Admitted {
 // Stay below even SQLite's older 999-parameter limit. Full batches share one prepared shape.
 const READ_BATCH: usize = 128;
 
+/// Every frame of a store as this process holds it (decision 0104: a run reads before its first wave): read once
+/// (`preload_frames`), kept current by every write this process queues or makes, by space, then relation and part.
+/// Shared by the store's handles in this process, by its path.
+type Snapshot = HashMap<[u8; 32], HashMap<(Rel, i64), Arc<Admitted>>>;
+
+fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>> {
+    static SNAPSHOTS: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>>> = std::sync::OnceLock::new();
+    SNAPSHOTS.get_or_init(Default::default)
+}
+
 fn frame_key(space: &[u8; 32], rel: &Rel, part: i64) -> super::write_back::Key {
     super::write_back::Key::of(&[b"frame", space, rel.name.as_bytes(), &rel.ident, &part.to_le_bytes()])
 }
 
 impl ContentStore {
+    /// The snapshot of this store's file, by its canonical path: handles that name it differently share it.
+    fn snapshot(&self) -> Option<Arc<std::sync::Mutex<Snapshot>>> {
+        snapshots().lock().expect("the frames' snapshots").get(&super::atoms::key(&self.database_path)).cloned()
+    }
+
+    /// Reads every frame of the store, once a process (decision 0104: before a run's first wave): from then on the
+    /// frames are read from memory, and every write of this process updates it. Returns the frames and their
+    /// encoded bytes read now (none when an earlier run of the process read them).
+    pub fn preload_frames(&self) -> StoreResult<(usize, usize)> {
+        if self.snapshot().is_some() {
+            return Ok((0, 0));
+        }
+        let mut snapshot = Snapshot::new();
+        let (mut frames, mut bytes) = (0, 0);
+        if self.frames_table()? {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let mut st = connection.prepare("SELECT space, rel, ident, part, digest, reads, rows, types, data FROM frames")?;
+            let rows = st.query_map([], |row| {
+                let (space, ident): (Vec<u8>, Vec<u8>) = (row.get(0)?, row.get(2)?);
+                let space: [u8; 32] = space.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let data: Vec<u8> = row.get(8)?;
+                Ok((space, (Rel { name: row.get(1)?, ident }, row.get::<_, i64>(3)?), Arc::new(Admitted {
+                    stored: Stored { digest: row.get::<_, i64>(4)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(5)?) },
+                    data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: data },
+                })))
+            })?;
+            for row in rows {
+                let (space, key, frame) = row?;
+                frames += 1;
+                bytes += frame.encoded_bytes();
+                snapshot.entry(space).or_default().insert(key, frame);
+            }
+        }
+        snapshots().lock().expect("the frames' snapshots").entry(super::atoms::key(&self.database_path)).or_insert_with(|| Arc::new(std::sync::Mutex::new(snapshot)));
+        Ok((frames, bytes))
+    }
+
     fn frames_table(&self) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let n: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
@@ -157,7 +205,20 @@ impl ContentStore {
                 missing.insert((rel.clone(), *part));
             }
         }
-        if missing.is_empty() || !self.frames_table()? { return Ok(out); }
+        if missing.is_empty() { return Ok(out); }
+        // Read before the first wave (`preload_frames`): from memory.
+        if let Some(snapshot) = self.snapshot() {
+            let snapshot = snapshot.lock().expect("the frames' snapshot");
+            if let Some(held) = snapshot.get(space) {
+                for key in missing {
+                    if let Some(frame) = held.get(&key) {
+                        out.insert(key, Arc::clone(frame));
+                    }
+                }
+            }
+            return Ok(out);
+        }
+        if !self.frames_table()? { return Ok(out); }
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let missing: Vec<_> = missing.into_iter().collect();
         for batch in missing.chunks(READ_BATCH) {
@@ -196,6 +257,12 @@ impl ContentStore {
 
     /// Every stored frame of `rel` in `space`, by part, admitted (queued writes are not among them).
     pub fn admit_all_parts(&self, space: &[u8; 32], rel: &Rel) -> StoreResult<Vec<(i64, Arc<Admitted>)>> {
+        if let Some(snapshot) = self.snapshot() {
+            let snapshot = snapshot.lock().expect("the frames' snapshot");
+            let mut parts: Vec<(i64, Arc<Admitted>)> = snapshot.get(space).into_iter().flatten().filter(|((r, _), _)| r == rel).map(|((_, p), f)| (*p, Arc::clone(f))).collect();
+            parts.sort_by_key(|(p, _)| *p);
+            return Ok(parts);
+        }
         if !self.frames_table()? {
             return Ok(Vec::new());
         }
@@ -237,6 +304,9 @@ impl ContentStore {
 
     /// Forgets every frame of `space` and its count of runs: the space of a program no run will run again.
     pub fn drop_frame_space(&self, space: &[u8; 32]) -> StoreResult<usize> {
+        if let Some(snapshot) = self.snapshot() {
+            snapshot.lock().expect("the frames' snapshot").remove(space);
+        }
         if !self.frames_table()? {
             return Ok(0);
         }
@@ -256,6 +326,17 @@ impl ContentStore {
             (frame_key(&space, &p.rel, p.part), Some(Arc::new(Some(frame)) as Arc<dyn std::any::Any + Send + Sync>))
         }).collect();
         keys.extend(gone.iter().map(|(rel, part)| (frame_key(&space, rel, *part), Some(Arc::new(None::<Arc<Admitted>>) as Arc<dyn std::any::Any + Send + Sync>))));
+        // Memory is ahead of the store: the snapshot holds what is queued (`preload_frames`).
+        if let Some(snapshot) = self.snapshot() {
+            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+            let held = snapshot.entry(space).or_default();
+            for p in &puts {
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) }));
+            }
+            for key in &gone {
+                held.remove(key);
+            }
+        }
         self.write_back("frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
             let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
@@ -273,6 +354,17 @@ impl ContentStore {
 
     fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
+        // The snapshot holds what is written (a write the writer runs was put there as it was queued: the same).
+        if let Some(snapshot) = self.snapshot() {
+            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+            let held = snapshot.entry(*space).or_default();
+            for (p, block) in puts.iter().zip(&blocks) {
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: block.clone() } }));
+            }
+            for key in gone {
+                held.remove(key);
+            }
+        }
         self.immediate_transaction_once(|t| {
             t.execute_batch(SCHEMA)?;
             // A run's first program counts it: what it writes and marks is of the new run.
@@ -663,4 +755,9 @@ mod tests {
         assert!(!store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first));
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.
+pub fn forget_snapshot(path: &str) {
+    snapshots().lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
 }

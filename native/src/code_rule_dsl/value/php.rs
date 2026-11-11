@@ -88,12 +88,7 @@ pub(crate) const VALUE_KINDS: &[&str] = &[
     "unary_op_expression",
 ];
 
-/// A PHP array key: an integer, or a string that is not a canonical decimal integer.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Key {
-    Int(i64),
-    Str(Vec<u8>),
-}
+pub use super::types::Key;
 
 /// A PHP number.
 #[derive(Clone, Copy, Debug)]
@@ -1631,4 +1626,4 @@ fn subscript<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Va
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+pub mod tests;

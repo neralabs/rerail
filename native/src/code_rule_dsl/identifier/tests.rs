@@ -2,8 +2,8 @@
 //! and one lookalike test per capability that reads Python names.
 
 use super::*;
-use crate::code_rule_dsl::oracle;
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::{Value, json};
 
 const CPYTHON: &str = oracle!("python/identifier/cpython.expected.json");

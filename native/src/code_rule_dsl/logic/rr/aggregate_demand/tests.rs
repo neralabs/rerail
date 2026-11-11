@@ -129,7 +129,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     let file = crate::code_rule_dsl::prefilter::tests::temp();
     let dump = zstd::decode_all(
         std::fs::File::open(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .join("src/code_rule_dsl/logic/plan/golden/facts.sql.zst"),
         )
         .unwrap(),
@@ -187,7 +187,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     assert_eq!(native.outputs, result.outputs);
     assert!(native.native.contains("sums"), "production sum must use the native reduction");
     let dir = file.with_extension("profile");
-    crate::code_rule_dsl::logic::profile::write(&dir, "Demanded aggregate growth gate").unwrap();
+    crate::code_rule_dsl::logic::profile::report::write(&dir, "Demanded aggregate growth gate").unwrap();
     crate::code_rule_dsl::logic::profile::set(was_on);
     let trace = std::fs::read_to_string(dir.join("native.tsv")).unwrap();
     let mut measured = 0;

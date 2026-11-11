@@ -3,7 +3,7 @@ use super::metal_child_index::{ChildIndex, InitialChild, InitialSelector};
 use super::metal_grid_plan::ResidentInput;
 use super::*;
 
-pub(super) const PREFIX_EDITS: usize = 32;
+pub const PREFIX_EDITS: usize = 32;
 
 pub(super) fn incoming_counts(words: &[u32]) -> Vec<usize> {
     let mut incoming = vec![0usize; words.len()];

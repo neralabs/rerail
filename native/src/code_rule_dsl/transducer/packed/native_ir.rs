@@ -5,12 +5,12 @@ use super::{
 
 // The native IR and its lowering from the word program, the compiler crate's
 // (`rerail_compiler::native_ir`).
-pub(super) use rerail_compiler::native_ir::*;
+pub use rerail_compiler::native_ir::*;
 
 /// A program's native IR (`Structure`, the compiler crate's) and the matcher's value, capture
 /// and output programs.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct NativeModule {
+pub struct NativeModule {
     pub structure: Structure,
     pub value_programs: Vec<ValueProgram>,
     pub capture_programs: Vec<CaptureProgram>,
@@ -30,7 +30,7 @@ impl std::ops::DerefMut for NativeModule {
     }
 }
 
-pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
+pub fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
     let value_functions = u16::try_from(program.value_programs.len()).map_err(|_| LoweringError::TooManyInstructions)?;
     let capture_functions = u16::try_from(program.capture_programs.len()).map_err(|_| LoweringError::TooManyInstructions)?;
     Ok(NativeModule {
@@ -42,10 +42,10 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
 }
 
 // The block programs' native IR (`BlockNative`) is tier 1's, in its own crate.
-pub(super) use rerail_compiler::block_native::*;
+pub use rerail_compiler::block_native::*;
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     // G's tests (b90a7b0a), dropped by bb4c9605's merge; `policy_dsl::transducer` is `packed`.
     use super::super::{GREEDY, NAMED, Program, word};

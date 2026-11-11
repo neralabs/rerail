@@ -1,5 +1,5 @@
 use super::*;
-use crate::code_rule_dsl::facts::vtab::syntax::{sources, tests::documents};
+use crate::code_rule_dsl::facts::vtab::syntax::{sources};
 use std::path::PathBuf;
 
 fn temp(what: &str) -> PathBuf {
