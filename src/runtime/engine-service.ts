@@ -16,6 +16,7 @@ import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
+import { WorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -209,6 +210,12 @@ interface EngineRoutingState {
   idle: Map<string, NodeJS.Timeout>;
   /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
   idleRuntimeMs: number;
+  /**
+   * The walk of each repository's other worktrees, shared by the sessions of every runtime: hooks name the session's
+   * folder, so sessions in different worktrees of one repository run in different runtimes, and each walking every
+   * worktree for itself held every file of every worktree once per session.
+   */
+  worktreeWalks: WorktreeWalks;
 }
 
 /** The lane one session's work in one runtime runs in, one at a time. */
@@ -291,7 +298,7 @@ async function routeEngineEvent(
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
-      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true });
+      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks });
       state.runtimes.set(runtimeKey, runtime);
     }
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
@@ -530,6 +537,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     pending: new Set(),
     idle: new Map(),
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
+    worktreeWalks: new WorktreeWalks(),
   };
   const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   const server = createServer(async (incoming, response) => {
