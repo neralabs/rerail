@@ -152,10 +152,10 @@ def hooked_test_modules(nodes, keep):
     another file outside test modules by their parent's path (`syntax::candidate_spike::X`), or a helper (one
     file, no tests nor modules of its own: an impl's methods) in a file whose other test items follow test-hooks."""
     out = set(keep)
-    texts = {}
+    texts = []  # (module, its crate, whether it is test-only, its file's text)
     for q, n in nodes.items():
-        if q != 'crate' and not n.inline and n.file and os.path.exists(n.file) and not test_gated(nodes, q):
-            texts.setdefault(n.owner, []).append((q, open(n.file, 'rb').read()))
+        if q != 'crate' and not n.inline and n.file and os.path.exists(n.file):
+            texts.append((q, n.owner, test_gated(nodes, q), open(n.file, 'rb').read()))
     for p, n in nodes.items():
         if p == 'crate' or n.owner == ENGINE or not re.search(r'\btest\b', n.cfg) or not n.decl_file:
             continue
@@ -164,8 +164,13 @@ def hooked_test_modules(nodes, keep):
         s, e = n.decl
         here = re.search(rb'(?<![A-Za-z0-9_:])' + name.encode() + rb'::', decl[:s] + decl[e:]) is not None
         parent = p.rsplit('::', 2)[-2]
-        pat = re.compile(rb'(?<![A-Za-z0-9_])' + parent.encode() + rb'::' + name.encode() + rb'::')
-        there = any(pat.search(t) for q, t in texts.get(n.owner, []) if q != p and not q.startswith(p + '::'))
+        pat = re.compile(rb'(?<![A-Za-z0-9_])' + parent.encode() + rb'::' + name.encode() + rb'(?![A-Za-z0-9_])')
+        sib = re.compile(rb'(?<![A-Za-z0-9_:])super::' + name.encode() + rb'(?![A-Za-z0-9_])')
+        up = p.rsplit('::', 1)[0]
+        # read by another crate (the index may be stale: its tests too), or by its own crate's other code
+        there = any((pat.search(t) or (q.rsplit('::', 1)[0] == up and sib.search(t)))
+                    for q, o, gated, t in texts
+                    if q != p and not q.startswith(p + '::') and (o != n.owner or not gated))
         helper = (not n.inline and name != 'tests' and not name.endswith('_tests') and os.path.exists(n.file)
                   and not re.search(rb'#\[test\]|^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;', open(n.file, 'rb').read(), re.M))
         if here or there or helper:

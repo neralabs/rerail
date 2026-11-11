@@ -4,10 +4,13 @@
 
 use super::value::kit as value_kit;
 use super::{
-    Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, Rust, ScopeRules,
-    Sql, ValueRules, Vue, has_import_targets, is_comment_kind, is_paren_kind, parsed_by_forte,
+    Adapter, ArgumentRules, CallRules, FormatArgRules, ScopeRules, ValueRules, has_import_targets, is_comment_kind,
+    is_paren_kind, parsed_by_forte,
 };
-use crate::code_rule_dsl::language::with_adapter;
+use super::{blade::Blade, ecma::Ecma, php::Php, python::Python, rust::Rust, sql::Sql, vue::Vue};
+
+// `with_adapter!` (generated from the registry, `build_languages.rs`): every family's adapter by its module.
+include!(concat!(env!("OUT_DIR"), "/with_adapter.rs"));
 use crate::code_rule_dsl::language::{
     CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support, kind_ids,
 };

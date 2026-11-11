@@ -23,7 +23,7 @@ const TOP: i64 = 1 << 62;
 
 
 /// The flat-lattice system: seeds, and copies `(cell, source)`.
-struct System {
+pub struct System {
     seeds: Vec<i64>,
     copies: Vec<(u32, u32)>,
 }

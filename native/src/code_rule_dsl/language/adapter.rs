@@ -26,29 +26,9 @@ pub(in crate::code_rule_dsl) mod vue;
 pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
 pub(crate) use calls::{CallFeature, CallRules};
 pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
-// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(test)]
-#[cfg_attr(not(feature = "lang-json"), allow(unused_imports))]
-pub(crate) use json::Json;
-// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(test)]
-#[cfg_attr(not(feature = "lang-rr"), allow(unused_imports))]
-pub(crate) use rr::Rr;
-// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(test)]
-#[cfg_attr(not(feature = "lang-rust"), allow(unused_imports))]
-pub(crate) use rust::Rust;
 pub(crate) use scope::{ScopeFeature, ScopeRules};
-// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(test)]
-#[cfg_attr(not(feature = "lang-sql"), allow(unused_imports))]
-pub(crate) use sql::Sql;
 pub(crate) use syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
 pub(crate) use value::{ValueFeature, ValueRules};
-// Read through `with_adapter!` (tests) only, whose arm for a family left out of the build is `unreachable!`.
-#[cfg(test)]
-#[cfg_attr(not(feature = "lang-vue"), allow(unused_imports))]
-pub(crate) use vue::Vue;
 
 use super::{
     Family, GrammarDialect, PackageType, SourceType, is_declaration_file, language_not_supported,
@@ -65,17 +45,9 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
 pub(in crate::code_rule_dsl) mod python;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use python::{Python};
 pub(in crate::code_rule_dsl) mod ecma;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use ecma::{Ecma};
 pub(in crate::code_rule_dsl) mod php;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use php::{Php};
 pub(in crate::code_rule_dsl) mod blade;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use blade::{Blade};
 
 /// The adapter of a capability a family does not read (registry `refused` or `not-supported-yet`).
 pub(crate) struct Refused;
