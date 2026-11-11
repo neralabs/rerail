@@ -402,7 +402,8 @@ pub fn run_batch(
             .collect();
         let totals = if n.totals.is_empty() { Vec::new() } else { vec![u64::from(count(n.extracts.len()) != 0)] };
         let _ = groups;
-        results.push(BlockRun { outputs, positions, totals });
+        // This executor has no record pass: a program with records runs on the serial one.
+        results.push(BlockRun { outputs, positions, totals, codes: Vec::new() });
     }
     Ok(BatchRun { files: results, launches, seconds })
 }

@@ -9,9 +9,13 @@ use crate::stream::*;
 const RUN: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
+  block 0 %1 = const 0x0000000000000000
   block 0 output %0
+  block 0 output %1
   block 0 extract %0
-  block 0 mask %0
+  block 0 extract %0
+  block 0 total %1
+  block 0 records 0 1 kinds=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
   switch 0 at 0 end refuse
   switch 0 0x61-0x61 @0002
   switch 1 at 0 end @0007
@@ -26,32 +30,42 @@ const RUN: &str = "program -
   0007 ACCEPT 0
 ";
 
-/// Tier 1's run as the words read it: the starts (extract 0) and last bytes (mask 0, output 0).
-fn tier1(starts: &[u32], lasts: &[u32]) -> crate::block::BlockRun {
-    let mut words = vec![0u64; 1];
-    for &l in lasts {
-        words[l as usize / 64] |= 1 << (l % 64);
-    }
-    crate::block::BlockRun { outputs: vec![words], positions: vec![starts.to_vec()], totals: Vec::new() }
+/// Tier 1's run as the words read it: the records (`records`), the starts (extract 0) and
+/// last bytes (extract 1, the starts where none are given: one-byte tokens), each code its first
+/// byte (the programs' kinds are their bytes; no words).
+fn tier1(bytes: &[u8], starts: &[u32], lasts: &[u32]) -> crate::block::BlockRun {
+    let lasts = if lasts.is_empty() { starts } else { lasts };
+    let n = starts.len().min(lasts.len());
+    let codes = starts[..n].iter().map(|&s| u32::from(bytes.get(s as usize).copied().unwrap_or(0))).collect();
+    crate::block::BlockRun { outputs: vec![vec![0], vec![0]], positions: vec![starts.to_vec(), lasts.to_vec()], totals: vec![0], codes }
 }
 
 #[test]
 fn a_tier2_program_writes_its_nodes() {
     let p = crate::rir_asm::assemble(RUN).unwrap_or_else(|e| panic!("{e}"));
-    let nodes = run(&p, b"aa a ", &tier1(&[0, 1, 3], &[])).expect("parses");
+    let nodes = run(&p, b"aa a ", &tier1(b"aa a ", &[0, 1, 3], &[])).expect("parses");
     let spans: Vec<(u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.start, n.end, n.size)).collect();
     assert_eq!(spans, [(1, 0, 5, 4), (2, 0, 1, 1), (2, 1, 2, 1), (2, 3, 4, 1)]);
     // A byte no state takes, a token past the file, an empty stream: refused.
-    assert!(run(&p, b"ab", &tier1(&[0, 1], &[])).is_err());
-    assert!(run(&p, b"a", &tier1(&[0, 1], &[])).is_err());
-    assert!(run(&p, b"", &tier1(&[], &[])).is_err());
-    // The last bytes are the mask a `SPAN m=1` names; this program names none, so it reads
-    // none. One that does takes a last byte per token, the next bit after the last one taken,
-    // and refuses one left unread.
+    assert!(run(&p, b"ab", &tier1(b"ab", &[0, 1], &[])).is_err());
+    assert!(run(&p, b"a", &tier1(b"a", &[0, 1], &[])).is_err());
+    assert!(run(&p, b"", &tier1(b"", &[], &[])).is_err());
+    // A token's end is its record's (`SPAN m=1`); a length (`SPAN 1`) must be the record's.
     let lasts = crate::rir_asm::assemble(&RUN.replace("  0003 SPAN 1\n", "  0003 SPAN m=1 0\n")).unwrap_or_else(|e| panic!("{e}"));
-    assert!(run(&lasts, b"aa", &tier1(&[0, 1], &[0, 1])).is_ok());
-    assert!(run(&lasts, b"aa", &tier1(&[0, 1], &[0, 1, 2])).is_err());
-    assert!(run(&lasts, b"aa", &tier1(&[0, 1], &[0])).is_err());
+    assert!(run(&lasts, b"aa", &tier1(b"aa", &[0, 1], &[0, 1])).is_ok());
+    assert!(run(&p, b"aa", &tier1(b"aa", &[0, 1], &[0, 1])).is_ok());
+    assert!(run(&p, b"aa a", &tier1(b"aa a", &[0, 3], &[1, 3])).is_err(), "a length not the record's");
+    // The record pass refuses streams that disagree: as many lasts as starts, each last in its
+    // token, each token after the one before.
+    let block = &p.block_programs[0];
+    let table = crate::records::WordTable::new(&[]).expect("no words");
+    let r = block.records.as_ref().expect("records");
+    let bad = |s: &[u32], l: &[u32]| crate::records::pass(r, &table, b"aaaa", s, l).1;
+    assert!(!bad(&[0, 1], &[0, 1]));
+    assert!(bad(&[0, 1], &[0, 1, 2]));
+    assert!(bad(&[0, 1], &[0]));
+    assert!(bad(&[1, 2], &[0, 2]), "a last before its token");
+    assert!(bad(&[0, 1], &[1, 2]), "a token inside the one before");
 }
 
 /// The verifier refuses a loop that does not pass a `TOKEN`: here the second switch jumps to
@@ -84,9 +98,13 @@ fn a_tier2_program_holds_only_its_words() {
 const WRAPPED: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
+  block 0 %1 = const 0x0000000000000000
   block 0 output %0
+  block 0 output %1
   block 0 extract %0
-  block 0 mask %0
+  block 0 extract %0
+  block 0 total %1
+  block 0 records 0 1 kinds=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
   switch 0 at 0 end refuse
   switch 0 0x61-0x61 @0002
   switch 1 at 0 end refuse
@@ -114,7 +132,7 @@ const WRAPPED: &str = "program -
 #[test]
 fn a_wrap_goes_before_the_node_it_wraps() {
     let p = crate::rir_asm::assemble(WRAPPED).unwrap_or_else(|e| panic!("{e}"));
-    let t1 = tier1(&[0, 1], &[]);
+    let t1 = tier1(b"a(", &[0, 1], &[]);
     let nodes = run(&p, b"a(", &t1).expect("parses");
     let got: Vec<(u16, u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.field, n.start, n.end, n.size)).collect();
     // The root; the wrap, from the leaf's start; the leaf, now kind 4 with field 5; the `(`.
@@ -134,9 +152,13 @@ fn a_wrap_goes_before_the_node_it_wraps() {
 const RELABELLED: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
+  block 0 %1 = const 0x0000000000000000
   block 0 output %0
+  block 0 output %1
   block 0 extract %0
-  block 0 mask %0
+  block 0 extract %0
+  block 0 total %1
+  block 0 records 0 1 kinds=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
   switch 0 at 0 end refuse
   switch 0 0x61-0x61 @0002
   switch 1 at 0 end refuse
@@ -163,7 +185,7 @@ const RELABELLED: &str = "program -
 #[test]
 fn a_relabel_acts_on_the_node_made_last() {
     let p = crate::rir_asm::assemble(RELABELLED).unwrap_or_else(|e| panic!("{e}"));
-    let t1 = tier1(&[0, 1], &[]);
+    let t1 = tier1(b"a(", &[0, 1], &[]);
     let nodes = run(&p, b"a(", &t1).expect("parses");
     let got: Vec<(u16, u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.field, n.start, n.end, n.size)).collect();
     // The root; the leaf, now kind 4 with field 5; the `(`.
@@ -183,9 +205,13 @@ fn a_relabel_acts_on_the_node_made_last() {
 const FOLDED: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
+  block 0 %1 = const 0x0000000000000000
   block 0 output %0
+  block 0 output %1
   block 0 extract %0
-  block 0 mask %0
+  block 0 extract %0
+  block 0 total %1
+  block 0 records 0 1 kinds=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
   switch 0 at 0 end refuse
   switch 0 0x61-0x61 @0002
   switch 1 at 0 end refuse
@@ -218,7 +244,7 @@ const FOLDED: &str = "program -
 #[test]
 fn a_fold_makes_the_open_nodes_two_leaves_one() {
     let p = crate::rir_asm::assemble(FOLDED).unwrap_or_else(|e| panic!("{e}"));
-    let t1 = tier1(&[0, 1, 2], &[]);
+    let t1 = tier1(b"ab(", &[0, 1, 2], &[]);
     let nodes = run(&p, b"ab(", &t1).expect("parses");
     let got: Vec<(u16, u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.field, n.start, n.end, n.size)).collect();
     // The root; `ab`, one leaf of kind 4; the `(`.
@@ -249,9 +275,13 @@ fn a_fold_makes_the_open_nodes_two_leaves_one() {
 const RELABELLED_INNER: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
+  block 0 %1 = const 0x0000000000000000
   block 0 output %0
+  block 0 output %1
   block 0 extract %0
-  block 0 mask %0
+  block 0 extract %0
+  block 0 total %1
+  block 0 records 0 1 kinds=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
   switch 0 at 0 end refuse
   switch 0 0x61-0x61 @0002
   switch 1 at 0 end refuse
@@ -287,7 +317,7 @@ const RELABELLED_INNER: &str = "program -
 #[test]
 fn an_inner_relabel_acts_on_the_node_a_wrap_holds_first() {
     let p = crate::rir_asm::assemble(RELABELLED_INNER).unwrap_or_else(|e| panic!("{e}"));
-    let t1 = tier1(&[0, 1, 2], &[]);
+    let t1 = tier1(b"a(b", &[0, 1, 2], &[]);
     let nodes = run(&p, b"a(b", &t1).expect("parses");
     let got: Vec<(u16, u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.field, n.start, n.end, n.size)).collect();
     // The root; the wrap, now kind 8; `a`, field 7 (was 5); the `(`; the `b`.
@@ -308,9 +338,13 @@ fn an_inner_relabel_acts_on_the_node_a_wrap_holds_first() {
 const CHAINED: &str = "program -
   mode set=0 query=0
   block 0 %0 = eq 0x61
+  block 0 %1 = const 0x0000000000000000
   block 0 output %0
+  block 0 output %1
   block 0 extract %0
-  block 0 mask %0
+  block 0 extract %0
+  block 0 total %1
+  block 0 records 0 1 kinds=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
   switch 0 at 0 end refuse
   switch 0 0x61-0x61 @0002
   switch 1 at 0 end @0016
@@ -341,7 +375,7 @@ const CHAINED: &str = "program -
 #[test]
 fn returns_chain_but_a_call_is_never_popped_at_once() {
     let p = crate::rir_asm::assemble(CHAINED).unwrap_or_else(|e| panic!("{e}"));
-    let t1 = tier1(&[0, 2, 4], &[]);
+    let t1 = tier1(b"a a a", &[0, 2, 4], &[]);
     let nodes = run(&p, b"a a a", &t1).expect("parses");
     let got: Vec<(u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.start, n.end, n.size)).collect();
     assert_eq!(got, [(1, 0, 5, 4), (2, 0, 1, 1), (2, 2, 3, 1), (2, 4, 5, 1)]);

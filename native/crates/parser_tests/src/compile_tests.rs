@@ -377,35 +377,15 @@ const JSON_CASES: [&[u8]; 12] = [
 ];
 
 /// Tier 1's stream, on every executor, is the evaluator's tokens (decision 0087): the starts
-/// extract is every token's first byte; the lasts extract is the last byte of each token whose
-/// end tier 2 reads from it (a row whose tokens are not one byte and not all keywords).
+/// extract is every token's first byte; the lasts extract every token's last byte, zipped with
+/// it (`records`).
 #[test]
 fn json_stream_equals_the_evaluator_on_every_executor() {
-    use ::bitlex::syntax::Stmt;
     let (p, compiled) = json_compiled();
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     let prepared = Executors::new(&p);
     let label = |name: &str| usize::from(compiled.labels.iter().find(|l| l.0 == name).unwrap_or_else(|| panic!("no {name}")).1);
     let (starts, lasts) = (label(bitlex_compile::STREAM_START), label(bitlex_compile::STREAM_LAST));
-    // The kinds whose tokens' last bytes are in the stream: rows with a last byte of their own,
-    // and their keywords. A row of keywords only is one too: its token runs to its own last byte,
-    // which tier 2 compares with the word (`truee` is not `true`).
-    let mut late: Vec<String> = Vec::new();
-    for s in &stmts {
-        if let Stmt::Token { kind, last, through, .. } = s
-            && (last.is_some() || through.is_some())
-        {
-            late.push(kind.clone());
-            if let Some(words) = stmts.iter().find_map(|k| match k {
-                Stmt::Keywords { kind: k, words, .. } if k == kind => Some(words),
-                _ => None,
-            }) {
-                late.extend(words.iter().map(|(w, alias)| alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned())));
-            }
-            late.dedup();
-        }
-    }
-    assert_eq!(late, ["string_content", "escape_sequence", "number", "true", "false", "null"]);
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
@@ -420,9 +400,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
         let mut want_lasts = vec![0u64; n.div_ceil(64)];
         for t in &out.tokens {
             want_starts[t.start / 64] |= 1 << (t.start % 64);
-            if late.contains(&t.kind) {
-                want_lasts[(t.end - 1) / 64] |= 1 << ((t.end - 1) % 64);
-            }
+            want_lasts[(t.end - 1) / 64] |= 1 << ((t.end - 1) % 64);
         }
         let (runs, over) = prepared.run(&bytes, true);
         assert!(over.is_empty(), "over the launch budget: {over:?}");
@@ -732,8 +710,10 @@ fn json_state_is_bits() {
 /// JSON's state budget (a ratchet): 104 bits in one tier; 4 in two (decision 0071); 5 since a
 /// keyword-only row's tokens end at their own last bytes (an escape's last byte, one byte after
 /// its backslash, is carried into the next block's last-bytes stream); 15 since the number check
-/// is tier 1's masks (doc 18 §4): a bit per state it looks back on and per run it fills.
-const JSON_STATE_BITS: usize = 15;
+/// is tier 1's masks (doc 18 §4): a bit per state it looks back on and per run it fills; 17
+/// since every token's last byte is an extract, zipped with the starts (the records, decision
+/// 0087's stream as a lexer's tokens): the one-byte tokens' too.
+const JSON_STATE_BITS: usize = 17;
 
 /// JSON's budgets (ratchets: lower them as the compiler improves). 37 operations rose to 40 when
 /// tier 1 began to hand tier 2 its stream (decision 0087): the starts' four ORs, as simdjson's
@@ -744,9 +724,11 @@ const JSON_STATE_BITS: usize = 15;
 /// length the compiler can prove would drop them. 85 and 15 when the number check moved from a
 /// program of its own, run per number in tier 2, into tier 1's masks (`JSON_NUMBER_CHECK_OPS`).
 /// 86 and 16 when the check's span fills from the starts it takes (`start & taken`), one `and`
-/// and its field: the exemption of other rows' starts went with it.
-const JSON_OPS: usize = 86;
-const JSON_CARRIED_WORDS: usize = 16;
+/// and its field: the exemption of other rows' starts went with it. 88 and 18 when every
+/// token's last byte joined the stream, an extract zipped with the starts (the records): one OR
+/// of the one-byte rows' last bytes, and the second extract's carries.
+const JSON_OPS: usize = 88;
+const JSON_CARRIED_WORDS: usize = 18;
 
 #[test]
 #[ignore = "a dump; run by name"]
@@ -784,8 +766,10 @@ fn json_loop_keeps_values_in_registers() {
 /// itself, the sinks after the ASCII branch's merge. Measured over the whole body (both
 /// bodies of the ASCII branch, the flattenings once), the code before the gated regions'
 /// calls has 564 instructions and 4 stack loads or stores; with the delayed outputs not held
-/// and the regions called where it is free, 566 and 4.
-const JSON_LOOP: usize = 566;
+/// and the regions called where it is free, 566 and 4. 690 with the records: every token's last
+/// byte an extract of its own, flattened as the starts are (simdjson writes one index; a record
+/// with no end for a one-byte token would save it).
+const JSON_LOOP: usize = 690;
 const JSON_LOOP_STACK: usize = 4;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
@@ -1185,17 +1169,12 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns, no
-    // reorder). Its loop heads are the stream's and `ACCEPT`'s check of the mask (once a
-    // file). The table's final pass (parents and extras)
-    // is a function of its own, called once, and so is `SPAN m=1`'s search of the last-byte
-    // mask, called at each such span lowered (one copy of a shared arm's): their loops are not
-    // the token loop's.
+    // reorder). Its loop heads are the stream's. The table's final pass (parents and extras) is
+    // a function of its own, called once: its loop is not the token loop's. A token's end is its
+    // record's (`records`): no search.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    let pushes: Vec<u16> = native.structural.iter().filter_map(|w| if let native_ir::StructuralOperation::Push { target } = w.operation { Some(target) } else { None }).collect();
-    let shared = native_cpu_stream::shared_runs(&native, &pushes);
-    let spans = native.structural.iter().enumerate().filter(|(pc, w)| !shared.skipped[*pc] && shared.at.get(pc).is_none_or(|&(b, _)| shared.bodies[b].start == *pc) && matches!(w.operation, native_ir::StructuralOperation::Span { last: true, .. })).count();
-    assert_eq!(tier2.own_calls, 1 + spans, "the final pass's call and the spans' searches alone");
+    assert_eq!(tier2.own_calls, 1, "the final pass's call alone");
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);

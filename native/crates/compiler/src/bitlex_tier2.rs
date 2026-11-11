@@ -89,6 +89,10 @@ enum Pre {
 /// Tier 2 as words: their `rir` text (strings, switches, words).
 pub struct Lowered {
     pub text: String,
+    /// The switches and strings, as in `text`: tier 1's records are made from them (a byte's
+    /// kind, the words).
+    pub switches: Vec<ByteSwitch>,
+    pub strings: Vec<Vec<u8>>,
     /// The rows `ROW` tests, in order: those that need a start mask.
     pub tested: Vec<usize>,
 }
@@ -628,8 +632,8 @@ impl Emit<'_> {
 }
 
 /// Tier 2's words from the state machine and the token rows.
-/// Tier 1's streams the words read: the extract of every token's first byte (`TOKEN`), and the
-/// mask of the last byte of each token whose arm reads it (`SPAN m=1`).
+/// Tier 1's records the words read: the extract of every token's first byte (`TOKEN`); `SPAN
+/// m=1` takes the record's end (operand 0).
 pub const STARTS: u16 = 0;
 pub const LASTS: u16 = 0;
 
@@ -722,7 +726,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         };
         text.push('\n');
     }
-    Ok(Lowered { text, tested: e.tested.into_iter().collect() })
+    Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect() })
 }
 
 /// A word's operand without its target, for the first partition (`merge_words`).

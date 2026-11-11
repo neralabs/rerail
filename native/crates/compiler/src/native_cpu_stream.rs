@@ -36,9 +36,10 @@ pub struct Ctx {
     /// The extract `TOKEN` names, and its count; two readable slots past the count.
     starts: *const u32,
     nstarts: u64,
-    /// The mask `SPAN m=1` names: its first word, and its number of words (one a 64 bytes).
-    lasts: *const u64,
-    nlasts: u64,
+    /// The records' other columns (`records`): each token's last byte and its code, zipped
+    /// with `starts`.
+    lasts: *const u32,
+    codes: *const u32,
     totals: *const u64,
     kind: *mut u32,
     field: *mut u32,
@@ -51,7 +52,7 @@ pub struct Ctx {
     returns: *mut u32,
     /// Written at `ACCEPT`: the node count, the supertype count.
     counts: *mut u64,
-    /// The bytes from one of the mask's words to the next.
+    /// The bytes from one of a mask's words to the next.
     lasts_stride: u64,
     /// Every output's word 0, interleaved as `lasts` is (output `o`'s word `w` at
     /// `o + w * stride` words): the masks `MARK` reads.
@@ -106,7 +107,7 @@ const LEN: i32 = 8;
 const STARTS: i32 = 16;
 const NSTARTS: i32 = 24;
 const LASTS: i32 = 32;
-const NLASTS: i32 = 40;
+const CODES: i32 = 40;
 const TOTALS: i32 = 48;
 const KIND: i32 = 56;
 const FIELD: i32 = 64;
@@ -455,86 +456,11 @@ fn dispatch_weighted(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, u32, B
     dispatch_weighted(f, x, &runs[mid..]);
 }
 
-/// A mask tier 1 wrote (`block::BlockProgram::masks`): its first word, the bytes from one word
-/// to the next, and its number of words.
-#[derive(Clone, Copy)]
-struct Mask {
-    first: Value,
-    stride: Value,
-    words: Value,
-}
-
 /// Word `w` of a mask (`w` below its count).
 fn mask_word(f: &mut FunctionBuilder<'_>, first: Value, stride: Value, w: Value) -> Value {
     let off = f.ins().imul(w, stride);
     let at = f.ins().iadd(first, off);
     f.ins().load(types::I64, MemFlags::trusted().with_readonly(), at, 0)
-}
-
-/// The first set bit of `m` from `bits`, word `w`'s bits not yet passed, on: a loop of a word
-/// (64 bytes) a turn, its head given second. With `want`, a bit is found (the builder is left in
-/// a block with parameters the bit's word and its bits) and the mask's end refuses at `pc`;
-/// without, a bit refuses and the builder is left after the mask's end.
-fn mask_scan(f: &mut FunctionBuilder<'_>, m: Mask, w: Value, bits: Value, refuse: Block, pc: usize, want: bool) -> (Block, Block) {
-    let (scan, next, found, end) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
-    for b in [scan, found] {
-        f.append_block_param(b, types::I64);
-        f.append_block_param(b, types::I64);
-    }
-    let at = f.ins().iconst(types::I64, pc as i64 + 1);
-    f.ins().jump(scan, &[w.into(), bits.into()]);
-    f.switch_to_block(scan);
-    let (w, bits) = (f.block_params(scan)[0], f.block_params(scan)[1]);
-    let none = f.ins().icmp_imm(IntCC::Equal, bits, 0);
-    f.ins().brif(none, next, &[], found, &[w.into(), bits.into()]);
-    f.switch_to_block(next);
-    let w1 = f.ins().iadd_imm(w, 1);
-    let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, w1, m.words);
-    let more = f.create_block();
-    f.ins().brif(past, end, &[], more, &[]);
-    f.switch_to_block(more);
-    let word = mask_word(f, m.first, m.stride, w1);
-    f.ins().jump(scan, &[w1.into(), word.into()]);
-    if want {
-        f.switch_to_block(end);
-        f.ins().jump(refuse, &[at.into()]);
-        f.switch_to_block(found);
-        (found, scan)
-    } else {
-        f.switch_to_block(found);
-        f.ins().jump(refuse, &[at.into()]);
-        f.switch_to_block(end);
-        (end, scan)
-    }
-}
-
-/// `SPAN m=1`'s search, a function of its own (`outline`): the next of the last-byte mask's
-/// bits after the last one taken, the bits of word `lw` not yet taken (`taken`), then a word
-/// (64 bytes) a turn. Parameters: the mask (its first word, stride, word count), `lw`, `taken`,
-/// the token's start and limit. Returns the token's end (the bit's byte, plus one), the bit's
-/// word and its bits left, and 1 when it refuses: no bit is left, or the bit is before the
-/// token's start or its end past its limit.
-fn span_last(f: &mut FunctionBuilder<'_>, p: &[Value], heads: &mut Vec<(Block, Step)>) {
-    let (first, stride, words, w, bits, start, limit) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
-    let refuse = f.create_block();
-    f.append_block_param(refuse, types::I64);
-    let (found, scan) = mask_scan(f, Mask { first, stride, words }, w, bits, refuse, 0, true);
-    heads.push((scan, Step::Block));
-    let (w, bits) = (f.block_params(found)[0], f.block_params(found)[1]);
-    let tz = f.ins().ctz(bits);
-    let at = f.ins().ishl_imm(w, 6);
-    let l = f.ins().iadd(at, tz);
-    let less = f.ins().iadd_imm(bits, -1);
-    let rest = f.ins().band(bits, less);
-    let before = f.ins().icmp(IntCC::UnsignedLessThan, l, start);
-    let e = f.ins().iadd_imm(l, 1);
-    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
-    let bad = f.ins().bor(before, past);
-    let bad = f.ins().uextend(types::I64, bad);
-    f.ins().return_(&[e, w, rest, bad]);
-    f.switch_to_block(refuse);
-    let one = f.ins().iconst(types::I64, 1);
-    f.ins().return_(&[start, p[3], p[4], one]);
 }
 
 /// A switch's runs: each maximal range of bytes with one target, as (first byte, block).
@@ -1065,7 +991,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let named = |op: fn(&Op) -> Option<u16>| words.iter().find_map(|b| op(&b.operation)).map(usize::from);
     let starts = named(|o| if let Op::Token { extract } = *o { Some(extract) } else { None });
     // The mask `SPAN m=1` names, as its output's index.
-    let lasts = named(|o| if let Op::Span { last: true, len } = *o { Some(len) } else { None }).and_then(|m| native.block_programs.first().and_then(|b| b.masks.get(m).copied()));
+    // The records' last bytes, an extract (`records`).
+    let lasts = starts.and(native.block_programs.first().and_then(|b| b.records.as_ref())).map(|r| usize::from(r.lasts));
+    // Each kind's least byte (`records`): a switch on the first byte is a jump table on the kind.
+    let kind_reps: Option<Vec<u8>> = starts.and(native.block_programs.first().and_then(|b| b.records.as_ref())).map(|r| {
+        let n = r.kinds.iter().copied().max().map_or(0, |m| usize::from(m) + 1);
+        (0..n).map(|k| r.kinds.iter().position(|&x| usize::from(x) == k).unwrap_or(0) as u8).collect()
+    });
 
     let clustered = cut.count > 1;
     // In clusters, the state's address is in the pinned register (x21 on aarch64): never
@@ -1127,7 +1059,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     // The node table's passes, outlined (`outline`): made where first called, by any cluster.
     let mut reorder_fn = None;
     let mut table_fn: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = None;
-    let mut span_fn = None;
     let mut lowered: Vec<Lowered> = Vec::new();
     let mut word_insts: Vec<u32> = vec![0; words.len()];
     let phase = std::time::Instant::now();
@@ -1241,7 +1172,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let starts_p = load(&mut f, STARTS);
         let nstarts = load(&mut f, NSTARTS);
         let lasts_p = load(&mut f, LASTS);
-        let nlasts = load(&mut f, NLASTS);
+        let codes_p = load(&mut f, CODES);
         let lasts_stride = load(&mut f, LASTS_STRIDE);
         let totals_p = load(&mut f, TOTALS);
         let (output_stride, totals_stride, totals_mask) = (load(&mut f, OUTPUT_STRIDE), load(&mut f, TOTALS_STRIDE), load(&mut f, TOTALS_MASK));
@@ -1420,11 +1351,11 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             }
             // `Cut::reload`: the `ctx` fields this word reads, loaded here, so none lives past
             // its word (its registers are the word's and the state's).
-            let (bytes, len, starts_p, nstarts, lasts_p, nlasts, lasts_stride, totals_p, output_stride, totals_stride, totals_mask, rooms, outputs_p) =
-                (bytes, len, starts_p, nstarts, lasts_p, nlasts, lasts_stride, totals_p, output_stride, totals_stride, totals_mask, rooms, outputs_p);
+            let (bytes, len, starts_p, nstarts, lasts_p, codes_p, lasts_stride, totals_p, output_stride, totals_stride, totals_mask, rooms, outputs_p) =
+                (bytes, len, starts_p, nstarts, lasts_p, codes_p, lasts_stride, totals_p, output_stride, totals_stride, totals_mask, rooms, outputs_p);
             let (kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c) = (kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c);
             let wcols_here: Vec<Value>;
-            let (bytes, len, starts_p, nstarts, lasts_p, nlasts, lasts_stride, totals_p, output_stride, totals_stride, totals_mask, rooms, outputs_p, kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c, wc) = {
+            let (bytes, len, starts_p, nstarts, lasts_p, codes_p, lasts_stride, totals_p, output_stride, totals_stride, totals_mask, rooms, outputs_p, kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c, wc) = {
                 let reads = ctx_reads(&w.operation, wrapping);
                 let all = reads.is_empty() && cut.reload && cold_op(&w.operation);
                 let get = |f: &mut FunctionBuilder<'_>, at: i32, old: Value| -> Value {
@@ -1438,7 +1369,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     }
                 };
                 let v = (
-                    get(&mut f, BYTES, bytes), get(&mut f, LEN, len), get(&mut f, STARTS, starts_p), get(&mut f, NSTARTS, nstarts), get(&mut f, LASTS, lasts_p), get(&mut f, NLASTS, nlasts),
+                    get(&mut f, BYTES, bytes), get(&mut f, LEN, len), get(&mut f, STARTS, starts_p), get(&mut f, NSTARTS, nstarts), get(&mut f, LASTS, lasts_p), get(&mut f, CODES, codes_p),
                     get(&mut f, LASTS_STRIDE, lasts_stride), get(&mut f, TOTALS, totals_p), get(&mut f, OUTPUT_STRIDE, output_stride), get(&mut f, TOTALS_STRIDE, totals_stride), get(&mut f, TOTALS_MASK, totals_mask),
                     [get(&mut f, ROOM_NODES, rooms[0]), get(&mut f, ROOM_SUPERS, rooms[1]), get(&mut f, ROOM_PUSHES, rooms[2])], get(&mut f, OUTPUTS, outputs_p),
                     get(&mut f, KIND, kind_c), get(&mut f, FIELD, field_c), get(&mut f, START, start_c), get(&mut f, END, end_c), get(&mut f, SIZE, size_c), get(&mut f, SUPER_NODE, snode_c), get(&mut f, SUPER_KIND, skind_c),
@@ -1489,34 +1420,31 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     guard(&mut f, at_end, pc);
                     let (next, end) = (mget(&mut f, Mem::Next), mget(&mut f, Mem::End));
                     mset(&mut f, Mem::LastEnd, end);
+                    // The token's record (`records`): its first byte, last byte and code, from
+                    // three columns. Two slots past the count are readable: they are loaded
+                    // whether or not the stream has them, and chosen with `select`. The record
+                    // pass checked the columns (the totals' flag).
                     let is_end = f.ins().icmp(IntCC::Equal, next, nstarts);
-                    // Two slots past the count are readable: `s` and the next start are loaded
-                    // whether or not the stream has them, and chosen with `select`.
-                    let s = {
-                        let at = slot(&mut f, starts_p, next);
+                    let load_at = |f: &mut FunctionBuilder<'_>, c: Value| {
+                        let at = slot(f, c, next);
                         f.ins().uload32(flags, at, 0)
                     };
-                    let inside = f.ins().icmp(IntCC::UnsignedLessThan, s, end);
+                    let (s, l, c) = (load_at(&mut f, starts_p), load_at(&mut f, lasts_p), load_at(&mut f, codes_p));
                     let not_end = f.ins().bxor_imm(is_end, 1);
-                    let bad = f.ins().band(inside, not_end);
-                    guard(&mut f, bad, pc);
-                    let (start, end, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::End), mget(&mut f, Mem::Limit));
+                    let (start, end, rec_end, code) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::End), mget(&mut f, Mem::Limit), mget(&mut f, Mem::Taken));
                     let start = f.ins().select(is_end, start, s);
                     let end = f.ins().select(is_end, end, s);
+                    let l1 = f.ins().iadd_imm(l, 1);
+                    let rec_end = f.ins().select(is_end, rec_end, l1);
+                    let code = f.ins().select(is_end, code, c);
                     let step = f.ins().uextend(types::I64, not_end);
                     let after = f.ins().iadd(next, step);
-                    let following = {
-                        let at = slot(&mut f, starts_p, after);
-                        f.ins().uload32(flags, at, 0)
-                    };
-                    let has = f.ins().icmp(IntCC::UnsignedLessThan, after, nstarts);
-                    let fresh = f.ins().select(has, following, len);
-                    let limit = f.ins().select(is_end, limit, fresh);
                     let at_end = f.ins().uextend(types::I64, is_end);
                     mset(&mut f, Mem::Start, start);
                     mset(&mut f, Mem::End, end);
                     mset(&mut f, Mem::Next, after);
-                    mset(&mut f, Mem::Limit, limit);
+                    mset(&mut f, Mem::Limit, rec_end);
+                    mset(&mut f, Mem::Taken, code);
                     mset(&mut f, Mem::AtEnd, at_end);
                     f.ins().jump(fall, &[]);
                 }
@@ -1533,12 +1461,27 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         f.ins().jump(word(s.end), &[]);
                     }
                     f.switch_to_block(taking);
-                    let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
-                    let at = f.ins().iadd_imm(start, i64::from(s.offset));
-                    let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, limit);
-                    guard(&mut f, past, pc);
-                    let addr = f.ins().iadd(bytes, at);
-                    let b = f.ins().uload8(types::I64, flags, addr, 0);
+                    // On the first byte, with records: the record's kind (`records`), the
+                    // switch's targets by kind (its least byte's), a compare tree as on bytes.
+                    let by_kind = kind_reps.as_ref().filter(|_| s.offset == 0).map(|reps| {
+                        let mut t = vec![REFUSE; 256];
+                        for (k, &b) in reps.iter().enumerate() {
+                            t[k] = s.targets[usize::from(b)];
+                        }
+                        ByteSwitch { targets: t, ..s.clone() }
+                    });
+                    let s = by_kind.as_ref().unwrap_or(s);
+                    let b = if by_kind.is_some() {
+                        let code = mget(&mut f, Mem::Taken);
+                        f.ins().band_imm(code, 0xff)
+                    } else {
+                        let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
+                        let at = f.ins().iadd_imm(start, i64::from(s.offset));
+                        let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, limit);
+                        guard(&mut f, past, pc);
+                        let addr = f.ins().iadd(bytes, at);
+                        f.ins().uload8(types::I64, flags, addr, 0)
+                    };
                     // A refusing target refuses at this word.
                     let no = f.create_block();
                     match cut.pick {
@@ -1584,10 +1527,11 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.ins().jump(refuse, &[BlockArg::from(at)]);
                 }
                 Op::Span { last: false, len: n } => {
+                    // A length, which must be the record's.
                     let start = mget(&mut f, Mem::Start);
                     let e = f.ins().iadd_imm(start, i64::from(n));
-                    let limit = mget(&mut f, Mem::Limit);
-                    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
+                    let rec_end = mget(&mut f, Mem::Limit);
+                    let past = f.ins().icmp(IntCC::NotEqual, e, rec_end);
                     guard(&mut f, past, pc);
                     mset(&mut f, Mem::End, e);
                     let one = f.ins().iconst(types::I64, 1);
@@ -1595,73 +1539,18 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.ins().jump(fall, &[]);
                 }
                 Op::Span { last: true, .. } => {
-                    // Found once per token: a token spanned already (its end past its start: a
-                    // level that ended at it left it to its caller) keeps its end.
-                    let (start, end) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::End));
-                    let known = f.ins().icmp(IntCC::UnsignedGreaterThan, end, start);
-                    let find = f.create_block();
-                    f.ins().brif(known, fall, &[], find, &[]);
-                    f.switch_to_block(find);
-                    // The next of the mask's bits after the last one taken: the bits of word
-                    // `lw` not yet taken (`taken`), then a word (64 bytes) at a time.
-                    let (w, bits, start, limit) = (mget(&mut f, Mem::Lw), mget(&mut f, Mem::Taken), mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
-                    if cut.inline_span {
-                        // `Cut::inline_span`: a bit left in word `lw` is the token's end, found
-                        // here (straight-line); only a search past it calls the helper.
-                        let here = f.create_block();
-                        let search = f.create_block();
-                        f.ins().brif(bits, here, &[], search, &[]);
-                        f.switch_to_block(here);
-                        let tz = f.ins().ctz(bits);
-                        let at = f.ins().ishl_imm(w, 6);
-                        let l = f.ins().iadd(at, tz);
-                        let less = f.ins().iadd_imm(bits, -1);
-                        let rest = f.ins().band(bits, less);
-                        let before = f.ins().icmp(IntCC::UnsignedLessThan, l, start);
-                        let e = f.ins().iadd_imm(l, 1);
-                        let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
-                        let bad = f.ins().bor(before, past);
-                        let bad = f.ins().uextend(types::I64, bad);
-                        mset(&mut f, Mem::End, e);
-                        mset(&mut f, Mem::Taken, rest);
-                        guard(&mut f, bad, pc);
-                        let one = f.ins().iconst(types::I64, 1);
-                        mset(&mut f, Mem::Need, one);
-                        f.ins().jump(fall, &[]);
-                        f.set_cold_block(search);
-                        f.switch_to_block(search);
-                    }
-                    if span_fn.is_none() {
-                        span_fn = Some(outline(&mut module, "tempo_stream_last", 7, 4, |f, p, heads| span_last(f, p, heads))?);
-                    }
-                    let (id, sig, _) = span_fn.as_ref().expect("made");
-                    let r = call_own(&mut f, *id, sig, &[lasts_p, lasts_stride, nlasts, w, bits, start, limit]);
-                    mset(&mut f, Mem::End, r[0]);
-                    mset(&mut f, Mem::Lw, r[1]);
-                    mset(&mut f, Mem::Taken, r[2]);
-                    guard(&mut f, r[3], pc);
+                    // The record's end.
+                    let rec_end = mget(&mut f, Mem::Limit);
+                    mset(&mut f, Mem::End, rec_end);
                     let one = f.ins().iconst(types::I64, 1);
                     mset(&mut f, Mem::Need, one);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Word { string, test } => {
-                    // The token's bytes against the string: its length, then an 8-byte load per
-                    // 8 bytes of the string (64 readable bytes past the file, the token starting
-                    // inside it), the last masked to its length. Straight-line: no loop.
-                    let text = &native.strings[usize::from(string)];
-                    let (start, end) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::End));
-                    let n = f.ins().isub(end, start);
-                    let mut same = f.ins().icmp_imm(IntCC::Equal, n, text.len() as i64);
-                    let addr = f.ins().iadd(bytes, start);
-                    for (i, chunk) in text.chunks(8).enumerate() {
-                        let got = f.ins().load(types::I64, flags, addr, 8 * i as i32);
-                        let mask = if chunk.len() == 8 { u64::MAX } else { (1u64 << (8 * chunk.len())) - 1 };
-                        let got = f.ins().band_imm(got, mask as i64);
-                        let mut want = [0u8; 8];
-                        want[..chunk.len()].copy_from_slice(chunk);
-                        let eq = f.ins().icmp_imm(IntCC::Equal, got, u64::from_le_bytes(want) as i64);
-                        same = f.ins().band(same, eq);
-                    }
+                    // The record's word: its code names the string (`records`), one compare.
+                    let code = mget(&mut f, Mem::Taken);
+                    let w = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
+                    let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(string) + 1);
                     if test {
                         let skip = goto(pc + 2);
                         f.ins().brif(same, fall, &[], skip, &[]);
@@ -2247,10 +2136,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     }
                 }
                 Op::Accept => {
-                    // No bit of the mask is left after the last one taken.
-                    let (w, bits) = (mget(&mut f, Mem::Lw), mget(&mut f, Mem::Taken));
-                    let (_, scan) = mask_scan(&mut f, Mask { first: lasts_p, stride: lasts_stride, words: nlasts }, w, bits, refuse, pc, false);
-                    heads.push((scan, Step::Block));
                     let (at_end, open, ret) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Open), mget(&mut f, Mem::Ret));
                     let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
                     let not_one = f.ins().icmp_imm(IntCC::NotEqual, open, 1);
@@ -2438,7 +2323,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     if times {
         eprintln!("tier 2: lowered {:.2?}", phase.elapsed());
     }
-    let own: Vec<_> = reorder_fn.into_iter().chain(table_fn).chain(span_fn).collect();
+    let own: Vec<_> = reorder_fn.into_iter().chain(table_fn).collect();
     let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
     let crossings: usize = lowered.iter().map(|l| l.tails).sum();
     if clustered {
@@ -2562,9 +2447,8 @@ fn check_across(lowered: &[Lowered]) -> Result<(), Error> {
 /// many and are cold (`cold_op`: they load every field).
 fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
     let mut r: Vec<i32> = match op {
-        Op::Token { .. } => vec![STARTS, NSTARTS, LEN, ROOM_NODES, ROOM_SUPERS, ROOM_PUSHES],
-        Op::Switch { .. } | Op::Word { .. } => vec![BYTES],
-        Op::Span { last: true, .. } => vec![LASTS, LASTS_STRIDE, NLASTS],
+        Op::Token { .. } => vec![STARTS, NSTARTS, LASTS, CODES, ROOM_NODES, ROOM_SUPERS, ROOM_PUSHES],
+        Op::Switch { .. } => vec![BYTES],
         Op::Mark { .. } | Op::Row { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::Open { .. } => vec![KIND, FIELD, START, OPEN],
         Op::Close { .. } => vec![OPEN, END, SIZE],
@@ -2610,8 +2494,9 @@ fn framed(words: &[crate::native_ir::StructuralBlock]) -> bool {
 pub struct Tier1View {
     pub starts: *const u32,
     pub nstarts: usize,
-    pub lasts: *const u64,
-    pub nlasts: usize,
+    /// The records' last bytes and codes, zipped with `starts` (`records`).
+    pub lasts: *const u32,
+    pub codes: *const u32,
     pub lasts_stride: usize,
     pub outputs: *const u64,
     pub output_stride: usize,
@@ -2716,7 +2601,7 @@ impl CompiledStream {
             starts: tier1.starts,
             nstarts: tier1.nstarts as u64,
             lasts: tier1.lasts,
-            nlasts: tier1.nlasts as u64,
+            codes: tier1.codes,
             totals: tier1.totals.cast(),
             kind: tape.kind.as_mut_ptr(),
             field: tape.field.as_mut_ptr(),
@@ -2776,19 +2661,18 @@ impl CompiledStream {
                 all[o + w * n] = x;
             }
         }
-        let (lasts, nlasts) = match self.lasts {
-            Some(m) => (all[m..].as_ptr(), tier1.outputs[m].len()),
-            None => (all.as_ptr(), 0),
-        };
+        let lasts = stream(self.lasts);
+        let mut codes = tier1.codes.clone();
+        codes.extend([0, 0]);
         let mut tape = self.tape(starts.1);
         let totals = if tier1.totals.is_empty() { vec![0] } else { tier1.totals.clone() };
         // SAFETY: `padded` has the byte before and 64 after; each stream two slots past its count;
         // the tape is sized for the stream; every output has `count` words in `all`.
         let view = Tier1View {
             starts: starts.0.as_ptr(),
-            nstarts: starts.1,
-            lasts,
-            nlasts,
+            nstarts: starts.1.min(lasts.1),
+            lasts: lasts.0.as_ptr(),
+            codes: codes.as_ptr(),
             lasts_stride: 8 * n,
             outputs: all.as_ptr(),
             output_stride: 8,
@@ -2924,10 +2808,9 @@ impl Parser {
         let extracts = self.tier1.extracts.len();
         let starts = self.stream(batch, self.tier2.starts);
         let outputs = batch.out[row.out as usize..].as_ptr();
-        let (lasts, nlasts) = match self.tier2.lasts {
-            Some(m) => (batch.out[row.out as usize + m..].as_ptr(), row.blocks as usize),
-            None => (outputs, 0),
-        };
+        // The records' other columns: the last bytes, and the codes after the extracts'.
+        let lasts = self.stream(batch, self.tier2.lasts);
+        let codes = batch.positions[(row.positions + extracts as u64 * row.capacity) as usize..].as_ptr();
         let none = [0u64];
         let totals = match batch.counts.get(row.counts as usize + extracts..) {
             Some(t) if !t.is_empty() => t,
@@ -2939,9 +2822,9 @@ impl Parser {
         // sized for the stream.
         let view = Tier1View {
             starts: starts.0.as_ptr(),
-            nstarts: starts.1,
-            lasts,
-            nlasts,
+            nstarts: starts.1.min(lasts.1),
+            lasts: lasts.0.as_ptr(),
+            codes,
             lasts_stride: 8 * self.tier1.outputs,
             outputs,
             output_stride: 8,

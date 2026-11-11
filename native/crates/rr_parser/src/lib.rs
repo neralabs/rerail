@@ -321,7 +321,7 @@ pub mod tests {
         let got = run_serial_split(&[native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
         let mut differ = 0;
         for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
-            if g.outputs != w.outputs || g.positions != w.positions || g.totals != w.totals {
+            if g.outputs != w.outputs || g.positions != w.positions || g.totals != w.totals || g.codes != w.codes {
                 differ += 1;
                 if differ < 4 {
                     let o = (0..w.outputs.len()).find(|&o| g.outputs.get(o) != w.outputs.get(o));
