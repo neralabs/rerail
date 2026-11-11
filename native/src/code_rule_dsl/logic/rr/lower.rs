@@ -2707,8 +2707,9 @@ const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
 ];
 
 /// The relations of the file system a rule may read (t21 E1), each with the request its reads make: a directory's
-/// entries, `dir_entry(dir, name, is_dir)`, and a file's lines, `file_line(path, i, text)` (from 1).
-pub(in crate::code_rule_dsl) const WORLD: [(&str, &str); 2] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req")];
+/// entries, `dir_entry(dir, name, is_dir)`, a file's lines, `file_line(path, i, text)` (from 1), and a file's content
+/// digest, `file_digest(path, c)` (a cache key's, decision 0103: a library's tape is kept by it).
+pub(in crate::code_rule_dsl) const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
 
 fn world_demand(rel: &str) -> Option<&'static str> {
     WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
