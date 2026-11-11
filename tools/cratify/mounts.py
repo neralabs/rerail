@@ -100,6 +100,11 @@ def owners(nodes):
     walk(nodes['crate'], ENGINE)
 
 
+# The test modules other crates read (apply.py's `read_modules`): their crates build them under test-hooks too, so
+# the facades re-export them.
+KEEP_TEST = set()
+
+
 def sees(c):
     return ALLOW.get(c, set()) | {c}
 
@@ -200,8 +205,8 @@ class Facades:
         sub = {x.path for x in subtree(k)}
         if not (sub & self.want):
             return
-        if k.owner != c and 'cfg(test)' in k.cfg.replace(' ', ''):
-            return  # another crate's test module exists only in that crate's own test build
+        if k.owner != c and 'cfg(test)' in k.cfg.replace(' ', '') and k.path not in KEEP_TEST:
+            return  # another crate's test module exists only in that crate's own test build (unless it is test-hooks')
         if k.path in globbed and not self.need_inline(k):
             return  # the parent's glob brings it
         cfg = cfg_lines(k, indent)

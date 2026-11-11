@@ -540,6 +540,7 @@ def main(tree_tsv, join_out, *flags):
     v = mounts.view(nodes)
     crates = sorted({n.owner for n in nodes.values()} - {ENGINE})
     keep = read_modules(nodes, join_out)
+    mounts.KEEP_TEST = set(keep)
     engine_text = open(os.path.join(NATIVE, 'Cargo.toml')).read()
     engine = tomllib.loads(engine_text)
     # lib.rs and Cargo.toml per crate
