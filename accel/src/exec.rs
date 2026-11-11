@@ -877,6 +877,19 @@ impl Executor {
     /// Places each launch of a batch of kind `tag`, largest first, by host CPU (`Prices::choose_host`): per launch,
     /// in the batch's order, its lane, its cost there and the fastest lane's; and the load it was weighed against.
     pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+        let predicted = self.predict(batch, &self.load(tag));
+        self.place_predicted(tag, batch, &predicted)
+    }
+
+    /// The learned model's cost of every launch of `batch` on every lane that can run it ([`crate::cost_model`]),
+    /// one call for the batch under `load`.
+    pub fn predict(&self, batch: &Batch, load: &Load) -> Vec<[Option<crate::cost_model::Predicted>; 4]> {
+        let kernels: Vec<(&Kernel, Vec<Lane>)> = batch.0.iter().map(|l| (&l.kernel, self.backends.iter().filter(|b| b.can(&l.kernel)).map(|b| b.lane()).collect())).collect();
+        crate::cost_model::predict_batch(&kernels, load.cores)
+    }
+
+    /// [`Executor::place`] with the model's costs (`predicted`, per launch by lane).
+    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; 4]]) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
         let mut order: Vec<usize> = (0..batch.0.len()).collect();
         order.sort_by(|&a, &b| batch.0[b].kernel.units().total_cmp(&batch.0[a].kernel.units()));
         let prices = self.measured_prices();
@@ -888,7 +901,7 @@ impl Executor {
             // A launch the caller did not pin goes to the measurement's lane when that lane can run it.
             let pin = l.pin.or_else(|| measured_lane().filter(|&m| self.backends.iter().any(|b| b.lane() == m && b.can(&l.kernel))));
             let able: Vec<Lane> = self.backends.iter().filter(|b| pin.is_none_or(|p| p == b.lane()) && b.can(&l.kernel)).map(|b| b.lane()).collect();
-            let (lane, cost, fastest) = prices.choose_host(&l.kernel, &able, &load).ok_or_else(|| {
+            let (lane, cost, fastest) = prices.choose_host_predicted(&l.kernel, &able, &load, &predicted[i]).ok_or_else(|| {
                 format!("no lane can run launch {i} ({}, {:.3e} units){}", l.kernel.form().name(), l.kernel.units(), l.pin.map_or(String::new(), |p| format!(" on {}", p.name())))
             })?;
             let at = lane.index();
@@ -932,7 +945,8 @@ impl Executor {
     pub fn begin_as(&self, tag: &'static str, batch: Batch) -> Result<Running, String> {
         let cpu0 = process_cpu();
         let begun = Instant::now();
-        let (costs, load) = self.place(tag, &batch)?;
+        let predicted = self.predict(&batch, &self.load(tag));
+        let (costs, load) = self.place_predicted(tag, &batch, &predicted)?;
         let place = begun.elapsed().as_secs_f64();
         self.board.placed(tag, &costs, load.slack);
         let prices = self.measured_prices();
@@ -948,7 +962,7 @@ impl Executor {
             pinned[i] = l.pin.is_some() || measured.is_some();
             for b in &self.backends {
                 if b.can(&l.kernel) {
-                    all[i][b.lane().index()] = prices.cost(&l.kernel, b.lane(), &load);
+                    all[i][b.lane().index()] = prices.cost_predicted(&l.kernel, b.lane(), &load, predicted[i][b.lane().index()]);
                 }
             }
             let (lane, c, _) = costs[i];

@@ -89,7 +89,7 @@ impl Default for CostConfig {
                 ..Default::default()
             },
             min_samples: 8,
-            host_batch: 16,
+            host_batch: 4,
         }
     }
 }
@@ -435,6 +435,32 @@ mod tests {
 
     fn query(s: &CostSample) -> CostQuery<'_> {
         query_of(s)
+    }
+
+    /// Batch prediction on the host and on the device, CPU and wall a call, at each batch size: where the host's
+    /// walk stops paying (`CostConfig::host_batch`).
+    #[test]
+    #[ignore = "benchmark: --ignored --nocapture"]
+    fn host_or_device_by_batch() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let model = CostModel::train(&samples(12000), &CostConfig::default()).unwrap();
+        let test = samples(12000);
+        for b in [1usize, 4, 16, 64, 256, 1024] {
+            let qs: Vec<CostQuery> = test[..b].iter().map(query).collect();
+            for (what, hb) in [("host", usize::MAX), ("device", 0)] {
+                let m = CostModel { host_batch: hb, ..CostModel::from_bytes(&model.to_bytes()).unwrap() };
+                m.predict(&qs).unwrap();
+                let reps = 50;
+                let (w, c) = (std::time::Instant::now(), crate::process_cpu());
+                for _ in 0..reps {
+                    m.predict(&qs).unwrap();
+                }
+                eprintln!("BATCH {b:5} {what:6}: {:8.1} us wall {:8.1} us CPU a call", w.elapsed().as_secs_f64() / reps as f64 * 1e6, (crate::process_cpu() - c) / reps as f64 * 1e6);
+            }
+        }
+        eprintln!("{model:?}");
     }
 
     /// The model learns the costs (within a few percent on samples like those it trained on), the host's and the

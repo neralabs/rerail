@@ -16,6 +16,7 @@
 //! counts every job. Every lane's output is the reference's, exactly: the tests compare them.
 
 pub mod col;
+pub mod cost_model;
 pub mod cpu;
 pub mod exec;
 pub mod kernel;
