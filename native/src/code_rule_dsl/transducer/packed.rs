@@ -101,7 +101,7 @@ mod scm;
 #[path = "packed/compile/matcher.rs"]
 #[cfg_attr(not(test), allow(dead_code))]
 mod compile_matcher;
-pub(in crate::code_rule_dsl) use compile_matcher::{LoweredMatcher, LoweredWave};
+pub(in crate::code_rule_dsl) use compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave, WaveRun};
 // Label programs as node-set formulas (decision 0036).
 #[path = "packed/compile/sets.rs"]
 mod compile_sets;
@@ -277,6 +277,8 @@ mod block_digest_tests;
 // what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
 #[allow(unused_imports)]
 pub(in crate::code_rule_dsl) use rerail_rr_parser as rr_parser;
+/// JSON's parser: the ladder's JSONC grammar, with tree-sitter-json's ids (the tape's parse of a JSON file).
+pub(in crate::code_rule_dsl) mod json_parser;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
 mod regex_relocation_tests;

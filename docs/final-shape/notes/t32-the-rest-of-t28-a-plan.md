@@ -84,6 +84,9 @@ What this costs until K4 (t33): a phase's export statistics are measured from it
 version deltas (0096 §3), and an unchanged run runs the phase's nested run (all its parts kept) instead of reading a
 record.
 
+Measured after 2.5 and stage 3 (2026-11-10, load 36 to 76): P3 over the 84-file corpus agrees with jedi on 6,410
+calls, as before; 76.8 s user CPU, 91 s wall, peak RSS 1,292 MB.
+
 ### Stage 4. P2 maintained across processes
 
 t28's step 7 left one gap: a new process runs P2 in full after any struct change (3.8 s). The kept strata hold
@@ -92,8 +95,36 @@ maintains it from the deltas instead.
 
 | Step | Change | Done when |
 |---|---|---|
-| 4.1 | **A new process maintains from the kept rows**, as a session does: the kept strata's rows are the `__old` rows of `maintain::rewrite`, and an input's delta is its kept rows against its new ones | a new process after E1: P2 under 3 s, exports equal to a full run's; after E2 and E3 under 0.5 s |
-| 4.2 | Measure what reading the kept rows costs, against the 3.8 s full run; keep fewer relations (0099) or read lazily if it is more | a table, per edit |
+| 4.1 | **A new process maintains from the kept rows**, as a session does: the kept strata's rows are the `__old` rows of `maintain::rewrite`, and an input's delta is its kept rows against its new ones | **built** (`kept_strata::load`, `keep`): a run with no session takes the session's branch, its `Retained` read back from the store's frames (space `cross-maintained`, each relation under its identity) and written back after the run (only frames whose rows or inputs changed). A frame records the digests of the inputs it was derived from (its cone), and is read back only while those inputs' frames hold them: frames are shared by identity across programs. Not for a part whose requests the run answers (phase 0's loads). Test: `a_new_process_maintains_the_cross_file_part_from_the_kept_rows`. **Measured** below |
+| 4.2 | Measure what reading the kept rows costs, against the 3.8 s full run; keep fewer relations (0099) or read lazily if it is more | **done**, below: 0.06 to 0.09 s a run |
+
+Measured 2026-11-10 on 54 of the corpus's files (`_internal`, `l1100_exceptions`, `l2055_lazy_result`), the t28 spike
+with `RERAIL_SPIKE_PROCESS=1` (no session; the process's own caches of programs and files stay warm). P2's CPU; the
+full run is the old per-stratum cut (`RERAIL_KEPT_PART=off`). Exports equal to the full run's after every edit.
+
+| Run | A new process | Full run | Strata run (of 110) | Read back | Written |
+|---|---|---|---|---|---|
+| unchanged | 0.59 s | | 0 | 0.08 s | 0.02 s, queued |
+| E1 | 3.15 s | 3.57 s | 97, all maintained (6 recursive) | 0.09 s | 0.02 s |
+| E2 | 0.57 s | 2.67 s | 0 | 0.09 s | 0.02 s |
+| E3 | 0.40 s | 1.73 s | 0 | 0.06 s | 0.01 s |
+
+Three faults found on the way, fixed:
+
+- A kept relation read by SQL (`want`'s rule, a substring) had no index: SQLite scanned it per probe, 16 s of an
+  unchanged run's 17. A kept relation as a source (`Derived`) now answers probes by a sorted index per column,
+  built on first probe; that is so in a session too.
+- Outputs were not kept (their decoded lines were not), so their strata ran each process and their readers could
+  not be maintained. Their rows are kept as any relation's, and a clean output's lines decoded from them.
+- An input's frame was keyed by its name only, so programs over one root that bind an input of that name to other
+  rows (P3's cross part, its loading cone, the phases: `py_docmod` 63 against 237 rows) overwrote each other, and
+  every process found its inputs changed. An input's frame is now its program's.
+
+P3 over the same 54 files, three processes, no edit: the main thread's CPU 28.8 s (cold), 13.4 s, then 4.7 s; P3's
+cross part 6.4 s, 0.78 s (1 of 481 strata), 0.91 s; the agree count 4,815 each time. The second process still runs
+the phases in full: the cold process prepares its programs itself (0098's dropped columns, simplified bodies, text
+tests) and later ones read the stored prepared program without those rewrites, so the phases' relations have other
+identities once. Open: the stored prepared program and a fresh one should be the same program.
 
 This is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's "column blocks" would be the
 kept relations' encoding, not a format of their own.
@@ -127,8 +158,8 @@ mro_found(c, x, d) :- mro_ask(c, x), <the search>.      // the output: where the
 
 | Step | Change | Done when |
 |---|---|---|
-| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | reviewed |
-| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | P3's agree count unchanged; the `found` strata's work measured |
+| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | **drafted as 0106**, for review: a search is demand rules (a request relation, answer rules that read it), no program kind and no `.cache` |
+| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | **measured, not taken** (0106 §5): as demand rules, `found` pulled six relations into `pv`'s recursion, +13.5% join work there (1.81 M to 2.05 M) for the same answers; the eager `found` was 279 units. P3 keeps it. The full corpus's 116 s (against 66 s, at load 110 against 36 to 76) was not measured again on the full corpus; on the 54 files, the same cold run took 38 s of main-thread CPU at load 75 to 97 and 29 to 32 s at 19 to 48, and the new path's cold run was no slower than the old (28.8 s against 31.9 s) |
 | 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | `wbind`/`gpar` work gone |
 
 ### Stage 8. P3 on symbols (this branch, after 2.1 and 7.2)

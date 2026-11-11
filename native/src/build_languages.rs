@@ -14,8 +14,10 @@ use std::path::{Path, PathBuf};
 
 const FORMAT: &str = "rerail.language/v1";
 /// The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port,
-/// `code_rule_dsl::blade::forte`), or the rule engine's own `.rr` parser (`logic::rr::syntax`).
-const PARSERS: &[&str] = &["tree-sitter", "forte", "rr"];
+/// `code_rule_dsl::blade::forte`), the rule engine's own `.rr` parser (`logic::rr::syntax`), or a
+/// Bitlex grammar compiled by the transducer, with its tree-sitter grammar's ids, and tree-sitter
+/// for a file it refuses (JSON's: `transducer::packed::json_parser`).
+const PARSERS: &[&str] = &["tree-sitter", "forte", "rr", "bitlex"];
 /// The grammars Rerail implements itself (`native:<name>`): no tree-sitter grammar backs them.
 const NATIVE_GRAMMARS: &[&str] = &["forte", "rr"];
 /// ast-grep-language 0.45's `SupportLang` variants. A vendored grammar whose dialect variant is

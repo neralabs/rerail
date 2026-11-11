@@ -213,9 +213,11 @@ impl ContentStore {
         }
         let list = serde_json::to_string(&keys.iter().map(|(s, p)| serde_json::json!([s.0, p])).collect::<Vec<_>>()).expect("keys");
         let connection = self.connection.lock().expect("content store mutex poisoned");
+        // Drive probes from the demanded keys. SQLite otherwise starts from facts_results_by_plan
+        // and visits the entire JSON demand array for every retained row of the plan.
         let mut statement = connection.prepare_cached(
             "SELECT j.key, r.path, r.codec_id, r.raw_length, r.frame FROM json_each(?3) j \
-             JOIN facts_results r ON r.source_id=json_extract(j.value,'$[0]') AND r.fact_schema=?1 \
+             CROSS JOIN facts_results r ON r.source_id=json_extract(j.value,'$[0]') AND r.fact_schema=?1 \
              AND r.path IN (json_extract(j.value,'$[1]'), ?4) AND r.plan_digest=?2",
         )?;
         let rows = statement.query_map(params![i64::from(fact_schema), &plan[..], list, CONTENT_PURE], |row| {
