@@ -52,14 +52,48 @@ def anchor_captures(text, base):
         text = text.replace(m.group(0), f".violation {rel}({new_cols}){rest}\n", 1)
         # every head of rel at a line start: swap argument 0 and k
         out, pos = [], 0
+        # Main reports at the matched node when the anchor capture is unset: where the body may leave it unset,
+        # the location is the capture when it is a node, else the node.
         for h in re.finditer(r"^" + rel + r"\(", text, re.M):
             end = head_span(text, h.end() - 1)
             args = split_args(text[h.end():end - 1])
+            tail = ""
             if len(args) == len(names):
-                args[0], args[k] = args[k], args[0]
-            out.append(text[pos:h.end()] + ", ".join(args) + ")"); pos = end
+                stop = rule_end(text, end)
+                if re.search(r"\bunset\(" + re.escape(args[k]) + r"\)", text[end:stop]):
+                    x, at = args[k], args[0]
+                    args[0], args[k] = "rr_at", x
+                    tail = (text[end:stop], f",\n    (unset({x}), rr_at = {at} ; !unset({x}), rr_at = {x})")
+                else:
+                    args[0], args[k] = args[k], args[0]
+            out.append(text[pos:h.end()] + ", ".join(args) + ")")
+            if tail:
+                out.append(tail[0] + tail[1]); pos = stop
+            else:
+                pos = end
         out.append(text[pos:]); text = "".join(out)
     return text
+
+
+def rule_end(text, start):
+    """Index of the `.` that ends the rule whose body starts at start (outside strings, ticks and braces)."""
+    q, depth, esc = None, 0, False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if q:
+            if esc:
+                esc = False
+            elif ch == "\\" and q == '"':
+                esc = True
+            elif ch == q:
+                q = None
+            continue
+        if ch in "\"`": q = ch
+        elif ch in "({[": depth += 1
+        elif ch in ")}]": depth -= 1
+        elif ch == "." and depth == 0 and (i + 1 == len(text) or text[i + 1] in "\n "):
+            return i
+    return len(text)
 
 # Helper relations a rule declares are its own: prefixed with the rule's code, so no two programs (nor a program and
 # a library) share one. Every mention outside string and pattern literals is renamed: `rel(`, and `rel` passed as a
@@ -124,7 +158,7 @@ def lower_options(text, base):
             conds = []
             if "regex" in fp: conds.append(f'match({json.dumps(fp["regex"])}, rr_p)')
             if "notRegex" in fp: conds.append(f'!match({json.dumps(fp["notRegex"])}, rr_p)')
-            text += f"\n// main's file condition {json.dumps(fp)}\n{decl}{rel}({args}) :- {raw}({args}), node(rr_d, v0, _, _, _), doc(rr_d, rr_p, _), {', '.join(conds)}.\n"
+            text += f"\n// main's file condition {json.dumps(fp)}\n{decl}{rel}({args}) :- {raw}({args}), rr_d = @doc(v0), doc(rr_d, rr_p, _), {', '.join(conds)}.\n"
     return text
 
 # A pattern that is one metavariable, `n ~ \`$X\``, matches every node and names it: `X = n`.

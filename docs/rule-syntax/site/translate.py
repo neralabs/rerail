@@ -503,6 +503,22 @@ def stop_axis(prog, axis, lo, hi, stop, vs):
     return [f"{axis}_stop({lo}, {hi}, {stop_set(prog, stop)})"]
 
 
+def passed_in_patterns(entries, helpers):
+    """`pattern: "$X"` where the caller passes X in matches a node with X's text (ast-grep's metavariable
+    consistency), not X itself: `n ~ \\`$X\\`` becomes the text join."""
+    inputs = getattr(share_metavariables, "inputs", {})
+    k = [0]
+    for e in entries:
+        h = e["head"].split("(")[0]
+        if e.get("drop") or not inputs.get(h):
+            continue
+        for x in inputs[h]:
+            def join(m, x=x):
+                k[0] += 1
+                return f"text({m.group(1)}, t_{x.lower()}{k[0]}), text({x}, t_{x.lower()}{k[0]})"
+            e["lits"] = [re.sub(r"(?<![\w$])([a-z][a-z0-9_]*) ~ `\$" + x + r"`", join, l) for l in e["lits"]]
+
+
 def drop_dead_columns(entries, helpers, decls, notes):
     """ast-grep passes a util's argument (`matches: {u: {N: "$C"}}`) or a shared metavariable whether or not the
     caller bound it; an unbound one is unset there, and the util matches as if it were not passed. In Datalog such
@@ -831,6 +847,9 @@ def transform_lits(prog, tr, vs, defined):
         return ["(" + " ; ".join(parts) + ")"]
     lits = []
     for t, spec in tr.items():
+        start = len(lits)
+        if not isinstance(getattr(prog, "transform_defs", None), dict):
+            prog.transform_defs = {}
         if not (isinstance(spec, dict) and len(spec) == 1):
             prog.untranslated += 1
             lits.append(f"ast(n, {compact({'transform': {t: spec}})})")
@@ -884,7 +903,31 @@ def transform_lits(prog, tr, vs, defined):
         else:
             prog.untranslated += 1
             lits.append(f"ast(n, {compact({'transform': {t: spec}})})")
+        prog.transform_defs[t] = (src, lits[start:])
     return lits
+
+
+def transform_defs_for(prog, lits):
+    """The transform literals a helper needs for the transformed metavariables it reads but does not define
+    (ast-grep computes a transform where it is read): each from its source, which the helper binds."""
+    defs = getattr(prog, "transform_defs", None) or {}
+    text = ", ".join(lits)
+    have = set(re.findall(r"(?<![\w$])([A-Z][A-Z0-9_]*)\s*=\s*[@a-z0-9\"]", _mask_ticks(_strip_strings(text))))
+    out = []
+
+    def need(t, depth=0):
+        if t in have or t not in defs or depth > 20:
+            return
+        src, body = defs[t]
+        if src in defs:
+            need(src, depth + 1)
+        have.add(t)
+        # its own variables (`text(X, t2)`) renamed apart from the helper's
+        out.extend("".join(q if q.startswith('"') else re.sub(r"(?<![\w$])([td]\d+)\b", r"\1_td", q)
+                           for q in re.split(r'("(?:[^"\\]|\\.)*")', l)) for l in body)
+    for t in sorted(set(defs) & _upper_vars(text)):
+        need(t)
+    return out
 
 
 def fix_edits(viol):
@@ -1337,6 +1380,18 @@ def inline_unsafe(entries, helpers):
 
 # ---- demand: helpers that take a metavariable from their caller ------------------------------------------------
 
+def head_span_ok(t):
+    """Whether t's first `(` closes at its last character (t is one parenthesised group)."""
+    masked = _mask_ticks(_strip_strings_keep(t))
+    d = 0
+    for i, ch in enumerate(masked):
+        d += ch == "("
+        d -= ch == ")"
+        if d == 0:
+            return i == len(masked) - 1
+    return False
+
+
 def _split_top_text(s, sep):
     out, d, cur, ins = [], 0, "", None
     i = 0
@@ -1694,6 +1749,7 @@ def translate(doc):
             if outs:
                 prog.notes.setdefault(name, []).append(f"//   {', '.join(outs)}: metavariable{'s' if len(outs) > 1 else ''} "
                                                        f"this relation binds for the calling rule")
+    passed_in_patterns(entries + helper_entries, helpers)
     drop_dead_columns(entries + helper_entries, helpers, prog.decls, prog.notes)
     stop_with_columns(entries + helper_entries, prog.decls)
     inline_unsafe(entries + helper_entries, helpers)
@@ -1723,6 +1779,12 @@ def translate(doc):
 
     def emit_rule(h, lits, edits=None):
         nonlocal ungrounded
+        if h.split("(")[0][:1].islower() and getattr(prog, "transform_defs", None):
+            lits = list(lits) + transform_defs_for(prog, lits)
+        if prog.symbolic:
+            # a transform's result is a string, not a node: its text is itself
+            pat = re.compile(r"(?<![\w$@])(?:text|value)\((" + "|".join(sorted(prog.symbolic)) + r"), (\w+)\)")
+            lits = [pat.sub(r"\2 = \1", l) for l in lits]
         text = wrap(h, lits, edits=edits)
         inputs = getattr(share_metavariables, "inputs", {}).get(h.split("(")[0], ())
         bad = check_rule(text, fix_rels, inputs)
@@ -1743,10 +1805,30 @@ def translate(doc):
         empty = [x for x in bad if re.fullmatch(r"[A-Z][A-Z0-9_]*", x)]
         if empty:
             # ast-grep leaves a metavariable empty when the match does not bind it; core's unset is that value.
-            lits = list(lits) + [f"unset({x})" for x in empty]
+            # A disjunction some of whose branches bind it: the others leave it empty.
+            lits, rest = list(lits), []
+            for x in empty:
+                done = False
+                for i, l in enumerate(lits):
+                    t = l.strip()
+                    if not (t.startswith("(") and t.endswith(")") and head_span_ok(t)):
+                        continue
+                    branches = _split_top_text(t[1:-1], ";")
+                    # (a named group under `!match` binds nothing)
+                    binding = [x in _binders(re.sub(r'!\s*match\("(?:[^"\\]|\\.)*"', "", b)) or f"unset({x})" in b
+                               for b in branches]
+                    if len(branches) > 1 and any(binding):
+                        lits[i] = "(" + " ; ".join(b.strip() if ok else f"{b.strip()}, unset({x})"
+                                                  for b, ok in zip(branches, binding)) + ")"
+                        done = True
+                        break
+                if not done:
+                    rest.append(x)
+            lits = lits + [f"unset({x})" for x in rest]
             text = wrap(h, lits, edits=edits)
             bad = check_rule(text, fix_rels, inputs)
-            out.append(f"// {', '.join(empty)}: not bound by this rule, so empty (unset), as in ast-grep.")
+            out.append(f"// {', '.join(empty)}: not bound by {'this rule' if rest == empty else 'every branch'}, "
+                       f"so empty (unset) {'here' if rest == empty else 'where not bound'}, as in ast-grep.")
         if bad:
             ungrounded += 1
             out.append(f"// Not grounded: no positive atom binds {', '.join(bad)}.")
