@@ -168,8 +168,6 @@ const STATE: &[(&str, &str)] = &[
     // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
-    // The store files this process opened and checked (by device and inode): a registry of open things.
-    ("content_store/mod.rs", "CHECKED"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
@@ -208,9 +206,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
-    // Tree counts stored or queued to the store, held in memory ahead of its writer (decision 0102): the stored
-    // facts read ahead, not a result kept apart from them.
-    ("code_rule_dsl/logic/plan/corpus.rs", "OWN_KEPT"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
@@ -262,8 +257,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/hazards.rs", "HAZARDS"),
     // The run each frame space last counted in this process, so a run's programs count it once.
     ("content_store/frames.rs", "COUNTED"),
-    // Store files this process checked the schema of (device and inode): state of the open files.
-    ("content_store/mod.rs", "CHECKED"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
@@ -290,8 +283,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/derived.rs", "MEMO", "6"),
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED", "6"),
-    // A chunk mix's tree counts read from memory across runs (the Typing branch's edit step): kept statistics.
-    ("code_rule_dsl/logic/plan/corpus.rs", "OWN_KEPT", "6"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "PAID", "6"),
     ("code_rule_dsl/logic/strings.rs", "MATCHERS", "7"),
     ("code_rule_dsl/logic/strings.rs", "GROUPS", "7"),
@@ -300,8 +291,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-// Raised to 25 by the Typing branch's merge (`OWN_KEPT`, a cache it added): to come down with step 6.
-const NOT_YET_MAPS_PIN: usize = 25;
+const NOT_YET_MAPS_PIN: usize = 24;
 
 fn src() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
