@@ -2273,6 +2273,8 @@ fn run_observed(
         roots.truncate(60);
         format!("{total} relations cross-file of their own ({} by reading them): {}", causes.len() - total, roots.join("; "))
     });
+    // Preparation's splits are done: the kept ones (`file_local::split_memo`) go.
+    crate::code_rule_dsl::typing::file_local::forget_splits();
     crate::code_rule_dsl::logic::profile::decision("nearest ancestors", || {
         let names: Vec<&str> = sets.iter().map(|(n, _)| n.as_str()).collect();
         format!("{} sets, each made per looked-up node, or for the batch by the transducer's file-local FIX (bound {binding:?}) where the planner expects more lookups than that costs (decision 0105): {}", sets.len(), names.join(", "))

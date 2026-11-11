@@ -105,7 +105,7 @@ fn near(src: &str, pos: usize) -> &str {
     &src[pos..end]
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub(in crate::code_rule_dsl) enum Term {
     Var(String),
     Wild,
@@ -132,7 +132,7 @@ impl Term {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub(in crate::code_rule_dsl) struct Atom {
     pub(in crate::code_rule_dsl) rel: Name,
     pub(in crate::code_rule_dsl) args: Vec<Term>,
@@ -152,7 +152,7 @@ impl Atom {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) enum AggOp {
     Count,
     Min,
@@ -167,7 +167,7 @@ pub(in crate::code_rule_dsl) enum AggOp {
     Join { by: Vec<String>, sep: String },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub(in crate::code_rule_dsl) enum Literal {
     Atom(Atom),
     Cmp { l: Term, op: &'static str, r: Term },
@@ -292,7 +292,7 @@ pub(in crate::code_rule_dsl) fn join<T: fmt::Display>(items: &[T]) -> String {
     items.iter().map(T::to_string).collect::<Vec<_>>().join(", ")
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub(in crate::code_rule_dsl) struct Rule {
     pub(in crate::code_rule_dsl) head: Atom,
     pub(in crate::code_rule_dsl) body: Vec<Literal>,
