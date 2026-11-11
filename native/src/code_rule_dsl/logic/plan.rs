@@ -2104,6 +2104,9 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
         if stats.lazy.0.contains_key(rel.as_str()) {
             continue;
         }
+        if !prog.decls.contains_key(rel) {
+            return Err(Error::Statistics(format!("the input {rel} is not declared")));
+        }
         input_stats(&mut stats, &mut ndv, prog, rel)?;
     }
     // Input indexes as column lists, each ending in the rowid column if the table has one (SQLite appends it). The
@@ -6795,6 +6798,30 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         BTreeSet::new()
     };
     let to_sql: Vec<String> = written.iter().filter(|r| !native_out.contains(*r)).cloned().collect();
+    // A view that stays (an output, a relation kept for the caller, or one they read) is made now, after the last
+    // wave, for its readers' SQL; one no SQL read was never made (decision 0104).
+    // A view kept only for a session (`inputs.kept`) that a native join read in place (`Run::in_place`) is not made:
+    // a session reads a view of one input from the input (decision 0090), not from SQL. An output's is. A gate's is
+    // read inside the native fixpoint, as any relation of it (in place, `setfix::view`), and not after it.
+    let read_after: BTreeSet<&String> = {
+        let mut read: BTreeSet<&String> = prog.outputs.iter().collect();
+        loop {
+            let more: Vec<&String> = prog.rules.iter().filter(|r| read.contains(&r.head.rel) && run.views.contains(&r.head.rel)).flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| &a.rel)).filter(|r| !read.contains(r)).collect();
+            if more.is_empty() {
+                break;
+            }
+            read.extend(more);
+        }
+        read
+    };
+    let mut stay_views: Vec<String> = Vec::new();
+    for r in pinned.iter().filter(|r| run.views.contains(*r)) {
+        match run.unmade_view(r).filter(|_| !read_after.contains(r) && run.in_place(r)) {
+            Some(view) => crate::code_rule_dsl::facts::vtab::note_view(db, r, view),
+            None => stay_views.push(r.clone()),
+        }
+    }
+    run.ensure(&stay_views)?;
     run.materialize(&to_sql)?;
     let (outputs, nodes) = decoded_outputs(prog, db, lowered, &facts, atoms, &kept, &native_out)?;
     let mut outputs=outputs;let mut nodes=nodes;
