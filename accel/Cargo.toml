@@ -16,6 +16,7 @@ ane = []
 rayon = "=1.12.0"
 sha2 = "0.10"
 libc = "0.2.189"
+rerail-forest = { path = "../forest" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33.0"

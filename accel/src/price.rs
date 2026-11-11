@@ -244,6 +244,21 @@ pub fn learned_rates() -> Vec<Learned> {
 /// sample's wall is not one unit's cost; it keeps its prior. Each rate is the median of its warm, successful samples
 /// of one kernel name alone, with at least [`MIN_SAMPLES`] of them.
 pub fn learn_from(samples: &[crate::score::Sample]) -> Vec<Learned> {
+    let fitted = fit_rates(samples);
+    if let Ok(mut l) = LEARNED.write() {
+        for f in &fitted {
+            l.retain(|x| !(x.name == f.name && x.lane == f.lane));
+            l.push(f.clone());
+        }
+        if !fitted.is_empty() {
+            LEARNED_VERSION.fetch_add(1, std::sync::atomic::Ordering::Release);
+        }
+    }
+    fitted
+}
+
+/// [`learn_from`]'s rates, not put in place.
+pub fn fit_rates(samples: &[crate::score::Sample]) -> Vec<Learned> {
     let p = Prices::default();
     let mut by: std::collections::BTreeMap<(String, usize), Vec<f64>> = Default::default();
     for s in samples {
@@ -271,15 +286,6 @@ pub fn learn_from(samples: &[crate::score::Sample]) -> Vec<Learned> {
             Learned { name, lane: Lane::ALL[lane], per_unit: v[v.len() / 2], samples: v.len() }
         })
         .collect();
-    if let Ok(mut l) = LEARNED.write() {
-        for f in &fitted {
-            l.retain(|x| !(x.name == f.name && x.lane == f.lane));
-            l.push(f.clone());
-        }
-        if !fitted.is_empty() {
-            LEARNED_VERSION.fetch_add(1, std::sync::atomic::Ordering::Release);
-        }
-    }
     fitted
 }
 
@@ -329,6 +335,26 @@ impl Prices {
         Some(per * k.units() + fixed.launch + if open { 0.0 } else { fixed.submission })
     }
 
+    /// `k`'s cost on `lane` under `load`: the learned model's when it predicted one ([`crate::cost_model`]), else
+    /// the rates'. The model predicts a one-launch job under this load: its wall less the lane's submission is the
+    /// work (at least a launch's), and its CPU is the host's, less the job's share when the lane is open.
+    pub fn cost_predicted(&self, k: &Kernel, lane: Lane, load: &Load, predicted: Option<crate::cost_model::Predicted>) -> Option<Cost> {
+        let Some(p) = predicted else { return self.cost(k, lane, load) };
+        // The lane must have a kernel for it, as the rates say.
+        self.wall(k, lane)?;
+        let i = lane.index();
+        let wall = (p.wall - self.fixed[i].submission).max(self.fixed[i].launch);
+        let host = if load.open[i] { (p.cpu - self.host[i].submission).max(self.host[i].launch) } else { p.cpu };
+        let finish = load.queued[i] + if load.open[i] { 0.0 } else { load.latency[i] } + wall;
+        Some(Cost { finish, wall, host })
+    }
+
+    /// [`Prices::choose_host`], each lane's cost the model's where it predicted one (`predicted`, by lane).
+    pub fn choose_host_predicted(&self, k: &Kernel, able: &[Lane], load: &Load, predicted: &[Option<crate::cost_model::Predicted>; 4]) -> Option<(Lane, Cost, Cost)> {
+        let costs: Vec<(Lane, Cost)> = able.iter().filter_map(|&l| Some((l, self.cost_predicted(k, l, load, predicted[l.index()])?))).collect();
+        self.choose_among(&costs, load)
+    }
+
     /// `k`'s cost on `lane` under `load`.
     pub fn cost(&self, k: &Kernel, lane: Lane, load: &Load) -> Option<Cost> {
         let i = lane.index();
@@ -345,6 +371,11 @@ impl Prices {
     /// least energy. The chosen lane's cost, and the fastest's.
     pub fn choose_host(&self, k: &Kernel, able: &[Lane], load: &Load) -> Option<(Lane, Cost, Cost)> {
         let costs: Vec<(Lane, Cost)> = able.iter().filter_map(|&l| Some((l, self.cost(k, l, load)?))).collect();
+        self.choose_among(&costs, load)
+    }
+
+    /// The choice among lanes' costs ([`Prices::choose_host`]).
+    fn choose_among(&self, costs: &[(Lane, Cost)], load: &Load) -> Option<(Lane, Cost, Cost)> {
         let fastest = costs.iter().min_by(|a, b| a.1.finish.total_cmp(&b.1.finish))?.1;
         let deadline = (fastest.finish * self.band).max(load.slack);
         let (lane, cost) = costs

@@ -3147,6 +3147,7 @@ dependencies = [
  "metal",
  "objc",
  "rayon",
+ "rerail-forest",
  "sha2 0.10.9",
 ]
 
@@ -3232,6 +3233,19 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-forest"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "cc",
+ "libc",
+ "metal",
+ "objc",
+ "rayon",
+ "sha2 0.10.9",
 ]
 
 [[package]]

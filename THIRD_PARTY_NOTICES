@@ -588,10 +588,10 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Copied source: MLDB (random forest Metal kernels, UKL shims, compute-kernel runtime)
-Files: accel/src/forest/mldb/
+Files: forest/src/mldb/
 Source: https://github.com/mldbai/mldb (branch opencl-random-forests)
 Revision: e3caed6fa44782d08eb640702fd60e9a2576d939
-License: Apache-2.0 (the full text is accel/src/forest/mldb/LICENSE and LICENSES/Apache-2.0.txt)
+License: Apache-2.0 (the full text is forest/src/mldb/LICENSE and LICENSES/Apache-2.0.txt)
 
 Copyright (c) 2015-2022 mldb.ai inc. Copyright (c) 2021-2022 Jeremy Barnes.
 Licensed under the Apache License, Version 2.0. Rerail's changes to these files are marked by the

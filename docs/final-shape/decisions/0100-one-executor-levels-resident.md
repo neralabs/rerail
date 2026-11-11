@@ -494,8 +494,27 @@ in place.
 **The store** is `RERAIL_COSTS` (a SQLite file, or `off`), else `~/.cache/rerail/costs.sqlite`. Tests write
 none unless it is set. It keeps 500,000 samples for each machine.
 
-A regressor trained on the table (over units, load, launches and phases) replaces the medians later, behind the
-same lookup.
+**The learned model** (built, 2026-11-10). Two regression forests (crate `rerail-forest`: MLDB's random forest,
+trained and asked on the GPU) predict a job's wall and host CPU from its lane, its launches' names, its launches,
+units, coldness, the cores' slowdown and the pool's threads. Placement asks the model once a batch, for every
+launch on every lane that can run it; where the model gave a cost it replaces the rates', elsewhere the rates
+stay. The model prices only a lane and name it saw at least 8 warm samples of.
+
+It is put in place only when it wins. Each training holds out the newest fifth of the samples, trains on the rest,
+and compares the errors on the held-out jobs. On this machine's 14,945 samples (2026-11-10), as the factor of the
+root mean square log error:
+
+| Held-out jobs | Model | Medians | Prices when run |
+|---|---|---|---|
+| Wall, with a learned rate (1,450) | ×2.08 | ×7.13 | ×8.18 |
+| Wall, all (2,989) | ×2.58 | — | ×20.5 |
+| Host CPU, all (2,989) | ×1.84 | — | ×4.93 |
+
+A model that wins is trained again on every sample, put in place and saved (table `models` in the store, one
+for each machine); the next run puts the saved one in place at once. One that loses is taken out with the saved
+one. Training runs on a thread of its own at the background quality of service, in a pool of two threads apart
+from the engine's (25 s wall, about 1.2 s CPU on a loaded machine), and again once 2,000 more samples are written,
+at most every ten minutes. A batch of up to 4 jobs is predicted on the host, a larger one on the GPU.
 
 ## Order of work
 
