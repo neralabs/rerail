@@ -152,7 +152,7 @@ impl Projection {
         if rel == "syntax_error" && self.shape == Shape::T && !self.verdict {
             return Some(&["d"]);
         }
-        crate::code_rule_dsl::logic::sql::select::input_columns(rel)
+        crate::code_rule_dsl::facts::core::input_columns(rel)
     }
 
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::SpanIn) -> bool {
@@ -187,7 +187,7 @@ struct TextDemand {
 /// `text` holds at any length (`core_rr::TEXT_INLINE`).
 fn leaf_field(body: &[crate::code_rule_dsl::logic::front::Literal], v: &str) -> bool {
     use crate::code_rule_dsl::logic::front::Term;
-    use crate::code_rule_dsl::logic::plan::corpus::matchers::{field_kinds, leaf_kind};
+    use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
     body.iter().filter_map(crate::code_rule_dsl::logic::front::Literal::atom).filter(|a| !a.neg && a.rel == "field").any(|a| match (a.args.get(1), a.args.get(2)) {
         (Some(Term::Str(f)), Some(Term::Var(x))) if x == v => field_kinds(f).is_some_and(|k| !k.is_empty() && k.iter().all(|k| leaf_kind(k))),
         _ => false,

@@ -668,3 +668,100 @@ static CORE_NAMES: std::sync::OnceLock<fn() -> &'static std::collections::BTreeS
 pub(crate) fn install_core_names(names: fn() -> &'static std::collections::BTreeSet<String>) {
     let _ = CORE_NAMES.set(names);
 }
+
+/// The columns of the planner's base relations (T's input schema). Others are `c0`, `c1`, ….
+pub(crate) fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
+    Some(match rel {
+        "node" => &["d", "n", "kind", "start", "end_"],
+        "line" => &["n", "l"],
+        "doc" => &["d", "path", "module"],
+        "child" => &["p", "c", "idx"],
+        "field" => &["p", "f", "c"],
+        "text" | "name" | "str" | "strprefix" | "node_text" | "comment" => &["n", "s"],
+        // W's values (`facts::vtab::syntax::Extra`).
+        "value" | "static_value" => &["n", "v"],
+        "value_type_of" => &["n", "t"],
+        "value_type" => &["v", "t"],
+        // W's f-string trees (`facts::vtab::syntax::fstring`).
+        "fstring_piece" => &["n", "i", "kind", "v"],
+        "fstring_template" => &["n", "marker", "v"],
+        // CPython's verdict (`facts::vtab::syntax::cpython`; core.rr's `syntax_error(d, l, msg)`).
+        "cpython_syntax_error" => &["d", "l", "msg"],
+        // Ruff's string annotations and their trees (`facts::vtab::syntax::annotation`).
+        "string_annotation" => &["s"],
+        "parsed" => &["s", "grammar", "root"],
+        // W's pythonAst `literal_json` (`facts::vtab::syntax::cpython`).
+        "literal_json" => &["n", "v"],
+        // core.rr's @py_unparse(n) and @ast_dump(n), and W's hashes of dumps (`facts::vtab::syntax::cpython`).
+        "cpython_unparse" | "cpython_ast_dump" => &["n", "s"],
+        "dump_sha256" => &["n", "h"],
+        "body_sha256" | "signature_sha256" => &["f", "h"],
+        "intval" => &["n", "v"],
+        "op_at" => &["n", "i", "s"],
+        "op" | "op_t" => &["n", "s"],
+        // `core.rr`'s (`facts::vtab::syntax`, decision 0046).
+        "syntax_error" => &["d", "l", "msg"],
+        "spread" => &["n"],
+        "next_sibling" => &["a", "b"],
+        "visit_index" => &["n", "i"],
+        "node_order" => &["n", "k"],
+        "ast_depth" => &["n", "k"],
+        "line_count" => &["d", "k"],
+        "end_line" => &["n", "l"],
+        "col" => &["n", "c"],
+        "docof" => &["n", "d"],
+        "source" => &["d", "sp"],
+        "src_line" | "src_line_lf" | "tape_line" => &["d", "l", "sp"],
+        "split_line" | "lf_line" => &["d", "l", "t"],
+        "str_part" => &["lit", "i", "v", "at", "spec"],
+        "str_part_word" => &["lit", "i", "w", "at", "spec"],
+        "str_part_start" => &["lit", "i", "l", "c"],
+        "first_token" | "last_token" => &["n", "t"],
+        "token_before" | "token_after" => &["x", "t"],
+        "tree_digest" | "def_digest" => &["n", "s"],
+        // core.rr's tokens (`facts::vtab::syntax::tree`).
+        "prev_token" => &["n", "s"],
+        "token" => &["p", "i", "s", "start", "end_"],
+        // W's Python reference graph (`logic::plan::corpus::references`).
+        "reference_edge" => &["src", "dst", "via"],
+        "reference_open" => &["n"],
+        "rx_span" => &["p", "c", "j", "g", "m"],
+        "ast_match" => &["p", "n", "g", "c"],
+        // Decision 0055's (`facts::vtab::syntax::guests`).
+        "guest" => &["g", "host", "at", "grammar"],
+        "doc_role" => &["d", "r"],
+        "doc_root" => &["d", "n"],
+        "tape_of" => &["d", "t"],
+        "sub_tape" => &["at", "grammar", "t"],
+        "host_node" => &["n", "h"],
+        // Decision 0058's tape operations.
+        "parse_of" => &["x", "g", "t"],
+        "unparse_of" => &["t", "x"],
+        "splice_of" => &["t", "n", "t2", "t3"],
+        // The repository inputs (`facts::repository`).
+        "option" => &["name", "v"],
+        "option_item" => &["name", "i", "v"],
+        "file" => &["path"],
+        "package" => &["dir", "name"],
+        "package_field" => &["dir", "key", "v"],
+        "package_for" => &["path", "dir"],
+        "pkg" => &["d", "p"],
+        "path_part" | "file_name" => &["d", "s"],
+        "tape" => &["n", "par", "size", "depth"],
+        "core_node" => &["d", "t", "n"],
+        // Containment read off the tree (`facts::vtab::syntax::within`, decision 0050).
+        "within" => &["n", "a"],
+        "span_within" => &["inner", "outer"],
+        // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).
+        rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &["n", "a"],
+        rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],
+        // An `ast` matcher's matched nodes (decision 0106).
+        rel if rel.starts_with(crate::code_rule_dsl::logic::plan::corpus::AST_MATCHES) => crate::code_rule_dsl::logic::plan::corpus::ast_columns(rel),
+        // A `match_all` regex's matches (`logic::strings::as_relations`, `facts::vtab::syntax::Extra`).
+        rel if rel.starts_with(crate::code_rule_dsl::logic::strings::MATCHES) => &["sp", "m"],
+        rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
+        // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
+        rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::family_columns(rel)?,
+        _ => return None,
+    })
+}
