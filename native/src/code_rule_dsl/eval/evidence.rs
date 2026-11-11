@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 
 /// A producer's witnesses across its domain, and the files whose witnesses are unknown.
 #[derive(Default)]
-pub(crate) struct Rows {
+pub struct Rows {
     pub witnesses: Vec<Witness>,
     /// Files of the domain whose query failed, stopped, or read around syntax errors.
     pub(crate) incomplete: BTreeSet<String>,

@@ -12,11 +12,14 @@
 #[cfg(any(test, feature = "test-hooks"))]
 #[path = "catalog/plan/render/compact_output_sql.rs"]
 pub mod compact_output_sql;
+#[path = "catalog/plan/mod.rs"]
 pub mod plan;
-// cratify: `relational` is rerail-engine's (it mounts it)
+#[path = "catalog/plan/render/relational.rs"]
+pub mod relational;
 #[path = "catalog/plan/render/relational_ir.rs"]
 pub mod relational_ir;
 // N's backend, with the fact producers demand::vtab's adaptation removed.
+#[path = "catalog/sql_backend.rs"]
 pub mod sql_backend;
 
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -866,5 +869,9 @@ pub(in crate::code_rule_dsl) fn regex_matches(
     (matches, true)
 }
 
-// cratify: `policy_lowering_tests` is rerail-engine's (it mounts it)
-// cratify: `production_contract_tests` is rerail-engine's (it mounts it)
+#[cfg(test)]
+#[path = "catalog/policy_lowering_tests.rs"]
+mod policy_lowering_tests;
+#[cfg(test)]
+#[path = "catalog/production_contract_tests.rs"]
+mod production_contract_tests;

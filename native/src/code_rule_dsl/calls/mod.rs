@@ -68,7 +68,7 @@ impl Through {
 
 /// The graph relation and the node at which a term asks its reachability question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct Mode {
+pub struct Mode {
     pub through: Through,
     pub references: bool,
     pub(crate) definition: bool,

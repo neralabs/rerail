@@ -1852,11 +1852,11 @@ impl PackedExecution {
         })
     }
 
-    pub(crate) fn file_count(&self) -> usize {
+    pub fn file_count(&self) -> usize {
         self.file_count
     }
 
-    pub(crate) fn program_count(&self) -> usize {
+    pub fn program_count(&self) -> usize {
         self.program_count
     }
 
@@ -1928,7 +1928,7 @@ impl PackedExecution {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PackedCaptureView<'a> {
+pub struct PackedCaptureView<'a> {
     page: &'a PackedResultPage,
     record: &'a FinalCaptureRecord,
     file: &'a BatchFile,
@@ -1968,7 +1968,7 @@ impl<'a> PackedCaptureView<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct PackedResultView<'a> {
+pub struct PackedResultView<'a> {
     page: &'a PackedResultPage,
     record: &'a ResultRecord,
     file: &'a BatchFile,

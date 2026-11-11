@@ -54,7 +54,7 @@ pub enum Target<'tree, D: Doc> {
     TreeNode(Arc<SubTree>, usize),
 }
 
-pub(crate) struct Fact<'tree, D: Doc> {
+pub struct Fact<'tree, D: Doc> {
     pub slot: u16,
     pub key: i64,
     pub pos: i64,

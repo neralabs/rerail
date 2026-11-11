@@ -782,9 +782,11 @@ fn execute_sql<'t>(
     Run { findings, metrics }
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+// The oracles read the engine's compiled rules: only this crate's own tests build them (the engine mounts its own,
+// `query::plan::async_reference`).
+#[cfg(test)]
 pub mod native_oracle;
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub mod s_native_oracle;
 #[cfg(test)]
 pub mod tests;

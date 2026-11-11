@@ -543,15 +543,15 @@ impl SubTree {
 /// One node of a `SubTree` (`SubTree::preorder`): its grammar kind and field ids (tree-sitter's, for an annotation:
 /// ERROR is `annotation::ERROR_KIND`), its parent's index, its range in the tree's text and its flags.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PreNode {
+pub struct PreNode {
     pub kind: u16,
     pub field: u16,
     pub parent: Option<u32>,
     pub start: u32,
     pub end: u32,
     pub named: bool,
-    pub(crate) extra: bool,
-    pub(crate) error: bool,
+    pub extra: bool,
+    pub error: bool,
 }
 
 /// A sub-tree's text. Node ranges are offsets into it plus `offset`, which an annotation's tree

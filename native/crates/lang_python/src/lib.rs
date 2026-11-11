@@ -266,7 +266,7 @@ pub mod code_rule_dsl {
             pub mod syntax {
                 pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
                 pub mod annotation;
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 pub mod candidate_spike;
                 pub mod candidates;
                 pub mod cpython;

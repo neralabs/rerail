@@ -17,8 +17,7 @@ pub mod code_rule_dsl {
         #[path = "binds"]
         pub mod binds {
             pub use rerail_w::code_rule_dsl::compile::binds::*;
-            #[cfg(any(test, feature = "test-hooks"))]
-            pub mod eslint;
+            // ESLint's binds lab (`eslint.rs`) reads the engine's oracles and test kit: the engine mounts it.
             #[allow(unused_imports)]
             use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
             #[allow(unused_imports)]

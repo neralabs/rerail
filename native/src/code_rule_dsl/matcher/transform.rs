@@ -51,7 +51,7 @@ pub struct Source {
 }
 
 /// A `value` source whose value is not known and that has no default.
-pub(crate) struct UnknownValue;
+pub struct UnknownValue;
 
 pub struct TransformLimit;
 

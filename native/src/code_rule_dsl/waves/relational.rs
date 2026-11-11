@@ -103,7 +103,7 @@ pub(in crate::code_rule_dsl) fn identifier(value: &str) -> bool {
 fn quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
-pub(in crate::code_rule_dsl) fn sql_error(error: rusqlite::Error) -> napi::Error {
+pub fn sql_error(error: rusqlite::Error) -> napi::Error {
     invalid(format!("relational query: {error}"))
 }
 

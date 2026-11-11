@@ -16,25 +16,25 @@
 //! statements are lowered with the capture's statistics (`stats::inputs`) and run on its
 //! connection. Gone with decoding: clearing `decoded_*` tables and the structural fill.
 pub(super) mod capture;
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 mod replay;
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 use super::{execute, lower, tests::{open, temp}};
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 use crate::code_rule_dsl::stats::inputs::Statistics;
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 use crate::content_store::ContentStore;
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 const STEP: i32 = 1000;
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 #[test]
 #[ignore = "requires a policy and captured candidate databases"]
 fn anchor_lab() {
@@ -44,7 +44,7 @@ fn anchor_lab() {
     }
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 fn run(policy: &str) {
     let captures = std::env::var("RERAIL_LAB_CAPTURES").expect("RERAIL_LAB_CAPTURES");
     let limit = std::env::var("RERAIL_LAB_LIMIT").map_or(usize::MAX, |n| n.parse().unwrap());
@@ -264,7 +264,7 @@ fn run(policy: &str) {
     );
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 fn cpu_ns() -> u64 {
     let mut now = libc::timespec {
         tv_sec: 0,
@@ -275,7 +275,7 @@ fn cpu_ns() -> u64 {
     now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 #[test]
 fn a_capture_replays_to_the_candidates_of_its_statement() {
     use crate::code_rule_dsl::{language::{self, GrammarDialect}, matcher::AnchorPlan};
@@ -315,7 +315,7 @@ fn a_capture_replays_to_the_candidates_of_its_statement() {
 /// array of arrays of file names, P's batches) or one batch of every file.
 ///   RERAIL_LAB_CORPUS=<dir> RERAIL_SQL_PROFILE_DIR=<out> [RERAIL_LAB_BATCHES=<json>]
 ///   [RERAIL_CAPTURE_TAPES=1] cargo test --lib -- --ignored capture_lab_corpus
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 #[test]
 #[ignore = "requires a corpus directory"]
 fn capture_lab_corpus() {

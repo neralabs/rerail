@@ -81,8 +81,7 @@ pub mod code_rule_dsl {
         #[path = "format_args"]
         pub mod format_args {
             pub use rerail_w::code_rule_dsl::compile::format_args::*;
-            #[cfg(any(test, feature = "test-hooks"))]
-            pub mod php;
+            // PHP's format-args lab (`php.rs`) reads the engine's oracles and test kit: the engine mounts it.
             #[allow(unused_imports)]
             use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
             #[allow(unused_imports)]

@@ -458,6 +458,7 @@ fn run(
     })
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+// Test-only, and it reads the engine's `relational`: the engine mounts it (`code_rule_dsl::demand::driver`).
+#[cfg(test)]
 pub mod catalog;
 // cratify: `tests` is rerail-engine's (it mounts it)

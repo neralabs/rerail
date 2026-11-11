@@ -98,6 +98,9 @@ mod compile {
     #[path = "binds"]
     pub mod binds {
         pub use rerail_w::code_rule_dsl::compile::binds::*;
+        // ESLint's binds lab: it reads the engine's oracles and test kit.
+        #[cfg(test)]
+        pub mod eslint;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
         #[allow(unused_imports)]
@@ -128,6 +131,9 @@ mod compile {
     #[path = "format_args"]
     pub mod format_args {
         pub use rerail_w::code_rule_dsl::compile::format_args::*;
+        // PHP's format-args lab: it reads the engine's oracles and test kit.
+        #[cfg(test)]
+        pub mod php;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
         #[allow(unused_imports)]
@@ -280,40 +286,10 @@ mod demand {
     #[path = "driver"]
     pub mod driver {
         pub use rerail_transducer::code_rule_dsl::demand::driver::*;
+        // The catalog is test-only and reads `relational`, the engine's: mounted here whole.
         #[cfg(any(test, feature = "test-hooks"))]
-        #[path = "catalog"]
-        pub mod catalog {
-            pub use rerail_transducer::code_rule_dsl::demand::driver::catalog::*;
-            #[cfg(test)]
-            pub mod policy_lowering_tests;
-            #[cfg(test)]
-            pub mod production_contract_tests;
-            #[path = "plan/render/relational.rs"]
-            pub mod relational;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::language::GrammarDialect;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::lines::{LineTable, Terminators};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::model::CompiledCodeRule;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::tape::TapeDoc;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::demand::driver::catalog::sql_backend::{
-                DocumentMapSpan, HardPartition, MatchRegistry, PackedDemand, PackedRow, ProducerKind,
-                register_module,
-            };
-            #[allow(unused_imports)]
-            use rusqlite::{Connection, Row};
-            #[allow(unused_imports)]
-            use serde_json::{Value, json};
-            #[allow(unused_imports)]
-            use std::collections::BTreeMap;
-            #[allow(unused_imports)]
-            use std::sync::Arc;
-        }
+        #[path = "catalog.rs"]
+        pub mod catalog;
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]
@@ -1300,7 +1276,7 @@ mod matcher {
         #[path = "sql"]
         pub mod sql {
             pub use rerail_w::code_rule_dsl::matcher::p_anchors::sql::*;
-            #[cfg(any(test, feature = "test-hooks"))]
+            #[cfg(test)]
             pub mod lab;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::matcher::p_anchors::sql::audit::candidate_frontier_audit;

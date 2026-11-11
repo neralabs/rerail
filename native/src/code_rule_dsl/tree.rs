@@ -54,7 +54,7 @@ impl<'r, D: Doc> Token<'r, D> {
 }
 
 /// A child in source order: a named node, or one of the parent's tokens.
-pub(crate) enum Part<'r, D: Doc> {
+pub enum Part<'r, D: Doc> {
     Named(Node<'r, D>),
     Token(Token<'r, D>),
 }

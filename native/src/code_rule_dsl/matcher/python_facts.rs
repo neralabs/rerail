@@ -27,7 +27,7 @@ pub struct Config<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ProjectionError {
+pub enum ProjectionError {
     NotPython,
     UnsupportedPythonVersion,
     ReadingMismatch,
@@ -35,7 +35,7 @@ pub(crate) enum ProjectionError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Reason {
+pub enum Reason {
     SyntaxError,
     UnsupportedExpression,
     MissingReference,
@@ -93,7 +93,7 @@ pub struct BindingProjection {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Bindings {
+pub struct Bindings {
     pub default: Fact<Option<BindingProjection>>,
     pub stop_at_global: Fact<Option<BindingProjection>>,
 }
@@ -148,14 +148,14 @@ pub struct NodeFacts {
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct Stats {
+pub struct Stats {
     pub requested: usize,
     pub distinct: usize,
     pub qualified_lookups: usize,
     pub binding_lookups: usize,
 }
 #[derive(Default, Debug)]
-pub(crate) struct Batch {
+pub struct Batch {
     // Distinct node kinds can occupy the same range; retain every requested ID.
     pub by_range: BTreeMap<NodeRange, Vec<NodeFacts>>,
     pub stats: Stats,
@@ -267,7 +267,7 @@ fn chain<'t, D: Doc>(
 }
 /// Normalized, scope-free shape of an identifier/attribute qualification demand.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct QualificationChain {
+pub struct QualificationChain {
     pub head: String,
     pub attributes: Vec<String>,
 }

@@ -675,11 +675,11 @@ pub enum PackedPattern {
     },
 }
 
-pub(in crate::code_rule_dsl) struct AstPatternCapture {
-    pub(in crate::code_rule_dsl) label: String,
-    pub(in crate::code_rule_dsl) occurrence: usize,
-    pub(in crate::code_rule_dsl) node: u32,
-    pub(in crate::code_rule_dsl) multi: bool,
+pub struct AstPatternCapture {
+    pub label: String,
+    pub occurrence: usize,
+    pub node: u32,
+    pub multi: bool,
 }
 
 #[derive(Clone, Default)]
@@ -1571,7 +1571,7 @@ impl Program {
         )
     }
 
-    pub(in crate::code_rule_dsl) fn is_navigation_descriptor(&self) -> bool {
+    pub fn is_navigation_descriptor(&self) -> bool {
         self.words == [word(STOP, 0, 0)]
             && self.strings.is_empty()
             && self.predicates.is_empty()
@@ -1672,11 +1672,11 @@ impl Program {
         Ok(program)
     }
 
-    pub(in crate::code_rule_dsl) fn is_ast_pattern(&self) -> bool {
+    pub fn is_ast_pattern(&self) -> bool {
         self.ast_pattern.is_some()
     }
 
-    pub(in crate::code_rule_dsl) fn execute_ast_pattern(
+    pub fn execute_ast_pattern(
         &self,
         tape: &TapeDoc,
         root: u32,
@@ -2055,7 +2055,7 @@ impl Program {
         (!kinds.is_empty()).then_some(kinds)
     }
 
-    pub(in crate::code_rule_dsl) fn label_name(&self, label: u16) -> Option<&str> {
+    pub fn label_name(&self, label: u16) -> Option<&str> {
         rerail_compiler::rir_asm::label_name(self, label)
     }
 
@@ -3781,7 +3781,7 @@ pub fn execute_with_backend(
     execute_with_backend_outcomes(backend, programs, files, anchors)?.into_result()
 }
 
-pub(in crate::code_rule_dsl) fn packed_workspace_fits(
+pub fn packed_workspace_fits(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -3829,7 +3829,7 @@ pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
     batch.workspace_allocation_bytes(totals).ok_or(Error::BackendCapacity)
 }
 
-pub(in crate::code_rule_dsl) fn execute_with_backend_packed_result_limits(
+pub fn execute_with_backend_packed_result_limits(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],

@@ -1077,7 +1077,7 @@ impl Metrics {
 }
 
 #[derive(Clone, Default)]
-pub(super) struct Evaluation {
+pub struct Evaluation {
     pub violations: Vec<Value>,
     pub failures: Vec<Value>,
     pub(super) metrics: Metrics,

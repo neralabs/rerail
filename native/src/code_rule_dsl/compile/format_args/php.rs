@@ -2,10 +2,10 @@
 //! `PrintfArrayParametersRule` report on fixtures (`fixtures/php/compile/format-args`) and over whole
 //! corpora (`benchmark_php_format_corpus`).
 
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::language::GrammarDialect;
-// cratify: a re-export of rerail-engine's, which its facades of this module make
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
