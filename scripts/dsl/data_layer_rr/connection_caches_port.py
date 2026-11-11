@@ -57,10 +57,11 @@ def scan(suite, entry, module, args):
             source = args['source'] if entry == 'scan_file_content' else path.read_text(encoding='utf-8')
         except (OSError, UnicodeDecodeError):
             continue
-        logical = f'input-{index}/' + path.relative_to(root).as_posix()
+        logical = f'input/{index}/' + path.relative_to(root).as_posix()
         originals[logical] = path
         files.append(dict(path=logical, source=source))
-    rows = suite.native('connection_caches', entry, files, dict(rootParts=list(root.parts)))
+    rows = suite.native('connection_caches', entry, files,
+                        dict(apiInputDirs=['input'], rootParts=list(root.parts)))
     if any(row['code'] != 'CC001' for row in rows):
         raise AssertionError('Unexpected native connection cache diagnostic')
     order = {file['path']: index for index, file in enumerate(files)}

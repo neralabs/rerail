@@ -6,6 +6,7 @@
 .scope include "api/**/*.py", "impl/**/*.py"
 .scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**", "**/.pytest_cache/**", "**/test/**", "**/tests/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_connection_caches.py
+.scope dirs option("apiInputDirs")
 .decl cc_pattern(i: number, pattern: symbol, description: symbol)
 .decl cc_regex(i: number, source: symbol, native: symbol)
 .decl cc_allowed(file: symbol, substring: symbol)

@@ -7,6 +7,7 @@ def connection_caches(source, target, header):
     original = module(source, 'connection_caches')
     text = header('connection_caches', target).replace('#include "python/ast.rr"\n', '')
     text = text.replace(', "**/test_*.py"', '').replace('"**/test/**"', '"**/.pytest_cache/**", "**/test/**"')
+    text += '.scope dirs option("apiInputDirs")\n'
     text += '.decl cc_pattern(i: number, pattern: symbol, description: symbol)\n'
     text += '.decl cc_regex(i: number, source: symbol, native: symbol)\n'
     text += '.decl cc_allowed(file: symbol, substring: symbol)\n'
