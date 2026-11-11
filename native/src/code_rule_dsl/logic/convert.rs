@@ -1084,8 +1084,11 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
             if !authored.decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));
             }
-            // A bridged relation (`typing_<program>__<output>`, the library's calls) is the runner's to give.
-            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)) {
+            // A bridged relation (`typing_<program>__<output>`, the library's calls) is the runner's to give; so are
+            // decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none), which
+            // the library reads (`python/names.rr`).
+            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)
+                || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
             }
         }

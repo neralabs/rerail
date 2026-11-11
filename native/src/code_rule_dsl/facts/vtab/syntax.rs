@@ -210,7 +210,15 @@ pub(crate) fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::
     const MAX: usize = 3;
     let TextDemand { any, .. } = text_kind_demand(program, matchers);
     let mut by_rule: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
-    for (r, i) in any {
+    // A twin binds `v` by the rest of its body: an atom whose `text` alone binds `v` (`list_constant(v) :- text(v, s),
+    // glob(…, s)`) is not twinned, and its rule keeps the any-kind projection.
+    let bound = |r: usize, i: usize| {
+        let body = &program.rules[r].body;
+        let Some(Literal::Atom(text)) = body.get(i) else { return false };
+        let Some(Term::Var(v)) = text.args.first() else { return false };
+        body.iter().enumerate().filter(|(j, _)| *j != i).filter_map(|(_, l)| l.atom()).filter(|a| !a.neg && a.rel != "text").any(|a| a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v)))
+    };
+    for (r, i) in any.into_iter().filter(|&(r, i)| bound(r, i)) {
         by_rule.entry(r).or_default().push(i);
     }
     // Each rule's twins follow it, so a rule's place does not depend on what other rules the program holds.

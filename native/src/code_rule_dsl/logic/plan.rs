@@ -1614,7 +1614,9 @@ impl Model {
             let (mut order, mut bound, mut rest) = (Vec::new(), BTreeSet::new(), (0..body.len()).collect());
             let rows = close(&mut order, 1.0, &mut bound, &mut rest);
             if !rest.is_empty() {
-                return Err(Error::Plan(format!("unbound literals in {head}")));
+                let rest: Vec<String> = rest.iter().map(|&i: &usize| body[i].to_string()).collect();
+                let all: Vec<String> = body.iter().map(ToString::to_string).collect();
+                return Err(Error::Plan(format!("unbound literals in {head}: {rest:?} (body {all:?})")));
             }
             (1.0, rows, order, 1)
         } else if let Some(fixed) = fixed {
