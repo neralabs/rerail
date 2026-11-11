@@ -32,14 +32,14 @@ def enum_spans(path):
 
 
 def napi_classes(text, structs):
-    """The spans of `structs` that are napi classes (`#[napi]` before them): a pub field of one is exported as a
-    getter, so a field widened for Rust's sake is `#[napi(skip)]`."""
+    """The spans of `structs` that are napi classes (`#[napi]` among their attributes; a span starts at its doc
+    comment): a pub field of one is exported as a getter, so a field widened for Rust's sake is `#[napi(skip)]`."""
     out = []
     for s, e in structs:
-        head = text[max(0, s - 400):s + 200]
-        decl = head.find('struct', 400 - min(s, 400))
-        attrs = head[:decl if decl >= 0 else len(head)]
-        if re.search(r'#\[napi(?:\((?!\s*object)[^)]*\))?\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?$', attrs[attrs.rfind('\n\n') + 1:] if '\n\n' in attrs else attrs):
+        head = text[s:e]
+        m = re.search(r'\bstruct\b', head)
+        attrs = head[:m.start()] if m else ''
+        if re.search(r'#\[napi(?:\((?!\s*object)[^)]*\))?\]', attrs):
             out.append((s, e))
     return out
 
