@@ -13,7 +13,7 @@ use crate::code_rule_dsl::json::{bounded_text, invalid, non_empty_str, object};
 use crate::code_rule_dsl::language::adapter::{SyntaxFeature, gate};
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
-use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
+use crate::code_rule_dsl::literal::Grammar;
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{
     AstMatcher, CaptureAnalysis, CompareText, Count, HostTest, ParseTest, Reading, Related,
@@ -40,16 +40,16 @@ const ANNOTATION_KEYS: &[&str] = &["pattern", "matches", "resolves", "parse"];
 
 fn allowed(grammar: Grammar, key: &str) -> bool {
     SUB_RULE_KEYS.contains(&key)
-        || (grammar == Grammar::Annotation && ANNOTATION_KEYS.contains(&key))
+        || (grammar.of_host_syntax() && ANNOTATION_KEYS.contains(&key))
         // A text grammar's tree reaches its host node through `host`; a directive's item names a
         // global `resolves` reads.
-        || (grammar != Grammar::Annotation && key == "host")
-        || (grammar == Grammar::EslintDirective && key == "resolves")
+        || (!grammar.of_host_syntax() && key == "host")
+        || (grammar.item_resolves() && key == "resolves")
 }
 
 /// The grammars' names, as `parse.grammar` takes them.
 fn grammar_names() -> Vec<&'static str> {
-    Grammar::ALL.iter().map(|grammar| grammar.name()).collect()
+    Grammar::all().iter().map(|grammar| grammar.name()).collect()
 }
 
 /// Validates a `parse` object: its grammar and the rule of that grammar it holds.
@@ -79,7 +79,7 @@ pub(super) fn validate_parse(
         )));
     }
     if let Some(marker) = parse.get("interpolation") {
-        if grammar != Grammar::PythonFString {
+        if !grammar.interpolates() {
             return Err(invalid(format!(
                 "{path}/interpolation requires pythonFString"
             )));
@@ -117,7 +117,7 @@ pub(super) fn validate_sub_rule(
 ) -> Result<()> {
     let rule = object(value, path)?;
     for key in rule.keys() {
-        if key == "host" && !hosted && grammar != Grammar::Annotation {
+        if key == "host" && !hosted && !grammar.of_host_syntax() {
             return Err(invalid(format!(
                 "{path}/host: host tests the literal a parse holds; formatArgs' fields have none"
             )));
@@ -142,7 +142,7 @@ pub(super) fn validate_sub_rule(
     if let Some(kind) = rule.get("kind") {
         let kind = non_empty_str(Some(kind), &format!("{path}/kind"))?;
         // An annotation's kinds are Python's, which its rule's compilation checks.
-        if grammar != Grammar::Annotation && !grammar.kinds().contains(&kind) {
+        if !grammar.of_host_syntax() && !grammar.kinds().contains(&kind) {
             return Err(invalid(format!(
                 "{path}/kind: `{kind}` is not a {} kind; expected one of {}",
                 grammar.name(),
@@ -173,7 +173,7 @@ pub(super) fn validate_sub_rule(
     }
     if let Some(compare) = rule.get("compare") {
         let comparison = parse_comparison(compare, &format!("{path}/compare"))?;
-        if grammar != Grammar::Annotation
+        if !grammar.of_host_syntax()
             && !matches!(
                 comparison.text,
                 CompareText::Source
@@ -200,7 +200,7 @@ pub(super) fn validate_sub_rule(
     }
     if let Some(resolves) = rule.get("resolves") {
         validate_resolves(resolves, &format!("{path}/resolves"))?;
-        if grammar == Grammar::EslintDirective
+        if grammar.item_resolves()
             && let Some(other) = object(resolves, &format!("{path}/resolves"))?
                 .keys()
                 .find(|key| *key != "global")
@@ -218,7 +218,7 @@ pub(super) fn validate_sub_rule(
     }
     if let Some(parse) = rule.get("parse") {
         let nested = validate_parse(parse, &format!("{path}/parse"), limits, utils)?;
-        if nested != Grammar::Annotation {
+        if !nested.of_host_syntax() {
             return Err(invalid(format!(
                 "{path}/parse/grammar: a string inside an annotation parses as an annotation"
             )));
@@ -339,7 +339,7 @@ pub(super) fn compile_parse(
         &format!("{path}/grammar"),
         { let pack = language_pack::pack(family); pack.syntax_feature(SyntaxFeature::Parse(grammar)) },
     )?;
-    let rule = if grammar == Grammar::Annotation {
+    let rule = if grammar.of_host_syntax() {
         // An annotation's nodes are Python's: its rule compiles as the host's does.
         compile_ast_rule(&sub_rule(parse), grammar.host_language(), path, gaps, utils)?
     } else {
@@ -374,25 +374,7 @@ pub(super) fn compile_parse(
         }),
         rule,
         exports: exports.into_iter().collect(),
-        host_kinds: Arc::new(match grammar.literal_host() {
-            LiteralHost::PythonString => {
-                let kinds: &[&str] = if grammar == Grammar::PythonFString {
-                    &["string", "concatenated_string", "format_specifier"]
-                } else {
-                    &["string", "concatenated_string"]
-                };
-                kind_ids(language, kinds)
-            }
-            LiteralHost::EcmaComment => kind_ids(language, &["comment"]),
-            LiteralHost::PhpString => kind_ids(
-                language,
-                &["string", "encapsed_string", "heredoc", "nowdoc"],
-            ),
-            LiteralHost::PhpComment => kind_ids(language, &["comment"]),
-            LiteralHost::RustString => {
-                kind_ids(language, &["string_literal", "raw_string_literal"])
-            }
-        }),
+        host_kinds: Arc::new(kind_ids(language, grammar.host_kinds())),
         reading: table_reading(utils.options.as_deref(), utils.python.as_deref()),
     }))))
 }

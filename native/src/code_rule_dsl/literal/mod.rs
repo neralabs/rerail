@@ -6,13 +6,14 @@
 pub(crate) mod annotation;
 pub(crate) mod brace;
 pub(crate) mod eslint_directive;
-mod identifier_words;
+pub(crate) mod identifier_words;
 pub(crate) mod offsets;
 pub(crate) mod percent;
 pub(crate) mod php_string;
 pub(crate) mod phpdoc;
 pub(crate) mod printf;
-mod python_fstring;
+pub(crate) mod python_fstring;
+pub(crate) mod python_string;
 pub(crate) mod rust_format;
 pub(crate) mod scanf;
 pub(crate) mod semantic;
@@ -24,76 +25,104 @@ use ast_grep_core::Position;
 use ast_grep_core::language::Language;
 use ast_grep_core::matcher::{Pattern, PatternBuilder, PatternError};
 use ast_grep_core::source::{Content, Doc, Edit, SgNode};
-use ast_grep_core::tree_sitter::StrDoc;
+
 use offsets::Decoded;
-pub(crate) use python_fstring::parse as parse_python_fstring;
 pub(crate) use python_fstring::{pieces as fstring_pieces, template as fstring_template};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// A sub-grammar `parse` can apply.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Grammar {
-    /// printf-style formats (`percent`).
-    Percent,
-    /// ASCII identifier words in decoded Python string text.
-    IdentifierWords,
-    /// Literal and interpolation parts of a Python JoinedStr.
-    PythonFString,
-    /// `str.format` templates (`brace`).
-    Brace,
-    /// String type definitions read as Python expressions (`annotation`); the scope table
-    /// parses them.
-    Annotation,
-    /// ESLint's directive comments (`eslintDirective`), in TypeScript.
-    EslintDirective,
-    /// PHP's printf-family formats (`printfFormat`).
-    Printf,
-    /// PHP's `sscanf`/`fscanf` formats (`scanfFormat`).
-    Scanf,
-    /// PHP doc comments as PHPStan's phpdoc-parser reads them (`phpDoc`).
-    PhpDoc,
-    /// Rust's `format_args!` templates as rustc reads them (`rustFormat`).
-    RustFormat,
-    /// Test-only: every decoded character is a `char` node under a `text` root.
-    #[cfg(test)]
-    Chars,
+/// A sub-grammar `parse` can apply, as the crate that reads its host's literals declares it: the engine registers
+/// each as it loads (`install`), in the order error messages list them.
+pub(crate) trait LiteralGrammar: Send + Sync + 'static {
+    /// Its `parse.grammar` name.
+    fn name(&self) -> &'static str;
+    /// The kinds a tree of it has, in id order from 1.
+    fn kinds(&self) -> &'static [&'static str];
+    /// The language of the host it parses, whose values its trees hold; that language's family parses the
+    /// host's literals (`SyntaxRules::parse_literal`).
+    fn host_language(&self) -> GrammarDialect;
+    /// What it parses, for messages.
+    fn host(&self) -> &'static str;
+    /// The host node kinds it parses.
+    fn host_kinds(&self) -> &'static [&'static str];
+    /// Whether it parses its host's comments, not its strings.
+    fn reads_comments(&self) -> bool {
+        false
+    }
+    /// Whether its trees are its host language's own syntax, parsed by the scope table (Python's string
+    /// annotations): no `host`, and a rule over them may use the host's keys besides.
+    fn of_host_syntax(&self) -> bool {
+        false
+    }
+    /// Whether an item names a global `resolves` reads (ESLint's directives).
+    fn item_resolves(&self) -> bool {
+        false
+    }
+    /// Whether it parses an interpolated literal's parts (`interpolation`: Python's f-strings).
+    fn interpolates(&self) -> bool {
+        false
+    }
+    /// Whether a tree depends on the literal alone, so a syntax error elsewhere cannot change it.
+    fn reads_only_the_node(&self) -> bool {
+        true
+    }
+    /// A kind's id where its kinds are not `kinds` (a host syntax's).
+    fn own_kind_id(&self, kind: &str) -> Option<u16> {
+        let _ = kind;
+        None
+    }
+    /// A kind id's name where its kinds are not `kinds`.
+    fn own_kind_name(&self, id: u16) -> Option<&'static str> {
+        let _ = id;
+        None
+    }
+    /// Parses decoded text into a tree root, its nodes `grammar`'s (this grammar's handle).
+    fn parse(&self, grammar: Grammar, text: &str) -> PNode;
 }
 
-/// What a grammar parses: a node of one family's host language.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LiteralHost {
-    /// Python `string` and `concatenated_string` nodes, decoded as `str`.
-    PythonString,
-    /// TypeScript comments.
-    EcmaComment,
-    /// PHP string literals (`string`, `encapsed_string`, `heredoc`, `nowdoc`), decoded as PHP
-    /// reads them.
-    PhpString,
-    /// PHP doc comments (`comment` nodes PHP lexes as `T_DOC_COMMENT`).
-    PhpComment,
-    /// Rust `str` literals (`string_literal`, `raw_string_literal`), decoded as rustc reads them.
-    RustString,
+/// A sub-grammar `parse` can apply (`LiteralGrammar`); equal by name.
+#[derive(Clone, Copy)]
+pub(crate) struct Grammar(&'static dyn LiteralGrammar);
+
+static GRAMMARS: std::sync::OnceLock<Vec<Grammar>> = std::sync::OnceLock::new();
+
+/// The engine's grammars, in the order error messages list them; the first call holds.
+pub(crate) fn install(grammars: Vec<Grammar>) {
+    let _ = GRAMMARS.set(grammars);
+}
+
+impl PartialEq for Grammar {
+    fn eq(&self, other: &Self) -> bool {
+        self.name() == other.name()
+    }
+}
+
+impl Eq for Grammar {}
+
+impl std::hash::Hash for Grammar {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name().hash(state);
+    }
+}
+
+impl std::fmt::Debug for Grammar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 impl Grammar {
-    /// Every grammar, in the order error messages list them.
-    pub(crate) const ALL: &'static [Grammar] = &[
-        Self::Percent,
-        Self::IdentifierWords,
-        Self::PythonFString,
-        Self::Brace,
-        Self::Annotation,
-        Self::EslintDirective,
-        Self::Printf,
-        Self::Scanf,
-        Self::PhpDoc,
-        Self::RustFormat,
-        #[cfg(test)]
-        Self::Chars,
-    ];
+    /// `grammar`'s handle.
+    pub(crate) const fn new(grammar: &'static dyn LiteralGrammar) -> Self {
+        Self(grammar)
+    }
+
+    /// Every grammar the engine registered, in the order error messages list them.
+    pub(crate) fn all() -> &'static [Grammar] {
+        GRAMMARS.get().map_or(&[], Vec::as_slice)
+    }
 
     /// The language of this grammar's trees.
     pub(crate) fn lang(self) -> SubLang {
@@ -102,106 +131,63 @@ impl Grammar {
 
     /// The grammar a `parse.grammar` name selects.
     pub(crate) fn named(name: &str) -> Option<Self> {
-        match name {
-            "identifierWords" => Some(Self::IdentifierWords),
-            "pythonFString" => Some(Self::PythonFString),
-            "percentFormat" => Some(Self::Percent),
-            "braceFormat" => Some(Self::Brace),
-            "annotation" => Some(Self::Annotation),
-            "eslintDirective" => Some(Self::EslintDirective),
-            "printfFormat" => Some(Self::Printf),
-            "scanfFormat" => Some(Self::Scanf),
-            "phpDoc" => Some(Self::PhpDoc),
-            "rustFormat" => Some(Self::RustFormat),
-            #[cfg(test)]
-            "testChars" => Some(Self::Chars),
-            _ => None,
-        }
+        Self::all().iter().copied().find(|grammar| grammar.name() == name)
+    }
+
+    /// The registered grammar `name` names, which a part of the engine reads by name (`formatArgs`' styles).
+    pub(crate) fn expect(name: &str) -> Self {
+        Self::named(name).unwrap_or_else(|| panic!("no grammar `{name}` registered"))
     }
 
     pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::IdentifierWords => "identifierWords",
-            Self::PythonFString => "pythonFString",
-            Self::Percent => "percentFormat",
-            Self::Brace => "braceFormat",
-            Self::Annotation => "annotation",
-            Self::EslintDirective => "eslintDirective",
-            Self::Printf => "printfFormat",
-            Self::Scanf => "scanfFormat",
-            Self::PhpDoc => "phpDoc",
-            Self::RustFormat => "rustFormat",
-            #[cfg(test)]
-            Self::Chars => "testChars",
-        }
+        self.0.name()
     }
 
     /// The kinds a tree of this grammar has, in id order from 1.
     pub(crate) fn kinds(self) -> &'static [&'static str] {
-        match self {
-            Self::IdentifierWords => identifier_words::KINDS,
-            Self::PythonFString => python_fstring::KINDS,
-            Self::Percent => percent::KINDS,
-            Self::Brace => brace::KINDS,
-            // Python's own kinds, which the grammar checks when it compiles the rule.
-            Self::Annotation => &[],
-            Self::EslintDirective => eslint_directive::KINDS,
-            Self::Printf => printf::KINDS,
-            Self::Scanf => scanf::KINDS,
-            Self::PhpDoc => phpdoc::KINDS,
-            Self::RustFormat => rust_format::KINDS,
-            #[cfg(test)]
-            Self::Chars => &["text", "char", "error"],
-        }
-    }
-
-    /// The host nodes the grammar parses.
-    pub(crate) fn literal_host(self) -> LiteralHost {
-        match self {
-            Self::Percent
-            | Self::Brace
-            | Self::Annotation
-            | Self::IdentifierWords
-            | Self::PythonFString => LiteralHost::PythonString,
-            Self::EslintDirective => LiteralHost::EcmaComment,
-            Self::Printf | Self::Scanf => LiteralHost::PhpString,
-            Self::PhpDoc => LiteralHost::PhpComment,
-            Self::RustFormat => LiteralHost::RustString,
-            #[cfg(test)]
-            Self::Chars => LiteralHost::PythonString,
-        }
+        self.0.kinds()
     }
 
     /// The language of the host the grammar parses, whose values its trees hold.
     pub(crate) fn host_language(self) -> GrammarDialect {
-        match self.literal_host() {
-            LiteralHost::PythonString => GrammarDialect::Python,
-            LiteralHost::EcmaComment => GrammarDialect::TypeScript,
-            LiteralHost::PhpString | LiteralHost::PhpComment => GrammarDialect::Php,
-            LiteralHost::RustString => GrammarDialect::Rust,
-        }
+        self.0.host_language()
     }
 
     /// What the grammar parses, for messages.
     pub(crate) fn host(self) -> &'static str {
-        match self.literal_host() {
-            LiteralHost::PythonString => "Python literals",
-            LiteralHost::EcmaComment => "TypeScript comments",
-            LiteralHost::PhpString => "PHP strings",
-            LiteralHost::PhpComment => "PHP doc comments",
-            LiteralHost::RustString => "Rust strings",
-        }
+        self.0.host()
+    }
+
+    /// The host node kinds the grammar parses.
+    pub(crate) fn host_kinds(self) -> &'static [&'static str] {
+        self.0.host_kinds()
+    }
+
+    pub(crate) fn reads_comments(self) -> bool {
+        self.0.reads_comments()
+    }
+
+    pub(crate) fn of_host_syntax(self) -> bool {
+        self.0.of_host_syntax()
+    }
+
+    pub(crate) fn item_resolves(self) -> bool {
+        self.0.item_resolves()
+    }
+
+    pub(crate) fn interpolates(self) -> bool {
+        self.0.interpolates()
     }
 
     /// Whether a tree depends on the literal alone, so a syntax error elsewhere cannot change it:
     /// whether a string is a type definition depends on the names the file binds.
     pub(crate) fn reads_only_the_node(self) -> bool {
-        self != Self::Annotation
+        self.0.reads_only_the_node()
     }
 
     fn kind_id(self, kind: &str) -> u16 {
-        if self == Self::Annotation {
-            return GrammarDialect::Python.kind_to_id(kind);
+        if let Some(id) = self.0.own_kind_id(kind) {
+            return id;
         }
         self.kinds()
             .iter()
@@ -210,8 +196,8 @@ impl Grammar {
     }
 
     fn kind_name(self, id: u16) -> &'static str {
-        if self == Self::Annotation {
-            return annotation::kind_name(id);
+        if let Some(name) = self.0.own_kind_name(id) {
+            return name;
         }
         self.kinds()
             .get(usize::from(id).wrapping_sub(1))
@@ -220,49 +206,44 @@ impl Grammar {
     }
 
     /// Parses decoded text into a tree root.
-    fn parse(self, text: &str) -> PNode {
-        match self {
-            Self::IdentifierWords => identifier_words::parse(text),
-            // Parsed from host syntax, not from decoded constant text.
-            Self::PythonFString => PNode::new(self, "template", 0, text.len()),
-            Self::Percent => percent::parse(text),
-            Self::Brace => brace::parse(text),
-            Self::Printf => printf::parse(text),
-            Self::Scanf => scanf::parse(text),
-            Self::RustFormat => rust_format::tree(text),
-            // Past the nesting bound an error root (`parse_php_comment` reads it as unknown).
-            Self::PhpDoc => phpdoc::parse(text).unwrap_or_else(|| {
-                let mut root = PNode::new(self, "php_doc", 0, text.len());
-                root.error = true;
-                root
-            }),
-            // A comment that is no directive has no tree (`parse_comment`).
-            Self::EslintDirective => eslint_directive::tree(text)
-                .unwrap_or_else(|| PNode::new(self, "directive", 0, text.len())),
-            // The scope table parses annotations (`annotation::parse`).
-            Self::Annotation => PNode {
-                kind: annotation::ERROR_KIND,
-                start: 0,
-                end: text.len(),
-                named: true,
-                error: true,
-                extra: false,
-                field: 0,
-                value: None,
-                children: Vec::new(),
-            },
-            #[cfg(test)]
-            Self::Chars => {
-                let mut root = PNode::new(self, "text", 0, text.len());
-                for (at, c) in text.char_indices() {
-                    root.children.push(
-                        PNode::new(self, "char", at, at + c.len_utf8())
-                            .with_value(Value::Str(c.to_string())),
-                    );
-                }
-                root
-            }
+    pub(crate) fn parse(self, text: &str) -> PNode {
+        self.0.parse(self, text)
+    }
+}
+
+/// Test-only: every decoded character is a `char` node under a `text` root (`testChars`, of Python strings).
+#[cfg(test)]
+pub(crate) struct Chars;
+
+#[cfg(test)]
+pub(crate) const CHARS: Grammar = Grammar::new(&Chars);
+
+#[cfg(test)]
+impl LiteralGrammar for Chars {
+    fn name(&self) -> &'static str {
+        "testChars"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        &["text", "char", "error"]
+    }
+    fn host_language(&self) -> GrammarDialect {
+        GrammarDialect::Python
+    }
+    fn host(&self) -> &'static str {
+        "Python literals"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["string", "concatenated_string"]
+    }
+    fn parse(&self, grammar: Grammar, text: &str) -> PNode {
+        let mut root = PNode::new(grammar, "text", 0, text.len());
+        for (at, c) in text.char_indices() {
+            root.children.push(
+                PNode::new(grammar, "char", at, at + c.len_utf8())
+                    .with_value(Value::Str(c.to_string())),
+            );
         }
+        root
     }
 }
 
@@ -614,14 +595,16 @@ impl Language for SubLang {
         self.0.kind_id(kind)
     }
     fn field_to_id(&self, field: &str) -> Option<u16> {
-        (self.0 == Grammar::Annotation)
-            .then(|| GrammarDialect::Python.field_to_id(field))
+        // A host syntax's trees have its fields (Python's annotations).
+        self.0
+            .of_host_syntax()
+            .then(|| self.0.host_language().field_to_id(field))
             .flatten()
     }
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-        // Patterns are Python's, and only annotations hold Python: written as its trees are,
-        // with no token the grammar implies (RER-131).
-        ast_grep_core::Language::build_pattern(&GrammarDialect::Python, builder)
+        // Patterns are the host's syntax, which only a host-syntax grammar's trees hold (Python's annotations):
+        // written as its trees are, with no token the grammar implies (RER-131).
+        ast_grep_core::Language::build_pattern(&self.0.host_language(), builder)
     }
 }
 
@@ -805,166 +788,12 @@ pub(crate) enum Parsed {
     NotString,
 }
 
-/// Parses a TypeScript comment ESLint reads as a directive (`eslintDirective`): its text, mapped
-/// to the source by a shift. Spends one step of `spend` per byte and tree node; `None` when the
-/// budget ran out.
-pub(crate) fn parse_comment<D: Doc>(
-    node: &ast_grep_core::Node<'_, D>,
-    spend: &mut dyn FnMut(usize) -> bool,
-) -> Option<Parsed> {
-    let text = node.text();
-    if !spend(text.len() + 1) {
-        return None;
-    }
-    let Some(root) = eslint_directive::tree(&text) else {
-        return Some(Parsed::NotString);
-    };
-    if !spend(root.size()) {
-        return None;
-    }
-    Some(Parsed::Tree(Arc::new(SubTree::new(
-        Grammar::EslintDirective,
-        text.into_owned(),
-        0,
-        root,
-        HostMap::Exact(node.range().start as isize),
-    ))))
-}
 
-/// Parses a PHP doc comment (`phpDoc`): its text, mapped to the source by a shift. Spends one step
-/// of `spend` per byte and tree node; `None` when the budget ran out.
-pub(crate) fn parse_php_comment<D: Doc>(
-    node: &ast_grep_core::Node<'_, D>,
-    spend: &mut dyn FnMut(usize) -> bool,
-) -> Option<Parsed> {
-    let text = node.text();
-    if !phpdoc::is_doc_comment(&text) {
-        return Some(Parsed::NotString);
-    }
-    if !spend(text.len() + 1) {
-        return None;
-    }
-    let Some(root) = phpdoc::parse(&text) else {
-        return Some(Parsed::Unknown);
-    };
-    if !spend(root.size()) {
-        return None;
-    }
-    Some(Parsed::Tree(Arc::new(SubTree::new(
-        Grammar::PhpDoc,
-        text.into_owned(),
-        0,
-        root,
-        HostMap::Exact(node.range().start as isize),
-    ))))
-}
 
-/// Parses a Python string node with a text grammar (not `annotation`, which the scope table
-/// parses). Spends one step of `spend` per tree node; `None` when the budget ran out.
-pub(crate) fn parse_string<D: Doc>(
-    node: &ast_grep_core::Node<'_, D>,
-    grammar: Grammar,
-    spend: &mut dyn FnMut(usize) -> bool,
-) -> Option<Parsed> {
-    let decoded = match offsets::decode_python(node) {
-        offsets::Decode::Known(decoded) => decoded,
-        offsets::Decode::Unknown => return Some(Parsed::Unknown),
-        offsets::Decode::NotString => return Some(Parsed::NotString),
-    };
-    if !spend(decoded.text.len() + 1) {
-        return None;
-    }
-    let root = grammar.parse(&decoded.text);
-    if !spend(root.size()) {
-        return None;
-    }
-    let text = decoded.text.clone();
-    Some(Parsed::Tree(Arc::new(SubTree::new(
-        grammar,
-        text,
-        0,
-        root,
-        HostMap::Spans(decoded),
-    ))))
-}
 
-/// Parses a Rust `str` literal with a text grammar (`rustFormat`). Spends one step of `spend` per
-/// byte and tree node; `None` when the budget ran out.
-pub(crate) fn parse_rust_string<D: Doc>(
-    node: &ast_grep_core::Node<'_, D>,
-    grammar: Grammar,
-    spend: &mut dyn FnMut(usize) -> bool,
-) -> Option<Parsed> {
-    let decoded = match rust_format::decode(node) {
-        offsets::Decode::Known(decoded) => decoded,
-        offsets::Decode::Unknown => return Some(Parsed::Unknown),
-        offsets::Decode::NotString => return Some(Parsed::NotString),
-    };
-    if !spend(decoded.text.len() + 1) {
-        return None;
-    }
-    let root = grammar.parse(&decoded.text);
-    if !spend(root.size()) {
-        return None;
-    }
-    let text = decoded.text.clone();
-    Some(Parsed::Tree(Arc::new(SubTree::new(
-        grammar,
-        text,
-        0,
-        root,
-        HostMap::Spans(decoded),
-    ))))
-}
 
-/// Parses a PHP string literal with a text grammar (`printfFormat`, `scanfFormat`). Spends one
-/// step of `spend` per byte and tree node; `None` when the budget ran out.
-pub(crate) fn parse_php_string<D: Doc>(
-    node: &ast_grep_core::Node<'_, D>,
-    grammar: Grammar,
-    spend: &mut dyn FnMut(usize) -> bool,
-) -> Option<Parsed> {
-    let (text, map) = match php_string::decode(node) {
-        php_string::PhpLiteral::Known(text, map) => (text, map),
-        php_string::PhpLiteral::Unknown => return Some(Parsed::Unknown),
-        php_string::PhpLiteral::NotString => return Some(Parsed::NotString),
-    };
-    parse_php_text(grammar, text, map, spend)
-}
 
-/// Parses the string PHP gives an expression that is no string literal (`value/php.rs`: a
-/// concatenation, a variable followed to its binding) with a text grammar, every node mapped to
-/// `whole`, the expression's range. Bytes that are not UTF-8 and a value past 64 KiB are unknown.
-/// Spends as `parse_php_string` does.
-pub(crate) fn parse_php_value(
-    bytes: Vec<u8>,
-    whole: Range<usize>,
-    grammar: Grammar,
-    spend: &mut dyn FnMut(usize) -> bool,
-) -> Option<Parsed> {
-    let Some(text) = php_string::text(bytes) else {
-        return Some(Parsed::Unknown);
-    };
-    parse_php_text(grammar, text, HostMap::Whole(whole), spend)
-}
 
-fn parse_php_text(
-    grammar: Grammar,
-    text: String,
-    map: HostMap,
-    spend: &mut dyn FnMut(usize) -> bool,
-) -> Option<Parsed> {
-    if !spend(text.len() + 1) {
-        return None;
-    }
-    let root = grammar.parse(&text);
-    if !spend(root.size()) {
-        return None;
-    }
-    Some(Parsed::Tree(Arc::new(SubTree::new(
-        grammar, text, 0, root, map,
-    ))))
-}
 
 #[cfg(test)]
 mod tests {
@@ -979,7 +808,7 @@ mod tests {
             .dfs()
             .find(|node| node.kind() == "string")
             .expect("a string");
-        match parse_string(&node, Grammar::Chars, &mut |_| true) {
+        match crate::code_rule_dsl::literal::python_string::parse_string(&node, CHARS, &mut |_| true) {
             Some(Parsed::Tree(tree)) => tree,
             _ => panic!("parses"),
         }

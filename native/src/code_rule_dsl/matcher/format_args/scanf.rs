@@ -24,7 +24,7 @@ pub(super) fn prepare<'t, D: Doc>(
     let Some(string) = env.get_match(string) else {
         return Prepared::NoMatch;
     };
-    let tree = match format_tree(string.clone(), Grammar::Scanf, reading) {
+    let tree = match format_tree(string.clone(), crate::code_rule_dsl::literal::scanf::GRAMMAR, reading) {
         Ok(tree) => tree,
         Err(prepared) => return prepared,
     };

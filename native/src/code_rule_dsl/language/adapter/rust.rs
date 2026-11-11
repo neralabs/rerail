@@ -19,7 +19,7 @@ use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
+use crate::code_rule_dsl::literal::Grammar;
 use crate::code_rule_dsl::matcher::{Arguments, Passed, ScopeName, SemanticText, Style, Unresolved, file_index};
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::module_path::ModulePath;
@@ -814,6 +814,15 @@ impl FormatArgRules for Rust {
 
 /// String literals: format templates.
 impl SyntaxRules for Rust {
+    fn parse_literal<D: Doc>(
+        grammar: Grammar,
+        node: &Node<'_, D>,
+        _: &str,
+        spend: &mut dyn FnMut(usize) -> bool,
+    ) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        crate::code_rule_dsl::literal::rust_format::parse_string(node, grammar, spend)
+    }
+
     const DOLLAR_NAMES: bool = false;
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
@@ -828,16 +837,14 @@ impl SyntaxRules for Rust {
             SyntaxFeature::LanguageOptions => {
                 refused("`languageOptions` is not available for rust policies")
             }
-            SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
-                LiteralHost::RustString => Ok(()),
-                LiteralHost::EcmaComment | LiteralHost::PhpComment => unhosted(grammar, ""),
-                LiteralHost::PythonString | LiteralHost::PhpString => match grammar {
-                    Grammar::Brace | Grammar::Percent | Grammar::Printf => {
-                        unhosted(grammar, "; Rust's format templates are `rustFormat`")
-                    }
-                    Grammar::Scanf => unhosted(grammar, "; Rust has no scanf formats"),
-                    _ => unhosted(grammar, ""),
-                },
+            SyntaxFeature::Parse(grammar) if crate::code_rule_dsl::language::Family::of(grammar.host_language()) == crate::code_rule_dsl::language::Family::Rust => Ok(()),
+            SyntaxFeature::Parse(grammar) if grammar.reads_comments() => unhosted(grammar, ""),
+            SyntaxFeature::Parse(grammar) => match grammar.name() {
+                "braceFormat" | "percentFormat" | "printfFormat" => {
+                    unhosted(grammar, "; Rust's format templates are `rustFormat`")
+                }
+                "scanfFormat" => unhosted(grammar, "; Rust has no scanf formats"),
+                _ => unhosted(grammar, ""),
             },
         }
     }

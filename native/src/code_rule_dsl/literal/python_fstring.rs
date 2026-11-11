@@ -10,7 +10,7 @@ use ast_grep_core::{Doc, Node};
 use std::sync::Arc;
 
 pub(crate) const KINDS: &[&str] = &["template", "literal", "interpolation"];
-const G: Grammar = Grammar::PythonFString;
+const G: Grammar = GRAMMAR;
 
 struct Builder {
     decoded: Decoded,
@@ -32,7 +32,7 @@ impl Builder {
     }
 
     fn literal(&mut self, text: &str, start: usize, prefix: &Prefix) -> bool {
-        offsets::decode_body(text, start, prefix, &mut self.decoded)
+        super::python_string::decode_body(text, start, prefix, &mut self.decoded)
             && self.decoded.text.len() <= MAX_STRING_BYTES
     }
 
@@ -283,4 +283,35 @@ pub(crate) fn parse<D: Doc>(
         root,
         HostMap::Spans(builder.decoded),
     ))))
+}
+
+/// The `pythonFString` grammar (`literal::LiteralGrammar`).
+pub(crate) struct PythonFStringGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&PythonFStringGrammar);
+
+impl super::LiteralGrammar for PythonFStringGrammar {
+    fn name(&self) -> &'static str {
+        "pythonFString"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        KINDS
+    }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn host(&self) -> &'static str {
+        "Python literals"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["string", "concatenated_string", "format_specifier"]
+    }
+    fn interpolates(&self) -> bool {
+        true
+    }
+    fn parse(&self, grammar: super::Grammar, text: &str) -> super::PNode {
+        // Parsed from host syntax, not from decoded constant text.
+        super::PNode::new(grammar, "template", 0, text.len())
+    }
 }

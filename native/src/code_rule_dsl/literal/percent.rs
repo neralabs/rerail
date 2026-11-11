@@ -23,7 +23,7 @@ pub(crate) const KINDS: &[&str] = &[
     "error",
 ];
 
-const G: Grammar = Grammar::Percent;
+const G: Grammar = GRAMMAR;
 
 /// Ruff's `CFormatErrorType`, with the character index it reports.
 enum ErrorType {
@@ -498,5 +498,32 @@ mod tests {
                 assert_eq!(keys, expected_keys, "{text:?}");
             }
         }
+    }
+}
+
+/// The `percentFormat` grammar (`literal::LiteralGrammar`).
+pub(crate) struct PercentGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&PercentGrammar);
+
+impl super::LiteralGrammar for PercentGrammar {
+    fn name(&self) -> &'static str {
+        "percentFormat"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        KINDS
+    }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn host(&self) -> &'static str {
+        "Python literals"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["string", "concatenated_string"]
+    }
+    fn parse(&self, _: super::Grammar, text: &str) -> super::PNode {
+        parse(text)
     }
 }

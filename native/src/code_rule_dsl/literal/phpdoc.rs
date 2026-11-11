@@ -102,7 +102,7 @@ pub(crate) const KINDS: &[&str] = &[
     "description",
 ];
 
-const G: Grammar = Grammar::PhpDoc;
+const G: Grammar = GRAMMAR;
 
 /// Whether PHP lexes a comment's text as a doc comment (`T_DOC_COMMENT`: `/**` and white space).
 pub(crate) fn is_doc_comment(text: &str) -> bool {
@@ -199,3 +199,66 @@ fn tree(parser: &parser::Parser<'_>, id: parser::Id, parent: usize, depth: usize
 
 #[cfg(test)]
 mod tests;
+
+/// The `phpDoc` grammar (`literal::LiteralGrammar`).
+pub(crate) struct PhpDocGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&PhpDocGrammar);
+
+impl super::LiteralGrammar for PhpDocGrammar {
+    fn name(&self) -> &'static str {
+        "phpDoc"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        KINDS
+    }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Php
+    }
+    fn host(&self) -> &'static str {
+        "PHP doc comments"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["comment"]
+    }
+    fn reads_comments(&self) -> bool {
+        true
+    }
+    fn parse(&self, grammar: super::Grammar, text: &str) -> super::PNode {
+        // Past the nesting bound an error root (`parse_php_comment` reads it as unknown).
+        parse(text).unwrap_or_else(|| {
+            let mut root = super::PNode::new(grammar, "php_doc", 0, text.len());
+            root.error = true;
+            root
+        })
+    }
+}
+
+/// Parses a PHP doc comment (`phpDoc`): its text, mapped to the source by a shift. Spends one step
+/// of `spend` per byte and tree node; `None` when the budget ran out.
+pub(crate) fn parse_comment<D: ast_grep_core::Doc>(
+    node: &ast_grep_core::Node<'_, D>,
+    spend: &mut dyn FnMut(usize) -> bool,
+) -> Option<super::Parsed> {
+    let text = node.text();
+    if !is_doc_comment(&text) {
+        return Some(super::Parsed::NotString);
+    }
+    if !spend(text.len() + 1) {
+        return None;
+    }
+    let Some(root) = parse(&text) else {
+        return Some(super::Parsed::Unknown);
+    };
+    if !spend(root.size()) {
+        return None;
+    }
+    Some(super::Parsed::Tree(std::sync::Arc::new(super::SubTree::new(
+        GRAMMAR,
+        text.into_owned(),
+        0,
+        root,
+        super::HostMap::Exact(node.range().start as isize),
+    ))))
+}

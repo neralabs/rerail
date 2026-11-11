@@ -40,11 +40,11 @@ pub(crate) enum Style {
 impl Style {
     pub(crate) fn grammar(self) -> Grammar {
         match self {
-            Self::Brace => Grammar::Brace,
-            Self::Percent => Grammar::Percent,
-            Self::Printf => Grammar::Printf,
-            Self::Scanf => Grammar::Scanf,
-            Self::Rust => Grammar::RustFormat,
+            Self::Brace => Grammar::expect("braceFormat"),
+            Self::Percent => Grammar::expect("percentFormat"),
+            Self::Printf => Grammar::expect("printfFormat"),
+            Self::Scanf => Grammar::expect("scanfFormat"),
+            Self::Rust => Grammar::expect("rustFormat"),
         }
     }
 }
@@ -165,7 +165,7 @@ impl FormatArgs {
         if !call.well_ordered {
             return Prepared::Unknown;
         }
-        let tree = match parsed_tree(&call.template, Grammar::RustFormat) {
+        let tree = match parsed_tree(&call.template, Grammar::expect("rustFormat")) {
             None | Some(Parsed::NotString) => return Prepared::NoMatch,
             Some(Parsed::Unknown) => return Prepared::Unknown,
             Some(Parsed::Tree(tree)) => tree,
@@ -657,7 +657,7 @@ fn string_key<D: Doc>(key: &Node<'_, D>) -> Option<String> {
     if !plain_literal(&key) {
         return None;
     }
-    match offsets::decode_python(&key) {
+    match crate::code_rule_dsl::literal::python_string::decode_python(&key) {
         offsets::Decode::Known(decoded) => Some(decoded.text),
         _ => None,
     }

@@ -44,6 +44,9 @@ pub(crate) trait LanguagePack: Send + Sync {
     fn suppresses_str(&self, violation: &crate::code_rule_dsl::model::ViolationSpec, suppress: &crate::code_rule_dsl::suppress::Suppress, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, source: &str, lines: &crate::code_rule_dsl::lines::LineTable, anchored: std::ops::Range<usize>, witness: (usize, usize)) -> bool;
     fn source_type(&self, _path: &str, _package: Option<crate::code_rule_dsl::language::PackageType>) -> Option<crate::code_rule_dsl::language::SourceType>;
     // SyntaxRules
+    fn syntax_parse_literal_tape(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed>;
+    fn syntax_parse_literal_sub(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed>;
+    fn syntax_parse_literal_str(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed>;
     fn syntax_dollar_names(&self) -> bool;
     fn syntax_feature(&self, feature: crate::code_rule_dsl::language::adapter::syntax::SyntaxFeature) -> Result<(), crate::code_rule_dsl::language::adapter::Refusal>;
     fn syntax_compile_language_options(&self, value: &serde_json::Value, path: &str) -> napi::Result<crate::code_rule_dsl::language::adapter::syntax::QueryOptions>;
@@ -245,6 +248,15 @@ impl<A: Adapter + SyntaxRules> LanguagePack for Pack<A> {
         <A as Adapter>::source_type(_path, _package)
     }
     // SyntaxRules
+    fn syntax_parse_literal_tape(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::tape::TapeDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        <A as SyntaxRules>::parse_literal::<crate::code_rule_dsl::tape::TapeDoc>(grammar, node, interpolation, spend)
+    }
+    fn syntax_parse_literal_sub(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, crate::code_rule_dsl::literal::SubDoc>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        <A as SyntaxRules>::parse_literal::<crate::code_rule_dsl::literal::SubDoc>(grammar, node, interpolation, spend)
+    }
+    fn syntax_parse_literal_str(&self, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        <A as SyntaxRules>::parse_literal::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>(grammar, node, interpolation, spend)
+    }
     fn syntax_dollar_names(&self) -> bool {
         <A as SyntaxRules>::DOLLAR_NAMES
     }
@@ -634,6 +646,20 @@ pub(crate) fn suppresses<D: Doc>(pack: &dyn LanguagePack, violation: &crate::cod
         return unsafe { pack.suppresses_str(violation, suppress, same(node), source, lines, anchored, witness) };
     }
     unreachable!("suppresses: a document type no language pack takes: {}", std::any::type_name::<D>())
+}
+
+/// `SyntaxRules::parse_literal` of `pack`, for `D`.
+pub(crate) fn syntax_parse_literal<D: Doc>(pack: &dyn LanguagePack, grammar: crate::code_rule_dsl::literal::Grammar, node: &ast_grep_core::Node<'_, D>, interpolation: &str, spend: &mut dyn FnMut (usize) -> bool) -> Option<crate::code_rule_dsl::literal::Parsed> {
+    if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::tape::TapeDoc>() {
+        return unsafe { pack.syntax_parse_literal_tape(grammar, same(node), interpolation, spend) };
+    }
+    if TypeId::of::<D>() == TypeId::of::<crate::code_rule_dsl::literal::SubDoc>() {
+        return unsafe { pack.syntax_parse_literal_sub(grammar, same(node), interpolation, spend) };
+    }
+    if TypeId::of::<D>() == TypeId::of::<ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>() {
+        return unsafe { pack.syntax_parse_literal_str(grammar, same(node), interpolation, spend) };
+    }
+    unreachable!("syntax_parse_literal: a document type no language pack takes: {}", std::any::type_name::<D>())
 }
 
 /// `ScopeRules::visit` of `pack`, for `D`.

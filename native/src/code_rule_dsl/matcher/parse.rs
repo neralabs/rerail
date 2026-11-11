@@ -16,7 +16,8 @@ use super::util::{UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::SubDoc;
-use crate::code_rule_dsl::literal::{self, Grammar, LiteralHost, Parsed};
+use crate::code_rule_dsl::literal::{self, Grammar, Parsed};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::origin::Origin;
 use crate::code_rule_dsl::scope::Reading;
 use crate::code_rule_dsl::value::Value;
@@ -188,7 +189,7 @@ fn parse_fact_tree_with<'t, D: Doc>(
     if !host_kinds.contains(&node.kind_id()) {
         return Some(Parsed::NotString);
     }
-    if grammar == Grammar::Annotation {
+    if grammar.of_host_syntax() {
         let table = file_table(node, GrammarDialect::Python, reading)?;
         return table
             .annotation_at(&node.range())
@@ -206,7 +207,7 @@ impl ParseTest {
         if !self.host_kinds.contains(&node.kind_id()) {
             return None;
         }
-        if self.grammar == Grammar::Annotation {
+        if self.grammar.of_host_syntax() {
             let table = file_table(&node, GrammarDialect::Python, self.reading)?;
             let tree = Arc::clone(&table.annotation_at(&node.range())?.tree);
             let _tables = SubTables::enter(table);
@@ -294,16 +295,9 @@ fn parsed_tree_with<D: Doc>(
             None => Parsed::Unknown,
         });
     }
-    let parsed = match grammar.literal_host() {
-        LiteralHost::EcmaComment => literal::parse_comment(node, &mut spend_steps),
-        LiteralHost::PythonString if grammar == Grammar::PythonFString => {
-            literal::parse_python_fstring(node, interpolation, &mut spend_steps)
-        }
-        LiteralHost::PythonString => literal::parse_string(node, grammar, &mut spend_steps),
-        LiteralHost::PhpString => literal::parse_php_string(node, grammar, &mut spend_steps),
-        LiteralHost::PhpComment => literal::parse_php_comment(node, &mut spend_steps),
-        LiteralHost::RustString => literal::parse_rust_string(node, grammar, &mut spend_steps),
-    };
+    // The family of the grammar's host reads its literals (`SyntaxRules::parse_literal`).
+    let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(grammar.host_language()));
+    let parsed = language_pack::syntax_parse_literal(pack, grammar, node, interpolation, &mut spend_steps);
     let Some(parsed) = parsed else {
         // The budget fails the clause; a deadline leaves the parse unknown.
         return UTIL_EXCEEDED.get().is_none().then_some(Parsed::Unknown);
@@ -342,7 +336,7 @@ pub(super) fn parsed_value_tree<D: Doc>(
         Value::Unknown => return Some(Parsed::Unknown),
         _ => return Some(Parsed::NotString),
     };
-    let Some(parsed) = literal::parse_php_value(bytes, node.range(), grammar, &mut spend_steps)
+    let Some(parsed) = literal::php_string::parse_value(bytes, node.range(), grammar, &mut spend_steps)
     else {
         return UTIL_EXCEEDED.get().is_none().then_some(Parsed::Unknown);
     };

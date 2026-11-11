@@ -30,7 +30,7 @@ pub(crate) const KINDS: &[&str] = &[
     "error",
 ];
 
-const G: Grammar = Grammar::Printf;
+const G: Grammar = GRAMMAR;
 
 /// PHP's `INT_MAX`: an argument number, width or precision must be below it.
 const INT_MAX: u64 = 2_147_483_647;
@@ -295,3 +295,30 @@ fn star(
 
 #[cfg(test)]
 mod tests;
+
+/// The `printfFormat` grammar (`literal::LiteralGrammar`).
+pub(crate) struct PrintfGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&PrintfGrammar);
+
+impl super::LiteralGrammar for PrintfGrammar {
+    fn name(&self) -> &'static str {
+        "printfFormat"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        KINDS
+    }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Php
+    }
+    fn host(&self) -> &'static str {
+        "PHP strings"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["string", "encapsed_string", "heredoc", "nowdoc"]
+    }
+    fn parse(&self, _: super::Grammar, text: &str) -> super::PNode {
+        parse(text)
+    }
+}

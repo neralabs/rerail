@@ -17,6 +17,7 @@ Adapter	parse_input	fn	parse_input
 Adapter	module_path	fn	module_path
 Adapter	suppresses	free	suppresses
 Adapter	source_type	fn	source_type
+SyntaxRules	parse_literal	free	syntax_parse_literal
 SyntaxRules	DOLLAR_NAMES	const	syntax_dollar_names
 SyntaxRules	feature	fn	syntax_feature
 SyntaxRules	compile_language_options	fn	syntax_compile_language_options

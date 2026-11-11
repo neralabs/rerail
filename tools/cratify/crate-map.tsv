@@ -234,3 +234,10 @@ matcher::resolve::php	rerail-lang-php
 calls::closure::lang_php	rerail-lang-php
 calls::closure::lang_python	rerail-lang-python
 calls::closure::lang_rust	rerail-lang-rust
+literal::percent	rerail-lang-python
+literal::brace	rerail-lang-python
+literal::identifier_words	rerail-lang-python
+literal::annotation	rerail-lang-python
+literal::python_string	rerail-lang-python
+literal::printf	rerail-lang-php
+literal::scanf	rerail-lang-php

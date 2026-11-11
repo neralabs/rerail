@@ -4,18 +4,22 @@ use super::*;
 
 /// Comments: ESLint's directives.
 impl SyntaxRules for Ecma {
+    fn parse_literal<D: Doc>(
+        _: Grammar,
+        node: &Node<'_, D>,
+        _: &str,
+        spend: &mut dyn FnMut(usize) -> bool,
+    ) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        crate::code_rule_dsl::literal::eslint_directive::parse_comment(node, spend)
+    }
+
     const DOLLAR_NAMES: bool = false;
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
         match feature {
             SyntaxFeature::LanguageOptions => Ok(()),
-            SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
-                LiteralHost::EcmaComment => Ok(()),
-                LiteralHost::PythonString
-                | LiteralHost::PhpString
-                | LiteralHost::PhpComment
-                | LiteralHost::RustString => unhosted(grammar, ""),
-            },
+            SyntaxFeature::Parse(grammar) if crate::code_rule_dsl::language::Family::of(grammar.host_language()) == crate::code_rule_dsl::language::Family::Ecma => Ok(()),
+            SyntaxFeature::Parse(grammar) => unhosted(grammar, ""),
         }
     }
 

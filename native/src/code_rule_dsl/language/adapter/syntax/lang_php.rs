@@ -4,6 +4,19 @@ use super::*;
 
 /// Strings (printf and scanf formats) and doc comments.
 impl SyntaxRules for Php {
+    fn parse_literal<D: Doc>(
+        grammar: Grammar,
+        node: &Node<'_, D>,
+        _: &str,
+        spend: &mut dyn FnMut(usize) -> bool,
+    ) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        if grammar.reads_comments() {
+            crate::code_rule_dsl::literal::phpdoc::parse_comment(node, spend)
+        } else {
+            crate::code_rule_dsl::literal::php_string::parse_string(node, grammar, spend)
+        }
+    }
+
     const DOLLAR_NAMES: bool = true;
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
@@ -11,23 +24,20 @@ impl SyntaxRules for Php {
             SyntaxFeature::LanguageOptions => {
                 refused("`languageOptions` is not available for php policies")
             }
-            SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
-                LiteralHost::PhpString | LiteralHost::PhpComment => Ok(()),
-                LiteralHost::EcmaComment | LiteralHost::RustString => unhosted(grammar, ""),
-                LiteralHost::PythonString => match grammar {
-                    Grammar::Percent => {
+            SyntaxFeature::Parse(grammar) if crate::code_rule_dsl::language::Family::of(grammar.host_language()) == crate::code_rule_dsl::language::Family::Php => Ok(()),
+            SyntaxFeature::Parse(grammar) => match grammar.name() {
+                    "percentFormat" => {
                         unhosted(grammar, "; PHP's printf formats are `printfFormat`")
                     }
-                    Grammar::Brace => unhosted(
+                    "braceFormat" => unhosted(
                         grammar,
                         "; PHP has no str.format templates (its printf formats are `printfFormat`)",
                     ),
-                    Grammar::Annotation => unhosted(
+                    "annotation" => unhosted(
                         grammar,
                         "; PHP holds no type in a string: its declared types are syntax, and its PHPDoc types are `phpDoc`",
                     ),
                     _ => unhosted(grammar, ""),
-                },
             },
         }
     }

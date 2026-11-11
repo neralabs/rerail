@@ -5,8 +5,9 @@ use super::{Adapter, Blade, Ecma, Php, Python, Refusal};
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::SourceType;
-use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
+use crate::code_rule_dsl::literal::Grammar;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
+use ast_grep_core::{Doc, Node};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -33,6 +34,19 @@ pub(crate) type QueryWhen = (bool, Option<Vec<SourceType>>);
 
 /// A family's syntax.
 pub(crate) trait SyntaxRules: Adapter {
+    /// `node`'s tree under `grammar`, a grammar of this family's literals (`LiteralGrammar::host_language`):
+    /// `interpolation` marks an interpolated literal's fields. Spends one step of `spend` per byte and tree node;
+    /// `None` when the budget ran out.
+    fn parse_literal<D: Doc>(
+        grammar: Grammar,
+        node: &Node<'_, D>,
+        interpolation: &str,
+        spend: &mut dyn FnMut(usize) -> bool,
+    ) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        let _ = (grammar, node, interpolation, spend);
+        Some(crate::code_rule_dsl::literal::Parsed::NotString)
+    }
+
     /// Whether a pattern's `$`-prefixed leaf that is no metavariable is a name of the language
     /// (Python's `$At` an identifier, PHP's `$x` a variable), spelled back with `$`.
     const DOLLAR_NAMES: bool;
@@ -92,7 +106,7 @@ pub(super) mod kit {
         /// compiles to.
         pub(in super::super) compiled_options: Option<(&'static str, Option<u16>, Option<u8>)>,
         pub(in super::super) when: &'static [When],
-        /// The refusals of `parse` with each grammar, in `Grammar::ALL`'s order; `None` where
+        /// The refusals of `parse` with each grammar, in the registration order (`Grammar::all`); `None` where
         /// the family's literals host it.
         pub(in super::super) parse: [Option<&'static str>; 8],
     }
@@ -138,15 +152,16 @@ pub(super) mod kit {
             expect.language_options.map(str::to_owned)
         );
         let parse = [
-            Grammar::Percent,
-            Grammar::Brace,
-            Grammar::Annotation,
-            Grammar::EslintDirective,
-            Grammar::Printf,
-            Grammar::Scanf,
-            Grammar::PhpDoc,
-            Grammar::RustFormat,
+            "percentFormat",
+            "braceFormat",
+            "annotation",
+            "eslintDirective",
+            "printfFormat",
+            "scanfFormat",
+            "phpDoc",
+            "rustFormat",
         ]
+        .map(Grammar::expect)
         .map(|grammar| refusal(A::feature(SyntaxFeature::Parse(grammar))));
         assert_eq!(parse, expect.parse.map(|m| m.map(str::to_owned)));
     }

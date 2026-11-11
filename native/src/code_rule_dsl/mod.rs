@@ -570,6 +570,21 @@ pub(crate) fn install_languages() {
         #[cfg(feature = "lang-blade")]
         (language::Via::CompiledView, embed::compiled_view::scope),
     ]);
+    // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).
+    literal::install(vec![
+        literal::percent::GRAMMAR,
+        literal::identifier_words::GRAMMAR,
+        literal::python_fstring::GRAMMAR,
+        literal::brace::GRAMMAR,
+        literal::annotation::GRAMMAR,
+        literal::eslint_directive::GRAMMAR,
+        literal::printf::GRAMMAR,
+        literal::scanf::GRAMMAR,
+        literal::phpdoc::GRAMMAR,
+        literal::rust_format::GRAMMAR,
+        #[cfg(test)]
+        literal::CHARS,
+    ]);
     // What a `package` file condition reads of a file without a manifest (ECMA's default Node range).
     language::set_no_manifest(&package_manifest::NoManifest);
     language::set_manifest_reader(package_manifest::read_wire);
