@@ -439,7 +439,7 @@ describe("RERAIL_AUTOSTART", () => {
       const machine = fakeMachine("linux", { env: { RERAIL_HOME: home, RERAIL_AUTOSTART: setting } });
       await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toBeInstanceOf(AutostartOffError);
     } finally {
-      await rm(home, { recursive: true, force: true });
+      await removeFolder(home);
     }
   });
 
