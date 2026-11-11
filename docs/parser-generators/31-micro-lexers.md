@@ -163,7 +163,21 @@ The next step for Bitlex is to emit this form:
 and to move what tier 1 now does with masks a byte (keyword words)
 to per-token tables, as this lexer does.
 
-Open in this baseline:
+### Words' codes for words alone, punctuation by one load
 
-- the word codes could be made only for words, not every token;
-- punctuation could take its kind and end from one table load.
+Two changes after the run above:
+
+- A token's kind and length come from one load of a 1024-entry table,
+  indexed by its first byte, whether it is a pair's, and whether that pair is `<:`.
+  A word's length is its run of word bits instead.
+- Only a word token gets a word code: one branch on "is it a word".
+
+| | instructions | cycles | IPC |
+|---|---|---|---|
+| block lexer, before | 156M | 33.2M | 4.7 |
+| block lexer, after | 132.5M | 32.6M | 4.1 |
+| byte lexer | 131.6M | 34.3M | 3.8 |
+
+The branch costs some IPC, but less than a code for every token did.
+The block lexer is now level with the byte lexer in instructions
+and 5% under it in cycles.

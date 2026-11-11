@@ -72,6 +72,7 @@ RR_ROUNDS=7 <test binary> rr_against_rust --ignored --nocapture
 | tier 2 | 642M | 151M | 338 / 79 | 4.3 |
 | **compiled, both tiers** | **1,174M** | **257M** | **618 / 135** | |
 | lean: lexer alone | 156M | 33M | 82 / 18 | 4.7 |
+| lean: lexer alone, page 31's last change | 133M | 33M | 70 / 17 | 4.1 |
 | lean: lexer and parse | 466M | 84M | 245 / 44 | 5.6 |
 | engine's Rust parser | 3,235M | 670M | 1,704 / 353 | 4.8 |
 

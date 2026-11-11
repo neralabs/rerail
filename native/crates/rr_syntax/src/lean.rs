@@ -194,6 +194,23 @@ static PAIR_KIND: [u8; 256] = {
     t
 };
 
+/// An ordinary token's kind and length, by one load: indexed by its first byte, whether it is a
+/// pair's (`+ 256`), and whether that pair is `<:` (`+ 512`). A word's length is its run of
+/// word bits, more than the 1 here.
+static TOKEN: [(u8, u8); 1024] = {
+    let mut t = [(BAD, 1u8); 1024];
+    let mut c = 0;
+    while c < 256 {
+        t[c] = (KIND_OF[c], 1);
+        if PAIR_KIND[c] != 0 {
+            t[256 + c] = (PAIR_KIND[c], 2);
+        }
+        c += 1;
+    }
+    t[256 + 512 + b'<' as usize] = (P0 + SUBTYPE, 2);
+    t
+};
+
 /// A run of two-byte punctuation's first bytes (`=>=`), read left to right: one whose first
 /// byte is the second of the one before is none.
 fn left_to_right(mut m: u64) -> u64 {
@@ -402,13 +419,12 @@ fn lex(src: &str) -> Lexed {
                 let raw = u64::from_le_bytes(w.bytes[at..at + 8].try_into().expect("8 bytes"));
                 let ninth = w.bytes[at + 8];
                 let words = micro::run(w.word, q) as usize;
-                let pair = ((pairs >> q) & 1) as u8;
-                // The kind: by the first byte, or a pair's (`<:` its own), by selects.
-                let pk = if d == b':' { P0 + SUBTYPE } else { PAIR_KIND[c as usize] };
-                let m = 0u8.wrapping_sub(pair);
-                let kind = (KIND_OF[c as usize] & !m) | (pk & m);
-                let mut end = pos + words.max(1) + pair as usize;
-                let mut code = word_code(raw, ninth, words);
+                let pair = ((pairs >> q) & 1) as usize;
+                // The kind and length by one load; a word's length is its run.
+                let (kind, n1) = TOKEN[c as usize | pair << 8 | (pair & usize::from(d == b':')) << 9];
+                let mut end = pos + words.max(usize::from(n1));
+                // Only a word has a code.
+                let mut code = if words != 0 { word_code(raw, ninth, words) } else { 0 };
                 if at + words == 64 {
                     // A word on past the block: the last start of it.
                     end = word_end(b, &w, pos);
