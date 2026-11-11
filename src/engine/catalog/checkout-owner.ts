@@ -27,19 +27,35 @@ function holdsGitEntry(directory: string): boolean {
 }
 
 /**
- * Whether `directory`'s `.git` entry still leads to a Git directory: it is a folder, or a file whose `gitdir:` line names
- * one that exists, as Git reads it (relative to `directory`). A linked worktree whose entry under the main checkout's
- * `.git/worktrees` was removed keeps its `.git` file, and Git no longer takes the folder for a checkout.
+ * Whether `directory`'s `.git` entry still leads to a Git directory: it is one, or it is a file whose `gitdir:` line names
+ * one, as Git reads it (relative to `directory`). A linked worktree whose entry under the main checkout's
+ * `.git/worktrees` was removed or emptied keeps its `.git` file, and Git no longer takes the folder for a checkout; nor
+ * does it take a folder whose `.git` folder was emptied, and it looks further up instead.
  */
 function leadsToGitDirectory(directory: string): boolean {
   const entry = join(directory, ".git");
   try {
-    if (statSync(entry).isDirectory()) return true;
+    if (statSync(entry).isDirectory()) return isGitDirectory(entry);
     const line = readFileSync(entry, "utf8").split("\n", 1)[0]!.trimEnd();
-    return line.startsWith("gitdir: ") && existsSync(resolve(directory, line.slice("gitdir: ".length)));
+    return line.startsWith("gitdir: ") && isGitDirectory(resolve(directory, line.slice("gitdir: ".length)));
   } catch {
     return false;
   }
+}
+
+/** A HEAD Git accepts (`validate_headref`): a symbolic ref under `refs/`, or an object name. */
+const GIT_HEAD = /^(?:ref:\s*refs\/|[0-9a-f]{40})/iu;
+
+/**
+ * Whether `folder` is a Git directory by the test Git applies before it takes a folder for one (`is_git_directory` in
+ * Git's setup.c): its HEAD names a ref or an object, and its common directory (the folder its `commondir` file names,
+ * relative to it, else itself) holds `objects` and `refs`. Throws when HEAD cannot be read.
+ */
+function isGitDirectory(folder: string): boolean {
+  if (!GIT_HEAD.test(readFileSync(join(folder, "HEAD"), "utf8"))) return false;
+  const commondir = join(folder, "commondir");
+  const common = existsSync(commondir) ? resolve(folder, readFileSync(commondir, "utf8").replace(/[\r\n]+$/u, "")) : folder;
+  return existsSync(join(common, "objects")) && existsSync(join(common, "refs"));
 }
 
 function within(root: string, candidate: string): boolean {
@@ -135,7 +151,8 @@ export class CheckoutOwners {
    * Forget the cached answers when the recorded checkouts changed since the last lookup, but for each folder Git
    * confirmed as a top level whose `.git` entry still leads to a Git directory: that is Git's answer, which no record
    * changes, and asking it again costs a Git process per checkout the session knows each time any checkout is recorded or
-   * forgotten. Checking the entry costs a stat, and a read for a `.git` file, per folder kept.
+   * forgotten. Checking the entry costs a few reads and stats per folder kept, still no Git process: the entry, a `.git`
+   * file's Git directory, its HEAD and `commondir`, and the common directory's `objects` and `refs`.
    */
   #revalidate(): void {
     if (this.#recordedVersion === undefined) return;
