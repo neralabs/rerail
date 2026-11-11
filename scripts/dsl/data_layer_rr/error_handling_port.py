@@ -24,7 +24,7 @@ def normalize(result, root):
 def scan(suite, entry, module, arguments):
     root, path = Path(arguments['root']), Path(arguments['path'])
     actual = path if path.is_absolute() else root / path
-    options = dict(filename=actual.name, providedSource=arguments['source'])
+    options = dict(filename=actual.name, providedSource=arguments['source'], apiInputDirs=['input'])
     try:
         relative = actual.relative_to(root)
     except ValueError:
@@ -39,7 +39,7 @@ def scan(suite, entry, module, arguments):
         read_error = error
         options['readError'] = 'true'
         source = ''
-    rows = suite.native('error_handling', entry, [dict(path='input.py', source=source)], options)
+    rows = suite.native('error_handling', entry, [dict(path='input/source.py', source=source)], options)
     failures = [row for row in rows if row['code'] == 'EH_READ_ERROR']
     if failures:
         if len(failures) != 1 or len(rows) != 1 or read_error is None:

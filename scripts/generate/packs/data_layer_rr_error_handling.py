@@ -6,6 +6,7 @@ from data_layer_rr_text import module
 def error_handling(source, target, header):
     original = module(source, 'error_handling')
     text = header('error_handling', target).replace(', "**/test_*.py"', '')
+    text += '.scope dirs option("apiInputDirs")\n'
     text += '.decl eh_dir(which: symbol, prefix: symbol)\n'
     for kind, values in [('log', original._LOG_RERAISE_DIRS), ('txn', original._TXN_COMMIT_DIRS)]:
         for value in values:

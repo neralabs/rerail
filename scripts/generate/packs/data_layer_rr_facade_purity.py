@@ -6,6 +6,7 @@ from data_layer_rr_text import module
 def data_layer_facade_purity(source, target, header):
     original = module(source, 'data_layer_facade_purity')
     text = header('data_layer_facade_purity', target)
+    text += '.scope dirs option("apiInputDirs")\n'
     text += '.decl fac_default(i: number, path: symbol)\n'
     for index, path in enumerate(original.DEFAULT_TARGETS):
         text += f'fac_default({index}, {json.dumps(path.relative_to(original.REPO_ROOT).as_posix())}).\n'

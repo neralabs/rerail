@@ -44,13 +44,13 @@ def scan(suite, entry, module, args):
     for index, path in enumerate(paths):
         if not path.is_file():
             continue
-        logical = f'input-{index}/{path.name}'
+        logical = f'input/{index}/{path.name}'
         originals[logical] = path
         # The framework does not read explicit non-Python files.
         source = path.read_text() if path.suffix == '.py' else ''
         files.append(dict(path=logical, source=source))
     rows = suite.native('data_layer_facade_purity', entry, files,
-        dict(attemptedPaths=[str(path) for path in paths]))
+        dict(apiInputDirs=['input'], attemptedPaths=[str(path) for path in paths]))
     stats = [row for row in rows if row['code'] == 'FAC_FILES']
     if entry == 'lint_targets' and len(stats) != 1 or entry != 'lint_targets' and stats:
         raise AssertionError('Native facade report must include one attempted-file count')

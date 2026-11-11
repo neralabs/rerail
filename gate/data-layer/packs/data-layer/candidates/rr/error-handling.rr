@@ -7,6 +7,7 @@
 .scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**", "**/test/**", "**/tests/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_error_handling.py
 #include "python/ast.rr"
+.scope dirs option("apiInputDirs")
 .decl eh_dir(which: symbol, prefix: symbol)
 eh_dir("log", "api").
 eh_dir("log", "impl").

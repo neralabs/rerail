@@ -7,6 +7,7 @@ def data_layer_compat_aliases(source, target, header):
     messages = constants(source / 'scripts/lint_data_layer_compat_aliases.py')['VIOLATIONS']
     text = header('data_layer_compat_aliases', target)
     text = text.replace('.scope include "data_layer/**/*.py"', '.scope include "data_layer/**/*.py", "testing.py"')
+    text += '.scope dirs option("apiInputDirs")\n'
     text += '''
 .decl alias_trigger(d: number)
 alias_trigger(d) :- source(d, sp), text(sp, t), (contains(" as ", t) ; contains("=", t)).

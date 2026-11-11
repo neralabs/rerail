@@ -41,14 +41,14 @@ def scan(suite, entry, module, args):
             paths.extend(sorted(p for p in target.glob('*.py') if p.is_file()))
     originals, files = {}, []
     for index, path in enumerate(paths):
-        name = f'input-{index}/{path.name}'
+        name = f'input/{index}/{path.name}'
         originals[name] = path
         try:
             content = path.read_text()
         except (OSError, UnicodeError):
             continue
         files.append(dict(path=name, source=content))
-    rows = suite.native(check, entry, files)
+    rows = suite.native(check, entry, files, dict(apiInputDirs=['input']))
     if any(r['code'] not in {'DLA001', 'DLA002'} for r in rows):
         raise AssertionError('Unexpected facade alias diagnostic')
     rows.sort(key=lambda r: (originals[r['path']].as_posix(), r['line'], r['code']))
