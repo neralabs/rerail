@@ -871,12 +871,15 @@ fn unkept_digest(rel: &str, reads: &[(String, u64)]) -> u64 {
     h
 }
 
-/// An input's identity: its name and columns. Its rows are what its digest says: two programs whose inputs have
-/// the same rows share the relations derived from them.
-fn input_ident(rel: &str, prog: &front::Program) -> [u8; 32] {
+/// An input's identity: its program's (`key`), its name and its columns. Programs over one root bind inputs of one
+/// name to other rows (phase 1's `doc`, the pack's), so each keeps its own input frames. A derived relation is
+/// named by its rules and is shared: another program's frame of it is taken when the digests it read are this
+/// program's.
+fn input_ident(rel: &str, prog: &front::Program, key: &[u8; 32]) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut h = Sha256::new();
-    h.update(b"rerail.relation/v1\0input\0");
+    h.update(b"rerail.relation/v2\0input\0");
+    h.update(key);
     h.update(rel.as_bytes());
     h.update(format!("\0{:?}\0", prog.decls.get(rel)).as_bytes());
     h.finalize().into()
@@ -935,7 +938,7 @@ impl Retained {
         // as phase 1's `doc` or the types phase's `types__wgen`, which no rule may name (a pattern reads `node`).
         let read: BTreeSet<String> = prog.inputs.iter().chain(bound.keys()).filter(|r| !derived.contains(r)).cloned().collect();
         for rel in &read {
-            names.insert(rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog) });
+            names.insert(rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &key) });
         }
         let all: Vec<FrameRel> = names.values().cloned().collect();
         let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
@@ -977,6 +980,18 @@ impl Retained {
                     for rel in scc {
                         known.insert(rel.clone(), unkept_digest(rel, &rd));
                     }
+                }
+            }
+        }
+        // An input this program kept no frame of (its first run) reads as unchanged, at the run's digest, with no old
+        // rows, when another program's relations are current: each was derived from rows of that digest. With none
+        // current, the run is a first one.
+        if !frames.derived.is_empty() {
+            for rel in &read {
+                if !inputs.contains_key(rel)
+                    && let Some(d) = bound.get(rel)
+                {
+                    inputs.insert(rel.clone(), *d);
                 }
             }
         }

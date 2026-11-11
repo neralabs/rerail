@@ -206,6 +206,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
+    // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),
     ("code_rule_dsl/logic/plan/sketch.rs", "FILE"),
     ("code_rule_dsl/logic/profile.rs", "DIR"),

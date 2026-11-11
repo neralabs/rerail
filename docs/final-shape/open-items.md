@@ -3457,3 +3457,23 @@ No rule reads `encl` any more. `bound` and `defined` are refused because no rule
 
 **Closure:** find which change made `within` (and so `uses`) cross-file, and whether that change is right.
 Then give the test a program whose export factorizes, or restore the split, and stop ignoring the test.
+
+## O-suite-five. Five engine tests fail in files the merges of 2026-11-10 did not touch
+
+**Seen (2026-11-10).** These five tests fail in the full engine suite after the merge of
+`More-ergonomic-rule-syntax` at 96d4720ab, and fail on their own too:
+
+| Test | Failure |
+|---|---|
+| `logic::simplify::tests::an_existence_count_is_a_negation` | one existence count rewritten, not two |
+| `sql_executor::tests::scaling::walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs` | refreshed strata: 0, not 2 |
+| `sql_executor::tests::recovery::original_cpython_programs_use_private_projections_and_bounded_join_work` | 1755 against 1841 |
+| `transducer::packed::backend_parity_tests::the_verifier_and_the_metal_interpreter_share_one_opcode_set` | tier 2's words lack 83 |
+| `transducer::packed::compile_matcher_tests::the_gate_catches_a_widened_walk` | only 2 widened clauses differ |
+
+Neither the merge nor this branch's memo and frames work changes these tests' files or what they run. Five other
+failures in that run need the pack fixtures, which come from S3 (`fixtures:pull`) and are not in this worktree:
+`python_shortcuts_change_no_pack_result_f811`, `…_f821`, `…_f841`, `reproduces_sqlfluff_rf01_and_al05` and
+`vue::view::tests::corpus`.
+
+**Closure:** each of the five passes on the hub, or its owner fixes it or ignores it with a reason.

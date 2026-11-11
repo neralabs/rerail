@@ -46,8 +46,7 @@ v(s, d) :- types__vtype(s, _, d).
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
     let report = corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).unwrap();
     let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
-    // Phase 1 (`sources`: the source files loaded, 0104 step 1) runs beside the typing phases the reader reads.
-    assert_eq!(names, ["struct", "types", "sources"]);
+    assert_eq!(names, ["sources", "struct", "types"]);
     let rows = |rel: &str| -> Vec<String> {
         let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
         v.sort();
@@ -115,7 +114,7 @@ sh(f, n, c, w) :- struct__shape(f, n, c, w).
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
     let report = corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).unwrap();
     let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
-    assert_eq!(names, ["struct", "sources"]);
+    assert_eq!(names, ["sources", "struct"]);
     let rows = |rel: &str| -> Vec<String> {
         let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
         v.sort();

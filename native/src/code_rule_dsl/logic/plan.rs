@@ -5459,7 +5459,10 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     for (&rel, rs) in rules_by {
         if native_reads.contains(rel) { continue; }
         let [rule] = rs.as_slice() else { continue };
-        if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
+        // A gate's relations (a request asked, `ask_…`, and what it feeds) are written as the run decides them: a
+        // table, not a view.
+        let gated = prog.gates.iter().any(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps).any(|x| x == rel));
+        if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) || gated {
             continue;
         }
         let (h, b) = (&rule.head, &rule.body);
@@ -6351,12 +6354,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 if prog.inputs.contains(rel) || rows.is_empty() || !prog.rules.iter().any(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| a.rel == *rel)) {
                     continue;
                 }
-                let width = prog.decls[rel].len();
-                let marks = vec!["?"; width].join(", ");
-                let mut insert = db.prepare(&format!("INSERT OR IGNORE INTO {} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(rel)))?;
-                for row in &rows {
-                    insert.execute(rusqlite::params_from_iter(row.iter()))?;
-                }
+                // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above
+                // reads it there, and a SQL one has it moved into its table (`Run::materialize`).
+                let types: Vec<u8> = prog_types(prog, rel).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
+                super::native::component::retain(db, rel, rows, types)?;
+                run.native_rels.insert(rel.clone());
             }
             continue;
         }

@@ -1316,7 +1316,9 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
             }
             let path = path.clone();
             let _ = tx.send(Some(std::thread::spawn(move || {
-
+        // Collection works behind the run, as the writer does: on its own connection, beside the waves, which read
+        // nothing it writes and wait for none of it (decision 0053). Its statements are not a wave's.
+        crate::code_rule_dsl::logic::profile::behind_the_run();
         let started = std::time::Instant::now();
         let mut passes = 0;
         let outcome = (|| -> std::result::Result<String, crate::content_store::StoreError> {
@@ -1598,11 +1600,54 @@ fn run_observed(
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
     // The constants' own run runs no phase: a constant reads no input (`constants::foldable`), and a phase export is
     // one. Run here, a phase took the constants' option for its own, and wrote none of its exports.
+    // Phase 1 (`sources.rr`, decision 0104) runs first: it loads the source files and the libraries their imports
+    // reach, to the imports' fixed point. Its documents are this run's, and every later phase's run inside it: a phase's
+    // own run, phase 0's (another tree) and the constants' (no documents) list none of theirs from it. A run given its
+    // files (`inputFiles`, T's facts) has no phase 1.
+    let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
+    let mut listing: Option<(Vec<String>, &'static str)> = None;
+    let mut phase_one_run = None;
+    let _phase_one = if t_facts.is_none()
+        && options.get("inputFiles").is_none()
+        && phases::declared(&prog).is_none()
+        && !phases::in_phase()
+        && !phase0::active()
+        && options.get(constants::OWN).is_none()
+        && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off")
+    {
+        let found = scoped(corpus_files(root)?, &prog, options);
+        let label = corpus_language(language.as_deref(), typing, &found);
+        let files = found.of(label);
+        // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
+        // only where the observer cannot vouch for it).
+        let stated: Vec<(String, String, String, String)> = files
+            .iter()
+            .filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label))
+            .map(|p| (p.clone(), crate::code_rule_dsl::facts::vtab::syntax::module(p), label.to_owned(), world::bytes_digest(&root.join(p))))
+            .filter(|(_, _, _, c)| !c.is_empty())
+            .collect();
+        listing = Some((files, label));
+        if stated.is_empty() {
+            None
+        } else {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
+            let (one, run) = phases::sources(&stated, label, root, out, modes, binding, chunk_nodes, typing, options)?;
+            let (made, libraries) = (one.documents.len(), one.libraries.len());
+            crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || {
+                format!("{made} of {} source files are its documents; {libraries} library documents the imports reached", stated.len())
+            });
+            phase_one_run = Some(run);
+            Some(phases::PhaseOneHeld::enter(one))
+        }
+    } else {
+        None
+    };
     let (phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
         (Default::default(), Vec::new())
     } else {
         phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?
     };
+    phase_runs.splice(0..0, phase_one_run);
     // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
     // prepared, so an edit that changes them leaves the program, its prepared plans and its keys as they were.
     // The split takes them as constants of the run (`file_local::run_constant`).
@@ -1634,8 +1679,10 @@ fn run_observed(
     let mut folded = fold_constants(&mut prog)?;
     phase("constants", 0);
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
-    // The program's `.language`, which picks the corpus's files: `.rr` files only when it names `rr` (decision 0061).
-    let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
+    // The program's `.language` (above) picks the corpus's files: `.rr` files only when it names `rr` (decision 0061).
+    // The library documents phase 1's imports reached, for a program that reads them (`sources__library`): each a
+    // loaded document of this run, `(canonical path, module)`.
+    let mut libraries: Vec<(String, String)> = Vec::new();
     let (docs, first, label): (Vec<(i64, String)>, HashMap<i64, i64>, &'static str) = match &t {
         Some(t) => {
             let docs: Vec<(i64, String)> = t.prepare("SELECT d, path FROM doc ORDER BY d")?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
@@ -1661,46 +1708,37 @@ fn run_observed(
                 };
                 (files, label)
             } else {
-                let found = scoped(corpus_files(root)?, &prog, options);
-                let label = corpus_language(language.as_deref(), typing, &found);
-                let files = found.of(label);
-                // Phase 1 (`sources.rr`, decision 0104) loads the source files, and its documents are this run's: a
-                // phase's own run, and the constants', list theirs.
-                // Phase 0 loads rule files, not source files: its runs, over an empty root, have none to give.
-                let sourcing = phases::declared(&prog).is_none()
-                    && !phases::in_phase()
-                    && !phase0::active()
-                    && options.get(constants::OWN).is_none()
-                    && files.iter().any(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label))
-                    && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off");
-                let files = if sourcing {
-                    let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
-                    // The observer's facts: each source file of the run's grammar, by its content's digest (read only
-                    // where the observer cannot vouch for it).
-                    let stated: Vec<(String, String, String)> = files
-                        .iter()
-                        .filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label))
-                        .map(|p| (p.clone(), label.to_owned(), world::bytes_digest(&root.join(p))))
-                        .filter(|(_, _, c)| !c.is_empty())
-                        .collect();
-                    let (documents, run) = phases::sources(&stated, label, root, out, modes, binding, chunk_nodes, typing, options)?;
-                    let made: std::collections::HashSet<&str> = documents.iter().map(|(p, _, _)| p.as_str()).collect();
-                    let stated_paths: std::collections::HashSet<&str> = stated.iter().map(|(p, _, _)| p.as_str()).collect();
-                    // A source file phase 1 made no document of (it did not load or parse) is listed as before, so
-                    // that the run reports it; a file of no grammar (`.scope text`) is not a source file.
-                    let left = stated.iter().filter(|(p, _, _)| !made.contains(p.as_str())).count();
-                    crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || format!("{} of {} source files are its documents; {left} listed without it", made.len(), stated.len()));
-                    phase_runs.push(run);
-                    let mut listed: Vec<String> = documents.iter().map(|(p, _, _)| p.clone()).collect();
-                    listed.extend(files.iter().filter(|p| !stated_paths.contains(p.as_str()) || !made.contains(p.as_str())).cloned());
-                    listed.sort();
-                    listed
-                } else {
-                    files
+                let (files, label) = match listing.take() {
+                    Some(listed) => listed,
+                    None => {
+                        let found = scoped(corpus_files(root)?, &prog, options);
+                        let label = corpus_language(language.as_deref(), typing, &found);
+                        (found.of(label), label)
+                    }
+                };
+                // Phase 1's documents are this run's (above); the constants' own run reads none.
+                let one = options.get(constants::OWN).is_none().then(|| phases::phase_one(root, label)).flatten();
+                let files = match one {
+                    Some(one) => {
+                        let made: std::collections::HashSet<&str> = one.documents.iter().map(|(p, _, _)| p.as_str()).collect();
+                        // A file phase 1 made no document of (it did not load or parse, or is of no grammar: `.scope
+                        // text`) is listed as before, so that the run reports it.
+                        let mut listed: Vec<String> = one.documents.iter().map(|(p, _, _)| p.clone()).collect();
+                        listed.extend(files.iter().filter(|p| !made.contains(p.as_str())).cloned());
+                        listed.sort();
+                        if prog.decls.contains_key("sources__library") {
+                            libraries = one.libraries.iter().map(|(p, m, _, _)| (p.clone(), m.clone())).collect();
+                        }
+                        listed
+                    }
+                    None => files,
                 };
                 (files, label)
             };
-            // A document's key is a function of its path (decision 0052), so a memoised row's node ids stay valid.
+            // The libraries come after the tree's files: a document's key is a function of its path (decision 0052),
+            // so a memoised row's node ids stay valid.
+            let mut files = files;
+            files.extend(libraries.iter().map(|(p, _)| p.clone()));
             let keys = memo::doc_keys(&files);
             (keys.into_iter().zip(files).collect(), HashMap::new(), label)
         }
@@ -1720,6 +1758,9 @@ fn run_observed(
     let mut paths: HashMap<i64, String> = docs.iter().cloned().collect();
     // The documents requests loaded (decision 0065 §2a), whose rows are not the run's findings: their keys.
     let mut loaded_keys: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    // The library documents phase 1 handed on are loaded documents of this run, named by their modules.
+    let given_modules: HashMap<String, Arc<str>> = libraries.iter().map(|(p, m)| (p.clone(), Arc::from(m.as_str()))).collect();
+    loaded_keys.extend(docs.iter().filter(|(_, p)| given_modules.contains_key(p)).map(|(d, _)| *d));
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
@@ -2072,8 +2113,10 @@ fn run_observed(
         let digest = if reads_options { memo::with_options(digest, options) } else { digest };
         // Under the earlier phases' rows only those rules read that a memoised row depends on (an export's or an
         // output's): a constant the per-file part derives for nothing it keeps (phase 1's keys) does not change a
-        // file's entry.
-        let mut kept: BTreeSet<&str> = split.exports.iter().chain(split.local.outputs.iter()).map(String::as_str).collect();
+        // file's entry. Nor does a constant the cross-file part reads (phase 1's `py_own`): its rows name no document,
+        // and a file's entry holds none of them; one a per-file rule reads is reached through that rule.
+        let constant = crate::code_rule_dsl::typing::file_local::constant_relations(&split.local);
+        let mut kept: BTreeSet<&str> = split.exports.iter().chain(split.local.outputs.iter()).map(String::as_str).filter(|r| !constant.contains(*r)).collect();
         loop {
             let more: Vec<&str> = split.local.rules.iter().filter(|r| kept.contains(r.head.rel.as_str())).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).filter(|r| !kept.contains(r)).collect();
             if more.is_empty() {
@@ -2562,7 +2605,7 @@ fn run_observed(
     // each load's (decision 0065 §2a). A run that loads nothing closes the channel after the corpus's, so the
     // builder ends without waiting (as it must without threads).
     let (docs_out, docs_in) = std::sync::mpsc::channel::<Vec<(i64, String, Option<Arc<str>>)>>();
-    docs_out.send(docs.iter().map(|(d, p)| (*d, p.clone(), None)).collect()).map_err(|_| Error::Plan("the chunk builder's channel".to_owned()))?;
+    docs_out.send(docs.iter().map(|(d, p)| (*d, p.clone(), given_modules.get(p).cloned())).collect()).map_err(|_| Error::Plan("the chunk builder's channel".to_owned()))?;
     let mut docs_out = loading.is_some().then_some(docs_out);
     // What loading made: each loaded document (key, path), and the rows the rest of the cross-file part reads of the
     // cone and of the answers.
@@ -2771,7 +2814,7 @@ fn run_observed(
     let before: parking_lot::Mutex<HashMap<String, Before>> = parking_lot::Mutex::new(match memo {
         Some(memo::Memo::Stored(_)) if looking => {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "memo lookup, before the first wave".into());
-            let batch: Vec<(i64, String, Option<Arc<str>>)> = docs.iter().map(|(d, p)| (*d, p.clone(), None)).collect();
+            let batch: Vec<(i64, String, Option<Arc<str>>)> = docs.iter().map(|(d, p)| (*d, p.clone(), given_modules.get(p).cloned())).collect();
             let looked = look_up(&batch, false)?;
             batch.into_iter().map(|(_, p, _)| p).zip(looked).collect()
         }
@@ -4073,6 +4116,10 @@ fn run_observed(
                         for ((_, is_dir), name) in entries.iter().zip(atoms(&names)?) {
                             out.push(vec![row[0], name, i64::from(*is_dir)]);
                         }
+                    } else if *produced == "file_digest" {
+                        if let Some(d) = world.digest(&asked) {
+                            out.push(vec![row[0], atoms(&[d.as_str()])?[0]]);
+                        }
                     } else {
                         let lines = world.file(&asked);
                         let texts: Vec<&str> = lines.iter().map(String::as_str).collect();
@@ -4729,7 +4776,7 @@ fn run_observed(
                         let (loaded, p) = kept_strata::load(store, root, ckey, &cross.program, &cross_inputs, &digests)?;
                         (cell, kept_frames) = (loaded, Some(p));
                     }
-                    let frames_space = kept_strata::program_space(root, &ckey);
+                    let frames_space = kept_strata::part_space(root, "cross");
                     if cell.is_none() && from_frames.is_some() {
                         let _s = span("the kept part, from the frames");
                         cell = Some(retain::Retained::from_frames(store, frames_space, ckey, &cross.program, &digests)?);
@@ -6790,10 +6837,13 @@ outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
         };
         // Each run is a new process's as far as the cross-file part goes: no session, the store on disk. One with a
         // store of its own keeps nothing.
+        // Each scenario keeps its own store: relations are shared by identity across programs (0103), so a later
+        // scenario's first run would find clean those of an earlier one whose inputs have the same rows.
         let fresh = std::cell::Cell::new(0);
+        let scenario = std::cell::Cell::new(0);
         let run = |texts: &[&str], src: &std::path::Path, kept: bool| {
             let path = if kept {
-                base.join("kept.sqlite")
+                base.join(format!("kept{}.sqlite", scenario.get()))
             } else {
                 fresh.set(fresh.get() + 1);
                 base.join(format!("fresh{}.sqlite", fresh.get()))
@@ -6803,6 +6853,7 @@ outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
             (report, findings())
         };
         let edit = |texts: &[&str], src: &std::path::Path, edits: &[(&str, &str)]| {
+            scenario.set(scenario.get() + 1);
             let (first, expected) = run(texts, src, true);
             let (ran, all) = first.cross_kept.expect("a run with a store keeps its cross-file part");
             assert_eq!(ran, all, "the first run evaluates every stratum");
@@ -6999,7 +7050,9 @@ unused(f) :- def(f, _), !used(f).
             (report.cone_kept.expect("a run with a tape cache keeps its cone's strata"), loaded)
         };
         let ((ran, all), first) = run("kept.sqlite");
-        assert_eq!(ran, all, "the first run evaluates every stratum of the cone");
+        // The first run evaluates the cone's strata that phase 1 did not: phase 1 (`sources.rr`) resolves the same
+        // imports first, and a relation is kept under its identity, not its program's (decision 0103).
+        assert!(ran > 0 && ran <= all, "the first run evaluates the cone ({ran} of {all} strata)");
         assert_eq!(first, ["a.pyi", "builtins.pyi"]);
         // A comment: the cone reads nothing new, and its answers are as they were.
         std::fs::write(ws.join("main.py"), "import a\n# a note\n").unwrap();

@@ -605,19 +605,17 @@ named(n, x) :- def(n, x), x = "g".
         first.extend(&digest[..8]);
         first
     };
-    let corrupt = |executor: &CodeRuleSqlExecutor, delta: i64| {
-        executor
-            .connection()
-            .execute(&format!("UPDATE frames SET rows = rows - {delta} WHERE rel = 'local' AND instr(reads, ?1) > 0"), rusqlite::params![&b])
-            .unwrap()
-    };
-    let changed = corrupt(&executor, 1);
+    // Through a connection of its own: the executor's refuses a commit while atoms it holds are pending (0049).
+    let path = executor.connection().path().expect("a store on disk").to_owned();
+    let changed = rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("UPDATE frames SET rows = rows - 1 WHERE rel = 'local' AND instr(reads, ?1) > 0", rusqlite::params![&b])
+        .unwrap();
     assert!(changed >= 1);
     executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["def".into()])).unwrap();
     assert_eq!(rows(&executor, &format!("SELECT count(*) FROM def WHERE n = {a_node}")), json!([[1]]));
     let err = executor.query("SELECT count(*) FROM def".into(), None, None).unwrap_err().to_string();
     assert!(err.contains("b.py") && err.contains("does not decode"), "{err}");
-    // The store is shared with other tests: put the entry back.
-    assert_eq!(corrupt(&executor, -1), changed);
+    // No other test reads b.py's content, which is this run's own: its frames are left as they are.
     let _ = std::fs::remove_dir_all(&dir);
 }
