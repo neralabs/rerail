@@ -208,6 +208,8 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 }
 
 mod split_memo;
+mod export_demand;
+pub(crate) use export_demand::demand_exports;
 pub(crate) use split_memo::forget as forget_splits;
 #[cfg(test)]
 mod tests;

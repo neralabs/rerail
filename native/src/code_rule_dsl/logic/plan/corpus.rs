@@ -592,6 +592,11 @@ struct Prepared {
 /// or more documents, joined by values), `same-unit` (every atom on one document), `config` (no document at all).
 /// A relation inherits the worst class of the relations its rules read.
 fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file_local::Programs) {
+    // The two parts' rules beside it, a line each, and the exports.
+    let rules = |p: &crate::code_rule_dsl::logic::front::Program| p.rules.iter().map(|r| format!("{r}\n")).collect::<String>();
+    let _ = std::fs::write(path.with_extension("local.rr"), rules(&split.local));
+    let _ = std::fs::write(path.with_extension("cross.rr"), rules(&split.cross));
+    let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
     use front::{Literal, Term};
     use std::io::Write;
     const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
@@ -2238,6 +2243,12 @@ fn run_observed(
             // An export that is a join of parts meeting at a key it projects away is handed on as its parts (decision 0099).
             let _step = crate::code_rule_dsl::logic::profile::span(|| "factorize the exports".into());
             let factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut lowered.program) } else { Vec::new() };
+            drop(_step);
+            // Each export cut to what its cross-file readers can use: their demand, made file-local.
+            let _step = crate::code_rule_dsl::logic::profile::span(|| "cut the exports to their readers' demand".into());
+            for line in crate::code_rule_dsl::typing::file_local::demand_exports(&mut lowered.program) {
+                crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
+            }
             drop(_step);
             // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
             let _step = crate::code_rule_dsl::logic::profile::span(|| "locate the chunks' rows".into());

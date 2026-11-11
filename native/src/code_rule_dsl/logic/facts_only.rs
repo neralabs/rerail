@@ -188,6 +188,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/extension/setfix.rs", "LOADS"),
     ("code_rule_dsl/logic/native/extension/setfix.rs", "SYMS"),
     ("code_rule_dsl/logic/native/setfix.rs", "ADOPTED"),
+    // A strand's first interning that failed, until its stratum checks (0113): an error, not a result.
+    ("code_rule_dsl/logic/native/setfix.rs", "HELD_FAILED"),
     ("code_rule_dsl/logic/native/setfix.rs", "CHANGING"),
     ("code_rule_dsl/logic/native/setfix.rs", "COMPONENTS"),
     ("code_rule_dsl/logic/native/setfix.rs", "DERIVATIONS"),
@@ -302,7 +304,8 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "KEPT", "6"),
     ("code_rule_dsl/logic/derived.rs", "MEMO", "6"),
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
-    ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED", "6"),
+    // The observed steps, shared with a strand's thread (0113; `OBSERVED` before).
+    ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", "6"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "PAID", "6"),
     ("code_rule_dsl/logic/strings.rs", "MATCHERS", "7"),
     // RER-131's compiled group patterns, where `GROUPS` was.
