@@ -22,7 +22,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
 import { FOLDER_REMOVAL_RETRIES, removeScratch, renameWithRetry, replaceFile } from "../engine/file-replace.js";
-import { LOCKS_DIR, withHomeLock, type LockEngine } from "../engine/native/file-lock.js";
+import { withHomeLock, type LockEngine } from "../engine/native/file-lock.js";
 import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
@@ -657,12 +657,14 @@ export class ManagedUpdater {
    * holds it. `rerail update` is how a person replaces a Rerail whose engine does not load, so where this one's does not,
    * the update takes the folder lock that works without it.
    */
-  private async withLock<T>(operation: () => Promise<T>): Promise<T> {
+  /** Runs `operation` holding the update lock; `firstInstall` removes the `locks/` it made where `operation` fails. */
+  private async withLock<T>(operation: () => Promise<T>, firstInstall = false): Promise<T> {
     return await withHomeLock(this.home, {
       name: UPDATE_LOCK,
       engine: this.lockEngine,
       withoutEngine: "folder",
       busy: () => new Error("Another Rerail update is already running"),
+      removeMadeFolderOnFailure: firstInstall,
     }, operation);
   }
 
@@ -813,19 +815,22 @@ export class ManagedUpdater {
    */
   async install(version = this.packageVersion): Promise<UpdateResult> {
     parseSemver(version);
-    // A failed install leaves no folder of its own behind (set-up says nothing was changed): `versions/`, and the
-    // home itself on a first install, go again when this run made them and they are still empty. So does `locks/`
-    // with the update lock in it, the one place Rerail removes a lock file: a home with no `locks/` has had no lock
-    // taken in it, so only another install starting at the same moment could be waiting for that lock.
-    const locks = join(this.home, LOCKS_DIR);
-    const created = [this.versionsRoot, locks, this.home].filter(path => !existsSync(path));
+    // A failed install leaves no folder of its own behind (set-up says nothing was changed). `versions/`, when this run
+    // made it and it is still empty, goes while the update lock is held, so it is this run's own; the `locks/` it made
+    // goes with the lock (`withLock`'s `firstInstall`); then the home, on a first install, once it is empty. Another
+    // install that found no home either and lost the lock removes nothing of the one that holds it.
+    const created = [this.versionsRoot, this.home].filter(path => !existsSync(path));
     try {
-      return await this.withLock(async () => await this.adopt(await this.materializeVersion(version)));
+      return await this.withLock(async () => {
+        try {
+          return await this.adopt(await this.materializeVersion(version));
+        } catch (error) {
+          if (created.includes(this.versionsRoot)) await rmdir(this.versionsRoot).catch(() => undefined);
+          throw error;
+        }
+      }, true);
     } catch (error) {
-      for (const path of created) {
-        if (path === locks) await rm(path, { recursive: true, force: true }).catch(() => undefined);
-        else await rmdir(path).catch(() => undefined);
-      }
+      if (created.includes(this.home)) await rmdir(this.home).catch(() => undefined);
       throw error;
     }
   }

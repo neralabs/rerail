@@ -591,6 +591,34 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(existsSync(home)).toBe(false);
   });
 
+  it("keeps the update lock of one of two first installs into a fresh home when the other finds it held", async () => {
+    const { home, packageRoot } = await fixture();
+    const holds = Promise.withResolvers<void>();
+    const mayEnd = Promise.withResolvers<void>();
+    const installer = (validateInstallation: (installation: Installation) => Promise<void>) => new ManagedUpdater({
+      home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0"), validateInstallation,
+    });
+    const holding = async (installation: Installation): Promise<void> => {
+      holds.resolve();
+      await mayEnd.promise;
+      await assertPackageIdentity(installation);
+    };
+    // Started together, both find no Rerail home; one takes the update lock and the other finds it held.
+    const installs = [installer(holding).install(), installer(holding).install()];
+    try {
+      const lost = await Promise.race(installs.map(async install => await install.then(() => "ran", (error: unknown) => error)));
+      expect(lost).toMatchObject({ message: "Another Rerail update is already running" });
+      await holds.promise;
+      // The loser's failure left the winner's lock alone: the lock file, and the record that names its holder.
+      expect((await readdir(join(home, "locks"))).sort()).toEqual(["update.json", "update.lock"]);
+      await expect(installer(assertPackageIdentity).install()).rejects.toThrow("Another Rerail update is already running");
+    } finally {
+      mayEnd.resolve();
+    }
+    const outcomes = await Promise.allSettled(installs);
+    expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
+  });
+
   it("removes only the empty versions/ it made when an install into an existing home fails", async () => {
     const { home, packageRoot } = await fixture();
     await mkdir(home);

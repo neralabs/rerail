@@ -8,9 +8,9 @@
  * moment could both take it over, one removing the lock the other has just made in its place.
  *
  * A lock file is never removed while Rerail may take it: a process holding the lock on a removed file and one holding
- * it on the file made in its place would both hold it. (A first install that fails removes the `locks/` it made:
- * `ManagedUpdater.install`.) The holder records itself beside the lock (`<name>.json`: pid, since when) so a process
- * that gave up waiting can say who holds it, and a person can look; the record decides nothing.
+ * it on the file made in its place would both hold it. (A first install that fails removes the `locks/` it made, while
+ * it still holds its lock: `removeMadeFolderOnFailure`.) The holder records itself beside the lock (`<name>.json`: pid,
+ * since when) so a process that gave up waiting can say who holds it, and a person can look; the record decides nothing.
  *
  * Without the engine there is no OS lock. `rerail update` is how a person replaces a Rerail whose engine does not
  * load, so the update lock alone asks for a lock that works without it ({@link takeFolderLock}). An update that loads
@@ -54,25 +54,55 @@ export interface LockRequest {
   readonly engine?: (() => LockEngine) | undefined;
   /** Where the engine does not load, take the folder lock rather than fail: the update lock only. */
   readonly withoutEngine?: "fail" | "folder" | undefined;
+  /**
+   * Where `action` fails and this call made `locks/` (a first install into a fresh home): remove this lock's files while
+   * it is still held, then `locks/` if that leaves it empty, so the failure leaves no Rerail home behind. A process that
+   * also found no `locks/` and lost the lock removes nothing: it holds nothing it made.
+   */
+  readonly removeMadeFolderOnFailure?: boolean | undefined;
 }
 
 type Wait = Pick<LockRequest, "waitMs" | "sleep">;
 
-type Taken =
-  | { readonly kind: "held"; release(): void }
-  | { readonly kind: "busy"; readonly holder: LockHolder | undefined };
+/** A lock this process holds: `release` lets go; `forget` removes its files first, while it is still held. */
+interface Held {
+  readonly kind: "held";
+  release(): void;
+  forget(): Promise<void>;
+}
+
+type Taken = Held | { readonly kind: "busy"; readonly holder: LockHolder | undefined };
 
 /** Runs `action` holding `home`'s lock `request.name`, waiting up to `request.waitMs`; throws `request.busy` past that. */
 export async function withHomeLock<T>(home: string, request: LockRequest, action: () => Promise<T>): Promise<T> {
   const locks = join(home, LOCKS_DIR);
-  await mkdir(locks, { recursive: true, mode: 0o700 });
+  // The first folder it made, which is `locks/` or above it, only for the one process that made it.
+  const made = await mkdir(locks, { recursive: true, mode: 0o700 }) !== undefined;
   const taken = await take(locks, request);
   if (taken.kind === "busy") throw request.busy(taken.holder);
+  if (made && request.removeMadeFolderOnFailure === true) return await holdingMadeFolder(locks, taken, action);
   try {
     return await action();
   } finally {
     taken.release();
   }
+}
+
+/** Runs `action` holding `taken` in the `locks/` this process made; where it fails, removes what the lock left there. */
+async function holdingMadeFolder<T>(locks: string, taken: Held, action: () => Promise<T>): Promise<T> {
+  let result: T;
+  try {
+    result = await action();
+  } catch (error) {
+    // While still held: a process that takes this lock from here on makes its files again.
+    await taken.forget();
+    taken.release();
+    // Only an empty folder: another lock taken in it meanwhile keeps it.
+    await rmdir(locks).catch(() => undefined);
+    throw error;
+  }
+  taken.release();
+  return result;
 }
 
 /** The OS lock, or the folder lock where the engine does not load and the request allows it. */
@@ -127,6 +157,10 @@ async function takeOsLock(engine: LockEngine, locks: string, request: LockReques
           } finally {
             lock.release();
           }
+        },
+        async forget() {
+          await rm(record, { force: true }).catch(() => undefined);
+          await rm(path, { force: true }).catch(() => undefined);
         },
       };
     }
@@ -185,7 +219,8 @@ async function takeFolderLock(folder: string, wait: Wait): Promise<Taken> {
   try {
     await writeFile(join(staged, owner), holderText(), { mode: 0o600 });
     for (;;) {
-      if (await moveIn(staged, folder)) return { kind: "held", release: () => { letGo(folder, owner); } };
+      // Letting go removes the folder, so there is nothing to remove before.
+      if (await moveIn(staged, folder)) return { kind: "held", release: () => { letGo(folder, owner); }, forget: async () => {} };
       const found = await folderOwner(folder);
       if (found.kind !== "held" && await clear(folder, found)) continue;
       if (Date.now() >= deadline) return { kind: "busy", holder: found.kind === "empty" ? undefined : found.holder };
