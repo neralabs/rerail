@@ -131,7 +131,6 @@ suppress::eslint	rerail-lang-ecma
 suppress::oxlint	rerail-lang-ecma
 suppress::vue	rerail-lang-ecma
 literal::eslint_directive	rerail-lang-ecma
-compile::binds::eslint	rerail-lang-ecma
 vue	rerail-lang-ecma
 language::adapter::vue	rerail-lang-ecma
 language::adapter::ecma	rerail-lang-ecma
@@ -150,7 +149,6 @@ value::php_structure	rerail-lang-php
 suppress::phpcs	rerail-lang-php
 suppress::phpstan	rerail-lang-php
 suppress::psalm	rerail-lang-php
-compile::format_args::php	rerail-lang-php
 language::adapter::php	rerail-lang-php
 
 calls::rust	rerail-lang-rust
@@ -187,7 +185,6 @@ module_path	rerail-lang
 embed	rerail-lang
 
 # Whole-file remaps found by moves.py / split.py (no item moves)
-demand::driver::catalog	rerail-w
 
 # logic/rr.rs (the module root, which reads phase0) is logic's; its children are the lowering
 logic::rr	rerail-logic
@@ -281,3 +278,8 @@ waves::relational::execution	rerail-engine
 rule_api	rerail-w
 logic::front::name	rerail-rr-syntax
 query::plan	rerail-engine
+compile::format_args::php	rerail-engine
+compile::binds::eslint	rerail-engine
+findings::async_reference::native_oracle	rerail-engine
+findings::async_reference::s_native_oracle	rerail-engine
+demand::driver::catalog	rerail-engine

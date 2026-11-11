@@ -66,7 +66,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
         Self::build_at(root, _plans, max_nodes, interrupted, "input")
     }
 
-    pub(in crate::code_rule_dsl) fn build_at(
+    pub fn build_at(
         root: &'tree AstGrep<TapeDoc>,
         _plans: &[&AnchorPlan],
         max_nodes: usize,
@@ -123,7 +123,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
         self.file.as_ref().map_or(0, |file| file.bytes)
     }
 
-    pub(in crate::code_rule_dsl) fn selected(
+    pub fn selected(
         &self,
         plan: &std::sync::Arc<AnchorPlan>,
     ) -> Option<std::sync::Arc<[u32]>> {
