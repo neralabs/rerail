@@ -139,6 +139,21 @@ After both, on the same 54 files at load 137 to 160: 92.3 s CPU cold (its first 
 schema moved), 31.7 s, 29.8 s; the second process no longer runs the struct phase's local part (6.2 s cold, 0 after)
 or the types phase (0 of 110 strata).
 
+The larger corpus (84 files, 6,410 calls agreeing, load about 90): 78.75 s CPU cold (321 s wall), 23.18 s warm, 20.28 s
+the third time (33 s wall). Warm runs found inputs changed every time — `doc, node` (types phase) and `doc, types__wgen` (P3) — for two
+reasons, both fixed: phase 1's program and the pack's shared one frame space, so an input both read was one frame
+each overwrote (a space per program now), and an input bound from an earlier phase (`doc`, `types__wgen`) or read by
+a pattern (`node`) is in no rule's body nor `prog.inputs`, so it had no frame name (the bound inputs are named now).
+Warm on the 54 files: inputs changed none; 14.5 s CPU.
+
+With no input changed, the same strata still ran (34 of 110, 429 of 481): a derived relation's frame was current
+only when each read had a digest, and two kinds had none. An input bound with no frame (an option's `env`, phase 0's
+`p0_resolved`) is now read by its bound digest, and a program fact by its identity; a relation with no rows to keep
+(a view such as `gproto`, `blocking`; one past the budget) is named by its reads' digests, on writing and on loading
+alike, so the chain above it (`pbase__sup0`, `pbase`, `explicit`, …) stays current. The input digests checked are the
+frames' (the state the old rows are of), so a changed stratum is still maintained from them. Warm on the 54 files,
+steady: 15 of 481 and 18 of 110 strata run, none derived again; 12.4 to 14.6 s CPU; 4,815 agreeing.
+
 This is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's "column blocks" would be the
 kept relations' encoding, not a format of their own.
 
@@ -171,9 +186,9 @@ mro_found(c, x, d) :- mro_ask(c, x), <the search>.      // the output: where the
 
 | Step | Change | Done when |
 |---|---|---|
-| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | **drafted as 0106**, for review: a search is demand rules (a request relation, answer rules that read it), no program kind and no `.cache` |
-| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | **measured, not taken** (0106 §5): as demand rules, `found` pulled six relations into `pv`'s recursion, +13.5% join work there (1.81 M to 2.05 M) for the same answers; the eager `found` was 279 units. P3 keeps it. The full corpus's 116 s (against 66 s, at load 110 against 36 to 76) was not measured again on the full corpus; on the 54 files, the same cold run took 38 s of main-thread CPU at load 75 to 97 and 29 to 32 s at 19 to 48, and the new path's cold run was no slower than the old (28.8 s against 31.9 s) |
-| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | **measured, not taken** (0106 §6): on the 84-file small corpus, cold, `lcbind` 316 k, `lgpar` 281 k, `wbind` 103 k (t27: 2.7 M), `gpar` 69 k, `lfound` 5 k, `lwbind` 4 k of 30.9 M join work: 2.5% and 0.3 s together. The cost is `py_try` (4.5 M), `tv` and `tbv` |
+| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | **drafted as 0107**, for review: a search is demand rules (a request relation, answer rules that read it), no program kind and no `.cache` |
+| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | **measured, not taken** (0107 §5): as demand rules, `found` pulled six relations into `pv`'s recursion, +13.5% join work there (1.81 M to 2.05 M) for the same answers; the eager `found` was 279 units. P3 keeps it. The full corpus's 116 s (against 66 s, at load 110 against 36 to 76) was not measured again on the full corpus; on the 54 files, the same cold run took 38 s of main-thread CPU at load 75 to 97 and 29 to 32 s at 19 to 48, and the new path's cold run was no slower than the old (28.8 s against 31.9 s) |
+| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | **measured, not taken** (0107 §6): on the 84-file small corpus, cold, `lcbind` 316 k, `lgpar` 281 k, `wbind` 103 k (t27: 2.7 M), `gpar` 69 k, `lfound` 5 k, `lwbind` 4 k of 30.9 M join work: 2.5% and 0.3 s together. The cost is `py_try` (4.5 M), `tv` and `tbv` |
 
 ### Stage 8. P3 on symbols (this branch, after 2.1 and 7.2)
 

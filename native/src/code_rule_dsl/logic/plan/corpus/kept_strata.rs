@@ -43,6 +43,17 @@ pub(in crate::code_rule_dsl) fn space(root: &Path) -> [u8; 32] {
     }
 }
 
+/// The fact space of the cross-file part of program `key` (`retain::key`) over `root` (t33 K4): the programs of
+/// one run (phase 1's `sources.rr`, the rule pack's) each have their own, so an input both read, as `doc` or `load`,
+/// is each one's own frame, with its own rows, not one frame each overwrites with its rows on every run.
+pub(in crate::code_rule_dsl) fn program_space(root: &Path, key: &[u8; 32]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"rerail.space/v1\0program\0");
+    h.update(part_space(root, "cross"));
+    h.update(key);
+    h.finalize().into()
+}
+
 /// The fact space of a part of the run over `root` (`cross`, `cone`: the cone of requests answered in the fixpoint).
 pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] {
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());

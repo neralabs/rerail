@@ -110,7 +110,7 @@ fn k4_rejects_input_headers_replaced_after_the_metadata_snapshot() {
     let metadata = store.frames(&SPACE, &keys, DOCS_PART).unwrap();
     store.keep_frames(&SPACE, &[], &[(names["input0"].clone(), DOCS_PART)], None).unwrap();
     let (sccs, _) = front::strata(&prog).unwrap();
-    let kept = Retained::from_frame_snapshot(&store, SPACE, KEY, &prog, &sccs, names, metadata).unwrap();
+    let kept = Retained::from_frame_snapshot(&store, SPACE, KEY, &prog, &sccs, names, metadata, &HashMap::new()).unwrap();
     assert!(kept.inputs.is_empty());
     assert!(kept.frames().unwrap().derived.is_empty());
     let cold = cut(Some(&kept), KEY, &prog, &now).unwrap();
