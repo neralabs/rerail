@@ -26,7 +26,7 @@ Older reports without a recorded API appear in the unspecified column. No API is
 | serverplan_grammar_surface | full-contract-passed | 9 | 9 | 9 | 9 |
 | permission_error | full-contract-passed | 5 | 5 | 5 | 5 |
 | dynamic_module_loading | draft | 315 | 314 | 314 | 115 |
-| forwardref | draft | 53 | 53 | 53 | 5 |
+| forwardref | full-contract-passed | 53 | 53 | 53 | 5 |
 | unresolved_forward_refs | draft | 119 | 116 | 116 | 117 |
 | classvar_check | full-contract-passed | 8 | 8 | 8 | 8 |
 | type_safety_patterns | draft | 193 | 0 | 0 | 193 |

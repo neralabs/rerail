@@ -3,7 +3,8 @@
 .description "ForwardRef annotations must be guarded before annotation type checks"
 .language python
 .mode block
-.scope include "api/**/*.py", "impl/**/*.py", "public/**/*.py"
+.scope dirs "__forwardref_no_primary__"
+.scope dirs option("frInputDirs")
 .scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**", "**/test/**", "**/tests/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_forwardref.py
 #include "python/ast.rr"
@@ -140,3 +141,14 @@ sf_config("order","code").
 sf_config("bundle_fallback","exact").
 sf_default("code","FWDREF").
 sf_default("message","ForwardRef handling issue").
+fr_config("extractor","{\"extractor_id\": \"forwardref.issues\", \"schema_version\": \"1\", \"implementation_version\": \"forwardref-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\".annotation\", \"ForwardRef\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"ba4df04c48fde3c5\", \"node_kinds\": [\"FunctionDef\", \"Assign\", \"Call\"]}").
+fr_config("plugin","{\"name\": \"forwardref\", \"enforcement\": \"hard-fail\", \"description\": \"ForwardRef annotations must be guarded before annotation type checks\"}").
+fr_config("file_scope","{\"explicit_files\": [], \"include_tests\": false, \"broad_repo_scope\": false}").
+fr_config("plugin_dirs","[\"api\", \"impl\", \"public\"]").
+#include "data-layer/forwardref-api.rr"
+fr_config("cli_schema","{\"description\": \"Lint for ForwardRef annotation handling issues\", \"arguments\": [{\"name\": \"paths\", \"kwargs\": {\"nargs\": \"*\", \"default\": null, \"help\": \"Paths to lint (default: production roots for the detected layout)\"}}, {\"name\": \"--check\", \"kwargs\": {\"action\": \"store_true\", \"help\": \"Exit with code 1 if any issues found\"}}, {\"name\": \"--root\", \"kwargs\": {\"type\": \"str\", \"default\": null, \"help\": \"Project root directory to scan (default: data layer repo root)\"}}, {\"name\": \"--dirs\", \"kwargs\": {\"type\": \"str\", \"nargs\": \"*\", \"default\": null, \"help\": \"Subdirectories under --root to scan (default: production roots for the detected layout)\"}}]}").
+fr_config("cli_header_prefix","Found ").
+fr_config("cli_header_suffix"," ForwardRef handling issue(s):\n\n").
+fr_config("cli_clean","No ForwardRef handling issues found.\n").
+fr_config("cli_exclude","[\"tests/\", \"test_\", \"__pycache__\", \".pyc\"]").
+#include "data-layer/forwardref-cli.rr"

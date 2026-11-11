@@ -17,10 +17,8 @@ def cases(_module):
 
 
 def install(backend,module,detectors=False):
-    from suite import Suite
-    backend.replace(module,'lint_file',lambda filepath:Suite.scan(backend,CHECK,'lint_file',module,dict(filepath=filepath)))
-    backend.replace(module,'lint_file_content',lambda filepath,source,*,root=None:Suite.scan(backend,CHECK,'lint_file_content',module,dict(filepath=filepath,source=source,root=root)))
-    backend.replace(module,'lint_directory',lambda dirpath,exclude_patterns=None:Suite.scan(backend,CHECK,'lint_directory',module,dict(dirpath=dirpath,exclude_patterns=exclude_patterns)))
+    from forwardref_port import install as native_install
+    native_install(backend,module,detectors=detectors)
 
 
 if __name__=='__main__':

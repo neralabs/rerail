@@ -1,0 +1,2789 @@
+{
+  "format": "rerail.rr-original-assertions/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+  "exitCode": 0,
+  "sourceFiles": {
+    "scripts/tests/test_lint_forwardref.py": "9677cfd9bfed75e30d59fe4cd70bfd923994d9320733661f13b2475e2986e4a6",
+    "scripts/tests/test_monitor_pr_status.py": "fd830e732518d81fcf62925033dddaa1e9f980fee7e2fb713366d1844d06e620",
+    "scripts/lint_forwardref.py": "ba4df04c48fde3c502f57876e69ca108139b88037843a06f79c76bb1f9405fec"
+  },
+  "ruleRoot": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr",
+  "testTargets": [
+    "scripts/tests/test_lint_forwardref.py",
+    "scripts/tests/test_monitor_pr_status.py"
+  ],
+  "api": "snapshot-cli",
+  "mode": "snapshot",
+  "harnessFiles": {
+    "scripts/dsl/data_layer_audit/native_guard.py": "9de4f513c0855f77870f14a3de6723cc0f65ca933cb6df28a7f49c8ed53f68b8",
+    "scripts/dsl/data_layer_batch_eight.py": "b0aa06282577557f293ab4493adbca1d36eb7c3cd72bc32f11b98f5c706684d9",
+    "scripts/dsl/data_layer_batch_five.py": "c4bd8edcb10c65ddbac6eea03eca11bad9389a0ec727d77889334a554010d34d",
+    "scripts/dsl/data_layer_batch_four.py": "af190011454ce4c136164cb31813375f607f765ced3a13393fd0cbfebb816ef1",
+    "scripts/dsl/data_layer_batch_seven.py": "06b95e9a6d34683f68b15a67bc65bdac95cc532ba0e3f2ab282cddc6ee7f0951",
+    "scripts/dsl/data_layer_batch_six.py": "c696511c6b23941317878d5fa77322b860e0ee061ac0da6fb5318eb06823a3ad",
+    "scripts/dsl/data_layer_batch_three.py": "bb528abe50676159a06c3bfc071fdbeca0aae200db90945d187cccb412c9b7e8",
+    "scripts/dsl/data_layer_batch_two.py": "04835aa6befc2229b7d7de6c6d23f6cb17ee7dd546d90bc731f0377313b17df9",
+    "scripts/dsl/data_layer_probe_record.py": "24c6a5d37b67e2d7569224523b046bb64617179dfa1d881804a4694ce7fbb1db",
+    "scripts/dsl/data_layer_probe_three.py": "e46fa55d33f3888b97a694e81a3c370eb0cf2362d723bbfb65cb7095d9ed3f8c",
+    "scripts/dsl/data_layer_record.py": "7d32c79a7eda75b2c40e2be6bcae2dee08f3b02f8fa0a2226bf504b5e568af9e",
+    "scripts/dsl/data_layer_rr/ast_transport.py": "30b3c597ff7570dab6ebacaf806767ab268dc90adf3950fe0555fc9643781c8a",
+    "scripts/dsl/data_layer_rr/dto.py": "086cdf3ed267e340c8e29ab33016d448590f10f8f074d277977ffa51a85cee4f",
+    "scripts/dsl/data_layer_rr/fact_transport.py": "ed88c12a4c01ab4c475dde76901f4d4a18c04d0af7e887b611324192fa4cddfa",
+    "scripts/dsl/data_layer_rr/forwardref_cli_port.py": "40b7d133246c3ead194ae761c32f2304258165e3492289ee535d2a6aebc4db54",
+    "scripts/dsl/data_layer_rr/forwardref_port.py": "bbd46571d06bf27d80e0109fdc65cdf65b27c75d37712c4f6862370689f2b32c",
+    "scripts/dsl/data_layer_rr/framework_fixtures.py": "01eb634cc14db618cca8f837a62cd42477805af4eb4cb11428cb248fd4cc4bc1",
+    "scripts/dsl/data_layer_rr/migration.py": "e4cd1e3073f4a21ddab81d0dabe65361a65ac9a6e3e2a1f041dc645500bda305",
+    "scripts/dsl/data_layer_rr/policy_routes.py": "4e7390039fd78720823f8424d308e39c4420a72d18d0e52dff733a1a03262f22",
+    "scripts/dsl/data_layer_rr/python_value_transport.py": "91e260760d5a586f4d0fb4076cfb3f10401bdc8d982f9834ab931451ab8e80ed",
+    "scripts/dsl/data_layer_rr/replay.py": "c1d4bbd11057736c7883c90660df690768302cd475cdb06b0a5ec649c129249b",
+    "scripts/dsl/data_layer_rr/suite.py": "b58f8ff65c4806d1480c273fd6c847fd0c186d8392399f5a86030e89947fb5e0",
+    "scripts/dsl/data_layer_rr/typed_fact_transport.py": "b5d5d3c9bcb51ddae5715221e359de6a11bc6e8dedcf96301b0ed59a1a22300d",
+    "scripts/dsl/data_layer_rule_audit.py": "9a87c1d158f1f621f3a7b32bf46ff43228f4bf2c2e186894dcf160f16d1e80ef"
+  },
+  "policySha256": {
+    "forwardref": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+  },
+  "sourceFilesChecked": 1472,
+  "missingResults": [],
+  "collected": [
+    "scripts/tests/test_lint_forwardref.py::test_flags_isinstance_type_after_annotation_read",
+    "scripts/tests/test_lint_forwardref.py::test_flags_issubclass_after_annotation_read",
+    "scripts/tests/test_lint_forwardref.py::test_allows_explicit_forward_ref_detection",
+    "scripts/tests/test_lint_forwardref.py::test_clean_file_has_no_findings",
+    "scripts/tests/test_lint_forwardref.py::test_invalid_python_has_no_findings",
+    "scripts/tests/test_monitor_pr_status.py::TestStatusReport::test_has_blockers_returns_true_when_blockers_exist",
+    "scripts/tests/test_monitor_pr_status.py::TestStatusReport::test_has_blockers_returns_false_when_no_blockers",
+    "scripts/tests/test_monitor_pr_status.py::TestStatusReport::test_print_report_orders_blocker_categories",
+    "scripts/tests/test_monitor_pr_status.py::TestRunCommand::test_gh_commands_seed_token_from_gh_auth",
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_get_pr_for_branch_returns_none_when_no_pr_exists",
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_get_pr_for_branch_prefers_open_pr",
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_handle_pr_lifecycle_reports_merged_branch_as_stop",
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_handle_pr_lifecycle_reports_closed_branch_as_error",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckMypy::test_mypy_command_not_found_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckMypy::test_mypy_uses_extended_timeout",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckMypy::test_mypy_timeout_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_check_lazy_architecture_success_reports_pass",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_check_lazy_architecture_failure_reports_architectural_block",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_architectural_linter_suite_failure_is_architecture_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_run_checks_runs_architecture_then_ci_then_typing",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_mypy_exit_code_nonzero_with_empty_stdout_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_mypy_success_reports_passed",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_mypy_with_errors_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_command_not_found_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_timeout_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_exit_code_nonzero_with_empty_stdout_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_success_reports_passed",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_with_errors_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_nonzero_exit_not_saved_by_zero_errors_substring",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_null_author_does_not_crash",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_repo_info_failure_reports_warning",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_cursor_bot_comments_are_detected",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_unaddressed_bugbot_comment_is_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_addressed_bugbot_comment_is_not_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_no_bugbot_comments_passes",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_review_comments_on_current_commit_are_detected",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_review_comments_where_code_was_changed_still_block",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_review_comments_from_old_commit_without_reply_still_block",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_all_checks_pass",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_failing_check_is_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_pending_check_is_warning",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_windows_check_is_regular_pending_ci",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_skipping_check_is_treated_as_pass",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_ci_fetch_failure_does_not_report_passed",
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_reports_missing_pr_for_current_branch",
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_reports_merged_pr_for_current_branch",
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_reports_closed_pr_for_current_branch",
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_does_not_report_ready_when_ci_status_unavailable",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_no_python_files_changed_passes",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_changed_files_with_no_violations_passes",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_violations_in_unchanged_files_are_ignored",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_violations_in_changed_files_are_blockers",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_similarly_named_files_do_not_trigger_false_positive_matches"
+  ],
+  "part": 0,
+  "parts": 1,
+  "cases": {
+    "scripts/tests/test_lint_forwardref.py::test_flags_isinstance_type_after_annotation_read": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_forwardref.py::test_flags_issubclass_after_annotation_read": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_forwardref.py::test_allows_explicit_forward_ref_detection": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_forwardref.py::test_clean_file_has_no_findings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_forwardref.py::test_invalid_python_has_no_findings": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestStatusReport::test_has_blockers_returns_true_when_blockers_exist": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestStatusReport::test_has_blockers_returns_false_when_no_blockers": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestStatusReport::test_print_report_orders_blocker_categories": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestRunCommand::test_gh_commands_seed_token_from_gh_auth": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_get_pr_for_branch_returns_none_when_no_pr_exists": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_get_pr_for_branch_prefers_open_pr": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_handle_pr_lifecycle_reports_merged_branch_as_stop": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_handle_pr_lifecycle_reports_closed_branch_as_error": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckMypy::test_mypy_command_not_found_reports_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckMypy::test_mypy_uses_extended_timeout": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckMypy::test_mypy_timeout_reports_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_check_lazy_architecture_success_reports_pass": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_check_lazy_architecture_failure_reports_architectural_block": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_architectural_linter_suite_failure_is_architecture_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_run_checks_runs_architecture_then_ci_then_typing": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_mypy_exit_code_nonzero_with_empty_stdout_reports_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_mypy_success_reports_passed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_mypy_with_errors_reports_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_command_not_found_reports_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_timeout_reports_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_exit_code_nonzero_with_empty_stdout_reports_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_success_reports_passed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_with_errors_reports_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_nonzero_exit_not_saved_by_zero_errors_substring": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_null_author_does_not_crash": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_repo_info_failure_reports_warning": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_cursor_bot_comments_are_detected": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_unaddressed_bugbot_comment_is_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_addressed_bugbot_comment_is_not_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_no_bugbot_comments_passes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_review_comments_on_current_commit_are_detected": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_review_comments_where_code_was_changed_still_block": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_review_comments_from_old_commit_without_reply_still_block": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_all_checks_pass": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_failing_check_is_blocker": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_pending_check_is_warning": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_windows_check_is_regular_pending_ci": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_skipping_check_is_treated_as_pass": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_ci_fetch_failure_does_not_report_passed": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_reports_missing_pr_for_current_branch": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_reports_merged_pr_for_current_branch": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_reports_closed_pr_for_current_branch": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_does_not_report_ready_when_ci_status_unavailable": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_no_python_files_changed_passes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_changed_files_with_no_violations_passes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_violations_in_unchanged_files_are_ignored": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_violations_in_changed_files_are_blockers": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_similarly_named_files_do_not_trigger_false_positive_matches": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "calls": [
+    {
+      "test": "<native-configuration>",
+      "check": "forwardref",
+      "entry": "_fr_configuration",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_fr_configuration"
+      },
+      "findings": 9,
+      "diagnostics": [
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardConfig",
+          "code": "FR_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef configuration",
+          "parameters": {
+            "key": "cli_clean",
+            "value": "No ForwardRef handling issues found.\n"
+          }
+        },
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardConfig",
+          "code": "FR_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef configuration",
+          "parameters": {
+            "key": "cli_exclude",
+            "value": "[\"tests/\", \"test_\", \"__pycache__\", \".pyc\"]"
+          }
+        },
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardConfig",
+          "code": "FR_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef configuration",
+          "parameters": {
+            "key": "cli_header_prefix",
+            "value": "Found "
+          }
+        },
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardConfig",
+          "code": "FR_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef configuration",
+          "parameters": {
+            "key": "cli_header_suffix",
+            "value": " ForwardRef handling issue(s):\n\n"
+          }
+        },
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardConfig",
+          "code": "FR_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef configuration",
+          "parameters": {
+            "key": "cli_schema",
+            "value": "{\"description\": \"Lint for ForwardRef annotation handling issues\", \"arguments\": [{\"name\": \"paths\", \"kwargs\": {\"nargs\": \"*\", \"default\": null, \"help\": \"Paths to lint (default: production roots for the detected layout)\"}}, {\"name\": \"--check\", \"kwargs\": {\"action\": \"store_true\", \"help\": \"Exit with code 1 if any issues found\"}}, {\"name\": \"--root\", \"kwargs\": {\"type\": \"str\", \"default\": null, \"help\": \"Project root directory to scan (default: data layer repo root)\"}}, {\"name\": \"--dirs\", \"kwargs\": {\"type\": \"str\", \"nargs\": \"*\", \"default\": null, \"help\": \"Subdirectories under --root to scan (default: production roots for the detected layout)\"}}]}"
+          }
+        },
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardConfig",
+          "code": "FR_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef configuration",
+          "parameters": {
+            "key": "extractor",
+            "value": "{\"extractor_id\": \"forwardref.issues\", \"schema_version\": \"1\", \"implementation_version\": \"forwardref-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\".annotation\", \"ForwardRef\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"ba4df04c48fde3c5\", \"node_kinds\": [\"FunctionDef\", \"Assign\", \"Call\"]}"
+          }
+        },
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardConfig",
+          "code": "FR_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef configuration",
+          "parameters": {
+            "key": "file_scope",
+            "value": "{\"explicit_files\": [], \"include_tests\": false, \"broad_repo_scope\": false}"
+          }
+        },
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardConfig",
+          "code": "FR_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef configuration",
+          "parameters": {
+            "key": "plugin",
+            "value": "{\"name\": \"forwardref\", \"enforcement\": \"hard-fail\", \"description\": \"ForwardRef annotations must be guarded before annotation type checks\"}"
+          }
+        },
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardConfig",
+          "code": "FR_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef configuration",
+          "parameters": {
+            "key": "plugin_dirs",
+            "value": "[\"api\", \"impl\", \"public\"]"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.062439999999999996,
+          "systemCpuSeconds": 0.002378999999999999,
+          "peakRssMB": 91.42272,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.000000000030756e-06,
+          "systemCpuSeconds": 7.999999999994123e-06,
+          "peakRssMB": 123.191296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 123.191296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.09538100000000002,
+          "systemCpuSeconds": 0.010507000000000002,
+          "peakRssMB": 104.464384,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.188764,
+          "systemCpuSeconds": 0.006407000000000003,
+          "peakRssMB": 123.191296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.028245000000000076,
+          "systemCpuSeconds": 0.0020809999999999995,
+          "peakRssMB": 123.191296,
+          "submittedStatements": 32
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 6.299999999992423e-05,
+          "systemCpuSeconds": 0.0023889999999999884,
+          "peakRssMB": 123.191296,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_flags_isinstance_type_after_annotation_read",
+      "check": "forwardref",
+      "entry": "_fr_prepare",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_fr_prepare",
+        "frPaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_flags_isinstance_type_aft0/impl/module.py"
+        ],
+        "frScopes": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_flags_isinstance_type_aft0/impl/module.py"
+        ],
+        "frExists": [
+          "1"
+        ],
+        "frEntry": "lint_file",
+        "frExclude": []
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardRead",
+          "code": "FR_READ",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef source read",
+          "parameters": {
+            "ordinal": 0,
+            "path": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_flags_isinstance_type_aft0/impl/module.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.06404199999999999,
+          "systemCpuSeconds": 0.003099000000000001,
+          "peakRssMB": 55.312384,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.000000000030756e-06,
+          "systemCpuSeconds": 9.000000000002062e-06,
+          "peakRssMB": 97.828864,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 97.828864,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.100386,
+          "systemCpuSeconds": 0.010562000000000002,
+          "peakRssMB": 88.850432,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.031538999999999984,
+          "systemCpuSeconds": 0.004455000000000001,
+          "peakRssMB": 97.828864,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.02756000000000003,
+          "systemCpuSeconds": 0.001459999999999996,
+          "peakRssMB": 97.828864,
+          "submittedStatements": 35
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 6.80000000000125e-05,
+          "systemCpuSeconds": 0.0029969999999999997,
+          "peakRssMB": 97.828864,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_flags_isinstance_type_after_annotation_read",
+      "check": "forwardref",
+      "entry": "_fr_batch",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [
+        {
+          "path": "impl/forwardref-0.py",
+          "sourceSha256": "77e8591ce753189c504d9e0db084df554476b705c84311bd3c8de7716c71381c"
+        }
+      ],
+      "options": {
+        "entryPoint": "_fr_batch",
+        "frInputDirs": [
+          "impl"
+        ],
+        "logicalPaths": [
+          "impl/forwardref-0.py"
+        ],
+        "scopePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_flags_isinstance_type_aft0/impl/module.py"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardRefInstance",
+          "code": "FWDREF001",
+          "path": "impl/forwardref-0.py",
+          "line": 4,
+          "at": 4592816829000318988,
+          "tag": null,
+          "message": "isinstance(annotation, type) without ForwardRef handling. ForwardRef annotations will fail this check. Consider using coerce_sys_id_value() or checking for ForwardRef first.",
+          "parameters": {
+            "column": 11,
+            "ordinal": 13,
+            "collector_order0": 13,
+            "collector_order1": 0,
+            "collector_order2": 0
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.064716,
+          "systemCpuSeconds": 0.0027420000000000014,
+          "peakRssMB": 54.14912,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 9.499999999995623e-05,
+          "systemCpuSeconds": 0.00011100000000000693,
+          "peakRssMB": 103.006208,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.00031599999999998296,
+          "systemCpuSeconds": 0.00019700000000000273,
+          "peakRssMB": 103.006208,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.10161099999999998,
+          "systemCpuSeconds": 0.011826999999999997,
+          "peakRssMB": 90.554368,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.03270200000000001,
+          "systemCpuSeconds": 0.004803000000000009,
+          "peakRssMB": 103.006208,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00029599999999996296,
+          "systemCpuSeconds": 0.0013789999999999983,
+          "peakRssMB": 103.006208,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.014849000000000001,
+          "systemCpuSeconds": 0.0012799999999999964,
+          "peakRssMB": 103.006208,
+          "submittedStatements": 14
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.03955599999999998,
+          "systemCpuSeconds": 0.0023110000000000006,
+          "peakRssMB": 103.006208,
+          "submittedStatements": 77
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 8.40000000000285e-05,
+          "systemCpuSeconds": 0.0026380000000000015,
+          "peakRssMB": 103.006208,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_flags_issubclass_after_annotation_read",
+      "check": "forwardref",
+      "entry": "_fr_prepare",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_fr_prepare",
+        "frPaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_flags_issubclass_after_an0/impl/module.py"
+        ],
+        "frScopes": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_flags_issubclass_after_an0/impl/module.py"
+        ],
+        "frExists": [
+          "1"
+        ],
+        "frEntry": "lint_file",
+        "frExclude": []
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardRead",
+          "code": "FR_READ",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef source read",
+          "parameters": {
+            "ordinal": 0,
+            "path": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_flags_issubclass_after_an0/impl/module.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.062546,
+          "systemCpuSeconds": 0.002909000000000002,
+          "peakRssMB": 52.068352,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.000000000030756e-06,
+          "systemCpuSeconds": 6.0000000000060005e-06,
+          "peakRssMB": 100.712448,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 100.712448,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.09822800000000001,
+          "systemCpuSeconds": 0.011460000000000001,
+          "peakRssMB": 89.882624,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.034257999999999955,
+          "systemCpuSeconds": 0.00544,
+          "peakRssMB": 100.712448,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.026410000000000045,
+          "systemCpuSeconds": 0.00179,
+          "peakRssMB": 100.712448,
+          "submittedStatements": 35
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 6.399999999995298e-05,
+          "systemCpuSeconds": 0.002602,
+          "peakRssMB": 100.712448,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_flags_issubclass_after_annotation_read",
+      "check": "forwardref",
+      "entry": "_fr_batch",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [
+        {
+          "path": "impl/forwardref-0.py",
+          "sourceSha256": "7610c094ff9d3742b4429c6a464f9610b13a9a7efdd3c3b6a64be4ac0a37f502"
+        }
+      ],
+      "options": {
+        "entryPoint": "_fr_batch",
+        "frInputDirs": [
+          "impl"
+        ],
+        "logicalPaths": [
+          "impl/forwardref-0.py"
+        ],
+        "scopePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_flags_issubclass_after_an0/impl/module.py"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardRefSubclass",
+          "code": "FWDREF002",
+          "path": "impl/forwardref-0.py",
+          "line": 4,
+          "at": 4592816829000318988,
+          "tag": null,
+          "message": "issubclass(annotation, ...) without ForwardRef handling. ForwardRef annotations will raise TypeError. Consider checking for ForwardRef first.",
+          "parameters": {
+            "column": 11,
+            "ordinal": 13,
+            "collector_order0": 13,
+            "collector_order1": 0,
+            "collector_order2": 0
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.06251400000000001,
+          "systemCpuSeconds": 0.001805000000000001,
+          "peakRssMB": 55.181312,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 0.0001040000000000138,
+          "systemCpuSeconds": 0.00010599999999999152,
+          "peakRssMB": 95.813632,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.00031899999999999984,
+          "systemCpuSeconds": 0.00023199999999999957,
+          "peakRssMB": 95.813632,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.09307716699999999,
+          "systemCpuSeconds": 0.012681999999999999,
+          "peakRssMB": 83.47648,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.03272900000000001,
+          "systemCpuSeconds": 0.004944000000000004,
+          "peakRssMB": 95.666176,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.0007551659999999738,
+          "systemCpuSeconds": 0.0008679999999999938,
+          "peakRssMB": 95.666176,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.01455099999999998,
+          "systemCpuSeconds": 0.0018640000000000045,
+          "peakRssMB": 95.666176,
+          "submittedStatements": 14
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.040132,
+          "systemCpuSeconds": 0.0028859999999999997,
+          "peakRssMB": 95.666176,
+          "submittedStatements": 77
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 5.700000000002925e-05,
+          "systemCpuSeconds": 0.0024090000000000014,
+          "peakRssMB": 95.813632,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_allows_explicit_forward_ref_detection",
+      "check": "forwardref",
+      "entry": "_fr_prepare",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_fr_prepare",
+        "frPaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_allows_explicit_forward_r0/impl/module.py"
+        ],
+        "frScopes": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_allows_explicit_forward_r0/impl/module.py"
+        ],
+        "frExists": [
+          "1"
+        ],
+        "frEntry": "lint_file",
+        "frExclude": []
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardRead",
+          "code": "FR_READ",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef source read",
+          "parameters": {
+            "ordinal": 0,
+            "path": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_allows_explicit_forward_r0/impl/module.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.064002,
+          "systemCpuSeconds": 0.003299,
+          "peakRssMB": 55.689216,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.000000000004e-06,
+          "systemCpuSeconds": 6.0000000000060005e-06,
+          "peakRssMB": 95.485952,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 95.485952,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.09619699999999998,
+          "systemCpuSeconds": 0.012285999999999998,
+          "peakRssMB": 88.621056,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.03319300000000003,
+          "systemCpuSeconds": 0.005628000000000001,
+          "peakRssMB": 95.485952,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.028380000000000016,
+          "systemCpuSeconds": 0.0027370000000000033,
+          "peakRssMB": 95.485952,
+          "submittedStatements": 35
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 7.999999999996898e-05,
+          "systemCpuSeconds": 0.003136,
+          "peakRssMB": 95.485952,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_allows_explicit_forward_ref_detection",
+      "check": "forwardref",
+      "entry": "_fr_batch",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [
+        {
+          "path": "impl/forwardref-0.py",
+          "sourceSha256": "26787605b0b43d954e8f9bba1bfca2a8293279336344d90ca07d38403996430f"
+        }
+      ],
+      "options": {
+        "entryPoint": "_fr_batch",
+        "frInputDirs": [
+          "impl"
+        ],
+        "logicalPaths": [
+          "impl/forwardref-0.py"
+        ],
+        "scopePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_allows_explicit_forward_r0/impl/module.py"
+        ]
+      },
+      "findings": 0,
+      "diagnostics": [],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.064134,
+          "systemCpuSeconds": 0.0029780000000000015,
+          "peakRssMB": 52.281344,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 0.00010099999999996223,
+          "systemCpuSeconds": 0.00011900000000000105,
+          "peakRssMB": 98.189312,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0003269999999999662,
+          "systemCpuSeconds": 0.0002590000000000023,
+          "peakRssMB": 98.189312,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.10217700000000002,
+          "systemCpuSeconds": 0.011329999999999996,
+          "peakRssMB": 89.62048,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.030624999999999958,
+          "systemCpuSeconds": 0.004706000000000009,
+          "peakRssMB": 98.189312,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00025999999999998247,
+          "systemCpuSeconds": 0.001335999999999997,
+          "peakRssMB": 98.189312,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.011855999999999978,
+          "systemCpuSeconds": 0.0014949999999999963,
+          "peakRssMB": 98.189312,
+          "submittedStatements": 14
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.03739500000000001,
+          "systemCpuSeconds": 0.002266999999999998,
+          "peakRssMB": 98.189312,
+          "submittedStatements": 77
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 6.80000000000125e-05,
+          "systemCpuSeconds": 0.0030990000000000045,
+          "peakRssMB": 98.189312,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_clean_file_has_no_findings",
+      "check": "forwardref",
+      "entry": "_fr_prepare",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_fr_prepare",
+        "frPaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_clean_file_has_no_finding0/impl/module.py"
+        ],
+        "frScopes": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_clean_file_has_no_finding0/impl/module.py"
+        ],
+        "frExists": [
+          "1"
+        ],
+        "frEntry": "lint_file",
+        "frExclude": []
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardRead",
+          "code": "FR_READ",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef source read",
+          "parameters": {
+            "ordinal": 0,
+            "path": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_clean_file_has_no_finding0/impl/module.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.068876,
+          "systemCpuSeconds": 0.0040479999999999995,
+          "peakRssMB": 55.738368,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 2.9999999999752447e-06,
+          "systemCpuSeconds": 7.000000000000062e-06,
+          "peakRssMB": 91.209728,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 91.209728,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.09649441699999997,
+          "systemCpuSeconds": 0.015886,
+          "peakRssMB": 80.429056,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.03354299999999999,
+          "systemCpuSeconds": 0.005808000000000001,
+          "peakRssMB": 91.209728,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.029769999999999963,
+          "systemCpuSeconds": 0.0022970000000000004,
+          "peakRssMB": 91.209728,
+          "submittedStatements": 35
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 7.20000000000165e-05,
+          "systemCpuSeconds": 0.002700000000000001,
+          "peakRssMB": 91.209728,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_clean_file_has_no_findings",
+      "check": "forwardref",
+      "entry": "_fr_batch",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [
+        {
+          "path": "impl/forwardref-0.py",
+          "sourceSha256": "5d080563b57287276f589c2b2714ef499269efe7405a288b3c1474f5a92bf271"
+        }
+      ],
+      "options": {
+        "entryPoint": "_fr_batch",
+        "frInputDirs": [
+          "impl"
+        ],
+        "logicalPaths": [
+          "impl/forwardref-0.py"
+        ],
+        "scopePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_clean_file_has_no_finding0/impl/module.py"
+        ]
+      },
+      "findings": 0,
+      "diagnostics": [],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.06974399999999999,
+          "systemCpuSeconds": 0.002884000000000001,
+          "peakRssMB": 51.953664,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 9.399999999992747e-05,
+          "systemCpuSeconds": 0.00012100000000000999,
+          "peakRssMB": 95.010816,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0003189999999999582,
+          "systemCpuSeconds": 0.00020799999999999985,
+          "peakRssMB": 95.010816,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.10032829099999999,
+          "systemCpuSeconds": 0.016040000000000002,
+          "peakRssMB": 81.5104,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.03297599999999995,
+          "systemCpuSeconds": 0.004057000000000005,
+          "peakRssMB": 94.109696,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00032799899999996773,
+          "systemCpuSeconds": 0.0010639999999999955,
+          "peakRssMB": 94.109696,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.010006000000000015,
+          "systemCpuSeconds": 0.0012829999999999994,
+          "peakRssMB": 94.109696,
+          "submittedStatements": 14
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.040581000000000034,
+          "systemCpuSeconds": 0.002047,
+          "peakRssMB": 94.879744,
+          "submittedStatements": 77
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 6.299999999997974e-05,
+          "systemCpuSeconds": 0.002824999999999994,
+          "peakRssMB": 95.010816,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_invalid_python_has_no_findings",
+      "check": "forwardref",
+      "entry": "_fr_prepare",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_fr_prepare",
+        "frPaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_invalid_python_has_no_fin0/impl/module.py"
+        ],
+        "frScopes": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_invalid_python_has_no_fin0/impl/module.py"
+        ],
+        "frExists": [
+          "1"
+        ],
+        "frEntry": "lint_file",
+        "frExclude": []
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-forwardref",
+          "clause": "ForwardRead",
+          "code": "FR_READ",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "ForwardRef source read",
+          "parameters": {
+            "ordinal": 0,
+            "path": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_invalid_python_has_no_fin0/impl/module.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.072031,
+          "systemCpuSeconds": 0.004011000000000001,
+          "peakRssMB": 51.986432,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.000000000030756e-06,
+          "systemCpuSeconds": 9.000000000002062e-06,
+          "peakRssMB": 92.962816,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 92.962816,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.10259966600000003,
+          "systemCpuSeconds": 0.014508999999999998,
+          "peakRssMB": 82.558976,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.03469099999999997,
+          "systemCpuSeconds": 0.005825999999999998,
+          "peakRssMB": 92.962816,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.029260000000000008,
+          "systemCpuSeconds": 0.0022160000000000027,
+          "peakRssMB": 92.962816,
+          "submittedStatements": 35
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 6.40000000000085e-05,
+          "systemCpuSeconds": 0.0025060000000000013,
+          "peakRssMB": 92.962816,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_invalid_python_has_no_findings",
+      "check": "forwardref",
+      "entry": "_fr_batch",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [
+        {
+          "path": "impl/forwardref-0.py",
+          "sourceSha256": "e5c39b5d9e483c96898f2970978fee4d8e5a3814e685d9ab37365a5aa333b5ad"
+        }
+      ],
+      "options": {
+        "entryPoint": "_fr_batch",
+        "frInputDirs": [
+          "impl"
+        ],
+        "logicalPaths": [
+          "impl/forwardref-0.py"
+        ],
+        "scopePaths": [
+          "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/pytest-of-jeremy/pytest-17628/test_invalid_python_has_no_fin0/impl/module.py"
+        ]
+      },
+      "findings": 0,
+      "diagnostics": [],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+          "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+          "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/typed-supplied-facts.rr",
+          "sha256": "1e95cd91d28e84ea35031e3ec71a21b1be0608b4e5a8043f9dae749fce3b076a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
+          "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.06105799999999999,
+          "systemCpuSeconds": 0.003046,
+          "peakRssMB": 52.002816,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 6.899999999998574e-05,
+          "systemCpuSeconds": 8.799999999998392e-05,
+          "peakRssMB": 93.7984,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0003090000000000037,
+          "systemCpuSeconds": 0.00019199999999999773,
+          "peakRssMB": 93.7984,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.09179825000000005,
+          "systemCpuSeconds": 0.014038000000000002,
+          "peakRssMB": 83.5584,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.030983999999999956,
+          "systemCpuSeconds": 0.0042109999999999925,
+          "peakRssMB": 93.7984,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.0004320409999999941,
+          "systemCpuSeconds": 0.0010420000000000013,
+          "peakRssMB": 93.7984,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.008465,
+          "systemCpuSeconds": 0.0015000000000000013,
+          "peakRssMB": 93.7984,
+          "submittedStatements": 14
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.038024,
+          "systemCpuSeconds": 0.0021770000000000053,
+          "peakRssMB": 93.7984,
+          "submittedStatements": 77
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 9.799999999998699e-05,
+          "systemCpuSeconds": 0.0027649999999999966,
+          "peakRssMB": 93.7984,
+          "submittedStatements": 0
+        }
+      ]
+    }
+  ],
+  "assertionTranslations": [],
+  "configurationBindings": {
+    "forwardref": {
+      "nativeCall": 0,
+      "names": [
+        "FORWARDREF_EXTRACTOR"
+      ]
+    }
+  },
+  "hostTransfers": [],
+  "originalRecordingSha256": "a1c34954f2bdce50bc30a96499d57c9837b3b398b2205c691bdcd6da0567cd80",
+  "detectorObservations": [
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_flags_isinstance_type_after_annotation_read",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [
+        {
+          "kind": "tuple",
+          "items": [
+            {
+              "kind": "path",
+              "value": "impl/module.py"
+            },
+            4,
+            11,
+            "isinstance(annotation, type) without ForwardRef handling. ForwardRef annotations will fail this check. Consider using coerce_sys_id_value() or checking for ForwardRef first.",
+            "FWDREF001"
+          ]
+        }
+      ],
+      "actualSourceResult": [
+        {
+          "kind": "tuple",
+          "items": [
+            {
+              "kind": "path",
+              "value": "impl/module.py"
+            },
+            4,
+            11,
+            "isinstance(annotation, type) without ForwardRef handling. ForwardRef annotations will fail this check. Consider using coerce_sys_id_value() or checking for ForwardRef first.",
+            "FWDREF001"
+          ]
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/module.py",
+          "line": 4,
+          "column": 11,
+          "code": "FWDREF001",
+          "message": "isinstance(annotation, type) without ForwardRef handling. ForwardRef annotations will fail this check. Consider using coerce_sys_id_value() or checking for ForwardRef first.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "actual": [
+        {
+          "path": "impl/module.py",
+          "line": 4,
+          "column": 11,
+          "code": "FWDREF001",
+          "message": "isinstance(annotation, type) without ForwardRef handling. ForwardRef annotations will fail this check. Consider using coerce_sys_id_value() or checking for ForwardRef first.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_flags_issubclass_after_annotation_read",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [
+        {
+          "kind": "tuple",
+          "items": [
+            {
+              "kind": "path",
+              "value": "impl/module.py"
+            },
+            4,
+            11,
+            "issubclass(annotation, ...) without ForwardRef handling. ForwardRef annotations will raise TypeError. Consider checking for ForwardRef first.",
+            "FWDREF002"
+          ]
+        }
+      ],
+      "actualSourceResult": [
+        {
+          "kind": "tuple",
+          "items": [
+            {
+              "kind": "path",
+              "value": "impl/module.py"
+            },
+            4,
+            11,
+            "issubclass(annotation, ...) without ForwardRef handling. ForwardRef annotations will raise TypeError. Consider checking for ForwardRef first.",
+            "FWDREF002"
+          ]
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/module.py",
+          "line": 4,
+          "column": 11,
+          "code": "FWDREF002",
+          "message": "issubclass(annotation, ...) without ForwardRef handling. ForwardRef annotations will raise TypeError. Consider checking for ForwardRef first.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "actual": [
+        {
+          "path": "impl/module.py",
+          "line": 4,
+          "column": 11,
+          "code": "FWDREF002",
+          "message": "issubclass(annotation, ...) without ForwardRef handling. ForwardRef annotations will raise TypeError. Consider checking for ForwardRef first.",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_allows_explicit_forward_ref_detection",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [],
+      "actualSourceResult": [],
+      "expected": [],
+      "actual": [],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_clean_file_has_no_findings",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [],
+      "actualSourceResult": [],
+      "expected": [],
+      "actual": [],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_forwardref.py::test_invalid_python_has_no_findings",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": [],
+      "actualSourceResult": [],
+      "expected": [],
+      "actual": [],
+      "status": "passed"
+    }
+  ],
+  "pythonHashSeed": null,
+  "executionIsolation": "One owned persistent cache per assertion shard; shared-cache concurrency is tested separately",
+  "semanticFallbacks": [],
+  "hostProtocolCalls": [],
+  "casesWithoutNativeCalls": [
+    "scripts/tests/test_monitor_pr_status.py::TestStatusReport::test_has_blockers_returns_true_when_blockers_exist",
+    "scripts/tests/test_monitor_pr_status.py::TestStatusReport::test_has_blockers_returns_false_when_no_blockers",
+    "scripts/tests/test_monitor_pr_status.py::TestStatusReport::test_print_report_orders_blocker_categories",
+    "scripts/tests/test_monitor_pr_status.py::TestRunCommand::test_gh_commands_seed_token_from_gh_auth",
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_get_pr_for_branch_returns_none_when_no_pr_exists",
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_get_pr_for_branch_prefers_open_pr",
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_handle_pr_lifecycle_reports_merged_branch_as_stop",
+    "scripts/tests/test_monitor_pr_status.py::TestPrResolution::test_handle_pr_lifecycle_reports_closed_branch_as_error",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckMypy::test_mypy_command_not_found_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckMypy::test_mypy_uses_extended_timeout",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckMypy::test_mypy_timeout_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_check_lazy_architecture_success_reports_pass",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_check_lazy_architecture_failure_reports_architectural_block",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_architectural_linter_suite_failure_is_architecture_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_run_checks_runs_architecture_then_ci_then_typing",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_mypy_exit_code_nonzero_with_empty_stdout_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_mypy_success_reports_passed",
+    "scripts/tests/test_monitor_pr_status.py::TestArchitecturalLinterChecks::test_mypy_with_errors_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_command_not_found_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_timeout_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_exit_code_nonzero_with_empty_stdout_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_success_reports_passed",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_with_errors_reports_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckPyright::test_pyright_nonzero_exit_not_saved_by_zero_errors_substring",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_null_author_does_not_crash",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_repo_info_failure_reports_warning",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_cursor_bot_comments_are_detected",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_unaddressed_bugbot_comment_is_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_addressed_bugbot_comment_is_not_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_no_bugbot_comments_passes",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_review_comments_on_current_commit_are_detected",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_review_comments_where_code_was_changed_still_block",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckBugbotComments::test_review_comments_from_old_commit_without_reply_still_block",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_all_checks_pass",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_failing_check_is_blocker",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_pending_check_is_warning",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_windows_check_is_regular_pending_ci",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_skipping_check_is_treated_as_pass",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckCiStatus::test_ci_fetch_failure_does_not_report_passed",
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_reports_missing_pr_for_current_branch",
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_reports_merged_pr_for_current_branch",
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_reports_closed_pr_for_current_branch",
+    "scripts/tests/test_monitor_pr_status.py::TestMain::test_main_does_not_report_ready_when_ci_status_unavailable",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_no_python_files_changed_passes",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_changed_files_with_no_violations_passes",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_violations_in_unchanged_files_are_ignored",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_violations_in_changed_files_are_blockers",
+    "scripts/tests/test_monitor_pr_status.py::TestCheckLayerViolations::test_similarly_named_files_do_not_trigger_false_positive_matches"
+  ]
+}

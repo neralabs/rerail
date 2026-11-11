@@ -1,0 +1,70 @@
+.violation ForwardCliRoot(at:span,path:symbol) code "FR_CLI_ROOT" "ForwardRef CLI root"
+ForwardCliRoot(@place("",0),p) :- option("entryPoint","_fr_cli_root"),option("frCliHasRoot","1"),option("frCliRoot",p).
+ForwardCliRoot(@place("",0),@dir(@dir(@dir(p)))) :- option("entryPoint","_fr_cli_root"),option("frCliHasRoot","0"),option("frDiscoverySource",p).
+.violation ForwardCliArgument(at:span,ordinal:number,path:symbol) code "FR_CLI_ARG" "ForwardRef CLI directory argument"
+ForwardCliArgument(@place("",0),i,p) :- option("entryPoint","_fr_cli_root"),option("frCliHasDirs","1"),option_item("frCliDirs",i,p).
+ForwardCliArgument(@place("",0),i,p) :- option("entryPoint","_fr_cli_root"),option("frCliHasDirs","0"),option("frCliHasDefaults","1"),option_item("frCliDefaults",i,p).
+ForwardCliArgument(@place("",0),0,"public") :- option("entryPoint","_fr_cli_root"),option("frCliHasDirs","0"),option("frCliHasDefaults","0").
+.decl frc_top(path:symbol)
+frc_top(p) :- option("entryPoint","_fr_cli_dirs"),dir_entry(".",p,1).
+.decl frc_layer(path:symbol)
+frc_layer(p) :- frc_top(p),pp_config("layer_regex",r),match(r,p).
+.decl frc_modern()
+frc_modern() :- frc_top("data_layer").
+frc_modern() :- frc_top("_internal").
+frc_modern() :- frc_layer(_).
+.decl frc_default(rank:number,path:symbol)
+frc_default(0,"impl") :- frc_modern(),frc_top("impl").
+frc_default(1,"data_layer") :- frc_modern(),frc_top("data_layer").
+frc_default(2,"_internal") :- frc_modern(),frc_top("_internal").
+frc_default(3,p) :- frc_layer(p).
+frc_default(0,"api") :- !frc_modern(),frc_top("api").
+frc_default(1,"impl") :- !frc_modern(),frc_top("impl").
+.decl frc_public()
+frc_public() :- option_item("frCliRawDirs",_,"public").
+.decl frc_expanded(i:number,rank:number,path:symbol)
+frc_expanded(i,0,p) :- option("entryPoint","_fr_cli_dirs"),option_item("frCliRawDirs",i,p),p!="public".
+frc_expanded(i,r,p) :- option("entryPoint","_fr_cli_dirs"),option_item("frCliRawDirs",i,"public"),frc_default(r,p).
+.decl frc_previous(i:number,rank:number,path:symbol)
+frc_previous(i,r,p) :- frc_expanded(i,r,p),frc_expanded(j,s,p),(j<i;j=i,s<r).
+.violation ForwardCliDirectory(at:span,argument:number,rank:number,path:symbol) code "FR_CLI_DIR" "ForwardRef CLI directory"
+ForwardCliDirectory(@place("",0),i,r,p) :- frc_expanded(i,r,p),(!frc_public();!frc_previous(i,r,p)).
+.violation ForwardCliPath(at:span,ordinal:number,path:symbol) code "FR_CLI_PATH" "ForwardRef CLI path"
+ForwardCliPath(@place("",0),i,p) :- option("entryPoint","_fr_cli_paths"),option_item("frCliPaths",i,p).
+ForwardCliPath(@place("",0),i,p) :- option("entryPoint","_fr_cli_paths"),!option_item("frCliPaths",_,_),option_item("frCliDefaultPaths",i,p).
+.decl frc_excluded(i:number)
+frc_excluded(i) :- option_item("frCliCandidates",i,p),option_item("frCliExclude",_,s),contains(s,p).
+.violation ForwardCliFile(at:span,ordinal:number,path:symbol) code "FR_CLI_FILE" "ForwardRef CLI file"
+ForwardCliFile(@place("",0),i,p) :- option("entryPoint","_fr_cli_select"),option_item("frCliCandidates",i,p),option_item("frCliKinds",i,"direct").
+ForwardCliFile(@place("",0),i,p) :- option("entryPoint","_fr_cli_select"),option_item("frCliCandidates",i,p),option_item("frCliKinds",i,"walk"),suffix(".py",p),!frc_excluded(i).
+.violation ForwardCliWarning(at:span,ordinal:number,text:symbol) code "FR_CLI_WARNING" "ForwardRef CLI warning"
+ForwardCliWarning(@place("",0),i,cat("Warning: ",p," not found\n")) :- option("entryPoint","_fr_cli_select"),option_item("frCliCandidates",i,p),option_item("frCliKinds",i,"missing").
+
+.decl frc_path(i:number,value:symbol)
+.input frc_path(IO=json,filename="forwardref-cli.json",path="/items/*/file",projection="python-str")
+.decl frc_line(i:number,value:symbol)
+.input frc_line(IO=json,filename="forwardref-cli.json",path="/items/*/line",projection="python-str")
+.decl frc_line_json(i:number,value:symbol)
+.input frc_line_json(IO=json,filename="forwardref-cli.json",path="/items/*/line",projection="json")
+.decl frc_line_type(i:number,value:symbol)
+.input frc_line_type(IO=json,filename="forwardref-cli.json",path="/items/*/line",projection="type")
+.decl frc_col(i:number,value:symbol)
+.input frc_col(IO=json,filename="forwardref-cli.json",path="/items/*/col",projection="python-str")
+.decl frc_code(i:number,value:symbol)
+.input frc_code(IO=json,filename="forwardref-cli.json",path="/items/*/code",projection="python-str")
+.decl frc_message(i:number,value:symbol)
+.input frc_message(IO=json,filename="forwardref-cli.json",path="/items/*/message",projection="python-str")
+.decl frc_integer(i:number,value:symbol)
+frc_integer(i,v) :- frc_line_type(i,"number"),frc_line_json(i,v),@count_matches("[.eE]",v)=0.
+frc_integer(i,"1") :- frc_line_type(i,"boolean"),frc_line_json(i,"true").
+frc_integer(i,"0") :- frc_line_type(i,"boolean"),frc_line_json(i,"false").
+sf_line(-2,i,v,j) :- option("entryPoint","_fr_cli_report"),frc_integer(i,v),frc_line_json(i,j).
+.decl frc_count(n:number)
+frc_count(n) :- option("entryPoint","_fr_cli_report"),n=count:{frc_path(_,_)}.
+.violation ForwardCliOutput(at:span,phase:number,path_key:symbol,sign:number,length:number,digits:symbol,ordinal:number,text:symbol) code "FR_CLI_OUTPUT" "ForwardRef CLI output"
+ForwardCliOutput(@place("",0),0,"",0,0,"",0,t) :- frc_count(0),fr_config("cli_clean",t).
+ForwardCliOutput(@place("",0),0,"",0,0,"",0,cat(a,to_string(n),b)) :- frc_count(n),n>0,fr_config("cli_header_prefix",a),fr_config("cli_header_suffix",b).
+ForwardCliOutput(@place("",0),1,p,s,n,d,i,cat(p,":",l,":",c,": [",k,"] ",m,"\n")) :- option("entryPoint","_fr_cli_report"),frc_path(i,p),frc_line(i,l),frc_integer(i,num),sf_line_key(num,s,n,d),frc_col(i,c),frc_code(i,k),frc_message(i,m).
+.violation ForwardCliExit(at:span,status:number) code "FR_CLI_EXIT" "ForwardRef CLI status"
+ForwardCliExit(@place("",0),1) :- frc_count(n),n>0.
+ForwardCliExit(@place("",0),0) :- frc_count(0).

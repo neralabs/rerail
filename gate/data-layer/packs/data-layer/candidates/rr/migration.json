@@ -1610,7 +1610,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
-      "sha256": "ae991a67e16d99ca7e79c36053055755dcdb4acbfbed07896ffcaf4b1dbd6f6d",
+      "sha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289",
       "origin": "authored",
       "upstreamPath": "scripts/lint_forwardref.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1619,6 +1619,11 @@
           "before": "5e63e8a8dd7d60825fc3e2081618682e63ad32a41b887020390bf72fa16d4939",
           "after": "ae991a67e16d99ca7e79c36053055755dcdb4acbfbed07896ffcaf4b1dbd6f6d",
           "reason": "Normalize parenthesized assignment names without treating tuple targets or comment commas as names"
+        },
+        {
+          "before": "ae991a67e16d99ca7e79c36053055755dcdb4acbfbed07896ffcaf4b1dbd6f6d",
+          "after": "a84037a5f9ff6e4367cc6743239b15f50e82386c696e8fa08af9db294fe96458",
+          "reason": "Native batched input preparation, metadata, collector, helper, projection and supplied facts"
         }
       ]
     },
@@ -3003,6 +3008,20 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_conn_or_txn_union.py",
       "sha256": "0e2d2c649cf00c76b30a3b7340f3346d118b8d5885b1078e1f5bf4d9ed82a367"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/forwardref-api.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_forwardref.py",
+      "sha256": "3e050fb5cc8a1a7897116ac3d0632ba602ab3b31f6c7c517e61d8c6d59ff4b4f"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/forwardref-cli.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_forwardref.py",
+      "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
     }
   ],
   "rules": [
@@ -3589,18 +3608,19 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-forwardref.json",
       "legacySha256": "9bccddea5856ae1e41d834d68d7da4d96fdebe512c93c03bcef605a818f35333",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
-      "ruleSha256": "ae991a67e16d99ca7e79c36053055755dcdb4acbfbed07896ffcaf4b1dbd6f6d",
+      "ruleSha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289",
       "migrationProgress": {
-        "status": "scanner-and-production-contracts-passed",
-        "admitted": false,
+        "status": "full-contract-passed",
+        "admitted": true,
+        "verifiedNativeExecutions": 1124,
         "checkpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-scanner-progress-finalfcce.json.gz",
-          "sha256": "d069703da5d3aafe0ff39b5f82367044feef650506d831cef787a401c2da872e"
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-complete-finalfcce.json.gz",
+          "sha256": "9978209103f41168fb00660182ddc3c2e65678c9de850743e3221411ffb88901"
         },
         "summary": {
-          "admitted": false,
+          "admitted": true,
           "fullMigrationAcceptance": false,
           "originalCasesPerAPI": 53,
           "nativeLinterOriginalCasesPerAPI": 5,
@@ -3608,33 +3628,210 @@
           "hostWorkflowCasesPerAPI": 48,
           "publicCasesPerAPI": 80,
           "productionCasesPerAPI": 18,
-          "nativeExecutions": 240,
+          "nativeExecutions": 1124,
           "casesWithoutNativeCalls": {
             "public": {
-              "snapshot": [
-                "file-missing",
-                "file-invalid-utf8",
-                "content-missing"
-              ],
-              "workspace": [
-                "file-missing",
-                "file-invalid-utf8",
-                "content-missing"
-              ]
+              "snapshot": [],
+              "workspace": []
             },
             "production": {
               "snapshot": [],
               "workspace": []
             }
+          },
+          "casesPerAPI": {
+            "public": 80,
+            "components": 67,
+            "production": 18,
+            "cli": 26,
+            "legacy": 15
+          },
+          "persistentStepsPerAPI": 21,
+          "controls": 24,
+          "hostProtocols": {
+            "parser-help": "Unchanged argparse help exits before rule evaluation.",
+            "parser-bad-option": "Unchanged argparse rejects the unknown option before rule evaluation."
           }
         },
-        "remaining": [
-          "Native explicit-file preparation for the three identified host-only I/O cases",
-          "Native collector, registry, helpers, configuration and supplied-fact contracts",
-          "Native CLI and its source-recorded assertions",
-          "Persistent updates, behavior-removal controls and complete admission"
-        ]
-      }
+        "remaining": []
+      },
+      "evidence": {
+        "assertions": 53,
+        "positives": 2,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+        "corpusSha256": "a1c34954f2bdce50bc30a96499d57c9837b3b398b2205c691bdcd6da0567cd80",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-complete-native-snapshot.json",
+            "sha256": "eb934266604c26200b3eba9bd8528de5825b961e6c816dde4c09f8fb9d586f43"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-complete-native-workspace.json",
+            "sha256": "84be45cd294671a42a36a54f9f64190364369be638d3fa7f6dccb6878ecabe1d"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-complete-finalfcce.json.gz",
+            "sha256": "9978209103f41168fb00660182ddc3c2e65678c9de850743e3221411ffb88901"
+          }
+        ],
+        "supplemental": {
+          "admitted": true,
+          "fullMigrationAcceptance": false,
+          "originalCasesPerAPI": 53,
+          "nativeLinterOriginalCasesPerAPI": 5,
+          "originalPositiveObservationsPerAPI": 2,
+          "hostWorkflowCasesPerAPI": 48,
+          "publicCasesPerAPI": 80,
+          "productionCasesPerAPI": 18,
+          "nativeExecutions": 1124,
+          "casesWithoutNativeCalls": {
+            "public": {
+              "snapshot": [],
+              "workspace": []
+            },
+            "production": {
+              "snapshot": [],
+              "workspace": []
+            }
+          },
+          "casesPerAPI": {
+            "public": 80,
+            "components": 67,
+            "production": 18,
+            "cli": 26,
+            "legacy": 15
+          },
+          "persistentStepsPerAPI": 21,
+          "controls": 24,
+          "hostProtocols": {
+            "parser-help": "Unchanged argparse help exits before rule evaluation.",
+            "parser-bad-option": "Unchanged argparse rejects the unknown option before rule evaluation."
+          }
+        },
+        "scope": "All five original detector assertions through both native APIs; 48 unchanged PR-monitor workflow assertions are identified separately. Complete scanner, collector, helper, reporter, CLI, production, update and mutation contracts, including all earlier batch-two inputs."
+      },
+      "evidenceHistory": [
+        {
+          "assertions": 53,
+          "positives": 2,
+          "failures": 0,
+          "skipped": 0,
+          "semanticFallbacks": 0,
+          "ruleSha256": "f082b2f7a3e4cfc68e2646afef438aa2fb069465b34a8127170f49d484c5c289",
+          "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+          "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+          "corpusSha256": "a1c34954f2bdce50bc30a96499d57c9837b3b398b2205c691bdcd6da0567cd80",
+          "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+          "originalInventory": {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+            "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+          },
+          "reports": [
+            {
+              "path": "gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-complete-native-snapshot.json",
+              "sha256": "eb934266604c26200b3eba9bd8528de5825b961e6c816dde4c09f8fb9d586f43"
+            },
+            {
+              "path": "gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-complete-native-workspace.json",
+              "sha256": "84be45cd294671a42a36a54f9f64190364369be638d3fa7f6dccb6878ecabe1d"
+            }
+          ],
+          "acceptanceCheckpoints": [
+            {
+              "path": "gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-complete-finalfcce.json.gz",
+              "sha256": "3313dea638d0efb4fb002703aec384b7e7852fd9dfe8e47a3bdc8b3cefa364ab"
+            }
+          ],
+          "supplemental": {
+            "admitted": true,
+            "fullMigrationAcceptance": false,
+            "originalCasesPerAPI": 53,
+            "nativeLinterOriginalCasesPerAPI": 5,
+            "originalPositiveObservationsPerAPI": 2,
+            "hostWorkflowCasesPerAPI": 48,
+            "publicCasesPerAPI": 80,
+            "productionCasesPerAPI": 18,
+            "nativeExecutions": 1124,
+            "casesWithoutNativeCalls": {
+              "public": {
+                "snapshot": [],
+                "workspace": []
+              },
+              "production": {
+                "snapshot": [],
+                "workspace": []
+              }
+            },
+            "casesPerAPI": {
+              "public": 80,
+              "components": 67,
+              "production": 18,
+              "cli": 26,
+              "legacy": 15
+            },
+            "persistentStepsPerAPI": 21,
+            "controls": 24,
+            "hostProtocols": {
+              "parser-help": "Unchanged argparse help exits before rule evaluation.",
+              "parser-bad-option": "Unchanged argparse rejects the unknown option before rule evaluation."
+            }
+          },
+          "scope": "All five original detector assertions through both native APIs; 48 unchanged PR-monitor workflow assertions are identified separately. Complete scanner, collector, helper, reporter, CLI, production, update and mutation contracts, including all earlier batch-two inputs."
+        }
+      ],
+      "migrationProgressHistory": [
+        {
+          "status": "full-contract-passed",
+          "admitted": false,
+          "checkpoint": {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-scanner-progress-finalfcce.json.gz",
+            "sha256": "d069703da5d3aafe0ff39b5f82367044feef650506d831cef787a401c2da872e"
+          },
+          "summary": {
+            "admitted": false,
+            "fullMigrationAcceptance": false,
+            "originalCasesPerAPI": 53,
+            "nativeLinterOriginalCasesPerAPI": 5,
+            "originalPositiveObservationsPerAPI": 2,
+            "hostWorkflowCasesPerAPI": 48,
+            "publicCasesPerAPI": 80,
+            "productionCasesPerAPI": 18,
+            "nativeExecutions": 240,
+            "casesWithoutNativeCalls": {
+              "public": {
+                "snapshot": [
+                  "file-missing",
+                  "file-invalid-utf8",
+                  "content-missing"
+                ],
+                "workspace": [
+                  "file-missing",
+                  "file-invalid-utf8",
+                  "content-missing"
+                ]
+              },
+              "production": {
+                "snapshot": [],
+                "workspace": []
+              }
+            }
+          },
+          "remaining": [],
+          "verifiedNativeExecutions": 1124
+        }
+      ]
     },
     {
       "check": "unresolved_forward_refs",

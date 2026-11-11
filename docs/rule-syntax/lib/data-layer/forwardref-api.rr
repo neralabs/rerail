@@ -1,0 +1,85 @@
+// Caller-visible metadata, input preparation, helpers and fact projection.
+.decl fr_config(key:symbol,value:symbol)
+.violation ForwardConfig(at:span,key:symbol,value:symbol) code "FR_CONFIG" "ForwardRef configuration"
+ForwardConfig(@place("",0),k,v) :- option("entryPoint","_fr_configuration"),fr_config(k,v).
+
+.decl fr_prepare(i:number,path:symbol,scope:symbol)
+fr_prepare(i,p,s) :- option_item("frPaths",i,p),option_item("frScopes",i,s).
+.decl fr_prepare_test(i:number)
+fr_prepare_test(i) :- fr_prepare(i,_,s),match("(?s)(?:.*/)?(?:tests|test)(?:/.*)?",s).
+.decl fr_prepare_scope(i:number)
+fr_prepare_scope(i) :- fr_prepare(i,_,s),match("(?s)(?:.*/)?[^/]+[.]py",s),!fr_prepare_test(i).
+.decl fr_prepare_gate(i:number)
+fr_prepare_gate(i) :- fr_prepare(i,_,_),!option("frCallSource",_).
+fr_prepare_gate(i) :- fr_prepare(i,_,_),option("frCallSource",s),(contains(".annotation",s);contains("ForwardRef",s)).
+.decl fr_prepare_excluded(i:number)
+fr_prepare_excluded(i) :- fr_prepare(i,p,_),option_item("frExclude",_,s),contains(s,p).
+.decl fr_prepare_previous(i:number)
+fr_prepare_previous(i) :- fr_prepare(i,p,_),fr_prepare(j,p,_),j<i.
+.violation ForwardRead(at:span,ordinal:number,path:symbol) code "FR_READ" "ForwardRef source read"
+ForwardRead(@place("",0),i,p) :- option("entryPoint","_fr_prepare"),option("frEntry","lint_file"),fr_prepare(i,p,_).
+ForwardRead(@place("",0),i,p) :- option("entryPoint","_fr_prepare"),option("frEntry","lint_directory"),fr_prepare(i,p,_),!fr_prepare_excluded(i).
+ForwardRead(@place("",0),i,p) :- option("entryPoint","_fr_prepare"),option("frEntry",e),(e="lint_file_content";e="_issues_for_files"),fr_prepare(i,p,_),fr_prepare_scope(i),fr_prepare_gate(i),option_item("frExists",i,"1"),!fr_prepare_previous(i).
+
+// The registered collector sees all syntax. Trigger filtering belongs to its caller.
+fr_trigger(d) :- option("entryPoint","_fr_collect"),pp_doc(d,_).
+.violation ForwardCollectStatus(at:span,present:number) code "FR_COLLECT_STATUS" "ForwardRef parse status"
+ForwardCollectStatus(@place("",0),1) :- option("entryPoint","_fr_collect"),pp_doc(d,_),!syntax_error(d,_,_).
+ForwardCollectStatus(@place("",0),0) :- option("entryPoint","_fr_collect"),pp_doc(d,_),syntax_error(d,_,_).
+.violation ForwardCollectError(at:span,value:symbol) code "FR_COLLECT_ERROR" "ForwardRef parse error"
+ForwardCollectError(@place("",0),cat("SyntaxError: ",m," (",name,", line ",to_string(l),")")) :- option("entryPoint","_fr_collect"),pp_doc(d,_),syntax_error(d,l,m),option("frCollectName",name).
+.decl fr_graph_kind(n:number,kind:symbol)
+fr_graph_kind(n,k) :- option_item("astKinds",n,k).
+.decl fr_graph_child(p:number,c:number,field:symbol)
+fr_graph_child(to_number(raw),c,f) :- option_item("astParents",c,raw),raw!="-1",option_item("astFields",c,f).
+.decl fr_graph_ref(n:number)
+fr_graph_ref(n) :- fr_graph_kind(n,"Name"),option_item("astIds",n,"ForwardRef").
+fr_graph_ref(n) :- fr_graph_kind(n,"Attribute"),option_item("astAttrs",n,"ForwardRef").
+fr_graph_ref(n) :- fr_graph_kind(n,"Tuple"),fr_graph_child(n,c,"elts"),fr_graph_ref(c).
+.violation ForwardContains(at:span,value:number) code "FR_CONTAINS" "ForwardRef helper"
+ForwardContains(@place("",0),1) :- option("entryPoint","ForwardRefCollector._contains_forwardref"),fr_graph_ref(0).
+ForwardContains(@place("",0),0) :- option("entryPoint","ForwardRefCollector._contains_forwardref"),!fr_graph_ref(0).
+
+.decl fr_value_file(value:symbol)
+.input fr_value_file(IO=json,filename="forwardref-value.json",path="/file",projection="python-str")
+.decl fr_value_line(value:symbol)
+.input fr_value_line(IO=json,filename="forwardref-value.json",path="/line",projection="json")
+.decl fr_value_col(value:symbol)
+.input fr_value_col(IO=json,filename="forwardref-value.json",path="/col",projection="json")
+.decl fr_value_message(value:symbol)
+.input fr_value_message(IO=json,filename="forwardref-value.json",path="/message",projection="json")
+.decl fr_value_code(value:symbol)
+.input fr_value_code(IO=json,filename="forwardref-value.json",path="/code",projection="json")
+.decl fr_owner(path:symbol,root:symbol)
+fr_owner(p,r) :- option("entryPoint","_issue_to_fact"),fr_value_file(p),option("frFactRoot",r).
+fr_owner(p,r) :- option("entryPoint","_fr_collect"),option("frCollectPath",p),option("frFactRoot",r).
+.decl fr_relative(path:symbol,value:symbol)
+fr_relative(p,".") :- fr_owner(p,p).
+fr_relative(p,@slice(p,strlen(r)+1,strlen(p))) :- fr_owner(p,r),r!=".",r!="/",r!="//",prefix(cat(r,"/"),p).
+fr_relative(p,@slice(p,1,strlen(p))) :- fr_owner(p,"/"),p!="/",prefix("/",p),!prefix("//",p).
+fr_relative(p,@slice(p,2,strlen(p))) :- fr_owner(p,"//"),p!="//",prefix("//",p).
+fr_relative(p,p) :- fr_owner(p,"."),!prefix("/",p).
+.decl fr_fact_path(value:symbol)
+fr_fact_path(v) :- fr_relative(_,v).
+fr_fact_path(p) :- fr_owner(p,_),!fr_relative(p,_).
+.violation ForwardProjection(at:span,file:symbol,line_json:symbol,col_json:symbol,message_json:symbol,code_json:symbol) code "FR_PROJECT" "ForwardRef fact"
+ForwardProjection(@place("",0),p,l,c,m,k) :- option("entryPoint","_issue_to_fact"),fr_fact_path(p),fr_value_line(l),fr_value_col(c),fr_value_message(m),fr_value_code(k).
+.violation ForwardCollectorFact(at:span,ordinal:number,file:symbol,line_number:number,column:number,source_code:symbol,source_message:symbol) code "FR_COLLECT_FACT" "ForwardRef collector fact"
+ForwardCollectorFact(@place("",0),i,p,l,c,"FWDREF001","isinstance(annotation, type) without ForwardRef handling. ForwardRef annotations will fail this check. Consider using coerce_sys_id_value() or checking for ForwardRef first.") :- option("entryPoint","_fr_collect"),fr_fact_path(p),fr_bad(n,"isinstance",c,i),line(n,l).
+ForwardCollectorFact(@place("",0),i,p,l,c,"FWDREF002","issubclass(annotation, ...) without ForwardRef handling. ForwardRef annotations will raise TypeError. Consider checking for ForwardRef first.") :- option("entryPoint","_fr_collect"),fr_fact_path(p),fr_bad(n,"issubclass",c,i),line(n,l).
+ForwardCollectorFact(@place("",0),i,p,l,c,"FWDREF003","callable(annotation) without ForwardRef handling. ForwardRef is callable but calling it produces wrong results. Consider checking for ForwardRef first.") :- option("entryPoint","_fr_collect"),fr_fact_path(p),fr_bad(n,"callable",c,i),line(n,l).
+.decl fr_last_module_assign(d:number,a:node)
+fr_last_module_assign(d,a) :- pp_doc(d,_),modnode(d,m),fr_assign(a,m),visit_index(a,i),i=max j:{fr_assign(b,m),visit_index(b,j)}.
+.decl fr_final_guard(d:number)
+fr_final_guard(d) :- fr_last_module_assign(d,a),modnode(d,m),fr_good(g),fr_scope(g,m),earlier(a,g).
+.violation ForwardCollectorState(at:span,context:number,guarded:number,annotation_var:symbol) code "FR_COLLECT_STATE" "ForwardRef collector state"
+ForwardCollectorState(@place("",0),0,0,"") :- option("entryPoint","_fr_collect"),pp_doc(d,_),!fr_last_module_assign(d,_).
+ForwardCollectorState(@place("",0),1,0,"annotation") :- option("entryPoint","_fr_collect"),fr_last_module_assign(d,_),!fr_final_guard(d).
+ForwardCollectorState(@place("",0),1,1,"annotation") :- option("entryPoint","_fr_collect"),fr_last_module_assign(d,_),fr_final_guard(d).
+
+#include "data-layer/typed-supplied-facts.rr"
+.input sfe_member(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/key",projection="python-str")
+.input sfe_value(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded",projection="python-value-str")
+.input sfe_tag(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/0",projection="python-str")
+.input sfe_scalar(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="python-str")
+.input sfe_json(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="json")

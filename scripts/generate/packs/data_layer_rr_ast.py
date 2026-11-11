@@ -58,7 +58,8 @@ ClassVarComparison(c, ordinal, style, column, visit) :- cv_candidate(c, ordinal,
 
 
 def forwardref(source, target, header):
-    text = header('forwardref', target) + r'''
+    import re
+    text = re.sub(r'^\.scope include .*$', '.scope dirs "__forwardref_no_primary__"\n.scope dirs option("frInputDirs")',header('forwardref', target),flags=re.M) + r'''
 .decl fr_trigger(d: number)
 fr_trigger(d) :- source(d, sp), text(sp, t), (contains(".annotation", t) ; contains("ForwardRef", t)).
 .decl fr_sync(f: node)
@@ -145,4 +146,5 @@ ForwardRefSubclass(c, column, ordinal) :- fr_bad(c, "issubclass", column, ordina
 ForwardRefCallable(c, column, ordinal) :- fr_bad(c, "callable", column, ordinal).
 '''
     from data_layer_rr_production import production
-    return production(source, 'forwardref', text)
+    from data_layer_rr_forwardref import suffix
+    return production(source, 'forwardref', text)+suffix(source)

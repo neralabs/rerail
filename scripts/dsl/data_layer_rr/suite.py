@@ -388,46 +388,8 @@ class Suite:
             from aliases_port import scan
             return scan(self, entry, module, arguments)
         if check == 'forwardref':
-            path = Path(arguments.get('filepath', arguments.get('dirpath')))
-            paths = list(path.rglob('*.py')) if entry == 'lint_directory' else [path]
-            files, originals, scopes = [], {}, []
-            root = Path(arguments.get('root') or Path.cwd())
-            for index, item in enumerate(paths):
-                actual = item if item.is_absolute() else root / item
-                name = f'impl/forwardref-api-{index}.py'
-                scope_path = str(actual.relative_to(root)) if actual.is_relative_to(root) else str(actual)
-                originals[name] = actual
-                scopes.append(scope_path)
-                try:
-                    content = actual.read_text()
-                except (OSError, UnicodeError):
-                    if entry == 'lint_file_content':
-                        if not actual.is_file():
-                            return []
-                        gate = self.native(check, 'source_gate', [], dict(callSource=arguments['source']))
-                        if len(gate) > 1 or any(r['code'] != 'FWDREF_GATE' for r in gate):
-                            raise AssertionError('Invalid native ForwardRef source gate')
-                        if not gate:
-                            return []
-                        scope = self.native(check, 'file_gate', [dict(path=name, source='')],
-                                            dict(logicalPaths=[name],scopePaths=[scope_path]))
-                        if len(scope) > 1 or any(r['code'] != 'FWDREF_FILE_GATE' for r in scope):
-                            raise AssertionError('Invalid native ForwardRef scope gate')
-                        if not scope:
-                            return []
-                    raise
-                files.append(dict(path=name, source=content))
-            options = dict(callSource=arguments['source']) if entry == 'lint_file_content' else {}
-            options.update(logicalPaths=list(originals),scopePaths=scopes)
-            if entry == 'lint_directory':
-                options.update(excludePatterns=arguments.get('exclude_patterns') or [],
-                               originalPaths=[str(item) for item in paths])
-            rows = self.native(check, entry, files, options)
-            if any(row['code'] not in {'FWDREF001', 'FWDREF002', 'FWDREF003'} for row in rows):
-                raise AssertionError('Unexpected native ForwardRef diagnostic')
-            order = {f['path']: i for i, f in enumerate(files)}
-            return [module.LintIssue(originals[r['path']], r['line'], r['parameters']['column'], r['message'], r['code'])
-                    for r in sorted(rows, key=lambda r: (order[r['path']], r['parameters']['ordinal']))]
+            from forwardref_port import scan
+            return scan(self,entry,module,arguments)
         if check == 'type_safety_patterns':
             from types_port import scan
             return scan(self, entry, module, arguments)
@@ -528,6 +490,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'forwardref':
+                from forwardref_port import install
+                install(self,module)
             if check == 'conn_or_txn_union':
                 from conn_union_port import install
                 install(self,module)

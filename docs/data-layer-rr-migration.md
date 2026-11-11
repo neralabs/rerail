@@ -11,7 +11,7 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 The latest registered root CLI is `f4db14313662e14c…`, built from native repair commit `4e0774680`.
-It includes Final `fcce32b26`. Generated-index sources and connection-union pass complete acceptance on this cohort.
+It includes Final `fcce32b26`. Generated-index sources, connection-union, and ForwardRef pass complete acceptance on this cohort.
 The thirteen earlier admissions retain their recorded engine versions.
 
 Build and develop the engine in this repository root.
@@ -3510,3 +3510,48 @@ ForwardRef remains a draft. The global inventory remains fifteen admissions, eig
 The progress receipt is `rr-forwardref-scanner-progress-finalfcce.json.gz`.
 The red receipt is `rr-forwardref-parenthesized-target-red-finalfcce.json.gz`.
 No engine build, full-repository cold run, or additional Linear ticket was created.
+
+### 2026-11-11 — Complete ForwardRef migration
+
+The complete receipt certifies 1,124 native executions on the retained Final fcce binary.
+Both APIs pass all five unchanged detector tests, including both finding-positive observations.
+Each suite also runs the 48 unchanged PR-monitor assertions. Their identities remain separate from native detector coverage.
+The admission validator requires both groups and rejects hidden host workflow coverage or missing detector observations.
+
+Each API passes eighty public cases, 67 component cases, eighteen production cases, and 26 CLI cases.
+All fifteen earlier batch-two inputs pass through each API: five original recordings and ten probes.
+Each API also passes 21 persistent repository steps. All 24 behavior-removal controls detect the intended semantic changes.
+
+The native rule now supplies extractor metadata, plugin configuration, registered collection, final collector state, the ForwardRef helper, and fact projection.
+Native supplied-fact reporting preserves field conversions, nonfinite values, booleans, unbounded integer lines, duplicates, and stable finding order.
+The first reporter replay exposed a missing typed member binding. Valid lines incorrectly became the fallback value of one.
+The retained red receipt shows that failure before the binding repair.
+
+Explicit-file preparation now runs in native relations before source reads.
+The previously identified missing-file and UTF-8 cases now record native preparation calls and preserve the complete source errors.
+Direct collector syntax failures also use native parser diagnostics. Registered extraction and final state pass through the real framework interface.
+No original linter callback executes during native inference.
+
+CLI parsing uses the source-derived argparse schema. Native relations choose roots, expand directory arguments, select files, and render complete output.
+All selected CLI files enter one source batch. Source `--check` behavior remains exact: this CLI returns one whenever it finds issues.
+Help and unknown-option rejection remain the two identified argparse protocols that exit before rule evaluation.
+
+Workspace acceptance exposed primary-document leakage during a directory-only request.
+The request emitted both a directory row and an unrelated ForwardRef finding from a selected Python file.
+The rule now starts without primary documents. Analysis requests supply their explicit buffer directory; production uses its existing demanded file relations.
+The fixed workspace request returns directory rows alone and avoids the unwanted AST preparation.
+The red receipt preserves the unmodified failing CLI case, consumed rules, and adapter bytes.
+
+The source private batch helper iterates file bundles in `FactEngine.as_completed` order.
+Its batch comparator permits whole-file group permutation and preserves every ordered finding within each file.
+Public directory scans, reporter results, and CLI output retain their respective exact orders.
+
+The admission tests were committed before the validator. All twelve admission tests pass.
+The full tooling run passes 520 tests and 165 subtests. The final manifest inventory audit passes.
+The generator reproduces the accepted rule exactly. The sibling and remote Final branch still point to the already merged `fcce32b26`.
+No engine source changed or binary was copied. Compilation time for this delivery is zero.
+
+The complete receipt is `rr-forwardref-complete-finalfcce.json.gz`.
+The inventory now records sixteen admissions, eighty-three drafts, and one absent translation.
+Earlier admissions retain their own engine and adapter identities. This receipt does not certify the remaining rules.
+No full-repository cold run or additional Linear ticket was created.

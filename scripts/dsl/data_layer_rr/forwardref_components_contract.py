@@ -23,6 +23,11 @@ def cases(_module):
     for i,text in enumerate(['ForwardRef','typing.ForwardRef','other.ForwardRef','ForwardRef.other','(str,ForwardRef)',
         '((str,),(typing.ForwardRef,))','[ForwardRef]','str | ForwardRef','"ForwardRef"','Optional[ForwardRef]','str','None']):
         rows.append(dict(kind='helper',id='contains-'+str(i),annotation=text))
+    for name,source in [('empty','pass\n'),('active',BAD),('guarded',BAD+'isinstance(annotation, ForwardRef)\n'),
+        ('restored',BAD+'def f():\n isinstance(annotation, ForwardRef)\n'),
+        ('async',BAD+'async def f():\n isinstance(annotation, ForwardRef)\n')]:rows.append(dict(kind='state',id='state-'+name,source=source))
+    for name,paths in [('order',['z.py','a/z.py','a-.py','a.py']),('duplicates',['a.py','a.py']),('missing',['missing.py']),('tests',['tests/a.py','a.py'])]:
+        rows.append(dict(kind='batch',id='batch-'+name,paths=paths))
     for i,(path,root) in enumerate([('api/a.py','.'),('api/a.py','api'),('api/a.py','api/a.py'),('api/a.py','other'),
         ('/project/api/a.py','/project'),('/project/api/a.py','/'),('//server/a.py','//'),('a/../b.py','a'),('a.py','/project')]):
         rows.append(dict(kind='project',id='project-'+str(i),path=path,root=root,line=2,col=3))
@@ -59,9 +64,24 @@ def exercise(module,case,scratch):
             plugin=module.forwardref_plugin(root)
             value={f.name:getattr(plugin,f.name) for f in fields(plugin) if f.name!='reporter'};value['registry']=list(module.forwardref_fact_extractors(root))
         elif case['kind']=='extract':
-            bundle=materialize_source_facts(path=root/'api/a.py',source=case['source'],specs=(module.FORWARDREF_EXTRACTOR,),extractors=module.forwardref_fact_extractors(root))
+            bundle=module._rerail_forwardref_extract(root/'api/a.py',case['source'],root) if hasattr(module,'_rerail_forwardref_extract') else materialize_source_facts(path=root/'api/a.py',source=case['source'],specs=(module.FORWARDREF_EXTRACTOR,),extractors=module.forwardref_fact_extractors(root))
             value=dict(facts=bundle.facts,errors=bundle.errors)
         elif case['kind']=='helper':value=module.ForwardRefCollector(root/'api/a.py')._contains_forwardref(ast.parse(case['annotation'],mode='eval').body)
+        elif case['kind']=='state':
+            factory=module.forwardref_fact_extractors(root)[family];created=[]
+            def capture(path,source):
+                collector=factory(path,source);created.append(collector);return collector
+            bundle=materialize_source_facts(path=root/'api/a.py',source=case['source'],specs=(module.FORWARDREF_EXTRACTOR,),extractors={family:capture})
+            collector=created[0];value=dict(facts=bundle.facts,issues=collector.issues,context=collector._in_annotation_context,guarded=collector._has_forwardref_check,annotation_var=collector._annotation_var,stack=collector._state_stack)
+        elif case['kind']=='batch':
+            for path in set(case['paths']):
+                if path!='missing.py':p=root/path;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(BAD)
+            value=module._issues_for_files(root,tuple(root/path for path in case['paths']))
+            # FactEngine materializes file bundles with as_completed. Only whole
+            # file groups may permute; retain every ordered finding in each group.
+            groups={}
+            for issue in value:groups.setdefault(issue.file,[]).append(issue)
+            value=[issue for path in sorted(groups) for issue in groups[path]]
         elif case['kind']=='project':value=module._issue_to_fact(module.LintIssue(Path(case['path']),case['line'],case['col'],'message','CODE'),Path(case['root']))
         else:
             plugin=module.forwardref_plugin(root)
