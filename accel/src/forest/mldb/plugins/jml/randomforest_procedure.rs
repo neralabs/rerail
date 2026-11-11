@@ -128,6 +128,46 @@ pub fn random_forest_rng(seed: u32) -> Mt19937 {
 /// its label (non-zero is true) and weight; the weights' total is scaled to 1 in the rows' wAll (the rows keep
 /// their weights). `wheres` and `weights` default to 1.
 pub fn training_data(fs: Arc<DatasetFeatureSpace>, labels: &[f32], wheres: Option<&[f32]>, weights: Option<&[f32]>) -> Result<PartitionData, String> {
+    training_rows(fs, labels, wheres, weights, &mut |w, i, weight| w.add_row_values(labels[i] != 0.0, weight, i as u32))
+}
+
+/// A regression's targets, `[lo, hi]`, as the trainer takes them, `[0, 1]` (soft labels: `RowWeights`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TargetScale {
+    pub lo: f64,
+    pub hi: f64,
+}
+
+impl TargetScale {
+    /// A target in [0, 1] (all 0.5 when every target is the same).
+    pub fn to_unit(&self, y: f64) -> f32 {
+        if self.hi > self.lo { ((y - self.lo) / (self.hi - self.lo)).clamp(0.0, 1.0) as f32 } else { 0.5 }
+    }
+
+    /// A prediction's target: the leaves' mean of the unit targets (a prediction's true side), scaled back.
+    pub fn from_unit(&self, p: f32) -> f64 {
+        if self.hi > self.lo { self.lo + p as f64 * (self.hi - self.lo) } else { self.lo }
+    }
+}
+
+/// `training_data` for a regression: each kept row's target (not NaN) scaled into [0, 1] over the kept targets'
+/// range. The feature space's label must be real (`FeatureType::Real`), which makes the splits' criterion the
+/// variance (`SplitCriterion::of`).
+pub fn regression_training_data(fs: Arc<DatasetFeatureSpace>, targets: &[f32], wheres: Option<&[f32]>, weights: Option<&[f32]>) -> Result<(PartitionData, TargetScale), String> {
+    if fs.label_info != crate::forest::dataset_feature_space::FeatureType::Real {
+        return Err(format!("a regression's label must be real, not {:?}", fs.label_info));
+    }
+    if targets.iter().any(|t| t.is_infinite()) {
+        return Err("a target is infinite".into());
+    }
+    let finite = || targets.iter().filter(|t| t.is_finite()).map(|&t| t as f64);
+    let scale = TargetScale { lo: finite().fold(f64::INFINITY, f64::min), hi: finite().fold(f64::NEG_INFINITY, f64::max) };
+    let data = training_rows(fs, targets, wheres, weights, &mut |w, i, weight| w.add_row_target(scale.to_unit(targets[i] as f64), weight, i as u32))?;
+    Ok((data, scale))
+}
+
+/// The training rows, each kept row written by `write` (the writer, the row, its weight).
+fn training_rows(fs: Arc<DatasetFeatureSpace>, labels: &[f32], wheres: Option<&[f32]>, weights: Option<&[f32]>, write: &mut dyn FnMut(&mut crate::forest::randomforest_types::RowWriter, usize, f32) -> Result<(), String>) -> Result<PartitionData, String> {
     let n = labels.len();
     if wheres.is_some_and(|w| w.len() != n) || weights.is_some_and(|w| w.len() != n) {
         return Err("the label, where and weight columns differ in length".into());
@@ -144,7 +184,7 @@ pub fn training_data(fs: Arc<DatasetFeatureSpace>, labels: &[f32], wheres: Optio
     let mut s = MemorySerializer;
     let mut writer = all_data.rows.get_row_writer(kept.len(), n, &mut s, false, (1.0 / total_kept_weight) as f32);
     for &i in &kept {
-        writer.add_row_values(labels[i] != 0.0, weight(i), i as u32)?;
+        write(&mut writer, i, weight(i))?;
     }
     all_data.rows = writer.freeze(&mut s);
     Ok(all_data)
@@ -227,6 +267,23 @@ pub struct Forest {
     pub fs: Arc<DatasetFeatureSpace>,
     pub trees: Vec<Tree>,
     pub weights: Vec<f32>,
+    /// A regression's target scale (`regression_training_data`): a prediction's true side is its unit target.
+    pub target_scale: Option<TargetScale>,
+}
+
+impl Forest {
+    /// A regression's prediction from the forest's distribution (`Forest::predict_*`).
+    pub fn regression_value(&self, p: [f32; 2]) -> Option<f64> {
+        self.target_scale.map(|s| s.from_unit(p[1]))
+    }
+}
+
+/// A regression forest: the training rows from the targets (`regression_training_data`), then `train_forest`.
+pub fn train_regression_forest(fs: Arc<DatasetFeatureSpace>, targets: &[f32], wheres: Option<&[f32]>, weights: Option<&[f32]>, config: &RandomForestProcedureConfig) -> Result<Forest, String> {
+    let (all, scale) = regression_training_data(fs, targets, wheres, weights)?;
+    let mut forest = train_forest(&all, config)?;
+    forest.target_scale = Some(scale);
+    Ok(forest)
 }
 
 /// Trains the forest over the training rows (`training_data`): the bags in parallel, up to 8 at once.
@@ -250,7 +307,7 @@ pub fn train_forest(all_data: &PartitionData, config: &RandomForestProcedureConf
     for b in bags {
         trees.extend(b?);
     }
-    Ok(Forest { fs: all_data.fs.clone(), weights: vec![1.0 / total as f32; total], trees })
+    Ok(Forest { fs: all_data.fs.clone(), weights: vec![1.0 / total as f32; total], trees, target_scale: None })
 }
 
 #[cfg(test)]
@@ -348,7 +405,7 @@ mod tests {
             let (data, _) = bag(&all, 0, &config).unwrap();
             assert_eq!(data.rows.weight_encoder.weight_format, format);
             let trainer = FeatureSamplingTrainerKernel::init("decode", 4, &data.rows, &data.features, data.bucket_memory.clone(), &data.fs).unwrap();
-            let device = transfer_to_host_sync::<f32>(&trainer.expanded_row_data, data.rows.row_count());
+            let device = transfer_to_host_sync::<[f32; 2]>(&trainer.expanded_row_data, data.rows.row_count());
             assert_eq!(device, decode_rows(&data.rows), "{format:?}");
         }
     }
@@ -374,6 +431,50 @@ mod tests {
                 assert!(compare_trees(other, other.root, t, t.root, PartitionIndex::root(), &all.fs, &mut why), "tree {i}, {what}:\n{why}");
             }
             assert!(t.node(t.root).is_some(), "tree {i} splits");
+        }
+    }
+
+    /// A regression forest: trained on the device it is the recursive trainer's, tree by tree (soft labels, the
+    /// variance criterion, and the targets carried through the bags and splits); its predictions follow the
+    /// targets, on the host and on the device.
+    #[test]
+    fn regression_forests_on_the_device_match_the_recursive_trainer() {
+        if crate::gpu::shared::get().is_none() {
+            eprintln!("no Metal device: skipped");
+            return;
+        }
+        let n = 5000u32;
+        let d = deep_dataset(n);
+        let mut fs = (*d.fs).clone();
+        fs.label_info = crate::forest::dataset_feature_space::FeatureType::Real;
+        let fs = Arc::new(fs);
+        let bucket = |f: usize, r: u32| d.features[f].buckets.get(r) as f32;
+        // A function of three features, with noise; some rows without a target, or left out.
+        let targets: Vec<f32> = (0..n).map(|r| if r % 17 == 4 { f32::NAN } else { 10.0 + 3.0 * bucket(0, r) - 2.0 * bucket(3, r) + bucket(12, r) * bucket(1, r) + ((r * 7919) % 10) as f32 * 0.1 }).collect();
+        let wheres: Vec<f32> = (0..n).map(|r| if r % 7 == 3 { 0.0 } else { 1.0 }).collect();
+        let config = RandomForestProcedureConfig { feature_vector_samplings: 2, feature_samplings: 3, max_depth: 8, feature_sampling_prop: 1.0, ..Default::default() };
+        let device = train_regression_forest(fs.clone(), &targets, Some(&wheres), None, &config).unwrap();
+        let recursive = train_regression_forest(fs.clone(), &targets, Some(&wheres), None, &RandomForestProcedureConfig { training_scheme: TrainingScheme::Recursive, ..config.clone() }).unwrap();
+        let scale = device.target_scale.unwrap();
+        assert_eq!(device.target_scale, recursive.target_scale);
+        for (i, t) in device.trees.iter().enumerate() {
+            let mut why = String::new();
+            assert!(compare_trees(&recursive.trees[i], recursive.trees[i].root, t, t.root, PartitionIndex::root(), &fs, &mut why), "tree {i}:\n{why}");
+        }
+        // The predictions: the mean squared error is a small part of the targets' variance.
+        // The dataset's bucket b is the value b.
+        let columns: Vec<Vec<crate::forest::bucket::CellValue>> = (0..d.features.len()).map(|f| (0..n).map(|r| crate::forest::bucket::CellValue::Float(bucket(f, r) as f64)).collect()).collect();
+        let rows = crate::forest::randomforest_predict::RowBuckets::from_values(&device.fs, &columns).unwrap();
+        let host = device.predict_host(&rows).unwrap();
+        let on_device = crate::forest::randomforest_predict::FlatForest::new(&device).unwrap().predict_device(&rows).unwrap();
+        let kept: Vec<usize> = (0..n as usize).filter(|&r| targets[r].is_finite()).collect();
+        let mean = kept.iter().map(|&r| targets[r] as f64).sum::<f64>() / kept.len() as f64;
+        let var = kept.iter().map(|&r| (targets[r] as f64 - mean).powi(2)).sum::<f64>() / kept.len() as f64;
+        let mse = kept.iter().map(|&r| (device.regression_value(host[r]).unwrap() - targets[r] as f64).powi(2)).sum::<f64>() / kept.len() as f64;
+        eprintln!("regression: targets {:.2}..{:.2}, variance {var:.3}, forest mse {mse:.3}", scale.lo, scale.hi);
+        assert!(mse < 0.25 * var, "mse {mse}, variance {var}");
+        for r in 0..n as usize {
+            assert!((host[r][1] - on_device[r][1]).abs() < 1e-5, "row {r}: {:?} {:?}", host[r], on_device[r]);
         }
     }
 }

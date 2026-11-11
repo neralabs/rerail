@@ -704,6 +704,21 @@ impl Keyed {
         self.runs.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// The runs' keys in order: the key's distinct values, ascending (after the sort completes).
+    pub fn run_keys(&self) -> Vec<i64> {
+        let n = self.runs();
+        let p = self.rkeys.buffer.contents();
+        // SAFETY: `run_compact` wrote `n` keys of the sort's word, its command buffer completed (`runs` settled it).
+        (0..n).map(|i| unsafe {
+            let k = match self.key {
+                Width::W16 => *p.cast::<u16>().add(i) as u64,
+                Width::W32 => *p.cast::<u32>().add(i) as u64,
+                Width::W64 => *p.cast::<u64>().add(i),
+            };
+            (k as i64).wrapping_add(self.base)
+        }).collect()
+    }
+
     /// The sort's GPU seconds (after it completes).
     pub fn gpu_seconds(&self) -> f64 {
         self.settle();

@@ -47,6 +47,11 @@ impl RowBuckets {
     }
 }
 
+/// The bits of a column's buckets at prediction (`ColumnInfo::bucketize`: its buckets and the unseen one).
+pub fn prediction_bucket_bits(column: &crate::forest::dataset_feature_space::ColumnInfo) -> u32 {
+    crate::forest::bucket::highest_bit(crate::forest::dataset_feature_space::unseen_bucket(&column.bucket_descriptions) + 1, 0) as u32 + 1
+}
+
 /// The column index of a feature.
 fn column_index(fs: &DatasetFeatureSpace, feature: &crate::forest::jml::feature::Feature) -> Result<usize, String> {
     let hash = fs.get_hash(*feature)?;
@@ -65,16 +70,33 @@ impl Forest {
 
     /// The predictions on the host: the committee, each tree routing the row by its buckets.
     pub fn predict_host(&self, rows: &RowBuckets) -> Result<Vec<[f32; 2]>, String> {
-        let committee = self.committee();
+        HostForest::new(self).predict(rows)
+    }
+}
+
+/// The committee on the host, built once (its trees and the features' columns), predicting batch after batch.
+pub struct HostForest {
+    committee: Committee,
+    index: std::collections::HashMap<crate::forest::jml::feature::Feature, usize>,
+}
+
+impl HostForest {
+    pub fn new(forest: &Forest) -> Self {
         let mut index = std::collections::HashMap::new();
-        for (hash, c) in &self.fs.column_info {
-            index.insert(self.fs.get_feature(*hash), c.index as usize);
+        for (hash, c) in &forest.fs.column_info {
+            index.insert(forest.fs.get_feature(*hash), c.index as usize);
         }
+        HostForest { committee: forest.committee(), index }
+    }
+
+    /// The predictions for a batch of rows (in parallel from 256 rows).
+    pub fn predict(&self, rows: &RowBuckets) -> Result<Vec<[f32; 2]>, String> {
         use rayon::prelude::*;
-        Ok((0..rows.num_rows).into_par_iter().map(|r| {
-            let p = committee.predict(&|tree| tree.predict_buckets(&|f| rows.columns[index[f]].get(r as u32)));
+        let one = |r: usize| {
+            let p = self.committee.predict(&|tree| tree.predict_buckets(&|f| rows.columns[self.index[f]].get(r as u32)));
             [p[0], p[1]]
-        }).collect())
+        };
+        Ok(if rows.num_rows < 256 { (0..rows.num_rows).map(one).collect() } else { (0..rows.num_rows).into_par_iter().map(one).collect() })
     }
 }
 
@@ -82,9 +104,11 @@ impl Forest {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PredictNode {
-    pub feature: u32,
-    pub split_bucket: u32,
-    pub ordinal: u32,
+    pub feature: u16,
+    /// The bits of each of the feature's buckets (`RowBuckets` packs the feature's column with them).
+    pub bucket_bits: u16,
+    pub split_bucket: u16,
+    pub ordinal: u16,
     /// A node's index when at least 0; leaf -(child + 1) when below 0.
     pub child_true: i32,
     pub child_false: i32,
@@ -99,14 +123,20 @@ pub struct FlatForest {
     pub roots: Vec<i32>,
     pub weights: Vec<f32>,
     pub leaf_preds: Vec<f32>,
+    /// The categorical subset splits' sets, 16 words each (`PredictNode::split_bucket` of an `ordinal` 2 node).
+    pub subsets: Vec<u32>,
     /// The deepest walk (nodes from a root to a leaf).
     pub max_depth: u32,
     pub num_features: usize,
+    /// Each feature's bucket bits at prediction (`prediction_bucket_bits`), which the rows' columns must have.
+    pub feature_bits: Vec<u32>,
 }
 
 impl FlatForest {
     pub fn new(forest: &Forest) -> Result<Self, String> {
-        let mut f = FlatForest { num_features: forest.fs.column_info.len(), ..Default::default() };
+        let nf = forest.fs.column_info.len();
+        let feature_bits = (0..nf).map(|i| forest.fs.column(i).map_or(0, prediction_bucket_bits)).collect();
+        let mut f = FlatForest { num_features: nf, feature_bits, ..Default::default() };
         for (t, &w) in forest.trees.iter().zip(&forest.weights) {
             let root = f.flatten(&forest.fs, t, t.root, 0)?;
             f.roots.push(root);
@@ -117,7 +147,7 @@ impl FlatForest {
 
     fn flatten(&mut self, fs: &DatasetFeatureSpace, tree: &Tree, p: Ptr, depth: u32) -> Result<i32, String> {
         match p {
-            Ptr::Null => Err("a tree with no node or leaf where one is needed".into()),
+            Ptr::Null => Err(format!("a tree with no node or leaf where one is needed (depth {depth}, {} nodes so far)", self.nodes.len())),
             Ptr::Leaf(_) => {
                 let pred = tree.pred(p);
                 if pred.len() != 2 {
@@ -134,10 +164,27 @@ impl FlatForest {
                     return Err("a node with no split bucket (not from the random forest trainer)".into());
                 }
                 let at = self.nodes.len();
+                let feature = column_index(fs, node.split.feature())?;
+                let column = fs.column(feature).ok_or("a split's feature has no column")?;
+                if node.split_bucket > u16::MAX as i32 || feature > u16::MAX as usize {
+                    return Err("a split past 65535 buckets or features".into());
+                }
+                // A categorical subset split: its set's place among the subsets.
+                let (split_bucket, ordinal) = if !node.split_subset.is_empty() {
+                    let at = self.subsets.len() / 16;
+                    if at > u16::MAX as usize || node.split_subset.len() != 16 {
+                        return Err("more than 65536 subset splits, or a subset not of 512 buckets".into());
+                    }
+                    self.subsets.extend_from_slice(&node.split_subset);
+                    (at as u16, 2)
+                } else {
+                    (node.split_bucket as u16, (node.split.op() == Op::Less) as u16)
+                };
                 self.nodes.push(PredictNode {
-                    feature: column_index(fs, node.split.feature())? as u32,
-                    split_bucket: node.split_bucket as u32,
-                    ordinal: (node.split.op() == Op::Less) as u32,
+                    feature: feature as u16,
+                    bucket_bits: prediction_bucket_bits(column) as u16,
+                    split_bucket,
+                    ordinal,
                     child_true: 0,
                     child_false: 0,
                 });
@@ -150,56 +197,106 @@ impl FlatForest {
         }
     }
 
-    /// The predictions on the device, every row at once.
+    /// The predictions on the device, every row at once (the forest uploaded for this call; `DeviceForest` keeps it
+    /// there).
     pub fn predict_device(&self, rows: &RowBuckets) -> Result<Vec<[f32; 2]>, String> {
+        DeviceForest::new(self)?.predict(rows)
+    }
+}
+
+/// The threads a row takes in `predictForestKernel`: enough that a batch keeps the device's threads busy (about
+/// 64k of them), at most one a tree and at most the group's threads; a power of 2.
+pub fn lanes_per_row(num_rows: usize, num_trees: usize) -> u32 {
+    let group = crate::forest::randomforest_kernels_grid::PREDICT_GROUP_THREADS as usize;
+    let want = (65536 / num_rows.max(1)).clamp(1, group).min(num_trees.max(1).next_power_of_two());
+    // The largest power of 2 not above `want`.
+    1 << (usize::BITS - 1 - want.leading_zeros())
+}
+
+/// A flattened forest resident on the device: uploaded once, predicting batch after batch.
+pub struct DeviceForest {
+    nodes: metal::Buffer,
+    roots: metal::Buffer,
+    weights: metal::Buffer,
+    leaves: metal::Buffer,
+    subsets: metal::Buffer,
+    num_trees: u32,
+    max_depth: u32,
+    num_features: usize,
+    feature_bits: Vec<u32>,
+}
+
+impl DeviceForest {
+    pub fn new(flat: &FlatForest) -> Result<Self, String> {
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let device = &shared.device;
+        let one = [PredictNode::default()];
+        Ok(DeviceForest {
+            nodes: transfer_to_device_immutable(device, if flat.nodes.is_empty() { &one[..] } else { &flat.nodes }),
+            roots: transfer_to_device_immutable(device, &flat.roots),
+            weights: transfer_to_device_immutable(device, &flat.weights),
+            leaves: transfer_to_device_immutable(device, &flat.leaf_preds),
+            subsets: transfer_to_device_immutable(device, if flat.subsets.is_empty() { &[0u32; 16][..] } else { &flat.subsets }),
+            num_trees: flat.roots.len() as u32,
+            max_depth: flat.max_depth,
+            num_features: flat.num_features,
+            feature_bits: flat.feature_bits.clone(),
+        })
+    }
+
+    /// The predictions for a batch of rows: their buckets uploaded, one dispatch, one wait.
+    pub fn predict(&self, rows: &RowBuckets) -> Result<Vec<[f32; 2]>, String> {
+        Ok(self.predict_timed(rows)?.0)
+    }
+
+    /// `predict`, with the seconds the GPU spent on the dispatch.
+    pub fn predict_timed(&self, rows: &RowBuckets) -> Result<(Vec<[f32; 2]>, f64), String> {
         use ComputeKernelArgument::{Buffer as B, Int};
         if rows.columns.len() != self.num_features {
             return Err(format!("{} columns for a forest over {}", rows.columns.len(), self.num_features));
         }
+        if rows.num_rows == 0 {
+            return Ok((Vec::new(), 0.0));
+        }
+        if let Some(i) = (0..self.num_features).find(|&i| rows.columns[i].entry_bits as u32 != self.feature_bits[i]) {
+            return Err(format!("column {i} has {}-bit buckets, the forest's {}", rows.columns[i].entry_bits, self.feature_bits[i]));
+        }
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
-        let (mut data, mut offsets, mut bits) = (Vec::new(), Vec::new(), Vec::new());
-        for c in &rows.columns {
-            offsets.push(data.len() as u32);
-            bits.push(c.entry_bits as u32);
-            data.extend_from_slice(c.storage.data());
+        // Every column at the same stride (the widest column's words), so a node finds its column without a load.
+        let stride = rows.columns.iter().map(|c| c.storage.data().len()).max().unwrap_or(0) + 1;
+        let mut data = vec![0u32; stride * rows.columns.len() + 1];
+        for (i, c) in rows.columns.iter().enumerate() {
+            data[i * stride..i * stride + c.storage.data().len()].copy_from_slice(c.storage.data());
         }
-        offsets.push(data.len() as u32);
-        // The kernel reads a word past an entry that ends a column's last word.
-        data.push(0);
         let nr = rows.num_rows as u32;
         let d_data = transfer_to_device_immutable(device, &data);
-        let d_offsets = transfer_to_device_immutable(device, &offsets);
-        let d_bits = transfer_to_device_immutable(device, &bits);
-        let one = [PredictNode::default()];
-        let d_nodes = transfer_to_device_immutable(device, if self.nodes.is_empty() { &one[..] } else { &self.nodes });
-        let d_roots = transfer_to_device_immutable(device, &self.roots);
-        let d_weights = transfer_to_device_immutable(device, &self.weights);
-        let d_leaves = transfer_to_device_immutable(device, &self.leaf_preds);
         let d_out = alloc_uninitialized_array_sync::<f32>(device, rows.num_rows * 2);
         let mut queue = MetalComputeQueue::new(&shared.queue);
         let k = kernel("predictForest")?;
         let mut ctx = queue.new_bind_context(k.function);
         k.enqueue(&[
             ("numRows", Int(nr as i64)),
-            ("numTrees", Int(self.roots.len() as i64)),
+            ("numTrees", Int(self.num_trees as i64)),
             ("maxDepth", Int(self.max_depth as i64 + 1)),
+            ("lanesPerRow", Int(lanes_per_row(rows.num_rows, self.num_trees as usize) as i64)),
+            ("columnStride", Int(stride as i64)),
             ("bucketData", B(&d_data)),
-            ("bucketDataOffsets", B(&d_offsets)),
-            ("bucketEntryBits", B(&d_bits)),
-            ("nodes", B(&d_nodes)),
-            ("treeRoots", B(&d_roots)),
-            ("treeWeights", B(&d_weights)),
-            ("leafPreds", B(&d_leaves)),
+            ("nodes", B(&self.nodes)),
+            ("subsets", B(&self.subsets)),
+            ("treeRoots", B(&self.roots)),
+            ("treeWeights", B(&self.weights)),
+            ("leafPreds", B(&self.leaves)),
             ("predictionsOut", B(&d_out)),
         ], &[nr], &mut ctx)?;
         drop(ctx);
-        queue.flush().await_()?;
+        let event = queue.flush();
+        event.await_()?;
         let out = transfer_to_host_sync::<f32>(&d_out, rows.num_rows * 2);
         if out.iter().any(|v| v.is_nan()) {
             return Err("a walk did not reach a leaf".into());
         }
-        Ok(out.chunks(2).map(|c| [c[0], c[1]]).collect())
+        Ok((out.chunks(2).map(|c| [c[0], c[1]]).collect(), event.gpu_seconds()))
     }
 }
 
@@ -254,6 +351,7 @@ mod tests {
         let forest = train_forest(&all, &config).unwrap();
         let flat = FlatForest::new(&forest).unwrap();
         assert!(flat.max_depth >= 3, "{}", flat.max_depth);
+        assert!(!flat.subsets.is_empty(), "categorical subset splits to predict with");
 
         let (mut test, test_labels) = columns(3000, 2);
         test[2][7] = CellValue::String("violet".into());
@@ -267,6 +365,16 @@ mod tests {
                     assert!((host[r][k] - device[r][k]).abs() < 1e-5, "{what} row {r}: host {:?}, device {:?}", host[r], device[r]);
                 }
                 assert!((host[r][0] + host[r][1] - 1.0).abs() < 1e-4, "{what} row {r}: {:?}", host[r]);
+            }
+            // Small batches take many lanes a row (up to one a tree): the same predictions.
+            let resident = DeviceForest::new(&flat).unwrap();
+            for b in [1usize, 2, 5, 33, 300] {
+                assert!(lanes_per_row(b, flat.roots.len()) > 1 || b == 300);
+                let few: Vec<Vec<CellValue>> = c.iter().map(|col| col[..b].to_vec()).collect();
+                let p = resident.predict(&RowBuckets::from_values(&fs, &few).unwrap()).unwrap();
+                for r in 0..b {
+                    assert!((p[r][1] - host[r][1]).abs() < 1e-5, "{what}, batch {b}, row {r}: {:?} {:?}", p[r], host[r]);
+                }
             }
             let right = host.iter().zip(l).filter(|(p, l)| (p[1] > 0.5) == (**l != 0.0)).count() as f64 / host.len() as f64;
             assert!(right > 0.75, "{what}: {right} right");
@@ -294,5 +402,192 @@ mod tests {
         // Column 0's split points are values once it has more distinct values than buckets: a row on one goes
         // left by its bucket and right by `<`. Those rows are few.
         assert!(differ * 100 < n, "{differ} rows differ");
+    }
+
+    fn h(i: usize, k: u64) -> u64 {
+        let mut x = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ k.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+        x ^= x >> 31;
+        x = x.wrapping_mul(0x2C1B_3C6D_297A_2D39);
+        x ^ (x >> 29)
+    }
+
+    /// A CSV line's fields (sqlite3 -csv: quoted when they hold spaces or commas).
+    fn fields(line: &str) -> Vec<String> {
+        let (mut out, mut cur, mut quoted) = (Vec::new(), String::new(), false);
+        for c in line.chars() {
+            match c {
+                '"' => quoted = !quoted,
+                ',' if !quoted => out.push(std::mem::take(&mut cur)),
+                c => cur.push(c),
+            }
+        }
+        out.push(cur);
+        out
+    }
+
+    /// A job sample: lane, forms, launches, units, estimate, wall, cpu, cold, load, threads.
+    #[derive(Clone)]
+    struct Job { lane: String, forms: String, launches: i64, units: f64, estimate: f64, wall: f64, cold: i64, load: f64, threads: i64 }
+
+    fn real_jobs() -> Vec<Job> {
+        let Ok(path) = std::env::var("BENCH_SAMPLES") else { return Vec::new() };
+        std::fs::read_to_string(path).unwrap().lines().filter_map(|l| {
+            let f = fields(l);
+            if f.len() != 10 { return None; }
+            Some(Job { lane: f[0].clone(), forms: f[1].clone(), launches: f[2].parse().ok()?, units: f[3].parse().ok()?, estimate: f[4].parse().ok()?, wall: f[5].parse().ok()?, cold: f[7].parse().ok()?, load: f[8].parse().ok()?, threads: f[9].parse().ok()? })
+        }).collect()
+    }
+
+    const LANES: [&str; 4] = ["cpu", "gpu", "sme", "ane"];
+
+    /// The modelled wall of a job on a lane: the lane's submission plus the form's rate on the lane per unit,
+    /// slowed by load, plus a compile when cold.
+    fn modelled_wall(form: &str, lane: usize, units: f64, load: f64, cold: bool, noise: f64) -> f64 {
+        let fh = form.bytes().fold(7u64, |a, b| a.wrapping_mul(31).wrapping_add(b as u64));
+        let rate = 1e-9 * (1u64 << (h(fh as usize, lane as u64) % 10)) as f64;
+        let overhead = [2e-6, 30e-6, 5e-6, 100e-6][lane];
+        let slow = if lane == 0 { 1.0 + load / 20.0 } else { 1.0 };
+        (overhead + rate * units * slow + if cold { 1e-3 } else { 0.0 }) * noise
+    }
+
+    /// `n` synthetic jobs drawn from the real ones (their units, loads, launches, threads): four lanes, about 300
+    /// forms; labelled "this lane beats the CPU for this job" (the pairwise question).
+    fn synthetic(real: &[Job], n: usize, seed: u64) -> (Vec<Job>, Vec<f32>) {
+        let mut jobs = Vec::with_capacity(n);
+        let mut labels = Vec::with_capacity(n);
+        for i in 0..n {
+            let r = &real[(h(i, seed) % real.len() as u64) as usize];
+            let lane = (h(i, seed + 1) % 4) as usize;
+            let forms = if h(i, seed + 2) % 3 == 0 { r.forms.clone() } else { format!("form{}", h(i, seed + 3) % 300) };
+            let units = (r.units.max(1.0) * 2f64.powi((h(i, seed + 4) % 9) as i32 - 4)).round();
+            let cold = h(i, seed + 5) % 50 == 0;
+            let noise = 1.0 + (h(i, seed + 6) % 1000) as f64 / 2000.0;
+            let wall = modelled_wall(&forms, lane, units, r.load, cold, noise);
+            let cpu_wall = modelled_wall(&forms, 0, units, r.load, false, 1.25);
+            labels.push((wall < cpu_wall) as u8 as f32);
+            jobs.push(Job { lane: LANES[lane].into(), forms, launches: r.launches, units, estimate: 0.0, wall, cold: cold as i64, load: r.load, threads: r.threads });
+        }
+        (jobs, labels)
+    }
+
+    fn columns_of(jobs: &[Job]) -> Vec<Vec<CellValue>> {
+        vec![
+            jobs.iter().map(|j| CellValue::String(j.lane.clone())).collect(),
+            jobs.iter().map(|j| CellValue::String(j.forms.clone())).collect(),
+            jobs.iter().map(|j| CellValue::Integer(j.launches)).collect(),
+            jobs.iter().map(|j| CellValue::Float(j.units)).collect(),
+            jobs.iter().map(|j| CellValue::Integer(j.cold)).collect(),
+            jobs.iter().map(|j| CellValue::Float(j.load)).collect(),
+            jobs.iter().map(|j| CellValue::Integer(j.threads)).collect(),
+        ]
+    }
+
+    fn timed<T>(f: impl FnOnce() -> T) -> (T, f64, f64) {
+        let (w, c) = (std::time::Instant::now(), crate::exec::process_cpu());
+        let r = f();
+        (r, w.elapsed().as_secs_f64(), crate::exec::process_cpu() - c)
+    }
+
+    fn train_bench(what: &str, cols: &[Vec<CellValue>], labels: &[f32], config: &RandomForestProcedureConfig) -> (Arc<DatasetFeatureSpace>, Forest) {
+        let names = ["lane", "forms", "launches", "units", "cold", "load", "threads"];
+        let named: Vec<(String, Vec<CellValue>)> = names.iter().zip(cols).map(|(n, c)| (n.to_string(), c.clone())).collect();
+        let (fs, w0, c0) = timed(|| Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Boolean).unwrap()));
+        let typed: Vec<(String, crate::forest::dataset_feature_space::ColumnData)> = named.iter().map(|(n, v)| (n.clone(), crate::forest::dataset_feature_space::ColumnData::from_values(n, v).unwrap())).collect();
+        let _ = DatasetFeatureSpace::from_columns_device(&typed[..1], FeatureType::Boolean).unwrap();
+        let (fsd, wd, cd) = timed(|| DatasetFeatureSpace::from_columns_device(&typed, FeatureType::Boolean).unwrap());
+        for i in 0..names.len() {
+            assert_eq!(format!("{:?}", fs.column(i).unwrap().bucket_descriptions), format!("{:?}", fsd.column(i).unwrap().bucket_descriptions));
+        }
+        eprintln!("feature space {what}, {} rows: host {:.0} ms ({:.0} ms CPU), device {:.0} ms ({:.0} ms CPU)", labels.len(), w0 * 1e3, c0 * 1e3, wd * 1e3, cd * 1e3);
+        let (all, w1, c1) = timed(|| training_data(fs.clone(), labels, None, None).unwrap());
+        let (forest, w2, c2) = timed(|| train_forest(&all, config).unwrap());
+        for (i, t) in forest.trees.iter().enumerate() {
+            if let Err(e) = FlatForest::new(&Forest { fs: forest.fs.clone(), trees: vec![t.clone()], weights: vec![1.0], target_scale: None }) {
+                let r = t.node(t.root).map(|n| (n.child_true, n.child_false, n.child_missing, n.split_bucket, n.base.examples));
+                panic!("{what}: tree {i}: {e}; root {:?} {r:?}", t.root);
+            }
+        }
+        let flat = FlatForest::new(&forest).unwrap();
+        eprintln!("train {what}: {} rows, {} bags x {} trees, depth {}: feature space {:.0} ms ({:.0} ms CPU), rows {:.0} ms ({:.0} ms CPU), forest {:.0} ms wall, {:.0} ms CPU; {} nodes, deepest {}",
+            labels.len(), config.feature_vector_samplings, config.feature_samplings, config.max_depth, w0 * 1e3, c0 * 1e3, w1 * 1e3, c1 * 1e3, w2 * 1e3, c2 * 1e3, flat.nodes.len(), flat.max_depth);
+        (fs, forest)
+    }
+
+    fn right(p: &[[f32; 2]], l: &[f32]) -> f64 {
+        p.iter().zip(l).filter(|(p, l)| (p[1] > 0.5) == (**l != 0.0)).count() as f64 / l.len() as f64
+    }
+
+    /// Training and prediction on the engine's job samples (`BENCH_SAMPLES`, a CSV of costs.sqlite's samples) and
+    /// on synthetic jobs drawn from them at the fit's window (20,000) and the store's size (500,000), sizes in
+    /// `BENCH_SIZES`; prediction in batches from 1 to 65,536 rows: on the host (the committee), on the device with
+    /// the forest uploaded per call, and with the forest resident.
+    #[test]
+    #[ignore = "benchmark: run by name with --ignored --nocapture, BENCH_SAMPLES set"]
+    fn bench_training_and_prediction() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let real = real_jobs();
+        assert!(!real.is_empty(), "BENCH_SAMPLES");
+        let fsp: f32 = std::env::var("BENCH_FSP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.3);
+        let full = RandomForestProcedureConfig { feature_sampling_prop: fsp, ..Default::default() };
+        let shallow = RandomForestProcedureConfig { max_depth: 8, feature_sampling_prop: fsp, ..Default::default() };
+        // Warm the kernels.
+        let (wj, wl) = synthetic(&real, 2000, 99);
+        train_bench("warm-up", &columns_of(&wj), &wl, &shallow);
+
+        // The real samples: did the job take longer than its price said?
+        let labels: Vec<f32> = real.iter().map(|j| (j.wall > j.estimate) as u8 as f32).collect();
+        eprintln!("real: {} samples, {:.2} over their price", real.len(), labels.iter().sum::<f32>() / labels.len() as f32);
+        for c in [&full, &shallow] {
+            train_bench("real", &columns_of(&real), &labels, c);
+        }
+
+        let sizes: Vec<usize> = std::env::var("BENCH_SIZES").ok().map(|v| v.split(',').map(|x| x.parse().unwrap()).collect()).unwrap_or(vec![20000]);
+        let (test_jobs, test_labels) = synthetic(&real, 65536, 7);
+        let test_cols = columns_of(&test_jobs);
+        let mut kept = None;
+        for &n in &sizes {
+            let (jobs, labels) = synthetic(&real, n, 1);
+            for c in [&full, &shallow] {
+                let (fs, forest) = train_bench("synthetic", &columns_of(&jobs), &labels, c);
+                let rows = RowBuckets::from_values(&fs, &test_cols).unwrap();
+                eprintln!("  held out: {:.3} right ({:.2} of the labels true)", right(&FlatForest::new(&forest).unwrap().predict_device(&rows).unwrap(), &test_labels), test_labels.iter().sum::<f32>() / test_labels.len() as f32);
+                if n == sizes[0] && std::ptr::eq(c, &full) {
+                    kept = Some((fs, forest));
+                }
+            }
+        }
+
+        let (fs, forest) = kept.unwrap();
+        let flat = FlatForest::new(&forest).unwrap();
+        let ((), wr, _) = timed(|| ());
+        let _ = wr;
+        let (resident, wu, _) = timed(|| DeviceForest::new(&flat).unwrap());
+        eprintln!("predict: forest of {} trees, {} nodes, uploaded once in {:.0} us", flat.roots.len(), flat.nodes.len(), wu * 1e6);
+        let host_forest = HostForest::new(&forest);
+        for b in [1usize, 16, 256, 4096, 65536] {
+            let cols: Vec<Vec<CellValue>> = test_cols.iter().map(|c| c[..b].to_vec()).collect();
+            let reps = (2000 / b).clamp(3, 20);
+            let per = |w: f64| w / reps as f64 * 1e6;
+            let (rows, wb, cb) = timed(|| { let mut r = None; for _ in 0..reps { r = Some(RowBuckets::from_values(&fs, &cols).unwrap()); } r.unwrap() });
+            eprintln!("  batch {b:>6} x{reps}: bucketize {:>9.1} us ({:>9.1} CPU)", per(wb), per(cb));
+            let hreps = if b > 256 { 0 } else { reps };
+            let (host, wh, ch) = timed(|| { let mut r = Vec::new(); for _ in 0..hreps { r = host_forest.predict(&rows).unwrap(); } r });
+            let per = |w: f64| if hreps == 0 { 0.0 } else { w / reps as f64 * 1e6 };
+            eprintln!("  batch {b:>6}: host {:>9.1} us ({:>9.1} CPU), {:>7.1} ns/row", per(wh), per(ch), per(wh) * 1e3 / b as f64);
+            let per = |w: f64| w / reps as f64 * 1e6;
+            let mut gpu = 0.0;
+            let (res, wres, cres) = timed(|| { let mut r = Vec::new(); for _ in 0..reps { let (p, g) = resident.predict_timed(&rows).unwrap(); r = p; gpu += g; } r });
+            eprintln!("  batch {b:>6}: resident {:>8.1} us wall ({:>7.1} CPU), GPU {:>7.1} us, {:>6.1} ns/row on the GPU", per(wres), per(cres), per(gpu), per(gpu) * 1e3 / b as f64);
+            let (dev, wd, cd) = timed(|| { let mut r = Vec::new(); for _ in 0..reps.min(5) { r = flat.predict_device(&rows).unwrap(); } r });
+            let per5 = |w: f64| w / reps.min(5) as f64 * 1e6;
+            eprintln!("  batch {b:>6}: device+upload {:>8.1} us wall ({:>7.1} CPU)", per5(wd), per5(cd));
+            let per = |w: f64| w / reps as f64 * 1e6;
+            let _ = per;
+            for r in 0..b {
+                assert!((host.get(r).map_or(dev[r][1], |h| h[1]) - dev[r][1]).abs() < 1e-5 && (res[r][1] - dev[r][1]).abs() < 1e-5);
+            }
+        }
     }
 }

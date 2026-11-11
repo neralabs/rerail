@@ -243,6 +243,28 @@ UKL_FUNCTION(v1,void,incrementWGlobal)(UKL_GLOBAL_PTR(W) wIn, bool label, float 
     atom_inc(&w->count);
 }
 
+// A row's weights to false and true (decodedRows holds two floats a row): each side's weight added where it is not
+// zero, so a classification row (whose weight is all on its label's side) costs what upstream's did.
+UKL_FUNCTION(v1,void,addRowLocal)(__local W * wIn, float wFalse, float wTrue)
+{
+    UKL_LOCAL_PTR(WAtomic) w = UKL_LOCAL_PTR_CAST(WAtomic)wIn;
+    if (wFalse != 0.0f)
+        atom_add_local(&w->vals[0], encodeW(wFalse));
+    if (wTrue != 0.0f)
+        atom_add_local(&w->vals[1], encodeW(wTrue));
+    atom_inc_local(&w->count);
+}
+
+UKL_FUNCTION(v1,void,addRowGlobal)(UKL_GLOBAL_PTR(W) wIn, float wFalse, float wTrue)
+{
+    UKL_GLOBAL_PTR(WAtomic) w = UKL_GLOBAL_PTR_CAST(WAtomic)wIn;
+    if (wFalse != 0.0f)
+        atom_add(&w->vals[0], encodeW(wFalse));
+    if (wTrue != 0.0f)
+        atom_add(&w->vals[1], encodeW(wTrue));
+    atom_inc(&w->count);
+}
+
 UKL_FUNCTION(v1,void,incrementWOut)(UKL_GLOBAL_PTR(W) wOut_, __local const W * wIn)
 {
     UKL_GLOBAL_PTR(WAtomic) wOut = UKL_GLOBAL_PTR_CAST(WAtomic)wOut_;
@@ -284,6 +306,8 @@ decompressRowsImpl)(ROBUFFER(uint64_t) rowData,
                          WeightFormat weightFormat,
                          float weightMultiplier,
                          ROBUFFER(float) weightData,
+                         uint32_t numTargets,
+                         ROBUFFER(float) targets,
                      
                          RWBUFFER(float) decodedRowsOut,
                          uint32_t workerId, uint32_t numWorkers)
@@ -304,9 +328,12 @@ decompressRowsImpl)(ROBUFFER(uint64_t) rowData,
                       weightFormat, weightMultiplier, weightData,
                       mask, exampleMask, weightMask, labelMask);
 
-        float encoded = row.label ? -row.weight : row.weight;
-        
-        decodedRowsOut[rowNumber] = encoded;
+        // The row's weights to false and true: its label's side has its weight, or a regression row's target t
+        // (by example) gives w (1 - t) and w t.
+        float t = numTargets != 0 ? targets[row.example] : (row.label ? 1.0f : 0.0f);
+        // One rounding (as the host's `row_weights`): fast math may not contract it differently.
+        decodedRowsOut[2 * rowNumber] = fma(-row.weight, t, row.weight);
+        decodedRowsOut[2 * rowNumber + 1] = row.weight * t;
     }
 }
 
@@ -343,9 +370,8 @@ UKL_FUNCTION(v1,uint32_t,testRow)
                  uint32_t maxLocalBuckets)
 {
     uint32_t exampleNum = rowId;
-    float val = rowData[rowId];
-    float weight = fabs(val);
-    bool label = val < 0;
+    float wFalse = rowData[2 * rowId];
+    float wTrue = rowData[2 * rowId + 1];
     //int f = get_global_id(0);
     uint16_t bucket
         = getBucket(exampleNum, bucketData, bucketDataLength,
@@ -365,10 +391,10 @@ UKL_FUNCTION(v1,uint32_t,testRow)
     //}
 
     if (bucket < maxLocalBuckets) {
-        incrementWLocal(&w[bucket], label, weight);
+        addRowLocal(&w[bucket], wFalse, wTrue);
     }
     else {
-        incrementWGlobal(&wOut[bucket], label, weight);
+        addRowGlobal(&wOut[bucket], wFalse, wTrue);
     }
 
     return bucket;
@@ -432,15 +458,21 @@ void, testFeatureImpl)
     SYNC_RETURN();
 }
 
+// A categorical split's buckets on the left (CART's subset split), a bit per bucket (at most 512 buckets).
+#define CATEGORY_SET_WORDS 16
+#define MAX_CATEGORICAL_BUCKETS 512
+
 typedef struct PartitionSplit {
     float score;
     int16_t feature;
-    int16_t value;
+    int16_t value;      // An ordinal split's bucket; a categorical split's number of buckets on the left
     W left;
     W right;
+    uint32_t subset[CATEGORY_SET_WORDS];  // A categorical split's buckets on the left
 } PartitionSplit;
 
-#define PARTITION_SPLIT_INIT { INFINITY, -1, -1, W_INIT, W_INIT }
+#define CATEGORY_SET_INIT { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+#define PARTITION_SPLIT_INIT { INFINITY, -1, -1, W_INIT, W_INIT, CATEGORY_SET_INIT }
 
 typedef struct IndexedPartitionSplit {
     float score;
@@ -448,10 +480,30 @@ typedef struct IndexedPartitionSplit {
     int16_t value;
     W left;
     W right;
+    uint32_t subset[CATEGORY_SET_WORDS];
     uint32_t index;
 } IndexedPartitionSplit;
 
-#define INDEXED_PARTITION_SPLIT_INIT { INFINITY, -1, -1, W_INIT, W_INIT, 0 }
+#define INDEXED_PARTITION_SPLIT_INIT { INFINITY, -1, -1, W_INIT, W_INIT, CATEGORY_SET_INIT, 0 }
+
+UKL_FUNCTION(v1,bool,inCategorySet)(ROBUFFER(uint32_t) set, uint32_t b)
+{
+    return b < MAX_CATEGORICAL_BUCKETS && ((set[b >> 5] >> (b & 31)) & 1) != 0;
+}
+
+// CART's order of a categorical feature's buckets: by their mean target (the true side's share of the weight),
+// the empty buckets last, ties by bucket number. Exact, in the fixed point: t_a (f_b + t_b) < t_b (f_a + t_a), as
+// the host's `category_before`.
+UKL_FUNCTION(v1,bool,categoryBefore)(W wa, uint32_t a, W wb, uint32_t b)
+{
+    if ((wa.count == 0) != (wb.count == 0))
+        return wb.count == 0;
+    if (wa.count == 0)
+        return a < b;
+    int64_t fa = wa.vals[0], ta = wa.vals[1], fb = wb.vals[0], tb = wb.vals[1];
+    int64_t l = ta * (fb + tb), r = tb * (fa + ta);
+    return l < r || (l == r && a < b);
+}
 
 UKL_FUNCTION(v1,bool,partitionSplitDirection)(PartitionSplit split)
 {
@@ -489,11 +541,25 @@ UKL_FUNCTION(v1,float,sqrt3)(float val)
     return approx * SQRT3_MULT_AFTER;
 }
 
-UKL_FUNCTION(v1,float,scoreSplit)(W wFalse, W wTrue);
+// SplitCriterion: upstream's score, or the variance (regression; the Gini impurity for classification).
+#define SPLIT_CRITERION_SQRT 0
+#define SPLIT_CRITERION_VARIANCE 1
+
+// A side's squared error about its mean target, less what every split shares: f t / (f + t) in the accumulators'
+// fixed point, by integer division (exact, as the host's `variance_fixed`; the device's float division is not).
+UKL_FUNCTION(v1,int64_t,varianceFixed)(W w)
+{
+    int64_t f = w.vals[0], t = w.vals[1];
+    return f + t <= 0 ? 0 : f * t / (f + t);
+}
+
+UKL_FUNCTION(v1,float,scoreSplit)(W wFalse, W wTrue, uint32_t criterion);
 
 #if 1
-UKL_FUNCTION(v1,float,scoreSplit)(W wFalse, W wTrue)
+UKL_FUNCTION(v1,float,scoreSplit)(W wFalse, W wTrue, uint32_t criterion)
 {
+    if (criterion == SPLIT_CRITERION_VARIANCE)
+        return (float)(varianceFixed(wFalse) + varianceFixed(wTrue)) * HL_2_VAL;
     float arg1 = decodeWf(wFalse.vals[0]) * decodeWf(wFalse.vals[1]);
     float arg2 = decodeWf(wTrue.vals[0])  * decodeWf(wTrue.vals[1]);
     float sr1 = sqrt3(arg1);
@@ -514,25 +580,25 @@ UKL_FUNCTION(v1,void,incrementW)(__local W * out, __local const W * in)
     out->count += in->count;
 }
 
-UKL_FUNCTION(v1,float,scoreSplitWAll)(W wTrue, W wAll);
+UKL_FUNCTION(v1,float,scoreSplitWAll)(W wTrue, W wAll, uint32_t criterion);
 
-UKL_FUNCTION(v1,float,scoreSplitWAll)(W wTrue, W wAll)
+UKL_FUNCTION(v1,float,scoreSplitWAll)(W wTrue, W wAll, uint32_t criterion)
 {
     W wFalse = { { wAll.vals[0] - wTrue.vals[0],
                    wAll.vals[1] - wTrue.vals[1] },
                  wAll.count - wTrue.count };
     if (wFalse.count == 0 || wTrue.count == 0)
         return INFINITY;
-    return scoreSplit(wFalse, wTrue);
+    return scoreSplit(wFalse, wTrue, criterion);
 }
 
 #if 1
-UKL_FUNCTION(v1,void,minW)(RWLOCAL(WIndexed) out, RWLOCAL(const WIndexed) in, W wAll);
+UKL_FUNCTION(v1,void,minW)(RWLOCAL(WIndexed) out, RWLOCAL(const WIndexed) in, W wAll, uint32_t criterion);
 
 /* In this function, we identify empty buckets (that should not be scored)
    by marking their index with -1.
 */
-UKL_FUNCTION(v1,void,minW)(RWLOCAL(WIndexed) out, RWLOCAL(const WIndexed) in, W wAll)
+UKL_FUNCTION(v1,void,minW)(RWLOCAL(WIndexed) out, RWLOCAL(const WIndexed) in, W wAll, uint32_t criterion)
 {
     if (in->w.count == 0 || in->index < 0)
         return;
@@ -541,8 +607,8 @@ UKL_FUNCTION(v1,void,minW)(RWLOCAL(WIndexed) out, RWLOCAL(const WIndexed) in, W 
         return;
     }
 
-    float scoreIn = scoreSplitWAll(in->w, wAll);
-    float scoreOut = scoreSplitWAll(out->w, wAll);
+    float scoreIn = scoreSplitWAll(in->w, wAll, criterion);
+    float scoreOut = scoreSplitWAll(out->w, wAll, criterion);
 
 #if 0
     if (debug) {
@@ -667,14 +733,14 @@ void, prefixSumW) (RWLOCAL(WIndexed) w, uint32_t n, uint16_t threadIdx, uint16_t
 #endif
 
 SYNC_FUNCTION(v1,
-uint32_t, argMinScanW) (RWLOCAL(WIndexed) w, uint32_t n, W wAll, uint16_t threadIdx, uint16_t numThreads);
+uint32_t, argMinScanW) (RWLOCAL(WIndexed) w, uint32_t n, W wAll, uint32_t criterion, uint16_t threadIdx, uint16_t numThreads);
 
 #if 1
 // Return the lowest index of the W array with a score equal to the minimum
 // score.  Only get_local_id(0) knows the actual correct result; the result
 // from the others should be ignored.
 SYNC_FUNCTION(v1,
-uint32_t, argMinScanW) (RWLOCAL(WIndexed) w, uint32_t n, W wAll, uint16_t threadIdx, uint16_t numThreads)
+uint32_t, argMinScanW) (RWLOCAL(WIndexed) w, uint32_t n, W wAll, uint32_t criterion, uint16_t threadIdx, uint16_t numThreads)
 {
     if (n == 0)
         SYNC_RETURN(0);
@@ -697,7 +763,7 @@ uint32_t, argMinScanW) (RWLOCAL(WIndexed) w, uint32_t n, W wAll, uint16_t thread
 
             if (resultIndex <  n) {
                 // Compare them, taking the minimum and pushing it right
-                minW(w + resultIndex, w + argIndex, wAll);
+                minW(w + resultIndex, w + argIndex, wAll, criterion);
             }
         }
 
@@ -732,7 +798,10 @@ PartitionSplit, chooseSplit)
      RWLOCAL(WIndexed) wLocal,
      uint32_t wLocalSize,
      RWLOCAL(WIndexed) wStartBest,  // length 2
+     RWLOCAL(WIndexed) wRanked,  // [MAX_CATEGORICAL_BUCKETS]: a categorical feature's buckets in CART's order
+     RWLOCAL(uint16_t) ranked,   // [MAX_CATEGORICAL_BUCKETS]: the bucket at each place of that order
      bool ordinal,
+     uint32_t criterion,
      uint16_t threadIdx, uint16_t numThreads,
      uint16_t f,
      uint16_t p)
@@ -757,9 +826,12 @@ PartitionSplit, chooseSplit)
     // Contains the best split from the previous iteration
     RWLOCAL(WIndexed) wBest = wStartBest + 1;
     
+    if (!ordinal && numBuckets > MAX_CATEGORICAL_BUCKETS)
+        SYNC_RETURN(result);
+
     if (threadIdx == 0) {
         // Initialize wBest
-        if (ordinal) {
+        {
             wStart->w.vals[0] = wStart->w.vals[1] = wStart->w.count = 0;
             wStart->index = -1;
         }
@@ -775,7 +847,37 @@ PartitionSplit, chooseSplit)
     //using namespace std;
     //cerr << "threadIdx = " << threadIdx << " numThreads = " << numThreads << " numBuckets = " << numBuckets << endl;
 
-    for (uint32_t startBucket = 0;  startBucket < numBuckets;  startBucket += wLocalSize) {
+    if (!ordinal) {
+        // CART: a categorical feature's buckets ranked by mean target (categoryBefore), then scanned as an ordinal
+        // feature's are, in one pass: the best prefix of the order is the best subset. The buckets are staged in
+        // wRanked, each ranked against all (a bounded loop); then wRanked holds them in rank order, each indexed by
+        // its place (-1 for an empty one), and `ranked` the bucket at each place.
+        for (uint32_t i = threadIdx;  i < numBuckets;  i += numThreads)
+            wRanked[i].w = w[i];
+        ukl_threadgroup_barrier();
+        for (uint32_t i = threadIdx;  i < numBuckets;  i += numThreads) {
+            W wi = wRanked[i].w;
+            uint32_t rank = 0;
+            for (uint32_t j = 0;  j < numBuckets;  ++j) {
+                if (categoryBefore(wRanked[j].w, j, wi, i))
+                    ++rank;
+            }
+            ranked[rank] = i;
+        }
+        ukl_threadgroup_barrier();
+        for (uint32_t k = threadIdx;  k < numBuckets;  k += numThreads) {
+            wRanked[k].w = w[ranked[k]];
+            wRanked[k].index = wRanked[k].w.count > 0 ? (int32_t)k : -1;
+        }
+        ukl_threadgroup_barrier();
+        SYNC_CALL_4(prefixSumW, wRanked, numBuckets, threadIdx, numThreads);
+        SYNC_CALL_6(argMinScanW, wRanked, numBuckets, wAll, criterion, threadIdx, numThreads);
+        minW(wBest, wRanked + (numBuckets - 1), wAll, criterion);
+        ukl_threadgroup_barrier();
+    }
+
+    // An ordinal feature's buckets in order, a block of wLocalSize at a time.
+    for (uint32_t startBucket = 0;  ordinal && startBucket < numBuckets;  startBucket += wLocalSize) {
 
         //if (startBucket != 0) {
         //    printf("f %d p %d startBucket %d\n",
@@ -830,22 +932,23 @@ PartitionSplit, chooseSplit)
 
         ukl_threadgroup_barrier();
 
-        if (ordinal) {
+        RWLOCAL(WIndexed) wScan = wLocal;
+        {
             // Now we've read it in, we can do our prefix sum
-            SYNC_CALL_4(prefixSumW, wLocal, numBucketsInIteration, threadIdx, numThreads);
+            SYNC_CALL_4(prefixSumW, wScan, numBucketsInIteration, threadIdx, numThreads);
 
             // Seed for the next one
-            *wStart = wLocal[numBucketsInIteration - 1];
+            *wStart = wScan[numBucketsInIteration - 1];
         }
 
         //using namespace std;
         //cerr << "numBucketsInIteration = " << numBucketsInIteration << endl;
 
         // And then scan that to find the index of the best score
-        SYNC_CALL_5(argMinScanW, wLocal, numBucketsInIteration, wAll, threadIdx, numThreads);
+        SYNC_CALL_6(argMinScanW, wScan, numBucketsInIteration, wAll, criterion, threadIdx, numThreads);
 
         // Find if our new bucket is better than the last champion
-        minW(wBest, wLocal + (numBucketsInIteration - 1), wAll);
+        minW(wBest, wScan + (numBucketsInIteration - 1), wAll, criterion);
 
         ukl_threadgroup_barrier();
     }
@@ -891,9 +994,16 @@ PartitionSplit, chooseSplit)
 
     //cerr << "FINISHED chooseSplit f=" << f << " p=" << p << " threadIdx " << threadIdx << endl;
 
-    result.score = scoreSplitWAll(wBest->w, wAll);
+    result.score = scoreSplitWAll(wBest->w, wAll, criterion);
     result.feature = f;
-    result.value = wBest->index + ordinal;  // ordinal indexes are offset by 1
+    result.value = wBest->index + 1;  // the buckets (or ranks) below the split's value are on the left
+    if (!ordinal) {
+        // The subset: the buckets ranked below the split's value.
+        for (int32_t k = 0;  k < result.value;  ++k) {
+            uint32_t b = ranked[k];
+            result.subset[b >> 5] |= 1u << (b & 31);
+        }
+    }
     result.left = wBest->w;
     result.right = wAll;
 
@@ -924,6 +1034,7 @@ typedef struct TreeTrainingInfo {
     uint16_t featureSampling;     ///< Which feature sampling bag we belong to
     uint16_t featureVectorSampling; ///< Which feature vector sampling bag we belong to
     uint32_t maxNumFinishedPartitions; ///< Length of the pool of every level's partition splits
+    uint32_t splitCriterion;      ///< How splits are scored (SPLIT_CRITERION_*)
 } TreeTrainingInfo;
 
 // TreeDepthInfo's status: 0 while the device trains; 1 when it has stopped (the next level is wider than its
@@ -950,6 +1061,8 @@ getPartitionSplitsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
                          RWLOCAL(WIndexed) wLocal,  // [wLocalSize]
                          uint32_t wLocalSize,
                          RWLOCAL(WIndexed) wStartBest, //[2]
+                         RWLOCAL(WIndexed) wRanked, //[MAX_CATEGORICAL_BUCKETS]
+                         RWLOCAL(uint16_t) ranked, //[MAX_CATEGORICAL_BUCKETS]
 
                          uint16_t featureId, uint16_t numFeatureIds,
                          uint16_t workerId, uint16_t workGroupSize,
@@ -1016,8 +1129,8 @@ getPartitionSplitsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
         
         bool ordinal = featureIsOrdinal[f];
 
-        best = SYNC_CALL_11(chooseSplit, myW, numBuckets, wAll[partition],
-                         wLocal, wLocalSize, wStartBest, ordinal,
+        best = SYNC_CALL_14(chooseSplit, myW, numBuckets, wAll[partition],
+                         wLocal, wLocalSize, wStartBest, wRanked, ranked, ordinal, treeTrainingInfo[0].splitCriterion,
                          workerId, workGroupSize, f, partition);
         
         if (workerId == 0) {
@@ -1096,6 +1209,8 @@ bestPartitionSplitImpl)(CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
                 best.value = split.value;
                 best.left = split.left;
                 best.right = split.right;
+                for (uint32_t i = 0;  i < CATEGORY_SET_WORDS;  ++i)
+                    best.subset[i] = split.subset[i];
             }
         }
 
@@ -1405,7 +1520,7 @@ typedef struct UpdateWorkEntry {
     uint32_t row;
     uint16_t partition;
     uint16_t smallSideIndex;
-    float decodedRow;
+    float decodedRow[2];  // The row's weights to false and true
 } UpdateWorkEntry;
 
 // [partition, bucket]
@@ -1554,7 +1669,8 @@ updatePartitionNumbersImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
                                             splitBucketData, 0 /*splitBucketDataLength*/,
                                             splitBucketBits, 0 /*splitNumBuckets*/);
                 
-                uint16_t side = ordinal ? bucket >= splitValue : bucket != splitValue;
+                // A categorical split's left is its subset.
+                uint16_t side = ordinal ? bucket >= splitValue : !inCategorySet(allPartitionSplits[partition].subset, bucket);
 
                 // Set the new partition number
                 uint16_t newPartitionNumber = side ? info.right : info.left;
@@ -1594,7 +1710,7 @@ updatePartitionNumbersImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
 
         if (direction) {
             uint16_t smallPartitionIndex = /*partition < SSI_CACHE_SIZE ? smallSideIndexesCache[partition] :*/ smallSideIndexes[partition];
-            const UpdateWorkEntry work = { r, partition, smallPartitionIndex, decodedRows[r] };
+            const UpdateWorkEntry work = { r, partition, smallPartitionIndex, { decodedRows[2 * r], decodedRows[2 * r + 1] } };
             nonZeroDirectionIndices[nonZeroDirectionBase + n] = work;
         }
     }
@@ -1714,10 +1830,8 @@ updateBucketsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
         const uint32_t r = work.row;
         const uint16_t partition = work.partition;
         const uint16_t smallPartitionIndex = work.smallSideIndex;
-        const float decodedRow = work.decodedRow;
-
-        float weight = fabs(decodedRow);
-        bool label = decodedRow < 0;
+        const float wFalse = work.decodedRow[0];
+        const float wTrue = work.decodedRow[1];
 
         uint32_t toBucketLocal;
         uint32_t toBucketGlobal;
@@ -1753,11 +1867,11 @@ updateBucketsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
 
         if (toBucketLocal < numLocalBuckets) {
             //atom_inc(&numLocalUpdates);
-            incrementWLocal(&wLocal[toBucketLocal], label, weight);
+            addRowLocal(&wLocal[toBucketLocal], wFalse, wTrue);
         }
         else {
             //atom_inc(&numGlobalUpdates);
-            incrementWGlobal(&wGlobal[toBucketGlobal], label, weight);
+            addRowGlobal(&wGlobal[toBucketGlobal], wFalse, wTrue);
         }
     }
 
@@ -1879,51 +1993,171 @@ fixupBucketsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
 // One node of a flattened forest. A child is a node's index when it is at least 0, and leaf -(child + 1) when it is
 // below 0.
 typedef struct PredictNode {
-    uint32_t feature;       // The feature's index (its bucket column)
-    uint32_t splitBucket;   // The bucket the trainer split at
-    uint32_t ordinal;       // 1: true is the buckets below splitBucket; 0: true is splitBucket itself
+    uint16_t feature;       // The feature's index (its bucket column)
+    uint16_t bucketBits;    // The bits of each of the feature's buckets
+    uint16_t splitBucket;   // The bucket the trainer split at; for a subset, its place in the subsets
+    uint16_t ordinal;       // 1: true is the buckets below splitBucket; 0: true is splitBucket itself; 2: true is
+                            // the buckets of subset splitBucket (CART's categorical split)
     int32_t childTrue;
     int32_t childFalse;
 } PredictNode;
 
-// [row]: the forest's prediction for row r, the trees' leaf distributions (two labels) weighted. Each walk is at
-// most maxDepth steps; a walk that has not reached a leaf by then gives NaN.
-UKL_FUNCTION(v1,void,
+// [row group]: the forest's prediction for each row, the trees' leaf distributions (two labels) weighted. A row has
+// lanesPerRow threads of the group (a power of 2, at most the group's threads): each lane walks the trees lane,
+// lane + lanesPerRow, ..., and the row's first lane adds the lanes' sums in lane order, so a row's result depends on
+// lanesPerRow only. Many lanes a row keep a small batch's walks short (a walk is a chain of dependent loads); one
+// lane a row suits a batch that fills the device by itself. Each walk is at most maxDepth steps; a walk that has not
+// reached a leaf by then gives NaN.
+SYNC_FUNCTION(v1,void,
 predictForestImpl) (uint32_t numRows,
                     uint32_t numTrees,
                     uint32_t maxDepth,
+                    uint32_t lanesPerRow,
+                    uint32_t columnStride,
                     ROBUFFER(uint32_t) bucketData,
-                    ROBUFFER(uint32_t) bucketDataOffsets,
-                    ROBUFFER(uint32_t) bucketEntryBits,
                     ROBUFFER(PredictNode) nodes,
+                    ROBUFFER(uint32_t) subsets,  // [numSubsets * CATEGORY_SET_WORDS]
                     ROBUFFER(int32_t) treeRoots,
                     ROBUFFER(float) treeWeights,
                     ROBUFFER(float) leafPreds,
                     RWBUFFER(float) predictionsOut,
-                    uint32_t r)
+                    RWLOCAL(float) partials,  // [2 * threadsPerGroup]
+                    uint32_t groupId,
+                    uint16_t threadId,
+                    uint16_t threadsPerGroup)
+{
+    uint32_t rowsPerGroup = threadsPerGroup / lanesPerRow;
+    uint32_t lane = threadId % lanesPerRow;
+    uint32_t r = groupId * rowsPerGroup + threadId / lanesPerRow;
+
+    float p0 = 0.0f, p1 = 0.0f;
+    if (r < numRows) {
+        for (uint32_t t = lane;  t < numTrees;  t += lanesPerRow) {
+            int32_t at = treeRoots[t];
+            // Each step: the node, then its feature's bucket for the row (column `feature` starts at
+            // feature * columnStride; the bits are the node's).
+            for (uint32_t d = 0;  d < maxDepth && at >= 0;  ++d) {
+                PredictNode node = nodes[at];
+                uint16_t bucket = extract16BitRange32(bucketData + (uint32_t)node.feature * columnStride,
+                                                      node.bucketBits, r);
+                bool isTrue = node.ordinal == 1 ? bucket < node.splitBucket
+                    : node.ordinal == 0 ? bucket == node.splitBucket
+                    : inCategorySet(subsets + (uint32_t)node.splitBucket * CATEGORY_SET_WORDS, bucket);
+                at = isTrue ? node.childTrue : node.childFalse;
+            }
+            if (at >= 0) {
+                p0 = p1 = NAN;
+                break;
+            }
+            uint32_t leaf = (uint32_t)(-(at + 1));
+            float w = treeWeights[t];
+            p0 += w * leafPreds[2 * leaf];
+            p1 += w * leafPreds[2 * leaf + 1];
+        }
+    }
+    partials[2 * threadId] = p0;
+    partials[2 * threadId + 1] = p1;
+
+    ukl_threadgroup_barrier();
+
+    if (r < numRows && lane == 0) {
+        float s0 = 0.0f, s1 = 0.0f;
+        for (uint32_t l = 0;  l < lanesPerRow;  ++l) {
+            s0 += partials[2 * (threadId + l)];
+            s1 += partials[2 * (threadId + l) + 1];
+        }
+        predictionsOut[2 * r] = s0;
+        predictionsOut[2 * r + 1] = s1;
+    }
+}
+
+
+// The feature space's columns built on the device (rerail's addition): each row's bucket, then the rows' buckets
+// bit-packed as WritableBucketList writes them (least significant bits first, entryBits each).
+
+// A row's key that stands for a null (no number orders below it).
+#define NULL_ORDER_KEY ((int64_t)0x8000000000000000UL)
+
+// [row]: a numeric column's bucket: 0 for a null; else the numeric buckets' offset plus the split points below the
+// value (the keys order as the values do, so the comparison is exact). A bounded binary search.
+UKL_FUNCTION(v1,void,
+numericBucketsImpl) (uint32_t numRows,
+                     ROBUFFER(int64_t) keys,
+                     ROBUFFER(int64_t) splitKeys,
+                     uint32_t numSplits,
+                     uint32_t numericOffset,
+                     RWBUFFER(uint32_t) bucketsOut,
+                     uint32_t r)
 {
     if (r >= numRows)
         return;
-
-    float p0 = 0.0f, p1 = 0.0f;
-    for (uint32_t t = 0;  t < numTrees;  ++t) {
-        int32_t at = treeRoots[t];
-        for (uint32_t d = 0;  d < maxDepth && at >= 0;  ++d) {
-            PredictNode node = nodes[at];
-            uint16_t bucket = extract16BitRange32(bucketData + bucketDataOffsets[node.feature],
-                                                  bucketEntryBits[node.feature], r);
-            bool isTrue = node.ordinal ? bucket < node.splitBucket : bucket == node.splitBucket;
-            at = isTrue ? node.childTrue : node.childFalse;
-        }
-        if (at >= 0) {
-            p0 = p1 = NAN;
-            break;
-        }
-        uint32_t leaf = (uint32_t)(-(at + 1));
-        float w = treeWeights[t];
-        p0 += w * leafPreds[2 * leaf];
-        p1 += w * leafPreds[2 * leaf + 1];
+    int64_t k = keys[r];
+    if (k == NULL_ORDER_KEY) {
+        bucketsOut[r] = 0;
+        return;
     }
-    predictionsOut[2 * r] = p0;
-    predictionsOut[2 * r + 1] = p1;
+    uint32_t lo = 0, hi = numSplits;
+    for (uint32_t step = 0;  step < 32 && lo < hi;  ++step) {
+        uint32_t mid = (lo + hi) / 2;
+        if (splitKeys[mid] < k)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    bucketsOut[r] = numericOffset + lo;
+}
+
+// [row]: marks the codes a categorical column holds (code numCodes for a null).
+UKL_FUNCTION(v1,void,
+markCodesImpl) (uint32_t numRows,
+                uint32_t numCodes,
+                ROBUFFER(uint32_t) codes,
+                RWBUFFER(uint32_t) presentOut,
+                uint32_t r)
+{
+    if (r >= numRows)
+        return;
+    uint32_t c = codes[r];
+    presentOut[c < numCodes ? c : numCodes] = 1;
+}
+
+// [row]: a categorical column's bucket, its code's (code numCodes for a null).
+UKL_FUNCTION(v1,void,
+categoricalBucketsImpl) (uint32_t numRows,
+                         uint32_t numCodes,
+                         ROBUFFER(uint32_t) codes,
+                         ROBUFFER(uint32_t) codeBuckets,
+                         RWBUFFER(uint32_t) bucketsOut,
+                         uint32_t r)
+{
+    if (r >= numRows)
+        return;
+    uint32_t c = codes[r];
+    bucketsOut[r] = codeBuckets[c < numCodes ? c : numCodes];
+}
+
+// [word]: one 32-bit word of the packed buckets: the entries whose bits fall in it (at most 32 / entryBits + 2, a
+// bounded loop), zero past the last entry.
+UKL_FUNCTION(v1,void,
+packBucketsImpl) (uint32_t numRows,
+                  uint32_t entryBits,
+                  uint32_t numWords,
+                  ROBUFFER(uint32_t) buckets,
+                  RWBUFFER(uint32_t) wordsOut,
+                  uint32_t w)
+{
+    if (w >= numWords)
+        return;
+    uint32_t firstBit = 32 * w;
+    uint32_t first = firstBit / entryBits;
+    uint32_t word = 0;
+    for (uint32_t i = 0;  i < 34;  ++i) {
+        uint32_t e = first + i;
+        if (e >= numRows || e * entryBits >= firstBit + 32)
+            break;
+        int32_t shift = (int32_t)(e * entryBits) - (int32_t)firstBit;
+        uint32_t b = buckets[e];
+        word |= shift >= 0 ? b << shift : b >> (-shift);
+    }
+    wordsOut[w] = word;
 }

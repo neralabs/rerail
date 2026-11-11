@@ -63,6 +63,46 @@ impl Accum for f64 {
     }
 }
 
+/// A row's contribution to the weights: (to false, to true). A row with label `l` and weight `w` gives `w` to its
+/// label's side; a regression row with target `t` (in [0, 1]) is a soft label, giving `w (1 - t)` and `w t`.
+/// Classification is the case of a target of 0 or 1, so the trainer is the same for both: the buckets, the splits'
+/// sides and the leaves (whose true side is the rows' weighted mean target) need nothing more. Only the split's
+/// score differs (`SplitCriterion`).
+pub type RowWeights = [f32; 2];
+
+/// A categorical split's buckets on its left side (CART's subset split), a bit per bucket: a categorical feature has
+/// at most 512 buckets.
+pub type CategorySet = [u32; 16];
+
+/// The most buckets a categorical feature may have (`CategorySet`).
+pub const MAX_CATEGORICAL_BUCKETS: usize = 512;
+
+/// Whether bucket `b` is in a set (none past the set's 512).
+#[inline(always)]
+pub fn in_category_set(set: &CategorySet, b: u32) -> bool {
+    (b as usize) < MAX_CATEGORICAL_BUCKETS && (set[(b >> 5) as usize] >> (b & 31)) & 1 != 0
+}
+
+/// How a split is scored (lower is better), from its sides' weights.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SplitCriterion {
+    /// upstream's: `2 (sqrt(f0 t0) + sqrt(f1 t1))` over the sides' false and true weights, for classification.
+    #[default]
+    Sqrt = 0,
+    /// The rows' squared error about their side's mean target: `sum over sides of f t / (f + t)`, in the
+    /// accumulators' fixed point and exact (the sum of `w t^2` is the same for every split, and leaves out). For
+    /// regression; the Gini impurity for classification.
+    Variance = 1,
+}
+
+impl SplitCriterion {
+    /// The criterion for a feature space's label: the variance for a real label, else upstream's.
+    pub fn of(fs: &DatasetFeatureSpace) -> SplitCriterion {
+        if fs.label_info == crate::forest::dataset_feature_space::FeatureType::Real { SplitCriterion::Variance } else { SplitCriterion::Sqrt }
+    }
+}
+
 /// This structure holds the weights (false and true) for any particular split.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -76,6 +116,20 @@ impl<F: Accum> WT<F> {
     pub fn add_weight(&mut self, i: bool, val: f32) {
         self.v[i as usize] += F::from_f32(val);
         self.c += 1;
+    }
+
+    /// Adds a row's weights (`RowWeights`).
+    pub fn add_weights(&mut self, r: RowWeights) {
+        self.v[0] += F::from_f32(r[0]);
+        self.v[1] += F::from_f32(r[1]);
+        self.c += 1;
+    }
+
+    /// Removes a row's weights (`RowWeights`).
+    pub fn sub_weights(&mut self, r: RowWeights) {
+        self.v[0] -= F::from_f32(r[0]);
+        self.v[1] -= F::from_f32(r[1]);
+        self.c -= 1;
     }
 
     /// `sub(i, val)` upstream.
@@ -273,6 +327,22 @@ pub struct DecodedRow {
     pub label: bool,
     pub weight: f32,
     pub example_num: u32,
+    /// The row's target in [0, 1]: its label (0 or 1), or its regression target (`Rows::targets`).
+    pub target: f32,
+}
+
+impl DecodedRow {
+    /// The row's weights to false and true (`row_weights`).
+    pub fn weights(&self) -> RowWeights {
+        row_weights(self.weight, self.target)
+    }
+}
+
+/// A row's weights to false and true from its weight and target: `w (1 - t)` (one rounding, a fused multiply-add,
+/// as the device's `decompressRowsImpl`, so that the two agree to the bit) and `w t`; exact for a label.
+#[inline(always)]
+pub fn row_weights(weight: f32, target: f32) -> RowWeights {
+    [(-weight).mul_add(target, weight), weight * target]
 }
 
 /// Writes rows, bit-packed: label, then weight, then (unless sequential) example number.
@@ -288,6 +358,8 @@ pub struct RowWriter {
     written: usize,
     w_all: W,
     weight_scaling_factor: f32,
+    /// The rows' regression targets by example number (`add_row_target`); none for a classification.
+    targets: Option<Vec<f32>>,
 }
 
 /// `MLDB::highest_bit(x, none)` over 64 bits.
@@ -303,7 +375,7 @@ impl RowWriter {
         // +1 allows extractFast
         let to_allocate = (total_bits as usize * max_rows).div_ceil(64) + 1;
         let data = serializer.allocate_writable_t::<u64>(to_allocate, 4096); // page aligned
-        RowWriter { weight_encoder: weight_encoder.clone(), weight_bits, example_num_bits, total_bits, to_allocate, data, written: 0, w_all: W::default(), weight_scaling_factor }
+        RowWriter { weight_encoder: weight_encoder.clone(), weight_bits, example_num_bits, total_bits, to_allocate, data, written: 0, w_all: W::default(), weight_scaling_factor, targets: None }
     }
 
     fn write_bits(&mut self, val: u64, bits: u32) {
@@ -313,7 +385,22 @@ impl RowWriter {
         self.written += bits as usize;
     }
 
+    /// A classification row (its target is its label).
     pub fn add_row(&mut self, row: &Row) {
+        assert!(self.targets.is_none(), "a classification row among regression rows");
+        self.add_row_with(row, row.label() as u8 as f32);
+    }
+
+    /// A row with its target (in [0, 1]; its label for a classification): a regression writer keeps the target by
+    /// the example number the rows will decode with (the row's, or its place when they are sequential).
+    pub fn add_row_with(&mut self, row: &Row, target: f32) {
+        if let Some(t) = &mut self.targets {
+            let ex = if self.example_num_bits == 0 { self.written / self.total_bits as usize } else { row.example_num() as usize };
+            if t.len() <= ex {
+                t.resize(ex + 1, f32::NAN);
+            }
+            t[ex] = target;
+        }
         let mut to_write = row.label() as u64;
         to_write = (to_write << self.weight_bits) | row.encoded_weight_ as u64;
         if self.example_num_bits > 0 {
@@ -321,7 +408,22 @@ impl RowWriter {
         }
         self.write_bits(to_write, self.total_bits as u32);
         let weight = self.weight_encoder.decode_weight(row.encoded_weight_) * self.weight_scaling_factor;
-        self.w_all.add_weight(row.label(), weight);
+        self.w_all.add_weights(row_weights(weight, target));
+    }
+
+    /// A regression row: its target, in [0, 1], kept by example number (its label is the nearer of 0 and 1). A
+    /// writer's rows are all classification rows or all regression rows.
+    pub fn add_row_target(&mut self, target: f32, weight: f32, example_num: u32) -> Result<(), String> {
+        if !(0.0..=1.0).contains(&target) {
+            return Err(format!("example {example_num}: target {target} is outside [0, 1]"));
+        }
+        if self.written > 0 && self.targets.is_none() {
+            return Err("a regression row after classification rows".into());
+        }
+        let row = Row { label_: target >= 0.5, encoded_weight_: self.weight_encoder.encode_weight(weight)?, example_num_: example_num };
+        self.targets.get_or_insert_with(Vec::new);
+        self.add_row_with(&row, target);
+        Ok(())
     }
 
     pub fn add_row_values(&mut self, label: bool, weight: f32, example_num: u32) -> Result<(), String> {
@@ -349,6 +451,7 @@ impl RowWriter {
             total_bits: self.total_bits,
             weight_encoder: self.weight_encoder,
             w_all: self.w_all,
+            targets: self.targets.map(std::sync::Arc::new),
         }
     }
 }
@@ -365,6 +468,19 @@ pub struct Rows {
     pub total_bits: i32,
     pub weight_encoder: WeightEncoder,
     pub w_all: W,
+    /// Regression targets in [0, 1] by example number; none for a classification (the target is the label).
+    pub targets: Option<std::sync::Arc<Vec<f32>>>,
+}
+
+impl Rows {
+    /// A row's target: its regression target, else its label.
+    #[inline(always)]
+    pub fn target_of(&self, label: bool, example_num: u32) -> f32 {
+        match &self.targets {
+            Some(t) => t[example_num as usize],
+            None => label as u8 as f32,
+        }
+    }
 }
 
 /// Iterates the rows in order.
@@ -393,7 +509,7 @@ impl<'a> RowIterator<'a> {
     #[inline(always)]
     pub fn get_decoded_row(&mut self) -> DecodedRow {
         let row = self.get_row();
-        DecodedRow { label: row.label(), weight: self.owner.weight_encoder.decode_weight(row.encoded_weight_), example_num: row.example_num() }
+        DecodedRow { label: row.label(), weight: self.owner.weight_encoder.decode_weight(row.encoded_weight_), example_num: row.example_num(), target: self.owner.target_of(row.label(), row.example_num()) }
     }
 
     #[inline(always)]
@@ -446,7 +562,7 @@ impl Rows {
     #[inline(always)]
     pub fn get_decoded_row(&self, i: usize) -> DecodedRow {
         let row = self.get_row(i);
-        DecodedRow { label: row.label(), weight: self.weight_encoder.decode_weight(row.encoded_weight_), example_num: row.example_num() }
+        DecodedRow { label: row.label(), weight: self.weight_encoder.decode_weight(row.encoded_weight_), example_num: row.example_num(), target: self.target_of(row.label(), row.example_num()) }
     }
 
     pub fn get_weight(&self, i: usize) -> f32 {
@@ -474,7 +590,10 @@ impl Rows {
     }
 
     pub fn get_row_writer(&self, max_rows: usize, max_example_count: usize, serializer: &mut impl MappedSerializer, sequential_example_nums: bool, weight_scaling_factor: f32) -> RowWriter {
-        RowWriter::new(&self.weight_encoder, max_rows, max_example_count, serializer, sequential_example_nums, weight_scaling_factor)
+        let mut w = RowWriter::new(&self.weight_encoder, max_rows, max_example_count, serializer, sequential_example_nums, weight_scaling_factor);
+        // A regression's rows give regression rows.
+        w.targets = self.targets.as_ref().map(|_| Vec::new());
+        w
     }
 }
 
@@ -571,15 +690,18 @@ pub enum PartitionSplitDirection {
 pub struct PartitionSplit {
     pub score: f32,
     pub feature: i16,
+    /// An ordinal split's bucket (the left is below it); a categorical split's number of buckets on the left.
     pub value: i16,
     /// 12 bytes: true, false, count.
     pub left: W,
     pub right: W,
+    /// A categorical split's buckets on the left (`CategorySet`; rerail's addition, CART's subset split).
+    pub subset: CategorySet,
 }
 
 impl Default for PartitionSplit {
     fn default() -> Self {
-        PartitionSplit { score: f32::INFINITY, feature: -1, value: -1, left: W::default(), right: W::default() }
+        PartitionSplit { score: f32::INFINITY, feature: -1, value: -1, left: W::default(), right: W::default(), subset: [0; 16] }
     }
 }
 
@@ -630,7 +752,7 @@ impl From<u16> for RowPartitionInfo {
 
 #[derive(Debug, Default)]
 pub struct PartitionEntry {
-    pub decoded_rows: Vec<f32>,
+    pub decoded_rows: Vec<RowWeights>,
     pub features: Vec<Feature>,
     pub active_features: Vec<i32>,
     pub active_feature_set: BTreeSet<i32>,
@@ -677,8 +799,8 @@ pub struct UpdateWorkEntry {
     pub partition: u16,
     /// Linear index of small side bucket to update.
     pub small_side_index: u16,
-    /// Decoded version of row.
-    pub decoded_row: f32,
+    /// Decoded version of row: its weights (`RowWeights`).
+    pub decoded_row: RowWeights,
 }
 
 /// Sizing information for a whole tree.
@@ -704,6 +826,8 @@ pub struct TreeTrainingInfo {
     /// Length of the pool of every level's partition splits (rerail's addition: the device stops before a level
     /// whose splits would not fit).
     pub max_num_finished_partitions: u32,
+    /// How splits are scored (`SplitCriterion`, rerail's addition).
+    pub split_criterion: u32,
 }
 
 /// `TreeDepthInfo::status` once the device has stopped and left the rest of the tree to the host.
@@ -773,7 +897,7 @@ pub fn get_leaf(tree: &mut Tree, w: &W) -> Ptr {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split: i32, left: Ptr, right: Ptr, w_left: W, w_right: W, features: &[Feature], fs: &DatasetFeatureSpace) -> Result<Ptr, String> {
+pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split: i32, subset: &CategorySet, left: Ptr, right: Ptr, w_left: W, w_right: W, features: &[Feature], fs: &DatasetFeatureSpace) -> Result<Ptr, String> {
     let f = &features[best_feature as usize];
     let hash = f.info.ok_or("get_node: feature without a column")?;
     let column = fs.column_info.get(&hash).ok_or("get_node: feature's column not in the feature space")?;
@@ -793,9 +917,9 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
     };
     let split = Split::new(feature, split_val, if f.ordinal { Op::Less } else { Op::Equal })?;
     // A missing value is a null, which training put in bucket 0: on the left of an ordinal split (whose bucket is
-    // at least 1), and on the left of a categorical one only when that is bucket 0. Upstream gave the missing
+    // at least 1), and on the left of a categorical one when bucket 0 is in its subset. Upstream gave the missing
     // branch an empty leaf (a 0/0 prediction).
-    let missing = if f.ordinal || best_split == 0 { left } else { right };
+    let missing = if f.ordinal || in_category_set(subset, 0) { left } else { right };
     let node = tree.new_node();
     {
         let n = tree.node_mut(node).unwrap();
@@ -805,18 +929,21 @@ pub fn get_node(tree: &mut Tree, best_score: f32, best_feature: i32, best_split:
         n.child_missing = missing;
         n.z = best_score;
         n.split_bucket = best_split;
+        if !f.ordinal {
+            n.split_subset = subset.to_vec();
+        }
     }
     fill_in_base(tree, node, &(w_left + w_right));
     Ok(node)
 }
 
-pub fn decode_row_iter(row_iterator: &mut RowIterator<'_>, _row_number: usize) -> DecodedRow {
-    row_iterator.get_decoded_row()
+pub fn decode_row_iter(row_iterator: &mut RowIterator<'_>, _row_number: usize) -> (u32, RowWeights) {
+    let r = row_iterator.get_decoded_row();
+    (r.example_num, r.weights())
 }
 
-pub fn decode_row_arr(arr: &[f32], row_number: usize) -> DecodedRow {
-    let f = arr[row_number];
-    DecodedRow { label: f < 0.0, example_num: row_number as u32, weight: f.abs() }
+pub fn decode_row_arr(arr: &[RowWeights], row_number: usize) -> (u32, RowWeights) {
+    (row_number as u32, arr[row_number])
 }
 
 #[cfg(test)]
@@ -835,18 +962,19 @@ mod tests {
         assert_eq!(size_of::<PartitionIndex>(), 4);
         assert_eq!(align_of::<PartitionIndex>(), 4);
         assert_eq!(size_of::<WIndexed>(), 16);
-        assert_eq!(size_of::<PartitionSplit>(), 32);
-        assert_eq!(size_of::<IndexedPartitionSplit>(), 36);
+        assert_eq!(size_of::<PartitionSplit>(), 96);
+        assert_eq!(size_of::<IndexedPartitionSplit>(), 100);
         assert_eq!(offset_of!(PartitionSplit, score), 0);
         assert_eq!(offset_of!(PartitionSplit, feature), 4);
         assert_eq!(offset_of!(PartitionSplit, value), 6);
         assert_eq!(offset_of!(PartitionSplit, left), 8);
         assert_eq!(offset_of!(PartitionSplit, right), 20);
-        assert_eq!(offset_of!(IndexedPartitionSplit, index), 32);
+        assert_eq!(offset_of!(PartitionSplit, subset), 32);
+        assert_eq!(offset_of!(IndexedPartitionSplit, index), 96);
         // The kernels' own structs (randomforest_kernels_common.h).
         assert_eq!(size_of::<TreeDepthInfo>(), 28);
-        assert_eq!(size_of::<TreeTrainingInfo>(), 24);
-        assert_eq!(size_of::<UpdateWorkEntry>(), 12);
+        assert_eq!(size_of::<TreeTrainingInfo>(), 28);
+        assert_eq!(size_of::<UpdateWorkEntry>(), 16);
         assert_eq!(size_of::<PartitionInfo>(), 8);
         assert_eq!(size_of::<RowPartitionInfo>(), 2);
     }
@@ -872,6 +1000,9 @@ mod tests {
         }
         let total: f32 = (0..100).map(|i| (i % 32) as f32 * 0.5).sum();
         assert!((rows.w_all.total() - total / 1024.0).abs() < 1e-5);
-        assert_eq!(decode_row_arr(&[-2.0, 3.0], 0), DecodedRow { label: true, weight: 2.0, example_num: 0 });
+        assert_eq!(decode_row_arr(&[[0.0, 2.0], [3.0, 0.0]], 1), (1, [3.0, 0.0]));
+        assert_eq!(DecodedRow { label: true, weight: 2.0, example_num: 0, target: 1.0 }.weights(), [0.0, 2.0]);
+        assert_eq!(DecodedRow { label: false, weight: 2.0, example_num: 0, target: 0.0 }.weights(), [2.0, 0.0]);
+        assert_eq!(DecodedRow { label: false, weight: 2.0, example_num: 0, target: 0.25 }.weights(), [1.5, 0.5]);
     }
 }

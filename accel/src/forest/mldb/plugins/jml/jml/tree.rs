@@ -74,11 +74,14 @@ pub struct Node {
     /// trainer splits on buckets, and its prediction routes rows by them (an addition to upstream's node, whose
     /// split is only the value).
     pub split_bucket: i32,
+    /// A categorical split's buckets on the true side (CART's subset split, a bit per bucket; empty for none): the
+    /// trainer's categorical splits are subsets of their feature's buckets.
+    pub split_subset: Vec<u32>,
 }
 
 impl Default for Node {
     fn default() -> Self {
-        Node { base: Base::default(), split: Split::default(), z: 0.0, child_true: Ptr::Null, child_false: Ptr::Null, child_missing: Ptr::Null, split_bucket: -1 }
+        Node { base: Base::default(), split: Split::default(), z: 0.0, child_true: Ptr::Null, child_false: Ptr::Null, child_missing: Ptr::Null, split_bucket: -1, split_subset: Vec::new() }
     }
 }
 
