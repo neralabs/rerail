@@ -8,8 +8,8 @@ import Database from "better-sqlite3";
 import { is } from "drizzle-orm";
 import { getTableConfig, SQLiteTable } from "drizzle-orm/sqlite-core";
 import { afterEach, describe, expect, it } from "vitest";
-import { createConversationRulesExtension } from "../../src/hosts/omp/index.js";
-import { RerailRuntime } from "../../src/runtime/runtime.js";
+import { createConversationRulesExtension } from "../../../src/hosts/omp/index.js";
+import { RerailRuntime } from "../../../src/runtime/runtime.js";
 import {
   defaultRerailDatabasePath,
   openRerailDatabase,
@@ -22,19 +22,19 @@ import {
   listLibraryRules,
   upsertLibraryRule,
   worktreeRuleCatalog,
-} from "../../src/engine/index.js";
-import { SqlitePresentationPreferenceStore } from "../../src/runtime/presentation-preference-store.js";
-import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { decodeEventPayload, SqliteSessionReader, SqliteSessionStore } from "../../src/runtime/session-store.js";
-import { NativeSessionClient } from "../../src/harness/index.js";
-import { databaseInstalledAt, resetRepositoryHistoryIn, schema } from "../../src/engine/index.js";
-import { testEmbedder } from "../support/hook-events.js";
-import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
-import { startTestRepository } from "../support/started-repository.js";
-import { setUpTestRepository } from "../support/repository-rules.js";
-import { approve, currentSubject } from "../../src/engine/index.js";
-import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
-import { removeFolder, removeFolderSync } from "../support/platform/remove-folder.js";
+} from "../../../src/engine/index.js";
+import { SqlitePresentationPreferenceStore } from "../../../src/runtime/presentation-preference-store.js";
+import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../../src/cli/index.js";
+import { decodeEventPayload, SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/session-store.js";
+import { NativeSessionClient } from "../../../src/harness/index.js";
+import { databaseInstalledAt, resetRepositoryHistoryIn, schema } from "../../../src/engine/index.js";
+import { testEmbedder } from "../../support/hook-events.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
+import { startTestRepository } from "../../support/started-repository.js";
+import { setUpTestRepository } from "../../support/repository-rules.js";
+import { approve, currentSubject } from "../../../src/engine/index.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../../support/platform/file-mode.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];

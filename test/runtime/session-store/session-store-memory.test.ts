@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { setFlagsFromString } from "node:v8";
 import { describe, expect, it } from "vitest";
-import { SqliteSessionStore } from "../../src/runtime/session-store.js";
-import { removeFolder } from "../support/platform/remove-folder.js";
+import { SqliteSessionStore } from "../../../src/runtime/session-store.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 setFlagsFromString("--expose-gc");
 const gc = runInNewContext("gc") as () => void;
