@@ -821,7 +821,7 @@ def main():
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--checks', required=True)
     parser.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot')
-    parser.add_argument('--tests', nargs='+', help='Explicit unchanged modules or pytest node IDs; defaults to each check\'s direct module')
+    parser.add_argument('--tests', nargs='+', action='extend', help='Explicit unchanged modules or pytest node IDs; repeated lists accumulate; defaults to each check\'s direct module')
     parser.add_argument('--rule-root', type=Path, default=ROOT / 'gate/data-layer/packs/data-layer/candidates/rr',
                         help='Rule directory to execute; mutation tests supply a directory of disabled policies')
     parser.add_argument('--part', type=int, default=0)
