@@ -1,6 +1,7 @@
 """Compile the pinned scanners' regex constants to the engine's DFA dialect, offline."""
 import importlib
 import json
+from pathlib import Path
 import re
 import sys
 import unicodedata
@@ -128,6 +129,12 @@ inspection_framework_hidden(d) :- path_part(d,p), (p = ".git" ; p = ".venv" ; p 
     text=production(source, 'no_source_inspection',text+cli_suffix(source,'no_source_inspection'))
     from dataclasses import asdict
     text+='\n.decl inspection_config(value: symbol)\ninspection_config('+quote(json.dumps(asdict(original.NO_SOURCE_INSPECTION_EXTRACTOR)))+').\n'
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory(prefix='inspection-plugin-author-') as directory:
+        plugin=original.no_source_inspection_plugin(Path(directory))
+    metadata=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description,
+        include_tests=plugin.file_scope.include_tests,broad_repo_scope=plugin.file_scope.broad_repo_scope)
+    text+='\n.decl inspection_plugin_config(value: symbol)\ninspection_plugin_config('+quote(json.dumps(metadata))+').\n'
     for i in range(len(original.FORBIDDEN_PATTERNS)):
         text+=f'inspection_finding(p,l,i,label,snippet) :- ppe_Inspection{i}(p,l,_,_,_,i,label,snippet).\n'
     return text+'#include "data-layer/inspection-api.rr"\n'

@@ -10,6 +10,10 @@ InspectionRead(@place("",0),i,p) :- option("entryPoint","_inspection_prepare"), 
     suffix(".py",p), !inspection_path_excluded(p).
 .violation InspectionConfiguration(at: span, value: symbol) code "NSI_CONFIG" "extractor metadata"
 InspectionConfiguration(@place("",0),v) :- option("entryPoint","_inspection_configuration"), inspection_config(v).
+.violation InspectionPluginMetadata(at: span, value: symbol) code "NSI_PLUGIN_META" "plugin metadata"
+InspectionPluginMetadata(@place("",0),v) :- option("entryPoint","_inspection_plugin_metadata"), inspection_plugin_config(v).
+.violation InspectionPluginDirectory(at: span, ordinal: number, path: symbol) code "NSI_PLUGIN_DIR" "plugin directory"
+InspectionPluginDirectory(@place("",0),i,p) :- option("entryPoint","_inspection_plugin_metadata"),option_item("inspectionDirectories",i,p).
 .decl inspection_finding(path: symbol, line: number, ordinal: number, label: symbol, snippet: symbol)
 .violation InspectionFact(at: span, ordinal: number, value_json: symbol) code "NSI_FACT" "source fact"
 InspectionFact(@place(p,l),i,cat("{\"file_path\":",@json_str(owner),",\"line\":",to_string(l),

@@ -11774,3 +11774,28 @@ The source policy hash is `095022a333bda78d1f6f0188fa878ba5727e41c109da6c5c9f020
 The Quality sibling's results remain partial. Its native relations are implementation material, rather than acceptance evidence for the missing port.
 State's shared scope, supplied scanner AST, project options, production, signing administration, CLI, and persistent-update gaps remain open.
 The inventory remains 13 admitted ports, 86 drafts, and one absent translation. No full-repository cold benchmark ran.
+
+### 2026-11-11 — Source-inspection plugin and caller paths
+
+Native outputs now supply the plugin descriptor, registered extraction, and supplied-fact reporting.
+The shared reporter input carries caller paths separately from workspace artifact identities.
+This fixes a relative bundle path that previously acquired the replay workspace prefix.
+
+All 124 primary source-inspection tests pass through each native API.
+The separate shared MCP suite passes seven of eight cases through each API.
+The combined independent inventory therefore passes 131 of 132 cases per API.
+The remaining test executes application behavior probes; its native migration remains unresolved.
+No rule invokes Python to satisfy that test.
+
+All 21 source-recorded plugin cases pass through each API.
+All 144 existing shared-reporter cases pass. Six native behavior-removal controls detect the missing behavior.
+The progress receipt records 840 native executions on the registered Final 2911 engine.
+All 430 migration tooling tests pass. This checkpoint does not admit another rule.
+
+The initial 131/132 report preceded the complete primary run and was incorrect at that time.
+Repeated --tests arguments silently discarded earlier targets. A failing regression exposed that parser defect; the corrected parser accumulates all targets.
+The upstream collector also rejects these two modules together because they both own ARC-010.
+Separate complete module runs now establish the reported coverage without changing upstream assertions.
+
+Receipt: gate/data-layer/fixtures/host/data-layer-port/rr-inspection-plugin-progress-final2911.json.gz.
+The inventory remains 100 historical ports, 99 native candidates, 13 full admissions, 86 drafts, and one absent translation.

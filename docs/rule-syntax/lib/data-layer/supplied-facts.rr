@@ -5,6 +5,10 @@
 .decl sf_strict(key: symbol)
 .decl sf_bundle(b: number, path: symbol)
 .input sf_bundle(IO=json,filename="reporter-facts.json",path="/bundles/*/path",projection="python-str")
+// A supplied plugin view can retain a caller's relative or external Path.
+// Keep it separate from the artifact's workspace-relative bundle identity.
+.decl sf_source_bundle(b: number, path: symbol)
+.input sf_source_bundle(IO=json,filename="reporter-facts.json",path="/bundles/*/source_path",projection="python-str")
 .decl sf_container(b: number, kind: symbol)
 .input sf_container(IO=json,filename="reporter-facts.json",path="/bundles/*/kind",projection="python-str")
 .decl sf_shape(b: number, ordinal: number, kind: symbol)
@@ -29,8 +33,9 @@ sf_row(b,r) :- option("entryPoint","_report_facts"), sf_container(b,"array"), sf
 .decl sf_field(b: number, ordinal: number, key: symbol, value: symbol)
 sf_field(b,r,k,v) :- sf_row(b,r), sf_property(b,r,k,v).
 sf_field(b,r,k,v) :- sf_row(b,r), sf_default(k,v), !sf_property(b,r,k,_).
-sf_field(b,r,k,cat(root,"/",p)) :- sf_row(b,r), sf_bundle(b,p), workspace_root(root), sf_config("path_field",k), !sf_property(b,r,k,_), !sf_config("bundle_fallback","exact").
-sf_field(b,r,k,p) :- sf_row(b,r), sf_bundle(b,p), sf_config("path_field",k), !sf_property(b,r,k,_), sf_config("bundle_fallback","exact").
+sf_field(b,r,k,p) :- sf_row(b,r), sf_source_bundle(b,p), sf_config("path_field",k), !sf_property(b,r,k,_).
+sf_field(b,r,k,cat(root,"/",p)) :- sf_row(b,r), sf_bundle(b,p), !sf_source_bundle(b,_), workspace_root(root), sf_config("path_field",k), !sf_property(b,r,k,_), !sf_config("bundle_fallback","exact").
+sf_field(b,r,k,p) :- sf_row(b,r), sf_bundle(b,p), !sf_source_bundle(b,_), sf_config("path_field",k), !sf_property(b,r,k,_), sf_config("bundle_fallback","exact").
 .decl sf_int(b: number, ordinal: number, value: symbol, json: symbol)
 sf_int(b,r,v,v) :- sf_row(b,r), sf_type(b,r,"line","number"), sf_json(b,r,"line",v), @count_matches("[.eE]",v) = 0.
 sf_int(b,r,"1","true") :- sf_row(b,r), sf_type(b,r,"line","boolean"), sf_json(b,r,"line","true").

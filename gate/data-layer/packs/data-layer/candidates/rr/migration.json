@@ -1466,7 +1466,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "sha256": "93b6966d6832faa8c6f521025294018b1cbea4fbd860b479e9b57642efde360e",
+      "sha256": "a65f008fe7595df87a6b86b28c8f5ee35e46c2e3bddeb2a51fc7a60cc50481c0",
       "origin": "authored",
       "upstreamPath": "scripts/lint_no_source_inspection.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2672,7 +2672,14 @@
     {
       "destination": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
       "origin": "authored",
-      "sha256": "a48a82c9fc0cd18c8b615878535aada700e0cf523c806f9af54efea0312c9efa"
+      "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4",
+      "repairs": [
+        {
+          "before": "a48a82c9fc0cd18c8b615878535aada700e0cf523c806f9af54efea0312c9efa",
+          "after": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4",
+          "reason": "Retain explicit caller bundle paths in supplied-view reporting instead of joining the replay workspace root."
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/model-validation.rr",
@@ -3219,7 +3226,7 @@
       "legacySha256": "89f2000f352654e02459f7e7bef1609b0e846a46c64bb1d6606169ef7872185f",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/no-source-inspection.rr",
-      "ruleSha256": "93b6966d6832faa8c6f521025294018b1cbea4fbd860b479e9b57642efde360e"
+      "ruleSha256": "a65f008fe7595df87a6b86b28c8f5ee35e46c2e3bddeb2a51fc7a60cc50481c0"
     },
     {
       "check": "serverplan_name_inference",

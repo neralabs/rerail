@@ -106,28 +106,28 @@ pp_report_allowed(p) :- pp_file(p), !pp_report_excluded(p).
 .decl pp_report_excluded(path: symbol)
 .decl ppe_Inspection0(path: symbol, line: number, event0: number, event1: number, event2: number, ordinal: number, label: symbol, snippet: symbol)
 Inspection0(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection0(p,l,o0,o1,o2,ordinal,label,snippet), pp_api().
-Inspection0(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection0(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
+Inspection0(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection0(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p), !option("entryPoint","_production_contract").
 pp_report(p,l,"NSI001",cat(label," is forbidden in tests"),p,l,cat(label," is forbidden in tests"),0,o0,o1,o2) :- ppe_Inspection0(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 .violation ProductionFact(at: span, path: symbol, path_order: symbol, order0: number, order1: number, order2: number, f_file_path: symbol, f_line: number, f_line_content: symbol, f_pattern_name: symbol) code "DL_FACT" "production fact"
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,full,l,snippet,label) :- ppe_Inspection0(p,l,o0,o1,o2,ordinal,label,snippet), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
 .decl ppe_Inspection1(path: symbol, line: number, event0: number, event1: number, event2: number, ordinal: number, label: symbol, snippet: symbol)
 Inspection1(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection1(p,l,o0,o1,o2,ordinal,label,snippet), pp_api().
-Inspection1(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection1(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
+Inspection1(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection1(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p), !option("entryPoint","_production_contract").
 pp_report(p,l,"NSI001",cat(label," is forbidden in tests"),p,l,cat(label," is forbidden in tests"),0,o0,o1,o2) :- ppe_Inspection1(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,full,l,snippet,label) :- ppe_Inspection1(p,l,o0,o1,o2,ordinal,label,snippet), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
 .decl ppe_Inspection2(path: symbol, line: number, event0: number, event1: number, event2: number, ordinal: number, label: symbol, snippet: symbol)
 Inspection2(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection2(p,l,o0,o1,o2,ordinal,label,snippet), pp_api().
-Inspection2(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection2(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
+Inspection2(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection2(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p), !option("entryPoint","_production_contract").
 pp_report(p,l,"NSI001",cat(label," is forbidden in tests"),p,l,cat(label," is forbidden in tests"),0,o0,o1,o2) :- ppe_Inspection2(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,full,l,snippet,label) :- ppe_Inspection2(p,l,o0,o1,o2,ordinal,label,snippet), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
 .decl ppe_Inspection3(path: symbol, line: number, event0: number, event1: number, event2: number, ordinal: number, label: symbol, snippet: symbol)
 Inspection3(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection3(p,l,o0,o1,o2,ordinal,label,snippet), pp_api().
-Inspection3(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection3(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
+Inspection3(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection3(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p), !option("entryPoint","_production_contract").
 pp_report(p,l,"NSI001",cat(label," is forbidden in tests"),p,l,cat(label," is forbidden in tests"),0,o0,o1,o2) :- ppe_Inspection3(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,full,l,snippet,label) :- ppe_Inspection3(p,l,o0,o1,o2,ordinal,label,snippet), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
 .decl ppe_Inspection4(path: symbol, line: number, event0: number, event1: number, event2: number, ordinal: number, label: symbol, snippet: symbol)
 Inspection4(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection4(p,l,o0,o1,o2,ordinal,label,snippet), pp_api().
-Inspection4(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection4(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
+Inspection4(@place(p,l),ordinal,label,snippet,o0,o1,o2) :- ppe_Inspection4(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p), !option("entryPoint","_production_contract").
 pp_report(p,l,"NSI001",cat(label," is forbidden in tests"),p,l,cat(label," is forbidden in tests"),0,o0,o1,o2) :- ppe_Inspection4(p,l,o0,o1,o2,ordinal,label,snippet), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,full,l,snippet,label) :- ppe_Inspection4(p,l,o0,o1,o2,ordinal,label,snippet), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
 
@@ -140,6 +140,9 @@ sf_default("pattern_name","source inspection").
 
 .decl inspection_config(value: symbol)
 inspection_config("{\"extractor_id\": \"no_source_inspection.violations\", \"schema_version\": \"1\", \"implementation_version\": \"no-source-inspection-v1\", \"parser_mode\": \"source\", \"source_triggers\": [\"inspect.getsource\", \"inspect.getsourcelines\", \"inspect.getsourcefile\", \"from inspect import\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"085f6c13b19f79cb\"}").
+
+.decl inspection_plugin_config(value: symbol)
+inspection_plugin_config("{\"name\": \"no_source_inspection\", \"enforcement\": \"hard-fail\", \"description\": \"Tests verify behavior instead of inspecting source text\", \"include_tests\": true, \"broad_repo_scope\": false}").
 inspection_finding(p,l,i,label,snippet) :- ppe_Inspection0(p,l,_,_,_,i,label,snippet).
 inspection_finding(p,l,i,label,snippet) :- ppe_Inspection1(p,l,_,_,_,i,label,snippet).
 inspection_finding(p,l,i,label,snippet) :- ppe_Inspection2(p,l,_,_,_,i,label,snippet).
