@@ -132,9 +132,10 @@ async function startSession(session: Session): Promise<void> {
   await hook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "prompt-1", prompt: "Add the classifiers." }, session.projectDir, session.env);
 }
 
-async function endTurn(session: Session): Promise<void> {
+/** The turn's end: `Stop`'s answer. */
+async function endTurn(session: Session): Promise<HookAnswer> {
   const common = { session_id: session.id, cwd: session.projectDir };
-  await hook({ ...common, hook_event_name: "Stop", prompt_id: "prompt-1", last_assistant_message: "Done." }, session.projectDir, session.env);
+  return await hook({ ...common, hook_event_name: "Stop", prompt_id: "prompt-1", last_assistant_message: "Done." }, session.projectDir, session.env);
 }
 
 /** The next turn up to its first tool call, a Read of `file`: that call's PreToolUse answer. */
@@ -254,12 +255,14 @@ describe("the Claude Code hook against a daemon of this build", () => {
     await stopDaemon();
     await startDaemon();
     // The edit's own PreToolUse reopens the session on the new daemon, so its call can arrive while the session's rules
-    // are still opening (`#codeRuleWorkspaceNow`): it goes on without code rules, the turn's end finds the edit in its
-    // walk and checks it, and the steer waits for the model's next tool call. Whether the rules open first is a race:
-    // on a busy two-CPU Linux machine the call won it every time.
+    // are still opening (`#codeRuleWorkspaceNow`): it goes on without code rules, and the turn's end finds the edit in
+    // its walk and checks it. Claude Code takes `Stop` context and continues the turn with it, so the steer goes out at
+    // `Stop`; one not ready by then waits for the model's next tool call. Whether the rules open first is a race: on a
+    // busy two-CPU Linux machine the call won it every time.
     const after = await writeTooComplex(session, files[1]!, "agent-1");
-    await endTurn(session);
-    expectSteered(contextOf(after).includes(`[${RULE}]`) ? after : await nextToolCall(session, files[1]!), files[1]!);
+    const stop = await endTurn(session);
+    const steered = [after, stop].find(answer => contextOf(answer).includes(`[${RULE}]`));
+    expectSteered(steered ?? await nextToolCall(session, files[1]!), files[1]!);
     await expectRulesFired(session, files);
   }, 120_000);
 });
