@@ -22,6 +22,28 @@ use std::collections::HashMap;
 /// The grammar: the ladder's last step.
 const GRAMMAR: &str = include_str!("../../rr_syntax/bitlex_ladder/20-json-depth.bitlex");
 
+/// Sample documents, for the profile tier 2 is cut by when the grammar compiles
+/// (docs/parser-generators/28-tier-2-in-clusters.md): 12 of the repository's `.rr`
+/// files, spread over its folders. A profile of about ten files gives a cut as good as the
+/// whole corpus's.
+const SAMPLES: [&str; 12] = [
+    include_str!("../samples/data-layer-graph-lazy-sql-plan.rr.sample"),
+    include_str!("../samples/eslint-no-sequences.rr.sample"),
+    include_str!("../samples/node.rr.sample"),
+    include_str!("../samples/phpcs-generic-php-forbidden-functions.rr.sample"),
+    include_str!("../samples/plan-scope-side-effects.rr.sample"),
+    include_str!("../samples/react-hooks-rules-of-hooks.rr.sample"),
+    include_str!("../samples/ruff-b029-except-with-empty-tuple.rr.sample"),
+    include_str!("../samples/ruff-fbt001-boolean-type-hint-positional-argument.rr.sample"),
+    include_str!("../samples/ruff-pth115-os-readlink.rr.sample"),
+    include_str!("../samples/ruff-ruf043-pytest-raises-ambiguous-pattern.rr.sample"),
+    include_str!("../samples/swallowed-exceptions.rr.sample"),
+    include_str!("../samples/typescript-eslint-no-dynamic-delete.rr.sample"),
+];
+
+/// The cap of tier 2's clusters, in words (doc 28: 2,500 runs fastest on `.rr`).
+const CLUSTER_CAP: usize = 2500;
+
 /// Ids above the engine's, for the grammar's own names (supertypes, marks) that never reach a
 /// tape.
 const OWN_IDS: u16 = 0x4000;
@@ -81,7 +103,11 @@ fn compile() -> Result<Compiled, String> {
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
-    let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
+    // Tier 2 in clusters, cut by the samples' traffic.
+    let samples: Vec<&[u8]> = SAMPLES.iter().map(|s| s.as_bytes()).collect();
+    let traffic = rerail_compiler::native_cpu_clusters::traffic(&program, &samples);
+    let cut = rerail_compiler::native_cpu_clusters::by_traffic(&native, &traffic, CLUSTER_CAP);
+    let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program })
 }
 
@@ -323,6 +349,17 @@ pub mod tests {
         }
         for (src, g) in files.iter().zip(&got) {
             assert_eq!(*g, super::tape(src), "{src:?}");
+        }
+    }
+
+    /// The compiled parser's tier 2 is in clusters, cut by the samples' profile, and each sample
+    /// parses (none is refused).
+    #[test]
+    fn tier2_is_in_clusters_by_the_samples() {
+        let c = crate::compiled().expect("compiles");
+        assert!(c.parser.tier2.clusters > 1, "{} clusters", c.parser.tier2.clusters);
+        for (i, s) in crate::SAMPLES.iter().enumerate() {
+            assert!(crate::compiled_tape(s).is_some(), "sample {i} refused");
         }
     }
 
