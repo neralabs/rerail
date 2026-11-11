@@ -2084,6 +2084,14 @@ impl Program {
                 }
             }
         }
+        // Tier 2's rules, each a function (`Words::rules`), when it has them.
+        if !self.rules.is_empty() {
+            digest.update(b"rules");
+            digest.update((self.rules.len() as u64).to_le_bytes());
+            for r in &self.rules {
+                digest.update(r.to_le_bytes());
+            }
+        }
         format!("{:x}", digest.finalize())
     }
 

@@ -87,6 +87,14 @@ pub fn compiled() -> Result<&'static Compiled, &'static str> {
 }
 
 fn compile() -> Result<Compiled, String> {
+    // Tier 2 a function a grammar rule, from the grammar (`Shape::Rules`); `RR_SHAPE=machine`:
+    // one state machine.
+    let shape = if std::env::var("RR_SHAPE").as_deref() == Ok("machine") { bitlex_compile::Shape::Machine } else { bitlex_compile::Shape::Rules };
+    compile_with(shape)
+}
+
+/// The grammar compiled with tier 2 in `shape`.
+pub fn compile_with(shape: bitlex_compile::Shape) -> Result<Compiled, String> {
     let stmts = ::bitlex::syntax::parse(GRAMMAR)?;
     let own: RefCell<HashMap<String, u16>> = RefCell::new(HashMap::new());
     let id = |names: &[&str], name: &str| -> u16 {
@@ -100,7 +108,7 @@ fn compile() -> Result<Compiled, String> {
     let kind = |n: &str| Some(if n == "ERROR" { u16::MAX } else { id(rr::tape::KIND_NAMES, n) });
     let field = |n: &str| Some(id(rr::tape::FIELD_NAMES, n.trim_start_matches("field ")));
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
+    let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), shape)?;
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     // Tier 2 a function a grammar rule (`by_rules`): a call of the grammar is a native call,
@@ -226,6 +234,45 @@ pub mod tests {
         // (The engine's parser, recursive too, runs off a test thread's stack at that depth.)
     }
 
+    /// Tier 2 is a function a grammar rule, from the grammar: the program holds its rules
+    /// (`Words::rules`, a `rir` row each), the verifier checked that only calls cross them, and
+    /// each rule is one function (`by_rules` reads them; none is found). A call takes no token:
+    /// its arm goes to the callee's switch. The state machine is still there
+    /// (`Shape::Machine`): no rules. Both write the engine's tapes.
+    #[test]
+    fn tier2_is_a_function_a_grammar_rule() {
+        use rerail_compiler::{native_cpu_clusters, native_ir, stream};
+        let c = crate::compiled().expect("compiles");
+        let rules = &c.program.rules;
+        assert!(rules.len() > 20, "a rule a level: {}", rules.len());
+        assert!(c.words.contains("  rule 0 @0000\n"), "the rules are rows of the program's text");
+        assert!(c.machine.contains(" call"), "calls take no token");
+        // A ratchet, as the machine's (`the_state_machine_shares_its_rules`): lower it as the
+        // compiler improves. Most words are jumps (`GOTO`, a third) and keyword tests (`SPAN`,
+        // `WORD`, one a keyword a state).
+        let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
+        let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
+        assert!(states <= 371 && arms <= 3068 && c.program.words.len() <= 13119, "{states} states, {arms} arms, {} words", c.program.words.len());
+        let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
+        let cut = native_cpu_clusters::by_rules(&native);
+        assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
+        assert_eq!(c.parser.tier2.clusters, rules.len(), "as compiled");
+        // A jump from one rule into another, not a call's: refused.
+        let mut bad = c.program.clone();
+        let (from, into) = (usize::from(rules[1]), rules[2]);
+        let goto = (0..bad.words.len()).find(|&pc| pc >= from && rerail_compiler::program::split(bad.words[pc]).0 == rerail_compiler::program::GOTO && rerail_compiler::program::split(bad.words[pc - 1]).0 != rerail_compiler::program::PUSH).expect("a rule's own jump");
+        bad.words[goto] = rerail_compiler::program::word(rerail_compiler::program::GOTO, 0, into);
+        assert!(stream::validate_rules(&bad).is_err(), "a jump across rules");
+        // The machine: no rules. Each shape writes the engine's tape on the samples.
+        let m = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        assert!(m.program.rules.is_empty());
+        for (i, s) in crate::SAMPLES.iter().enumerate() {
+            let engine = Some(crate::engine_columns(&crate::rr::tape(s)));
+            assert_eq!(c.parser.columns(s.as_bytes()).ok(), engine, "sample {i}, as rules");
+            assert_eq!(m.parser.columns(s.as_bytes()).ok(), engine, "sample {i}, as one machine");
+        }
+    }
+
     #[test]
     fn tape_is_the_engines() {
         assert_eq!(super::compile_error(), None);
@@ -250,9 +297,11 @@ pub mod tests {
     /// place, `.rr` had 858 states and 8,370 arms; shared, 438 and 4,014. A ratchet: lower it as
     /// the compiler improves. Named-only tapes (step 21) raised it from 234 and 2,225 (to 266 and 2,590): a group's
     /// body and an aggregate word's arguments are rules of their own, which drop their `,`.
+    /// Of the state machine (`Shape::Machine`); the product's shape, a function a rule, has its
+    /// own (`tier2_is_a_function_a_grammar_rule`).
     #[test]
     fn the_state_machine_shares_its_rules() {
-        let c = super::compiled().expect("compiles");
+        let c = super::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
         assert!(states <= 266, "{states} states");
@@ -381,6 +430,32 @@ pub mod tests {
         for (i, s) in crate::SAMPLES.iter().enumerate() {
             assert!(crate::compiled_tape(s).is_some(), "sample {i} refused");
         }
+    }
+
+    /// Each corpus file the compiled grammar takes, as rules and as one machine: the engine's
+    /// tape. Prints how many each takes.
+    #[test]
+    #[ignore = "the corpus: run by name"]
+    fn corpus_tapes_are_the_engines() {
+        let files = corpus();
+        let rules = crate::compiled().expect("compiles");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let mut taken = [0usize; 2];
+        let mut differ = Vec::new();
+        for (i, f) in files.iter().enumerate() {
+            let engine = crate::engine_columns(&crate::rr::tape(f));
+            for (k, c) in [rules, &machine].into_iter().enumerate() {
+                if let Ok(t) = c.parser.columns(f.as_bytes()) {
+                    taken[k] += 1;
+                    if t != engine {
+                        differ.push((i, k));
+                    }
+                }
+            }
+        }
+        eprintln!("{} files: rules take {}, one machine {}", files.len(), taken[0], taken[1]);
+        assert_eq!(differ, Vec::new(), "(file, shape) whose tape is not the engine's");
+        assert_eq!(taken[0], taken[1], "the shapes take the same files");
     }
 
     /// `tapes` over the corpus as one batch equals `tape` file by file. Prints the time.

@@ -143,23 +143,32 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         }
     };
     let successors = |pc: usize| step(pc, true);
-    // From a `PUSH`, no `RETURN` before a `TOKEN`.
+    // From a `PUSH`, no `RETURN` before a `TOKEN`; but a `RETURN m=0` after a `SPAN`: the call
+    // took the token, and its return lands on the caller's `TOKEN`, which takes the next. (A
+    // call that takes no token itself, a function a rule's, goes to its callee's start, whose arm
+    // takes it.) A `RETURN m=1` switches on the token again: a `TOKEN` must come first.
     for (pc, &w) in words.iter().enumerate() {
         if split(w).0 != PUSH {
             continue;
         }
-        let mut seen = vec![false; words.len()];
-        let mut todo = vec![pc];
-        while let Some(q) = todo.pop() {
+        // Each place, seen before or after a `SPAN`.
+        let mut seen = vec![[false; 2]; words.len()];
+        let mut todo = vec![(pc, false)];
+        while let Some((q, spanned)) = todo.pop() {
+            let spanned = spanned || split(words[q]).0 == SPAN;
             for n in step(q, false) {
                 if n >= words.len() {
                     return Err(Error::InvalidTarget(q));
                 }
-                if split(words[n]).0 == RETURN {
+                let (op, mode, _) = split(words[n]);
+                if op == RETURN {
+                    if spanned && mode == 0 {
+                        continue;
+                    }
                     return Err(Error::NonProgressingCycle(n));
                 }
-                if !std::mem::replace(&mut seen[n], true) {
-                    todo.push(n);
+                if !std::mem::replace(&mut seen[n][usize::from(spanned)], true) {
+                    todo.push((n, spanned));
                 }
             }
         }
@@ -607,5 +616,52 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
             _ => validate_word(program, pc, opcode, mode, operand)?,
         }
     }
-    validate(program)
+    validate(program)?;
+    validate_rules(program)
+}
+
+/// Tier 2's rules (`Words::rules`), when it has them: from place 0, rising, within the words;
+/// every word goes on within its own rule (a `PUSH` to its return's places, and its next word,
+/// a `GOTO`), but for that `GOTO`: a call's, to its callee in any rule. So a rule is a
+/// function, and a rule's code reaches another's by its calls alone.
+pub fn validate_rules(program: &Words) -> Result<(), Error> {
+    let (rules, words) = (&program.rules, &program.words);
+    if rules.is_empty() {
+        return Ok(());
+    }
+    let n = words.len();
+    if rules[0] != 0 || rules.windows(2).any(|w| w[0] >= w[1]) || rules.last().is_some_and(|&r| usize::from(r) >= n) {
+        return Err(Error::InvalidTarget(0));
+    }
+    let rule_of = |pc: usize| rules.partition_point(|&s| usize::from(s) <= pc) - 1;
+    let target = |t: u16| usize::from(t);
+    for pc in 0..n {
+        let (op, mode, operand) = split(words[pc]);
+        let after_push = pc > 0 && split(words[pc - 1]).0 == PUSH;
+        let next: Vec<usize> = match op {
+            STOP | ACCEPT | RETURN => vec![],
+            // A call's `GOTO`: to its callee, in any rule.
+            GOTO if after_push => vec![],
+            GOTO => vec![target(operand)],
+            SWITCH => {
+                let s = &program.switches[usize::from(operand)];
+                s.targets.iter().chain([&s.end]).filter(|&&t| t != REFUSE).map(|&t| target(t)).collect()
+            }
+            PUSH => {
+                if split(*words.get(pc + 1).ok_or(Error::InvalidTarget(pc))?).0 != GOTO {
+                    return Err(Error::InvalidTarget(pc));
+                }
+                vec![target(operand), target(operand) + 1, pc + 1]
+            }
+            TOKEN => vec![pc + 1],
+            WORD_IS if mode != 0 => vec![pc + 1, pc + 2],
+            FLAG if mode == 2 => vec![pc + 1, pc + 2],
+            MARK | ROW => vec![pc + 1, pc + 2],
+            _ => vec![pc + 1],
+        };
+        if next.into_iter().any(|t| t < n && rule_of(t) != rule_of(pc)) {
+            return Err(Error::InvalidTarget(pc));
+        }
+    }
+    Ok(())
 }

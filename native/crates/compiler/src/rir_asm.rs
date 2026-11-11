@@ -403,6 +403,10 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
         }
         "switch" => switch_row(parts, line)?,
         "reading" => reading_row(parts, line)?,
+        "rule" => {
+            index(line, parts.rules.len(), "rule")?;
+            parts.rules.push(line.number("@")?);
+        }
         "provisional" => {
             let f: u16 = line.number("#")?;
             parts.readings.provisional.push(f);
@@ -629,6 +633,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
         switch_rows(out, at, s);
     }
     reading_rows(out, &program.readings);
+    crate::rir_text::rule_rows(out, &program.rules);
 }
 
 /// Each block program's rows (`block::block_rows`).

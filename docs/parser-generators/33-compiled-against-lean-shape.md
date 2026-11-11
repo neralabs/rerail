@@ -229,30 +229,90 @@ Two tries were measured and dropped:
   each call stores the values and loads them back, and the joins spill them.
   The state stays in memory, one register away.
 
+## A function a grammar rule, from the grammar
+
+Before this step, tier 2's rules were found after the fact,
+in one state machine the compiler had already built.
+Now the compiler builds them from the Bitlex grammar.
+The state machine stays; it is the shape for small grammars.
+
+- **The rules.** Each rule or choice with two inner positions or more
+  becomes a level of its own: 55 for `.rr`.
+  Its states are its own; Moore merging never joins two rules' states.
+- **The table.** The program holds each rule's first word
+  (one `rule N @P` row of the text).
+  The verifier refuses a jump from one rule into another;
+  only a call (`PUSH`, then its `GOTO`) crosses.
+  Cranelift makes each rule one function.
+- **A call takes no token.** In the state machine, a call site
+  holds a copy of the callee's first arms.
+  Now its arm opens the callee's node and goes to the callee's start,
+  which switches on the token itself, as a recursive-descent parser does.
+  The callee is entered at its first token instead where:
+  - the call's field goes to the callee's first node;
+  - the callee may begin with a mark;
+  - its first token merges into the leaf before it.
+- **Which shape.** `Shape::Auto` keeps one machine up to 64 states,
+  about simdjson's size; JSON stays a machine.
+  `.rr` is compiled as rules.
+
+Two fixes it needed, each also a case the machine never met:
+
+- **A mark's end.** A rule's last state may take no token.
+  It closes its node at the end of the token just taken.
+  After a mark nothing was taken, so it now closes
+  at the end of the last token taken.
+- **Marks a callee tests.** A call goes straight to the callee's switch
+  only where the caller has tested every mark the callee tests.
+  Elsewhere it goes in just past the callee's `TOKEN`, so the callee
+  tests its own marks.
+
+The numbers, the least of 7 rounds over the 1,360 corpus files
+(the instructions and cycles of tier 2):
+
+| Shape | Rules | States | Words | Machine code | Instructions | Cycles |
+|---|---|---|---|---|---|---|
+| One machine | (cut after) | 266 | 12,085 | 175,768 | 447M | 87M |
+| A function a rule | 55 | 371 | 13,119 | 165,529 | 484M | 95M |
+| The lean parser (whole) | 45 | | | about 12,000 | 356M | 69M |
+
+Both shapes give the engine's tape on every file they take,
+and they take the same files.
+
+The structure is now the lean parser's, but each function is still too big.
+A third of the words are `GOTO`s, and a seventh are keyword tests:
+a state that may see a word compares it with each keyword in turn.
+In the lean parser, a rule switches once on the token's code.
+
 ## What to build next
 
-1. **Marks from the records** (3, 7).
+1. **Keywords by their code.** Tier 1's records hold each word's code.
+   A state switches on the code once,
+   not one `SPAN` and `WORD` test a keyword (3,680 words of 13,119).
+2. **Fewer jumps.** A `GOTO` to a `GOTO`, and a `GOTO` to the next word, go.
+   Small arms are copied into their states.
+3. **Marks from the records** (3, 7).
    `MARK` still tests tier 1's bit masks: 42 instructions a token.
    Tier 1 still finds keywords a byte at a time, for those marks.
    A mark becomes a bit of the record, or a look at the next record's code.
    Then the keyword masks leave tier 1: about 180 of its 865 operations a block.
-2. **A cheaper `TOKEN`.** 61 instructions:
+4. **A cheaper `TOKEN`.** 61 instructions:
    three column loads, a choice at the stream's end, three room checks,
    and eight fields stored.
    The lean parser reads a record and moves a pointer.
    - An end record, a kind of its own, in place of the choice.
    - The room checked once for each rule's call, not at each token.
    - Fewer fields: a token's start, end and limit are its record's, read where used.
-3. **The state across calls in registers.** The token's place and the tape's end
+5. **The state across calls in registers.** The token's place and the tape's end
    passed to a rule and given back by it (a call's arguments and results),
    not stored and loaded around each call.
-4. **The record pass into the extract pass.** The kind and the word read
+6. **The record pass into the extract pass.** The kind and the word read
    where tier 1 writes the starts, as the lean lexer does, not in a pass of their own.
    For JSON, the second stream costs 124 instructions a block;
    a record with no end for a one-byte token would save it.
-5. **Small functions.** 244 of the 435 are one or two words: a tail call on.
+7. **Small functions.** 244 of the 435 are one or two words: a tail call on.
    Code: 175,768 machine instructions (15,740 stack loads and stores);
    the lean parser is about 12,000.
    A piece that small is copied into its callers, not called.
-6. **Switches on the kind.** 48 instructions each.
+8. **Switches on the kind.** 48 instructions each.
    Kinds numbered so a switch's targets are few runs, and the hot arm first.

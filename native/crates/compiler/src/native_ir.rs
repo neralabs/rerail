@@ -341,6 +341,8 @@ pub struct Structure {
     /// Tier 2's switch tables (`SWITCH`).
     pub switches: Vec<crate::stream_ir::ByteSwitch>,
     pub readings: crate::stream_ir::Readings,
+    /// Tier 2's rules (`Words::rules`): each rule's first place.
+    pub rules: Vec<u16>,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
     pub output: FunctionRef,
@@ -500,6 +502,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         strings: program.strings.clone(),
         switches: program.switches.clone(),
         readings: program.readings.clone(),
+        rules: program.rules.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,

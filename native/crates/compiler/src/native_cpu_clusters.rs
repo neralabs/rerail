@@ -255,7 +255,8 @@ pub fn by_states(native: &Structure) -> Cut {
     Cut { of, count, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false, calls: false }
 }
 
-/// One function a grammar rule (docs/parser-generators/33-compiled-against-lean-shape.md): a
+/// One function a grammar rule (docs/parser-generators/33-compiled-against-lean-shape.md): the
+/// program's rules where it has them (`Words::rules`). A state machine's are found: a
 /// rule is what a call (`PUSH`) runs, from the word after it (its callee, past `GOTO`s) to the
 /// `RETURN`s it reaches, and the file's start is one too. Inside a rule, a call goes on at its
 /// return's place (`Cut::calls`: the callee is called natively).
@@ -271,6 +272,13 @@ pub fn by_rules(native: &Structure) -> Cut {
     if n == 0 {
         return Cut { calls: true, ..Cut::one(0) };
     }
+    // A program with its rules (`Words::rules`, a function a grammar rule from the grammar):
+    // each rule a function, as the program says (the verifier checked only calls cross).
+    if !native.rules.is_empty() {
+        let of = (0..n).map(|pc| (native.rules.partition_point(|&s| usize::from(s) <= pc) - 1) as u32).collect();
+        return Cut { of, count: native.rules.len() as u32, calls: true, ..Cut::one(n) };
+    }
+    // Else a state machine's rules, found: from each call's callee.
     let mut entries: BTreeSet<usize> = std::iter::once(0)
         .chain((0..n).filter(|&pc| matches!(native.structural[pc].operation, crate::native_ir::StructuralOperation::Push { .. })).map(|pc| callee(native, pc)))
         .filter(|&e| e < n)
