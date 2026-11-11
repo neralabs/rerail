@@ -3712,8 +3712,10 @@ fn run_observed(
         let modes = modes.to_owned();
         let cone = crate::threads::beside("the cone of requests", move || -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             let db2 = Connection::open(&db_path)?;
-            db2.execute_batch("PRAGMA synchronous=OFF")?;
-            db2.execute("ATTACH ?1 AS x", [x_path.to_string_lossy()])?;
+            let statements = Statements::on_as(&db2, ".cone");
+            statements.enter("cone");
+            // When SQL first runs on it (`vtab::setup_now`), as the run's.
+            crate::code_rule_dsl::facts::vtab::defer_setup(&db2, &format!("PRAGMA synchronous=OFF; ATTACH '{}' AS x;", x_path.to_string_lossy().replace('\'', "''")));
             crate::code_rule_dsl::logic::native::register(&db2)?;
             crate::code_rule_dsl::logic::native::register_symbols(&db2)?;
             let modules = Modules::default();
@@ -5489,9 +5491,11 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
 ///
 /// `RDL_STMTS=<file>`: also each statement's cost at its end (`SQLITE_TRACE_PROFILE`): its time and SQLite's own
 /// counters (VM steps, full-scan steps, sorts, automatic-index rows), summed by statement text and written to `<file>`
-/// as tab-separated rows (phase, runs, ms, vm steps, full-scan steps, sorts, autoindex rows, text).
+/// as tab-separated rows (phase, runs, ms, vm steps, full-scan steps, sorts, autoindex rows, text); another connection's
+/// (`on_as`) to `<file><suffix>`.
 pub(super) struct Statements {
     db: *mut rusqlite::ffi::sqlite3,
+    suffix: &'static str,
     state: Box<StatementState>,
     /// The profile's span of the phase entered last (`logic::profile`).
     span: std::cell::RefCell<Option<crate::code_rule_dsl::logic::profile::Span>>,
@@ -5504,6 +5508,9 @@ struct StatementState {
 }
 impl Statements {
     pub(super) fn on(db: &Connection) -> Self {
+        Self::on_as(db, "")
+    }
+    pub(super) fn on_as(db: &Connection, suffix: &'static str) -> Self {
         use rusqlite::ffi;
         unsafe extern "C" fn trace(event: u32, state: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
             // SAFETY: the state outlives the callback (removed on drop).
@@ -5552,7 +5559,7 @@ impl Statements {
         // SAFETY: the connection is live for the run; the state is boxed (a stable address) and outlives the callback.
         let db = unsafe { db.handle() };
         unsafe { ffi::sqlite3_trace_v2(db, mask, Some(trace), std::ptr::from_ref(&*state).cast_mut().cast()) };
-        Statements { db, state, span: Default::default() }
+        Statements { db, suffix, state, span: Default::default() }
     }
     pub(super) fn count(&self) -> usize {
         self.state.count.load(std::sync::atomic::Ordering::Relaxed)
@@ -5577,6 +5584,8 @@ impl Drop for Statements {
                 .iter()
                 .map(|((phase, sql), [n, ns, vm, scan, sort, auto])| format!("{phase}\t{n}\t{:.3}\t{vm}\t{scan}\t{sort}\t{auto}\t{sql}\n", *ns as f64 / 1e6))
                 .collect();
+            let mut file = file;
+            file.push(self.suffix);
             let _ = std::fs::write(file, text);
         }
     }

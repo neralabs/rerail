@@ -5693,6 +5693,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         .chain(prog.outputs.iter().map(String::as_str))
         .chain(prog.facts.keys().map(String::as_str))
         .collect();
+    let produced_rels = super::answers::produced(prog);
     for (rel, cols) in &prog.decls {
         if prog.inputs.contains(rel) || run.views.contains(rel) || !named.contains(rel.as_str()) {
             continue;
@@ -5719,14 +5720,19 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         let create = format!("CREATE TEMP TABLE {}({names}, PRIMARY KEY ({key})) WITHOUT ROWID", crate::code_rule_dsl::logic::sql::ident(rel));
         // A rule's head is made when SQL first needs it; a relation of facts alone, or of neither, now.
         // (Over atoms: T's extension, over text, reads its relations' tables itself.)
-        if atoms && rules_by.contains_key(rel.as_str()) && prog.facts.get(rel).is_none_or(|f| f.is_empty()) {
+        // A request's produced relation too: its answers go to the engine's component, or to its table (made then).
+        if atoms && (rules_by.contains_key(rel.as_str()) || produced_rels.contains_key(rel.as_str())) && prog.facts.get(rel).is_none_or(|f| f.is_empty()) {
             run.pending.insert(rel.clone(), create);
             continue;
         }
         // A relation of stated facts alone is held in the engine, as any relation is, when the run has it: its
         // facts are not loaded into a SQL table inside the run's waves (decision 0104). SQL that reads it has it made
         // then (`materialize`).
-        if atoms && !native.is_empty() && !cols.is_empty() && prog.facts.get(rel).is_some_and(|f| !f.is_empty()) && !rules_by.contains_key(rel.as_str()) && !prog.lattice.contains_key(rel) {
+        // A relation of neither (`env` with no settings) is held empty, unless a request's answers or a native operator
+        // fill it.
+        let stated = prog.facts.get(rel).is_some_and(|f| !f.is_empty());
+        let empty = !stated && !produced_rels.contains_key(rel.as_str()) && !prog.natives.contains_key(rel);
+        if atoms && !native.is_empty() && !cols.is_empty() && (stated || empty) && !rules_by.contains_key(rel.as_str()) && !prog.lattice.contains_key(rel) {
             let facts = prog.facts.get(rel).map(Vec::as_slice).unwrap_or_default();
             let texts: Vec<&str> = facts.iter().flatten().filter_map(|v| if let Value::Str(s) = v { Some(s.as_str()) } else { None }).collect();
             let mut ids = super::native::intern_batch(db, texts.iter().copied())?.into_iter();
@@ -6150,6 +6156,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 }
                 let width = prog.decls[rel].len();
                 let marks = vec!["?"; width].join(", ");
+                run.ensure(std::slice::from_ref(rel))?;
                 let mut insert = db.prepare(&format!("INSERT OR IGNORE INTO {} VALUES ({marks})", crate::code_rule_dsl::logic::sql::ident(rel)))?;
                 for row in &rows {
                     insert.execute(rusqlite::params_from_iter(row.iter()))?;
@@ -6385,9 +6392,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // A view that stays (an output, a relation kept for the caller, or one they read) is made now, after the last
     // wave, for its readers' SQL; one no SQL read was never made (decision 0104).
     // A view kept only for a session (`inputs.kept`) that a native join read in place (`Run::in_place`) is not made:
-    // a session reads a view of one input from the input (decision 0090), not from SQL. An output's or a gate's is.
+    // a session reads a view of one input from the input (decision 0090), not from SQL. An output's is. A gate's is
+    // read inside the native fixpoint, as any relation of it (in place, `setfix::view`), and not after it.
     let read_after: BTreeSet<&String> = {
-        let mut read: BTreeSet<&String> = prog.outputs.iter().chain(&gated).collect();
+        let mut read: BTreeSet<&String> = prog.outputs.iter().collect();
         loop {
             let more: Vec<&String> = prog.rules.iter().filter(|r| read.contains(&r.head.rel) && run.views.contains(&r.head.rel)).flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| &a.rel)).filter(|r| !read.contains(r)).collect();
             if more.is_empty() {

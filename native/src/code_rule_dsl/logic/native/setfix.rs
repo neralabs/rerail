@@ -765,7 +765,7 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
                         }
                     }
                     Start::From(sql) => {
-                        let rows = read_sql(conn, sql, &rel.types.clone(), &mut syms)?;
+                        let rows = match bound_rows(conn, sql, rel.types.as_slice(), &mut syms)? { Some(rows) => rows, None => read_sql(conn, sql, &rel.types.clone(), &mut syms)? };
                         rel.reserve(rows.len());
                         for row in rows { rel.push(&row); }
                     }
@@ -2955,6 +2955,23 @@ fn input_of(conn: &Connection, spec: &InputKey, syms: &mut Interner) -> Result<A
     }
     keep(&rel);
     Ok(rel)
+}
+
+/// The rows of `sql`, `SELECT <cols> FROM main.<input>[ WHERE …]` over a bound input, read from the input where it is
+/// held (`view`), each cell as SQL reads it (`read_value`). `None` for any other query.
+fn bound_rows(conn: &Connection, sql: &str, types: &[u8], syms: &mut Interner) -> Result<Option<Vec<Vec<i64>>>> {
+    let Some((cols, table)) = sql.strip_prefix("SELECT ").and_then(|s| s.split_once(" FROM ")) else { return Ok(None) };
+    let Some(v) = table.starts_with("main.").then(|| view(conn, table, cols)).flatten() else { return Ok(None) };
+    let ids: Box<dyn Iterator<Item = usize>> = match &v.ids { Some(ids) => Box::new(ids.iter().map(|&r| r as usize)), None => Box::new(0..v.src.len()) };
+    let mut rows = Vec::with_capacity(v.ids.as_ref().map_or(v.src.len(), Vec::len));
+    for r in ids {
+        let mut row = Vec::with_capacity(types.len());
+        for (&c, &t) in v.cols.iter().zip(types) {
+            row.push(read_value(ValueRef::from(&v.src.cell(r, c)), t, syms).map_err(|e| err(format!("{table}: {e}")))?);
+        }
+        rows.push(row);
+    }
+    Ok(Some(rows))
 }
 
 /// A base input over a bound vtab, read in place: `main.<table>` with `<col> = <int>` filters (joined by AND), its
