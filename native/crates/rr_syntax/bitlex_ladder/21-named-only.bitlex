@@ -62,6 +62,9 @@ class c_x       = 'x'
 class c_s       = 's'
 class c_r       = 'r'
 class c_e       = 'e'
+class c_l       = 'l'
+class c_c       = 'c'
+class c_y       = 'y'
 class c_v       = 'v'
 class c_m       = 'm'
 class c_a       = 'a'
@@ -269,6 +272,11 @@ mark fix_on      = fix_w & next(id_ahead, 3)
 mark suppress_on = suppress_w & next(id_str_ahead, 8)
 mark options_on  = options_w & next(brace_ahead, 7)
 mark over_on     = over_w & next(brace_ahead, 4)
+# `policy` after a statement's `.`, then a `{`: a policy document, whose `.` is implied; any
+# other `.policy` is a setting's, whose `.` is stored.
+mask policy_w    = id_first & c_p & next(c_o) & next(c_l, 2) & next(c_i, 3) & next(c_c, 4) & next(c_y, 5) & ~next(ident, 6)
+mask after_dot   = fill(code & dot & p_start, starts_g)
+mark policy_on   = policy_w & prev(after_dot) & next(brace_ahead, 6)
 # A `{` around one name: a column's name, not its raw text.
 mark one_name    = code & lbrace & next(back_fill(id_rb, solid))
 # A `(` whose next token is `)`.
@@ -301,17 +309,19 @@ tree rr {
   node include          = '#include' path: string
   # A setting's arguments to its line's end; a JSON object ends it.
   # `.policy`: a setting, or before a `{` a policy document.
+  # A setting's `.` is stored: its arguments may hold a `.`. A directive's is dropped, but a
+  # declaration's and a functor's, whose modifiers may hold one.
   node setting          = '.' (directive
-                              | line (directive | drop name: identifier | drop name: ('policy' as identifier) [policy_tail])
-                              | drop name: identifier (argument: word | setting_punctuation)* (argument: json | newline)
-                              | drop name: ('policy' as identifier) (policy_tail | (argument: word | setting_punctuation)+ (argument: json | newline) | newline))
+                              | line (directive | name: identifier | name: ('policy' as identifier))
+                              | name: identifier (argument: word | setting_punctuation)* (argument: json | newline)
+                              | name: ('policy' as identifier) ((argument: word | setting_punctuation)+ (argument: json | newline) | newline))
   # A word of a setting's, a declaration's tail: a leaf with a field.
   choice word           = value | code_literal
   # Each directive: the node opened as a setting at the `.` is its node, the word one leaf with
   # the `.`.
-  choice directive      = declaration_tail | violation_tail | edit_tail | functor_tail | type_tail | io_tail | lattice_tail | pragma_tail
+  choice directive      = policy_tail | declaration_tail | violation_tail | edit_tail | functor_tail | type_tail | io_tail | lattice_tail | pragma_tail
   choice edit_tail      = drop retag edit_declaration 'edit' name: identifier columns: column_list
-  choice functor_tail   = drop retag functor_declaration 'functor' name: identifier columns: column_list ':' return_type: functor_type (modifier: word | punctuation)* line
+  choice functor_tail   = retag functor_declaration 'functor' name: identifier columns: column_list ':' return_type: functor_type (modifier: word | punctuation)* line
   # A type of its own level: a `<` after its name is its own, not a modifier's (the engine reads
   # the type first).
   node functor_type nested = retag type name: identifier ['<' (drop argument: identifier '>' | angle_close)]
@@ -339,7 +349,7 @@ tree rr {
                         | parenthesized_expression
   node lattice_functor  = retag functor_call '@' function: identifier [arguments: argument_list]
   # The setting's `.` and name, one `.policy` leaf; the node a policy document.
-  choice policy_tail    = drop retag policy_document document: json_document
+  choice policy_tail    = policy_on drop retag policy_document 'policy' document: json_document
   # JSON, every token merged into the document's leaf.
   choice json_document nested = '{' as json_object [json_member (merge json_object ',' json_member)*] merge json_object '}'
   choice json_member    = merge json_object string merge json_object ':' json_value
@@ -350,7 +360,7 @@ tree rr {
   choice json_inner_array nested = merge json_object '[' [json_value (merge json_object ',' json_value)*] merge json_object ']'
   refuse json_bad in json_document json_inner_object json_inner_array
   # A `.decl`: the node opened as a setting at the `.` is a declaration.
-  choice declaration_tail = drop retag declaration 'decl' name: identifier columns: column_list (modifier: word | punctuation)* line
+  choice declaration_tail = retag declaration 'decl' name: identifier columns: column_list (modifier: word | punctuation)* line
   # A `.violation`: the node opened as a setting at the `.` is one. It goes on while a part
   # follows.
   choice violation_tail = drop retag violation_declaration 'violation' name: identifier columns: column_list (code_part | tag_part)* message: string (fix_on fix: fix_line | suppress_on suppress: suppress_line | options_on 'options' options: json)*
@@ -469,7 +479,8 @@ tree rr {
   remember aggregate_word
   choice aggregate_word = 'min' | 'max' | 'sum' | 'mean' | 'join'
   # The aggregate around its word, which takes its own kind back.
-  choice count_agg      = wrap aggregate operator as 'count' ':' '{' body: body '}'
+  # `count` with a body alone: implied, so dropped once the aggregate holds it.
+  choice count_agg      = wrap aggregate _ drop ':' '{' body: body '}'
   choice word_agg      = wrap aggregate operator as aggregate_word aggregated
   # What a value's aggregate holds after its word.
   choice aggregated     = value: with no_named agg_value ['by' ('(' key: without no_named term (',' key: without no_named term)* ')' | key: with no_named agg_value)] ['sep' separator: string] ':' '{' body: body '}'
@@ -498,7 +509,8 @@ tree rr {
   # The tokens the grammar implies: no leaf.
   implied include '#include'
   implied edit_tail 'edit'
-  implied functor_tail 'functor' ':'
+  implied functor_tail 'functor'
+  implied policy_tail 'policy'
   implied functor_type '>'
   implied type_tail 'type'
   implied io_tail ','
@@ -512,7 +524,6 @@ tree rr {
   implied violation_tail 'violation' 'options'
   implied code_part 'in'
   implied braced_column '{' '}'
-  implied fix_line 'fix'
   implied suppress_line 'suppress' ',' 'over' '{' '}'
   implied column_list '(' ',' ')'
   implied column ':'
@@ -531,8 +542,8 @@ tree rr {
   implied functor_call '@'
   implied aggregate_literal ':' '{' '}'
   implied count_agg ':' '{' '}'
-  implied aggregated 'by' 'sep' ':' '{' '}' ','
+  implied aggregated ':' '{' '}' ','
   implied word_in_value ':' '{' '}'
-  hidden line newline json_bad fix_on suppress_on options_on over_on one_name empty_parens
+  hidden line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens
   extra comment
 }

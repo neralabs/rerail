@@ -799,14 +799,22 @@ impl<'s> Parser<'s> {
             self.open(kind);
             match tape::directive(&d).filter(|_| kind != Kind::Setting) {
                 // A directive's `.word` is implied by its kind, but `.input` and `.output`, which share one.
+                // Under a kind whose tail may hold any punctuation (a declaration's, a functor's
+                // modifiers), a `.` is not implied anywhere: its `.` is stored, its word implied.
                 Some(keyword) => {
                     if kind == Kind::IoDirective {
                         self.leaf_over(keyword, self.i, self.i + 2);
+                        self.i += 2;
+                    } else if matches!(kind, Kind::Declaration | Kind::FunctorDeclaration) {
+                        self.anon();
+                        self.implied();
+                    } else {
+                        self.i += 2;
                     }
-                    self.i += 2;
                 }
+                // A setting's `.`: stored, as its arguments may hold a `.`.
                 None => {
-                    self.implied();
+                    self.anon();
                     self.bump_as(Kind::Identifier);
                     self.field(Field::Name);
                 }
@@ -839,7 +847,8 @@ impl<'s> Parser<'s> {
                 let name = self.id()?;
                 self.field(Field::Name);
                 self.columns()?;
-                self.p(":")?;
+                // Stored: a functor's modifiers may hold a `:`.
+                self.p_stored(":")?;
                 self.ty()?;
                 self.field(Field::ReturnType);
                 let at = self.last_line();
@@ -978,8 +987,9 @@ impl<'s> Parser<'s> {
                 loop {
                     if self.is_id("fix") && matches!(self.peek_at(1), Tok::Id(_)) {
                         self.open(Kind::FixLine);
-                        self.implied();
-                        // `safe` is stored: nothing else says it is there.
+                        // `fix` is stored, as `fix safe` is stored whole; and `safe`, as nothing
+                        // else says it is there.
+                        self.anon();
                         if self.is_id("safe") && matches!(self.peek_at(1), Tok::Id(_)) {
                             self.anon();
                         }
@@ -1238,8 +1248,13 @@ impl<'s> Parser<'s> {
     /// An aggregate, from its operator word `op`: `count : { … }`, `min x : { … }`, `join x by k sep "," : { … }`.
     fn aggregate(&mut self, op: String) -> Result<Term, Error> {
         self.open(Kind::Aggregate);
-        self.anon();
-        self.field(Field::Operator);
+        // `count` is implied: the only aggregate with a body alone. Any other word is stored.
+        if op == "count" && self.is_p_at(1, ":") {
+            self.implied();
+        } else {
+            self.anon();
+            self.field(Field::Operator);
+        }
         let over = if self.is_p(":") {
             None
         } else {
@@ -1248,9 +1263,10 @@ impl<'s> Parser<'s> {
             Some(Box::new(over))
         };
         let (mut by, mut sep) = (Vec::new(), None);
-        // `by` and `sep` are implied; the parentheses around keys are stored (`by (k)` is not `by k`).
+        // `by` and `sep` are stored (`by (k)` is stored whole, so `by` is wherever it stands); the
+        // parentheses around keys too (`by (k)` is not `by k`).
         if self.is_id("by") {
-            self.implied();
+            self.anon();
             if self.is_p("(") {
                 self.anon();
                 by = self.list(")", Field::Key, Self::term)?;
@@ -1261,7 +1277,7 @@ impl<'s> Parser<'s> {
             }
         }
         if self.is_id("sep") {
-            self.implied();
+            self.anon();
             sep = Some(self.string()?);
             self.field(Field::Separator);
         }

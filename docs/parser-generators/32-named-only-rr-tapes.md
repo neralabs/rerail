@@ -51,9 +51,9 @@ not only in the corpus.
 | `group`, `parenthesized_expression`, `io_relation` | `(`, `)` |
 | `column`, `named_argument`, `functor_declaration` | `:` |
 | `negation`, `functor_call`, `pattern_match`, `unary_expression` | `!`, `@`, `~`, `-` |
-| the directives | `.decl`, `.edit`, `.functor`, `.type`, `.lattice`, `.pragma`, `.violation`, `.policy`, `#include`, a setting's `.` |
-| `.violation`'s parts | `code` before a string, `code {` … `}`, `tag {` … `}`, `fix` alone, `suppress`, `over {` … `}`, the `,` between rules |
-| `aggregate` | `: {` and `}`, `by` alone, `sep` alone, `,` between keys |
+| the directives | `.edit`, `.type`, `.lattice`, `.pragma`, `.violation`, `.policy {`, `#include`; the word of `.decl` and `.functor` |
+| `.violation`'s parts | `code` before a string, `code {` … `}`, `tag {` … `}`, `suppress`, `over {` … `}`, the `,` between rules |
+| `aggregate` | `count` with a body alone, `: {` and `}`, `,` between keys |
 | `type` | `<` and `>` around an argument |
 | `lattice_declaration`, `lattice_operation` | `<`, `> {`, `}`, `->` |
 
@@ -65,6 +65,8 @@ not only in the corpus.
 | a head's `must`, `may` | none is shortest |
 | an aggregate's word (`count`, `min`, `max`, `sum`, `mean`, `join`) | several fit |
 | `fix safe`, `by (`, `) sep` | not the shortest word: the gap is stored whole |
+| `fix`, `by`, `sep` alone | each is stored whole somewhere under its kind, so everywhere (below) |
+| a setting's, a `.decl`'s and a `.functor`'s `.`; a `.functor`'s `:` | their kinds' modifiers and arguments may be any punctuation |
 | `.input`, `.output` | two fit |
 | a type's `< >` with no argument | the shortest is none |
 | a setting's and a declaration's punctuation | any punctuation fits |
@@ -165,18 +167,37 @@ A `RETURN` now has 68 places to go back to, up from 55,
 and costs 219 instructions where it cost 180.
 That would go with a native call and `ret` (page 30).
 
-## Against RER-131's later rule
+## The two classes of token
 
-RER-131's last commit splits tokens in two classes, by text:
+RER-131 splits tokens in two classes, by text:
 
 - a **delimiter** (brackets, `,` `;` `|` `<` `>`, quotes) is left out wherever its gap is implied;
 - any **other token** (keywords, operators, `:`, `.`, `=>`) is left out
-  only where its kind is implied in every gap it can stand in.
+  only where its parent's kind implies it in every gap it can stand in.
+  Where one gap of the kind holds it beside a choice, it is stored in every gap of the kind.
 
-Here the rule is per position.
-Under the later rule, `.rr` would store a few more tokens:
+`.rr` follows it. What that changes from the rule by gaps alone:
 
-- the unary `-`, since a binary `-` is stored;
-- the `:`, `.` and `!` that a setting's punctuation may also be.
+- `fix` is stored in every `fix_line`: `fix safe` is no implied word, so it is stored whole.
+- `by` and `sep` are stored in every aggregate, for the same reason (`by (k)`, `) sep`).
+- A setting's `.` is stored: its arguments may be any punctuation, `.` too.
+  So are a `.decl`'s and a `.functor`'s, for their modifiers, and a `.functor`'s `:`.
+  `decl` and `functor` stay implied.
+- `count` is implied: `count : { … }` is the only aggregate with a body alone.
+  The reader takes an aggregate with no `operator` as a `count`.
 
-None of them is read by the engine. Which rule `.rr` follows is open.
+`.policy {` is a policy document, whose `.` is implied;
+any other `.policy` is a setting's, whose `.` is stored.
+Bitlex knows which at the `.` by a tier-1 mark, `policy_on`:
+`policy` after a `.`, then a `{`.
+
+`native/crates/rr_syntax/tests/token_rule.rs` checks the rule on every `.rr` file.
+It lexes each file, finds each token's parent and whether the tape stores it,
+and groups the tokens into gaps.
+A gap's implied word is the only shortest word seen there.
+Where the grammar allows more than the corpus shows, the test says so itself:
+a setting's arguments and a declaration's modifiers may be any punctuation or none.
+
+After the change: 1,176,197 tape nodes, 33,492 anonymous tokens
+(19,245 more than the rule by gaps alone, nearly all `.decl`'s `.`).
+Tier 2's machine: 266 states, 2,590 arms.

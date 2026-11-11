@@ -1074,14 +1074,19 @@ impl Parser<'_> {
             // The keyword's kind: the directives' in their words' order.
             let keyword = Kind::DotDecl as u16 + u16::from(d.wrapping_sub(W_DECL));
             self.open(kind);
+            // A `.` is stored under a kind whose tail may hold any punctuation (a setting's, a
+            // declaration's, a functor's); a directive's word is implied, but `.input`/`.output`.
             if kind == Kind::Setting {
-                self.implied();
+                self.anon();
                 self.bump_as(Kind::Identifier);
                 self.field(Field::Name);
+            } else if kind == Kind::IoDirective {
+                self.leaf_over(keyword, self.i, self.i + 2);
+                self.i += 2;
+            } else if matches!(kind, Kind::Declaration | Kind::FunctorDeclaration) {
+                self.anon();
+                self.implied();
             } else {
-                if kind == Kind::IoDirective {
-                    self.leaf_over(keyword, self.i, self.i + 2);
-                }
                 self.i += 2;
             }
             self.directive(first, d, kind)?;
@@ -1164,7 +1169,7 @@ impl Parser<'_> {
                 self.id()?;
                 self.field(Field::Name);
                 self.columns()?;
-                self.p(COLON)?;
+                self.p_stored(COLON)?;
                 self.ty()?;
                 self.field(Field::ReturnType);
                 let at = self.last_line();
@@ -1249,7 +1254,7 @@ impl Parser<'_> {
         loop {
             if self.is_id(W_FIX) && self.is_id_at(1) {
                 self.open(Kind::FixLine);
-                self.implied();
+                self.anon();
                 if self.is_id(W_SAFE) && self.is_id_at(1) {
                     self.anon();
                 }
@@ -1458,14 +1463,19 @@ impl Parser<'_> {
 
     fn aggregate(&mut self) -> R<Call> {
         self.open(Kind::Aggregate);
-        self.anon();
-        self.field(Field::Operator);
+        // `count` with a body alone is implied.
+        if self.is_id(W_COUNT) && self.is_p_at(1, COLON) {
+            self.implied();
+        } else {
+            self.anon();
+            self.field(Field::Operator);
+        }
         if !self.is_p(COLON) {
             self.agg_part()?;
             self.field(Field::Value);
         }
         if self.is_id(W_BY) {
-            self.implied();
+            self.anon();
             if self.is_p(LPAREN) {
                 self.anon();
                 self.list(RPAREN, Field::Key, |p| p.term().map(|_| ()))?;
@@ -1476,7 +1486,7 @@ impl Parser<'_> {
             }
         }
         if self.is_id(W_SEP) {
-            self.implied();
+            self.anon();
             self.string()?;
             self.field(Field::Separator);
         }

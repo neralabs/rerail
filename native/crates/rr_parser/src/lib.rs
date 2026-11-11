@@ -229,15 +229,15 @@ pub mod tests {
     /// Tier 2's state machine is built once per rule, not once per place a rule is used: rules
     /// whose calls save states are calls (`grammar::shared`). With every rule inlined into each
     /// place, `.rr` had 858 states and 8,370 arms; shared, 438 and 4,014. A ratchet: lower it as
-    /// the compiler improves. Named-only tapes (step 21) raised it from 234 and 2,225: a group's
+    /// the compiler improves. Named-only tapes (step 21) raised it from 234 and 2,225 (to 266 and 2,590): a group's
     /// body and an aggregate word's arguments are rules of their own, which drop their `,`.
     #[test]
     fn the_state_machine_shares_its_rules() {
         let c = super::compiled().expect("compiles");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 265, "{states} states");
-        assert!(arms <= 2592, "{arms} arms");
+        assert!(states <= 266, "{states} states");
+        assert!(arms <= 2590, "{arms} arms");
     }
 
     /// The parse path is the compiled code's: the host functions around the two compiled calls

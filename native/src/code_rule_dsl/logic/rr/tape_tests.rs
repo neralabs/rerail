@@ -27,14 +27,16 @@ fn render(src: &str, nodes: &[Node]) -> String {
     out
 }
 
-/// Decision 0061's example, on a named-only tape (RER-131): the tokens the grammar implies (`.decl`, `(`, `,`, `:`,
-/// `:-`, `!`, `)`, `.`) are left out (`docs/parser-generators/32-named-only-rr-tapes.md`).
+/// Decision 0061's example, on a named-only tape (RER-131): the tokens the grammar implies (`decl`, `(`, `,`, `:`,
+/// `:-`, `!`, `)`, the clause's `.`) are left out (`docs/parser-generators/32-named-only-rr-tapes.md`). The
+/// declaration's `.` is stored: its modifiers may hold a `.`.
 #[test]
 fn the_decisions_example_has_the_decisions_tree() {
     let src = "// Calls of eval.\n.decl bad(n: node)\nbad(c) :- kind(c, \"call\"), !safe(c).\n";
     let expected = r#"source_file
   comment // Calls of eval.
   declaration
+    "."
     name: identifier bad
     columns: column_list
       column: column
@@ -80,15 +82,15 @@ r(x, y) :- (a(x) ; b(x)), y = -1, z = -x, n ~ `eval($X)`, w = count : { c(_) }, 
         "relation: io_relation\n      name: identifier b\n      parameters: raw_text IO=json, filename=\"x\"",
         "type_declaration\n    name: identifier T\n    definition: raw_text <: symbol",
         "code: code_column\n      column: identifier c\n      codes: string \"E[0-9]+\"",
-        "fix: fix_line\n      \"safe\"\n      relation: identifier rewrite\n      description: string \"Use x\"",
+        "fix: fix_line\n      \"fix\"\n      \"safe\"\n      relation: identifier rewrite\n      description: string \"Use x\"",
         "suppress: suppress_line\n      tool: identifier noqa\n      rule: string \"E501\"\n      rule: string \"E502\"\n      over: identifier n",
-        "setting\n    name: identifier mode\n    argument: identifier block",
+        "setting\n    \".\"\n    name: identifier mode\n    argument: identifier block",
         "literal: group\n        body: disjunction\n          alternative: conjunction",
         "right: number -1",
         "right: unary_expression\n          operand: variable x",
         "literal: pattern_match\n        subject: variable n\n        pattern: code_literal `eval($X)`",
-        "right: aggregate\n          operator: \"count\"\n          body: conjunction",
-        "right: aggregate\n          operator: \"join\"\n          value: variable v\n          key: variable i\n          separator: string \",\"",
+        "right: aggregate\n          body: conjunction",
+        "right: aggregate\n          operator: \"join\"\n          value: variable v\n          \"by\"\n          key: variable i\n          \"sep\"\n          separator: string \",\"",
         "right: binary_expression\n          left: functor_call\n            function: identifier f",
         "right: binary_expression\n            left: number 2\n            operator: \"*\"\n            right: number 3",
     ] {
@@ -161,7 +163,7 @@ fn every_rule_file_tapes_and_its_leaves_cover_it() {
         const IMPLIED: &[&str] = &[
             "(", ")", ",", ":", ":-", "=>", ".", ";", "!", "@", "~", "-", "{", "}", "<", ">", "->", "#include", "decl", "edit",
             "functor", "type", "lattice", "pragma", "violation", "policy", "code", "tag", "in", "fix", "suppress", "over",
-            "options", "by", "sep",
+            "options", "count",
         ];
         let mut at = 0;
         while at < src.len() {

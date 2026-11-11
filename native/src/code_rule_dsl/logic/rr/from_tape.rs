@@ -298,7 +298,8 @@ impl<'a> Tree<'a> {
             k if k == Kind::UnaryExpression as u16 => Term::Bin { op: "-", l: Box::new(Term::Num(0)), r: Box::new(self.term(self.one(t, Field::Operand)?)?) },
             k if k == Kind::ParenthesizedExpression as u16 => self.term(self.one(t, Field::Expression)?)?,
             k if k == Kind::Aggregate as u16 => Term::Agg {
-                op: self.text(self.one(t, Field::Operator)?).to_owned(),
+                // `count` is implied: the aggregate with a body alone.
+                op: self.get(t, Field::Operator).map_or("count", |o| self.text(o)).to_owned(),
                 over: self.get(t, Field::Value).map(|v| self.term(v).map(Box::new)).transpose()?,
                 by: self.all(t, Field::Key).map(|k| self.term(k)).collect::<Result<_, _>>()?,
                 sep: self.get(t, Field::Separator).map(|s| self.string(s)).transpose()?,
