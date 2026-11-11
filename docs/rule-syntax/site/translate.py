@@ -513,7 +513,7 @@ def passed_in_patterns(entries, helpers):
         h = e["head"].split("(")[0]
         if e.get("drop") or not inputs.get(h):
             continue
-        for x in inputs[h]:
+        for x in sorted(inputs[h]):
             def join(m, x=x):
                 k[0] += 1
                 return f"text({m.group(1)}, t_{x.lower()}{k[0]}), text({x}, t_{x.lower()}{k[0]})"
