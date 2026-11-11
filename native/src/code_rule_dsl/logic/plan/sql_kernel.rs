@@ -38,7 +38,7 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
                 TOP
             } else {
                 let mut ops =
-                    lattices::registered(run.db, l.lattice()).map_err(|e| Error::Plan(e.reason))?;
+                    lattices::registered(&run.db, l.lattice()).map_err(|e| Error::Plan(e.reason))?;
                 ops.after = l.widen;
                 let top = ops.top;
                 operations.insert(rel.clone(), ops);
@@ -87,7 +87,7 @@ pub(super) fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize>
         reads: vec![],
         sql: format!("INSERT OR IGNORE INTO new_{rel} {select}"),
     });
-    schedule::execute_existing(run.db, &p, 1024).map_err(|e| Error::Plan(e.to_string()))?;
+    schedule::execute_existing(&run.db, &p, 1024).map_err(|e| Error::Plan(e.to_string()))?;
     Ok(run.db.query_row(
         "SELECT coalesce(sum(rows),0) FROM wave_delta WHERE rel=?1",
         [rel],
@@ -176,6 +176,6 @@ pub(super) fn component(
         }
         step.sql = format!("INSERT OR IGNORE INTO new_{} {}", step.output, q.render());
     }
-    schedule::execute_existing(run.db, &emitted.program, 1024)
+    schedule::execute_existing(&run.db, &emitted.program, 1024)
         .map_err(|e| Error::Plan(e.to_string()))
 }

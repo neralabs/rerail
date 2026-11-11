@@ -844,10 +844,50 @@ fn rename_all(l: &Literal, to: &BTreeMap<String, String>) -> Literal {
     }
 }
 
+/// What the native strata observed during a corpus run (`observing`): kept across its chunks and parts, so a later
+/// chunk's choice prices each relation from the rows its join steps produced. The run's thread's, shared by the jobs
+/// its strata run as on other threads (decision 0113, `share_observed`): each stratum observes its own rules and
+/// relations.
+pub(in crate::code_rule_dsl) type SharedObserved = std::sync::Arc<parking_lot::RwLock<Option<Observed>>>;
+
 thread_local! {
-    /// What the native strata observed on this thread during a corpus run (`observing`): kept across its chunks and
-    /// parts, so a later chunk's choice prices each relation from the rows its join steps produced.
-    static OBSERVED: RefCell<Option<Observed>> = const { RefCell::new(None) };
+    static OBSERVED_AT: RefCell<SharedObserved> = RefCell::new(Default::default());
+}
+
+/// The observations as a cell: read (`borrow`, several at once) or written (`borrow_mut`).
+struct ObservedCell(SharedObserved);
+impl ObservedCell {
+    fn borrow(&self) -> parking_lot::RwLockReadGuard<'_, Option<Observed>> {
+        self.0.read_recursive()
+    }
+    fn borrow_mut(&self) -> parking_lot::RwLockWriteGuard<'_, Option<Observed>> {
+        self.0.write()
+    }
+}
+struct ObservedKey;
+impl ObservedKey {
+    fn with<R>(&self, f: impl FnOnce(&ObservedCell) -> R) -> R {
+        f(&ObservedCell(OBSERVED_AT.with(|a| a.borrow().clone())))
+    }
+}
+static OBSERVED: ObservedKey = ObservedKey;
+
+/// This thread's observations, for a job on another thread to enter.
+pub(in crate::code_rule_dsl) fn share_observed() -> SharedObserved {
+    OBSERVED_AT.with(|a| a.borrow().clone())
+}
+
+/// While the guard lives, this thread's strata observe into `to` (another thread's, `share_observed`).
+pub(in crate::code_rule_dsl) fn enter_observed(to: SharedObserved) -> impl Drop {
+    struct Entered(Option<SharedObserved>);
+    impl Drop for Entered {
+        fn drop(&mut self) {
+            if let Some(a) = self.0.take() {
+                OBSERVED_AT.with(|o| *o.borrow_mut() = a);
+            }
+        }
+    }
+    Entered(Some(OBSERVED_AT.with(|a| std::mem::replace(&mut *a.borrow_mut(), to))))
 }
 
 /// Observed join work and relations, each with the corpus nodes of the runs that observed it (summed), so a later
@@ -855,7 +895,7 @@ thread_local! {
 /// probe of it (the planner's units of work: `native.tsv`'s `steps_in_out`); per relation, its rows when its stratum
 /// ended and per column its distinct values and fanout (`Rel`).
 #[derive(Default)]
-struct Observed {
+pub(in crate::code_rule_dsl) struct Observed {
     rules: rustc_hash::FxHashMap<u64, (f64, f64)>,
     rels: rustc_hash::FxHashMap<String, Rel>,
     /// Per (rule, step pattern) and per step pattern alone (`pattern`), the rows into and out of the steps of that
@@ -1270,7 +1310,7 @@ mod tests {
         .unwrap();
         let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
         let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
-        let mut model = Model { docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+        let mut model = Model { docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&prog), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
         model.stats.nodes = 450_000.0;
         // Measured rows (an earlier chunk's), then distinct values by column.
         for (rel, rows, ndv) in [
