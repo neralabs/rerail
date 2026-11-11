@@ -33,6 +33,8 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/plan/corpus/constants.rs',
     # Unconditional ground readers must seed a demanded producer.
     'native/src/code_rule_dsl/logic/plan/demand.rs',
+    # Ground world requests publish their answers across the existing cone boundary.
+    'native/src/code_rule_dsl/logic/answers.rs',
     # Generic ordered BFS, on Final's existing native-relation boundary.
     'native/src/code_rule_dsl/logic/front.rs',
     'native/src/code_rule_dsl/logic/native.rs',

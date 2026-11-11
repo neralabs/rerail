@@ -185,6 +185,14 @@ pub(in crate::code_rule_dsl) fn split(prog: &Program) -> Option<Loading> {
     }
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
     let mut cone: BTreeSet<String> = prog.answers.keys().filter(|r| derived.contains(r.as_str())).cloned().collect();
+    // A request stated as facts has no rule to seed the cone. Its answers still
+    // belong to the cone and must be handed to their consumers in the rest.
+    for (request, answers) in &prog.answers {
+        if !derived.contains(request.as_str()) && prog.facts.get(request).is_some_and(|rows| !rows.is_empty()) {
+            cone.insert(request.clone());
+            cone.extend(answers.iter().cloned());
+        }
+    }
     let mut work: Vec<String> = cone.iter().cloned().collect();
     while let Some(rel) = work.pop() {
         for r in prog.rules.iter().filter(|r| r.head.rel == rel) {
