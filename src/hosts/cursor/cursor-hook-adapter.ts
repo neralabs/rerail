@@ -206,7 +206,7 @@ export async function handleCursorEvent(
   const descriptor = event.session ?? cursorSession(input);
   const path = pendingPath(storageRoot, "cursor", descriptor.sessionId);
   const transcript = () => ingestCursorTranscript(input, descriptor, eventLoop, storageRoot);
-  const transcriptOwnsText = hook !== "sessionStart" && await (lock === undefined ? transcript() : lock.kept(transcript));
+  const transcriptOwnsText = hook !== "sessionStart" && await keptBy(lock, transcript);
   const deliveries = transcriptOwnsText && (hook === "afterAgentResponse" || hook === "stop")
     ? []
     : await eventLoop.ingest(event);
@@ -220,6 +220,11 @@ export async function handleCursorEvent(
     default:
       return cursorAnswer(input, { hook, descriptor, path }, deliveries);
   }
+}
+
+/** Runs `work` while `lock` is kept, or as it is when there is no lock. */
+async function keptBy<T>(lock: SessionLock | undefined, work: () => Promise<T>): Promise<T> {
+  return await (lock === undefined ? work() : lock.kept(work));
 }
 
 /**
