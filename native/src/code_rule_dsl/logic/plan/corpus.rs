@@ -7307,10 +7307,13 @@ outer(f, x) :- named(x), encl(f, p), bound(p, x).
         };
         // Each run is a new process's as far as the cross-file part goes: no session, the store on disk. One with a
         // store of its own keeps nothing.
+        // Each scenario keeps its own store: relations are shared by identity across programs (0103), so a later
+        // scenario's first run would find clean those of an earlier one whose inputs have the same rows.
         let fresh = std::cell::Cell::new(0);
+        let scenario = std::cell::Cell::new(0);
         let run = |texts: &[&str], src: &std::path::Path, kept: bool| {
             let path = if kept {
-                base.join("kept.sqlite")
+                base.join(format!("kept{}.sqlite", scenario.get()))
             } else {
                 fresh.set(fresh.get() + 1);
                 base.join(format!("fresh{}.sqlite", fresh.get()))
@@ -7320,6 +7323,7 @@ outer(f, x) :- named(x), encl(f, p), bound(p, x).
             (report, findings())
         };
         let edit = |texts: &[&str], src: &std::path::Path, edits: &[(&str, &str)]| {
+            scenario.set(scenario.get() + 1);
             let (first, expected) = run(texts, src, true);
             let (ran, all) = first.cross_kept.expect("a run with a store keeps its cross-file part");
             assert_eq!(ran, all, "the first run evaluates every stratum");

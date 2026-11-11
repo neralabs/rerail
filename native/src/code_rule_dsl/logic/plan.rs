@@ -5835,7 +5835,10 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     for (&rel, rs) in rules_by {
         if native_reads.contains(rel) || written.contains(rel) { continue; }
         let [rule] = rs.as_slice() else { continue };
-        if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
+        // A gate's relations (a request asked, `ask_…`, and what it feeds) are written as the run decides them: a
+        // table, not a view.
+        let gated = prog.gates.iter().any(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps).any(|x| x == rel));
+        if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) || gated {
             continue;
         }
         let (h, b) = (&rule.head, &rule.body);
