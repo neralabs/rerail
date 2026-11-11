@@ -191,8 +191,14 @@ fail while an editor had the file open.
 - `replaceFile` writes the text to a new file beside the target, `<file>.<pid>.<uuid>.tmp`, created exclusively with
   the mode given, and renames it over the target. A reader sees the old file or the new one, and when any step fails
   the new file is removed and the old one stays.
-- `removeScratch` removes a temporary folder Rerail made with 10 retries and never throws: a folder Windows still holds
-  must not replace the result, or the error, of the work that used it. The system's temp cleanup takes what is left.
+- `removeWithRetry` removes a file or folder, trying again 10 times while a file in it is held, 5.5 s of waits in
+  all, then fails with an error that names the file and says another program held it open. It counts the tries
+  itself, each one `rm` with no retries of its own: `fs.promises.rm` repeats `maxRetries` at every level of the
+  folder, so one held file kept it trying for 67 s rather than 5.5 s, and each folder further down multiplies that
+  by 11. The updater's staging cleanup and `rerail install --remove` use it.
+- `removeScratch` removes a temporary folder Rerail made through `removeWithRetry` and never throws: a folder Windows
+  still holds must not replace the result, or the error, of the work that used it. The system's temp cleanup takes
+  what is left.
 - Set-up no longer deletes a coding agent's settings file before renaming the new one in, so a failed rename leaves
   the old file, not none.
 

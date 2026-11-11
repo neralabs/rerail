@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, realpath, rm, rmdir, unlink, writeFile } from "node:fs/promises";
-import { FOLDER_REMOVAL_RETRIES, renameWithRetry } from "../engine/file-replace.js";
+import { removeWithRetry, renameWithRetry } from "../engine/file-replace.js";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
@@ -322,7 +322,7 @@ async function deleteRulesAndHistory(home: string, dryRun: boolean, machine: Dae
   const failed: Array<{ path: string; reason: string }> = [];
   for (const { path, what, ledger } of remove) {
     try {
-      await rm(path, { recursive: true, force: true, ...FOLDER_REMOVAL_RETRIES });
+      await removeWithRetry(path);
       process.stdout.write(`Deleted ${path} (${what}).\n`);
     } catch (error) {
       failed.push({ path, reason: error instanceof Error ? error.message : String(error) });
@@ -512,8 +512,8 @@ async function removeInstallation(context: SetupContext, dryRun: boolean): Promi
   for (const { path, what } of remove) {
     try {
       if (path === context.updater.currentLink) await unlink(path);
-      // rm retries Windows' transient EBUSY and EPERM itself (as the updater's staging cleanup does).
-      else await rm(path, { recursive: true, force: true, ...FOLDER_REMOVAL_RETRIES });
+      // Retried while Windows holds a file in it for a moment, as the updater's staging cleanup is.
+      else await removeWithRetry(path);
       process.stdout.write(`Removed ${path} (${what}).\n`);
     } catch (error) {
       failed.push({ path, reason: error instanceof Error ? error.message : String(error) });

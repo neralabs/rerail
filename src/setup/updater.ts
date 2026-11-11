@@ -9,7 +9,6 @@ import {
   readdir,
   readFile,
   realpath,
-  rm,
   rmdir,
   symlink,
   unlink,
@@ -21,7 +20,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
-import { FOLDER_REMOVAL_RETRIES, removeScratch, renameWithRetry, replaceFile } from "../engine/file-replace.js";
+import { removeScratch, removeWithRetry, renameWithRetry, replaceFile } from "../engine/file-replace.js";
 import { withHomeLock, type LockEngine } from "../engine/native/file-lock.js";
 import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
@@ -711,7 +710,7 @@ export class ManagedUpdater {
       await this.validate({ version, packageRoot: join(stagingPrefix, "node_modules", "@neralabs", "rerail") });
       await this.renameStaging(stagingPrefix, finalPrefix);
     } catch (error) {
-      await rm(stagingPrefix, { recursive: true, force: true, ...FOLDER_REMOVAL_RETRIES });
+      await removeWithRetry(stagingPrefix, { platform: this.platform });
       throw error;
     }
     return installation;

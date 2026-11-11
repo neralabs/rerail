@@ -1,9 +1,19 @@
-import { readdirSync, readFileSync, renameSync } from "node:fs";
-import { chmod, mkdtemp, readdir, readFile, rename as fsRename, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync, readdirSync, readFileSync, renameSync, type RmOptions } from "node:fs";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rename as fsRename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { FOLDER_REMOVAL_RETRIES, removeScratch, renameWithRetry, renameWithRetrySync, replaceFile, replaceFileSync } from "../../src/engine/file-replace.js";
+import {
+  FOLDER_REMOVAL_RETRIES,
+  removeScratch,
+  removeWithRetry,
+  renameWithRetry,
+  renameWithRetrySync,
+  replaceFile,
+  replaceFileSync,
+} from "../../src/engine/file-replace.js";
 import { REMOVAL_RETRIES, removeFolder } from "../support/platform/remove-folder.js";
 
 const roots: string[] = [];
@@ -182,12 +192,114 @@ describe("replaceFileSync", () => {
   });
 });
 
+/** A file Windows reports held: the code a refused `rm` gives, and `path` naming the file, as Node's errors do. */
+const heldFile = (code: string, path: string): Error => Object.assign(new Error(`${code}: resource busy or locked, unlink '${path}'`), { code, path });
+
+/** An `rm` refused with `code` on the file `held` the first `failures` times, then removing nothing; records each try's options. */
+function heldRemoval(failures: number, code = "EBUSY", held = join("versions", "nested", "held.sqlite")) {
+  const tries: RmOptions[] = [];
+  const rm = async (_path: string, options: RmOptions): Promise<void> => {
+    tries.push(options);
+    if (tries.length <= failures) throw heldFile(code, held);
+  };
+  return { tries, rm };
+}
+
+/** A wait that returns at once, recording how long it was asked to wait. */
+function recordedWaits(): { waits: number[]; sleep: (ms: number) => Promise<void> } {
+  const waits: number[] = [];
+  return { waits, sleep: async (ms) => {
+    waits.push(ms);
+  } };
+}
+
+/** One try with no retries of `rm`'s own, which would repeat the whole set at every level of the folder. */
+const ONE_TRY = { recursive: true, force: true };
+
+describe("removeWithRetry", () => {
+  it("tries again while a file in the folder is held, each try one rm of its own, waiting 100 ms longer each time", async () => {
+    const removal = heldRemoval(3);
+    const { waits, sleep } = recordedWaits();
+    await removeWithRetry("versions", { platform: "win32", rm: removal.rm, sleep });
+    expect(removal.tries).toEqual([ONE_TRY, ONE_TRY, ONE_TRY, ONE_TRY]);
+    expect(waits).toEqual([100, 200, 300]);
+  });
+
+  it("gives up after its 10 retries and 5.5 s of waits, naming the file another program held open", async () => {
+    const held = join("versions", "0.2.0", "nested", "held.sqlite");
+    const removal = heldRemoval(Infinity, "EBUSY", held);
+    const { waits, sleep } = recordedWaits();
+    await expect(removeWithRetry("versions", { platform: "win32", rm: removal.rm, sleep })).rejects.toMatchObject({
+      code: "EBUSY",
+      message: `EBUSY: Windows refused for 5.5 s to remove versions, as another program held ${held} open`,
+      cause: expect.objectContaining({ code: "EBUSY", path: held }),
+    });
+    expect(removal.tries).toEqual(Array.from({ length: FOLDER_REMOVAL_RETRIES.maxRetries + 1 }, () => ONE_TRY));
+    expect(waits).toEqual([100, 200, 300, 400, 500, 600, 700, 800, 900, 1_000]);
+    const unnamed = async (): Promise<void> => {
+      throw Object.assign(new Error("EPERM: operation not permitted, rmdir"), { code: "EPERM" });
+    };
+    await expect(removeWithRetry("versions", { platform: "win32", rm: unnamed, sleep }))
+      .rejects.toThrow("EPERM: Windows refused for 5.5 s to remove versions, as another program held it, or a file in it, open");
+  });
+
+  it("retries elsewhere as rm did, the last refusal standing, and fails at once on an error no wait clears", async () => {
+    const posix = heldRemoval(Infinity, "ENOTEMPTY");
+    await expect(removeWithRetry("versions", { platform: "linux", rm: posix.rm, sleep: recordedWaits().sleep }))
+      .rejects.toMatchObject({ code: "ENOTEMPTY", message: expect.stringContaining("resource busy or locked") });
+    expect(posix.tries).toHaveLength(FOLDER_REMOVAL_RETRIES.maxRetries + 1);
+    const denied = heldRemoval(Infinity, "EACCES");
+    await expect(removeWithRetry("versions", { platform: "win32", rm: denied.rm, sleep: recordedWaits().sleep }))
+      .rejects.toMatchObject({ code: "EACCES", message: expect.stringContaining("resource busy or locked") });
+    expect(denied.tries).toHaveLength(1);
+  });
+
+  describe.runIf(process.platform === "win32")("against a file this process holds open", () => {
+    /** The folder `versions` in a new scratch folder, with a SQLite file open one folder down, which Windows refuses to delete. */
+    async function heldFolder(): Promise<{ folder: string; held: string; database: Database.Database }> {
+      const folder = join(await scratch(), "versions");
+      const held = join(folder, "nested", "held.sqlite");
+      await mkdir(dirname(held), { recursive: true });
+      const database = new Database(held);
+      database.exec("CREATE TABLE t (x)");
+      return { folder, held, database };
+    }
+
+    it("gives up within 6.5 s, the 5.5 s of waits and a second for the tries, naming the file", async () => {
+      const { folder, held, database } = await heldFolder();
+      const limit = 6_500;
+      const started = Date.now();
+      try {
+        const outcome = await Promise.race([
+          removeWithRetry(folder).then(() => "removed", (error: unknown) => error),
+          delay(limit, `still trying after ${limit} ms`),
+        ]);
+        expect(outcome).toBeInstanceOf(Error);
+        expect(String(outcome)).toContain(`another program held ${held} open`);
+      } finally {
+        database.close();
+      }
+      expect(Date.now() - started).toBeGreaterThanOrEqual(5_500);
+    });
+
+    it("removes the folder once the file is let go of a second later", async () => {
+      const { folder, database } = await heldFolder();
+      const released = delay(1_000).then(() => database.close());
+      try {
+        await removeWithRetry(folder);
+      } finally {
+        await released;
+      }
+      expect(existsSync(folder)).toBe(false);
+    });
+  });
+});
+
 describe("removeScratch", () => {
   it("never fails the work that used the folder", async () => {
-    const rm = async (): Promise<void> => {
-      throw Object.assign(new Error("EBUSY: resource busy or locked, rmdir"), { code: "EBUSY" });
-    };
-    await expect(removeScratch(join(tmpdir(), "rerail-missing"), rm)).resolves.toBeUndefined();
+    const removal = heldRemoval(Infinity);
+    await expect(removeScratch(join(tmpdir(), "rerail-missing"), { rm: removal.rm, sleep: recordedWaits().sleep })).resolves.toBeUndefined();
+    expect(removal.tries).toHaveLength(FOLDER_REMOVAL_RETRIES.maxRetries + 1);
   });
 });
 

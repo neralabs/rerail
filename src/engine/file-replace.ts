@@ -10,20 +10,35 @@
  * `nameTaken` reads them as the name being taken.
  *
  * To make text the whole of a file, use `replaceFile` or `replaceFileSync`. `renameWithRetry` is for moving a file or
- * folder that already exists, and for a writer that must open its new file itself.
+ * folder that already exists, and for a writer that must open its new file itself. `removeWithRetry` removes a file or
+ * folder and waits out a held file in it; it retries on every platform, as node:fs's `rm` does, since a folder another
+ * process still writes in refuses removal anywhere.
  */
 import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, fchmodSync, openSync, renameSync as fsRenameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, fchmodSync, openSync, renameSync as fsRenameSync, rmSync, statSync, writeFileSync, type RmOptions } from "node:fs";
 import { chmod, open, rename as fsRename, rm as fsRm, stat } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
 /**
- * How a folder removal waits out a file Windows holds for a moment, given to `rm` or `rmSync`: 10 more tries, each
- * 100 ms later than the one before, about 5.5 s in all. A folder a running process keeps open stays held, and the
- * removal then fails. Every removal that retries uses these: `removeScratch`, the updater's staging cleanup and
+ * How a folder removal waits out a file Windows holds for a moment: 10 more tries, each 100 ms later than the one
+ * before, 5.5 s of waits in all. A file a running program keeps open stays held, and the removal then fails.
+ * `removeWithRetry` counts these tries itself, for `removeScratch`, the updater's staging cleanup and
  * `rerail install --remove`; the tests' `removeFolder` repeats them, held equal by `test/engine/file-replace.test.ts`.
  */
 export const FOLDER_REMOVAL_RETRIES = { maxRetries: 10, retryDelay: 100 } as const;
+
+/** The waits between {@link FOLDER_REMOVAL_RETRIES}' tries, added up: 100 ms, then each 100 ms longer than the last. */
+const REMOVAL_WAIT_MS = FOLDER_REMOVAL_RETRIES.retryDelay
+  * (FOLDER_REMOVAL_RETRIES.maxRetries * (FOLDER_REMOVAL_RETRIES.maxRetries + 1) / 2);
+
+/**
+ * The codes node:fs's `rm` retries, and so does {@link removeWithRetry}: a file another process holds (EBUSY, EPERM), a
+ * folder it still writes in or still holds a deleted file in (ENOTEMPTY), and too many files open (EMFILE, ENFILE).
+ */
+const REMOVAL_RETRIED: ReadonlySet<unknown> = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EMFILE", "ENFILE"]);
+
+/** Of those, the codes Windows gives while another program holds the folder or a file in it open. */
+const HELD_IN_FOLDER: ReadonlySet<unknown> = new Set(["EBUSY", "EPERM", "ENOTEMPTY"]);
 
 /** How long a rename is retried on Windows. */
 const RENAME_RETRY_MS = 2_000;
@@ -209,13 +224,62 @@ async function makeWritable(path: string): Promise<RenameTarget> {
   return "replaceable";
 }
 
+export interface RemoveOptions {
+  platform?: NodeJS.Platform;
+  rm?: (path: string, options: RmOptions) => Promise<void>;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const pathOf = (error: unknown): string | undefined =>
+  (error instanceof Error && "path" in error && typeof error.path === "string" ? error.path : undefined);
+
 /**
- * Removes a temporary folder Rerail made, retrying while Windows holds a file in it, and never fails: a leftover folder
- * in the temp directory must not replace the result, or the error, of the work that used it.
+ * What a removal throws once its retries are spent. On Windows, where its code says another program held the folder or
+ * a file in it open, that is an error naming the file, as the bare `EBUSY: resource busy or locked, unlink` never says
+ * a program had it open; the code stays for callers that branch on it, and the last refusal is the cause. Elsewhere it
+ * is the last refusal itself.
  */
-export async function removeScratch(path: string, rm: typeof fsRm = fsRm): Promise<void> {
+function removalHeldTooLong(error: unknown, path: string, platform: NodeJS.Platform = process.platform): unknown {
+  const code = codeOf(error);
+  if (platform !== "win32" || !HELD_IN_FOLDER.has(code)) return error;
+  const held = pathOf(error) ?? path;
+  const message = `${String(code)}: Windows refused for ${REMOVAL_WAIT_MS / 1_000} s to remove ${path}, as another program`
+    + ` held ${held === path ? "it, or a file in it," : held} open`;
+  return Object.assign(new Error(message, { cause: error }), { code });
+}
+
+/**
+ * Removes the file or folder at `path` and everything in it, if it is there. While another process holds a file in it
+ * (Windows refuses to delete a file held open), the removal is tried again {@link FOLDER_REMOVAL_RETRIES} times, 5.5 s
+ * of waits in all, then fails: on Windows with an error that names the file and says another program held it open. Any
+ * other failure is thrown at once.
+ *
+ * The tries are counted here, each one `rm` with no retries of its own: node:fs/promises' `rm` applies `maxRetries` at
+ * every level of the folder, each try at a folder removing its contents with a full set of retries again, so one held
+ * file kept it trying for 67 s rather than 5.5 s, and each folder further down multiplies that by 11.
+ * `npm run check:owned-builtins` fails on any other `rm` given `maxRetries` in `src/`.
+ */
+export async function removeWithRetry(path: string, options: RemoveOptions = {}): Promise<void> {
+  const { rm = fsRm, sleep: wait = sleep } = options;
+  for (let retry = 1; ; retry += 1) {
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (!REMOVAL_RETRIED.has(codeOf(error))) throw error;
+      if (retry > FOLDER_REMOVAL_RETRIES.maxRetries) throw removalHeldTooLong(error, path, options.platform);
+      await wait(retry * FOLDER_REMOVAL_RETRIES.retryDelay);
+    }
+  }
+}
+
+/**
+ * Removes a temporary folder Rerail made, retrying while Windows holds a file in it ({@link removeWithRetry}), and never
+ * fails: a leftover folder in the temp directory must not replace the result, or the error, of the work that used it.
+ */
+export async function removeScratch(path: string, options: RemoveOptions = {}): Promise<void> {
   try {
-    await rm(path, { recursive: true, force: true, ...FOLDER_REMOVAL_RETRIES });
+    await removeWithRetry(path, options);
   } catch {
     // Left for the system's temp cleanup.
   }
