@@ -23,6 +23,7 @@ mod params_tests;
 mod parse;
 mod resolve;
 mod shared;
+pub(in crate::code_rule_dsl) mod token_tests;
 mod transform;
 mod utils;
 mod value;
@@ -277,6 +278,8 @@ pub(super) fn compile_document(
 ) -> Result<CompiledDocument> {
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
+    // A token test nothing answers on a named-only tape is refused (t31).
+    token_tests::refuse(document)?;
     let root = object(document, "/")?;
     reject_unknown(
         root,

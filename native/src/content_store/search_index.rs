@@ -186,13 +186,13 @@ impl ContentStore {
                 )?
                 .collect::<Result<Vec<_>, _>>()?
         };
-        let decode = |(codec, length, frame, hash): Frame| -> StoreResult<Vec<u8>> {
+        // A source is checked against its hash; its tape against its identity (`HashKey::tape_identity`).
+        let decode = |(codec, length, frame, hash): Frame, identity: &dyn Fn(&[u8]) -> HashKey| -> StoreResult<Vec<u8>> {
             if codec != CODEC_ZSTD {
                 return Err(StoreError::Corrupt("unsupported object codec".to_owned()));
             }
             let bytes = super::decompress(&frame, 0)?;
-            if usize::try_from(length).ok() != Some(bytes.len()) || HashKey::sha256(&bytes) != hash
-            {
+            if usize::try_from(length).ok() != Some(bytes.len()) || identity(&bytes) != hash {
                 return Err(StoreError::Corrupt(
                     "object length or hash does not match metadata".to_owned(),
                 ));
@@ -201,11 +201,12 @@ impl ContentStore {
         };
         rows.into_iter()
             .map(|(tape, grammar, source, image)| {
+                let source_hash = source.3;
                 Ok(UnindexedTape {
                     tape,
                     grammar,
-                    source: decode(source)?,
-                    image: decode(image)?,
+                    source: decode(source, &|bytes| HashKey::sha256(bytes))?,
+                    image: decode(image, &|bytes| HashKey::tape_identity(source_hash, bytes))?,
                 })
             })
             .collect()

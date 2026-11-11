@@ -44,6 +44,7 @@ bootstrap_type("type").
 .decl bootstrap_str_names(s: node, x: symbol)
 .decl bootstrap_str_value(s: node, v: symbol)
 .decl bootstrap_string_ann(t: node)
+.decl bootstrap_subscripts(sb: node)
 .decl bootstrap_txn_name(x: symbol)
 .decl bootstrap_txn_param(f: node)
 .decl bootstrap_txn_type(x: symbol)
@@ -183,7 +184,8 @@ bootstrap_bare(f, nm, x) :- bootstrap_fn(f, _), field(f, "parameters", ps), chil
 bootstrap_seq_elem(t, e) :- bootstrap_ann_expr(t, g), node(_, g, "generic_type", _, _), child(g, v, 0), node(_, v, "identifier", _, _), text(v, u), q = @nfkc(u), q = "Sequence", child(g, e, 1), node(_, e, "type_parameter", _, _).
 bootstrap_seq_elem(t, e) :- bootstrap_ann_expr(t, sb), node(_, sb, "subscript", _, _), field(sb, "value", v), node(_, v, "identifier", _, _), text(v, u), q = @nfkc(u), q = "Sequence", field(sb, "subscript", e).
 bootstrap_elem_one(t, e) :- bootstrap_seq_elem(t, tp), node(_, tp, "type_parameter", _, _), child(tp, c, 0), !child(tp, _, 1), !token(tp, _, ",", _, _), child(c, e, 0), !child(c, _, 1).
-bootstrap_elem_one(t, e) :- bootstrap_seq_elem(t, e), field(sb, "subscript", e), !token(sb, _, ",", _, _).
+bootstrap_elem_one(t, e) :- bootstrap_seq_elem(t, e), field(sb, "subscript", e), !token(sb, _, ",", _, _), !bootstrap_subscripts(sb).
+bootstrap_subscripts(sb) :- field(sb, "subscript", a), field(sb, "subscript", b), a != b.
 bootstrap_elem_one(t, i) :- bootstrap_elem_one(t, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
 bootstrap_elem_str(t, s) :- bootstrap_elem_one(t, s), bootstrap_plain_string(s, _).
 bootstrap_has_elem_str(t) :- bootstrap_elem_str(t, _).

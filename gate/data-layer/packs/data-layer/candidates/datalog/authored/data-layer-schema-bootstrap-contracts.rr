@@ -176,7 +176,10 @@ bootstrap_seq_elem(t, e) :- bootstrap_ann_expr(t, sb), node(_, sb, "subscript", 
 .decl bootstrap_elem_one(t: node, e: node)
 bootstrap_elem_one(t, e) :- bootstrap_seq_elem(t, tp), node(_, tp, "type_parameter", _, _), child(tp, c, 0),
     !child(tp, _, 1), !token(tp, _, ",", _, _), child(c, e, 0), !child(c, _, 1).
-bootstrap_elem_one(t, e) :- bootstrap_seq_elem(t, e), field(sb, "subscript", e), !token(sb, _, ",", _, _).
+// One subscript and no trailing comma: the tape stores a trailing comma, not one between subscripts (RER-131).
+bootstrap_elem_one(t, e) :- bootstrap_seq_elem(t, e), field(sb, "subscript", e), !token(sb, _, ",", _, _), !bootstrap_subscripts(sb).
+.decl bootstrap_subscripts(sb: node)
+bootstrap_subscripts(sb) :- field(sb, "subscript", a), field(sb, "subscript", b), a != b.
 bootstrap_elem_one(t, i) :- bootstrap_elem_one(t, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
 .decl bootstrap_elem_str(t: node, s: node)
 bootstrap_elem_str(t, s) :- bootstrap_elem_one(t, s), bootstrap_plain_string(s, _).

@@ -190,15 +190,27 @@ ann_bare_of(ann, m) :- !kind(ann, "type"), unparen(ann, m).
 // ---- 4b. slices --------------------------------------------------------------------------------------------------
 // slice_part(s, which, e): bound e of slice s, which is "lower", "upper" or "step". tree-sitter's slice has no
 // fields; the colons before a bound tell which it is: `x[1:]` has a lower 1, `x[:2]` an upper, `x[::2]` a step.
+// The tape stores a colon only where the bounds do not imply it (RER-131), so the colons are counted in the
+// source between the slice's children: the gap before each child, summed over it and the children before it.
 .decl slice_part(s: node, which: symbol, e: node)
-slice_part(s, "lower", c) :- kind(s, "slice"), child(s, c, _), !kind(c, "comment"), token_before(c, t), !text(t, ":").
-slice_part(s, "step", c) :- slice_step(s, c).
-slice_part(s, "upper", c) :- colon_bound(s, c), !slice_step(s, c).
-.decl slice_step(s: node, c: node)
-slice_step(s, c) :- colon_bound(s, c), token_before(c, t), token_before(t, t2), text(t2, ":").
-slice_step(s, c) :- colon_bound(s, c), colon_bound(s, p), precedes(p, c).
-.decl colon_bound(s: node, c: node)
-colon_bound(s, c) :- kind(s, "slice"), child(s, c, _), !kind(c, "comment"), token_before(c, t), text(t, ":").
+slice_part(s, "lower", c) :- slice_bound(s, c, 0).
+slice_part(s, "upper", c) :- slice_bound(s, c, 1).
+slice_part(s, "step", c) :- slice_bound(s, c, 2).
+.decl slice_bound(s: node, c: node, n: number)
+slice_bound(s, c, n) :- kind(s, "slice"), child(s, c, _), !kind(c, "comment"), slice_colons(s, c, n).
+// slice_colons(s, c, n): n colons sit before child c of slice s (comments are children, so no gap holds one).
+.decl slice_colons(s: node, c: node, n: number)
+slice_colons(s, c, n) :- slice_gap(s, c, i, _), n = sum g : { slice_gap(s, _, j, g), j <= i }.
+// slice_gap(s, c, i, g): child c is s's i-th, and the source before it, from the previous child or `[`, has g colons.
+.decl slice_gap(s: node, c: node, i: number, g: number)
+slice_gap(s, c, i, 2) :- slice_gap_text(s, c, i, t), match("(?s).*:.*:.*", t).
+slice_gap(s, c, i, 1) :- slice_gap_text(s, c, i, t), match("(?s).*:.*", t), !match("(?s).*:.*:.*", t).
+slice_gap(s, c, i, 0) :- slice_gap_text(s, c, i, t), !match("(?s).*:.*", t).
+.decl slice_gap_text(s: node, c: node, i: number, t: symbol)
+slice_gap_text(s, c, 0, substr(t, 0, cs - ss)) :- kind(s, "slice"), child(s, c, 0), node(_, s, _, ss, _), text(s, t),
+    node(_, c, _, cs, _).
+slice_gap_text(s, c, i, substr(t, a - ss, cs - a)) :- kind(s, "slice"), child(s, c, i), i > 0, j = i - 1, child(s, p, j),
+    node(_, p, _, _, a), node(_, s, _, ss, _), text(s, t), node(_, c, _, cs, _).
 
 // ---- 3b. arguments by name or position ---------------------------------------------------------------------------
 // call_param(c, x, i, v): v is the argument call c passes for parameter x, at position i or as keyword x

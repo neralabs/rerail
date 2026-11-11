@@ -284,9 +284,30 @@ usage_import_kind("dotted_name"). usage_import_kind("aliased_import").
 usage_comma_kind("identifier"). usage_comma_kind("call"). usage_comma_kind("attribute"). usage_comma_kind("subscript").
 usage_comma_kind("dotted_name"). usage_comma_kind("aliased_import"). usage_comma_kind("generic_type"). usage_comma_kind("type").
 // usage_prev(n, s): the token right before n among its parent's children, anonymous ones and comments included (W's
-// `follows`, stopBy neighbor, its regex `^,$` / `^import$` on that token's text).
+// `follows`, stopBy neighbor, its regex `^,$` / `^import$` on that token's text). The tape stores neither token
+// there (RER-131), so each is read from the named structure:
+// - `import`: n is the first name an import lists (`from m import (a)` has a stored `(` before it instead);
+// - `,`: n is an element of a comma-separated list but its first, right after an element (not a comment).
 .decl usage_prev(n: node, s: symbol)
-usage_prev(n, s) :- prev_token(n, s).
+usage_prev(n, "import") :- node(_, s, "import_statement", _, _), child(s, n, 0).
+usage_prev(n, "import") :- node(_, s, k, _, _), (k = "import_from_statement" ; k = "future_import_statement"),
+    field(s, "name", n), !usage_name_before(s, n), !token(s, _, "(", _, _).
+usage_prev(n, ",") :- child(p, n, i), i > 0, j = i - 1, child(p, m, j), !node(_, m, "comment", _, _), node(_, p, k, _, _),
+    usage_comma_list(k).
+usage_prev(n, ",") :- node(_, s, k, _, _), (k = "import_from_statement" ; k = "future_import_statement"),
+    usage_name_before(s, n).
+usage_prev(n, ",") :- field(p, "subscript", n), node(_, p, "subscript", _, _), node(_, n, _, a, _), field(p, "subscript", m),
+    node(_, m, _, b, _), b < a.
+// usage_name_before(s, n): another name of import s comes before its name n.
+.decl usage_name_before(s: node, n: node)
+usage_name_before(s, n) :- field(s, "name", n), node(_, n, _, a, _), field(s, "name", m), node(_, m, _, b, _), b < a.
+// The kinds whose named children are separated by commas.
+.decl usage_comma_list(k: symbol)
+usage_comma_list("argument_list"). usage_comma_list("expression_list"). usage_comma_list("tuple"). usage_comma_list("list").
+usage_comma_list("set"). usage_comma_list("pattern_list"). usage_comma_list("tuple_pattern"). usage_comma_list("list_pattern").
+usage_comma_list("parameters"). usage_comma_list("lambda_parameters"). usage_comma_list("global_statement").
+usage_comma_list("nonlocal_statement"). usage_comma_list("type_parameter"). usage_comma_list("assert_statement").
+usage_comma_list("print_statement"). usage_comma_list("import_statement").
 // usage-0: SqlAdminQuery
 .decl usage_0_hit(d: number, n: node)
 usage_0_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlAdminQuery", s), usage_call_slot(n).

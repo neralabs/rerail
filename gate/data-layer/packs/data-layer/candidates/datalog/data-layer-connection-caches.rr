@@ -5,14 +5,10 @@
 .decl cc_gate(d: number)
 .decl cc_keyed(n: node)
 .decl cc_p0_hit(n: node)
-.decl cc_p0_next(a: node, t: symbol)
+.decl cc_p0_next(a: node)
 .decl cc_p1_hit(n: node)
-.decl cc_p2_before(n: node, e: number)
 .decl cc_p2_hit(n: node)
-.decl cc_p2_level(n: node, st: number)
-.decl cc_p2_prior(n: node, a: node, j: number, e: number)
 .decl cc_p2_typed(n: node)
-.decl cc_p2_up(n: node, a: node)
 .decl cc_p3_hit(n: node)
 .decl cc_self_attr(a: node, s: symbol)
 .decl cc_skipped(d: number)
@@ -24,13 +20,13 @@
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
+.decl op_at(n: node, i: number, s: symbol)
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
-.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, child, text, line, tape_line, col, node_text, token
+.input doc, node, field, child, text, line, tape_line, col, node_text, op_at
 .output violation
 option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
@@ -64,19 +60,16 @@ cc_candidate(n) :- cc_p3_hit(n).
 cc_found(n, p, l) :- cc_candidate(n), node(d, n, _, _, _), line(n, l), !cc_exempt(d, l), !cc_skipped(d), cc_gate(d), in_scope(d), !out_scope(d), doc(d, p, _).
 cc_self_attr(a, s) :- node(_, a, "attribute", _, _), field(a, "object", o), node_text(o, t), match("(?s:.*)self", t), field(a, "attribute", x), node_text(x, s).
 cc_keyed(n) :- node(_, n, "assignment", _, _), field(n, "type", t), node_text(t, s), match("dict\\[(?:BranchId|RevisionId)(?s:.*)", s).
-cc_p0_next(a, t) :- cc_self_attr(a, _), child(p, a, _), node(_, a, _, s, e), token(p, i, _, s, e), j = @add(i, 1), token(p, j, t, _, _).
-cc_p0_hit(a) :- cc_self_attr(a, s), match("_\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*", s), cc_p0_next(a, t), match("(?:=|:|==|:=)", t).
+cc_p0_next(a) :- cc_self_attr(a, _), field(p, "left", a), node(_, p, "assignment", _, _).
+cc_p0_next(a) :- cc_self_attr(a, _), field(p, "key", a), node(_, p, "pair", _, _).
+cc_p0_next(a) :- cc_self_attr(a, _), child(p, a, 0), node(_, p, "comparison_operator", _, _), op_at(p, 0, "==").
+cc_p0_hit(a) :- cc_self_attr(a, s), match("_\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*", s), cc_p0_next(a).
 violation("data-layer-connection-caches", "pattern-0", "CC001", p, l) :- cc_p0_hit(n), cc_found(n, p, l).
 cc_p1_hit(n) :- cc_keyed(n), field(n, "left", a), cc_self_attr(a, s), match("_\\w*cache\\w*", s).
 violation("data-layer-connection-caches", "pattern-1", "CC001", p, l) :- cc_p1_hit(n), cc_found(n, p, l).
 cc_p2_hit(n) :- cc_keyed(n), field(n, "left", x), node(_, x, "identifier", _, _), node_text(x, s), match("_\\w+", s).
-cc_p2_hit(n) :- cc_p2_typed(n), cc_p2_before(n, e), node(_, n, _, s, _), col(n, c), e < @sub(s, c).
+cc_p2_hit(n) :- cc_p2_typed(n), node(d, n, _, _, _), line(n, l), tape_line(d, l, sp), text(sp, t), col(n, c), match("\\s*", @substr(t, 0, c)).
 cc_p2_typed(n) :- node(_, n, "typed_parameter", _, _), child(n, x, _), node(_, x, "identifier", _, _), node_text(x, xs), match("_\\w+", xs), field(n, "type", t), node_text(t, ts), match("dict\\[(?:BranchId|RevisionId)(?s:.*)", ts).
-cc_p2_up(n, n) :- cc_p2_typed(n).
-cc_p2_up(n, p) :- cc_p2_up(n, a), child(p, a, _).
-cc_p2_prior(n, a, j, pe) :- cc_p2_up(n, a), child(p, a, _), node(_, a, _, s, e), token(p, i, _, s, e), token(p, j, t, ps, pe), j < i, pe > ps, !match("#(?s:.*)", t).
-cc_p2_level(n, st) :- cc_p2_prior(n, a, _, _), node(_, a, _, st, _).
-cc_p2_before(n, e) :- cc_p2_prior(n, a, j, e), node(_, a, _, st, _), st = max t : { cc_p2_level(n, t) }, j = max k : { cc_p2_prior(n, a, k, _) }.
 violation("data-layer-connection-caches", "pattern-2", "CC001", p, l) :- cc_p2_hit(n), cc_found(n, p, l).
 cc_p3_hit(n) :- node(_, n, "assignment", _, _), field(n, "left", a), cc_self_attr(a, s), match("_\\w+", s), field(n, "type", t), node_text(t, ts), match("dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)(?s:.*)", ts).
 violation("data-layer-connection-caches", "pattern-3", "CC001", p, l) :- cc_p3_hit(n), cc_found(n, p, l).

@@ -122,10 +122,11 @@ impl ContentStore {
                         ));
                     }
                     validate_tape_payload(publication.tape)?;
+                    let source = HashKey::sha256(publication.source);
                     Ok((
                         publication,
-                        HashKey::sha256(publication.source),
-                        publication.tape.map(|tape| HashKey::sha256(tape.bytes)),
+                        source,
+                        publication.tape.map(|tape| HashKey::tape_identity(source, tape.bytes)),
                     ))
                 })
                 .collect::<StoreResult<Vec<_>>>()
@@ -639,7 +640,7 @@ fn prepare_object_pass(
                     payload.documents.iter().zip(frames).enumerate()
                 {
                     let document_source = HashKey::sha256(document.source);
-                    let document_tape = HashKey::sha256(document.tape);
+                    let document_tape = HashKey::tape_identity(document_source, document.tape);
                     hashes.insert(document_source);
                     hashes.insert(document_tape);
                     source_rows.push((

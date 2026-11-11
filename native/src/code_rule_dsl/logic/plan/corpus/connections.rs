@@ -65,7 +65,10 @@ impl Connections {
                 if let Some((_, db)) = other {
                     super::close_beside(db);
                 }
-                Connection::open(path)
+                let mut db = Connection::open(path)?;
+                // Its own store's atoms, guarded at commit (decision 0049); a kept connection already is.
+                crate::content_store::atoms::Atoms::install(&mut db)?;
+                Ok(db)
             }
         }
     }
@@ -109,7 +112,9 @@ impl Cone {
             }
             super::close_beside(db);
         }
-        let db = Connection::open(path)?;
+        let mut db = Connection::open(path)?;
+        // The atoms guarded at commit, as the run's connection's (decision 0049).
+        crate::content_store::atoms::Atoms::install(&mut db)?;
         crate::code_rule_dsl::logic::native::register(&db)?;
         crate::code_rule_dsl::logic::native::register_symbols(&db)?;
         Ok(db)

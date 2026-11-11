@@ -599,9 +599,8 @@ fn implied(moves: &[FxHashMap<Label, u32>], accepting: &[bool]) -> Implied {
     implied
 }
 
-/// What the automata say about where tokens are implied, for the census of rules that test
-/// tokens (`token_readers`).
-#[cfg(test)]
+/// What the automata say about where tokens are implied, for the check of rules that test
+/// tokens (`compile::token_tests`).
 impl TokenGrammar {
     /// Per kind: the (token, field) pairs some implied word of its automaton holds. `""` is no
     /// field.

@@ -154,7 +154,7 @@ immutable_ann(t) :- type_app(t, h, 0, a), ruff_qual(h, "typing.Optional"), ruff_
 immutable_ann(t) :- type_app(t, h, 0, _), ruff_qual(h, "typing.Union"), ruff_type_nargs(t, n), n > 1, imm_prefix(t, n - 1).
 immutable_ann(t) :- type_app(t, h, 0, a), ruff_qual(h, q), (q = "typing.Annotated" ; q = "typing_extensions.Annotated"),
     ruff_type_nargs(t, n), n > 1, immutable_ann(a).
-immutable_ann(t) :- ann_strip(t, m), (kind(m, "binary_operator") ; kind(m, "union_type")), op(m, "|"),
+immutable_ann(t) :- ann_strip(t, m), (kind(m, "binary_operator"), op(m, "|") ; kind(m, "union_type")),
     child(m, x, 0), child(m, y, 1), immutable_ann(x), immutable_ann(y).
 immutable_ann(t) :- ann_strip(t, m), kind(m, "none").
 // imm_prefix(t, i): arguments 0 to i of t are immutable (a chain, so the recursion stays positive).

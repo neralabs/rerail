@@ -117,7 +117,7 @@ tc_ann_owner(r, f) :- kind(f, "function_definition"), field(f, "parameters", ps)
 
 // ---- unions ---------------------------------------------------------------------------------------------------
 .decl tc_bitor(u: node)
-tc_bitor(u) :- (kind(u, "binary_operator") ; kind(u, "union_type")), op(u, "|").
+tc_bitor(u) :- (kind(u, "binary_operator"), op(u, "|") ; kind(u, "union_type")).
 .decl tc_union(u: node)
 tc_union(u) :- tc_bitor(u), !tc_nested(u).
 .decl tc_nested(u: node)
