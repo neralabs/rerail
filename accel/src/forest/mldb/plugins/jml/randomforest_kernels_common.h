@@ -1879,51 +1879,76 @@ fixupBucketsImpl) (CONSTBUFFER(TreeTrainingInfo) treeTrainingInfo,
 // One node of a flattened forest. A child is a node's index when it is at least 0, and leaf -(child + 1) when it is
 // below 0.
 typedef struct PredictNode {
-    uint32_t feature;       // The feature's index (its bucket column)
-    uint32_t splitBucket;   // The bucket the trainer split at
-    uint32_t ordinal;       // 1: true is the buckets below splitBucket; 0: true is splitBucket itself
+    uint16_t feature;       // The feature's index (its bucket column)
+    uint16_t bucketBits;    // The bits of each of the feature's buckets
+    uint16_t splitBucket;   // The bucket the trainer split at
+    uint16_t ordinal;       // 1: true is the buckets below splitBucket; 0: true is splitBucket itself
     int32_t childTrue;
     int32_t childFalse;
 } PredictNode;
 
-// [row]: the forest's prediction for row r, the trees' leaf distributions (two labels) weighted. Each walk is at
-// most maxDepth steps; a walk that has not reached a leaf by then gives NaN.
-UKL_FUNCTION(v1,void,
+// [row group]: the forest's prediction for each row, the trees' leaf distributions (two labels) weighted. A row has
+// lanesPerRow threads of the group (a power of 2, at most the group's threads): each lane walks the trees lane,
+// lane + lanesPerRow, ..., and the row's first lane adds the lanes' sums in lane order, so a row's result depends on
+// lanesPerRow only. Many lanes a row keep a small batch's walks short (a walk is a chain of dependent loads); one
+// lane a row suits a batch that fills the device by itself. Each walk is at most maxDepth steps; a walk that has not
+// reached a leaf by then gives NaN.
+SYNC_FUNCTION(v1,void,
 predictForestImpl) (uint32_t numRows,
                     uint32_t numTrees,
                     uint32_t maxDepth,
+                    uint32_t lanesPerRow,
+                    uint32_t columnStride,
                     ROBUFFER(uint32_t) bucketData,
-                    ROBUFFER(uint32_t) bucketDataOffsets,
-                    ROBUFFER(uint32_t) bucketEntryBits,
                     ROBUFFER(PredictNode) nodes,
                     ROBUFFER(int32_t) treeRoots,
                     ROBUFFER(float) treeWeights,
                     ROBUFFER(float) leafPreds,
                     RWBUFFER(float) predictionsOut,
-                    uint32_t r)
+                    RWLOCAL(float) partials,  // [2 * threadsPerGroup]
+                    uint32_t groupId,
+                    uint16_t threadId,
+                    uint16_t threadsPerGroup)
 {
-    if (r >= numRows)
-        return;
+    uint32_t rowsPerGroup = threadsPerGroup / lanesPerRow;
+    uint32_t lane = threadId % lanesPerRow;
+    uint32_t r = groupId * rowsPerGroup + threadId / lanesPerRow;
 
     float p0 = 0.0f, p1 = 0.0f;
-    for (uint32_t t = 0;  t < numTrees;  ++t) {
-        int32_t at = treeRoots[t];
-        for (uint32_t d = 0;  d < maxDepth && at >= 0;  ++d) {
-            PredictNode node = nodes[at];
-            uint16_t bucket = extract16BitRange32(bucketData + bucketDataOffsets[node.feature],
-                                                  bucketEntryBits[node.feature], r);
-            bool isTrue = node.ordinal ? bucket < node.splitBucket : bucket == node.splitBucket;
-            at = isTrue ? node.childTrue : node.childFalse;
+    if (r < numRows) {
+        for (uint32_t t = lane;  t < numTrees;  t += lanesPerRow) {
+            int32_t at = treeRoots[t];
+            // Each step: the node, then its feature's bucket for the row (column `feature` starts at
+            // feature * columnStride; the bits are the node's).
+            for (uint32_t d = 0;  d < maxDepth && at >= 0;  ++d) {
+                PredictNode node = nodes[at];
+                uint16_t bucket = extract16BitRange32(bucketData + (uint32_t)node.feature * columnStride,
+                                                      node.bucketBits, r);
+                bool isTrue = node.ordinal ? bucket < node.splitBucket : bucket == node.splitBucket;
+                at = isTrue ? node.childTrue : node.childFalse;
+            }
+            if (at >= 0) {
+                p0 = p1 = NAN;
+                break;
+            }
+            uint32_t leaf = (uint32_t)(-(at + 1));
+            float w = treeWeights[t];
+            p0 += w * leafPreds[2 * leaf];
+            p1 += w * leafPreds[2 * leaf + 1];
         }
-        if (at >= 0) {
-            p0 = p1 = NAN;
-            break;
-        }
-        uint32_t leaf = (uint32_t)(-(at + 1));
-        float w = treeWeights[t];
-        p0 += w * leafPreds[2 * leaf];
-        p1 += w * leafPreds[2 * leaf + 1];
     }
-    predictionsOut[2 * r] = p0;
-    predictionsOut[2 * r + 1] = p1;
+    partials[2 * threadId] = p0;
+    partials[2 * threadId + 1] = p1;
+
+    ukl_threadgroup_barrier();
+
+    if (r < numRows && lane == 0) {
+        float s0 = 0.0f, s1 = 0.0f;
+        for (uint32_t l = 0;  l < lanesPerRow;  ++l) {
+            s0 += partials[2 * (threadId + l)];
+            s1 += partials[2 * (threadId + l) + 1];
+        }
+        predictionsOut[2 * r] = s0;
+        predictionsOut[2 * r + 1] = s1;
+    }
 }

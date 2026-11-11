@@ -47,6 +47,11 @@ impl RowBuckets {
     }
 }
 
+/// The bits of a column's buckets at prediction (`ColumnInfo::bucketize`: its buckets and the unseen one).
+pub fn prediction_bucket_bits(column: &crate::forest::dataset_feature_space::ColumnInfo) -> u32 {
+    crate::forest::bucket::highest_bit(crate::forest::dataset_feature_space::unseen_bucket(&column.bucket_descriptions) + 1, 0) as u32 + 1
+}
+
 /// The column index of a feature.
 fn column_index(fs: &DatasetFeatureSpace, feature: &crate::forest::jml::feature::Feature) -> Result<usize, String> {
     let hash = fs.get_hash(*feature)?;
@@ -99,9 +104,11 @@ impl HostForest {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PredictNode {
-    pub feature: u32,
-    pub split_bucket: u32,
-    pub ordinal: u32,
+    pub feature: u16,
+    /// The bits of each of the feature's buckets (`RowBuckets` packs the feature's column with them).
+    pub bucket_bits: u16,
+    pub split_bucket: u16,
+    pub ordinal: u16,
     /// A node's index when at least 0; leaf -(child + 1) when below 0.
     pub child_true: i32,
     pub child_false: i32,
@@ -119,11 +126,15 @@ pub struct FlatForest {
     /// The deepest walk (nodes from a root to a leaf).
     pub max_depth: u32,
     pub num_features: usize,
+    /// Each feature's bucket bits at prediction (`prediction_bucket_bits`), which the rows' columns must have.
+    pub feature_bits: Vec<u32>,
 }
 
 impl FlatForest {
     pub fn new(forest: &Forest) -> Result<Self, String> {
-        let mut f = FlatForest { num_features: forest.fs.column_info.len(), ..Default::default() };
+        let nf = forest.fs.column_info.len();
+        let feature_bits = (0..nf).map(|i| forest.fs.column(i).map_or(0, prediction_bucket_bits)).collect();
+        let mut f = FlatForest { num_features: nf, feature_bits, ..Default::default() };
         for (t, &w) in forest.trees.iter().zip(&forest.weights) {
             let root = f.flatten(&forest.fs, t, t.root, 0)?;
             f.roots.push(root);
@@ -151,10 +162,16 @@ impl FlatForest {
                     return Err("a node with no split bucket (not from the random forest trainer)".into());
                 }
                 let at = self.nodes.len();
+                let feature = column_index(fs, node.split.feature())?;
+                let column = fs.column(feature).ok_or("a split's feature has no column")?;
+                if node.split_bucket > u16::MAX as i32 || feature > u16::MAX as usize {
+                    return Err("a split past 65535 buckets or features".into());
+                }
                 self.nodes.push(PredictNode {
-                    feature: column_index(fs, node.split.feature())? as u32,
-                    split_bucket: node.split_bucket as u32,
-                    ordinal: (node.split.op() == Op::Less) as u32,
+                    feature: feature as u16,
+                    bucket_bits: prediction_bucket_bits(column) as u16,
+                    split_bucket: node.split_bucket as u16,
+                    ordinal: (node.split.op() == Op::Less) as u16,
                     child_true: 0,
                     child_false: 0,
                 });
@@ -174,6 +191,15 @@ impl FlatForest {
     }
 }
 
+/// The threads a row takes in `predictForestKernel`: enough that a batch keeps the device's threads busy (about
+/// 64k of them), at most one a tree and at most the group's threads; a power of 2.
+pub fn lanes_per_row(num_rows: usize, num_trees: usize) -> u32 {
+    let group = crate::forest::randomforest_kernels_grid::PREDICT_GROUP_THREADS as usize;
+    let want = (65536 / num_rows.max(1)).clamp(1, group).min(num_trees.max(1).next_power_of_two());
+    // The largest power of 2 not above `want`.
+    1 << (usize::BITS - 1 - want.leading_zeros())
+}
+
 /// A flattened forest resident on the device: uploaded once, predicting batch after batch.
 pub struct DeviceForest {
     nodes: metal::Buffer,
@@ -183,6 +209,7 @@ pub struct DeviceForest {
     num_trees: u32,
     max_depth: u32,
     num_features: usize,
+    feature_bits: Vec<u32>,
 }
 
 impl DeviceForest {
@@ -198,6 +225,7 @@ impl DeviceForest {
             num_trees: flat.roots.len() as u32,
             max_depth: flat.max_depth,
             num_features: flat.num_features,
+            feature_bits: flat.feature_bits.clone(),
         })
     }
 
@@ -215,21 +243,19 @@ impl DeviceForest {
         if rows.num_rows == 0 {
             return Ok((Vec::new(), 0.0));
         }
+        if let Some(i) = (0..self.num_features).find(|&i| rows.columns[i].entry_bits as u32 != self.feature_bits[i]) {
+            return Err(format!("column {i} has {}-bit buckets, the forest's {}", rows.columns[i].entry_bits, self.feature_bits[i]));
+        }
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
-        let (mut data, mut offsets, mut bits) = (Vec::new(), Vec::new(), Vec::new());
-        for c in &rows.columns {
-            offsets.push(data.len() as u32);
-            bits.push(c.entry_bits as u32);
-            data.extend_from_slice(c.storage.data());
+        // Every column at the same stride (the widest column's words), so a node finds its column without a load.
+        let stride = rows.columns.iter().map(|c| c.storage.data().len()).max().unwrap_or(0) + 1;
+        let mut data = vec![0u32; stride * rows.columns.len() + 1];
+        for (i, c) in rows.columns.iter().enumerate() {
+            data[i * stride..i * stride + c.storage.data().len()].copy_from_slice(c.storage.data());
         }
-        offsets.push(data.len() as u32);
-        // The kernel reads a word past an entry that ends a column's last word.
-        data.push(0);
         let nr = rows.num_rows as u32;
         let d_data = transfer_to_device_immutable(device, &data);
-        let d_offsets = transfer_to_device_immutable(device, &offsets);
-        let d_bits = transfer_to_device_immutable(device, &bits);
         let d_out = alloc_uninitialized_array_sync::<f32>(device, rows.num_rows * 2);
         let mut queue = MetalComputeQueue::new(&shared.queue);
         let k = kernel("predictForest")?;
@@ -238,9 +264,9 @@ impl DeviceForest {
             ("numRows", Int(nr as i64)),
             ("numTrees", Int(self.num_trees as i64)),
             ("maxDepth", Int(self.max_depth as i64 + 1)),
+            ("lanesPerRow", Int(lanes_per_row(rows.num_rows, self.num_trees as usize) as i64)),
+            ("columnStride", Int(stride as i64)),
             ("bucketData", B(&d_data)),
-            ("bucketDataOffsets", B(&d_offsets)),
-            ("bucketEntryBits", B(&d_bits)),
             ("nodes", B(&self.nodes)),
             ("treeRoots", B(&self.roots)),
             ("treeWeights", B(&self.weights)),
@@ -322,6 +348,16 @@ mod tests {
                     assert!((host[r][k] - device[r][k]).abs() < 1e-5, "{what} row {r}: host {:?}, device {:?}", host[r], device[r]);
                 }
                 assert!((host[r][0] + host[r][1] - 1.0).abs() < 1e-4, "{what} row {r}: {:?}", host[r]);
+            }
+            // Small batches take many lanes a row (up to one a tree): the same predictions.
+            let resident = DeviceForest::new(&flat).unwrap();
+            for b in [1usize, 2, 5, 33, 300] {
+                assert!(lanes_per_row(b, flat.roots.len()) > 1 || b == 300);
+                let few: Vec<Vec<CellValue>> = c.iter().map(|col| col[..b].to_vec()).collect();
+                let p = resident.predict(&RowBuckets::from_values(&fs, &few).unwrap()).unwrap();
+                for r in 0..b {
+                    assert!((p[r][1] - host[r][1]).abs() < 1e-5, "{what}, batch {b}, row {r}: {:?} {:?}", p[r], host[r]);
+                }
             }
             let right = host.iter().zip(l).filter(|(p, l)| (p[1] > 0.5) == (**l != 0.0)).count() as f64 / host.len() as f64;
             assert!(right > 0.75, "{what}: {right} right");

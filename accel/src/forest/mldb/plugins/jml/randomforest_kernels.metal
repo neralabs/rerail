@@ -310,21 +310,25 @@ struct PredictForestArgs {
     uint32_t numRows;
     uint32_t numTrees;
     uint32_t maxDepth;
+    uint32_t lanesPerRow;
+    uint32_t columnStride;
 };
 
-// [row]
+// [row group]
 __kernel void
 predictForestKernel(__constant const PredictForestArgs & args,
                     __global const uint32_t * bucketData,
-                    __global const uint32_t * bucketDataOffsets,
-                    __global const uint32_t * bucketEntryBits,
                     __global const PredictNode * nodes,
                     __global const int32_t * treeRoots,
                     __global const float * treeWeights,
                     __global const float * leafPreds,
                     __global float * predictionsOut,
-                    uint32_t id [[thread_position_in_grid]])
+                    __local float * partials,
+                    uint32_t group [[threadgroup_position_in_grid]],
+                    uint32_t tid [[thread_position_in_threadgroup]],
+                    uint32_t ntid [[threads_per_threadgroup]])
 {
-    predictForestImpl(args.numRows, args.numTrees, args.maxDepth, bucketData, bucketDataOffsets, bucketEntryBits,
-                      nodes, treeRoots, treeWeights, leafPreds, predictionsOut, id);
+    predictForestImpl(args.numRows, args.numTrees, args.maxDepth, args.lanesPerRow, args.columnStride, bucketData,
+                      nodes, treeRoots, treeWeights, leafPreds, predictionsOut, partials,
+                      group, tid, ntid);
 }

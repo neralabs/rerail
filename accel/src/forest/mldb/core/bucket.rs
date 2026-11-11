@@ -17,7 +17,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 /// `highest_bit(x, none)`: the index of the highest set bit, or `none` when `x` is 0.
-fn highest_bit(x: u32, none: i32) -> i32 {
+pub fn highest_bit(x: u32, none: i32) -> i32 {
     if x == 0 { none } else { 31 - x.leading_zeros() as i32 }
 }
 
