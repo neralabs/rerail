@@ -431,10 +431,7 @@ fn rows_digest(lease: &Lease<'_>, rel: &str, arity: usize, part: Option<i64>) ->
     Ok((hash.finalize().into(), count))
 }
 
-mod batches;
-pub(in crate::code_rule_dsl) use batches::{layer, run_over};
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use batches::run;
+pub(in crate::code_rule_dsl) mod batches;
 
 
 #[cfg(test)]

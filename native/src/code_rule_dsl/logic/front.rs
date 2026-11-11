@@ -963,5 +963,4 @@ pub(crate) fn document_column(relation: &str) -> Option<usize> {
     }
 }
 
-/// Python's execution contexts, by `ContextKind` order: `py_exec_context.kind`'s names, which a rule names.
-pub(crate) const PYTHON_CONTEXTS: [&str; 5] = ["module", "sync_function", "async_function", "class", "lambda"];
+pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;

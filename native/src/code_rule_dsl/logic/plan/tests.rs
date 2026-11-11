@@ -383,7 +383,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
             for statement in &emitted.setup {
                 lease.execute_batch(statement).unwrap();
             }
-            let outcome = schedule::run(&lease, &store, &emitted.program, "/w", docs.clone(), &schedule::Limits::default(), &mut |_| Ok(None))
+            let outcome = schedule::batches::run(&lease, &store, &emitted.program, "/w", docs.clone(), &schedule::Limits::default(), &mut |_| Ok(None))
                 .unwrap_or_else(|e| panic!("{name}: {e:?}"));
             let (got, _) = emit::outputs(&lowered, &lease).unwrap();
             let sql: Vec<String> = emitted.program.steps.iter().map(|s| s.sql.clone()).collect();

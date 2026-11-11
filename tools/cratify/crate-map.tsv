@@ -276,7 +276,7 @@ semver	rerail-lang
 matcher::arguments_sql	rerail-lang-sql
 functors	rerail-engine
 stats::identity	rerail-facts
-waves::schedule::batches	rerail-transducer
+waves::schedule::batches	rerail-engine
 waves::relational	rerail-w
 rule_api	rerail-w
 logic::front::name	rerail-rr-syntax

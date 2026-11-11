@@ -280,7 +280,6 @@ static SQLITE_ALLOCATOR: extern "C" fn() = {
     install
 };
 
-pub(crate) use code_rule_dsl::prof::release_allocator_memory;
 
 #[napi]
 pub struct ConversationEngine {

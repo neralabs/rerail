@@ -12,20 +12,7 @@ pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::grammar_shape::sin
 #[cfg(test)]
 use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
 
-/// The prefix of a matcher's relation.
-pub(in crate::code_rule_dsl) const PREFIX: &str = "rr_ast_";
-
-/// A matcher relation's columns: the root `n`, then one a capture.
-const COLUMNS: [&str; 16] = ["n", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15"];
-
-/// The most captures an atom may name.
-const MOST_CAPTURES: usize = COLUMNS.len() - 1;
-
-/// The columns of matcher relation `rel` (`rr_ast_<k>` or `rr_ast_<k>_<m>`).
-pub(in crate::code_rule_dsl) fn columns(rel: &str) -> &'static [&'static str] {
-    let width = rel.strip_prefix(PREFIX).and_then(|rest| rest.split_once('_')).and_then(|(_, m)| m.parse::<usize>().ok()).unwrap_or(0);
-    &COLUMNS[..=width.min(MOST_CAPTURES)]
-}
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::core::ast_matches::{MOST_CAPTURES, PREFIX, columns};
 
 /// The relation of the `k`th distinct matcher, capturing `m` names.
 fn relation(k: usize, m: usize) -> String {

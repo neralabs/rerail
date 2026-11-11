@@ -782,7 +782,7 @@ pub(crate) fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &["n", "a"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],
         // An `ast` matcher's matched nodes (decision 0106).
-        rel if rel.starts_with(crate::code_rule_dsl::logic::plan::corpus::AST_MATCHES) => crate::code_rule_dsl::logic::plan::corpus::ast_columns(rel),
+        rel if rel.starts_with(ast_matches::PREFIX) => ast_matches::columns(rel),
         // A `match_all` regex's matches (`logic::strings::as_relations`, `facts::vtab::syntax::Extra`).
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::MATCHES) => &["sp", "m"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
@@ -831,3 +831,23 @@ pub(crate) mod cpython_relations {
         }
     }
 }
+
+/// The relations a program's `ast` atoms bind (`rr_ast_<k>`, `rr_ast_<k>_<m>`, decision 0107) and their columns.
+pub(crate) mod ast_matches {
+    /// The prefix of a matcher's relation.
+    pub(crate) const PREFIX: &str = "rr_ast_";
+
+    /// A matcher relation's columns: the root `n`, then one a capture.
+    pub(crate) const COLUMNS: [&str; 16] = ["n", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15"];
+
+    /// The most captures an atom may name.
+    pub(crate) const MOST_CAPTURES: usize = COLUMNS.len() - 1;
+
+    /// The columns of matcher relation `rel` (`rr_ast_<k>` or `rr_ast_<k>_<m>`).
+    pub(crate) fn columns(rel: &str) -> &'static [&'static str] {
+        let width = rel.strip_prefix(PREFIX).and_then(|rest| rest.split_once('_')).and_then(|(_, m)| m.parse::<usize>().ok()).unwrap_or(0);
+        &COLUMNS[..=width.min(MOST_CAPTURES)]
+    }
+}
+/// Python's execution contexts, by `ContextKind` order: `py_exec_context.kind`'s names, which a rule names.
+pub(crate) const PYTHON_CONTEXTS: [&str; 5] = ["module", "sync_function", "async_function", "class", "lambda"];

@@ -25,7 +25,7 @@ use crate::code_rule_dsl::language::KindCatalog;
 /// The rows' version: a change to what they hold changes the families' producer (`families::py_producer`).
 pub(crate) const VERSION: u32 = 3;
 
-pub(crate) use crate::code_rule_dsl::logic::front::PYTHON_CONTEXTS as CONTEXTS;
+pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS as CONTEXTS;
 /// `py_call_arg.spread`'s names: none, `*x`, `**x`.
 pub(crate) const SPREADS: [&str; 3] = ["none", "positional", "keywords"];
 

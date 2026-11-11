@@ -451,7 +451,7 @@ impl Layer {
         let program = &emitted.program;
         let mut inputs = documents.iter().map(|d| DerivationInput { name: Some(d.core.clone()), digest: d.digest }).collect::<Vec<_>>();
         inputs.push(DerivationInput { name: None, digest: self.digest() });
-        let outcome = schedule::layer(lease, graph, program, scope, inputs, &Limits::default())?;
+        let outcome = schedule::batches::layer(lease, graph, program, scope, inputs, &Limits::default())?;
         let mut keys = BTreeMap::<(usize, u32), Vec<FindingKey>>::new();
         let rows: Vec<(i64, i64, i64, i64)> = lease
             .prepare(&format!("SELECT c0, c1, c2, c3 FROM {RELATION}"))?

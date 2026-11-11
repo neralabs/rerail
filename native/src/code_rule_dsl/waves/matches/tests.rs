@@ -6,7 +6,7 @@
 
 use super::super::owner::Backing;
 use super::super::findings::{Layer, PROGRAM as FINDINGS, Shape};
-use super::super::schedule::{Limits, family_name, run};
+use super::super::schedule::{Limits, batches::run, family_name};
 use crate::code_rule_dsl::findings::contract::Coverage;
 use super::*;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
