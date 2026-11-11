@@ -28,6 +28,17 @@ function batchIndex(input: ClaudeHookInput): number {
 }
 
 /**
+ * `MessageDisplay`'s `delta`, the lines completed since the batch before: any text, blank included. A batch can be one
+ * blank line, and the last batch of a reply that ends on a newline is empty, since `final` marks the end.
+ */
+function batchDelta(input: ClaudeHookInput): string {
+  const { delta } = input;
+  if (delta === undefined) throw new Error("Claude hook omitted delta");
+  if (typeof delta !== "string") throw new Error(`Claude hook delta must be text, not ${typeof delta}`);
+  return delta;
+}
+
+/**
  * The turn end `Stop` or `StopFailure` reports. A Stop after a Stop hook kept the turn going (`stop_hook_active`) ends
  * the same prompt again, so it is a turn end of its own, as is each continuation after it (`stopContinuation`).
  */
@@ -68,7 +79,7 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
       sessionId,
       session: descriptor,
       messageId: requiredText(input, "message_id"),
-      delta: requiredText(input, "delta"),
+      delta: batchDelta(input),
       final: input.final === true || input.final === "true",
     }];
   }

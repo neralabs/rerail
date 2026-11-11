@@ -123,6 +123,30 @@ describe("Claude Code one-shot hook", () => {
     ]);
   });
 
+  it("records each batch of a reply, a blank line and the empty last batch of a reply that ends on a newline included", async () => {
+    const root = await temporaryDirectory();
+    const options = hookOptions(root);
+    const common = { session_id: "claude-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
+
+    // Interactive Claude Code sends whole lines per batch, so a batch can be a blank line, and the last batch's delta
+    // is empty when the reply ends on a newline: `final` marks the end, not the text.
+    const reply = { ...common, hook_event_name: "MessageDisplay", turn_id: "turn-1", message_id: "m1" };
+    for (const [index, delta, final] of [[0, "Here is the plan:\n", false], [1, "\n", false], [2, "", true]] as const) {
+      expect(await runClaudeHook({ ...reply, index, delta, final }, options)).toEqual({});
+    }
+
+    const batches = sessionDatabaseQuery<{ eventId: string; payload: string }>(
+      root,
+      "SELECT event_id AS eventId, payload_json AS payload FROM events WHERE kind = 'assistant-delta' ORDER BY sequence",
+    );
+    expect(batches.map(({ eventId, payload }) => [eventId, JSON.parse(payload) as unknown])).toEqual([
+      ["claude-session:message:m1:0", expect.objectContaining({ delta: "Here is the plan:\n", final: false })],
+      ["claude-session:message:m1:1", expect.objectContaining({ delta: "\n", final: false })],
+      ["claude-session:message:m1:2", expect.objectContaining({ delta: "", final: true })],
+    ]);
+  });
+
   it("ignores hook events the adapter does not model without touching storage", async () => {
     const root = await temporaryDirectory();
     const output = await runClaudeHook(

@@ -170,7 +170,8 @@ export interface AdapterSession {
 
 /**
  * Reads a text field of a host's hook payload, which is untyped JSON: only nonblank text is accepted. A field the host
- * sends as another JSON type, such as Claude Code's `MessageDisplay` `index` (a number), needs a reader of its own.
+ * sends as another JSON type, such as Claude Code's `MessageDisplay` `index` (a number), or as text that can be blank,
+ * such as its `delta`, needs a reader of its own.
  */
 export function hookText(host: string) {
   return {
