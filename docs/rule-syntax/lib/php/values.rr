@@ -34,12 +34,10 @@
 
 .decl php_value(n: node, t: symbol, v: symbol)
 php_value(n, "int", v) :- kind(n, "integer"), value(n, v).
-php_value(n, "int", cat("-", v)) :- kind(n, "unary_op_expression"), op(n, "-"), field(n, "argument", a),
-    kind(a, "integer"), value(a, v), v != "0".
-php_value(n, "int", "0") :- kind(n, "unary_op_expression"), op(n, "-"), field(n, "argument", a), value(a, "0").
+php_value(n, "int", cat("-", v)) :- php_negation(n, a), kind(a, "integer"), value(a, v), v != "0".
+php_value(n, "int", "0") :- php_negation(n, a), value(a, "0").
 php_value(n, "float", t) :- kind(n, "float"), text(n, t).
-php_value(n, "float", cat("-", t)) :- kind(n, "unary_op_expression"), op(n, "-"), field(n, "argument", a),
-    kind(a, "float"), text(a, t).
+php_value(n, "float", cat("-", t)) :- php_negation(n, a), kind(a, "float"), text(a, t).
 php_value(n, "string", v) :- php_string_kind(k), kind(n, k), str(n, v), !php_interpolated(n).
 // 'it\'s \n': single quotes unescape only \\ and \' (core's str reads every escape, as double quotes do).
 php_value(n, "string", @replace_all(w, "\\\\([\\\\'])", "${1}")) :- kind(n, "string"), text(n, t),
@@ -53,6 +51,10 @@ php_value(n, "array", "[…]") :- kind(n, "array_creation_expression"), child(n,
 php_value(n, t, v) :- kind(n, "parenthesized_expression"), child(n, e, 0), php_value(e, t, v).
 php_value(n, t, v) :- php_class_const(n, e), php_value(e, t, v).
 php_value(n, t, v) :- php_follow(n, e), php_value(e, t, v).
+// php_negation(n, a): n is `-a`. The operator is n's first character: a unary_op_expression begins with it, and
+// the `-1` of "$a[-1]" (the same kind) keeps no operator token on the tape.
+.decl php_negation(n: node, a: node)
+php_negation(n, a) :- kind(n, "unary_op_expression"), field(n, "argument", a), text(n, t), prefix("-", t).
 .decl php_string_kind(k: symbol)
 php_string_kind("encapsed_string"). php_string_kind("heredoc"). php_string_kind("nowdoc").
 .decl php_interpolated(n: node)  // "x $y", "{$o->p}", a heredoc with $name: a part other than text or an escape
@@ -107,9 +109,18 @@ php_in_use_clause(o) :- kind(o, "variable_name"), inside(o, _, "anonymous_functi
 .decl php_write(o: node)
 php_write(o) :- php_occ(_, _, o), php_assign_kind(k), kind(w, k), field(w, "left", l), (o = l ; within(o, l)).
 php_write(o) :- php_occ(_, _, o), inside(o, _, "update_expression").
-php_write(o) :- php_occ(_, _, o), token_before(o, t), text(t, "&").
+php_write(o) :- php_occ(_, _, o), php_referenced(o).
 php_write(o) :- php_occ(_, _, o), child(a, o, _), kind(a, "argument"), child(l, a, _), kind(l, "arguments"),
     child(c, l, _), !php_byval_call(c).  // a call, a method call, or `new Foo($x)` (a constructor's & parameter)
+// php_referenced(o): o is what a `&` takes a reference to: `&$x` (by_ref: foreach, list, array, use), `$a = &$x`,
+// or a `&` parameter or argument (reference_modifier, the sibling before o).
+.decl php_referenced(o: node)
+php_referenced(o) :- kind(b, "by_ref"), child(b, v, 0), php_leads(v, o).
+php_referenced(o) :- kind(r, "reference_assignment_expression"), field(r, "right", v), php_leads(v, o).
+php_referenced(o) :- kind(m, "reference_modifier"), child(p, m, i), child(p, v, i + 1), php_leads(v, o).
+.decl php_leads(v: node, o: node)  // o is v, or v's leftmost variable: the $a of `$a[0]`, `$a->b`
+php_leads(v, v) :- kind(v, "variable_name").
+php_leads(v, o) :- node(_, v, _, s, _), kind(o, "variable_name"), within(o, v), node(_, o, _, s, _).
 .decl php_byval_call(c: node)  // a call of a builtin that takes every argument by value
 php_byval_call(c) :- php_call_written(c, x), php_byval_fn(x).
 .decl php_byval_fn(x: symbol)
