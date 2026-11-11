@@ -50,6 +50,7 @@ def cases(_module):
 
 
 def exercise(module,case,scratch):
+    scratch=scratch.resolve()
     root=scratch/'repo';root.mkdir();write_fixture(root,case['files'])
     discovery=importlib.import_module('scripts.lint_lib.discovery');source=root/'scripts/lint_lib/discovery.py';source.parent.mkdir(parents=True);source.write_text('pass\n')
     argv=['lint_type_safety_patterns.py',*([] if case.get('noRoot') else ['--root',str(root)]),*case.get('arguments',[])]

@@ -490,6 +490,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'type_safety_patterns':
+                from types_port import install
+                install(self,module)
             if check == 'forwardref':
                 from forwardref_port import install
                 install(self,module)
@@ -607,7 +610,6 @@ class Suite:
             check, name, passive = originals[frame.f_code]
             host = {'admin_async_purity': {'cli_main'},
                     'async_executor': {'cli_main'},
-                    'type_safety_patterns': {'cli_main'},
                     'data_layer_compat_aliases': {'cli_main', '_print_results'},
                     'data_layer_facade_purity': {'cli_main', '_print_results'},
                     'backend_coupling': {'cli_main', 'get_project_root'},

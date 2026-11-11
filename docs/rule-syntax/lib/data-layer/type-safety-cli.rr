@@ -1,0 +1,86 @@
+// Directory discovery is evaluated against the caller's physical repository.
+.violation TspCliRoot(at:span,path:symbol) code "TSP_CLI_ROOT" "type-safety CLI root"
+TspCliRoot(@place("",0),p) :- option("entryPoint","_tsp_cli_root"),option("tspCliHasRoot","1"),option("tspCliRoot",p).
+TspCliRoot(@place("",0),@dir(@dir(@dir(p)))) :- option("entryPoint","_tsp_cli_root"),option("tspCliHasRoot","0"),option("tspDiscoverySource",p).
+.decl tsc_top(path:symbol)
+tsc_top(p) :- option("entryPoint",e),(e="_tsp_cli_dirs";e="_tsp_plugin_dirs"),dir_entry(".",p,1).
+.decl tsc_layer(path:symbol)
+tsc_layer(p) :- tsc_top(p),tsp_config("layer_regex",r),match(r,p).
+.decl tsc_production(rank:number,path:symbol)
+tsc_production(0,"impl") :- tsc_top("impl").
+tsc_production(1,"data_layer") :- tsc_top("data_layer").
+tsc_production(2,"_internal") :- tsc_top("_internal").
+tsc_production(3,p) :- tsc_layer(p).
+.decl tsc_modern()
+tsc_modern() :- tsc_top("data_layer").
+tsc_modern() :- tsc_top("_internal").
+tsc_modern() :- tsc_layer(_).
+.decl tsc_default(rank:number,path:symbol)
+tsc_default(r,p) :- tsc_modern(),tsc_production(r,p).
+tsc_default(0,"api") :- !tsc_modern(),tsc_top("api").
+tsc_default(1,"impl") :- !tsc_modern(),tsc_top("impl").
+.decl tsc_raw(argument:number,path:symbol)
+tsc_raw(i,p) :- option("tspCliHasDirs","1"),option_item("tspCliDirs",i,p).
+tsc_raw(i,p) :- option("tspCliHasDirs","0"),option("tspCliHasDefaults","1"),option_item("tspCliDefaults",i,p).
+tsc_raw(r,p) :- option("tspCliHasDirs","0"),option("tspCliHasDefaults","0"),tsc_default(r,p).
+.decl tsc_public()
+tsc_public() :- tsc_raw(_,"public").
+.decl tsc_expanded(argument:number,rank:number,path:symbol)
+tsc_expanded(i,0,p) :- tsc_raw(i,p),p!="public".
+tsc_expanded(i,r,p) :- tsc_raw(i,"public"),tsc_default(r,p).
+.decl tsc_previous(argument:number,rank:number,path:symbol)
+tsc_previous(i,r,p) :- tsc_expanded(i,r,p),tsc_expanded(j,s,p),(j<i;j=i,s<r).
+.violation TspCliDirectory(at:span,argument:number,rank:number,path:symbol) code "TSP_CLI_DIR" "type-safety CLI directory"
+TspCliDirectory(@place("",0),i,r,p) :- option("entryPoint","_tsp_cli_dirs"),tsc_expanded(i,r,p),(!tsc_public();!tsc_previous(i,r,p)).
+.violation TspPluginDirectory(at:span,rank:number,path:symbol) code "TSP_PLUGIN_DIR" "type-safety plugin directory"
+TspPluginDirectory(@place("",0),r,p) :- option("entryPoint","_tsp_plugin_dirs"),tsc_production(r,p).
+
+// The report consumes every issue and performs source-compatible deduplication.
+.decl tsc_path(i:number,value:symbol)
+.input tsc_path(IO=json,filename="type-safety-cli.json",path="/items/*/file_path",projection="python-str")
+.decl tsc_line(i:number,value:symbol)
+.input tsc_line(IO=json,filename="type-safety-cli.json",path="/items/*/line_number",projection="python-str")
+.decl tsc_line_json(i:number,value:symbol)
+.input tsc_line_json(IO=json,filename="type-safety-cli.json",path="/items/*/line_number",projection="json")
+.decl tsc_line_type(i:number,value:symbol)
+.input tsc_line_type(IO=json,filename="type-safety-cli.json",path="/items/*/line_number",projection="type")
+.decl tsc_category(i:number,value:symbol)
+.input tsc_category(IO=json,filename="type-safety-cli.json",path="/items/*/category",projection="python-str")
+.decl tsc_snippet(i:number,value:symbol)
+.input tsc_snippet(IO=json,filename="type-safety-cli.json",path="/items/*/code_snippet",projection="python-str")
+.decl tsc_suggestion(i:number,value:symbol)
+.input tsc_suggestion(IO=json,filename="type-safety-cli.json",path="/items/*/suggestion",projection="python-str")
+.decl tsc_integer(i:number,value:symbol)
+tsc_integer(i,v) :- tsc_line_type(i,"number"),tsc_line_json(i,v),@count_matches("[.eE]",v)=0.
+tsc_integer(i,"1") :- tsc_line_type(i,"boolean"),tsc_line_json(i,"true").
+tsc_integer(i,"0") :- tsc_line_type(i,"boolean"),tsc_line_json(i,"false").
+sf_line(-2,i,v,j) :- option("entryPoint","_tsp_cli_report"),tsc_integer(i,v),tsc_line_json(i,j).
+.decl tsc_duplicate(i:number)
+tsc_duplicate(i) :- tsc_path(i,p),tsc_integer(i,l),tsc_category(i,c),tsc_path(j,p),tsc_integer(j,l),tsc_category(j,c),j<i.
+.decl tsc_active(i:number)
+tsc_active(i) :- option("entryPoint","_tsp_cli_report"),tsc_path(i,_),!tsc_duplicate(i).
+.decl tsc_count(n:number)
+tsc_count(n) :- option("entryPoint","_tsp_cli_report"),n=count:{tsc_active(_)}.
+.decl tsc_category_count(category:symbol,n:number)
+tsc_category_count(c,n) :- tsp_category(c,_),n=count:{tsc_active(i),tsc_category(i,c)}.
+.decl tsc_relative(i:number,path:symbol)
+tsc_relative(i,".") :- tsc_path(i,p),option("tspReportRoot",p).
+tsc_relative(i,@slice(p,strlen(root)+1,strlen(p))) :- tsc_path(i,p),option("tspReportRoot",root),root!=".",root!="/",root!="//",prefix(cat(root,"/"),p).
+tsc_relative(i,@slice(p,1,strlen(p))) :- tsc_path(i,p),option("tspReportRoot","/"),p!="/",prefix("/",p),!prefix("//",p).
+tsc_relative(i,@slice(p,2,strlen(p))) :- tsc_path(i,p),option("tspReportRoot","//"),p!="//",prefix("//",p).
+tsc_relative(i,p) :- tsc_path(i,p),option("tspReportRoot","."),!prefix("/",p).
+.decl tsc_report_path(i:number,path:symbol)
+tsc_report_path(i,p) :- tsc_relative(i,p).
+tsc_report_path(i,p) :- tsc_path(i,p),!tsc_relative(i,_).
+.violation TspCliOutput(at:span,phase:number,category:number,part:number,path_key:symbol,sign:number,length:number,digits:symbol,ordinal:number,text:symbol) code "TSP_CLI_OUTPUT" "type-safety CLI output"
+TspCliOutput(@place("",0),0,0,0,"",0,0,"",0,"No type safety issues found.\n") :- tsc_count(0).
+TspCliOutput(@place("",0),0,0,0,"",0,0,"",0,cat("Found ",to_string(n)," type safety issue(s):\n\n")) :- tsc_count(n),n>0.
+TspCliOutput(@place("",0),1,r,0,"",0,0,"",0,cat("=== ",label," (",to_string(n)," issues) ===\n")) :- tsc_count(total),total>0,tsc_category_count(c,n),n>0,tsp_category(c,label),tsp_category_order(c,r).
+TspCliOutput(@place("",0),1,r,1,p,s,n,d,i,cat("  ",rel,":",l,"\n    ",snippet,"\n    Suggestion: ",suggestion,"\n\n")) :- tsc_active(i),!option("tspSummary","1"),tsc_category(i,c),tsp_category_order(c,r),tsc_path(i,p),tsc_report_path(i,rel),tsc_line(i,l),tsc_integer(i,num),sf_line_key(num,s,n,d),tsc_snippet(i,snippet),tsc_suggestion(i,suggestion).
+TspCliOutput(@place("",0),1,r,2,"",0,0,"",0,"\n") :- tsc_count(total),total>0,tsc_category_count(c,n),n>0,tsp_category_order(c,r).
+TspCliOutput(@place("",0),2,0,0,"",0,0,"",0,"Summary:\n") :- tsc_count(n),n>0.
+TspCliOutput(@place("",0),3,r,0,"",0,0,"",0,cat("  ",label,": ",to_string(n),"\n")) :- tsc_count(total),total>0,tsc_category_count(c,n),n>0,tsp_category(c,label),tsp_category_order(c,r).
+TspCliOutput(@place("",0),4,0,0,"",0,0,"",0,"\nType safety issues found. Please fix before merging.\n") :- tsc_count(n),n>0,option("tspCheck","1").
+.violation TspCliExit(at:span,status:number) code "TSP_CLI_EXIT" "type-safety CLI status"
+TspCliExit(@place("",0),1) :- tsc_count(n),n>0,option("tspCheck","1").
+TspCliExit(@place("",0),0) :- tsc_count(n),(n=0;!option("tspCheck","1")).

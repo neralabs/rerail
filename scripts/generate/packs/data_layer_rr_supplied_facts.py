@@ -10,6 +10,7 @@ from data_layer_rr_text import search
 def supplied_facts(original, check):
     if check == 'serverplan_grammar_surface': return surface_schema()
     configs = {
+        'type_safety_patterns': {},
         'classvar_check': dict(path_field='file',message='field',code_field='code',order='message',bundle_fallback='exact'),
         'forwardref': dict(path_field='file',message='field',code_field='code',order='code',bundle_fallback='exact'),
         'removed_compat_surfaces': dict(path_field='path', join_root='true', message='removed', code='RCS001', order='input'),
@@ -23,6 +24,7 @@ def supplied_facts(original, check):
         'permission_error': dict(path_field='path', message='field', code='builtin_permission_error', order='line'),
     }
     defaults = {
+        'type_safety_patterns': {},
         'classvar_check': dict(code='CLASSVAR001',message='Unsafe ClassVar check'),
         'forwardref': dict(code='FWDREF',message='ForwardRef handling issue'),
         'removed_compat_surfaces': dict(name='removed compatibility surface'),

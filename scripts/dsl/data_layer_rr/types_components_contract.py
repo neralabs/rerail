@@ -1,4 +1,5 @@
 """Record type-safety metadata, registered collectors and caller-supplied facts."""
+import ast
 from dataclasses import fields
 from pathlib import Path
 from contract_runner import main
@@ -12,7 +13,10 @@ def cases(_module):
     rows=[dict(kind='metadata',id='metadata-'+str(i),directories=dirs) for i,dirs in enumerate([[],['api'],['impl','public'],['data_layer','_internal','l1000_a','l１２３４_a','l1234_']])]
     for name,source in [('positive',BAD),('clean','pass\n'),('invalid','def broken(: # str | Expression\n'),('async','async def where(expression: str):\n pass\n'),('nested','def f():\n def select(columns: str):\n  pass\n'),('body-window','def select():\n x: str | Expression\n'),('unicode','def ｏｒｄｅｒ＿ｂｙ(column: str):\n pass\n')]:
         rows.append(dict(kind='extract',id='extract-'+name,source=source))
-    for name,paths in [('order',['z.py','a/z.py','a-.py','a.py']),('duplicates',['a.py','a.py']),('missing',['missing.py']),('scope',['tests/a.py','test/a.py','a.py','.py','a.pyi'])]:rows.append(dict(kind='batch',id='batch-'+name,paths=paths))
+    for name,source in [('positive',BAD),('clean','pass\n'),('async','async def where(expression: str):\n pass\n'),('nested','def order_by(column: str):\n def select(columns: str):\n  pass\n'),('unicode','def ｏｒｄｅｒ＿ｂｙ(column: str):\n pass\n')]:rows.append(dict(kind='state',id='state-'+name,source=source))
+    for kind in ['start','callback']:
+        for name,source in [('order',BAD),('where','def where(expression: str):\n pass\n'),('select','def select(columns: str):\n pass\n'),('async','async def group_by(columns: str):\n pass\n'),('clean','def other():\n pass\n')]:rows.append(dict(kind=kind,id=kind+'-'+name,source=source))
+    for name,paths in [('order',['z.py','a/z.py','a-.py','a.py']),('duplicates',['a.py','a.py']),('missing',['missing.py']),('scope',['tests/a.py','test/a.py','a.py','.py','a.pyi']),('binary',['a.py'])]:rows.append(dict(kind='batch',id='batch-'+name,paths=paths,binary=name=='binary'))
     hit=dict(category='STR_UNION_EXPRESSION',file_path='a.py',line_number=3,column=2,code_snippet='snippet',suggestion='suggestion')
     for i,number in enumerate([1,True,False,-1,2**100,None,2.5,'3']):rows.append(dict(kind='project',id='project-'+str(i),fact=dict(hit,line_number=number,column=number)))
     for i,value in enumerate([None,{},hit,dict(hit,category='UNKNOWN'),*[dict(hit,**{key:value}) for key in hit for value in [None,True,2.5,[],{}]],dict(hit,file_path='./a//./b.py/.')]):rows.append(dict(kind='load',id='load-'+str(i),fact=value))
@@ -38,9 +42,23 @@ def exercise(module,case,scratch):
             path=root/'impl/a.py'
             bundle=module._rerail_types_extract(path,case['source'],root) if hasattr(module,'_rerail_types_extract') else materialize_source_facts(path=path,source=case['source'],specs=(module.TYPE_SAFETY_PATTERNS_EXTRACTOR,),extractors=module.type_safety_patterns_fact_extractors(root))
             value=dict(facts=bundle.facts,errors=bundle.errors)
+        elif case['kind']=='state':
+            factory=module.type_safety_patterns_fact_extractors(root)[family];created=[]
+            def capture(path,source):
+                collector=factory(path,source);created.append(collector);return collector
+            bundle=materialize_source_facts(path=root/'impl/a.py',source=case['source'],specs=(module.TYPE_SAFETY_PATTERNS_EXTRACTOR,),extractors={family:capture})
+            value=dict(facts=bundle.facts,lines=created[0].lines,issues=created[0].issues)
+        elif case['kind'] in {'start','callback'}:
+            collector=module.TypeSafetyPatternsCollector(root/'impl/a.py',root);collector.start_file(root/'impl/a.py',case['source'],None)
+            if case['kind']=='callback':
+                node=next(n for n in ast.walk(ast.parse(case['source'])) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)));getattr(collector,'on_'+type(node).__name__)(node,None)
+            value=dict(issues=collector.issues,lines=collector.lines)
         elif case['kind']=='batch':
             for path in set(case['paths']):
-                if path!='missing.py':p=root/path;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(BAD)
+                if path!='missing.py':
+                    p=root/path;p.parent.mkdir(parents=True,exist_ok=True)
+                    if case.get('binary'):p.write_bytes(b'\xff')
+                    else:p.write_text(BAD)
             values=module._issues_for_files(root,tuple(root/path for path in case['paths']));groups={}
             for issue in values:groups.setdefault(issue.file_path,[]).append(issue)
             value=[issue for path in sorted(groups) for issue in groups[path]]

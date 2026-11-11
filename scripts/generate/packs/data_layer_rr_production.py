@@ -8,6 +8,7 @@ from data_layer_rr_text import module, character_class, search
 
 CLAUSES = {
     'classvar_check': ['ClassVarComparison'],
+    'type_safety_patterns': ['TypeSafety'],
     'forwardref': ['ForwardRefInstance', 'ForwardRefSubclass', 'ForwardRefCallable'],
     'removed_compat_surfaces': ['Removed'], 'versioned_lifecycle_legacy_surfaces': ['Lifecycle'],
     'no_api_root_imports': ['RootImport', 'RootExample'],
@@ -73,7 +74,7 @@ def production(source, check, text):
     default = next(f.default for f in fields(original.StructuredViolation) if f.name == 'severity')
     assert len(severities) <= 1
     severity = next(iter(severities), default)
-    dynamic = check in {'backend_type_strings', 'no_api_root_imports', 'no_blanket_grammar_bypass', 'classvar_check'}
+    dynamic = check in {'backend_type_strings', 'no_api_root_imports', 'no_blanket_grammar_bypass', 'classvar_check','type_safety_patterns'}
     if dynamic: roots, scope = [], 'production'
     elif check == 'hasattr_async': roots, scope = [p.rstrip('/') for p in original.DIRECTORIES_TO_CHECK], 'async'
     elif plugin.file_scope.broad_repo_scope: roots, scope = ['.'], 'static'
@@ -98,7 +99,7 @@ def production(source, check, text):
         'no_api_root_imports':'nari_file', 'backend_type_strings':'bts_doc', 'hasattr_async':'async_selected',
         'no_source_inspection':'inspection_selected', 'serverplan_name_inference':'name_selected',
         'no_blanket_grammar_bypass':'bypass_selected', 'serverplan_grammar_surface':'sgp_admitted',
-        'permission_error':'permission_selected', 'classvar_check':'cv_selected', 'forwardref':'fr_selected'}[check]
+        'permission_error':'permission_selected', 'classvar_check':'cv_selected', 'forwardref':'fr_selected','type_safety_patterns':'tsp_policy_doc'}[check]
     pattern = re.compile(r'(?m)^'+selector+r'\([^\n]* :- [\s\S]*?\.\n')
     text = pattern.sub(lambda m: '' if 'pp_run()' in m.group() else m.group(), text)
     text += f'\n{selector}(d) :- pp_run(), pp_doc(d,_), pp_fact_present(d).\n'
@@ -147,6 +148,9 @@ def production(source, check, text):
             elif check == 'no_api_root_imports': order = [names['ordinal'], '-1' if clause == 'RootImport' else names['piece']+'*2+'+names['pattern'], names['occurrence']]
             elif check == 'classvar_check': order = [names['collector_visit'],names['ordinal'],'0']
             elif check == 'forwardref': order = [names['ordinal'],'0','0']
+            elif check == 'type_safety_patterns':
+                body += ', tsp_event_order(d,l,ordinal,ppe_phase,ppe_a,ppe_b)'
+                order = ['ppe_phase','ppe_a','ppe_b']
             elif check == 'backend_type_strings': order = [line,names['pattern'],names['occurrence']]
             elif check == 'hasattr_async': order = [line,'0' if clause == 'Asynchasattr' else '1','0']
             elif check == 'no_source_inspection': order = [line,names['ordinal'],'0']
@@ -196,6 +200,7 @@ def production(source, check, text):
         elif check == 'no_api_root_imports': payload = [('file_path','full','symbol'),('line','l','number'),('message',message,'symbol')]
         elif check == 'classvar_check': payload = [('file','full','symbol'),('line','l','number'),('col','column','number'),('message',message,'symbol'),('code',code,'symbol')]
         elif check == 'forwardref': payload = [('file','p','symbol'),('line','l','number'),('col','column','number'),('message',message,'symbol'),('code',code,'symbol')]
+        elif check == 'type_safety_patterns': payload = [('category','category','symbol'),('file_path','full','symbol'),('line_number','l','number'),('column','column','number'),('code_snippet','snippet','symbol'),('suggestion','suggestion','symbol')]
         elif check == 'backend_type_strings': payload = [('file','full','symbol'),('line','l','number'),('column','column','number'),('message',message,'symbol'),('code',code,'symbol'),('snippet','snippet','symbol')]
         elif check == 'hasattr_async': payload = [('line','l','number'),('pattern_type',code,'symbol'),('method_name','method','symbol')]
         elif check == 'no_source_inspection': payload = [('file_path','full','symbol'),('line','l','number'),('line_content','snippet','symbol'),('pattern_name','label','symbol')]

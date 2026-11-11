@@ -1,0 +1,76 @@
+// Native configuration and direct collection share the scanner relations.
+.decl tsp_config(key:symbol,value:symbol)
+#include "project.rr"
+.decl tsp_category_order(category:symbol,ordinal:number)
+.decl tsp_event_order(d:number,line:number,ordinal:number,phase:number,first:number,second:number)
+tsp_event_order(d,l,i,0,l,i) :- tsp_issue(d,l,_,_,i,_,_),i<5.
+tsp_event_order(d,l,i,1,i,0) :- tsp_issue(d,l,_,_,i,_,_),i>=5.
+.violation TspConfiguration(at:span,key:symbol,value:symbol) code "TSP_CONFIG" "type-safety configuration"
+TspConfiguration(@place("",0),k,v) :- option("entryPoint","_tsp_configuration"),tsp_config(k,v).
+.decl tsp_prepare_gate()
+tsp_prepare_gate() :- option("tspPrepareEntry","_issues_for_files").
+.decl tsp_prepare_test(i:number)
+tsp_prepare_test(i) :- option_item("tspScopes",i,p),match("(?s)(?:.*/)?(?:tests|test)(?:/.*)?",p).
+.decl tsp_prepare_previous(i:number)
+tsp_prepare_previous(i) :- option_item("tspPaths",i,p),option_item("tspPaths",j,p),j<i.
+.violation TspRead(at:span,ordinal:number) code "TSP_READ" "type-safety source read"
+TspRead(@place("",0),i) :- option("entryPoint","_tsp_prepare"),tsp_prepare_gate(),option_item("tspNames",i,n),suffix(".py",n),n!=".py",option_item("tspExists",i,"1"),!tsp_prepare_test(i),!tsp_prepare_previous(i).
+
+tsp_text_mode(d) :- option("entryPoint","_tsp_collect"),doc(d,_,_),!syntax_error(d,_,_).
+tsp_signature_mode(d) :- option("entryPoint","_tsp_collect"),doc(d,_,_).
+tsp_signature_gate(d) :- option("entryPoint","_tsp_collect"),doc(d,_,_).
+.violation TspCollectStatus(at:span,present:number) code "TSP_COLLECT_STATUS" "type-safety collector status"
+TspCollectStatus(@place("",0),1) :- option("entryPoint","_tsp_collect"),doc(d,_,_),!syntax_error(d,_,_).
+TspCollectStatus(@place("",0),0) :- option("entryPoint","_tsp_collect"),doc(d,_,_),syntax_error(d,_,_).
+.violation TspCollectError(at:span,value:symbol) code "TSP_COLLECT_ERROR" "type-safety parse error"
+TspCollectError(@place("",0),cat("SyntaxError: ",m," (",name,", line ",to_string(l),")")) :- option("entryPoint","_tsp_collect"),doc(d,_,_),syntax_error(d,l,m),option("tspCollectName",name).
+
+// The plugin reporter accepts arbitrary JSON facts, preserving Python values.
+.decl pp_config(key:symbol,value:symbol)
+pp_config("findingSeverity","hard-fail").
+#include "data-layer/supplied-facts.rr"
+#include "data-layer/typed-supplied-facts.rr"
+.decl tsf_member(b:number,r:number,f:number,key:symbol)
+.input tsf_member(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/key",projection="python-str")
+sfe_member(b,r,f,"line") :- tsf_member(b,r,f,"line_number").
+sfe_member(b,r,f,k) :- tsf_member(b,r,f,k),k!="line_number".
+.input sfe_value(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded",projection="python-value-str")
+.input sfe_tag(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/0",projection="python-str")
+.input sfe_scalar(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="python-str")
+.input sfe_json(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="json")
+sf_config("path_field","file_path"). sf_config("order","message"). sf_config("code","TSP001").
+sf_default("category","DEPRECATED_COMPARISON_OP"). sf_default("suggestion","").
+.decl tsp_report_label(b:number,r:number,label:symbol)
+tsp_report_label(b,r,label) :- sf_field(b,r,"category",c),tsp_category(c,label).
+tsp_report_label(b,r,c) :- sf_field(b,r,"category",c),!tsp_category(c,_).
+sf_message(b,r,cat(label,": ",suggestion)) :- sf_active(b,r),tsp_report_label(b,r,label),sf_field(b,r,"suggestion",suggestion).
+
+// Strict deserialization differs from the tolerant plugin reporter.
+.decl tsp_string(b:number,r:number,key:symbol,value:symbol)
+tsp_string(b,r,k,v) :- tsf_member(b,r,f,k),sfe_tag(b,r,f,"str"),sfe_scalar(b,r,f,v).
+.decl tsp_load_valid(category:symbol,path:symbol,line_json:symbol,col_json:symbol,snippet:symbol,suggestion:symbol)
+tsp_load_valid(c,p,l,col,s,m) :- sf_container(0,"array"),sf_shape(0,0,"object"),tsp_string(0,0,"category",c),tsp_category(c,_),tsp_string(0,0,"file_path",p),tsp_string(0,0,"code_snippet",s),tsp_string(0,0,"suggestion",m),
+    sf_type(0,0,"line",lt),(lt="number";lt="boolean"),sf_json(0,0,"line",l),sf_type(0,0,"column",ct),(ct="number";ct="boolean"),sf_json(0,0,"column",col).
+.violation TspLoaded(at:span,category:symbol,path:symbol,line_json:symbol,col_json:symbol,snippet:symbol,suggestion:symbol) code "TSP_LOADED" "type-safety supplied issue"
+TspLoaded(@place("",0),c,p,l,col,s,m) :- option("entryPoint","_issue_from_fact"),tsp_load_valid(c,p,l,col,s,m).
+.violation TspLoadStatus(at:span,present:number) code "TSP_LOAD_STATUS" "type-safety supplied issue status"
+TspLoadStatus(@place("",0),1) :- option("entryPoint","_issue_from_fact"),tsp_load_valid(_,_,_,_,_,_).
+TspLoadStatus(@place("",0),0) :- option("entryPoint","_issue_from_fact"),!tsp_load_valid(_,_,_,_,_,_).
+.violation TspLoadError(at:span,message:symbol) code "TSP_LOAD_ERROR" "type-safety supplied issue error"
+TspLoadError(@place("",0),"'NoneType' object has no attribute 'get'") :- option("entryPoint","_issue_from_fact"),sf_shape(0,0,"null").
+
+// Issue projection retains all caller-supplied field values.
+.decl tsp_project_category(value:symbol)
+.input tsp_project_category(IO=json,filename="type-safety-value.json",path="/category",projection="python-str")
+.decl tsp_project_path(value:symbol)
+.input tsp_project_path(IO=json,filename="type-safety-value.json",path="/file_path",projection="python-str")
+.decl tsp_project_line(value:symbol)
+.input tsp_project_line(IO=json,filename="type-safety-value.json",path="/line_number",projection="json")
+.decl tsp_project_column(value:symbol)
+.input tsp_project_column(IO=json,filename="type-safety-value.json",path="/column",projection="json")
+.decl tsp_project_snippet(value:symbol)
+.input tsp_project_snippet(IO=json,filename="type-safety-value.json",path="/code_snippet",projection="json")
+.decl tsp_project_suggestion(value:symbol)
+.input tsp_project_suggestion(IO=json,filename="type-safety-value.json",path="/suggestion",projection="json")
+.violation TspProjected(at:span,category:symbol,path:symbol,line_json:symbol,col_json:symbol,snippet_json:symbol,suggestion_json:symbol) code "TSP_PROJECTED" "type-safety issue projection"
+TspProjected(@place("",0),c,p,l,col,s,m) :- option("entryPoint","_issue_to_fact"),tsp_project_category(c),tsp_project_path(p),tsp_project_line(l),tsp_project_column(col),tsp_project_snippet(s),tsp_project_suggestion(m).

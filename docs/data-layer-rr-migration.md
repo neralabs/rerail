@@ -3555,3 +3555,36 @@ The complete receipt is `rr-forwardref-complete-finalfcce.json.gz`.
 The inventory now records sixteen admissions, eighty-three drafts, and one absent translation.
 Earlier admissions retain their own engine and adapter identities. This receipt does not certify the remaining rules.
 No full-repository cold run or additional Linear ticket was created.
+
+### 2026-11-11 — Type-safety CLI, components, and production recovery
+
+The initial modern-engine run passes all 193 original assertions through snapshot execution.
+It still calls the source CLI sixteen times. Thirty-one cases have no native call, including configuration and passive DTO assertions.
+These results do not establish complete migration.
+
+New source recordings cover 27 CLI cases, 98 public API cases, and fourteen production cases.
+The CLI contracts retain complete streams, exit status, callback inputs, argument aliases, discovery, and parser errors.
+The production contracts retain selected files, extractor facts, and complete findings.
+Additional component recordings cover metadata, strict fact loading, projection, tolerant reporting, and collector events.
+
+Native configuration now binds categories, allowlists, regular expressions, triggers, extractor specifications, and argument schemas.
+The source CLI exemption is removed. Native relations perform directory selection, issue deduplication, category grouping, output ordering, and rendering.
+The existing production generator now supports the type-safety rule and preserves its distinct regex and AST collection phases.
+No engine source changes or compilation are needed.
+
+The first CLI replay passes all 27 cases after repairs.
+Production passes fourteen cases through snapshot execution. The component replay passes 74 cases before additional collector event assertions.
+Expanded public tests expose a decoding-error difference in the content-signature API. Its native preparation repair still needs the final replay.
+
+The recordings expose duplicate-file findings and incorrect explicit-file handling for a file named `.py`.
+Explicit-file preparation now rejects that name. Production discovery correctly retains it, as the original framework does.
+A separate production test confirms that normalized Unicode function names need collection without the public signature-trigger gate.
+
+Collector event tests expose incomplete adapter behavior before `finish_file`.
+The adapter omits initial regex findings and lacks function callbacks. Six of ten event cases fail on the recorded native implementation.
+The red receipt retains those complete observations, consumed programs, and adapter bytes.
+The receipt is `rr-type-safety-events-red-finalfcce.json.gz`.
+
+Type safety remains a draft. The inventory remains sixteen admissions, eighty-three drafts, and one absent translation.
+Remaining acceptance includes collector event repairs, both API replays, all original positives, persistent updates, removal controls, and strict admission tests.
+The remote Final branch remains `fcce32b26`. The retained native binary is unchanged.

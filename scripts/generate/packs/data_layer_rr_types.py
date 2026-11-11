@@ -46,13 +46,16 @@ def type_safety_patterns(source, target, header):
     digits = character_class(str.isdecimal)
     text += '.decl tsp_policy_doc(d: number)\n'
     layer = '(?s)l' + digits + r'{4}_[^/\n][^/]*/.*'
-    text += f'tsp_policy_doc(d) :- doc(d, p, _), (prefix("impl/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; match({q(layer)}, p)), file_name(d, n), suffix(".py", n), !tsp_policy_skip(d).\n'
+    text += f'tsp_policy_doc(d) :- !option("entryPoint",_), doc(d, p, _), (prefix("impl/", p) ; prefix("data_layer/", p) ; prefix("_internal/", p) ; match({q(layer)}, p)), file_name(d, n), suffix(".py", n), n != ".py", !tsp_policy_skip(d).\n'
     text += '.decl tsp_policy_skip(d: number)\n'
     text += 'tsp_policy_skip(d) :- path_part(d, p), (p = "tests" ; p = "test" ; p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").\n'
     text += '.decl tsp_category(c: symbol, label: symbol)\n'
     text += ''.join(f'tsp_category({q(c.name)}, {q(c.value)}).\n' for c in original.IssueCategory)
     text += '.decl tsp_allowed(c: symbol, p: symbol)\n'
-    text += ''.join(f'tsp_allowed({q(c.name)}, {q(p)}).\n' for c, paths in original.ALLOWLIST.items() for p in sorted(paths))
+    text += '.decl tsp_default_allowed(c: symbol, p: symbol)\n'
+    text += ''.join(f'tsp_default_allowed({q(c.name)}, {q(p)}).\n' for c, paths in original.ALLOWLIST.items() for p in sorted(paths))
+    text += 'tsp_allowed(c,p) :- tsp_default_allowed(c,p), !option("tspAllowOverride",_).\n'
+    text += 'tsp_allowed(c,p) :- option("tspAllowOverride","1"), option_item("tspAllowCategories",i,c), option_item("tspAllowPaths",i,p).\n'
     text += r'''
 .decl tsp_source(d: number, t: symbol)
 tsp_source(d, t) :- source(d, sp), text(sp, t).
@@ -70,11 +73,14 @@ tsp_text_mode(d) :- doc(d, _, _), option("entryPoint", e),
     (e = "check_file_for_patterns" ; e = "check_file_content_for_patterns").
 tsp_text_mode(d) :- tsp_fact_file(d), option("entryPoint", "_issues_for_files"), !syntax_error(d, _, _).
 .decl tsp_fact_file(d: number)
-tsp_fact_file(d) :- tsp_path(d, p, n), suffix(".py", n),
+tsp_fact_file(d) :- tsp_path(d, p, n), suffix(".py", n), n != ".py", !tsp_api_duplicate(d),
     !contains("/tests/", cat("/", p, "/")), !contains("/test/", cat("/", p, "/")).
 .decl tsp_api_path(d: number, path: symbol, name: symbol)
 tsp_api_path(d, p, n) :- doc(d, buffer, _), option_item("apiBuffers", i, buffer),
     option_item("apiSourcePaths", i, p), option_item("apiSourceNames", i, n).
+.decl tsp_api_duplicate(d: number)
+tsp_api_duplicate(d) :- doc(d,buffer,_),option_item("apiBuffers",i,buffer),option_item("apiSourcePaths",i,p),
+    option_item("apiBuffers",j,_),option_item("apiSourcePaths",j,p),j<i.
 .decl tsp_path(d: number, path: symbol, name: symbol)
 tsp_path(d, p, n) :- tsp_api_path(d, p, n).
 tsp_path(d, p, n) :- doc(d, p, _), file_name(d, n), !tsp_api_path(d, _, _).
@@ -85,6 +91,8 @@ tsp_signature_mode(d) :- tsp_fact_file(d), option("entryPoint", e),
 // The content API uses its argument only as a trigger, then the framework reads the file.
 .decl tsp_signature_gate(d: number)
 tsp_signature_gate(d) :- tsp_signature_trigger(d), !option("callSource", _).
+tsp_signature_gate(d) :- option("entryPoint","_issues_for_files"),doc(d,_,_).
+tsp_signature_gate(d) :- tsp_policy_doc(d),!option("entryPoint",_).
 '''
     for trigger in original.SIGNATURE_SOURCE_TRIGGERS:
         text += f'tsp_signature_gate(d) :- doc(d, _, _), option("callSource", t), contains({q(trigger)}, t).\n'
@@ -141,11 +149,14 @@ TypeSafety(@place(p, l), c, column, ordinal, suggestion, snippet, label) :- tsp_
 .violation TspAllowed(at: span) code "TSP_ALLOWED" "allowlisted"
 TspAllowed(@place("input.py", 1)) :- option("entryPoint", "is_allowlisted"), option("category", c), tsp_normalized(p), tsp_allowed(c, p).
 .decl tsp_normalized(p: symbol)
-tsp_normalized(".") :- option("filePath", p), option("basePath", p).
-tsp_normalized(@slice(p, strlen(prefix), strlen(p))) :- option("filePath", p), option("basePath", b),
-    prefix = cat(@replace_all(b, "/+$", ""), "/"), prefix(prefix, p).
-tsp_normalized(p) :- option("filePath", p), option("basePath", b), p != b,
-    prefix = cat(@replace_all(b, "/+$", ""), "/"), !prefix(prefix, p).
+.decl tsp_relative(p:symbol)
+tsp_relative(".") :- option("filePath",p),option("basePath",p).
+tsp_relative(@slice(p,strlen(b)+1,strlen(p))) :- option("filePath",p),option("basePath",b),b!=".",b!="/",b!="//",prefix(cat(b,"/"),p).
+tsp_relative(@slice(p,1,strlen(p))) :- option("filePath",p),option("basePath","/"),p!="/",prefix("/",p),!prefix("//",p).
+tsp_relative(@slice(p,2,strlen(p))) :- option("filePath",p),option("basePath","//"),p!="//",prefix("//",p).
+tsp_relative(p) :- option("filePath",p),option("basePath","."),!prefix("/",p).
+tsp_normalized(p) :- tsp_relative(p).
+tsp_normalized(p) :- option("filePath",p),!tsp_relative(_).
 .violation TspNormalized(at: span, result: symbol) code "TSP_NORMALIZED" "relative path"
 TspNormalized(@place("input.py", 1), p) :- option("entryPoint", "normalize_path"), tsp_normalized(p).
 .violation TspDiscovered(at: span) code "TSP_DISCOVERED" "source file"
@@ -163,4 +174,6 @@ TspDedupe(@place("input.py", 1), i) :- option("entryPoint", "_dedupe_issues"), o
 tsp_duplicate(i) :- option_item("issuePaths", i, p), option_item("issueLines", i, l), option_item("issueCategories", i, c),
     option_item("issuePaths", j, p), option_item("issueLines", j, l), option_item("issueCategories", j, c), j < i.
 '''
-    return text
+    from data_layer_rr_types_api import suffix
+    from data_layer_rr_production import production
+    return production(source,'type_safety_patterns',text) + suffix(source)

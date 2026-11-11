@@ -1603,7 +1603,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/type-safety-patterns.rr",
-      "sha256": "a0bd632185eafb87804ec3ff22704d53948ed2118c60e7aecc518b6bd2212b37",
+      "sha256": "d9b30fdac952f8460cce423c8a5660edd7eee221901a3a71a7b0d99f269138e5",
       "origin": "authored",
       "upstreamPath": "scripts/lint_type_safety_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3022,6 +3022,20 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_forwardref.py",
       "sha256": "d8d0018760eacdba16fbb145704cd3bee640f121326837773085afaab2a0f4b2"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/type-safety-api.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_type_safety_patterns.py",
+      "sha256": "feff97dd15f03ceff8e46b87d17fe6e0059ef98931293b5eed367cdb8741b291"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/type-safety-cli.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_type_safety_patterns.py",
+      "sha256": "e222431c3aaa10bc6116a1ade4916ba96c25941a8b69add13b9a462354c82e51"
     }
   ],
   "rules": [
@@ -3909,7 +3923,7 @@
       "legacySha256": "311eda52dff8cfc9108b52fcb2971412c59f1ea97c1784d6b4e47173ac8e61ca",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/type-safety-patterns.rr",
-      "ruleSha256": "a0bd632185eafb87804ec3ff22704d53948ed2118c60e7aecc518b6bd2212b37"
+      "ruleSha256": "d9b30fdac952f8460cce423c8a5660edd7eee221901a3a71a7b0d99f269138e5"
     },
     {
       "check": "conn_or_txn_union",
