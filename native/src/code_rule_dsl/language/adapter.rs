@@ -23,8 +23,6 @@ pub(crate) mod pack;
 mod value;
 pub(in crate::code_rule_dsl) mod vue;
 
-#[cfg(test)]
-pub(crate) use super::with_adapter;
 pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
 pub(crate) use calls::{CallFeature, CallRules};
 pub(crate) use format_args::{FormatArgFeature, FormatArgRules};

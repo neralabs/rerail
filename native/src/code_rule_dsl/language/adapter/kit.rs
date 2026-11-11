@@ -6,8 +6,8 @@ use super::value::kit as value_kit;
 use super::{
     Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, Rust, ScopeRules,
     Sql, ValueRules, Vue, has_import_targets, is_comment_kind, is_paren_kind, parsed_by_forte,
-    with_adapter,
 };
+use crate::code_rule_dsl::language::with_adapter;
 use crate::code_rule_dsl::language::{
     CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support, kind_ids,
 };

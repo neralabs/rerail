@@ -153,10 +153,30 @@ def cfg_test_edits(nodes, files, keep_test_mods, edits):
             p = by_decl.get((os.path.abspath(f), gated[4:]))
             # a test module stays its crate's test build's, unless another crate reads it or its own file does by
             # path (`tally::PARSES` under a converted cfg)
-            read_here = re.search(rb'(?<![A-Za-z0-9_:])' + gated[4:].encode() + rb'::', data[:int(s)] + data[int(e) + 200:]) is not None
-            if p is None or (p not in keep_test_mods and not read_here):
+            # (the text after the declaration's own line); or a helper with no tests of its own (an impl's methods)
+            # in a file whose other test items follow test-hooks
+            decl_end = data.find(b'\n', data.find(b'mod ' + gated[4:].encode(), int(e)))
+            read_here = re.search(rb'(?<![A-Za-z0-9_:])' + gated[4:].encode() + rb'::', data[:int(s)] + data[decl_end:]) is not None
+            helper = p is not None and nodes[p].file and b'#[test]' not in open(nodes[p].file, 'rb').read()
+            if p is None or (p not in keep_test_mods and not read_here and not helper):
                 continue
         edits.add(os.path.abspath(f), int(s), int(e), HOOKS, 'cfg test')
+
+
+def thread_local_cfg_edits(nodes, edits):
+    """`#[cfg(test)]` on a static in a `thread_local!` (macro input the cfgtest tool does not see): test-hooks."""
+    for p, n in nodes.items():
+        if n.inline or n.owner == ENGINE:
+            continue
+        data = open(n.file, 'rb').read()
+        for m in re.finditer(rb'thread_local!\s*\{', data):
+            depth, i = 1, m.end()
+            while depth and i < len(data):
+                depth += {ord('{'): 1, ord('}'): -1}.get(data[i], 0)
+                i += 1
+            for c in re.finditer(rb'#\[cfg\(test\)\]', data[m.end():i]):
+                a = m.end() + c.start() + len(b'#[cfg(')
+                edits.add(n.file, a, a + 4, HOOKS, 'cfg test')
 
 
 def use_vis_edits(nodes, edits):
@@ -416,8 +436,12 @@ def manifest(c, engine):
     if c == 'rerail-lang':
         lines[-1:-1] = ['build = "build.rs"']
     lines += ['[features]']
+    # the engine's test-only dependencies (tempfile) that test-hooks items read: optional, on with test-hooks
+    test_only = [k for k in engine.get('dev-dependencies', {}) if not k.startswith('rerail-') and k not in engine['dependencies']]
     for f, body in feats.items():
         fwd = [] if f == 'default' else [f'{ident(x).replace("_", "-")}/{f}' for x in direct(c) if x not in EXISTING]
+        if f == 'test-hooks':
+            fwd += [f'dep:{k}' for k in test_only]
         lines.append(f'{f} = {toml_value(list(body) + fwd)}')
     if 'test-hooks' not in feats:
         lines.append(f'test-hooks = {toml_value([f"{x}/test-hooks" for x in direct(c) if x != "rerail-prof"])}')
@@ -425,6 +449,11 @@ def manifest(c, engine):
     for k, v in engine['dependencies'].items():
         if k.startswith('rerail-'):
             continue
+        lines.append(f'{k} = {toml_value(rebase(v, d))}')
+    for k in test_only:
+        v = engine['dev-dependencies'][k]
+        v = dict(v) if isinstance(v, dict) else {'version': v}
+        v['optional'] = True
         lines.append(f'{k} = {toml_value(rebase(v, d))}')
     for x in direct(c):
         dep = {'path': os.path.relpath(os.path.join(ROOT, DIRS[x]), d)}
@@ -444,7 +473,7 @@ def manifest(c, engine):
                     lines.append(f'{k} = {toml_value(rebase(v, d))}')
     lines += ['', '[dev-dependencies]']
     for k, v in engine.get('dev-dependencies', {}).items():
-        if k.startswith('rerail-'):
+        if k.startswith('rerail-') or k in test_only:
             continue
         lines.append(f'{k} = {toml_value(rebase(v, d))}')
     if c == 'rerail-lang':
@@ -582,6 +611,7 @@ def main(tree_tsv, join_out, *flags):
     upward_use_edits(nodes, edits)
     files = sorted({n.file for n in nodes.values() if not n.inline})
     cfg_test_edits(nodes, files, keep, edits)
+    thread_local_cfg_edits(nodes, edits)
     manifest_dir_edits(nodes, edits)
     bad = edits.apply(write)
     print('edits:', dict(edits.why))

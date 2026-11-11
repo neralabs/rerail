@@ -1,7 +1,7 @@
 use super::{AstMatcher, StopBy, UtilRef};
 #[cfg(test)]
 use crate::code_rule_dsl::budget;
-use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
+use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules};
 #[cfg(test)]
 use crate::code_rule_dsl::walks::{Walk, record_walk};
 mod semantic;

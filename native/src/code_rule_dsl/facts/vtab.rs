@@ -177,7 +177,7 @@ pub(crate) trait Source: Send + Sync {
 }
 
 #[derive(Default)]
-pub(crate) struct Counters {
+pub struct Counters {
     pub scans: AtomicU64,
     pub batches: AtomicU64,
     pub candidates: AtomicU64,
