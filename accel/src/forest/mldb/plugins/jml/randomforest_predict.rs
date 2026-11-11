@@ -305,7 +305,7 @@ impl DeviceForest {
 mod tests {
     use super::*;
     use crate::forest::dataset_feature_space::FeatureType;
-    use crate::forest::randomforest_procedure::{train_forest, training_data, RandomForestProcedureConfig};
+    use crate::forest::randomforest_procedure::{train_forest, train_regression_forest, training_data, RandomForestProcedureConfig};
     use std::sync::Arc;
 
     /// Columns of values: real (with more distinct values than 255 buckets), real with nulls, categorical with
@@ -595,76 +595,240 @@ mod tests {
         }
     }
 
-    /// The comparison with other libraries: the synthetic jobs (`BENCH_SIZES[0]` rows to train on, 20,000 held out)
-    /// as a classification ("the lane beats the CPU") and a regression (the log of the job's wall), written to
-    /// `BENCH_EXPORT` as CSV for the other libraries' runs; this forest's training and prediction times and its
-    /// held-out scores, with upstream's categorical splits and with CART's.
+    /// One data set of the comparison with other libraries: rows to train on and rows held out, each with a label
+    /// (classification) and a target (regression).
+    struct Suite {
+        name: String,
+        train: Vec<Job>,
+        test: Vec<Job>,
+        train_labels: Vec<f32>,
+        test_labels: Vec<f32>,
+        train_targets: Vec<f32>,
+        test_targets: Vec<f32>,
+    }
+
+    const NAMES: [&str; 7] = ["lane", "forms", "launches", "units", "cold", "load", "threads"];
+
+    fn named(cols: Vec<Vec<CellValue>>) -> Vec<(String, Vec<CellValue>)> {
+        NAMES.iter().zip(cols).map(|(n, c)| (n.to_string(), c)).collect()
+    }
+
+    fn regression_scores(p: &[f64], t: &[f32]) -> (f64, f64) {
+        let mean = t.iter().map(|&t| t as f64).sum::<f64>() / t.len() as f64;
+        let se: f64 = p.iter().zip(t).map(|(p, &t)| (p - t as f64).powi(2)).sum();
+        let st: f64 = t.iter().map(|&t| (t as f64 - mean).powi(2)).sum();
+        ((se / t.len() as f64).sqrt(), 1.0 - se / st)
+    }
+
+    /// `x` solved from `a x = b` (n x n, row major), by elimination with partial pivoting.
+    fn solve(mut a: Vec<f64>, mut b: Vec<f64>) -> Vec<f64> {
+        let n = b.len();
+        for c in 0..n {
+            let p = (c..n).max_by(|&i, &j| a[i * n + c].abs().total_cmp(&a[j * n + c].abs())).unwrap();
+            for k in 0..n { a.swap(c * n + k, p * n + k); }
+            b.swap(c, p);
+            let d = a[c * n + c];
+            if d.abs() < 1e-300 { continue; }
+            for r in 0..n {
+                if r != c {
+                    let f = a[r * n + c] / d;
+                    for k in 0..n { a[r * n + k] -= f * a[c * n + k]; }
+                    b[r] -= f * b[c];
+                }
+            }
+        }
+        (0..n).map(|i| if a[i * n + i].abs() < 1e-300 { 0.0 } else { b[i] / a[i * n + i] }).collect()
+    }
+
+    /// `cols` cycled to `n` rows.
+    fn cycled(cols: &[Vec<CellValue>], n: usize) -> Vec<Vec<CellValue>> {
+        cols.iter().map(|c| (0..n).map(|i| c[i % c.len()].clone()).collect()).collect()
+    }
+
+    /// Batch prediction on resident forests (one dispatch and wait each): per batch size, the call's wall and CPU
+    /// and the GPU's time, the mean of several calls.
+    fn batch_timings(what: &str, fs: &DatasetFeatureSpace, forests: &[DeviceForest], test_cols: &[Vec<CellValue>]) {
+        for b in [1usize, 16, 256, 4096, 65536] {
+            let rows = RowBuckets::from_values(fs, &cycled(test_cols, b)).unwrap();
+            let reps = if b <= 256 { 20 } else { 3 };
+            let (gpu, w, c) = timed(|| {
+                let mut gpu = 0.0;
+                for _ in 0..reps {
+                    for f in forests {
+                        gpu += f.predict_timed(&rows).unwrap().1;
+                    }
+                }
+                gpu
+            });
+            let r = reps as f64;
+            eprintln!("BATCH {what} batch {b:6}: {:8.1} us wall {:8.1} us CPU {:8.1} us GPU a call; {:8.1} ns/row wall",
+                w / r * 1e6, c / r * 1e6, gpu / r * 1e6, w / r / b as f64 * 1e9);
+        }
+    }
+
+    /// One data set: exported for the other libraries (`BENCH_EXPORT`), then this forest's runs.
+    /// - classification and regression, upstream's categorical split and CART's, depth 20 and 8;
+    /// - the K-bucket regressor for each K in `BENCH_K`: K - 1 forests, forest k predicting "the target is above
+    ///   the training targets' k/K quantile", trained on 80% of the training rows; the value from those
+    ///   probabilities by the bucket medians (expected value) and by least squares fitted on the other 20%;
+    /// - batch prediction for the regression and K-bucket forests.
+    fn run_suite(s: &Suite) {
+        if let Ok(dir) = std::env::var("BENCH_EXPORT") {
+            for (part, jobs, labels, targets) in [("train", &s.train, &s.train_labels, &s.train_targets), ("test", &s.test, &s.test_labels, &s.test_targets)] {
+                let mut out = String::from("lane,forms,launches,units,cold,load,threads,label,target\n");
+                for ((j, l), t) in jobs.iter().zip(labels.iter()).zip(targets.iter()) {
+                    out += &format!("{},{},{},{},{},{},{},{},{}\n", j.lane, j.forms.replace(',', ";"), j.launches, j.units, j.cold, j.load, j.threads, l, t);
+                }
+                std::fs::write(format!("{dir}/{}_{part}.csv", s.name), out).unwrap();
+            }
+        }
+        let only = std::env::var("BENCH_ONLY").unwrap_or_default();
+        let want = |w: &str| only.is_empty() || only.split(',').any(|o| o == w);
+        let (train_cols, test_cols) = (named(columns_of(&s.train)), columns_of(&s.test));
+        let fsp: f32 = std::env::var("BENCH_FSP").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+        let fs_class = Arc::new(DatasetFeatureSpace::from_columns(&train_cols, FeatureType::Boolean).unwrap());
+        let fs_real = Arc::new(DatasetFeatureSpace::from_columns(&train_cols, FeatureType::Real).unwrap());
+        // Warm the kernels.
+        train_forest(&training_data(fs_class.clone(), &s.train_labels, None, None).unwrap(), &RandomForestProcedureConfig { feature_vector_samplings: 1, feature_samplings: 2, ..Default::default() }).unwrap();
+        let nt = s.test.len();
+        for depth in [20, 8] {
+            for subsets in [false, true] {
+                let config = RandomForestProcedureConfig { max_depth: depth, categorical_subsets: subsets, feature_sampling_prop: fsp, ..Default::default() };
+                let kind = if subsets { "cart" } else { "one-vs-rest" };
+                if want("classification") {
+                    let (forest, w, c) = timed(|| train_forest(&training_data(fs_class.clone(), &s.train_labels, None, None).unwrap(), &config).unwrap());
+                    let flat = FlatForest::new(&forest).unwrap();
+                    let rows = RowBuckets::from_values(&fs_class, &test_cols).unwrap();
+                    let resident = DeviceForest::new(&flat).unwrap();
+                    let ((p, gpu), pw, pc) = timed(|| resident.predict_timed(&rows).unwrap());
+                    let ll = p.iter().zip(&s.test_labels).map(|(p, &l)| -((if l != 0.0 { p[1] } else { p[0] }).clamp(1e-6, 1.0) as f64).ln()).sum::<f64>() / p.len() as f64;
+                    eprintln!("RESULT {} rerail-{kind} classification depth {depth}: train {:.0} ms wall {:.0} ms CPU; {} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
+                        s.name, w * 1e3, c * 1e3, flat.nodes.len(), pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &s.test_labels), ll);
+                }
+                if want("regression") {
+                    let (forest, w, c) = timed(|| train_regression_forest(fs_real.clone(), &s.train_targets, None, None, &config).unwrap());
+                    let flat = FlatForest::new(&forest).unwrap();
+                    let rows = RowBuckets::from_values(&fs_real, &test_cols).unwrap();
+                    let resident = DeviceForest::new(&flat).unwrap();
+                    let ((p, gpu), pw, pc) = timed(|| resident.predict_timed(&rows).unwrap());
+                    let values: Vec<f64> = p.iter().map(|p| forest.regression_value(*p).unwrap()).collect();
+                    let (rmse, r2) = regression_scores(&values, &s.test_targets);
+                    eprintln!("RESULT {} rerail-{kind} regression depth {depth}: train {:.0} ms wall {:.0} ms CPU; {} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; rmse {rmse:.4} r2 {r2:.4}",
+                        s.name, w * 1e3, c * 1e3, flat.nodes.len(), pw * 1e3, pc * 1e3, gpu * 1e3);
+                    if depth == 20 && !subsets && want("batch") {
+                        batch_timings(&format!("{} regression depth {depth}", s.name), &fs_real, &[resident], &test_cols);
+                    }
+                }
+                if !want("kbucket") {
+                    continue;
+                }
+                let ks: Vec<usize> = std::env::var("BENCH_K").ok().map(|v| v.split(',').map(|x| x.parse().unwrap()).collect()).unwrap_or(vec![2, 4, 8, 16]);
+                let fit: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 != 0).collect();
+                let cal: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 == 0).collect();
+                let pick = |cols: &[(String, Vec<CellValue>)], rows: &[usize]| -> Vec<Vec<CellValue>> { cols.iter().map(|(_, c)| rows.iter().map(|&i| c[i].clone()).collect()).collect() };
+                let fit_cols = named(pick(&train_cols, &fit));
+                let cal_cols: Vec<Vec<CellValue>> = pick(&train_cols, &cal);
+                let fs = Arc::new(DatasetFeatureSpace::from_columns(&fit_cols, FeatureType::Boolean).unwrap());
+                let mut sorted: Vec<f32> = fit.iter().map(|&i| s.train_targets[i]).collect();
+                sorted.sort_by(f32::total_cmp);
+                for &k in &ks {
+                    let thresholds: Vec<f32> = (1..k).map(|q| sorted[q * sorted.len() / k]).collect();
+                    // Each bucket's median target, bucket b holding the targets between thresholds b - 1 and b.
+                    let medians: Vec<f64> = (0..k).map(|b| sorted[(2 * b + 1) * sorted.len() / (2 * k)] as f64).collect();
+                    let ((forests, nodes), w, c) = timed(|| {
+                        let mut forests = Vec::new();
+                        let mut nodes = 0;
+                        for &t in &thresholds {
+                            let labels: Vec<f32> = fit.iter().map(|&i| (s.train_targets[i] > t) as u8 as f32).collect();
+                            let forest = train_forest(&training_data(fs.clone(), &labels, None, None).unwrap(), &config).unwrap();
+                            let flat = FlatForest::new(&forest).unwrap();
+                            nodes += flat.nodes.len();
+                            forests.push(DeviceForest::new(&flat).unwrap());
+                        }
+                        (forests, nodes)
+                    });
+                    // The probabilities "above threshold k", per row, for a set of rows.
+                    let probs = |cols: &[Vec<CellValue>]| -> (Vec<Vec<f64>>, f64) {
+                        let rows = RowBuckets::from_values(&fs, cols).unwrap();
+                        let mut gpu = 0.0;
+                        let mut out = vec![Vec::with_capacity(k - 1); rows.num_rows];
+                        for f in &forests {
+                            let (p, g) = f.predict_timed(&rows).unwrap();
+                            gpu += g;
+                            for (o, p) in out.iter_mut().zip(&p) {
+                                o.push(p[1] as f64);
+                            }
+                        }
+                        (out, gpu)
+                    };
+                    // Least squares over [1, p_1 .. p_{K-1}] on the calibration rows (a little ridge).
+                    let (cal_p, _) = probs(&cal_cols);
+                    let n = k;
+                    let (mut a, mut b) = (vec![0.0; n * n], vec![0.0; n]);
+                    for (p, &i) in cal_p.iter().zip(&cal) {
+                        let x: Vec<f64> = std::iter::once(1.0).chain(p.iter().copied()).collect();
+                        for r in 0..n {
+                            b[r] += x[r] * s.train_targets[i] as f64;
+                            for q in 0..n {
+                                a[r * n + q] += x[r] * x[q];
+                            }
+                        }
+                    }
+                    for r in 1..n {
+                        a[r * n + r] += 1e-3;
+                    }
+                    let coef = solve(a, b);
+                    let ((test_p, gpu), pw, pc) = timed(|| probs(&test_cols));
+                    let expected: Vec<f64> = test_p.iter().map(|p| medians[0] + p.iter().enumerate().map(|(q, &pq)| pq * (medians[q + 1] - medians[q])).sum::<f64>()).collect();
+                    let fitted: Vec<f64> = test_p.iter().map(|p| coef[0] + p.iter().zip(&coef[1..]).map(|(p, c)| p * c).sum::<f64>()).collect();
+                    let (rmse_e, r2_e) = regression_scores(&expected, &s.test_targets);
+                    let (rmse_l, r2_l) = regression_scores(&fitted, &s.test_targets);
+                    eprintln!("RESULT {} rerail-{kind}-k{k} kbucket depth {depth}: train {:.0} ms wall {:.0} ms CPU; {nodes} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; expected rmse {rmse_e:.4} r2 {r2_e:.4}; least squares rmse {rmse_l:.4} r2 {r2_l:.4}",
+                        s.name, w * 1e3, c * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3);
+                    if depth == 20 && !subsets && k == 8 && want("batch") {
+                        batch_timings(&format!("{} kbucket k{k} depth {depth}", s.name), &fs, &forests, &test_cols);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The comparison with other libraries (`BENCH_DATA`: `synthetic`, `real` or both, the default):
+    /// - synthetic: the synthetic jobs, `BENCH_SIZES[0]` rows to train on and 20,000 held out; the label "the lane
+    ///   beats the CPU", the target ln(wall);
+    /// - real: the job samples (`BENCH_SAMPLES`), 70% to train on and 30% held out; the label "slower than its
+    ///   price", the target ln(wall).
     #[test]
     #[ignore = "benchmark: run by name with --ignored --nocapture, BENCH_SAMPLES and BENCH_EXPORT set"]
     fn compare_with_libraries() {
-        use crate::forest::randomforest_procedure::train_regression_forest;
         if crate::gpu::shared::get().is_none() {
             return;
         }
         let real = real_jobs();
         assert!(!real.is_empty(), "BENCH_SAMPLES");
-        let n: usize = std::env::var("BENCH_SIZES").ok().and_then(|v| v.split(',').next()?.parse().ok()).unwrap_or(20000);
-        let (train, train_labels) = synthetic(&real, n, 1);
-        let (test, test_labels) = synthetic(&real, 20000, 7);
-        let target = |j: &Job| j.wall.ln() as f32;
-        let train_targets: Vec<f32> = train.iter().map(target).collect();
-        let test_targets: Vec<f32> = test.iter().map(target).collect();
-        if let Ok(dir) = std::env::var("BENCH_EXPORT") {
-            for (name, jobs, labels) in [(format!("train_{n}.csv"), &train, &train_labels), ("test.csv".to_string(), &test, &test_labels)] {
-                let mut out = String::from("lane,forms,launches,units,cold,load,threads,label,target\n");
-                for (j, l) in jobs.iter().zip(labels.iter()) {
-                    out += &format!("{},{},{},{},{},{},{},{},{}\n", j.lane, j.forms.replace(',', ";"), j.launches, j.units, j.cold, j.load, j.threads, l, target(j));
-                }
-                std::fs::write(format!("{dir}/{name}"), out).unwrap();
-            }
+        let data = std::env::var("BENCH_DATA").unwrap_or("synthetic,real".into());
+        let target = |j: &Job| j.wall.max(1e-9).ln() as f32;
+        if data.split(',').any(|d| d == "synthetic") {
+            let n: usize = std::env::var("BENCH_SIZES").ok().and_then(|v| v.split(',').next()?.parse().ok()).unwrap_or(20000);
+            let (train, train_labels) = synthetic(&real, n, 1);
+            let (test, test_labels) = synthetic(&real, 20000, 7);
+            let (train_targets, test_targets) = (train.iter().map(target).collect(), test.iter().map(target).collect());
+            run_suite(&Suite { name: format!("synthetic{n}"), train, test, train_labels, test_labels, train_targets, test_targets });
         }
-        let names = ["lane", "forms", "launches", "units", "cold", "load", "threads"];
-        let named = |cols: Vec<Vec<CellValue>>| -> Vec<(String, Vec<CellValue>)> { names.iter().zip(cols).map(|(n, c)| (n.to_string(), c)).collect() };
-        let (train_cols, test_cols) = (named(columns_of(&train)), columns_of(&test));
-        // Warm the kernels.
-        let fs = Arc::new(DatasetFeatureSpace::from_columns(&train_cols, FeatureType::Boolean).unwrap());
-        train_forest(&training_data(fs.clone(), &train_labels, None, None).unwrap(), &RandomForestProcedureConfig { feature_vector_samplings: 1, feature_samplings: 2, ..Default::default() }).unwrap();
-        for depth in [20, 8] {
-            for subsets in [false, true] {
-                let fsp: f32 = std::env::var("BENCH_FSP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.3);
-                let config = RandomForestProcedureConfig { max_depth: depth, categorical_subsets: subsets, feature_sampling_prop: fsp, ..Default::default() };
-                let kind = if subsets { "cart" } else { "one-vs-rest" };
-                // Classification.
-                let ((fs, forest), w, c) = timed(|| {
-                    let fs = Arc::new(DatasetFeatureSpace::from_columns(&train_cols, FeatureType::Boolean).unwrap());
-                    let all = training_data(fs.clone(), &train_labels, None, None).unwrap();
-                    let forest = train_forest(&all, &config).unwrap();
-                    (fs, forest)
-                });
-                let rows = RowBuckets::from_values(&fs, &test_cols).unwrap();
-                let resident = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
-                let ((p, gpu), pw, pc) = timed(|| resident.predict_timed(&rows).unwrap());
-                let ll = p.iter().zip(&test_labels).map(|(p, &l)| -((if l != 0.0 { p[1] } else { p[0] }).clamp(1e-6, 1.0) as f64).ln()).sum::<f64>() / p.len() as f64;
-                eprintln!("RESULT rerail-{kind} classification depth {depth}: train {:.0} ms wall {:.0} ms CPU; predict 20000 {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; accuracy {:.4} logloss {:.4}",
-                    w * 1e3, c * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3, right(&p, &test_labels), ll);
-                // Regression.
-                let ((fs, forest), w, c) = timed(|| {
-                    let fs = Arc::new(DatasetFeatureSpace::from_columns(&train_cols, FeatureType::Real).unwrap());
-                    let forest = train_regression_forest(fs.clone(), &train_targets, None, None, &config).unwrap();
-                    (fs, forest)
-                });
-                let rows = RowBuckets::from_values(&fs, &test_cols).unwrap();
-                let resident = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
-                let ((p, gpu), pw, pc) = timed(|| resident.predict_timed(&rows).unwrap());
-                let mean = test_targets.iter().map(|&t| t as f64).sum::<f64>() / test_targets.len() as f64;
-                let (mut se, mut st) = (0.0, 0.0);
-                for (p, &t) in p.iter().zip(&test_targets) {
-                    se += (forest.regression_value(*p).unwrap() - t as f64).powi(2);
-                    st += (t as f64 - mean).powi(2);
-                }
-                eprintln!("RESULT rerail-{kind} regression depth {depth}: train {:.0} ms wall {:.0} ms CPU; predict 20000 {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; rmse {:.4} r2 {:.4}",
-                    w * 1e3, c * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3, (se / test_targets.len() as f64).sqrt(), 1.0 - se / st);
-            }
+        if data.split(',').any(|d| d == "real") {
+            let (train, test): (Vec<(usize, &Job)>, Vec<(usize, &Job)>) = real.iter().enumerate().partition(|(i, _)| h(*i, 11) % 10 < 7);
+            let train: Vec<Job> = train.into_iter().map(|(_, j)| j.clone()).collect();
+            let test: Vec<Job> = test.into_iter().map(|(_, j)| j.clone()).collect();
+            let label = |j: &Job| (j.wall > j.estimate) as u8 as f32;
+            run_suite(&Suite {
+                name: "real".into(),
+                train_labels: train.iter().map(label).collect(),
+                test_labels: test.iter().map(label).collect(),
+                train_targets: train.iter().map(target).collect(),
+                test_targets: test.iter().map(target).collect(),
+                train,
+                test,
+            });
         }
     }
 }
