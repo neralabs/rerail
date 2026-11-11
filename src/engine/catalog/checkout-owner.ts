@@ -3,7 +3,7 @@
  * confirms as a checkout's top level, found the same way from the file's lexical and real paths. Whether that
  * checkout judges the file with its own rules, or leaves it to the checkout around it, is the router's decision.
  */
-import { existsSync, lstatSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { runGit } from "../git.js";
@@ -21,6 +21,22 @@ function holdsGitEntry(directory: string): boolean {
   try {
     lstatSync(join(directory, ".git"));
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether `directory`'s `.git` entry still leads to a Git directory: it is a folder, or a file whose `gitdir:` line names
+ * one that exists, as Git reads it (relative to `directory`). A linked worktree whose entry under the main checkout's
+ * `.git/worktrees` was removed keeps its `.git` file, and Git no longer takes the folder for a checkout.
+ */
+function leadsToGitDirectory(directory: string): boolean {
+  const entry = join(directory, ".git");
+  try {
+    if (statSync(entry).isDirectory()) return true;
+    const line = readFileSync(entry, "utf8").split("\n", 1)[0]!.trimEnd();
+    return line.startsWith("gitdir: ") && existsSync(resolve(directory, line.slice("gitdir: ".length)));
   } catch {
     return false;
   }
@@ -117,8 +133,9 @@ export class CheckoutOwners {
 
   /**
    * Forget the cached answers when the recorded checkouts changed since the last lookup, but for each folder Git
-   * confirmed as a top level whose `.git` entry is still there: that is Git's answer, which no record changes, and asking
-   * it again costs a Git process per checkout the session knows each time any checkout is recorded or forgotten.
+   * confirmed as a top level whose `.git` entry still leads to a Git directory: that is Git's answer, which no record
+   * changes, and asking it again costs a Git process per checkout the session knows each time any checkout is recorded or
+   * forgotten. Checking the entry costs a stat, and a read for a `.git` file, per folder kept.
    */
   #revalidate(): void {
     if (this.#recordedVersion === undefined) return;
@@ -126,7 +143,7 @@ export class CheckoutOwners {
     if (version === this.#version) return;
     this.#version = version;
     this.#roots.clear();
-    for (const [directory, root] of this.#confirmed) if (root === undefined || !holdsGitEntry(directory)) this.#confirmed.delete(directory);
+    for (const [directory, root] of this.#confirmed) if (root === undefined || !leadsToGitDirectory(directory)) this.#confirmed.delete(directory);
     this.#submodules.clear();
   }
 

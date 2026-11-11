@@ -46,4 +46,23 @@ describe("CheckoutOwners", () => {
 
     expect(owners.ownerOf(join(outer, "src", "a.py"))).toEqual({ checkoutRoot: nested, path: "a.py" });
   });
+
+  it("lets a worktree go once Git's folder for it is gone, at the next change in the recorded checkouts", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => rm(root, { recursive: true, force: true }));
+    const main = await repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "--detach", join(root, "w"), "HEAD");
+    const worktree = await realpath(join(root, "w"));
+    const catalogs = new CheckoutCatalogs(join(root, "rerail.sqlite"));
+    cleanups.push(async () => catalogs.close());
+    recordCheckout(catalogs.database, main);
+    const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
+    expect(owners.ownerOf(join(worktree, "README.md"))).toEqual({ checkoutRoot: worktree, path: "README.md" });
+
+    // The worktree's `.git` file stays and names a Git folder that is gone, so Git no longer takes it for a checkout.
+    await rm(join(main, ".git", "worktrees", "w"), { recursive: true, force: true });
+    recordCheckout(catalogs.database, await repository(join(root, "other")));
+
+    expect(owners.ownerOf(join(worktree, "README.md"))).toBeUndefined();
+  });
 });
