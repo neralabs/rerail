@@ -25,6 +25,30 @@ use std::collections::BTreeSet;
 /// The relations' names.
 pub(crate) const RELATIONS: [&str; 2] = ["fstring_piece", "fstring_template"];
 
+/// Python's f-string trees as a batch's producer (`syntax::Producer`).
+pub(crate) struct Producer;
+
+impl super::Producer for Producer {
+    fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn taped(&self) -> &'static [&'static str] {
+        &RELATIONS
+    }
+    fn start(&self, reads: &BTreeSet<String>, markers: &[String]) -> Box<dyn super::ProducerRun> {
+        Box::new(FStrings::new(reads, markers))
+    }
+}
+
+impl super::ProducerRun for FStrings {
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+        FStrings::document(self, p, d, dialect, own, string)
+    }
+    fn relations(self: Box<Self>, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
+        FStrings::relations(*self, atom)
+    }
+}
+
 /// W's hosts of `pythonFString` (`compile::parse`'s host kinds).
 const HOSTS: [&str; 3] = ["string", "concatenated_string", "format_specifier"];
 

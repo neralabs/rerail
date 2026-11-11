@@ -58,7 +58,7 @@ pub(super) struct CPython {
 const PRINTED: [&str; 5] = [UNPARSE, AST_DUMP, DUMP_SHA256, BODY_SHA256, SIGNATURE_SHA256];
 
 impl CPython {
-    pub(super) fn new(reads: &BTreeSet<String>) -> Self {
+    pub(super) fn start(reads: &BTreeSet<String>) -> Self {
         let want = Want {
             unparse: reads.contains(UNPARSE),
             dump: reads.contains(AST_DUMP),
@@ -183,5 +183,26 @@ pub(crate) fn columns(rel: &str) -> &'static [&'static str] {
         UNPARSE | AST_DUMP => &["n", "s"],
         DUMP_SHA256 => &["n", "h"],
         _ => &["f", "h"],
+    }
+}
+
+/// CPython's syntax verdicts, `ast.unparse` and `ast.dump` as a batch's producer (`syntax::Producer`).
+pub(crate) struct Producer;
+
+impl super::Producer for Producer {
+    fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn start(&self, reads: &BTreeSet<String>, _: &[String]) -> Box<dyn super::ProducerRun> {
+        Box::new(CPython::start(reads))
+    }
+}
+
+impl super::ProducerRun for CPython {
+    fn document(&mut self, p: &super::Projected, d: &super::Document, dialect: Option<&super::Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> crate::content_store::StoreResult<()> {
+        CPython::document(self, p, &d.path, dialect, own, string)
+    }
+    fn relations(self: Box<Self>, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
+        CPython::relations(*self, atom)
     }
 }

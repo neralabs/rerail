@@ -572,6 +572,14 @@ pub(crate) fn install_languages() {
     ]);
     // What reads W's values off a file's tape for facts' `value` relations.
     facts::core::install_value_reader(&matcher::Values);
+    // The families' producers of a batch's relations: Python's f-string trees, CPython's syntax, string annotations.
+    facts::vtab::syntax::install_producers(vec![
+        &facts::vtab::syntax::fstring::Producer,
+        &facts::vtab::syntax::cpython::Producer,
+        &facts::vtab::syntax::annotation::Producer,
+    ]);
+    // The families' lazy relations over a batch (Python's `py.*`).
+    facts::vtab::syntax::install_families(vec![&facts::vtab::syntax::py_families::Families]);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

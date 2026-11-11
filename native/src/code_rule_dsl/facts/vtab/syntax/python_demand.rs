@@ -1,5 +1,6 @@
 //! Batched semantic facts over explicit SQL demands. State belongs to one immutable document batch.
-use super::{Batch, NONE, Projected, py};
+use super::{Batch, NONE, Projected};
+use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::{
     facts::producers::python::{
         import_screen::Imports,
@@ -127,7 +128,7 @@ impl Batch {
             {
                 return Err("Python producer received another grammar".into());
             }
-            let grammar = &self.py.as_ref().ok_or("Python facts unavailable")?.grammar;
+            let grammar = &self.bound::<super::py_families::Py>().ok_or("Python facts unavailable")?.grammar;
             let mut ids = BTreeSet::new();
             for n in low {
                 let local = p
@@ -299,6 +300,7 @@ impl Batch {
 mod tests {
     use super::super::{Document, Projection};
     use super::*;
+use crate::code_rule_dsl::facts::producers::python::families as py;
     use crate::{
         code_rule_dsl::{facts::core, model::FileInput},
         content_store::ContentStore,
@@ -343,7 +345,7 @@ mod tests {
             })
             .collect();
         let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-        let grammar = &batch.py.as_ref().unwrap().grammar;
+        let grammar = &batch.bound::<super::super::py_families::Py>().unwrap().grammar;
         let mut requests = Vec::new();
         let mut calls = Vec::new();
         for p in &batch.docs {
@@ -382,13 +384,13 @@ mod tests {
                 .unwrap(),
             rows
         );
-        assert!(batch.py.as_ref().unwrap().argument_rows.get().is_none());
+        assert!(batch.bound::<super::super::py_families::Py>().unwrap().argument_rows.get().is_none());
         let args = batch
             .python_project("arguments", &calls, &BTreeSet::new())
             .unwrap();
         assert_eq!(args.len(), 1, "arguments from undemanded calls leaked");
         assert!(
-            batch.py.as_ref().unwrap().argument_rows.get().is_none(),
+            batch.bound::<super::super::py_families::Py>().unwrap().argument_rows.get().is_none(),
             "demand filled the global argument relation"
         );
         assert!(

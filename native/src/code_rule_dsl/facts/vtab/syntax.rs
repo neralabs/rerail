@@ -29,7 +29,6 @@
 use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
 use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, TEXT, kind_atom, kind_code};
-use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
@@ -691,7 +690,7 @@ pub(crate) struct Document {
     pub digest: [u8; 32],
     pub facts: Arc<Facts>,
     /// The tape the facts were read off and the file it parsed, which W's values, f-string trees and string annotations
-    /// read (`TAPED`), and the program's matchers run over (decision 0106); kept only for a file of a program that
+    /// read (`taped`), and the program's matchers run over (decision 0106); kept only for a file of a program that
     /// reads one of them or runs matchers, else `None` (a guest's is `None`).
     pub(in crate::code_rule_dsl) tape: Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>)>,
     /// A guest's place in its host (decision 0055); `None` for a file's own tree. A guest's `path` is its host's.
@@ -701,10 +700,52 @@ pub(crate) struct Document {
     pub module: Option<Arc<str>>,
 }
 
-/// The relations read off a document's tape, for which a batch's documents keep their tapes (`Document::tape`): W's
-/// values (`Extra`), its f-string trees (`fstring`) and the string annotations (`annotation`).
-pub(crate) const TAPED: [&str; 7] =
-    ["value", "static_value", "value_type_of", "value_type", fstring::RELATIONS[0], fstring::RELATIONS[1], annotation::RELATION];
+/// W's values (`Extra`), which a batch reads off its documents' tapes.
+const VALUES_TAPED: [&str; 4] = ["value", "static_value", "value_type_of", "value_type"];
+
+/// Whether `rel` is read off a document's tape, for which a batch's documents keep their tapes (`Document::tape`):
+/// W's values (`Extra`), and a registered producer's (`Producer::taped`: Python's f-string trees and string
+/// annotations).
+pub(crate) fn taped(rel: &str) -> bool {
+    VALUES_TAPED.contains(&rel) || producers().iter().any(|producer| producer.taped().contains(&rel))
+}
+
+/// A family's producer of relations over a batch's documents (Python's f-string trees, CPython's syntax, string
+/// annotations), registered at load by the crate that knows the family: the batch runs every registered producer
+/// over every document, telling it whether the document is of its dialect.
+pub(crate) trait Producer: Send + Sync {
+    /// The dialect whose documents it reads.
+    fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect;
+    /// The relations it reads off a document's tape.
+    fn taped(&self) -> &'static [&'static str] {
+        &[]
+    }
+    /// A run over one batch whose program reads `reads` (with `markers`, the program's interpolation markers).
+    fn start(&self, reads: &BTreeSet<String>, markers: &[String]) -> Box<dyn ProducerRun>;
+}
+
+/// A [`Producer`]'s run over one batch.
+pub(crate) trait ProducerRun {
+    /// Document `p`'s rows (`d` its document, `dialect` its grammar's kinds, `own`: it is of the producer's dialect).
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()>;
+    /// The relations it made, with `atom` mapping a string's index to its atom.
+    fn relations(self: Box<Self>, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)>;
+    /// Whether it reads guests' documents too (else only files').
+    fn reads_guests(&self) -> bool {
+        false
+    }
+}
+
+static PRODUCERS: std::sync::OnceLock<Vec<&'static dyn Producer>> = std::sync::OnceLock::new();
+
+/// Registers the families' producers (once, at load), in the order their relations are listed.
+pub(crate) fn install_producers(producers: Vec<&'static dyn Producer>) {
+    let _ = PRODUCERS.set(producers);
+}
+
+fn producers() -> &'static [&'static dyn Producer] {
+    PRODUCERS.get().map_or(&[], Vec::as_slice)
+}
 
 /// A comment's text without its marker (core.rr's `comment`): `#`, `--`, `//` (and a doc comment's `/` or `!`),
 /// `/*` to `*/` (and a doc comment's `*` or `!`) or `<!--` to `-->` taken off, then the whitespace around the rest.
@@ -831,7 +872,7 @@ impl Class {
 /// A dialect's kinds as T's exporter reads them. T's kinds were names, and a grammar gives some names several codes
 /// (aliases): the `kind` column holds each name's canonical code (`KindCatalog::kind_id`, what a program's constant
 /// lowers to), and a lookup reads the postings of every code of that name.
-struct Dialect {
+pub(crate) struct Dialect {
     tag: u8,
     family: Family,
     catalog: KindCatalog,
@@ -937,7 +978,7 @@ impl Dialect {
 
 /// A document's nodes, numbered in preorder: its named nodes other than comments (T's), or every named node
 /// (`core.rr`'s).
-struct Projected {
+pub(crate) struct Projected {
     module: Option<crate::code_rule_dsl::module_path::ModulePath>,
     python_imports: std::sync::OnceLock<crate::code_rule_dsl::facts::producers::python::import_screen::Imports>,
     python_semantics: std::sync::Mutex<Option<python_demand::Semantics>>,
@@ -1233,8 +1274,9 @@ pub(crate) struct Batch {
     /// Nodes and spans (`Projected::locs`).
     locs: OnceLock<Vec<usize>>,
     shape: Shape,
-    /// The `py.*` families of the batch's Python documents, made on their first read (list step 25).
-    py: Option<Py>,
+    /// The registered lazy families (`Families`, Python's `py.*`: list step 25), by registration; `None` for one
+    /// whose dialect has no document in the batch.
+    families: Vec<Option<Box<dyn BoundFamilies>>>,
     /// The relations made as rows for what the program reads (`Extra` and those beside it), bound in place of a view
     /// of the same name (`line`, `end_line`, `col`, `docof`: their spans have places too).
     made: BTreeSet<&'static str>,
@@ -1280,25 +1322,100 @@ pub(crate) fn physical_lines(source: &str, splitlines: bool) -> Vec<std::ops::Ra
     out
 }
 
-/// The `py.*` families (`facts::producers::python::families`): the producer's grammar, the atoms of its
-/// names, and the rows, made on the first read of any of them: a program that reads none does no work.
-struct Py {
-    grammar: py::Grammar,
-    contexts: [i64; 5],
-    spreads: [i64; 3],
-    rows: std::sync::OnceLock<Vec<Relation>>,
-    argument_rows: std::sync::OnceLock<Relation>,
+/// A family's relations over a batch's documents of its dialect, made on their first read (Python's `py.*`),
+/// registered at load by the crate that knows the family.
+pub(crate) trait Families: Send + Sync {
+    /// The dialect whose documents they are over.
+    fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect;
+    /// The relations' names, and each one's columns.
+    fn names(&self) -> &'static [&'static str];
+    fn columns(&self) -> &'static [&'static [&'static str]];
+    /// The strings its rows hold as atoms, interned with the batch's.
+    fn strings(&self) -> &'static [&'static str];
+    /// The families of a batch with documents of the dialect (`tag`, its kinds `catalog`), `atoms` its strings'.
+    fn bind(&self, tag: u8, catalog: &KindCatalog, atoms: &[i64]) -> Box<dyn BoundFamilies>;
 }
 
-/// The `py.*` families' tables and columns (all integers; `-1` is none), as `PY_COLUMNS[i]` is `PY[i]`'s.
-pub(crate) const PY: [&str; 5] = ["py_call", "py_call_site", "py_exec_context", "py_call_arg", "py_attribute"];
-pub(crate) const PY_COLUMNS: [&[&str]; 5] = [
-    &["d", "call", "callee"],
-    &["d", "report", "call", "ref"],
-    &["d", "call", "owner", "kind"],
-    &["d", "call", "arg", "ordinal", "keyword", "spread", "value"],
-    &["d", "node", "object", "name"],
-];
+/// A batch's [`Families`].
+pub(crate) trait BoundFamilies: Send + Sync {
+    /// The rows of the `family`th relation over `batch`'s documents.
+    fn rows<'b>(&'b self, batch: &'b Batch, family: usize) -> &'b Relation;
+    /// The families as their own type, for the family's other readers (Python's candidates and demand).
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+impl Batch {
+    /// The batch's bound families of type `T`; `None` without documents of their dialect.
+    pub(crate) fn bound<T: 'static>(&self) -> Option<&T> {
+        self.families.iter().flatten().find_map(|bound| bound.as_any().downcast_ref::<T>())
+    }
+}
+
+/// Whether `rel` is a registered family's lazy relation.
+pub(crate) fn is_family(rel: &str) -> bool {
+    family_columns(rel).is_some()
+}
+
+static FAMILIES: std::sync::OnceLock<Vec<&'static dyn Families>> = std::sync::OnceLock::new();
+
+/// Registers the families' lazy relations (once, at load).
+pub(crate) fn install_families(families: Vec<&'static dyn Families>) {
+    let _ = FAMILIES.set(families);
+}
+
+fn families() -> &'static [&'static dyn Families] {
+    FAMILIES.get().map_or(&[], Vec::as_slice)
+}
+
+/// The columns of a registered family's relation `rel`.
+pub(crate) fn family_columns(rel: &str) -> Option<&'static [&'static str]> {
+    families().iter().find_map(|f| f.names().iter().position(|&name| name == rel).map(|i| f.columns()[i]))
+}
+
+/// One of a batch's lazy families' relations, served from the rows its first read makes (none without documents of
+/// its dialect).
+struct FamilySource {
+    batch: Arc<Batch>,
+    at: usize,
+    family: usize,
+    empty: Relation,
+}
+
+impl FamilySource {
+    fn rows(&self) -> &Relation {
+        match &self.batch.families[self.at] {
+            Some(bound) => bound.rows(&self.batch, self.family),
+            None => &self.empty,
+        }
+    }
+}
+
+impl Source for FamilySource {
+    fn columns(&self) -> Vec<String> {
+        families()[self.at].columns()[self.family].iter().map(|c| (*c).to_owned()).collect()
+    }
+    fn len(&self) -> usize {
+        self.rows().len()
+    }
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        self.rows().estimated_matches(column, batch)
+    }
+    fn indexed(&self, column: usize) -> bool {
+        self.rows().indexed(column)
+    }
+    fn range_indexed(&self, column: usize) -> bool {
+        self.rows().range_indexed(column)
+    }
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+        self.rows().range_lookup(column, lower, upper)
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        self.rows().lookup(column, values)
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.rows().value(row, column)
+    }
+}
 
 /// Which view a source serves.
 #[derive(Clone, Copy)]
@@ -2044,9 +2161,8 @@ impl Batch {
         let span_text = [crate::code_rule_dsl::logic::front::SpanIn::Source, crate::code_rule_dsl::logic::front::SpanIn::Line].map(|within| !core || projection.wants_span_text(within));
         let mut extra = Extra::new(reads, matches, shape, span_text);
         let mut tree = tree::Tree::new(reads);
-        let mut fstrings = fstring::FStrings::new(reads, markers);
-        let mut cpython = cpython::CPython::new(reads);
-        let mut annotations = annotation::Annotations::new(reads);
+        let mut produced: Vec<(Option<u8>, Box<dyn ProducerRun>)> =
+            producers().iter().map(|producer| (crate::code_rule_dsl::language::tape_tag(producer.dialect()), producer.start(reads, markers))).collect();
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         // `core.rr`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
@@ -2267,14 +2383,17 @@ impl Batch {
                 let rx = if withheld { &[][..] } else { &rx_spans[..] };
                 extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, rx, &span_ends[j], &mut rows.text, &mut string)?;
                 tree.document(&p, dialect, python == Some(tag), &mut string);
-                fstrings.document(&p, d, dialect, python == Some(tag), &mut string)?;
-                cpython.document(&p, &d.path, dialect, python == Some(tag), &mut string)?;
             } else {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
                 // verdicts are a file's, read off its tape.
                 extra.nodes(&p, &mut string);
             }
-            annotations.document(&p, d, dialect, python == Some(tag))?;
+            // A guest's are read only by a producer of guests' rows (string annotations); the others' are its file's.
+            for (own, run) in &mut produced {
+                if d.guest.is_none() || run.reads_guests() {
+                    run.document(&p, d, dialect, *own == Some(tag), &mut string)?;
+                }
+            }
             drop(document_span);
             docs.push(p);
         }
@@ -2283,9 +2402,15 @@ impl Batch {
         for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
             g.document(p, d, d.guest.as_deref(), withheld, &docs, [projection.wants("host_node"), projection.wants("unparse_of")], &mut string);
         }
-        let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
-            (py::CONTEXTS.map(|name| string(name) as i64), py::SPREADS.map(|name| string(name) as i64))
-        });
+        // Each lazy family's strings, where the batch has documents of its dialect.
+        let vocabulary: Vec<Option<(u8, Vec<i64>)>> = families()
+            .iter()
+            .map(|f| {
+                crate::code_rule_dsl::language::tape_tag(f.dialect())
+                    .filter(|tag| dialects.contains_key(tag))
+                    .map(|tag| (tag, f.strings().iter().map(|name| string(name) as i64).collect()))
+            })
+            .collect();
         crate::code_rule_dsl::logic::profile::decision("input payload", || {
             let identities: usize = docs.iter().map(|p| (p.core.capacity() + p.local.capacity() + [&p.idx, &p.size, &p.depth, &p.fielded].iter().map(|v| v.get().map_or(0, |v| v.capacity())).sum::<usize>()) * 4).sum();
             let extras: usize = docs.iter().filter_map(|p| p.extra.as_ref()).map(|x| x.token_spans.get().map_or(0, |v| v.capacity()) * 8).sum();
@@ -2297,13 +2422,11 @@ impl Batch {
         let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
         drop(intern);
         let atom = |i: i64| i64::from(atoms[i as usize]);
-        let py = vocabulary.zip(python).map(|((contexts, spreads), tag)| Py {
-            grammar: py::Grammar::new(tag, &dialects[&tag].catalog),
-            contexts: contexts.map(atom),
-            spreads: spreads.map(atom),
-            argument_rows: Default::default(),
-            rows: Default::default(),
-        });
+        let bound: Vec<Option<Box<dyn BoundFamilies>>> = families()
+            .iter()
+            .zip(vocabulary)
+            .map(|(f, v)| v.map(|(tag, strings)| f.bind(tag, &dialects[&tag].catalog, &strings.into_iter().map(atom).collect::<Vec<_>>())))
+            .collect();
         let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
             let mut r = Relation::new(columns);
@@ -2327,9 +2450,9 @@ impl Batch {
         }
         let (mut read, matched) = extra.relations(&atom);
         read.extend(tree.relations(&atom));
-        read.extend(fstrings.relations(&atom));
-        read.extend(cpython.relations(&atom));
-        read.extend(annotations.relations());
+        for (_, run) in produced {
+            read.extend(run.relations(&atom));
+        }
         // The relations made for what the program reads are the batch's: in `core.rr`'s shape they stand in for
         // `core_rr`'s rows and the views of the same name (W's values, the spans and places `match_all` reads,
         // `op_at`'s operators, `visit_index`'s CPython order).
@@ -2365,7 +2488,7 @@ impl Batch {
         let children = offsets(&|p| p.core.len().saturating_sub(1));
         let fields = offsets(&|p| if projection.wants("field") { p.fielded().len() } else { 0 });
         let locs = OnceLock::new();
-        let batch = Arc::new(Batch { docs, dialects, nodes, children, fields, locs, shape, py, made });
+        let batch = Arc::new(Batch { docs, dialects, nodes, children, fields, locs, shape, families: bound, made });
         hold_texts(&batch);
         #[cfg(test)]
         BATCHES.lock().push((batch.docs.iter().map(|p| p.key).collect(), Arc::downgrade(&batch)));
@@ -2745,110 +2868,15 @@ fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     for (name, view) in named.into_iter().filter(|(name, _)| !batch.made.contains(name)) {
         out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view })));
     }
-    for (family, name) in PY.into_iter().enumerate() {
-        out.push((name, Arc::new(PyFamily { batch: Arc::clone(batch), family })));
+    for (at, families) in families().iter().enumerate() {
+        for (family, &name) in families.names().iter().enumerate() {
+            let empty = Relation::new(families.columns()[family]);
+            out.push((name, Arc::new(FamilySource { batch: Arc::clone(batch), at, family, empty })));
+        }
     }
     out
 }
 
-impl Batch {
-    /// The `py.*` families' relations (empty without Python documents), made on the first call.
-    fn py(&self) -> &[Relation] {
-        static EMPTY: std::sync::OnceLock<Vec<Relation>> = std::sync::OnceLock::new();
-        let Some(py) = &self.py else {
-            return EMPTY.get_or_init(|| PY_COLUMNS.iter().map(|columns| Relation::new(columns)).collect());
-        };
-        py.rows.get_or_init(|| {
-            let started = std::time::Instant::now();
-            let mut out: Vec<Relation> = PY_COLUMNS.iter().map(|columns| Relation::new(columns)).collect();
-            let mut skipped = 0;
-            for p in self.docs.iter().filter(|p| p.tag == py.grammar.tag()) {
-                let rows = py::structure(&py.grammar, &p.facts);
-                let d = i64::from(p.key);
-                // A node id, `-1` for none; `None` for a node the projection leaves out.
-                let id = |core: u32| -> Option<i64> {
-                    if core == NONE {
-                        return Some(-1);
-                    }
-                    let local = p.local[core as usize];
-                    (local != NONE).then(|| p.global(local))
-                };
-                let mut push = |family: usize, row: Option<Vec<i64>>| match row {
-                    Some(row) => out[family].push(&row),
-                    None => skipped += 1,
-                };
-                for &[call, callee] in &rows.call {
-                    push(0, (|| Some(vec![d, id(call)?, id(callee)?]))());
-                }
-                for &[report, call, reference] in &rows.site {
-                    push(1, (|| Some(vec![d, id(report)?, id(call)?, id(reference)?]))());
-                }
-                for &[call, owner, kind] in &rows.context {
-                    push(2, (|| Some(vec![d, id(call)?, id(owner)?, py.contexts[kind as usize]]))());
-                }
-                for &[call, arg, ordinal, keyword, spread, value] in &rows.arg {
-                    push(3, (|| Some(vec![d, id(call)?, id(arg)?, i64::from(ordinal), id(keyword)?, py.spreads[spread as usize], id(value)?]))());
-                }
-                for &[node, object, name] in &rows.attribute {
-                    push(4, (|| Some(vec![d, id(node)?, id(object)?, id(name)?]))());
-                }
-            }
-            crate::code_rule_dsl::prof::count("py.rows", out.iter().map(|r| r.len()).sum());
-            crate::code_rule_dsl::prof::count("py.skipped", skipped);
-            crate::code_rule_dsl::prof::count("py.us", started.elapsed().as_micros() as usize);
-            out
-        })
-    }
-}
-
-/// One `py.*` family of a batch (`PY[family]`), served from the rows its first read makes.
-struct PyFamily {
-    batch: Arc<Batch>,
-    family: usize,
-}
-impl PyFamily {
-    fn rows(&self) -> &Relation {
-        if self.family!=3 {return &self.batch.py()[self.family];}
-        let Some(py)=&self.batch.py else {return &self.batch.py()[3];};
-        py.argument_rows.get_or_init(|| {
-            let mut out=Relation::new(PY_COLUMNS[3]);
-            for p in self.batch.docs.iter().filter(|p|p.tag==py.grammar.tag()) {
-                let rows=py::rows(&py.grammar,&p.facts);
-                let id=|n:u32| if n==NONE {Some(-1)}else{p.local.get(n as usize).copied().filter(|&l|l!=NONE).map(|l|p.global(l))};
-                for [c,a,i,k,s,v] in rows.arg {
-                    if let (Some(c),Some(a),Some(k),Some(v))=(id(c),id(a),id(k),id(v)) {out.push(&[p.key as i64,c,a,i as i64,k,py.spreads[s as usize],v]);}
-                }
-            }
-            out
-        })
-    }
-}
-impl Source for PyFamily {
-    fn columns(&self) -> Vec<String> {
-        PY_COLUMNS[self.family].iter().map(|c| (*c).to_owned()).collect()
-    }
-    fn len(&self) -> usize {
-        self.rows().len()
-    }
-    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
-        self.rows().estimated_matches(column, batch)
-    }
-    fn indexed(&self, column: usize) -> bool {
-        self.rows().indexed(column)
-    }
-    fn range_indexed(&self, column: usize) -> bool {
-        self.rows().range_indexed(column)
-    }
-    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
-        self.rows().range_lookup(column, lower, upper)
-    }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
-        self.rows().lookup(column, values)
-    }
-    fn value(&self, row: usize, column: usize) -> i64 {
-        self.rows().value(row, column)
-    }
-}
 
 impl Batch {
 
@@ -3108,6 +3136,7 @@ thread_local! {
 mod candidate_spike;
 pub(crate) mod annotation;
 pub(crate) mod cpython;
-mod fstring;
+pub(crate) mod fstring;
 pub(super) mod tree;
 pub(crate) mod ast_wave;
+pub(crate) mod py_families;

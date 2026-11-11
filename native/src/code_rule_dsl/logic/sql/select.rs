@@ -178,8 +178,8 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         // A `match_all` regex's matches (`logic::strings::as_relations`, `facts::vtab::syntax::Extra`).
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::MATCHES) => &["sp", "m"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
-        // The `py.*` families (`facts::vtab::syntax::PY`).
-        rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::PY.iter().position(|&p| p == rel).map(|i| crate::code_rule_dsl::facts::vtab::syntax::PY_COLUMNS[i])?,
+        // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
+        rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::family_columns(rel)?,
         _ => return None,
     })
 }

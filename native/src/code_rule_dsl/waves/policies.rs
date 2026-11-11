@@ -129,17 +129,16 @@ fn matched(i: usize, document: &str, node: &str) -> Literal {
     atom(MATCH, vec![Term::Int(i as i64), var(document), var(node)])
 }
 
-/// Whether `rel` is one of the `py.*` families (`facts::vtab::syntax::PY`).
+/// Whether `rel` is one of a family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
 fn is_py(rel: &str) -> bool {
-    crate::code_rule_dsl::facts::vtab::syntax::PY.contains(&rel)
+    crate::code_rule_dsl::facts::vtab::syntax::is_family(rel)
 }
 
 /// Declares each `py.*` family the rules read and do not declare: integer columns, as bound.
 fn declare_py(prog: &mut Program) {
-    use crate::code_rule_dsl::facts::vtab::syntax::{PY, PY_COLUMNS};
     let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).filter(|rel| is_py(rel)).collect();
     for rel in read {
-        let columns = PY_COLUMNS[PY.iter().position(|p| *p == rel).expect("a py family")];
+        let columns = crate::code_rule_dsl::facts::vtab::syntax::family_columns(&rel).expect("a family's relation");
         prog.decls.entry(rel).or_insert_with(|| columns.iter().map(|c| ((*c).to_owned(), "int".to_owned())).collect());
     }
 }

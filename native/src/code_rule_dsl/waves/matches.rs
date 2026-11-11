@@ -147,7 +147,7 @@ impl Wave {
 
     /// Whether the demand statement reads a `py.*` family: the wave then reads it before its batch.
     pub(in crate::code_rule_dsl) fn demand_reads_py(&self) -> bool {
-        let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::PY.contains(&rel);
+        let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::is_family(rel);
         self.logic.demand.as_ref().is_some_and(|p| p.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| py(&a.rel)))))
     }
 

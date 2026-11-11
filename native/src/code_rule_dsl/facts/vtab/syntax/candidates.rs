@@ -1,5 +1,6 @@
 //! Candidate demands carry document identity before any scalar AST relation is materialized.
 use super::*;
+use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::facts::producers::python::{
     families::candidates, import_screen::Imports, python_facts::Fact,
 };
@@ -18,7 +19,7 @@ impl Batch {
             .iter()
             .position(|&v| v == context)
             .ok_or_else(|| format!("unknown Python context {context}"))? as u32;
-        let Some(py) = &self.py else {
+        let Some(py) = self.bound::<super::py_families::Py>() else {
             return Ok(Vec::new());
         };
         let scope: BTreeSet<_> = scope.iter().copied().collect();

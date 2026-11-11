@@ -166,3 +166,30 @@ impl Annotations {
         vec![(RELATION, r)]
     }
 }
+
+/// Python's string annotations as a batch's producer (`syntax::Producer`).
+pub(crate) struct Producer;
+
+impl super::Producer for Producer {
+    fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn taped(&self) -> &'static [&'static str] {
+        &[RELATION]
+    }
+    fn start(&self, reads: &BTreeSet<String>, _: &[String]) -> Box<dyn super::ProducerRun> {
+        Box::new(Annotations::new(reads))
+    }
+}
+
+impl super::ProducerRun for Annotations {
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, _: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+        Annotations::document(self, p, d, dialect, own)
+    }
+    fn relations(self: Box<Self>, _: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
+        Annotations::relations(*self)
+    }
+    fn reads_guests(&self) -> bool {
+        true
+    }
+}

@@ -3200,9 +3200,9 @@ fn run_observed(
             .collect()
     };
     // The matchers a chunk runs (decision 0106). A chunk's documents keep their tapes for them, and for a program that
-    // reads W's values, f-string trees or string annotations (`syntax::TAPED`).
+    // reads W's values, f-string trees or string annotations (`syntax::taped`).
     let chunk_matchers = matchers::compiled(&matchers, &prog.policies).map_err(Error::Plan)?;
-    let keep_tapes = !chunk_matchers.is_empty() || syntax::TAPED.iter().any(|rel| read.contains(*rel));
+    let keep_tapes = !chunk_matchers.is_empty() || read.iter().any(|rel| syntax::taped(rel));
     if !chunk_matchers.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("ast matchers (decision 0106)", || format!("{} matchers run by the transducer over each chunk's tapes", chunk_matchers.len()));
     }

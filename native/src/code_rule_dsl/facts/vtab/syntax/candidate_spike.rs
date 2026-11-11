@@ -1,5 +1,6 @@
 //! Test-only bridge from immutable core facts to typed candidate rows.
 use super::*;
+use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::facts::producers::python::{families::candidate_spike, import_screen::Imports};
 impl Batch {
     pub(crate) fn candidate_spike(&self, targets: &std::collections::BTreeSet<String>) -> Result<Vec<Vec<rusqlite::types::Value>>, String> {
@@ -7,7 +8,7 @@ impl Batch {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "native candidate spike".into());
         let mode = std::env::var("RERAIL_CANDIDATE_SPIKE").unwrap();
         let collector_mode=if mode=="typed_ranges" {"context_ranges"} else {&mode};
-        let py = self.py.as_ref().ok_or("candidate producer requires Python")?;
+        let py = self.bound::<super::py_families::Py>().ok_or("candidate producer requires Python")?;
         let wanted = targets.iter().filter(|s| !s.starts_with("builtins.")).cloned().collect();
         let globals = targets.iter().filter_map(|s| s.strip_prefix("builtins.").map(str::to_owned)).collect();
         let members = std::collections::BTreeSet::from(["open".to_owned()]);
