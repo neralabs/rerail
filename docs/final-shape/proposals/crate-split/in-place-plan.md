@@ -1,24 +1,34 @@
 # Plan: the engine in crates, without moving files
 
-Status: plan, for agreement. Code surveyed: the hub, `jeremybarnes/final-shape-serverplan-quality` at 251f0b85f
-(2026-11-11 06:43). This builds on Tim's proposal (`../crate-split.md`, the seam map at 91c2df886). It changes
-how the split lands (no file moves) and adds crates under facts, beside logic and inside backends.
+Status: plan, revision 2. Code surveyed: the hub, `jeremybarnes/final-shape-serverplan-quality` at 251f0b85f
+(2026-11-11 06:43). This builds on Tim's proposal (`../crate-split.md`, the seam map at 91c2df886).
+
+Requirements:
+
+1. **No file moves.** Logic stays as it is; imports and code change only where a cut needs it.
+2. **Metal is a plug-in.** Metal lives in its own crate. The foundation sees an abstract device interface; on
+   macOS the engine registers Metal against it. A non-macOS package does not depend on the Metal crate at all.
+3. **Languages are plug-ins.** Every language-specific part sits in a pack crate that registers itself the same
+   way. The core names no specific language.
+4. **One stop-the-world of about two hours.** Everything is prepared beforehand on one branch. During the stop,
+   the work is a replay and a check, done in big batches. No one-line edit followed by a long rebuild.
 
 ## Intro
 
 `rerail-engine` compiles all of `native/src` as one crate: about 400k lines of production files and 185k lines of
-test files. Any edit recompiles all of it. Tim measured 86–90 s warm (750–840 s CPU) for a one-line edit on a
-32-core box (`baseline.md`).
+test files. Any edit recompiles all of it (Tim's baseline: 86–90 s warm, 750–840 s CPU, on 32 cores).
 
-The goal is crates that each rebuild alone. The constraint here is to stay minimally disruptive:
+The engine is also closed over its devices and languages:
 
-- no file moves;
-- `use` paths and logic unchanged, except where a seam must be cut;
-- landed in waves, each green on its own.
-
-The engine has done this once already. `rerail-store` compiles `native/src/content_store` in place through
-`#[path]`, and the engine re-exports it at its old path (`native/crates/store/src/lib.rs`). This plan does the
-same for every crate.
+- **Metal** is reached from core code in 135 module references, in about 260 `cfg(target_os = "macos")` sites
+  outside the Metal files (110 in `packed.rs`), and in 48 `ExecutionBackend::Metal*` match arms.
+- **Languages** are a closed set generated at build time. `build_languages.rs` writes the `Family` enum and the
+  `with_adapter!` macro, a `match` over the concrete adapter types. Core code then reaches the languages in four
+  ways:
+  - 141 `with_adapter!` call sites;
+  - 80 production `GrammarDialect::Python`/`TypeScript`/… matches, in 32 files;
+  - 164 references into language modules;
+  - the grammars' C build in `native/build.rs`.
 
 ## 1. How a crate is made in place
 
@@ -50,187 +60,196 @@ Why this keeps the diff small (checked with a two-crate toy build, rustc 1.90):
   child-file rules. A `#[path]` straight to `logic.rs` would not: rustc treats a path-loaded file as a `mod.rs`.
 - `pub(in crate::code_rule_dsl)` stays valid, because each crate has a `code_rule_dsl` module. Only items read
   from another crate widen to `pub`.
+- Files staying in place keeps three things working: branches still merge, `include_str!` and `#[path]` still
+  resolve, and the build script's `native/src` hash still covers every source.
 
-Compared with `git mv` (Tim's §9), files staying where they are buys three things:
+`rerail-store` is built this way today (`native/crates/store/src/lib.rs`).
 
-- Branches that edit `native/src/…` keep merging, with no move map.
-- `include_str!` and `#[path]` relative paths keep working.
-- The build script's `native/src` hash still covers every source.
+## 2. Plug-ins: devices and language packs
 
-What changes in every wave is the same short list:
+### 2.1 Devices
 
-| change | where | size at HEAD |
+The core holds two object-safe traits and a registry, filled once at boot:
+
+- **`MatcherDevice`**, in rerail-transducer. Its methods are the Metal entry points `packed.rs` and its
+  neighbours call today:
+  - compile: `compile_interpreter`, `compile_jit_cached`;
+  - execute: `execute_packed_with_result_limits`, `execute_outcomes`, the grid's `execute`,
+    `execute_shared_corpus(_pages)`;
+  - anchor scans: `prepare_anchor_scan(_with_eligibility)`;
+  - label passes: `RootJobs`/`RootsFound`, `drop_pipelines`;
+  - `set_steps`, metrics, and memory (`reserved_mb`, `driver_mb`).
+- **`SolverDevice`**, in rerail-logic. Its methods are what set-fix and typing call: `metal_lattice::solve`,
+  `metal_join`, `metal_sort::install_guard`, `metal_nearest`, and the block programs (`run_split`, `Executor`).
+
+`ExecutionBackend`, `Binding` and `RanOn` keep their variants as data. "Metal" becomes "the registered device".
+Each `cfg`-gated match arm becomes `device()?.<method>(…)`, which fails as "no device" where none is registered.
+
+The batch format both sides share (`metal_batch_abi.rs`, 114 of the 135 references) is CPU data. The core
+mounts it, under the same name for now.
+
+`rerail-device-metal` holds `packed::metal_*`, `residency::{metal, slabs}` and the Metal runtime (`rerail-metal`).
+It sits above the transducer and logic, and implements both traits. The engine depends on it only under
+`[target.'cfg(target_os = "macos")'.dependencies]` and registers it at boot.
+
+One crate outside the engine has to change. `rerail-rr-parser` uses `rerail_metal::block_program::serial`, the
+CPU's serial block runner. That runner moves into `rerail-compiler`. `tier2_on` goes behind `MatcherDevice`.
+
+### 2.2 Language packs
+
+The core holds:
+
+- the registry as **data**: dialect ids, tape tags and kind catalogs, generated from `languages/*.json` and
+  filtered by the packs the build selects (`lang-*` features, which exist today);
+- an object-safe **`LanguagePack`** trait;
+- `pack(family) -> &'static dyn LanguagePack`.
+
+The per-language code does not change:
+
+- **Implementations stay put.** Each language keeps implementing today's static `Adapter`, `ScopeRules`,
+  `ValueRules`, `CallRules`, `ArgumentRules`, `FormatArgRules` and `SyntaxRules`.
+- **One blanket bridge.** `impl<A: Adapter> LanguagePack for Pack<A>` forwards each method and returns each
+  constant.
+- **Generic methods.** 20 of the 53 trait methods are generic, almost all over `D: Doc`. Production calls them
+  with two `Doc` types, `TapeDoc` and `SubDoc`, so each gets a tape variant and a sub-tree variant. `BladeDoc`
+  stays inside the PHP pack.
+
+What changes in the core:
+
+| coupling | sites | rewrite |
+|---|---:|---|
+| `with_adapter!(family, A => …)` | 141 | `pack(family).…`. 83 single-line sites in 70 shapes (`A::LABEL`, `<<A as Adapter>::Scope as ScopeRules>::resolve(…)`) are rewritten by script; the rest by hand |
+| `GrammarDialect::<Lang>` in production | 80 in 32 files | a pack hook (most are in `facts`, `language`, `tape`, `literal`, `logic`) |
+| references into language modules | 164 | registered hooks: Tim's I1 (tape building), I2 (per-language semantics), I3 (adapter constants) and I10 (CPython facts) are this seam |
+| grammars' C build | `native/build.rs` | each pack's build script builds its own grammars (a small `build.rs` per pack that includes the shared build module) |
+
+Packs, one per family (about 71k production lines in all):
+
+| pack | holds |
+|---|---|
+| `rerail-lang-python` | `cpython`; `identifier`; `module_path`; `scope::python`; `value::python*`; `facts::producers::python`; the adapter; Ruff-family suppressions; the grammar |
+| `rerail-lang-ecma` (TS, JS, TSX, Vue) | `value::ecma`; `import_target`; `npm_ignore`; `semver`; `module_graph`; `package_manifest`; `vue`; ESLint and Biome suppressions; the grammars |
+| `rerail-lang-php` (PHP, Blade) | `php_view`; `php_literal`; `blade`; `scope::php*`; `value::php*`; `calls::php`; `literal::phpdoc`; the phpcs, PHPStan and Psalm readers; the grammars |
+| `rerail-lang-rust` | `scope::rust`; `value::rust`; `calls::rust`; `literal::rust_format`; Clippy |
+| `rerail-lang-sql`, `rerail-lang-json` | their adapters and grammars |
+
+`.rr`'s own adapter stays in the core: it is the rule language.
+
+The dynamic dispatch is new cost on paths that today compile to a constant. Hot sites (per node rather than per
+file) take the `&dyn LanguagePack` once per file. The data-layer replay is compared before and after in
+instructions retired.
+
+## 3. Target crates
+
+```
+rerail-engine (thin)   napi, CLI, boot(): registers the packs and device(s) the build selects;
+ │                     composition glue (W's waves, prefilter, matcher→transducer lowering, convert, slice)
+ ├─ rerail-lang-{python,ecma,php,rust,sql,json}   → w, facts, lang
+ ├─ rerail-device-metal (macOS)                   → transducer, logic, rerail-metal
+ ├─ rerail-w           matcher, compile, eval, workspace, scope/value/calls frameworks (no language) → facts
+ ├─ rerail-sessions    sql_executor's sessions (the #[napi] class stays in the engine)          → logic
+ ├─ rerail-logic       plan, native, sql, simplify, typing, waves core, SolverDevice     → rr, facts
+ ├─ rerail-rr          front's parser, magic, rr: lowering, printer, checker, library   → facts, rr-syntax
+ ├─ rerail-transducer  CPU interpreter, Cranelift, Bitlex, verify, batch ABI, MatcherDevice,
+ │                     demand, space                                         → facts, compiler
+ ├─ rerail-facts       facts::*, text, logic::strings, sql_profile, producers                 → lang, store
+ ├─ rerail-lang        registry data, LanguagePack + registry, tape, tree, lines, json, budget → prof, rr-syntax
+ └─ exist: rerail-prof (+ phase_clock, profiler recorder), rerail-rr-syntax (+ front's AST types),
+    rerail-store, rerail-accel, rerail-forest, rerail-compiler (+ the serial block runner),
+    rerail-metal, rerail-rr-parser, rerail-parser-tests
+```
+
+W, the transducer, logic, the packs and Metal never depend on each other. An edit to one rebuilds that crate,
+whatever stands on it, and the engine. The remaining wide paths are `lang` and `facts`: everything stands on them.
+
+## 4. What is cut
+
+| work | count at HEAD | how |
+|---|---:|---|
+| references across the crate DAG (`seams-at-head.txt`) | 286 | as in Tim's seam map. I1, I2, I3, I8 and I10 are §2's registrations. Logic → transducer's `packed::block` (10) is `rerail_compiler::block` read directly |
+| Metal arms and `cfg(macos)` sites in the core | ~300 | §2.1 |
+| language couplings | 385 + the grammar build | §2.2 |
+| `#[napi]` class in `sql_executor.rs` (S5) | 19 items | into an engine file; sessions mounts the rest |
+| build ids (`env!("RERAIL_ENGINE_BUILD_ID")`, 9 files) | 9 | set once at boot, read from a `OnceLock` (Tim's M4) |
+| `env!("CARGO_MANIFEST_DIR")` | 18 production files, 50 in all | one `native_dir()` helper |
+| widen to `pub` the items another crate reads | ~910 items, ~160 modules (+ methods and fields) | by script, from compiler diagnostics (§5) |
+| test files that reach a higher crate | 87 (~95k lines) | mounted by the engine's test host; privates they read get `cfg(any(test, feature = "test-hooks"))` |
+
+## 5. How it lands: prepare, rehearse, replay
+
+### Before the stop (no stop needed)
+
+All of this happens on `jeremybarnes/Cratification`, which merges the hub in daily so the final merge stays small.
+
+1. **Hand-written changes, as a few large commits:**
+   - the device traits and registry;
+   - `LanguagePack` and the `with_adapter!` rewrite;
+   - the pack hooks;
+   - the 286 seams;
+   - S5, build ids and `native_dir()`.
+
+   These are the only commits that can conflict.
+2. **Generators** in `tools/cratify/`. They are idempotent and are re-run, never merged:
+   - **Crate map:** a module → crate table that writes every mount `lib.rs`, every `Cargo.toml` and the
+     feature forwarding, and swaps each owning parent's `mod x;` for `pub use`.
+   - **Visibility:** runs `cargo check --message-format=json` and reads errors E0603, E0616, E0624 and E0451.
+     It widens the item at the definition span the error names, then loops to a fixed point.
+   - **Test hosts:** writes the engine's test-host mounts.
+   - **Guard:** a test that fails on any reference across the DAG, or on a core file that names a language or
+     Metal.
+3. **Green on the branch:**
+   - `cargo check` for macOS and `wasm32-wasip1`. The wasm build has no Metal, so it proves the device cut.
+   - One Linux CI run, to prove the non-macOS package.
+   - The named tests per crate.
+   - The goldens byte-identical (`wave.rir`, RIR).
+   - The data-layer replay gate.
+   - The full suite once.
+   - The dispatch cost (§2.2) measured.
+4. **Rehearsals:** replay the whole stop procedure onto a copy of the current hub tip and time each step.
+   Repeat until it runs well under the two hours.
+
+### The stop (target under two hours)
+
+| step | time | what |
 |---|---|---|
-| mount file + `Cargo.toml` | new `native/crates/<name>/` | 2 new files |
-| `mod x;` → `pub use rerail_<c>::code_rule_dsl::x;` | the parent file of each moved module (`code_rule_dsl/mod.rs`, `waves.rs`, `packed.rs`) | a few lines |
-| widen to `pub` the items another crate reads | in place | ~910 items, ~160 modules in all (`vis.py`); methods and fields come from compiler errors |
-| seams (below) | in place, one commit each | 286 production references |
+| freeze | 5 min | branches stop pushing to the hub; its tip is T |
+| merge | ≤ 30 min | T into the prep branch. Conflicts arise only in the hand-written commits; generated files are reset to T's version |
+| regenerate and check | ≤ 30 min | run the generators. Then `cargo check --workspace --all-targets` rounds, bottom-up: lower crates check in seconds, and each round's errors are fixed in one batch (visibility by script) |
+| test | ≤ 30 min | one debug test build (sccache warm from the rehearsal); named tests per crate; goldens; data-layer gate. The full suite runs in the background |
+| land | 5 min | the hub fast-forwards. Other branches merge it as usual: their files have not moved |
 
-## 2. Target crates
+No release or profiling builds. Everything runs under `nice -n 19`.
 
-`→` lists direct dependencies. Sizes are file lines at HEAD from `mine.py`. "prod" counts files outside
-`#[cfg(test)]` modules, so inline `mod tests { }` count as prod; Tim's span-based counts are lower.
+## 6. Production lines recompiled per edit (file lines, of ~403k)
 
-```
-rerail-engine (thin top)  napi, CLI, boot; the composition glue: W's waves, prefilter, matcher→transducer
- │                        lowering, corpus references, convert, slice                             18k
- ├─ rerail-w              matcher, compile, eval, workspace, model, adapters, scope, value, calls,
- │                        literal, blade, vue, suppress, residency::admission  → facts          152k
- ├─ rerail-sessions       sql_executor's sessions (the #[napi] class stays in the engine) → logic  17k
- ├─ rerail-logic          plan, native, sql, simplify, typing, waves core, threads    → rr, facts  63k
- ├─ rerail-rr             front's parser, magic, rr: lowering, printer, checker, library → facts, rr-syntax  10k
- ├─ rerail-transducer-metal  packed::metal_* (macOS), residency::{metal, slabs}   → transducer     49k
- ├─ rerail-transducer     transducer, packed (CPU, Cranelift, Bitlex, verify, metal_batch_abi),
- │                        demand, space                                → facts, compiler, metal   48k
- ├─ rerail-cpython        Ruff CPython facts                                    → prof              4k
- ├─ rerail-facts          facts::*, text, logic::strings, sql_profile, producers, plan::sketch
- │                                                                     → lang, store, accel       23k
- ├─ rerail-lang     NEW   language registry + the grammar build, tape (+v9np, tokens), tree, lines,
- │                        identifier, json, budget, module_path, package_manifest, semver, npm_ignore,
- │                        module_graph                                  → prof, rr-syntax          14k
- ├─ rerail-rr-syntax      (exists) + front's AST types and names (Tim's A1)                         ~2k
- ├─ rerail-prof           (exists) + phase_clock, the recorder half of logic::profile, memory hooks  4k
- └─ exist, unchanged: rerail-store → accel, rerail-accel → forest, rerail-compiler (Tim's "tier1"),
-    rerail-metal (the Metal runtime), rerail-rr-parser, rerail-parser-tests
-```
+From `rebuild2.py`, with the packs and Metal as their own crates:
 
-Where this departs from the six-crate list, and why:
-
-- **W apart from the transducer, not "backends: W plus the transducer".** W is 152k lines and the transducer
-  97k. Together, every transducer edit rebuilds W and every W edit rebuilds the transducer. Apart, they are
-  siblings over facts and neither rebuilds for the other. Tim's own §11.4 recommends this too.
-- **`rerail-lang` under facts.** The registry, the grammar build (`native/build.rs`: grammar C and
-  tree-sitter-generate), tapes and lines are what every crate reads. Inside facts nothing points back down at
-  them: 87 references go facts → lang and none go lang → facts. Splitting them out moves the grammar build out of
-  the engine's build script, which reruns on every edit (`rerun-if-changed=src`). `RERAIL_GRAMMAR_BUILD_ID` then
-  comes from lang's own build.
-- **The `.rr` AST in `rerail-rr-syntax`, not facts.** The crate already holds `.rr`'s kind tables (Tim's A2 is
-  done: `logic/rr.rs:21` re-exports `rerail_rr_syntax::tape`). Facts reads the AST 53 times. `rr` sits on facts,
-  as in your list.
-- **`rerail-sessions` beside logic.** `sql_executor` → logic is 99 references and logic → `sql_executor` is
-  none, so the cut is already clean.
-- **Metal apart from the transducer's core.** The CPU side reads Metal 126 times, and 114 of those are
-  `metal_batch_abi.rs`, the batch ABI both sides share. With that file mounted in the core crate (no move), 10
-  references remain. Metal is where most current work happens (tier 2, the Parser-generators branch).
-- **No `rerail-base`.** Tim's base is `rerail-prof` plus `phase_clock` and the recorder. The leaf helpers
-  (`lower_hex`, `nfkc`) go to prof or to the crate that uses them.
-
-Not split further yet: W's core is one cycle of 122k lines (matcher, scope, compile, value, the languages). Its
-hub is the `Adapter` trait, whose associated consts are dispatched statically (`with_adapter`). Cutting it means
-dynamic dispatch, which is not minimal. `workspace`, `eval`, `query` and `stats` (~17k) sit above that cycle and
-could peel off later as `rerail-workspace`, but W-core edits would still rebuild them.
-
-### Production lines recompiled per edit (file lines, of ~403k)
-
-| edit in | today | after | rebuilds |
+| edit in | own lines | after | rebuilds |
 |---|---:|---:|---|
-| top | 100% | 5% | top |
-| cpython | 100% | 6% | cpython, top |
-| sessions | 100% | 9% | sessions, top |
-| metal | 100% | 17% | metal, top |
-| logic | 100% | 24% | logic, sessions, top |
-| rr | 100% | 27% | rr, logic, sessions, top |
-| transducer | 100% | 28% | transducer, metal, top |
-| W | 100% | 42% | W, top |
-| facts | 100% | 94% | everything above facts |
-| lang, prof, rr-syntax | 100% | 97–100% | everything |
+| engine | 18k | 5% | engine |
+| a language pack | 1k (SQL) – 27k (PHP) | 5–11% | the pack, engine |
+| sessions | 17k | 9% | sessions, engine |
+| Metal | 49k | 17% | Metal, engine |
+| transducer | 48k | 28% | transducer, Metal, engine |
+| logic | 63k | 36% | logic, sessions, Metal, engine |
+| rr | 10k | 39% | rr, logic, sessions, Metal, engine |
+| W (without its languages) | 94k | 45% | W, packs, engine |
+| facts, lang, prof, rr-syntax | 2k–20k | 96–100% | everything above |
 
-These are lines, not seconds: rustc's incremental cache reuses unchanged codegen units. Each wave below measures
-wall and CPU against Tim's baseline.
+These are lines, not seconds. The rehearsals measure warm-rebuild wall and CPU against Tim's baseline.
 
-## 3. Seams at HEAD
+## 7. Open
 
-286 production references cross this DAG (`seams-at-head.txt` lists every target and file). Tim's ids
-(seam map §2.2, §11) are given where his seam is the same.
+- **Pack granularity:** one pack per family (Python; ECMA with Vue; PHP with Blade; Rust; SQL; JSON), or finer?
+- **Dialect ids:** they stay build-time data in the core, generated from `languages/*.json` for the packs a
+  build selects. Making them runtime-open (packs loaded at run time) is a larger change and not needed for
+  separable packages.
+- **Linux check:** one CI run on the prep branch.
+- **Tim's scripts:** his analysis scripts (`seams.py` and the rest) resolve imported aliases more precisely than
+  `in-place/graph.py`, which would help the guard.
 
-| from → to | refs | what | fix |
-|---|---:|---|---|
-| facts → W | 45 | Python producers on W's scope tables (`python_facts`, `import_screen` 14), `FileInput`, `grammar_version`, adapter `ValueRules`, `scope::ScopeTable` | I2 per-language semantics registered by W; M3 `FileInput` down; `grammar_version` into lang |
-| W → top | 33 | `transducer::semantic_facts` (19), `panic_boundary`, `lower_hex`, `prefilter::LANG_STRIDE`, `purge_allocator_pages` | remount `semantic_facts.rs` (93 lines) and `panic_boundary.rs` in W; M5, M6, I4 |
-| lang → W | 27 | tape building through the adapter (`parse_input`, `parsed_by_forte`), Blade's tree types, comment kinds in `lines`/`identifier` | I1 tape builder registered at boot; I3 constants out of the trait |
-| facts → logic | 24 | `typing::file_local::Binding` (Cpu/Metal), corpus `thread_usage`/`matchers`, `lanes::executor_for`, `native::forget_*` | M7 move `Binding` down; I5 callbacks |
-| logic → transducer | 21 | 10 are `packed::block`, which is `rerail_compiler::block`; the rest `ExecutionBackend`, `LoweredMatcher`, `metal_lattice`, `metal_nearest` | read the compiler crate directly; I7/I8 for demand and GPU solvers |
-| rr → logic | 15 | `rr.rs`'s library loader calls corpus `phase0`/`observe`; `PRAGMA`, `document_column` | S1 the loader into logic; M1 names down |
-| facts → transducer | 14 | `SpanPrefilter`, `LoweredWave`, `MatcherBackend` in the syntax vtab | I6 |
-| logic → W | 14 | `grammar_version` (7), `FileInput`, `UtilityDefinitionId`, `matcher::transform::replace` | into lang/facts; M3 |
-| logic → top | 12 | `tools::{settings, with_settings, process_counters, program_text}`, `waves::policies::{Captor, lower_matcher}` | split `tools.rs`'s settings into logic; S3 |
-| prof → logic, rr-syntax, Metal, top | 20 | the report half of `logic::profile` | S2 recorder/report split |
-| transducer → W | 10 | `Witness`, `Captures`, adapter value rules in `demand`; `SiblingPositions` | M9, I2, M8 |
-| transducer → Metal | 10 | `metal_grid::EvaluationSpan`, `metal_program_backend::block_program` | remount `metal_grid`'s types or invert (new) |
-| facts/logic → cpython | 9 | printed/literal facts, `str_repr` | I10 registered by the engine |
-| W → transducer | 6 | the positional search index (`transducer.rs`), `demand::driver::catalog::sql_backend` | B2 (~60 lines into facts) |
-| the rest | 26 | `facts → rr` (A4/A5: `core_names`, `string_value`), `lang → transducer` (`json_parser` columns), `logic → Metal` (3, I8), `sessions → W/top` (5), `cpython → lang` (`nfkc`, M2) | as named |
-
-One seam is new:
-
-- **S5:** `sql_executor.rs` holds the 19 `#[napi]` items, and its children read it through `use super::*`. The
-  class moves into a new engine file. The rest of `sql_executor.rs` is then mounted by sessions. `#[napi]` in a
-  dependency rlib is not relied on, because its registration could be dropped at link time.
-
-One thing must land before logic and W leave:
-
-- **M4, build ids at run time.** `env!("RERAIL_ENGINE_BUILD_ID")` is read in 8 logic files and in
-  `workspace/persisted.rs`. A lower crate cannot see the engine's build script. Giving each crate its own copy
-  would either go stale or make every crate rerun on every `src` edit. The engine sets them once at boot, and the
-  crates read a `OnceLock`.
-
-Also mechanical:
-
-- `env!("CARGO_MANIFEST_DIR")` in 18 production files (50 in all) becomes one `native_dir()` helper. Under a
-  new crate it would point at `native/crates/<c>`.
-
-**Tests.** 87 test files (~95k lines) reach a crate above their own. The counts are in `tests.py`; logic has 24
-files and transducer 17. A dev-dependency cannot host them, because the types would be two copies. Each such
-file stays in place, but the engine mounts it in a test-host module, and its `#[cfg(test)] mod x;` line leaves
-the lower crate. Where it reads the parent's privates through `super::*`, those items get
-`cfg(any(test, feature = "test-hooks"))`, as `rerail-store` does. The other ~290 test files compile in their
-own crate and get the fast test binary.
-
-## 4. Waves
-
-Each wave lands in the same order:
-
-1. The seam commits, in place.
-2. One wiring commit: the mount, `Cargo.toml`, the parent's re-exports and widened visibility.
-3. The checks:
-   - `cargo check` for macOS, `wasm32-wasip1` and Windows (`cfg(windows)` dependencies move with their files);
-   - the crate's own tests by name;
-   - the goldens byte-identical (`wave.rir`, RIR);
-   - the full suite once, in the background;
-   - warm-rebuild wall and CPU for one edit in the new crate.
-
-Features (`code-rule-profile`, `bench-backends`, `headless`, `metal-tests`, `lang-*`, `test-hooks`) are declared
-by the crate that reads them and forwarded by the engine. Where test and bin builds would differ, the feature is
-always on, as the store's `test-hooks` is.
-
-| wave | crates | seams | payoff |
-|---|---|---|---|
-| 0 | none: the crate map (module → crate TSV) and a guard that fails on a reference across the DAG; M4 build ids; `native_dir()` | M4 | the map stays true while branches merge |
-| 1 | `rerail-cpython`; `rerail-prof` + recorder; `rerail-rr-syntax` + AST | M2, S2, I4, A1 | cpython edits rebuild 6%; proves the mount on small crates |
-| 2 | `rerail-lang`, with the grammar half of `build.rs` (branch on `CARGO_PKG_NAME`, no new script) | I1, I3, `json_parser` columns | the grammar build leaves the engine's per-edit script |
-| 3 | `rerail-facts` | I2, I5, I6, I10, M3, M7, A4, A5 (~100 refs) | the largest seam wave |
-| 4a | `rerail-rr` | S1, M1 | parallel with 4b and 4c |
-| 4b | `rerail-transducer`, Metal still inside | M8, M9, B2 | |
-| 4c | `rerail-w` | remounts, M5, M6 | W edits stop rebuilding logic and the transducer |
-| 5 | `rerail-logic` (+ waves core: `waves.rs` re-exports owner, schedule, storage) | I7, I8, S3, `tools` split | logic edits rebuild 24% |
-| 6 | `rerail-sessions`; `rerail-transducer-metal` | S5; transducer → Metal (10) | |
-| 7 | thin engine: one `boot()` the addon and the CLI both call, installing I1–I10 in today's order | none | the bootloader as one sequence |
-
-From wave 3 on, 4a, 4b and 4c are independent, so different people can take them.
-
-## 5. Open
-
-- **W's place.** This plan keeps W apart from the transducer, as Tim's §11.4 recommends, where the six-crate list
-  puts them together.
-- **Visibility churn.** About 1,000 one-word edits (`pub(crate)` → `pub`) land on hot files. Driving them from
-  a list (`vis.py`'s output) lets a branch re-apply the list instead of merging it.
-- **Landing point.** Land on `jeremybarnes/Cratification` and merge into the hub per wave, or one quiet point
-  for each wave's wiring commit (Tim's open item).
-- **Tim's analysis scripts.** `seams.py` and the rest were not committed. They resolve imported aliases, which
-  `in-place/graph.py` does only roughly. Committing them would let the guard in wave 0 use them.
-
-`in-place/` regenerates every number here:
+`in-place/` regenerates the counts:
 
 ```
-python3 graph.py ../../../../../native/src && python3 mine.py && python3 detail.py && python3 vis.py && python3 rebuild.py
+python3 graph.py ../../../../../native/src && python3 mine.py && python3 detail.py && python3 vis.py && python3 langs.py && python3 rebuild2.py
 ```
