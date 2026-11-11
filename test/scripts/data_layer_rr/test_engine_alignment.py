@@ -14,6 +14,18 @@ class EngineAlignmentTests(unittest.TestCase):
     def setUp(self):
         getattr(migration,'_SOURCE_COHORTS',set()).clear()
 
+    def test_inventory_verifies_the_adopted_engine_after_final_advances(self):
+        root = Path('/fixture')
+        source = dict(checkout='.', upstreamCommit='adopted')
+        manifest = dict(engineSource=source, rules=[], files=[])
+        with patch.object(migration, 'read_json', return_value=manifest), \
+             patch.object(migration, 'targets', return_value=[]), \
+             patch.object(migration, 'verify_engine_snapshot') as audit, \
+             patch.object(migration, 'verify_engine_alignment', side_effect=ValueError('peer advanced')) as live:
+            self.assertIs(migration.verify(root), manifest)
+            audit.assert_called_once_with(root, source)
+            live.assert_not_called()
+
     def test_registered_source_cohort_can_start_new_shards_after_a_peer_advances(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);binary,source=self.artifact(root)
