@@ -1,9 +1,10 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LOCKS_DIR, withHomeLock, type LockHolder, type LockRequest } from "../../../src/engine/native/file-lock.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 import { raceForLock, raceSize, sourceModule } from "../../support/processes/lock-race.js";
 
 vi.mock("node:fs/promises", { spy: true });
@@ -12,7 +13,7 @@ const { unlink: realUnlink } = await vi.importActual<typeof import("node:fs/prom
 const homes: string[] = [];
 afterEach(async () => {
   vi.mocked(unlink).mockReset();
-  await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true })));
+  await Promise.all(homes.splice(0).map(home => removeFolder(home)));
 });
 
 async function temporaryHome(): Promise<string> {

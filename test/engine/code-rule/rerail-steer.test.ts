@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -24,6 +24,7 @@ import {
 } from "../../../src/engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../../../src/engine/code-rule/steer-origin.js";
 import { installPack, installPackDirectory, thirdPartyPack } from "../../support/installed-packs.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 // The steer names a rule's pack from the installed catalog, the publisher of a third party's, and a pack installed from
 // a folder, whatever its package.json calls itself.
@@ -98,7 +99,7 @@ describe("Rerail steer text", () => {
       expect(args.slice(0, 2)).toEqual(["feedback", "ts:no-any"]);
       expect(args[2]).toMatch(/^[A-Za-z]:\/.+\/v1 routes are exempt & stay$/u);
     } finally {
-      rmSync(folder, { recursive: true, force: true });
+      removeFolderSync(folder);
     }
   });
 

@@ -2,11 +2,12 @@
 // release's check of the packed one (scripts/release/shrinkwrap-pack.mjs check).
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { shrinkwrapFrom, shrinkwrapProblem, shrinkwrapText } from "../../scripts/release/shrinkwrap.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const manifest = {
   name: "@neralabs/rerail",
@@ -110,7 +111,7 @@ describe("shrinkwrap-pack.mjs check", () => {
       expect(check.stdout).toBe(`${tarball} ships the npm-shrinkwrap.json package-lock.json gives.\n`);
       expect(check.status).toBe(0);
     } finally {
-      rmSync(folder, { recursive: true, force: true });
+      removeFolderSync(folder);
     }
   });
 });
