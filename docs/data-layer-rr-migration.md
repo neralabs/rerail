@@ -102,7 +102,15 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory has **12 accepted ports, 84 drafts, and four absent translations**.
+The current inventory has **13 accepted ports, 86 drafts, and one absent translation**.
+This means 99 translation candidates exist. It does not mean 99 migrations have passed acceptance.
+The absent translation is `serverplan_quality`.
+The State Tripwires candidate remains a draft. Its original module passes 76 of 80 assertions through each native API.
+Both APIs match all 77 recorded scanner returns, including 64 positive returns.
+The four failures concern plugin construction, function-node/reachability helpers, and selective fact and runtime-authority analysis.
+The selection tests currently fail their Python observer assertions. The native implementation must enforce and expose the same selection guarantees.
+Its two owned scope assertions and its broader production, supplied-AST, options, signing, CLI, and update contracts remain open.
+The [State Tripwires checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-native-progress-final733.json.gz) retains these failures alongside the passing scanner observations.
 `no_api_root_imports` passes its complete recorded contract on Final `ec3cfe1b7`.
 Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-complete-finalec3.json.gz) verifies 467 native executions.
 All four original tests and all 168 public cases pass through both APIs, including import and literal positives.

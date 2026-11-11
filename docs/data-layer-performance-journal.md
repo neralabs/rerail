@@ -11586,3 +11586,64 @@ The [census](../gate/data-layer/fixtures/host/data-layer-port/rr-final733-suite-
 Inventory checks now use the adopted engine snapshot.
 Adoption still checks the live Final tip before a new cohort starts.
 The local cache archives 29 older unit test binaries. The archive check compares each decompressed SHA-256 with its original.
+
+### State Tripwires native scanner and positive regressions, 2026-11-10
+
+The starting inventory contains 100 historical ports, 98 `.rr` candidates, and 13 full admissions.
+Those counts measure different stages. They must remain separate in progress reports.
+
+The integrated State Tripwires converter misses locations or codes in 23 of 77 original scanner observations.
+Its default gates apply repository discovery restrictions to supplied source.
+Its project branch also disables a cross-file finding.
+The native draft resolves scanner gates at authoring time and preserves the project branch.
+Its rule logic uses current core relations and native `.violation` declarations. It adds no engine implementation.
+
+The source API and repository driver share one generator.
+The source companion accepts supplied files, including test and temporary paths.
+The repository driver retains its original discovery filters.
+Direct scanners use their supplied return categories. Their default category map is empty, as in the source.
+The collector uses the pinned generated categories. These contain 142 names.
+
+Full-value comparisons expose defects that location sets miss:
+
+- Compiled-IR diagnostics need the carrier name, rather than the entire constructor expression.
+- Graph-config diagnostics need the enclosing class and field name.
+- The source's fast return preserves visitor order and repeated findings.
+  Only its function-fact path deduplicates complete diagnostics and sorts them.
+- Canonical fallback expressions need the native annotation printer.
+  A named request relation binds computed text before requesting a native parse.
+  Parsed helper documents are excluded from scanner candidates.
+
+Two fresh graph positives expose an incorrect algorithm in the converter.
+The source chooses the first successful call under ordered DFS. The converter chooses a shortest path.
+The first-call regression expects line 8. The shortest-path candidate reports line 9.
+The cycle regression also proves that a negative memo entry survives an open recursive path.
+The candidate reports an extra `b_lazy` finding that the source suppresses.
+Both cases pass after replacing shortest-path selection with the existing `dfs_first_memo` operator.
+Edges follow the source's line and callee order. Roots follow function declaration order.
+All 18 fresh contracts pass through both APIs. They include 15 positive cases and three clean cases.
+They compare complete returned values, including duplicates and exact diagnostic text.
+
+Both native APIs run all 80 original module assertions. Each passes 76 and fails four.
+They match all 77 complete scanner returns, including all 64 positive returns.
+The four failing assertions are retained individually:
+
+- `test_plugin_factory_does_not_scan_project_sources`: the plugin factory still needs a native adapter.
+- `test_reachable_function_selection_reuses_collected_call_facts`: function-node and reachability helper transport remains unimplemented.
+- `test_function_fact_analysis_excludes_unreachable_functions`: native fact selection needs the source's exclusion guarantee and an observable assertion.
+- `test_runtime_authority_analysis_skips_unreachable_functions`: runtime-authority analysis needs the same selection guarantee and assertion.
+
+These selection failures must not be dismissed as Python-only tests.
+The current relational pipeline still derives facts over contexts beyond its selected reporting roots.
+The next phase must select contexts before expensive taint and authority inference.
+The two owned scope assertions also remain outside this module run.
+Supplied ASTs, project options, mutable configuration, project signed filtering, production, signing, CLI, and persistent updates remain open.
+
+The [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-state-tripwires-native-progress-final733.json.gz) binds original reports, source recordings, fresh contracts, programs, and harness bytes.
+It explicitly records incomplete migration acceptance.
+The inventory now contains 99 candidates, 13 full admissions, 86 drafts, and one absent translation: `serverplan_quality`.
+
+The tooling suite passes 416 tests on the source test virtual environment.
+An earlier run used the wrong Python environment and also encountered a full disk. Its results are discarded.
+The original scanner cohort was repeated with fresh caches after space became available.
+All native test commands remain bounded at 110 seconds and run at nice level 19.

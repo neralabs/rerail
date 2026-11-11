@@ -2,6 +2,8 @@
 
 
 def policy_filename(check, entry):
+    if check == 'serverplan_state_tripwires' and entry is not None:
+        return 'serverplan-state-tripwires-source.rr'
     if check == 'legacy_execution_surfaces' and entry in {'scan_repo', '_iter_python_files'}:
         return 'legacy-execution-surfaces-repository.rr'
     if check=='dynamic_module_loading' and entry=='_report_facts':

@@ -56,6 +56,7 @@ ENTRIES = {
     'backend_type_strings': ['check_file', 'check_file_content', 'should_skip_file', 'find_python_files'],
     'serverplan_grammar_surface': ['scan_file', 'iter_python_files'],
     'serverplan_target_architecture': ['scan_sources', '_frozen_slots', '_symbol_names'],
+    'serverplan_state_tripwires': ['scan_source', 'scan_tree', 'scan_project_sources'],
     'legacy_execution_surfaces': ['scan_file_content', 'scan_sql_post_fetch_filter_content', 'scan_repo',
                                   'check_exact_file_inventory', 'check_removed_sql_read_leaf_inventory',
                                   '_iter_python_files', '_receiver_tokens', '_looks_like_cursor_receiver',
@@ -215,6 +216,10 @@ class Suite:
             from legacy_execution_port import snapshot
             values = inspect.signature(getattr(module, entry)).bind(*args, **kwargs).arguments
             files, scope, root = snapshot(module, entry, values)
+        elif check == 'serverplan_state_tripwires':
+            from state_tripwires_port import snapshot
+            values = inspect.signature(getattr(module,entry)).bind(*args,**kwargs).arguments
+            files, scope, root = snapshot(module,values,entry)
         elif check == 'admin_async_purity':
             from data_layer_batch_two import normalize as normalize_two
             root = Path(args[0] if args else kwargs['project_root'])
@@ -274,7 +279,7 @@ class Suite:
             from signatures_port import legacy_message
             actual = [dict(path=files[0]['path'], line=v.async_func.line, column=None,
                 code='sync_async_signature_mismatch', message=canonical(legacy_message(v), root)) for v in result]
-        elif check in {'serverplan_target_architecture', 'legacy_execution_surfaces'}:
+        elif check in {'serverplan_target_architecture', 'legacy_execution_surfaces', 'serverplan_state_tripwires'}:
             from data_layer_batch_six import normalize as normalize_six
             actual = normalize_six(check, result, root, files)
         elif check == 'versioned_lifecycle_legacy_surfaces':
@@ -342,6 +347,9 @@ class Suite:
         if check == 'serverplan_target_architecture':
             from target_architecture_port import scan
             return scan(self, module, arguments, entry=entry)
+        if check == 'serverplan_state_tripwires':
+            from state_tripwires_port import scan
+            return scan(self,module,arguments,entry)
         if check == 'legacy_execution_surfaces':
             from legacy_execution_port import scan
             return scan(self, entry, module, arguments)
@@ -513,6 +521,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'serverplan_state_tripwires':
+                from state_tripwires_port import install
+                install(self,module)
             if check == 'legacy_execution_surfaces':
                 from legacy_execution_port import install
                 install(self, module)
