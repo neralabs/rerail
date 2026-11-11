@@ -91,7 +91,8 @@ def escape_message(m):
     def one(b):
         key = b.group(1).split(".")[0]
         return b.group(0) if key in cols else "{{" + b.group(1) + "}}"
-    msg = re.sub(r"\{([^{}]*)\}", one, m.group(4))
+    # a column reference stays; every other brace, nested ones included, is doubled
+    msg = re.sub(r"\{([^{}]*)\}|([{}])", lambda b: one(b) if b.group(2) is None else b.group(2) * 2, m.group(4))
     return f".violation {m.group(1)}({m.group(2)}){m.group(3)}{msg}"
 def message_braces(text, base):
     text = re.sub(r'^\.violation (\w+)\(([^)]*)\)((?: code "(?:[^"\\]|\\.)*")? )("(?:[^"\\]|\\.)*")', escape_message, text, flags=re.M)

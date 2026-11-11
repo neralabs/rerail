@@ -222,7 +222,16 @@ class Vars:
 
 
 def one_of(prog, vs, fmt, values, p, note):
-    """fmt with one `{}`: an atom per value. One value: the atom; a few: a disjunction; many: a relation of facts."""
+    """fmt with one `{}`: an atom per value. One value: the atom; a few: a disjunction; many: a relation of facts.
+    A `{"$option": name, "spread": true}` entry splices in the option's configured list (option_item)."""
+    spread = [x["$option"] for x in values if isinstance(x, dict) and "$option" in x and x.get("spread") is True]
+    if spread:
+        values = [x for x in values if not isinstance(x, dict)]
+        name = prog.facts("set", "v", values, note)
+        for o in spread:
+            prog.rules.append((f"{name}(x)", [f"option_item({q(o)}, _, x)"]))
+        x = vs.fresh(p)
+        return f"{fmt.format(x)}, {name}({x})"
     if len(values) == 1:
         return fmt.format(q(values[0]))
     if len(values) <= INLINE_MAX:
@@ -264,6 +273,8 @@ def lower(prog, rule, v, vs, skip=()):
             lits.extend(compare(val, vs))
         elif k == "count" and isinstance(val, dict):
             lits.extend(count(prog, val, v, vs))
+        elif k == "layout" and isinstance(val, dict) and main_terms.layout(prog, val, v, Vars()) is not None:
+            lits.extend(main_terms.layout(prog, val, v, vs))
         elif k == "nthChild" and isinstance(val, dict) and isinstance(val.get("position"), int):
             lits.extend(nth_child(prog, val, v, vs))
         elif k == "binds" and isinstance(val, dict):
@@ -284,24 +295,9 @@ def lower(prog, rule, v, vs, skip=()):
             lits.append("!" + match(val, v))
         elif k == "pattern" and isinstance(val, str):
             lits.append(f"{v} ~ {tick(val)}")
-        elif k == "value" and isinstance(val, dict) and (len(val) > 1 or "type" in val):
-            x = vs.fresh("v")
-            lits.append(f"{'static_value' if val.get('follow') else 'value'}({v}, {x})")
-            for op, arg in val.items():
-                if op == "follow":
-                    continue
-                if op == "regex":
-                    lits.append(match(arg, x))
-                elif op == "eq":
-                    lits.append(opt_alts(arg, lambda c: f"{x} = {q(c)}"))
-                elif op == "type":
-                    lits.append(opt_alts(arg, lambda c: f"value_type({x}, {q(c)})"))
-                elif op in ("ne", "lt", "le", "gt", "ge"):
-                    sym = {'ne': '!=', 'lt': '<', 'le': '<=', 'gt': '>', 'ge': '>='}[op]
-                    lits.append(opt_alts(arg, lambda c: f"{x} {sym} {q(c)}"))
-                else:
-                    prog.untranslated += 1
-                    lits.append(f"ast({v}, {compact({'value': {op: arg}})})")
+        elif k == "value" and isinstance(val, dict) and (len(val) > 1 or "type" in val
+                                                         or next(iter(val)) in main_terms.VALUE_OPS):
+            lits.extend(main_terms.value(prog, val, v, vs, opt_alts, match))
         elif k == "$option" and isinstance(val, str) and ("cases" in rule or "default" in rule):
             lits.extend(option_cases(prog, val, rule, v))
         elif k in ("cases", "default") and "$option" in rule:
@@ -501,6 +497,163 @@ def stop_set(prog, stop):
     return name
 
 
+def stop_axis(prog, axis, lo, hi, stop, vs):
+    """within_stop / precedes_stop over the stop rule's relation (see stop_with_columns for a stop rule that reads
+    a metavariable of the caller)."""
+    return [f"{axis}_stop({lo}, {hi}, {stop_set(prog, stop)})"]
+
+
+def drop_dead_columns(entries, helpers, decls, notes):
+    """ast-grep passes a util's argument (`matches: {u: {N: "$C"}}`) or a shared metavariable whether or not the
+    caller bound it; an unbound one is unset there, and the util matches as if it were not passed. In Datalog such
+    a column is bound by nothing, so it is ungrounded. Found as a least fixpoint: a column passed in (an input or
+    a util param) is fed when some call passes it a constant or a variable bound in the caller; a variable is bound
+    in a rule when the rule reads or binds it other than by passing it on, passes it to a column that binds it,
+    or has it in its head at a fed column. A column never fed is removed, from the declaration, the heads and
+    every call; a variable that is not bound where it is passed becomes `_`."""
+    live = [e for e in entries if not e.get("drop")]
+    heads = {}
+    for e in live:
+        h = e["head"].split("(")[0]
+        if h in helpers:
+            heads.setdefault(h, []).append(e)
+    inputs = getattr(share_metavariables, "inputs", {})
+    params = getattr(share_metavariables, "params", {})
+
+    def head_args(e):
+        return _split_args(e["head"].split("(", 1)[1][:-1])
+
+    def binds_in(g, x):
+        # a param the util's body mentions is captured there (or by the rules it calls): an output
+        return any(x in _upper_vars(t) or re.search(r"\$\$?\$?" + x + r"\b", t)
+                   for t in (", ".join(e["lits"]) for e in heads[g]))
+
+    def input_col(g, j):
+        """A column the callee reads and does not bind: passed in, or a util param it never captures."""
+        names = head_args(heads[g][0])
+        return 0 < j < len(names) and (names[j] in inputs.get(g, ()) or
+                                       names[j] in params.get(g, ()) and not binds_in(g, names[j]))
+
+    def calls_in(e):
+        text = ", ".join(e["lits"])
+        out = []
+        for g in heads:
+            for a, b in _calls(text, g):
+                if not text[:a].endswith("@"):
+                    out.append((a, b, g, _split_args(text[a + len(g) + 1:b]), text[:a].rstrip().endswith("!")))
+        return text, out
+
+    info = []    # per rule: owner, head args, {var: [(g, j)] or None (used directly)}
+    for e in live:
+        text, calls = calls_in(e)
+        rest = list(_mask_ticks(_strip_strings_keep(text)))
+        for a, b, _, _, _ in calls:
+            for k in range(a, b + 1):
+                rest[k] = " "
+        direct = _upper_vars("".join(rest)) | set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", text)) | \
+            set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", " ".join(e.get("edits") or [])))
+        passed = {}
+        for _, _, g, args, neg in calls:
+            for j, x in enumerate(args):
+                if re.fullmatch(r"[A-Z][A-Z0-9_]*", x):
+                    passed.setdefault(x, []).append((g, j, neg))
+                elif x != "_":
+                    direct |= _upper_vars(x)      # nested in a bigger argument: a use
+        info.append((e, e["head"].split("(")[0], head_args(e), direct, passed))
+    cols = {(g, j) for g in heads for j in range(len(head_args(heads[g][0]))) if input_col(g, j)}
+    named = {g for e in live for g in heads
+             if re.search(r"(?<![\w.])" + g + r"(?![\w(])", _mask_ticks(_strip_strings(", ".join(e["lits"]))))}
+    fed = {(g, j) for g, j in cols if g in named}
+
+    def bound(owner, hargs, direct, passed, var):
+        if var in direct:
+            return True
+        if any((g, j) not in cols and not neg for g, j, neg in passed.get(var, ())):
+            return True           # a column that binds it (an output, in a positive call)
+        return any(x == var and (owner, i) in fed for i, x in enumerate(hargs)) or \
+            (owner not in heads and var in hargs)
+    changed = True
+    while changed:
+        changed = False
+        for e, owner, hargs, direct, passed in info:
+            _, calls = calls_in(e)
+            for _, _, g, args, _ in calls:
+                for j, x in enumerate(args):
+                    if (g, j) in cols and (g, j) not in fed and x != "_" and (
+                            not re.fullmatch(r"[A-Z][A-Z0-9_]*", x) or bound(owner, hargs, direct, passed, x)):
+                        fed.add((g, j))
+                        changed = True
+    dead = cols - fed
+    by = {}
+    for g, j in dead:
+        by.setdefault(g, set()).add(j)
+    gone = {g: {head_args(heads[g][0])[j] for j in js} for g, js in by.items()}
+
+    def rewrite(text, e_info):
+        _, owner, hargs, direct, passed = e_info
+        for g in heads:
+            for a, b in reversed(_calls(text, g)):
+                if text[:a].endswith("@"):
+                    continue
+                args = _split_args(text[a + len(g) + 1:b])
+                neg = text[:a].rstrip().endswith("!")
+                new = [("_" if ((g, j) in cols or neg) and re.fullmatch(r"[A-Z][A-Z0-9_]*", x)
+                        and not bound(owner, hargs, direct, passed, x) else x)
+                       for j, x in enumerate(args) if j not in by.get(g, ())]
+                text = text[:a] + f"{g}({', '.join(new)})" + text[b + 1:]
+        return text
+    for item in info:
+        e = item[0]
+        e["lits"] = [rewrite(l, item) for l in e["lits"]]
+        g = item[1]
+        if g in by:
+            args = [x for j, x in enumerate(item[2]) if j not in by[g]]
+            e["head"] = f"{g}({', '.join(args)})"
+    for g, js in by.items():
+        m = re.match(r"(\.decl \w+)\((.*)\)(.*)", decls[g])
+        parts = [x for j, x in enumerate(_split_args(m.group(2))) if j not in js]
+        decls[g] = f"{m.group(1)}({', '.join(parts)}){m.group(3)}"
+        kept = []
+        for l in notes.get(g, []):
+            m = re.match(r"(//\s+)([A-Z0-9_, ]+): (metavariables? of the calling rule, passed in.*)", l)
+            if m:
+                names = [x.strip() for x in m.group(2).split(",") if x.strip() not in gone[g]]
+                if not names:
+                    continue
+                l = f"{m.group(1)}{', '.join(names)}: {m.group(3)}"
+            kept.append(l)
+        notes[g] = kept
+
+
+def stop_with_columns(entries, decls):
+    """A stopBy rule that reads a metavariable of the caller gets more columns from share_metavariables and is no
+    set of nodes: `within_stop(a, b, s)` becomes the axis with no node of s (at the caller's metavariables)
+    strictly between a and b."""
+    wide = {}
+    for name, d in decls.items():
+        m = re.match(r"\.decl (\w+)\((.*)\)", d)
+        if m and m.group(1) == name and m.group(2).count(":") > 1:
+            wide[name] = [c.split(":")[0].strip() for c in m.group(2).split(",")]
+    heads = {e["head"].split("(")[0]: e["head"] for e in entries if not e.get("drop")}
+    # the metavariables the stop rule's head reads, as its callers name them
+    wide = {r: [a.strip() for a in heads[r].split("(", 1)[1].rstrip(")").split(",")] for r in wide if r in heads}
+    if not wide:
+        return
+    k = [0]
+
+    def one(m):
+        axis, a, b, rel = m.group(1), m.group(2), m.group(3), m.group(4)
+        if rel not in wide:
+            return m.group(0)
+        k[0] += 1
+        x = f"m_s{k[0]}"
+        args = ", ".join([x] + wide[rel][1:])
+        return (f"{axis}({a}, {b}), count : {{ {axis}({a}, {x}), {axis}({x}, {b}), {rel}({args}) }} = 0")
+    pat = re.compile(r"(within|precedes)_stop\((\w+), (\w+), (\w+)\)")
+    for e in entries:
+        e["lits"] = [pat.sub(one, l) for l in e["lits"]]
+
+
 def relation(prog, k, sub, v, vs):
     f = sub.get("field")
     stop = sub.get("stopBy", "neighbor")
@@ -518,7 +671,7 @@ def relation(prog, k, sub, v, vs):
         elif stop == "end":
             lits.append(f"within({lo}, {hi})")
         else:
-            lits.append(f"within_stop({lo}, {hi}, {stop_set(prog, stop)})")
+            lits.extend(stop_axis(prog, "within", lo, hi, stop, vs))
         if f and stop != "neighbor":
             lits.append(f"field(_, {q(f)}, {lo})")
     else:
@@ -528,7 +681,7 @@ def relation(prog, k, sub, v, vs):
         elif stop == "end":
             lits.append(f"precedes({a}, {b})")
         else:
-            lits.append(f"precedes_stop({a}, {b}, {stop_set(prog, stop)})")
+            lits.extend(stop_axis(prog, "precedes", a, b, stop, vs))
     lits.extend(lower(prog, sub, c, vs, skip=skip))
     return lits
 
@@ -536,8 +689,16 @@ def relation(prog, k, sub, v, vs):
 def resolves(prog, r, v, vs):
     lits = []
     rest = {}
+    if r.get("seenBefore") is True and isinstance(r.get("imported"), list):
+        return main_terms.seen_before(prog, r["imported"], v, vs)
+    if r.get("relative") == "text" and isinstance(r.get("imported"), list):
+        return main_terms.statement_imported(prog, r["imported"], v, vs, bool(r.get("prefix")))
     for k, val in r.items():
-        if k == "imported" and isinstance(val, list):
+        if k == "import" and val is True:
+            # Ruff's resolve_qualified_name(..).is_some(): an import, a module definition or a builtin
+            prog.use("names")
+            lits.append(f"sym_of({v}, _)")
+        elif k == "imported" and isinstance(val, list):
             prog.use("names")
             lits.append(one_of(prog, vs, f"imported_sym({v}, {{}})", val, "q", "symbols from the JSON `resolves.imported`"))
         elif k == "import" and isinstance(val, list):
@@ -558,9 +719,9 @@ def resolves(prog, r, v, vs):
                 lits.append(one_of(prog, vs, f"global_ref({v}, {{}})", val, "g", "names from the JSON `resolves.global`"))
             else:
                 lits.append(f"global_ref({v}, _)")
-        elif k == "unresolved" and val is True:
+        elif k == "unresolved" and val in (True, "star"):
             prog.use("names")
-            lits.append(f"!ref_site({v}, _), !global_ref({v}, _)")
+            lits.extend(main_terms.unresolved(prog, val, v, vs))
         elif k == "binding" and isinstance(val, dict):
             prog.use("names")
             s = vs.fresh("b")
@@ -894,16 +1055,47 @@ def _strip_strings(s):
     return re.sub(r'"(?:[^"\\]|\\.)*"', '""', s)
 
 
-def _binders(s):
-    """Metavariables a rule body binds itself: in a pattern, by a capture `X = …`, or by a named regex group."""
+def _binders(s, inside=False):
+    """Metavariables a rule body binds itself: in a pattern, by a capture `X = …`, or by a named regex group.
+    A capture inside an aggregate (a JSON `not` or `count`) does not escape it, as in ast-grep. With `inside`:
+    the captures the aggregates bind."""
     out = set()
+    whole = s
+    if inside:
+        return set().union(set(), *(_binders(s[a:b].replace("{", " ").replace("}", " "))
+                                    for a, b in _aggregate_spans(s)))
+    s = _drop_aggregates(s)
+    for b in re.findall(r'"bind": \{([^}]*)\}', whole):    # an ast(…) atom's argument binding
+        out |= set(re.findall(r'"([A-Z_][A-Z0-9_]*)":', b))
     for t in re.findall(r"~\s*(`+)(.*?)\1", s):
         out |= set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", t[1]))
     out |= set(re.findall(r"(?<![\w$])([A-Z][A-Z0-9_]*)\s*=\s*[a-z0-9]", _mask_ticks(_strip_strings(s))))
     out |= set(re.findall(r"\(\?P?<([A-Za-z_]\w*)>", s))
-    for b in re.findall(r'"bind": \{([^}]*)\}', s):       # an ast(…) atom's argument binding
-        out |= set(re.findall(r'"([A-Z_][A-Z0-9_]*)":', b))
     return out
+
+
+def _drop_aggregates(s):
+    """s without the bodies of its aggregates (`count : { … }`), braces in strings and ticks aside."""
+    for a, b in reversed(_aggregate_spans(s)):
+        s = s[:a] + " " * (b - a) + s[b:]
+    return s
+
+
+def _aggregate_spans(s):
+    """The outermost aggregate bodies of s, as (start, end) offsets."""
+    masked = _mask_ticks(_strip_strings_keep(s))
+    spans = []
+    for m in re.finditer(r"\b(?:count|sum|min|max|mean)\b[^:{}()]*:\s*\{", masked):
+        if spans and m.start() < spans[-1][1]:
+            continue
+        d = 0
+        for j in range(m.end() - 1, len(masked)):
+            d += masked[j] == "{"
+            d -= masked[j] == "}"
+            if d == 0:
+                spans.append((m.end(), j))
+                break
+    return spans
 
 
 def _calls(s, name):
@@ -938,9 +1130,12 @@ def share_metavariables(entries, helpers):
         text = ", ".join(e["lits"])
         masked = _mask_ticks(_strip_strings_keep(text))
         calls = sorted(set(re.findall(r"(?<![\w.])([a-z_]\w*)\(", masked)) & set(helpers))
-        rules.append({"e": e, "owner": e["head"].split("(")[0], "head": _upper_vars(e["head"].split("(", 1)[1]),
-                      "up": _upper_vars(text) | set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", " ".join(e.get("edits") or []))),
-                      "binds": _binders(text), "calls": calls,
+        # a capture bound inside an aggregate and read nowhere outside it is the aggregate's own variable
+        head_vars = _upper_vars(e["head"].split("(", 1)[1])
+        local = _binders(text, inside=True) - _upper_vars(_drop_aggregates(text)) - head_vars
+        rules.append({"e": e, "owner": e["head"].split("(")[0], "head": head_vars,
+                      "up": (_upper_vars(text) - local) | set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", " ".join(e.get("edits") or []))),
+                      "binds": _binders(text), "calls": calls, "local": local,
                       # a util's own `params` (`kw(n, N, V)`): the caller's arguments, local to the util
                       "params": _upper_vars(e["head"].split("(", 1)[1]) if e["head"].split("(")[0] in helpers else set()})
     by_owner = {}
@@ -961,7 +1156,7 @@ def share_metavariables(entries, helpers):
         fresh = {h: set() for h in helpers}
         for h in helpers:
             for r in by_owner.get(h, ()):
-                bound = r["binds"] | r["params"] | set().union(*[provides[g] & iface[g] for g in r["calls"]] or [set()])
+                bound = r["binds"] | r["params"] | r["local"] | set().union(*[provides[g] & iface[g] for g in r["calls"]] or [set()])
                 provides[h] |= (r["binds"] | set().union(*[provides[g] for g in r["calls"]] or [set()])) - r["params"]
                 use = r["up"] | set().union(*[free_in[g] for g in r["calls"]] or [set()])
                 fresh[h] |= use - bound
@@ -977,6 +1172,7 @@ def share_metavariables(entries, helpers):
             break
     order = {h: sorted(iface[h]) for h in helpers}
     share_metavariables.inputs = {h: set(free_in[h]) for h in helpers}
+    share_metavariables.params = {h: set().union(set(), *(r["params"] for r in by_owner.get(h, ()))) for h in helpers}
     for r in rules:
         e = r["e"]
         if order.get(r["owner"]):
@@ -1086,7 +1282,9 @@ def inline_unsafe(entries, helpers):
 
     counter = [0]
 
-    def expansion(h, args):
+    def expansion(h, args, known=frozenset()):
+        """The alternatives of h's rules at a call with args; `known`: the caller's variables bound elsewhere,
+        which an alternative that does not bind them leaves as they are (no `unset`)."""
         alts = []
         outputs = set().union(*[_binders(", ".join(e["lits"])) for e in by[h] if not e.get("drop")])
         for e in by[h]:
@@ -1100,11 +1298,12 @@ def inline_unsafe(entries, helpers):
                 mapping[p] = a if a != "_" else f"w{k}_{p.lower()}"
             body = ", ".join(e["lits"])
             for v in set(re.findall(r"(?<![\w$@\"])([a-z][a-z0-9_]*)\b(?!\s*\()", _mask_ticks(_strip_strings(body)))):
-                if v not in mapping and v not in _NOT_VARS:
+                if v not in mapping and v not in _NOT_VARS and v not in helpers:   # a kind set is a relation
                     mapping[v] = f"{v}_{k}"
             # a column this rule leaves empty that another rule binds is an output: empty here, as in ast-grep
             missing = [p for p in params if re.fullmatch(r"[A-Z][A-Z0-9_]*", p)
-                       and p not in bound_on_every_path(e["lits"]) and p in outputs]
+                       and p not in bound_on_every_path(e["lits"]) and p in outputs
+                       and mapping.get(p) not in known]
             alts.append(_rename_vars(body + "".join(f", unset({p})" for p in missing), mapping))
         return alts
 
@@ -1118,10 +1317,12 @@ def inline_unsafe(entries, helpers):
             if e.get("drop") or e["head"].split("(")[0] == h:
                 continue
             new = []
-            for l in e["lits"]:
+            for i, l in enumerate(e["lits"]):
                 for s, end in reversed(_calls(l, h)):
                     args = _split_args(l[s + len(h) + 1:end])
-                    alts = expansion(h, args)
+                    others = ", ".join(e["lits"][:i] + [l[:s] + l[end + 1:]] + e["lits"][i + 1:])
+                    known = _binders(others)
+                    alts = expansion(h, args, known)
                     if s > 0 and l[s - 1] == "!":
                         rep = ", ".join(f"count : {{ {a} }} = 0" for a in alts)
                         l = l[:s - 1] + rep + l[end + 1:]
@@ -1241,8 +1442,14 @@ def demand(entries, helpers, inputs, decls, lib):
                     ok = False
                     break
                 # the call's scope, without what could depend on h through recursion other than h's own demand
-                lits = [l for l in scope if not (l.split("(")[0] in by and (h in callees(l.split("(")[0])
-                                                                       or l.split("(")[0] == h))]
+                # (any relation a literal names, under `!` and in aggregates too: fewer literals ask for more)
+                def reaches(l):
+                    names = re.findall(r"(?<![\w.])([a-z_]\w*)\(", _mask_ticks(_strip_strings(l)))
+                    # a helper that takes demand itself (or calls one) would make the demand relations
+                    # depend on each other through its rules, which may negate: kept out
+                    return any(g in by and (g == h or h in callees(g) or
+                                            any(inputs.get(x) for x in callees(g) | {g})) for g in names)
+                lits = [l for l in scope if not reaches(l)]
                 if owner == h:      # recursion: the call asks for what the rule's own demand allows
                     hp = [a.strip() for a in e["head"].split("(", 1)[1][:-1].split(",")]
                     lits = [f"{dname}({', '.join(hp[i] for i in pos)})"] + lits
@@ -1274,6 +1481,95 @@ def demand(entries, helpers, inputs, decls, lib):
             break
         done += new
     return done
+
+
+# ---- recursion through `!` or an aggregate --------------------------------------------------------------------
+
+UNROLL = 8   # levels of nesting a recursion through negation is exact for (tuples of tuples, nested parentheses)
+
+
+def unroll_negative(entries, helpers, decls, inputs):
+    """ast-grep matches a util recursively whether or not the recursion goes through `not` (a tuple is constant
+    when no element is not constant): well founded, since each step goes to a child. Datalog needs strata. Such
+    a recursive group of helpers becomes UNROLL copies, level k reading level k-1 (level -1 is empty), and the
+    helper is its last level: exact wherever the recursion nests at most UNROLL deep. Returns the new entries."""
+    by = {}
+    for e in entries:
+        if not e.get("drop"):
+            by.setdefault(e["head"].split("(")[0], []).append(e)
+    names = [h for h in sorted(helpers) if h in by]
+
+    def edges(h):
+        out = []
+        for e in by[h]:
+            text = _mask_ticks(_strip_strings_keep(", ".join(e["lits"])))
+            for m in re.finditer(r"(?<![\w.])([a-z_]\w*)\(", text):
+                g = m.group(1)
+                if g in by and g in helpers:
+                    depth = text[:m.start()].count("{") - text[:m.start()].count("}")
+                    out.append((g, depth > 0 or text[:m.start()].rstrip().endswith("!")))
+        return out
+    graph = {h: edges(h) for h in names}
+    index, low, stack, on, sccs, counter = {}, {}, [], set(), [], [0]
+
+    def strong(v):
+        index[v] = low[v] = counter[0]
+        counter[0] += 1
+        stack.append(v)
+        on.add(v)
+        for w, _ in graph[v]:
+            if w not in index:
+                strong(w)
+                low[v] = min(low[v], low[w])
+            elif w in on:
+                low[v] = min(low[v], index[w])
+        if low[v] == index[v]:
+            comp = []
+            while True:
+                w = stack.pop()
+                on.discard(w)
+                comp.append(w)
+                if w == v:
+                    break
+            sccs.append(comp)
+    for h in names:
+        if h not in index:
+            strong(h)
+    new, empty = [], []
+    for comp in sccs:
+        members = set(comp)
+        if not any(neg and w in members for v in comp for w, neg in graph[v]):
+            continue
+        pat = re.compile(r"(?<![\w.])(" + "|".join(sorted(map(re.escape, members), key=len, reverse=True)) + r")\(")
+
+        def at(level):
+            return lambda m: f"{m.group(1)}_u{level}(" if level >= 0 else f"{m.group(1)}_u0_empty("
+        for h in sorted(members):
+            sig = decls[h]
+            for k in range(UNROLL):
+                decls[f"{h}_u{k}"] = sig.replace(f".decl {h}(", f".decl {h}_u{k}(", 1)
+                inputs[f"{h}_u{k}"] = inputs.get(h, set())
+                before = len(new)
+                for e in by[h]:
+                    lits = ["".join(p if p.startswith(("\"", "`")) else pat.sub(at(k - 1), p)
+                                    for p in re.split(r'("(?:[^"\\]|\\.)*"|`+[^`]*`+)', l)) for l in e["lits"]]
+                    if k == 0 and any(f"_u0_empty(" in l for l in lits if not l.startswith("!") and "{" not in l):
+                        continue     # a positive use of level -1, which is empty: the rule cannot fire
+                    # `!empty(…)` holds: dropped, so no unbound column is left to place
+                    lits = [l for l in (re.sub(r"(,\s*)?!\w+_u0_empty\([^()]*\)(\s*,)?",
+                                               lambda m: ", " if m.group(1) and m.group(2) else "", l)
+                                        for l in lits) if l.strip()]
+                    new.append({"head": e["head"].replace(f"{h}(", f"{h}_u{k}(", 1), "lits": lits})
+                if len(new) == before:      # no rule at this level: declared, empty
+                    empty.append((f"{h}_u{k}", decls[f"{h}_u{k}"]))
+            empty.append((f"{h}_u0_empty", sig.replace(f".decl {h}(", f".decl {h}_u0_empty(", 1)))
+            args = by[h][0]["head"].split("(", 1)[1]
+            first = by[h][0]
+            first["head_note"] = f"// {h}: level {UNROLL - 1} of its recursion through `!` (unroll_negative)"
+            first["lits"] = [f"{h}_u{UNROLL - 1}({args}"]
+            for e in by[h][1:]:
+                e["drop"] = True
+    return new, empty
 
 
 def translate(doc):
@@ -1398,8 +1694,15 @@ def translate(doc):
             if outs:
                 prog.notes.setdefault(name, []).append(f"//   {', '.join(outs)}: metavariable{'s' if len(outs) > 1 else ''} "
                                                        f"this relation binds for the calling rule")
+    drop_dead_columns(entries + helper_entries, helpers, prog.decls, prog.notes)
+    stop_with_columns(entries + helper_entries, prog.decls)
     inline_unsafe(entries + helper_entries, helpers)
     demand(entries + helper_entries, helpers, getattr(share_metavariables, "inputs", {}), prog.decls, prog.lib)
+    unrolled, empty = unroll_negative(entries + helper_entries, helpers, prog.decls,
+                                      getattr(share_metavariables, "inputs", {}))
+    body += [("rule", e) for e in unrolled]
+    for name, decl in empty:
+        prog.lib[name] = (decl, [f"// {name}: level -1 of an unrolled recursion, empty"], [])
     body = [(kind, item) for kind, item in body if kind != "rule" or not item.get("drop")]
     body = fold_messages(body)
     hi = iter(helper_entries)

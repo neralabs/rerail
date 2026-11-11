@@ -147,3 +147,238 @@ def arguments(prog, spec, v, vs):
         _, absent = _slot_rels(prog, sig, slot, syntactic)
         lits.append(f"{absent}({v})")
     return lits
+
+
+# ---- value ----------------------------------------------------------------------------------------------------------
+# matcher/value.rs: predicates over a node's own value (core's `value`, `value_type`). A node whose value is not
+# known fails every predicate but `constant: false`. Python's type names are `type(v).__name__`; core's value_type
+# says "boolean" for a bool. Truthiness is Python's bool(v); ordering bounds hold for numbers only.
+
+VALUE_OPS = {"truthy", "bitsAny", "constant", "type", "startsWith", "gt", "ge", "lt", "le"}
+PY_TYPE = {"bool": "boolean"}
+NUMERIC = '(value_type({x}, "int") ; value_type({x}, "float"))'
+
+
+def _truthy(prog):
+    zero = '(x = "0" ; x = "0.0" ; x = "-0.0")'
+    nonzero = 'x != "0", x != "0.0", x != "-0.0"'
+    num = NUMERIC.format(x="x")
+    text = '(value_type(x, "str") ; value_type(x, "bytes"))'
+    return lib(prog, "truthy_value", "(n: node, b: symbol)",
+               ["b is \"true\" when n's value is truthy (Python's bool(v)), \"false\" when it is falsy"],
+               [('truthy_value(n, "false")', ["value(n, x)", 'value_type(x, "NoneType")']),
+                ('truthy_value(n, b)', ["value(n, x)", 'value_type(x, "boolean")', "b = x"]),
+                ('truthy_value(n, "false")', ["value(n, x)", num, zero]),
+                ('truthy_value(n, "true")', ["value(n, x)", num, nonzero]),
+                ('truthy_value(n, "false")', ["value(n, x)", text, 'x = ""']),
+                ('truthy_value(n, "true")', ["value(n, x)", text, 'x != ""'])])
+
+
+def _bits(x, mask):
+    tests = [f"(to_number({x}) / {1 << i}) % 2 = 1" if i else f"to_number({x}) % 2 = 1"
+             for i in range(mask.bit_length()) if mask >> i & 1]
+    return tests[0] if len(tests) == 1 else "(" + " ; ".join(tests) + ")"
+
+
+def value(prog, val, v, vs, opt_alts, match):
+    reader = "static_value" if val.get("follow") else "value"
+    ops = {k: a for k, a in val.items() if k != "follow"}
+    if ops.get("constant") is False and len(ops) == 1:
+        return [f"!{reader}({v}, _)"]
+    x = vs.fresh("v")
+    lits = [f"{reader}({v}, {x})"]
+    for op, arg in ops.items():
+        if op == "constant":
+            if arg is False:        # known and not constant cannot both hold
+                lits.append("false")
+        elif op == "regex":
+            lits.append(match(arg, x))
+        elif op == "eq":
+            lits.append(opt_alts(arg, lambda c: f"{x} = {_q(c)}"))
+        elif op == "ne":
+            lits.append(opt_alts(arg, lambda c: f"{x} != {_q(c)}"))
+        elif op == "type":
+            types = arg if isinstance(arg, list) else [arg]
+            alts = [f"value_type({x}, {_q(PY_TYPE.get(t, t) if prog.lang == 'python' else t)})" for t in types]
+            lits.append(alts[0] if len(alts) == 1 else "(" + " ; ".join(alts) + ")")
+        elif op in ("gt", "ge", "lt", "le") and isinstance(arg, (int, float)) and not isinstance(arg, bool):
+            sym = {"lt": "<", "le": "<=", "gt": ">", "ge": ">="}[op]
+            lits += [NUMERIC.format(x=x), f"{x} {sym} {arg}"]
+        elif op in ("gt", "ge", "lt", "le"):
+            sym = {"lt": "<", "le": "<=", "gt": ">", "ge": ">="}[op]
+            lits.append(opt_alts(arg, lambda c: f"{x} {sym} {_q(c)}"))
+        elif op == "startsWith":
+            pre = arg if isinstance(arg, list) else [arg]
+            alts = [f"prefix({_q(p)}, {x})" for p in pre]
+            lits.append(alts[0] if len(alts) == 1 else "(" + " ; ".join(alts) + ")")
+        elif op == "bitsAny" and isinstance(arg, int):
+            lits += [f'value_type({x}, "int")', _bits(x, arg)]
+        elif op == "truthy" and isinstance(arg, bool):
+            lits.append(f"{_truthy(prog)}({v}, {_q('true' if arg else 'false')})")
+        else:
+            prog.untranslated += 1
+            lits.append(f"ast({v}, {json.dumps({'value': {op: arg}}, ensure_ascii=False)})")
+    return lits
+
+
+# ---- resolves: names in import statements, and modules seen before ----------------------------------------------
+# matcher/resolve.rs `imported` with `relative: "text"` (statement_name): a dotted name in an import statement and
+# the qualified name it imports. `import a.b` imports "a.b"; `from m import x` imports "m.x" and its module name is
+# "m"; a relative module is its text without the dots (`from .a import b` imports "a.b", `from . import b` "b");
+# `from __future__ import x` imports "__future__.x".
+
+FROM = '(kind(s, "import_from_statement") ; kind(s, "future_import_statement"))'
+
+
+def _statement_names(prog):
+    lib(prog, "from_module", "(s: node, m: symbol)",
+        ["the module text of from-import s, read as `relative: \"text\"` does (dots dropped)"],
+        [("from_module(s, m)", ['kind(s, "future_import_statement")', 'm = "__future__"']),
+         ("from_module(s, m)", ['kind(s, "import_from_statement")', 'field(s, "module_name", x)', 'kind(x, "dotted_name")',
+                                "name(x, m)"]),
+         ("from_module(s, m)", ['kind(s, "import_from_statement")', 'field(s, "module_name", x)', 'kind(x, "relative_import")',
+                                'child(x, y, _)', 'kind(y, "dotted_name")', "name(y, m)"]),
+         ('from_module(s, "")', ['kind(s, "import_from_statement")', 'field(s, "module_name", x)', 'kind(x, "relative_import")',
+                                 'count : { child(x, y, _), kind(y, "dotted_name") } = 0'])])
+    return lib(prog, "statement_name", "(n: node, q: symbol)",
+               ["dotted name n in an import statement imports q (relative modules by their text)"],
+               [("statement_name(n, q)", ['kind(n, "dotted_name")', "child(s, n, _)", 'kind(s, "import_statement")', "name(n, q)"]),
+                ("statement_name(n, q)", ['kind(n, "dotted_name")', "child(s, n, _)", 'kind(s, "relative_import")', "name(n, q)"]),
+                ("statement_name(n, q)", ['kind(n, "dotted_name")', 'field(a, "name", n)', 'kind(a, "aliased_import")',
+                                          "child(s, a, _)", 'kind(s, "import_statement")', "name(n, q)"]),
+                ("statement_name(n, q)", ['kind(n, "dotted_name")', 'field(a, "name", n)', 'kind(a, "aliased_import")',
+                                          "child(s, a, _)", FROM, "from_module(s, m)", "name(n, x)", "q = @dot(m, x)"]),
+                ("statement_name(n, m)", ['kind(n, "dotted_name")', 'field(s, "module_name", n)', FROM, "from_module(s, m)"]),
+                ("statement_name(n, q)", ['kind(n, "dotted_name")', "child(s, n, _)", FROM, '!field(s, "module_name", n)',
+                                          "from_module(s, m)", "name(n, x)", "q = @dot(m, x)"])])
+
+
+def statement_imported(prog, names, v, vs, prefix):
+    rel = _statement_names(prog)
+    q = vs.fresh("q")
+    if prefix:
+        alts = [f"({q} = {_q(n)} ; prefix({_q(n + '.')}, {q}))" for n in names]
+    else:
+        alts = [f"{q} = {_q(n)}" for n in names]
+    return [f"{rel}({v}, {q})", alts[0] if len(alts) == 1 else "(" + " ; ".join(alts) + ")"]
+
+
+# `seenBefore` (Ruff's seen_module): Ruff has visited an absolute import of one of the top-level modules before
+# node n: an import at fewer enclosing function bodies (Ruff visits function bodies after their scope), or as many
+# and earlier in the file; anything in a lambda body is visited after every import.
+
+FN_DEPTH = 'count : {{ within({n}, b{k}), field(f{k}, "body", b{k}), kind(f{k}, "function_definition") }}'
+
+
+def seen_before(prog, modules, v, vs):
+    rel = lib(prog, "seen_import", "(s: node, h: symbol, k: number)",
+              ["import statement s imports absolute module h (its first segment), inside k function bodies"],
+              [("seen_import(s, h, k)", ['kind(s, "import_statement")', "child(s, c, _)",
+                                         '(kind(c, "dotted_name"), x = c ; kind(c, "aliased_import"), field(c, "name", x))',
+                                         "child(x, i, 0)", 'kind(i, "identifier")', "text(i, h)",
+                                         "k = " + FN_DEPTH.format(n="s", k="")]),
+               ("seen_import(s, h, k)", ['kind(s, "import_from_statement")', 'field(s, "module_name", x)',
+                                         'kind(x, "dotted_name")', "child(x, i, 0)", 'kind(i, "identifier")', "text(i, h)",
+                                         "k = " + FN_DEPTH.format(n="s", k="")])])
+    d, st, s, so, h, ks, kn = (vs.fresh(p) for p in ("d", "st", "s", "so", "h", "ks", "kn"))
+    mods = " ; ".join(f"{h} = {_q(m)}" for m in modules)
+    k = vs.fresh("")
+    return [f"node({d}, {v}, _, {st}, _)", f"{rel}({s}, {h}, {ks})", f"({mods})", f"node({d}, {s}, _, {so}, _)",
+            f"{kn} = " + FN_DEPTH.format(n=v, k=k),
+            f'({ks} < {kn} ; {ks} = {kn}, {so} < {st} ; count : {{ within({v}, l{k}), field(m{k}, "body", l{k}), kind(m{k}, "lambda") }} > 0)']
+
+
+# ---- resolves.unresolved (matcher/resolve.rs is_unresolved, is_unresolved_export) ----------------------------------
+# A reference (an identifier that is looked up, not only bound) whose lookup reaches the module without a binding,
+# that is no builtin; or a string entry of a module-level `__all__` definition naming no module binding or builtin.
+# `true` asks for no star import in the module (the name is unbound); "star" for one (it may come from it).
+
+def _dunder_all(prog):
+    lib(prog, "all_expr", "(x: node)",
+        ["x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names",
+         "(Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))"],
+        [("all_expr(x)", ['(kind(st, "assignment") ; kind(st, "augmented_assignment"))', 'field(st, "left", l)',
+                          'kind(l, "identifier")', 'text(l, "__all__")', "child(es, st, _)",
+                          'kind(es, "expression_statement")', "child(m, es, _)", 'kind(m, "module")',
+                          'field(st, "right", x)']),
+         ("all_expr(y)", ["all_expr(x)", 'kind(x, "assignment")', 'field(x, "right", y)']),
+         ("all_expr(y)", ["all_expr(x)", 'kind(x, "binary_operator")', '(field(x, "left", y) ; field(x, "right", y))']),
+         ("all_expr(y)", ["all_expr(x)", 'kind(x, "parenthesized_expression")', "child(x, y, _)",
+                          '!kind(y, "comment")']),
+         ("all_expr(y)", ["all_expr(x)", 'kind(x, "named_expression")', 'field(x, "value", y)']),
+         ("all_expr(y)", ["all_expr(x)", 'kind(x, "call")', 'field(x, "function", f)', 'kind(f, "identifier")',
+                          '(text(f, "list") ; text(f, "tuple"))', 'field(x, "arguments", a)', "child(a, y, _)"])])
+    return lib(prog, "all_entry", "(e: node, x: symbol)",
+               ["string e is an entry of a module `__all__` definition, exporting the name x"],
+               [("all_entry(e, x)", ["all_expr(l)", '(kind(l, "list") ; kind(l, "tuple"))', "child(l, e, _)",
+                                     '(kind(e, "string") ; kind(e, "concatenated_string"))',
+                                     'count : { within(i, e), kind(i, "interpolation") } = 0', "str(e, x)"])])
+
+
+def unresolved(prog, mode, v, vs):
+    rel = _dunder_all(prog)
+    x, d, m = vs.fresh("x"), vs.fresh("d"), vs.fresh("m")
+    star = f"star({m})" if mode == "star" else f"!star({m})"
+    return [f"docof({v}, {d})", f"modnode({d}, {m})", f'( kind({v}, "identifier"), !bind_only({v}), miss({v}, {x})'
+            f' ; (kind({v}, "string") ; kind({v}, "concatenated_string")), {rel}({v}, {x}), !bound_in({m}, {x}) )',
+            f"!builtin({x})", star]
+
+
+# ---- layout (matcher/layout.rs) -----------------------------------------------------------------------------------
+# span: line breaks inside the node; start: its first byte's offset; before/after: the line breaks between the node
+# and its neighbour on that side: the nearest token, the nearest named sibling, or a capture bound before (which
+# must lie wholly on that side). `edge` lets the file's start or end stand in for a missing neighbour.
+
+def _bounds(c, x):
+    ops = {"min": ">=", "max": "<=", "eq": "="}
+    return [f"{x} {ops[k]} {int(n)}" for k, n in c.items() if k in ops]
+
+
+def layout(prog, spec, v, vs):
+    """Literals for a `layout` term, or None when it asks for something not lowered (blank lines, comments)."""
+    if set(spec) - {"span", "start", "before", "after"}:
+        return None
+    lits = []
+    if "span" in spec:
+        a, b, x = vs.fresh("l"), vs.fresh("l"), vs.fresh("k")
+        lits += [f"line({v}, {a})", f"end_line({v}, {b})", f"{x} = {b} - {a}"] + _bounds(spec["span"], x)
+    if "start" in spec:
+        s = vs.fresh("st")
+        lits += [f"node(_, {v}, _, {s}, _)"] + _bounds(spec["start"], s)
+    for side in ("before", "after"):
+        gap = spec.get(side)
+        if gap is None:
+            continue
+        if set(gap) - {"to", "breaks", "edge"}:
+            return None
+        to, x, nb = gap.get("to", "token"), vs.fresh("k"), vs.fresh("t")
+        a, b = vs.fresh("l"), vs.fresh("l")
+        # the gap runs from line a (the earlier end) to line b (the later start)
+        if side == "before":
+            here, there = f"line({v}, {b})", f"end_line({nb}, {a})"
+        else:
+            here, there = f"end_line({v}, {a})", f"line({nb}, {b})"
+        if to == "token":
+            find = [f"token_{side}({v}, {nb})"]
+        elif to == "sibling":
+            find = [f"next_sibling({nb}, {v})" if side == "before" else f"next_sibling({v}, {nb})"]
+        elif isinstance(to, str) and to.startswith("capture."):
+            c = to.split(".", 1)[1]
+            s1, e1, s2, e2 = vs.fresh("s"), vs.fresh("e"), vs.fresh("s"), vs.fresh("e")
+            find = [f"{nb} = {c}", f"node(_, {v}, _, {s1}, {e1})", f"node(_, {c}, _, {s2}, {e2})",
+                    f"{e2} <= {s1}" if side == "before" else f"{s2} >= {e1}"]
+        else:
+            return None
+        bounds = _bounds(gap.get("breaks") or {}, x)
+        found = find + [here, there, f"{x} = {b} - {a}"] + bounds
+        if gap.get("edge"):
+            if side == "before":
+                edge = [f"count : {{ {', '.join(find)} }} = 0", f"line({v}, {b})", f"{x} = {b} - 1"] + bounds
+            else:
+                d, k = vs.fresh("d"), vs.fresh("k")
+                edge = [f"count : {{ {', '.join(find)} }} = 0", f"end_line({v}, {a})", f"docof({v}, {d})",
+                        f"line_count({d}, {k})", f"{x} = {k} - {a}"] + bounds
+            lits.append("( " + ", ".join(found) + " ; " + ", ".join(edge) + " )")
+        else:
+            lits += found
+    return lits
