@@ -68,6 +68,7 @@ struct Clause<'a> {
     file: &'a std::path::Path,
     line: usize,
     heads: &'a [Head],
+    body: &'a [Lit],
     atoms: Vec<(&'a str, &'a [Term], bool)>,
     eqs: Vec<(&'a Term, &'a Term)>,
 }
@@ -168,46 +169,107 @@ impl Columns {
         Self { facts, kinds, texts }
     }
 
-    /// The kinds a clause gives its variables.
+    /// The kinds a clause gives its variables: a conjunction's literals each narrow them; a group's alternatives
+    /// give the union of theirs, for the variables every alternative gives.
     fn clause_kinds(clause: &Clause<'_>, facts: &BTreeMap<String, BTreeSet<String>>, columns: &BTreeMap<(String, usize), Option<BTreeSet<String>>>) -> BTreeMap<String, BTreeSet<String>> {
-        let mut given: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        let kind_of = |term: &Term| -> Option<BTreeSet<String>> {
-            match term {
-                Term::Str(k) => Some(BTreeSet::from([k.clone()])),
-                Term::Var(k) => clause.atoms.iter().find_map(|(rel, args, neg)| match args {
-                    [Term::Var(x)] if x == k && !neg => facts.get(*rel).cloned(),
-                    _ => None,
-                }),
-                _ => None,
+        Self::conjunction(clause.body, clause, facts, columns)
+    }
+
+    /// Each atom of a conjunction, with the kinds its scope gives: the enclosing conjunctions' and its own; an
+    /// atom in a group's alternative sees that alternative's kinds too.
+    fn scoped_reads<'a>(
+        lits: &'a [Lit],
+        outer: &BTreeMap<String, BTreeSet<String>>,
+        clause: &Clause<'_>,
+        facts: &BTreeMap<String, BTreeSet<String>>,
+        columns: &BTreeMap<(String, usize), Option<BTreeSet<String>>>,
+        out: &mut Vec<(&'a str, &'a [Term], BTreeMap<String, BTreeSet<String>>)>,
+    ) {
+        let mut local = outer.clone();
+        for (v, set) in Self::conjunction(lits, clause, facts, columns) {
+            local.entry(v).and_modify(|have| *have = have.intersection(&set).cloned().collect()).or_insert(set);
+        }
+        for lit in lits {
+            match lit {
+                Lit::Atom { rel, args, .. } => out.push((rel.as_str(), args.as_slice(), local.clone())),
+                Lit::Group { alts, .. } => alts.iter().for_each(|alt| Self::scoped_reads(alt, &local, clause, facts, columns, out)),
+                _ => {}
             }
-        };
+        }
+    }
+
+    fn conjunction(lits: &[Lit], clause: &Clause<'_>, facts: &BTreeMap<String, BTreeSet<String>>, columns: &BTreeMap<(String, usize), Option<BTreeSet<String>>>) -> BTreeMap<String, BTreeSet<String>> {
+        let mut given: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut give = |v: &str, set: BTreeSet<String>| {
             given.entry(v.to_owned()).and_modify(|have| *have = have.intersection(&set).cloned().collect()).or_insert(set);
         };
-        for (rel, args, neg) in &clause.atoms {
-            if *neg {
-                continue;
+        // A kind term: a constant, a variable a relation of kinds holds (`list_kind(k)`), or one equal to constants
+        // (`(k = "a" ; k = "b")`).
+        let kind_of = |term: &Term| -> Option<BTreeSet<String>> {
+            match term {
+                Term::Str(k) => Some(BTreeSet::from([k.clone()])),
+                Term::Var(k) => clause
+                    .atoms
+                    .iter()
+                    .find_map(|(rel, args, neg)| match args {
+                        [Term::Var(x)] if x == k && !neg => facts.get(*rel).cloned(),
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        let set: BTreeSet<String> = clause
+                            .eqs
+                            .iter()
+                            .filter_map(|(l, r)| match (l, r) {
+                                (Term::Var(x), Term::Str(s)) | (Term::Str(s), Term::Var(x)) if x == k => Some(s.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        (!set.is_empty()).then_some(set)
+                    }),
+                _ => None,
             }
-            match (*rel, *args) {
-                // A kind, a kind from a relation of kinds; `has(m, c, "k")`'s descendant; `inside(n, a, kinds)` and
-                // `nearest(n, a, kinds)`'s ancestor, its kinds a relation of kinds.
-                ("kind", [Term::Var(n), k]) | ("node", [_, Term::Var(n), k, _, _]) => {
-                    if let Some(set) = kind_of(k) {
-                        give(n, set);
+        };
+        for lit in lits {
+            match lit {
+                Lit::Atom { neg: true, .. } => {}
+                Lit::Atom { rel, args, .. } => match (rel.as_str(), args.as_slice()) {
+                    // `kind`, `node`; `has(m, c, kinds)`'s descendant; `inside` and `nearest`'s ancestor.
+                    ("kind", [Term::Var(n), k]) | ("node", [_, Term::Var(n), k, _, _]) => {
+                        if let Some(set) = kind_of(k) {
+                            give(n, set);
+                        }
                     }
-                }
-                ("has", [_, Term::Var(n), Term::Str(k)]) => give(n, BTreeSet::from([k.clone()])),
-                ("has", [_, Term::Var(n), Term::Var(set)]) if facts.contains_key(set.as_str()) => give(n, facts[set.as_str()].clone()),
-                ("inside" | "nearest", [_, Term::Var(a), Term::Var(set)]) if facts.contains_key(set.as_str()) => {
-                    give(a, facts[set.as_str()].clone());
-                }
-                _ => {
-                    for (at, arg) in args.iter().enumerate() {
-                        if let (Term::Var(n), Some(Some(set))) = (arg, columns.get(&((*rel).to_owned(), at))) {
-                            give(n, set.clone());
+                    ("has", [_, Term::Var(n), Term::Str(k)]) | ("inside" | "nearest", [_, Term::Var(n), Term::Str(k)]) => {
+                        give(n, BTreeSet::from([k.clone()]));
+                    }
+                    ("has", [_, Term::Var(n), Term::Var(set)]) | ("inside" | "nearest", [_, Term::Var(n), Term::Var(set)])
+                        if facts.contains_key(set.as_str()) =>
+                    {
+                        give(n, facts[set.as_str()].clone());
+                    }
+                    (rel, args) => {
+                        for (at, arg) in args.iter().enumerate() {
+                            if let (Term::Var(n), Some(Some(set))) = (arg, columns.get(&(rel.to_owned(), at))) {
+                                give(n, set.clone());
+                            }
+                        }
+                    }
+                },
+                Lit::Group { alts, neg: false } => {
+                    let each: Vec<BTreeMap<String, BTreeSet<String>>> = alts.iter().map(|alt| Self::conjunction(alt, clause, facts, columns)).collect();
+                    if let Some((first, rest)) = each.split_first() {
+                        for (v, set) in first {
+                            let mut all = set.clone();
+                            if rest.iter().all(|other| other.get(v).is_some_and(|o| {
+                                all.extend(o.iter().cloned());
+                                true
+                            })) {
+                                give(v, all);
+                            }
                         }
                     }
                 }
+                _ => {}
             }
         }
         given
@@ -229,7 +291,7 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>
                 let (mut all, mut equal) = (Vec::new(), Vec::new());
                 atoms(body, &mut all);
                 eqs(body, &mut equal);
-                Some(Clause { file, line: *line, heads, atoms: all, eqs: equal })
+                Some(Clause { file, line: *line, heads, body, atoms: all, eqs: equal })
             }
             _ => None,
         })
@@ -250,9 +312,11 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>
     let columns = Columns::new(&clauses);
     let mut refused = BTreeSet::new();
     for clause in clauses.iter().filter(|c| !c.heads.iter().any(|h| stored.contains(&h.rel))) {
-        let given = Columns::clause_kinds(clause, &columns.facts, &columns.kinds);
-        for (rel, args, _) in &clause.atoms {
-            let Some(&(_, node, text, own)) = READS.iter().find(|(r, ..)| r == rel) else { continue };
+        let mut scoped = Vec::new();
+        Columns::scoped_reads(clause.body, &BTreeMap::new(), clause, &columns.facts, &columns.kinds, &mut scoped);
+        for (rel, args, given) in &scoped {
+            let rel = *rel;
+            let Some(&(_, node, text, own)) = READS.iter().find(|(r, ..)| *r == rel) else { continue };
             let token = match text {
                 Some(at) => args.get(at),
                 None => args.get(1),
@@ -278,7 +342,7 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>
             let at = args.get(node).and_then(var).and_then(|n| given.get(n));
             // The token's parent: the node (its own token, or its first or last leaf), or the node's parent (the
             // token beside it).
-            let parents = match (own || matches!(*rel, "first_token" | "last_token"), at) {
+            let parents = match (own || matches!(rel, "first_token" | "last_token"), at) {
                 (true, Some(kinds)) => Some(kinds.clone()),
                 (false, Some(kinds)) => Some(crate::code_rule_dsl::compile::token_tests::parents_of(dialect, kinds)),
                 _ => None,

@@ -71,7 +71,7 @@ same_struct(a, b) :- kind(a, "struct_pattern"), kind(b, "struct_pattern"), a != 
 fpat(s, f, x, k) :- child(s, f, _), kind(f, "field_pattern"), field(f, "name", n), text(n, x),
     field(f, "pattern", p), unparen(p, q), text(q, t), k = cat(x, "=", @replace_all(t, "\\s+", "")).
 fpat(s, f, x, k) :- child(s, f, _), kind(f, "field_pattern"), field(f, "name", n), text(n, x),
-    !field(f, "pattern", _), (op(f, "_"), t = "_" ; !op(f, "_"), text(f, t)),
+    !field(f, "pattern", _), (wild_field(f), t = "_" ; !wild_field(f), text(f, t)),
     k = cat(x, "=", @replace_all(t, "\\s+", "")).
 .decl struct_rest(s: node)   // S { x, .. }
 struct_rest(s) :- kind(s, "struct_pattern"), child(s, r, _), kind(r, "remaining_field_pattern").
