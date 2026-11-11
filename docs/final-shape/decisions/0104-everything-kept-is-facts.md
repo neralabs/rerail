@@ -104,14 +104,29 @@ The profile reports every statement that a wave's thread runs, and every wait fo
 
 ## The tapes are facts
 
-A document's syntax is two ordinary rules too:
+A document's syntax is two ordinary rules too. They are phase 1's (`typing/programs/sources.rr`):
 
 ```text
-// The key: a document's content and its grammar.
-doc_key(d, c, g) :- doc(d, p, _), file(p, c), grammar_of(p, g).
-// The result: the parser's answer for the key.
-doc_tape(d, t) :- doc_key(d, c, g), parse_of(c, g, t).
+// The key: a source file's content, its grammar and the tape's version.
+doc_key(p, c, g, "tape-1") :- observer__source_file(p, g, c).
+// Each key asks for its file as a document, answered inside the fixed point.
+load(p, p, g) :- doc_key(p, _, g, _).
+// The result: the loaded document's tape.
+doc_tape(p, t) :- doc_key(p, _, g, _), loaded(f, p, g), doc(d, f, p), tape_of(d, t).
+.cache doc_tape by doc_key
 ```
+
+The run's phases:
+
+| Phase | What it does |
+|---|---|
+| 0 | loads the rule files and the rule libraries (`bootstrap.rr`) |
+| 1 | loads every source file, finds the libraries, and runs the imports to their fixed point |
+| 2 | runs the typing to its fixed point |
+| 3 | the analysis |
+
+Then the findings are written. Phase 3 takes its documents from phase 1: it does not list or
+parse a file itself.
 
 What `parse_of` answers, and what the file-local part reads of it, are a document's facts. They
 are stored where a document's facts are stored, as every relation is, and read with them.
@@ -126,11 +141,104 @@ warm and after an edit), CPU (user + sys, with the load) and the pins of `facts_
 
 | # | What | Done when |
 |---|---|---|
-| 1 | The tapes as the two rules above, for a run's files and its guests; contents by digest; the tape and source writes are the writer's | no tape or source statement among the hazards; the 4.2 s wait is gone |
-| 2 | The memo's entries read before the first wave; a lookup writes nothing | no memo statement among the hazards |
+| 1 | The tapes as the two rules above, for a run's files and its guests; contents by digest; the tape and source writes are the writer's | **built** (below): phase 1 loads every source file by its key; no tape or source statement of a file or a guest among the hazards, and the 4.2 s wait is gone |
+| 2 | The memo's entries read before the first wave; a lookup writes nothing | **built**: no memo statement among the hazards of a cold run or of a run after an edit (below) |
 | 3 | The constants, the statistics and the choices read before the first wave, written by the writer | no store statement among the hazards |
-| 4 | A program's stated facts and `rdl_int` bound in the engine, not loaded through SQL tables; inputs read from where they are held | no statement on the run's connection among the hazards, except `finding` after the last wave |
+| 4 | A program's stated facts and `rdl_int` bound in the engine, not loaded through SQL tables; inputs read from where they are held | **built**: on the slice, one statement is left on the run's connection (below) |
 | 5 | A test runs a small corpus with the profile on and fails on any hazard | the test passes with none |
+
+**Step 1, as built (the reads and writes).** A wave runs no tape or source SQL:
+
+- before the first wave, the run reads the tapes of the files the memo has no entry for, as
+  stored frames, in one read. Each is decompressed in its file's wave;
+- in a wave, a file's tape is that frame, or one this process has queued, else the file is
+  parsed. Its source and tape are handed to the store's writer, and memory holds the tape
+  until it is written;
+- a content the store does not hold yet is named by its digest. The memo's entries, the stat
+  index and the kept statistics name it so, and the writer finds its source, written before
+  them, when it writes them. The next run finds it by digest;
+- a guest's tape is made the same way.
+
+On the slice, cold, run side by side with the run before this step: the hazards went from
+11,076 statement runs and 4,065 ms to 204 runs and 27 ms; CPU (user + sys) from 22.3 s to
+17.7 s, and wall from 25.2 s to 16.2 s, at a load of 50 to 100. The findings are the same, cold,
+warm and after an edit, and on a second program over a cache the first one filled (its tapes
+hit).
+
+**Step 1, as built (phase 1).** Every run that is not itself a phase runs phase 1 first:
+
+- the observer states each source file of the run's grammar, with its content's digest. It
+  reads a file only where its journal, stat or Git index cannot vouch for it;
+- phase 1's run is given no file. It loads each one by its key. Its rows are kept as any
+  run's: its per-file memo, and its cone of requests in the frames;
+- its export, `document(path, grammar, content)`, is the run's list of documents. A file it
+  made no document of is listed as before, so that the run reports it.
+
+A memo entry's key is taken under the earlier phases' rows only where a rule it depends on
+reads them. Phase 1's keys feed no entry, so an edit misses only the edited file's entry.
+
+On the slice, the findings are the same as before phase 1, cold, warm, after an edit and on
+a fresh cache. After an edit, both phases read 485 of 486 files from their memos, and only
+the edited file is parsed. A warm run is still the whole-run cutoff (0.37 s CPU); phase 1's
+program is among the rule files its record checks. Cold, CPU is within the load's noise of
+the run before (21.5 s, user + sys, at a load of 15 to 45).
+
+Phase 1 still asks for every key's file on every run. An unchanged file's answer is its memo
+entry, not a parse or a build. Asking only for the keys that changed needs the cone to be
+maintained from its delta, not kept as a whole stratum.
+
+A run inside another (phase 0's, phase 1's, the constants') leaves the store's collection to
+the outer run. After an edit, the outer run's own collection, run at its end, is still
+counted among the hazards when a pass is due.
+
+Two source statements are left among the hazards. The planning choices and the measured
+constants are kept under a small text stored as a source. They are step 3's.
+
+**Step 2, as built.** Before the first wave, the run looks up every file of the corpus:
+
+- it stats each file. A file whose stat the store recorded is that source, and is not read;
+- it reads and hashes the others, in parallel, and finds their sources in one read;
+- it finds the entries of all of them in one or two reads, as stored frames. Each is
+  decompressed and decoded in its file's wave, so memory holds compressed entries, not
+  decoded ones;
+- for the statistics keeper, it also finds the entries of the files changed or gone since
+  their counts were kept.
+
+A lookup writes nothing:
+
+- a source found is pinned by the store's writer, behind the run;
+- a new source is not stored by the lookup. It is stored with its tape, in the tape's
+  transaction, which already held it;
+- a file read again in its wave is checked against its stat. If it changed since it was
+  looked up, its content is new, and it is stored with its tape.
+
+A load's files are known only in the waves, so they are still looked up there. On the
+slice, nothing is loaded. A session's memo is in memory, and reads no SQL.
+
+On the slice, the lookups' 488 transactions on the parse worker are gone. After one file
+is edited, 485 of the 486 files are memo hits, and the run's hazards are 212 statement runs
+and 37 ms, against 248 and 225 ms before. The findings equal a cold run's of the edited
+files. Run side by side on the same machine, the run before and after this step take the
+same CPU and wall.
+
+What is left inside the waves is the tape store (step 1), and the choices and statistics
+read from the store (step 3).
+
+**Step 4, as built.** Within a native run, the run's connection makes nothing in SQL that SQL
+does not read:
+
+- a relation of stated facts alone is held in the engine. A relation with rules and stated facts
+  has its facts apart (`rel__stated`), read by one rule;
+- a native run makes no views. A projection of an input is a stratum like any, run from the input
+  where it is held;
+- a range read computes a document's node-id interval from its key, when the run's documents are
+  numbered by key (the corpus runner's). The guests and the loaded documents write no intervals;
+- `rdl_int` is a series in the statement that reads it;
+- a connection's state (what its runs left in SQL, its settings, how its documents are numbered)
+  is kept with the connection and dropped when it closes. A run asks SQL nothing it knows.
+
+On the slice, the run's connection went from 208 table statements, 91 inserts, 11 input reads and
+one rule run in SQLite, to one `PRAGMA` on the first run of a guests' connection.
 
 How relations are stored and read back is shared work. rr-align's frames (one stored form, each
 relation by its identity, written only by the writer) are that form. As each of the stores above
@@ -157,7 +265,7 @@ Each cache is listed with its step in `facts_only.rs`.
 | 1 | the run's constants, the whole-run cutoff, the observer's record, the derivation tables (7 tables, 2 maps) | the observer's base facts and rules over them | final-rerail-shape-rr-align, which owns it |
 | 2 | rule files and programs: parsed files, libraries, phase 0's graph, the combined and prepared programs, the planning choices (7 maps) | phase 0's facts. A rule file is loaded on a `load` request. The combined program, the prepared program and the choices are answers keyed by the program's facts (0074) and the build | this branch |
 | 3 | a document's facts: the per-file memo, manifests, the cross-file memo, the first slice's kept matches, guest parses, the session's held rows (21 tables, 2 maps) | a document's facts in its phase's space, keyed by its content facts and the program's facts | this branch |
-| 4 | the kept strata (2 tables, 1 map) | the cross program's own relations, kept and maintained from the delta of its input facts | final-rerail-shape-rr-align: the 2 tables are moved to the store's frames (notes/t33, K1); maintaining from the delta is K4, next there |
+| 4 | the kept strata (2 tables, 1 map) | the cross program's own relations, kept and maintained from the delta of its input facts | final-rerail-shape-rr-align: the 2 tables are moved to the store's frames (notes/t33, K1); K4 is built (fe23a4986): a new process loads the session's retained state from the frames, maintains it from the delta of its inputs, and writes back what changed. The cone of requests still reruns as whole strata |
 | 5 | the phase store (5 tables) | a phase's exports as its space's facts | the typing branch (investigate-bend-vs-datalog), as its plan already says |
 | 6 | planning: kept plans, derived values, observed steps, the tables a chunk builds ahead, compiled plans, the statistics (14 tables, 7 maps) | planner facts. Statistics are maintained aggregates over the base facts. A plan is an answer keyed by its rule's facts and the statistics it read | this branch |
 | 7 | text patterns and indexes: stored automata, compiled matchers, the prefilter and vocabulary indexes (10 tables, 5 maps) | answers keyed by the pattern's facts. An index is a derived relation over tapes | this branch |

@@ -769,9 +769,8 @@ fn execute_sql<'t>(
 
 #[cfg(test)]
 mod generated_shape;
-// The native oracle runs P's anchor corpus (`matcher::p_anchors::sql`: its plans, its index built at a path),
-// which the engine keeps behind `p-anchor-corpus`, as `workspace::evaluate` does; the tests compare against it.
 #[cfg(all(test, feature = "p-anchor-corpus"))]
+#[path = "../../findings/tests/native_oracle.rs"]
 mod native_oracle;
 #[cfg(all(test, feature = "p-anchor-corpus"))]
 mod tests;

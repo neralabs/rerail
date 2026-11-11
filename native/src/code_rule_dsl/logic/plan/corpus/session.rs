@@ -19,7 +19,7 @@
 use super::memo;
 use crate::content_store::ContentStore;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 pub(in crate::code_rule_dsl) struct Session {
     /// The store's file, which each run's SQL connection opens (its atoms are the store's).
@@ -40,6 +40,10 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) stats: Mutex<std::collections::HashMap<[u8; 32], super::keptstats::Keeper>>,
     /// Which session this is: its runs' kept plans and derived values are taken back only by its own runs.
     generation: u64,
+    /// Its runs' connections and stores, kept from run to run (`connections`): an edit's run opens none.
+    pub(super) connections: Arc<parking_lot::Mutex<super::connections::Connections>>,
+    /// Its runs' chunk mixes' tree counts (`own_counts`), read from memory as they are written behind the runs.
+    pub(super) own: super::OwnKept,
 }
 
 
@@ -69,6 +73,8 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         written: Mutex::new(Default::default()),
         stats: Mutex::new(Default::default()),
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())),
+        own: Default::default(),
         #[cfg(test)]
         thread: std::thread::current().id(),
     });

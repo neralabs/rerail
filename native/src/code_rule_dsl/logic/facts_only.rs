@@ -59,9 +59,6 @@ const FACT_STORE: &[&str] = &[
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
     "x",
-    // native_demand's tests' tables.
-    "keys",
-    "facts",
     "a",
     "b",
     "c",
@@ -188,6 +185,15 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
+    // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
+    // connections, not a result kept.
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
+    // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
+    ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
+    ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
+    // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
+    ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
@@ -197,8 +203,14 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
-    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
+    // The build's Python grammar, and what follows from it and a matcher's text alone (its single-field answers, its
+    // lowered code): the process's code, as a compiled rule's, not a run's result.
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "GRAMMAR"),
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "KEPT"),
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "LOWERED"),
+    // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
+    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),
@@ -229,6 +241,8 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
     ("content_store/hazards.rs", "HAZARDS"),
+    // The run each frame space last counted in this process, so a run's programs count it once.
+    ("content_store/frames.rs", "COUNTED"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),

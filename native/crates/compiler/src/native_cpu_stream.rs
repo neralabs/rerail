@@ -2,9 +2,11 @@
 //! tier-2 words) as one function `tempo_stream(ctx)`. Each word is one block of code made from
 //! the word and its operand alone, and its tables (a switch's targets, a string's bytes). Nothing in it is fixed for a language or a tape format.
 //!
-//! The machine's state (`stream::run`, the reference) is in SSA variables: the stream's cursors,
-//! the token's start, end and limit, the end of the token before, the node and supertype
-//! counts, and the open and return stacks' depths. Its output is the node table, one row per node
+//! The machine's state (`stream::run`, the reference) is in SSA variables where every token
+//! uses it: the stream's cursors, the token's start, end and limit, the end of the token
+//! before, the node count, and the open and return stacks' depths. What few words touch (the
+//! supertype count, pending extras, wraps, dropped records, a shared arm's target) is in a
+//! stack slot (`Mem`): an SSA variable is carried through every block where paths meet. Its output is the node table, one row per node
 //! in preorder (kind, field, start, end, size), and the supertypes, one row each (node, kind).
 //!
 //! The loops are the stream's, as the verifier requires: every cycle passes a `TOKEN`.
@@ -17,8 +19,8 @@
 use crate::Error;
 
 use crate::native_cpu_shape::Step;
-use crate::native_ir::{On, Structure, StructuralOperation as Op};
-use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, Refused};
+use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
+use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, REMEMBERED, Refused};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -170,6 +172,8 @@ pub struct CompiledStream {
     marks: u64,
     /// The program has `WRAP`: the tape has the frames, chains and preorder columns.
     pub wraps: bool,
+    /// The program has context beside each return (`has_context`): two return slots a call.
+    context: bool,
     pub clif: String,
     pub disassembly: String,
     /// The CLIF blocks of the loops' heads, with their steps (`native_cpu_shape`): the token
@@ -193,7 +197,7 @@ fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<usize> {
             out
         }
         Op::Return { again } => pushes.iter().map(|&p| usize::from(p) + usize::from(again)).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
         _ => vec![pc + 1],
     }
     .into_iter()
@@ -325,6 +329,34 @@ fn push_targets(native: &Structure) -> Vec<u16> {
 }
 
 /// The machine's state, as variables.
+/// Tier 2's state that few words touch, each a slot of the function's stack frame: kept out of
+/// the SSA variables (`Vars`), which every block where paths meet carries.
+#[derive(Clone, Copy)]
+enum Mem {
+    /// The supertypes written.
+    Supers,
+    /// The deferred extras' leaves at the table's end.
+    Pending,
+    /// While leaves are pending, the end of the token before them: a node closed then ends there.
+    Keep,
+    /// The wraps made, and the node the last one moved.
+    Wraps,
+    Moved,
+    /// The records a reading dropped (`DEAD`).
+    Dead,
+    /// A shared arm's target, as an index into its body's (`shared_runs`).
+    Sel,
+    /// A shared arm's words' distance from its body's first place's, for a refusal there.
+    Shift,
+    /// The level's word (`REMEMBER`) and flags (`FLAG`), kept beside each call's return.
+    Word,
+    Flags,
+}
+
+impl Mem {
+    const COUNT: u32 = 10;
+}
+
 struct Vars {
     next: Variable,
     /// The mask's word `lw`'s bits not yet taken; before the first word, `lw` is -1 (no bits).
@@ -336,22 +368,12 @@ struct Vars {
     last_end: Variable,
     at_end: Variable,
     nodes: Variable,
-    supers: Variable,
     open: Variable,
     ret: Variable,
     /// 1 once the token's bytes are taken (`SPAN`): `TOKEN` then takes the next.
     need: Variable,
     /// The marks not yet taken or passed at this token, a bit each.
     live: Variable,
-    /// The deferred extras' leaves at the table's end.
-    pending: Variable,
-    /// While leaves are pending, the end of the token before them: a node closed then ends there.
-    keep: Variable,
-    /// The wraps made, and the node the last one moved.
-    wraps: Variable,
-    moved: Variable,
-    /// The records a reading dropped (`DEAD`).
-    dead: Variable,
 }
 
 /// A compare tree over a byte (or a place): runs of one target, split at the middle run.
@@ -423,6 +445,35 @@ fn mask_scan(f: &mut FunctionBuilder<'_>, m: Mask, w: Value, bits: Value, refuse
     }
 }
 
+/// `SPAN m=1`'s search, a function of its own (`outline`): the next of the last-byte mask's
+/// bits after the last one taken, the bits of word `lw` not yet taken (`taken`), then a word
+/// (64 bytes) a turn. Parameters: the mask (its first word, stride, word count), `lw`, `taken`,
+/// the token's start and limit. Returns the token's end (the bit's byte, plus one), the bit's
+/// word and its bits left, and 1 when it refuses: no bit is left, or the bit is before the
+/// token's start or its end past its limit.
+fn span_last(f: &mut FunctionBuilder<'_>, p: &[Value], heads: &mut Vec<(Block, Step)>) {
+    let (first, stride, words, w, bits, start, limit) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
+    let refuse = f.create_block();
+    f.append_block_param(refuse, types::I64);
+    let (found, scan) = mask_scan(f, Mask { first, stride, words }, w, bits, refuse, 0, true);
+    heads.push((scan, Step::Block));
+    let (w, bits) = (f.block_params(found)[0], f.block_params(found)[1]);
+    let tz = f.ins().ctz(bits);
+    let at = f.ins().ishl_imm(w, 6);
+    let l = f.ins().iadd(at, tz);
+    let less = f.ins().iadd_imm(bits, -1);
+    let rest = f.ins().band(bits, less);
+    let before = f.ins().icmp(IntCC::UnsignedLessThan, l, start);
+    let e = f.ins().iadd_imm(l, 1);
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
+    let bad = f.ins().bor(before, past);
+    let bad = f.ins().uextend(types::I64, bad);
+    f.ins().return_(&[e, w, rest, bad]);
+    f.switch_to_block(refuse);
+    let one = f.ins().iconst(types::I64, 1);
+    f.ins().return_(&[start, p[3], p[4], one]);
+}
+
 /// A switch's runs: each maximal range of bytes with one target, as (first byte, block).
 fn runs(s: &ByteSwitch, word: &dyn Fn(u16) -> Block) -> Vec<(u32, Block)> {
     let mut out: Vec<(u32, u16)> = Vec::new();
@@ -479,7 +530,12 @@ fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, bu
     for _ in 0..returns {
         signature.returns.push(AbiParam::new(types::I64));
     }
-    let id = module.declare_function(name, Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+    let id = module.declare_function(name, Linkage::Local, &signature).map_err(|e| {
+        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+            eprintln!("tier 2's own function {name}: {e:?}");
+        }
+        Error::BackendFailure
+    })?;
     let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), signature.clone());
     let mut fctx = FunctionBuilderContext::new();
     let mut heads = Vec::new();
@@ -744,6 +800,176 @@ fn table(f: &mut FunctionBuilder<'_>, cols: [Value; 2], count: Value, stack: Val
     f.ins().return_(&[zero]);
 }
 
+/// A body of shared arms (`shared_runs`): its words, from `start` (its first place) to the
+/// `GOTO` that ends it, and the places its places go on to.
+pub struct SharedBody {
+    pub start: usize,
+    pub end: usize,
+    pub targets: Vec<u16>,
+}
+
+/// Runs of words lowered once for every place that has them (`shared_runs`).
+pub struct SharedRuns {
+    pub bodies: Vec<SharedBody>,
+    /// Each place a run starts at: its body, and its target's index in the body's `targets`.
+    pub at: std::collections::HashMap<usize, (usize, usize)>,
+    /// Each body's last word: its `GOTO`, at the body's first place.
+    pub ends: std::collections::HashMap<usize, usize>,
+    /// The words of a run that is not its body's first place: never lowered.
+    pub skipped: Vec<bool>,
+}
+
+/// A word that only goes on to the next, or refuses: an arm's span, keyword check and acts.
+fn plain(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. }
+    )
+}
+
+/// Arms that differ only in where they go on are one copy of code. A run is the plain words
+/// (`plain`) before a `GOTO`, none of them but the first entered from elsewhere; runs with the
+/// same words that go on to a `TOKEN` are one body, lowered at its first place. Each place enters the body with the
+/// index of its `GOTO`'s target, and the body's end jumps by it (a jump table): an indirect
+/// jump an arm, as simdjson's stage 2 takes one a token, for code the size of the distinct
+/// arms instead of every arm's.
+pub fn shared_runs(native: &Structure, pushes: &[u16]) -> SharedRuns {
+    let words = &native.structural;
+    let n = words.len();
+    // Entered other than by falling from a plain word before it.
+    let mut entered = vec![false; n + 1];
+    entered[0] = true;
+    for pc in 0..n {
+        let mut next = successors(native, pushes, pc);
+        if matches!(words[pc].operation, Op::Token { .. }) {
+            next.push(pc + 1);
+        }
+        for t in next {
+            if !(t == pc + 1 && plain(&words[pc].operation)) {
+                entered[t] = true;
+            }
+        }
+    }
+    // Each run: its first place, its `GOTO`, the target, and its words.
+    let mut occ: Vec<(usize, usize, u16, Vec<Op>)> = Vec::new();
+    for g in 0..n {
+        let Op::Goto { target } = words[g].operation else { continue };
+        if entered[g] {
+            continue;
+        }
+        let mut s = g;
+        while s > 0 && plain(&words[s - 1].operation) && !entered[s] {
+            s -= 1;
+        }
+        if s < g {
+            occ.push((s, g, target, words[s..g].iter().map(|w| w.operation).collect()));
+        }
+    }
+    // Runs alone: each its own body. Sharing makes a body's jump reach every place's target on
+    // the graph (not at run time: a place's index picks its own), and the shape check reads the
+    // graph: a cycle that passes no `TOKEN` there is refused. So runs share, and where a cycle
+    // appears that a shared jump closes, the run whose jump goes where its own does not is
+    // alone; again, until none is left.
+    let chains = bounds(native).chains;
+    let mut alone = vec![false; occ.len()];
+    let goto_of: std::collections::HashMap<usize, usize> = occ.iter().enumerate().map(|(i, o)| (o.1, i)).collect();
+    loop {
+        let mut keys: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut body_of = vec![0usize; occ.len()];
+        let mut targets: Vec<Vec<u16>> = Vec::new();
+        for (i, (_, _, t, ops)) in occ.iter().enumerate() {
+            let key = if alone[i] { format!("{ops:?} to {t}") } else { format!("{ops:?}") };
+            let b = *keys.entry(key).or_insert_with(|| {
+                targets.push(Vec::new());
+                targets.len() - 1
+            });
+            if !targets[b].contains(t) {
+                targets[b].push(*t);
+            }
+            body_of[i] = b;
+        }
+        // The graph: a word's ways on (`TOKEN` and, where returns chain, `RETURN` cut: the
+        // shape check's loop heads), a run's `GOTO` to each of its body's targets.
+        let next = |pc: usize| -> Vec<usize> {
+            if let Some(&i) = goto_of.get(&pc) {
+                return targets[body_of[i]].iter().map(|&t| usize::from(t)).filter(|&t| t < n).collect();
+            }
+            if chains && matches!(words[pc].operation, Op::Return { .. }) {
+                return Vec::new();
+            }
+            successors(native, pushes, pc)
+        };
+        // A depth-first search for a cycle: 1 on the path, 2 done.
+        let mut mark = vec![0u8; n];
+        let mut found: Option<Vec<usize>> = None;
+        'search: for root in 0..n {
+            if mark[root] != 0 {
+                continue;
+            }
+            let mut stack: Vec<(usize, Vec<usize>)> = vec![(root, next(root))];
+            mark[root] = 1;
+            while let Some((pc, rest)) = stack.last_mut() {
+                let pc = *pc;
+                match rest.pop() {
+                    Some(q) if mark[q] == 1 => {
+                        let from = stack.iter().position(|(w, _)| *w == q).unwrap_or(0);
+                        let mut cycle: Vec<usize> = stack[from..].iter().map(|(w, _)| *w).collect();
+                        cycle.push(q);
+                        found = Some(cycle);
+                        break 'search;
+                    }
+                    Some(q) if mark[q] == 0 => {
+                        mark[q] = 1;
+                        let nq = next(q);
+                        stack.push((q, nq));
+                    }
+                    Some(_) => {}
+                    None => {
+                        mark[pc] = 2;
+                        stack.pop();
+                    }
+                }
+            }
+        }
+        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() && found.is_none() {
+            let words_in: usize = occ.iter().map(|o| o.1 - o.0 + 1).sum();
+            let kept: usize = (0..targets.len()).map(|b| occ.iter().enumerate().find(|(i, _)| body_of[*i] == b).map_or(0, |(_, o)| o.1 - o.0 + 1)).sum();
+            eprintln!("shared runs: {} runs, {} alone, {} bodies; {words_in} words in runs, {kept} lowered", occ.len(), alone.iter().filter(|a| **a).count(), targets.len());
+        }
+        let Some(cycle) = found else {
+            let mut out = SharedRuns { bodies: Vec::new(), at: std::collections::HashMap::new(), ends: std::collections::HashMap::new(), skipped: vec![false; n] };
+            let mut first: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            for (i, (s, g, t, _)) in occ.iter().enumerate() {
+                let b = body_of[i];
+                let body = *first.entry(b).or_insert_with(|| {
+                    out.bodies.push(SharedBody { start: *s, end: *g, targets: targets[b].clone() });
+                    out.ends.insert(*g, out.bodies.len() - 1);
+                    out.bodies.len() - 1
+                });
+                let ti = out.bodies[body].targets.iter().position(|x| x == t).expect("a target of its body");
+                out.at.insert(*s, (body, ti));
+                if out.bodies[body].start != *s {
+                    for k in s + 1..=*g {
+                        out.skipped[k] = true;
+                    }
+                }
+            }
+            return out;
+        };
+        // The runs on the cycle whose jump goes on where their own `GOTO` does not: alone.
+        let mut split = false;
+        for w in cycle.windows(2) {
+            if let Some(&i) = goto_of.get(&w[0])
+                && usize::from(occ[i].2) != w[1]
+            {
+                alone[i] = true;
+                split = true;
+            }
+        }
+        assert!(split, "a cycle on the words' own graph: the shape check refuses the program");
+    }
+}
+
 pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
     let words = &native.structural;
     let pushes = push_targets(native);
@@ -786,16 +1012,10 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
             last_end: f.declare_var(types::I64),
             at_end: f.declare_var(types::I64),
             nodes: f.declare_var(types::I64),
-            supers: f.declare_var(types::I64),
             open: f.declare_var(types::I64),
             ret: f.declare_var(types::I64),
             need: f.declare_var(types::I64),
             live: f.declare_var(types::I64),
-            pending: f.declare_var(types::I64),
-            keep: f.declare_var(types::I64),
-            wraps: f.declare_var(types::I64),
-            moved: f.declare_var(types::I64),
-            dead: f.declare_var(types::I64),
         };
         // Where returns chain, each `RETURN` is a loop's head: a turn pops a call.
         let bound = bounds(native);
@@ -832,6 +1052,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         // The node table's passes, outlined (`outline`): made where first called.
         let mut reorder_fn = None;
         let mut table_fn = None;
+        let mut span_fn = None;
         let w: Vec<Value> = if wrapping {
             [FRAME_BASE, FRAME_LAST, FRAME_LAST_BASE, HEAD, LINK, PLACE, OUT_KIND, OUT_FIELD, OUT_START, OUT_END, OUT_SIZE].iter().map(|&at| load(&mut f, at)).collect()
         } else {
@@ -840,8 +1061,18 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         let wc = |i: usize| w[i];
         let (fbase_c, flast_c, flbase_c, head_c, link_c, place_c) = (0, 1, 2, 3, 4, 5);
         let zero = f.ins().iconst(types::I64, 0);
-        for var in [v.next, v.taken, v.start, v.end, v.limit, v.last_end, v.at_end, v.nodes, v.supers, v.open, v.ret, v.live, v.pending, v.keep, v.wraps, v.moved, v.dead] {
+        for var in [v.next, v.taken, v.start, v.end, v.limit, v.last_end, v.at_end, v.nodes, v.open, v.ret, v.live] {
             f.def_var(var, zero);
+        }
+        // The state few words touch, in memory (`Mem`): not carried through every block where
+        // paths meet, as an SSA variable is.
+        let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * Mem::COUNT, 3));
+        let mget = |f: &mut FunctionBuilder<'_>, k: Mem| f.ins().stack_load(types::I64, slot, 8 * k as i32);
+        let mset = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| {
+            f.ins().stack_store(x, slot, 8 * k as i32);
+        };
+        for k in 0..Mem::COUNT {
+            f.ins().stack_store(zero, slot, 8 * k as i32);
         }
         let one = f.ins().iconst(types::I64, 1);
         f.def_var(v.need, one);
@@ -860,6 +1091,19 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
             f.ins().brif(bad, refuse, &[BlockArg::from(at)], ok, &[]);
             f.switch_to_block(ok);
         };
+        // A kind as a word names it: its level's word's (`REMEMBERED`, `REMEMBER`), refused where
+        // the level has none; else the kind.
+        let two_slots = has_context(words);
+        let kind_of = |f: &mut FunctionBuilder<'_>, kind: u16, pc: usize| {
+            if kind == REMEMBERED {
+                let w = mget(f, Mem::Word);
+                let none = f.ins().icmp_imm(IntCC::Equal, w, 0);
+                guard(f, none, pc);
+                w
+            } else {
+                f.ins().iconst(types::I64, i64::from(kind))
+            }
+        };
         // Column `c`'s slot `i` (u32s).
         let slot = |f: &mut FunctionBuilder<'_>, c: Value, i: Value| {
             let off = f.ins().ishl_imm(i, 2);
@@ -870,8 +1114,47 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
             f.ins().istore32(flags, x, at, 0);
         };
 
+        // Shared arms (`shared_runs`): each run's code is made once, at its first place; every
+        // place enters it with the run's next place (an index into its targets) and the shift
+        // of its words from the first place's, for a refusal's word.
+        let shared = shared_runs(native, &pushes);
+        let entries: Vec<Block> = shared.bodies.iter().map(|_| f.create_block()).collect();
         for (pc, w) in words.iter().enumerate() {
-            f.switch_to_block(wb[pc]);
+            if shared.skipped[pc] {
+                continue;
+            }
+            if let Some(&(body, ti)) = shared.at.get(&pc) {
+                let first = shared.bodies[body].start;
+                f.switch_to_block(wb[pc]);
+                let i = f.ins().iconst(types::I64, ti as i64);
+                mset(&mut f, Mem::Sel, i);
+                let sh = f.ins().iconst(types::I64, pc as i64 - first as i64);
+                mset(&mut f, Mem::Shift, sh);
+                f.ins().jump(entries[body], &[]);
+                if pc != first {
+                    continue;
+                }
+                f.switch_to_block(entries[body]);
+            } else {
+                f.switch_to_block(wb[pc]);
+            }
+            if let Some(&body) = shared.ends.get(&pc) {
+                // The run's end: its place's next word, by the index the place gave.
+                let zero = f.ins().iconst(types::I64, 0);
+                mset(&mut f, Mem::Shift, zero);
+                let targets = &shared.bodies[body].targets;
+                if let [t] = targets.as_slice() {
+                    f.ins().jump(word(*t), &[]);
+                } else {
+                    let i = mget(&mut f, Mem::Sel);
+                    let i = f.ins().ireduce(types::I32, i);
+                    let calls: Vec<_> = targets.iter().map(|&t| f.func.dfg.block_call(word(t), &[])).collect();
+                    let default = f.func.dfg.block_call(off_end, &[]);
+                    let jt = f.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
+                    f.ins().br_table(i, jt);
+                }
+                continue;
+            }
             let fall = wb.get(pc + 1).copied().unwrap_or(off_end);
             match w.operation {
                 Op::Token { .. } => {
@@ -881,8 +1164,8 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     // tape. Three compares a token, not one a write.
                     let mut over = f.ins().iconst(types::I8, 0);
                     let open_calls = f.use_var(v.ret);
-                    for (var, (room, (most, per_call))) in [v.nodes, v.supers, v.ret].into_iter().zip(rooms.into_iter().zip([(bound.nodes, bound.pop_nodes), (bound.supers, bound.pop_supers), (bound.pushes, 0)])) {
-                        let at = f.use_var(var);
+                    let counts = [f.use_var(v.nodes), mget(&mut f, Mem::Supers), f.use_var(v.ret)];
+                    for (at, (room, (most, per_call))) in counts.into_iter().zip(rooms.into_iter().zip([(bound.nodes, bound.pop_nodes), (bound.supers, bound.pop_supers), (bound.pushes, 0)])) {
                         let at = if per_call > 0 {
                             let popped = f.ins().imul_imm(open_calls, per_call as i64);
                             f.ins().iadd(at, popped)
@@ -988,25 +1271,16 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.switch_to_block(find);
                     // The next of the mask's bits after the last one taken: the bits of word
                     // `lw` not yet taken (`taken`), then a word (64 bytes) at a time.
-                    let (w, bits) = (f.use_var(v.lw), f.use_var(v.taken));
-                    let (found, scan) = mask_scan(&mut f, Mask { first: lasts_p, stride: lasts_stride, words: nlasts }, w, bits, refuse, pc, true);
-                    heads.push((scan, Step::Block));
-                    let (w, bits) = (f.block_params(found)[0], f.block_params(found)[1]);
-                    let tz = f.ins().ctz(bits);
-                    let at = f.ins().ishl_imm(w, 6);
-                    let l = f.ins().iadd(at, tz);
-                    let less = f.ins().iadd_imm(bits, -1);
-                    let rest = f.ins().band(bits, less);
-                    f.def_var(v.taken, rest);
-                    f.def_var(v.lw, w);
-                    let start = f.use_var(v.start);
-                    let before = f.ins().icmp(IntCC::UnsignedLessThan, l, start);
-                    guard(&mut f, before, pc);
-                    let e = f.ins().iadd_imm(l, 1);
-                    let limit = f.use_var(v.limit);
-                    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
-                    guard(&mut f, past, pc);
-                    f.def_var(v.end, e);
+                    let (w, bits, start, limit) = (f.use_var(v.lw), f.use_var(v.taken), f.use_var(v.start), f.use_var(v.limit));
+                    if span_fn.is_none() {
+                        span_fn = Some(outline(&mut module, "tempo_stream_last", 7, 4, |f, p, heads| span_last(f, p, heads))?);
+                    }
+                    let (id, sig, _) = span_fn.as_ref().expect("made");
+                    let r = call_own(&mut f, *id, sig, &[lasts_p, lasts_stride, nlasts, w, bits, start, limit]);
+                    f.def_var(v.end, r[0]);
+                    f.def_var(v.lw, r[1]);
+                    f.def_var(v.taken, r[2]);
+                    guard(&mut f, r[3], pc);
                     let one = f.ins().iconst(types::I64, 1);
                     f.def_var(v.need, one);
                     f.ins().jump(fall, &[]);
@@ -1090,7 +1364,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.ins().brif(bit, fall, &[], skip, &[]);
                 }
                 Op::Open { kind } => {
-                    f.def_var(v.pending, zero);
+                    mset(&mut f, Mem::Pending, zero);
                     let (nodes, start, open) = (f.use_var(v.nodes), f.use_var(v.start), f.use_var(v.open));
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     put(&mut f, kind_c, nodes, k);
@@ -1121,11 +1395,11 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                         let a = slot(&mut f, open_c, open);
                         f.ins().uload32(flags, a, 0)
                     };
-                    let (nodes, pending) = (f.use_var(v.nodes), f.use_var(v.pending));
+                    let (nodes, pending) = (f.use_var(v.nodes), mget(&mut f, Mem::Pending));
                     let e = if this {
                         f.use_var(v.end)
                     } else {
-                        let (keep, last_end) = (f.use_var(v.keep), f.use_var(v.last_end));
+                        let (keep, last_end) = (mget(&mut f, Mem::Keep), f.use_var(v.last_end));
                         f.ins().select(pending, keep, last_end)
                     };
                     put(&mut f, end_c, at, e);
@@ -1152,14 +1426,14 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 Op::Leaf { kind, deferred, extra } => {
                     let pending = if deferred {
                         // The first pending leaf keeps the end of the token before it.
-                        let (p, keep, last_end) = (f.use_var(v.pending), f.use_var(v.keep), f.use_var(v.last_end));
+                        let (p, keep, last_end) = (mget(&mut f, Mem::Pending), mget(&mut f, Mem::Keep), f.use_var(v.last_end));
                         let keep = f.ins().select(p, keep, last_end);
-                        f.def_var(v.keep, keep);
+                        mset(&mut f, Mem::Keep, keep);
                         f.ins().iadd_imm(p, 1)
                     } else {
                         zero
                     };
-                    f.def_var(v.pending, pending);
+                    mset(&mut f, Mem::Pending, pending);
                     let (nodes, start, end) = (f.use_var(v.nodes), f.use_var(v.start), f.use_var(v.end));
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     let one = f.ins().iconst(types::I64, 1);
@@ -1182,8 +1456,36 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.def_var(v.nodes, nodes);
                     f.ins().jump(fall, &[]);
                 }
+                Op::Remember { kind } => {
+                    let k = f.ins().iconst(types::I64, i64::from(kind));
+                    mset(&mut f, Mem::Word, k);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Flag { flag, op } => {
+                    let fl = mget(&mut f, Mem::Flags);
+                    let bit = 1i64 << flag;
+                    match op {
+                        FlagOp::Set => {
+                            let fl = f.ins().bor_imm(fl, bit);
+                            mset(&mut f, Mem::Flags, fl);
+                            f.ins().jump(fall, &[]);
+                        }
+                        FlagOp::Clear => {
+                            let fl = f.ins().band_imm(fl, !bit);
+                            mset(&mut f, Mem::Flags, fl);
+                            f.ins().jump(fall, &[]);
+                        }
+                        // The next word where the flag is set; else the one after.
+                        FlagOp::Test => {
+                            let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
+                            let set = f.ins().band_imm(fl, bit);
+                            f.ins().brif(set, fall, &[], skip, &[]);
+                        }
+                    }
+                }
                 Op::Retag { kind, on: On::Moved } => {
-                    let (m, k) = (f.use_var(v.moved), f.ins().iconst(types::I64, i64::from(kind)));
+                    let m = mget(&mut f, Mem::Moved);
+                    let k = kind_of(&mut f, kind, pc);
                     put(&mut f, kind_c, m, k);
                     f.ins().jump(fall, &[]);
                 }
@@ -1202,7 +1504,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let bad = f.ins().bor(none, no_last);
                     guard(&mut f, bad, pc);
                     let r = f.ins().iadd_imm(last, -1);
-                    let (nodes, wraps) = (f.use_var(v.nodes), f.use_var(v.wraps));
+                    let (nodes, wraps) = (f.use_var(v.nodes), mget(&mut f, Mem::Wraps));
                     let (fld, st) = {
                         let a = slot(&mut f, field_c, r);
                         let b = slot(&mut f, start_c, r);
@@ -1227,12 +1529,12 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     put(&mut f, wc(fbase_c), slot1, base);
                     put(&mut f, wc(flast_c), slot1, last);
                     put(&mut f, wc(flbase_c), slot1, base);
-                    f.def_var(v.moved, r);
-                    f.def_var(v.pending, zero);
+                    mset(&mut f, Mem::Moved, r);
+                    mset(&mut f, Mem::Pending, zero);
                     f.def_var(v.open, slot1);
                     f.def_var(v.nodes, n1);
                     let wraps = f.ins().iadd_imm(wraps, 1);
-                    f.def_var(v.wraps, wraps);
+                    mset(&mut f, Mem::Wraps, wraps);
                     f.ins().jump(fall, &[]);
                 }
                 Op::NodeField { field, on: On::Inner } => {
@@ -1279,7 +1581,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let bad = f.ins().bor(none, no_last);
                     guard(&mut f, bad, pc);
                     let r = f.ins().iadd_imm(last, -1);
-                    let x = f.ins().iconst(types::I64, i64::from(kind));
+                    let x = if matches!(w.operation, Op::Retag { .. }) { kind_of(&mut f, kind, pc) } else { f.ins().iconst(types::I64, i64::from(kind)) };
                     let col = if matches!(w.operation, Op::Retag { .. }) { kind_c } else { field_c };
                     put(&mut f, col, r, x);
                     f.ins().jump(fall, &[]);
@@ -1302,7 +1604,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     let bad = f.ins().bor(none, no_last);
                     guard(&mut f, bad, pc);
                     let root = f.ins().iadd_imm(last, -1);
-                    let (nodes, pending) = (f.use_var(v.nodes), f.use_var(v.pending));
+                    let (nodes, pending) = (f.use_var(v.nodes), mget(&mut f, Mem::Pending));
                     let end = f.ins().isub(nodes, pending);
                     let (scan, chain) = (f.create_block(), f.create_block());
                     f.append_block_param(scan, types::I64);
@@ -1389,13 +1691,13 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                                 f.ins().istore32(flags, kept, a, 0);
                                 let d = f.ins().iconst(types::I64, i64::from(DEAD));
                                 put(&mut f, kind_c, n, d);
-                                let dead = f.use_var(v.dead);
+                                let dead = mget(&mut f, Mem::Dead);
                                 let dead = f.ins().iadd_imm(dead, 1);
-                                f.def_var(v.dead, dead);
+                                mset(&mut f, Mem::Dead, dead);
                                 f.ins().jump(next, &[]);
                             }
                             m => {
-                                let m = f.ins().iconst(types::I64, i64::from(m));
+                                let m = kind_of(&mut f, m, pc);
                                 put(&mut f, kind_c, n, m);
                                 f.ins().jump(next, &[]);
                             }
@@ -1429,7 +1731,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 Op::Merge { kind, fold: true } => {
                     // The innermost open node holds two leaves and nothing else, no extra
                     // pending: the first becomes one leaf through the second's end.
-                    let (nodes, pending, open) = (f.use_var(v.nodes), f.use_var(v.pending), f.use_var(v.open));
+                    let (nodes, pending, open) = (f.use_var(v.nodes), mget(&mut f, Mem::Pending), f.use_var(v.open));
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     guard(&mut f, none, pc);
                     let top = f.ins().iadd_imm(open, -1);
@@ -1470,7 +1772,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 Op::Merge { kind, fold: false } => {
                     // The grammar's leaf before the pending extras: a leaf, inside the innermost
                     // open node. The extras are its text: dropped.
-                    let (nodes, pending, open) = (f.use_var(v.nodes), f.use_var(v.pending), f.use_var(v.open));
+                    let (nodes, pending, open) = (f.use_var(v.nodes), mget(&mut f, Mem::Pending), f.use_var(v.open));
                     let kept = f.ins().isub(nodes, pending);
                     let none = f.ins().icmp_imm(IntCC::Equal, kept, 0);
                     guard(&mut f, none, pc);
@@ -1496,12 +1798,12 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     put(&mut f, kind_c, leaf, k);
                     put(&mut f, end_c, leaf, end);
                     f.def_var(v.nodes, kept);
-                    f.def_var(v.pending, zero);
+                    mset(&mut f, Mem::Pending, zero);
                     f.ins().jump(fall, &[]);
                 }
                 Op::NodeField { field, on } => {
                     let last = if on == On::Moved {
-                        f.use_var(v.moved)
+                        mget(&mut f, Mem::Moved)
                     } else {
                         let nodes = f.use_var(v.nodes);
                         f.ins().iadd_imm(nodes, -1)
@@ -1511,19 +1813,31 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.ins().jump(fall, &[]);
                 }
                 Op::NodeSuper { kind } => {
-                    let (nodes, supers) = (f.use_var(v.nodes), f.use_var(v.supers));
+                    let (nodes, supers) = (f.use_var(v.nodes), mget(&mut f, Mem::Supers));
                     let last = f.ins().iadd_imm(nodes, -1);
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     put(&mut f, snode_c, supers, last);
                     put(&mut f, skind_c, supers, k);
                     let supers = f.ins().iadd_imm(supers, 1);
-                    f.def_var(v.supers, supers);
+                    mset(&mut f, Mem::Supers, supers);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Push { target } => {
                     let ret = f.use_var(v.ret);
                     let t = f.ins().iconst(types::I64, i64::from(target));
-                    put(&mut f, ret_c, ret, t);
+                    // With context (`REMEMBER`, `FLAG`), two slots a call: its return, then the
+                    // caller's word and flags (`context`).
+                    if two_slots {
+                        let at = f.ins().ishl_imm(ret, 1);
+                        put(&mut f, ret_c, at, t);
+                        let (w, fl) = (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags));
+                        let fl = f.ins().ishl_imm(fl, 16);
+                        let wf = f.ins().bor(w, fl);
+                        let at = f.ins().iadd_imm(at, 1);
+                        put(&mut f, ret_c, at, wf);
+                    } else {
+                        put(&mut f, ret_c, ret, t);
+                    }
                     let ret = f.ins().iadd_imm(ret, 1);
                     f.def_var(v.ret, ret);
                     f.ins().jump(fall, &[]);
@@ -1537,7 +1851,17 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     guard(&mut f, none, pc);
                     let ret = f.ins().iadd_imm(ret, -1);
                     f.def_var(v.ret, ret);
-                    let p = {
+                    let p = if two_slots {
+                        // The caller's word and flags back, from beside its return.
+                        let at = f.ins().ishl_imm(ret, 1);
+                        let a = slot(&mut f, ret_c, at);
+                        let wf = f.ins().uload32(flags, a, 4);
+                        let w = f.ins().band_imm(wf, 0xffff);
+                        let fl = f.ins().ushr_imm(wf, 16);
+                        mset(&mut f, Mem::Word, w);
+                        mset(&mut f, Mem::Flags, fl);
+                        f.ins().uload32(flags, a, 0)
+                    } else {
                         let a = slot(&mut f, ret_c, ret);
                         f.ins().uload32(flags, a, 0)
                     };
@@ -1596,11 +1920,11 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                         f.switch_to_block(after);
                     }
                     f.ins().store(flags, nodes, counts_c, 0);
-                    let supers = f.use_var(v.supers);
+                    let supers = mget(&mut f, Mem::Supers);
                     f.ins().store(flags, supers, counts_c, 8);
                     if wrapping {
                         // A dropped record needs the table in preorder too: without it.
-                        let (wraps, dead) = (f.use_var(v.wraps), f.use_var(v.dead));
+                        let (wraps, dead) = (mget(&mut f, Mem::Wraps), mget(&mut f, Mem::Dead));
                         let wraps = f.ins().iadd(wraps, dead);
                         f.ins().store(flags, wraps, counts_c, 16);
                         let rereads = words.iter().any(|b| matches!(b.operation, Op::Reread { .. }));
@@ -1656,16 +1980,24 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         f.ins().jump(refuse, &[BlockArg::from(past)]);
         f.switch_to_block(refuse);
         let pc = f.block_params(refuse)[0];
+        // Inside a shared run, its words are the first place's: the shift makes them this one's.
+        let sh = mget(&mut f, Mem::Shift);
+        let pc = f.ins().iadd(pc, sh);
         f.ins().return_(&[pc]);
         f.seal_all_blocks();
         f.finalize();
-        own = reorder_fn.into_iter().chain(table_fn).collect::<Vec<_>>();
+        own = reorder_fn.into_iter().chain(table_fn).chain(span_fn).collect::<Vec<_>>();
         let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
         shape = crate::native_cpu_shape::check(&context.func, &heads, &names);
     }
     shape.map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
     let mut clif = context.func.display().to_string();
-    crate::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
+    crate::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|e| {
+        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+            eprintln!("tier 2: {e:?}");
+        }
+        Error::BackendFailure
+    })?;
     let mut disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
     module.clear_context(&mut context);
     let calls = clif.lines().filter(|l| l.trim().starts_with("call ") || l.contains(" = call ")).count();
@@ -1675,11 +2007,21 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         c.func = func;
         c.set_disasm(true);
         clif.push_str(&c.func.display().to_string());
-        crate::native_cpu_codegen::define_function(&mut module, fid, &mut c).map_err(|_| Error::BackendFailure)?;
+        crate::native_cpu_codegen::define_function(&mut module, fid, &mut c).map_err(|e| {
+            if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+                eprintln!("tier 2's own function: {e:?}");
+            }
+            Error::BackendFailure
+        })?;
         disassembly.push_str(&c.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
         module.clear_context(&mut c);
     }
-    module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
+    module.finalize_definitions().map_err(|e| {
+        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+            eprintln!("tier 2's module: {e:?}");
+        }
+        Error::BackendFailure
+    })?;
     let code = module.get_finalized_function(id);
     // SAFETY: `tempo_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
@@ -1687,7 +2029,14 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
     let own_calls = calls;
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
-    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, clif, disassembly, heads, own_calls })
+    let two_slots = has_context(words);
+    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, heads, own_calls })
+}
+
+/// Whether the program has context beside each call's return (a level's word, its flags): two
+/// return slots a call.
+fn has_context(words: &[crate::native_ir::StructuralBlock]) -> bool {
+    words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. }))
 }
 
 /// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last
@@ -1766,7 +2115,7 @@ impl CompiledStream {
             super_node: vec![0; supers],
             super_kind: vec![0; supers],
             open: vec![0; nodes],
-            returns: vec![0; pushes],
+            returns: vec![0; if self.context { 2 * pushes } else { pushes }],
             counts: [0; 3],
             frames: std::array::from_fn(|_| vec![0; if self.wraps { nodes + 1 } else { 0 }]),
             chains: std::array::from_fn(|_| vec![0; if self.wraps { nodes } else { 0 }]),
@@ -1843,7 +2192,7 @@ impl CompiledStream {
             totals_mask: tier1.totals_mask,
             room_nodes: tape.kind.len() as u64,
             room_supers: tape.super_node.len() as u64,
-            room_pushes: tape.returns.len() as u64,
+            room_pushes: (tape.returns.len() / if self.context { 2 } else { 1 }) as u64,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers.
         unsafe { (self.entry)(&ctx) }
@@ -1910,6 +2259,9 @@ pub struct Columns {
     pub parent: Vec<u32>,
     /// 1 for an extra (a comment).
     pub extra: Vec<u8>,
+    /// The supertypes, one row each: the node's record and the supertype's kind.
+    pub super_node: Vec<u32>,
+    pub super_kind: Vec<u32>,
 }
 
 impl Columns {
@@ -1935,7 +2287,11 @@ impl Tape {
         };
         let (parent, mut extra) = (take(&mut self.parent), std::mem::take(&mut self.extra));
         extra.truncate(n);
-        Columns { kind, field, start, end, size, parent, extra }
+        let s = self.counts[1] as usize;
+        let (mut super_node, mut super_kind) = (std::mem::take(&mut self.super_node), std::mem::take(&mut self.super_kind));
+        super_node.truncate(s);
+        super_kind.truncate(s);
+        Columns { kind, field, start, end, size, parent, extra, super_node, super_kind }
     }
 
     /// The node table as `stream::Node`s.

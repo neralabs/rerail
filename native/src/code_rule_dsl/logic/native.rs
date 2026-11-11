@@ -21,7 +21,7 @@
 mod setfix;
 #[cfg(test)]
 pub(crate) use setfix::DERIVATIONS;
-pub(in crate::code_rule_dsl) use setfix::forget_scope;
+pub(in crate::code_rule_dsl) use setfix::{forget_engine, forget_scope};
 pub(in crate::code_rule_dsl) mod aggregation;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
 pub(in crate::code_rule_dsl) mod dfs_first;
@@ -32,7 +32,7 @@ pub(in crate::code_rule_dsl) mod match_all;
 #[cfg(test)]
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
-pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols};
+pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
 /// A connection's identity for the state a run leaves with it (`setfix::scope`).
 pub(in crate::code_rule_dsl) use setfix::scope as setfix_scope;
 pub(in crate::code_rule_dsl) use setfix::symbol_text;
@@ -133,6 +133,25 @@ impl Lattice for Min {
     fn top(&self) -> i64 { -TOP }
     fn finite(&self) -> bool { false }
     fn widen(&self, old: i64, new: i64) -> i64 { if new < old { -TOP } else { new } }
+}
+
+/// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rr`), over a run's atoms.
+/// Shortlex is a well-order, so every chain of ever-smaller values is finite. A value the atoms do not hold (`TOP`)
+/// absorbs. The run declares it over its store's atoms (`declare`), as its symbols are those atoms.
+pub(in crate::code_rule_dsl) struct ShortlexMin(pub(in crate::code_rule_dsl) Arc<crate::content_store::atoms::Atoms>);
+impl Lattice for ShortlexMin {
+    fn lub(&self, a: i64, b: i64) -> i64 {
+        if a == TOP || b == TOP {
+            return TOP;
+        }
+        let key = |v: i64| u32::try_from(v).ok().and_then(|atom| self.0.with_str(atom, |s| (s.chars().count(), s.as_bytes().to_vec())));
+        match (key(a), key(b)) {
+            (Some(x), Some(y)) => if y < x { b } else { a },
+            _ => TOP,
+        }
+    }
+    fn top(&self) -> i64 { TOP }
+    fn finite(&self) -> bool { true }
 }
 
 /// Declared lattices by name: the built-ins, and those the logic declares (`declare`), such as the typing's

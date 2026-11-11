@@ -522,6 +522,8 @@ pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &
 pub(super) struct CoreRows {
     /// The per-node relations no rule reads (`Batch::build`, from the projection): their rows are not made.
     pub(super) skip: Skip,
+    /// The node kinds whose `text` is made at any length (`Projection::long_text`).
+    pub(super) long_text: BTreeSet<String>,
     op: Vec<[i64; 2]>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
@@ -698,7 +700,7 @@ impl CoreRows {
                 }
             }
         }
-        if wants_text && (token_like || text.len() <= TEXT_INLINE) {
+        if wants_text && (token_like || text.len() <= TEXT_INLINE || self.long_text.contains(kind)) {
             self.text.push([n, string(text) as i64]);
         }
     }

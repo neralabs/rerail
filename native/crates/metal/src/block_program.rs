@@ -400,7 +400,7 @@ pub fn run_batch(
                 positions[from..from + (count(e) as usize).min(capacity)].to_vec()
             })
             .collect();
-        let totals = (0..n.totals.len()).map(|t| u64::from(count(n.extracts.len() + t))).collect();
+        let totals = if n.totals.is_empty() { Vec::new() } else { vec![u64::from(count(n.extracts.len()) != 0)] };
         let _ = groups;
         results.push(BlockRun { outputs, positions, totals });
     }
@@ -1129,8 +1129,9 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
     // A total is a flag (`BlockProgram::totals`): a group with a bit sets it, in any order and
     // again on a relaunch, so it waits on no other group.
     let extracts = native.extracts.len();
-    for (t, &k) in native.totals.iter().enumerate() {
-        out.push_str(&format!("  totals_or(select({m}(0), stream_cut(v{}, gl, len, {}u), keep), l, counts + f.tot_base + {}u);\n", native.outputs[k], native.output_delays[k], extracts + t));
+    // All of them into one flag, the count after the extracts' (`native_cpu_block::counted`).
+    for &k in &native.totals {
+        out.push_str(&format!("  totals_or(select({m}(0), stream_cut(v{}, gl, len, {}u), keep), l, counts + f.tot_base + {extracts}u);\n", native.outputs[k], native.output_delays[k]));
     }
     if extracts > 0 {
         let mut words = Vec::new();

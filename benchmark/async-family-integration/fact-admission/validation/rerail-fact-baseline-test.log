@@ -1,0 +1,211 @@
+   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/Async-family-integration-comparison/native)
+warning: function `take_write_lock_hash_counts` is never used
+   --> native/crates/store/src/../../../src/content_store/mod.rs:178:15
+    |
+178 | pub(super) fn take_write_lock_hash_counts() -> (usize, usize) {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `contains` and `is_empty` are never used
+   --> native/crates/store/src/../../../src/content_store/read_cache.rs:194:19
+    |
+175 | impl DecompressedReadCache {
+    | -------------------------- methods in this implementation
+...
+194 |     pub(super) fn contains(&self, key: CacheKey) -> bool {
+    |                   ^^^^^^^^
+...
+199 |     pub(super) fn is_empty(&self) -> bool {
+    |                   ^^^^^^^^
+
+warning: method `is_empty` is never used
+  --> native/crates/store/src/../../../src/content_store/results.rs:29:19
+   |
+19 | impl LocalResultCache {
+   | --------------------- method in this implementation
+...
+29 |     pub(super) fn is_empty(&self) -> bool {
+   |                   ^^^^^^^^
+
+warning: `rerail-store` (lib) generated 3 warnings
+warning: unused import: `Cache`
+ --> native/src/code_rule_dsl/logic/front/caches_tests.rs:3:13
+  |
+3 | use super::{Cache, caches};
+  |             ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `table_source` and `tables_built`
+  --> native/src/code_rule_dsl/logic/native.rs:45:392
+   |
+45 | ..., run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows};
+   |                                                       ^^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> native/src/code_rule_dsl/logic/native/setfix/rowcode.rs:227:9
+    |
+227 |     let mut index = |v: u16, outputs: &mut Vec<u16>| outputs.iter().position(|&o| o == v).unwrap_or_else(|| {
+    |         ----^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `program`
+  --> native/src/code_rule_dsl/logic/plan/corpus/cache_tests.rs:39:23
+   |
+39 |     fn of(name: &str, program: &str) -> Corpus {
+   |                       ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_program`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> native/src/code_rule_dsl/logic/plan/corpus.rs:664:13
+    |
+664 |         let mut bump = |c: &'static str, worst: &mut &'static str| {
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: value assigned to `inlined_rels` is never read
+    --> native/src/code_rule_dsl/logic/plan.rs:5310:46
+     |
+5310 |     let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
+     |                                              ^^^^^^^^^^^^^^^ this value is reassigned later and never used
+...
+5316 |             inlined_rels = c.inlined.iter().cloned().collect();
+     |             ------------ `inlined_rels` is overwritten here before the previous value is read
+     |
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `inlined_rels` is never read
+    --> native/src/code_rule_dsl/logic/plan.rs:5313:13
+     |
+5313 |             inlined_rels = c.inlined.iter().cloned().collect();
+     |             ^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: function `render` is never used
+   --> native/src/build_languages.rs:559:4
+    |
+559 | fn render(entries: &[Entry], test_planned: &[String]) -> String {
+    |    ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `add_decisions` is never used
+   --> native/src/code_rule_dsl/logic/profile.rs:704:33
+    |
+704 | pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) {
+    |                                 ^^^^^^^^^^^^^
+
+warning: method `patched` is never used
+  --> native/src/code_rule_dsl/sql_executor/versions/patch.rs:19:12
+   |
+ 4 | impl Version {
+   | ------------ method in this implementation
+...
+19 |     pub fn patched(
+   |            ^^^^^^^
+
+warning: associated function `visit` is never used
+   --> native/src/code_rule_dsl/sql_executor/versions/tree.rs:226:12
+    |
+ 47 | impl<V: Clone> Node<V> {
+    | ---------------------- associated function in this implementation
+...
+226 |     pub fn visit(root: &Link<V>, f: &mut impl FnMut(&V)) {
+    |            ^^^^^
+
+warning: fields `node` and `child` are never read
+  --> native/src/code_rule_dsl/query/plan/python_structure.rs:80:9
+   |
+79 | pub(crate) struct Parenthesis {
+   |                   ----------- fields in this struct
+80 |     pub node: NodeRef,
+   |         ^^^^
+81 |     pub child: NodeRef,
+   |         ^^^^^
+   |
+   = note: `Parenthesis` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `node` is never read
+  --> native/src/code_rule_dsl/query/plan/python_structure.rs:93:9
+   |
+92 | pub(crate) struct Sequence {
+   |                   -------- field in this struct
+93 |     pub node: NodeRef,
+   |         ^^^^
+   |
+   = note: `Sequence` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `node` is never read
+  --> native/src/code_rule_dsl/query/plan/python_structure.rs:99:9
+   |
+98 | pub(crate) struct SequenceChild {
+   |                   ------------- field in this struct
+99 |     pub node: NodeRef,
+   |         ^^^^
+   |
+   = note: `SequenceChild` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `node` and `context` are never read
+   --> native/src/code_rule_dsl/query/plan/python_structure.rs:111:9
+    |
+110 | pub(crate) struct Assignment {
+    |                   ---------- fields in this struct
+111 |     pub node: NodeRef,
+    |         ^^^^
+...
+116 |     pub context: u32,
+    |         ^^^^^^^
+    |
+    = note: `Assignment` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `node` and `context` are never read
+   --> native/src/code_rule_dsl/query/plan/python_structure.rs:120:9
+    |
+119 | pub(crate) struct WithItem {
+    |                   -------- fields in this struct
+120 |     pub node: NodeRef,
+    |         ^^^^
+...
+125 |     pub context: u32,
+    |         ^^^^^^^
+    |
+    = note: `WithItem` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: unused `std::result::Result` that must be used
+    --> native/src/code_rule_dsl/logic/plan.rs:5271:9
+     |
+5271 | / ...   db.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| {
+5272 | | ...       if matches!(ctx.action, AuthAction::CreateTempTable { .. } | AuthAction::CreateTempView { .. } | AuthAction::CreateTem...
+5273 | | ...           made.store(true, std::sync::atomic::Ordering::Relaxed);
+...    |
+5276 | | ...   }));
+     | |_________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+5271 |         let _ = db.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| {
+     |         +++++++
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+   --> native/src/code_rule_dsl/logic/plan/corpus/scoping.rs:238:5
+    |
+238 |     drop(place);
+    |     ^^^^^-----^
+    |          |
+    |          argument has type `{closure@native/src/code_rule_dsl/logic/plan/corpus/scoping.rs:133:17: 133:68}`
+    |
+    = note: `#[warn(dropping_copy_types)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+    |
+238 -     drop(place);
+238 +     let _ = place;
+    |

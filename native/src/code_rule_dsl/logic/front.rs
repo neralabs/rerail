@@ -913,6 +913,11 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
     finish(prog)
 }
 
+// A test of a transform written for preorder ids (T's goldens) parses programs with their node comparisons as written,
+// on its own thread.
+#[cfg(test)]
+thread_local! {pub(in crate::code_rule_dsl) static KEEP_NODE_COMPARISONS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };}
+
 /// The relation of each node's preorder key (`syntax`'s `node_order(n, k)`).
 const NODE_ORDER: &str = "node_order";
 
@@ -926,6 +931,10 @@ const NODE_ORDER: &str = "node_order";
 /// A variable is a node when a column it fills is declared `node`: in the head or any atom of the body.
 fn order_nodes(prog: &mut Program) {
     if !crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
+        return;
+    }
+    #[cfg(test)]
+    if KEEP_NODE_COMPARISONS.get() {
         return;
     }
     let decls = prog.decls.clone();

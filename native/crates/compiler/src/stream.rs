@@ -9,11 +9,11 @@ use crate::program::*;
 use crate::Error;
 use std::collections::{HashMap, HashSet};
 
-pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, Reading, Readings};
+pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Reading, Readings};
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=WRAP).contains(&opcode)
+    (TOKEN..=FLAG).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -22,7 +22,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
     let words = program.words.len();
     let block = program.block_programs.first();
     let extracts = block.map_or(0, |b| b.extracts.len());
-    let totals = block.map_or(0, |b| b.totals.len());
+    // The totals are one flag (`BlockRun::totals`).
+    let totals = block.map_or(0, |b| b.totals.len().min(1));
     let masks = block.map_or(0, |b| b.masks.len());
     let ok = match opcode {
         TOKEN => mode == 0 && usize::from(operand) < extracts,
@@ -33,21 +34,24 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // A word of at most 64 bytes: the CPU compares 8 at a time, unrolled, within the 64 bytes
         // past the file.
         WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 64),
-        OPEN | NODE_SUPER => mode == 0,
+        // A level's word's kind (`REMEMBERED`) only as a moved or relabelled node's.
+        OPEN | NODE_SUPER => mode == 0 && operand != REMEMBERED,
         // `m=1`: an extra's leaf, deferred; `m=2`: an extra's leaf placed now, never the node
         // made last at its level.
-        LEAF => mode <= 2,
+        LEAF => mode <= 2 && operand != REMEMBERED,
         // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
         MARK => mode < 64 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
         // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`);
         // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
         // the nodes inside it, read by reading `operand` (`reread`).
-        RETAG => mode <= 2 || (mode == 3 && usize::from(operand) < program.readings.maps.len()),
+        RETAG => (mode <= 2 && (mode != 0 || operand != REMEMBERED)) || (mode == 3 && usize::from(operand) < program.readings.maps.len()),
         NODE_FIELD => mode <= 3 && operand != 0,
         // `m=1`: the open node's two leaves, one (`fold`).
-        MERGE => mode <= 1,
-        WRAP => mode == 0,
+        MERGE => mode <= 1 && operand != REMEMBERED,
+        WRAP => mode == 0 && operand != REMEMBERED,
+        REMEMBER => mode == 0 && operand != 0 && operand != REMEMBERED,
+        FLAG => mode <= 2 && operand < 16,
         CLOSE => mode <= 1 && operand == 0,
         PUSH => mode == 0 && usize::from(operand) < words,
         RETURN => mode <= 1 && operand == 0,
@@ -129,6 +133,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             }
             RETURN => returns.iter().map(|&p| p + usize::from(mode)).collect(),
             WORD_IS if mode == 1 => vec![pc + 1, pc + 2],
+            FLAG if mode == 2 => vec![pc + 1, pc + 2],
             MARK | ROW => vec![pc + 1, pc + 2],
             _ => vec![pc + 1],
         }
@@ -223,6 +228,8 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
     let words = &program.words;
     let stream = |op: u8, m: u8| words.iter().map(|&w| split(w)).find(|&(o, mm, _)| o == op && mm == m).map(|(_, _, x)| usize::from(x));
     let none: Vec<u32> = Vec::new();
+    // A kind as a word names it: a level's word's (`REMEMBERED`), none where it has none.
+    let kind_of = |k: u16, word: u16| if k != REMEMBERED { Some(k) } else if word != 0 { Some(word) } else { None };
     let starts: &[u32] = stream(TOKEN, 0).map_or(&none, |e| &tier1.positions[e]);
     let no_words: Vec<u64> = Vec::new();
     let lasts: &[u64] = match (stream(SPAN, 1), program.block_programs.first()) {
@@ -259,7 +266,11 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
     let mut moved = 0usize;
     // A reading dropped a node (`GONE`): its record stays, of kind `DEAD`, left out at `ACCEPT`.
     let mut dead = false;
-    let mut returns: Vec<u16> = Vec::new();
+    // Each call's return, with its caller's word (`REMEMBER`), given back where it returns.
+    let mut returns: Vec<(u16, u16, u16)> = Vec::new();
+    let mut word: u16 = 0;
+    // The level's flags (`FLAG`), a bit each: the caller's come back where a call returns.
+    let mut flags: u16 = 0;
     let refuse = |pc: usize, why: &'static str| Err(Refused { pc, why });
     loop {
         let (opcode, mode, operand) = split(words[pc]);
@@ -344,7 +355,10 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
                     pc += 1;
                 }
             }
-            RETAG if mode == 1 => nodes[moved].kind = operand,
+            RETAG if mode == 1 => {
+                let Some(k) = kind_of(operand, word) else { return refuse(pc - 1, "a word's kind, and no word") };
+                nodes[moved].kind = k;
+            }
             RETAG if mode == 3 => {
                 // The node made last at this level and the nodes inside it, the records from its
                 // base to the pending extras, each base's chain of wraps first (outermost first,
@@ -391,7 +405,10 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
                                 nodes[n].kind = DEAD;
                                 dead = true;
                             }
-                            k => nodes[n].kind = k,
+                            k => {
+                                let Some(k) = kind_of(k, word) else { return refuse(pc - 1, "a word's kind, and no word") };
+                                nodes[n].kind = k;
+                            }
                         }
                     }
                     i = next;
@@ -414,7 +431,8 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
             RETAG | NODE_FIELD if mode == 2 => {
                 let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse(pc - 1, "a relabel with no node before it") };
                 if opcode == RETAG {
-                    nodes[r].kind = operand;
+                    let Some(k) = kind_of(operand, word) else { return refuse(pc - 1, "a word's kind, and no word") };
+                    nodes[r].kind = k;
                 } else {
                     nodes[r].field = operand;
                 }
@@ -498,9 +516,18 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
             NODE_FIELD if mode == 1 => nodes[moved].field = operand,
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
             NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
-            PUSH => returns.push(operand),
+            PUSH => returns.push((operand, word, flags)),
+            REMEMBER => word = operand,
+            FLAG if mode == 0 => flags |= 1 << operand,
+            FLAG if mode == 1 => flags &= !(1 << operand),
+            FLAG => {
+                if flags & (1 << operand) == 0 {
+                    pc += 1;
+                }
+            }
             RETURN => {
-                let Some(p) = returns.pop() else { return refuse(pc - 1, "a return with no call") };
+                let Some((p, w, fl)) = returns.pop() else { return refuse(pc - 1, "a return with no call") };
+                (word, flags) = (w, fl);
                 pc = usize::from(p) + usize::from(mode);
             }
             ACCEPT => {

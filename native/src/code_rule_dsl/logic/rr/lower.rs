@@ -315,10 +315,18 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
     // are no relations of the program.
     // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0050).
-    let reads_within = l.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
+    use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
+    let reads_within = l.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == WITHIN);
     for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).filter(|b| !(reads_within && *b == "within")) {
         l.prog.decls.remove(b);
         l.prog.inputs.retain(|i| i != b);
+    }
+    // A program lowered without `core.rr` (its own part, `parse_own`) still declares the `within` it reads.
+    if reads_within {
+        l.prog.decls.entry(WITHIN.to_owned()).or_insert_with(|| vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+        if !l.prog.inputs.iter().any(|i| i == WITHIN) {
+            l.prog.inputs.push(WITHIN.to_owned());
+        }
     }
     l.kind_sets()?;
     lower_boolean_relations(&mut l.prog);
@@ -1665,12 +1673,56 @@ impl Lowerer {
             }
             columns.extend(found);
         }
+        // Top-down: a helper's column its own rules do not bind to spans, where every rule that reads the helper binds
+        // that argument so (`binder`, or through its own head's such column), holds those spans. The helper derives
+        // rows for other nodes too, but none of its readers joins them, so testing only the spans its readers bind
+        // gives every reader the same rows. Not for a column the run outputs, which no reader bounds.
+        let mut demand: BTreeMap<(String, usize), BTreeSet<SpanIn>> = BTreeMap::new();
+        let outputs: BTreeSet<&String> = self.prog.outputs.iter().collect();
+        let mut rounds = 0;
+        loop {
+            let mut found = BTreeMap::new();
+            for &rel in by_head.keys().filter(|r| !outputs.contains(*r)) {
+                for i in 0..by_head[rel][0].head.args.len() {
+                    if columns.contains_key(&(rel.clone(), i)) {
+                        continue;
+                    }
+                    let mut all = BTreeSet::new();
+                    let mut sites = 0;
+                    let mut bound = true;
+                    for r in &self.prog.rules {
+                        for a in r.body.iter().filter_map(Literal::atom).filter(|a| &a.rel == rel) {
+                            sites += 1;
+                            let got = match a.args.get(i) {
+                                Some(Term::Var(y)) => binder(&r.body, y, &columns).or_else(|| {
+                                    r.head.args.iter().position(|t| matches!(t, Term::Var(h) if h == y)).and_then(|j| demand.get(&(r.head.rel.clone(), j)).cloned())
+                                }),
+                                _ => None,
+                            };
+                            match got {
+                                Some(s) => all.extend(s),
+                                None => bound = false,
+                            }
+                        }
+                    }
+                    if bound && sites > 0 && demand.get(&(rel.clone(), i)) != Some(&all) {
+                        found.insert((rel.clone(), i), all);
+                    }
+                }
+            }
+            rounds += 1;
+            if found.is_empty() || rounds > 64 {
+                break;
+            }
+            demand.extend(found);
+        }
         for rule in &self.prog.rules {
             for a in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "rx_span") {
                 let (Some(Term::Str(p)), Some(Term::Var(c))) = (a.args.first(), a.args.get(1)) else {
                     return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
                 };
-                let Some(within) = binder(&rule.body, c, &columns) else {
+                let from_readers = || rule.head.args.iter().position(|t| matches!(t, Term::Var(h) if h == c)).and_then(|j| demand.get(&(rule.head.rel.clone(), j)).cloned());
+                let Some(within) = binder(&rule.body, c, &columns).or_else(from_readers) else {
                                         return not_yet(format!("{}: match_all over ${c}, a node or span not bound by `source`, `src_line`, `kind` or a capture", rule.head.rel));
                 };
                 for w in within {
@@ -1865,6 +1917,10 @@ impl Lowerer {
         };
         if let Some(op) = test_of(rel) {
             let [p, s] = args else { return Err(Error::Syntax(format!("{rel} takes a pattern and a string"))) };
+            // Negated, a match binds nothing: its named groups are plain groups, `!match(re, s)` as written.
+            if op == "rx" && let STerm::Str(re) = p && !groups(re).is_empty() && neg {
+                return self.atom(rel, &[STerm::Str(ungrouped(re)), s.clone()], neg);
+            }
             if op == "rx" && let STerm::Str(re) = p && !groups(re).is_empty() {
                 return not_yet(format!("match with named groups, {re:?}, here (`Lowerer::captures` lowers it in a body)"));
             }
@@ -1949,7 +2005,9 @@ impl Lowerer {
                     let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(&name){break name;}serial+=1;};
                     let v=|s:&str|Term::Var(s.to_owned());
                     let a=|r:&str,args:Vec<Term>|Literal::Atom(Atom{rel:r.into(),args,neg:false,gated:false});
-                    let mut body=vec![a(&input,vec![v("d")])];
+                    // The targets are read as `python_qualified`'s are, so every pass that follows rule bodies
+                    // (shared library parts, strata, demand) makes them before the candidates.
+                    let mut body=vec![a(&input,vec![v("d")]),a(&targets,vec![v("q")])];
                     // Locality proof only: the native contract emits nodes from these documents.
                     for n in ["c","f","r","o"] {body.push(a("node",vec![v("d"),v(n),Term::Wild,Term::Wild,Term::Wild]));}
                     self.prog.decls.insert(rel.clone(),["c","f","r","o"].into_iter().map(|n|(n.into(),"node".into())).collect());
@@ -2558,6 +2616,11 @@ fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Lite
                 put(l, &vars);
                 put(r, &vars);
             }
+            // An aggregate's body (its helper atom) reads the unset variable from outside: it reads the empty value
+            // there too. Its result and `over` are its own, never unset.
+            Literal::Agg { var, over, atom, .. } if !vars.contains(var) && over.as_ref().is_none_or(|o| !vars.contains(o)) => {
+                atom.args.iter_mut().for_each(|t| put(t, &vars));
+            }
             other if !other.vars().is_disjoint(&vars) => return not_yet("`unset` in an aggregate, `nearest` or `ast`"),
             _ => {}
         }
@@ -2578,6 +2641,37 @@ fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Lite
         })
         .collect();
     Ok((head, rest))
+}
+
+/// `re` with each named group made non-capturing (`(?P<x>…)`, `(?<x>…)` → `(?:…)`): what a test that binds nothing
+/// reads. Escapes and character classes are passed over.
+fn ungrouped(re: &str) -> String {
+    let mut out: Vec<u8> = Vec::with_capacity(re.len());
+    let (mut i, b) = (0, re.as_bytes());
+    let mut class = false;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'\\' && i + 1 < b.len() {
+            out.extend_from_slice(&b[i..i + 2]);
+            i += 2;
+            continue;
+        }
+        if class {
+            class = c != b']';
+        } else if c == b'[' {
+            class = true;
+        } else if c == b'(' {
+            let open = if re[i..].starts_with("(?P<") { 4 } else if re[i..].starts_with("(?<") && !re[i..].starts_with("(?<=") && !re[i..].starts_with("(?<!") { 3 } else { 0 };
+            if open > 0 && let Some(end) = re[i + open..].find('>') {
+                out.extend_from_slice(b"(?:");
+                i += open + end + 1;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    String::from_utf8(out).expect("only ASCII bytes are replaced")
 }
 
 fn groups(re: &str) -> Vec<String> {

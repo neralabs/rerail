@@ -130,6 +130,9 @@ pub(crate) trait Source: Send + Sync {
     fn made_on_lookup(&self) -> bool {
         false
     }
+    /// The planner expects `keys` lookups on `column` (decision 0105): a source that can make every row at once for
+    /// less than that many lookups cost chooses to.
+    fn expect_lookups(&self, _column: usize, _keys: f64) {}
     /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
     /// reading every row: a source whose rows are made on lookup.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
@@ -367,22 +370,63 @@ pub(crate) struct UnmadeView {
     pub eqs: Vec<(usize, i64)>,
 }
 
+/// A connection's deferred set-up (`defer_setup`): the statements still to run, each with what undoes it, and what
+/// undoes those already run (`reuse`).
+#[derive(Default)]
+struct Setup {
+    pending: Vec<(String, Option<String>)>,
+    undo: Vec<String>,
+}
 /// Set-up statements a connection runs only once SQL is about to run on it (`defer_setup`, `setup_now`).
-static SETUP: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, Vec<String>>>> = std::sync::LazyLock::new(Default::default);
+static SETUP: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, Setup>>> = std::sync::LazyLock::new(Default::default);
 
 /// Defers `sql` (statements, run as one batch) until SQL first runs on `db`'s connection (`setup_now`): a run whose
 /// readers are native runs none of it.
 pub(crate) fn defer_setup(db: &Connection, sql: &str) {
-    SETUP.lock().entry(connection_scope(db)).or_default().push(sql.to_owned());
+    SETUP.lock().entry(connection_scope(db)).or_default().pending.push((sql.to_owned(), None));
+}
+
+/// `defer_setup` of a run's own set-up on a connection a later run reuses: once run, `undo` undoes it when the
+/// connection is reused (`reuse`; `DETACH x` for an `ATTACH`).
+pub(crate) fn defer_setup_undone(db: &Connection, sql: &str, undo: &str) {
+    SETUP.lock().entry(connection_scope(db)).or_default().pending.push((sql.to_owned(), Some(undo.to_owned())));
 }
 
 /// Runs `db`'s deferred set-up (`defer_setup`), once: before a statement that needs it (a table made, a table of
 /// `x` written).
 pub(crate) fn setup_now(db: &Connection) -> Result<()> {
-    let pending = SETUP.lock().remove(&connection_scope(db)).unwrap_or_default();
-    for sql in pending {
+    let at = connection_scope(db);
+    let pending = std::mem::take(&mut SETUP.lock().entry(at).or_default().pending);
+    for (sql, undo) in pending {
         db.execute_batch(&sql)?;
+        if let Some(undo) = undo {
+            SETUP.lock().entry(at).or_default().undo.push(undo);
+        }
     }
+    Ok(())
+}
+
+/// Readies a connection an earlier run worked on for the next run (its owner keeps it, `corpus::Connections`): what
+/// the earlier run set up of its own is undone (SQL only where its set-up ran), and what the process kept for that
+/// run on it (its bound tables, views, the engine's relations) is dropped. What the connection itself holds stays:
+/// its functions, its symbols, what its runs left in SQL (`plan::Left`, which the next run drops).
+pub(crate) fn reuse(db: &Connection) -> Result<()> {
+    let at = connection_scope(db);
+    let undo = SETUP.lock().remove(&at).map(|s| s.undo).unwrap_or_default();
+    for sql in undo.iter().rev() {
+        db.execute_batch(sql)?;
+    }
+    // SQLite keeps each module's binding until the connection closes: the last run's sources are let go, its tables
+    // left empty (a `Modules` may drop while its connection still reads, so this is the connection's next run's).
+    BOUND.lock().retain(|(h, _), binding| {
+        if *h == at {
+            binding.clear();
+        }
+        *h != at
+    });
+    VIEWS.lock().retain(|(h, _), _| *h != at);
+    UNRESOLVED.lock().remove(&at);
+    crate::code_rule_dsl::logic::native::forget_engine(at);
     Ok(())
 }
 

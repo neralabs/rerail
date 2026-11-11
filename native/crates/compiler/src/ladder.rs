@@ -168,7 +168,7 @@ impl Lang {
             Gram::Seq(gs) => gs.iter().map(|g| self.cost(g)).fold(0, |a, b| (a + b).min(FAR)),
             Gram::Alt(gs) => gs.iter().map(|g| self.cost(g)).min().unwrap_or(FAR),
             Gram::Opt(_) | Gram::Star(_) => 0,
-            Gram::Plus(g) | Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.cost(g),
+            Gram::Plus(g) | Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) | Gram::Flag { body: g, .. } | Gram::Unless { body: g, .. } => self.cost(g),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.cost(body),
             Gram::Balanced { .. } => 2,
             Gram::Any(_) => 1,
@@ -201,7 +201,7 @@ impl Lang {
                     self.derive(rng, g, depth, out)
                 }
             }
-            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.derive(rng, g, depth, out),
+            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) | Gram::Flag { body: g, .. } | Gram::Unless { body: g, .. } => self.derive(rng, g, depth, out),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.derive(rng, body, depth, out),
             // A word: a token of most kinds.
             Gram::Any(_) => out.push(self.token(rng, "identifier")),
@@ -284,7 +284,7 @@ impl Lang {
                     self.bytes(rng, g, long, out)
                 }
             }
-            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.bytes(rng, g, long, out),
+            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) | Gram::Flag { body: g, .. } | Gram::Unless { body: g, .. } => self.bytes(rng, g, long, out),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.bytes(rng, body, long, out),
             Gram::Balanced { .. } | Gram::Any(_) => {}
         }
@@ -539,8 +539,15 @@ pub fn check_shape(name: &str, c: &Compiled) {
     }
     // Each tier calls only its own outlined functions (`native_cpu_block::general`,
     // `native_cpu_stream::outline`).
-    for (tier, asm, own) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls()), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls)] {
-        assert!(!asm.contains(" bl ") && !asm.contains(" br "), "{name}: {tier} jumps out");
+    // An indirect jump only through a jump table of its own: tier 2's shared arms
+    // (`native_cpu_stream::shared_runs`) end in one, a `br` each.
+    let tables = c.parser.tier2.clif.lines().filter(|l| l.contains(" br_table ")).count();
+    for (tier, asm, own, tables) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls(), 0), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls, tables)] {
+        // A jump table's sequence is one line, its `br` inside, its entries the function's labels.
+        let (tables_asm, rest): (Vec<&str>, Vec<&str>) = asm.lines().partition(|l| l.contains("jt_entries"));
+        let out: Vec<&&str> = rest.iter().filter(|l| l.contains(" bl ") || l.contains(" br ") || l.trim_start().starts_with("br ")).take(4).collect();
+        assert!(out.is_empty(), "{name}: {tier} jumps out: {out:?}");
+        assert_eq!(tables_asm.len(), tables, "{name}: {tier} jumps other than by its own tables");
         assert_eq!(asm.matches("blr").count(), own, "{name}: {tier} calls out");
     }
 }

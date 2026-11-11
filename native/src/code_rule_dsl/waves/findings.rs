@@ -313,6 +313,54 @@ fn metavariable(
     }))
 }
 
+/// Where each of `names` binds in W's match of `grammar` at `node` of `root`'s tape (an `ast` atom's captures,
+/// decision 0107): per name, its nodes as tape preorder ids, a single capture's node or a multi-capture's every node.
+/// A name of the rule's `transform` binds its text instead (`Capture::Text`). `None` where W does not match there or a
+/// name binds nothing; `Err` with the limit W's matcher hit within `work` visits.
+pub(in crate::code_rule_dsl) fn captured(
+    grammar: &GrammarMatcher,
+    root: &AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+    node: u32,
+    names: &[String],
+    work: usize,
+) -> Result<Option<Vec<Capture>>, String> {
+    begin_clause(grammar, work);
+    let mut found = grammar.match_rule(node_at(root, node));
+    let transformed = match (&grammar.transform, &mut found) {
+        (Some(transform), Some(found)) => transform.apply(found.get_env_mut()).is_ok(),
+        _ => true,
+    };
+    let (_, exceeded) = end_clause();
+    if let Some(limit) = exceeded {
+        return Err(format!("{limit:?}"));
+    }
+    if !transformed {
+        return Err("Work".to_owned());
+    }
+    let Some(found) = found else { return Ok(None) };
+    let env = found.get_env();
+    Ok(names
+        .iter()
+        .map(|name| {
+            if let Some(text) = env.get_transformed(name) {
+                return Some(Capture::Text(String::from_utf8_lossy(text).into_owned()));
+            }
+            let nodes: Vec<u32> = match env.get_match(name) {
+                Some(node) => vec![node.node_id() as u32],
+                None => env.get_multiple_matches(name).iter().map(|node| node.node_id() as u32).collect(),
+            };
+            (!nodes.is_empty()).then_some(Capture::Nodes(nodes))
+        })
+        .collect())
+}
+
+/// What a name of an `ast` atom binds at a match (`captured`): nodes (a multi-capture's every node), or the text a
+/// rule's `transform` makes.
+pub(in crate::code_rule_dsl) enum Capture {
+    Nodes(Vec<u32>),
+    Text(String),
+}
+
 pub(in crate::code_rule_dsl) struct Layer {
     shapes: Vec<Shape>,
     /// Code rule ids: `r` is an index.
@@ -620,7 +668,10 @@ impl Layer {
                 let commented = index.directives().map(|(line, _)| line).collect::<Vec<_>>();
                 for (line, tests) in index.directives() {
                     insert("bandit", &[d, line as i64, 0])?;
-                    for test in tests.iter().filter_map(|test| index_of(&self.codes, test)) {
+                    // A test no clause's code names still names one: the comment is no blanket `# nosec`
+                    // (`# nosec B607` keeps B602's violation, as in Bandit). It is a `k` no `nosec(c, k)` holds.
+                    let named: BTreeSet<i64> = tests.iter().map(|test| index_of(&self.codes, test).unwrap_or(i64::MAX)).collect();
+                    for test in named {
                         insert("bandit", &[d, line as i64, test])?;
                     }
                 }

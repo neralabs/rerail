@@ -65,6 +65,9 @@ pub(super) struct World {
     loads: BTreeMap<String, Loaded>,
     refused: BTreeSet<String>,
     budget: usize,
+    /// The documents loaded from beyond the corpus root (the libraries'), which the budget bounds. A source file of
+    /// the run's own tree is always loaded (phase 1, `sources.rr`).
+    beyond: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
     pub(super) dropped: usize,
 }
@@ -85,12 +88,16 @@ impl World {
                 }
             }
         }
+        // What the requests may read is watched (decision 0105): a directory listed or a file read that the
+        // journal says is unchanged is not statted.
+        super::observe(|o| o.watch(&roots));
         World { roots, root: root.to_path_buf(), budget, ..World::default() }
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
+    /// Resolved by phase 0's observer: where the journal says nothing changed, with no `realpath` (decision 0105).
     fn allowed(&self, asked: &str) -> Option<PathBuf> {
-        let path = std::fs::canonicalize(self.root.join(asked)).ok()?;
+        let path = super::observe(|o| o.canonical(&self.root.join(asked)))?;
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
     }
 
@@ -132,12 +139,18 @@ impl World {
     pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = &'a String>) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
         for p in paths {
-            if let Ok(c) = std::fs::canonicalize(self.root.join(p)) {
+            if let Some(c) = super::observe(|o| o.canonical(&self.root.join(p))) {
                 out.insert(c.to_string_lossy().into_owned());
             }
             out.insert(p.clone());
         }
         out
+    }
+
+    /// The document a load of `asked` gave earlier in this run, if any: a load asked again is answered alike.
+    pub(super) fn loaded_as(&self, asked: &str) -> Option<Loaded> {
+        let path = self.allowed(asked)?;
+        self.loads.get(path.to_string_lossy().as_ref()).cloned()
     }
 
     pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {
@@ -153,12 +166,14 @@ impl World {
         if corpus.contains(&path) || self.loads.contains_key(&path) {
             return None;
         }
-        if grammar != run_grammar || self.loads.len() >= self.budget {
+        let own = self.roots.first().is_some_and(|r| Path::new(&path).starts_with(r));
+        if grammar != run_grammar || (!own && self.beyond >= self.budget) {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
         }
         let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
+        self.beyond += usize::from(!own);
         self.loads.insert(path, loaded.clone());
         Some(loaded)
     }
