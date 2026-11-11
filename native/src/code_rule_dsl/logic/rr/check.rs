@@ -66,8 +66,11 @@ fn groups(re: &str) -> BTreeSet<String> {
 fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>, BTreeSet<String>, bool) {
     let none = BTreeSet::new;
     match l {
-        Lit::Group { neg: true, .. } | Lit::Pattern { neg: true, .. } => {
-            let vs = lit_vars(l);
+        // A negation's own variables are its own (`!(callee(m, c), fname(f, c))`: some m and f): it needs only what
+        // it shares with the rest, which is checked where the rest binds it. A negated pattern reads its subject.
+        Lit::Group { neg: true, .. } => (none(), none(), true),
+        Lit::Pattern { subject, neg: true, .. } => {
+            let vs = vars_of(subject);
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
         }
@@ -105,7 +108,10 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
                 Some(Term::Str(re)) => groups(re),
                 _ => none(),
             };
-            let subject: BTreeSet<String> = args.iter().skip(1).flat_map(vars_of).collect();
+            // `match_all(re, s, i, from, to)` reads its subject and binds the rest (a match's index and span).
+            let subject: BTreeSet<String> = args.iter().skip(1).take(1).flat_map(vars_of).collect();
+            let mut g = g;
+            g.extend(args.iter().skip(2).flat_map(vars_of));
             let ready = force || subject.is_subset(bound);
             (g, subject, ready)
         }
@@ -185,7 +191,8 @@ fn inner_needs(lits: &[Lit], bound: &BTreeSet<String>) -> BTreeSet<String> {
 /// outside (fix relations and edits).
 pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTreeSet<String>) -> Vec<String> {
     let head_vars: BTreeSet<String> = heads.iter().flat_map(|h| h.args.iter().flat_map(vars_of)).collect();
-    let mut bound = BTreeSet::new();
+    // `top` is a lattice's top value where no literal binds it as a variable (`lower`'s `top_is_var`).
+    let mut bound = BTreeSet::from(["top".to_owned()]);
     if heads.first().is_some_and(|h| given.contains(&h.rel)) {
         bound.extend(head_vars.iter().cloned());
     }

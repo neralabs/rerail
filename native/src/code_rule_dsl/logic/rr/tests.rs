@@ -403,13 +403,12 @@ fn a_set_of_tests_on_a_span_tests_its_text() {
 
 /// What is not lowered yet says so by name.
 #[test]
-fn unlowered_constructs_are_named() {
-    for (src, what) in [
-        (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
-    ] {
-        let e = parse(src).unwrap_err().to_string();
-        assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
-    }
+fn a_negated_match_reads_its_named_groups_as_groups() {
+    // A negated match binds nothing, so its named groups are plain groups: `!match("(?<z>.*)", y)` is
+    // `!match("(?:.*)", y)` (it was refused as "named groups … not lowered yet").
+    let p = parse(".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).").unwrap();
+    let text = format!("{p:?}");
+    assert!(text.contains("(?:.*)") && !text.contains("(?<z>"), "{text}");
 }
 
 /// `.violation` rows become the engine's findings; fixes are left out; arithmetic and Soufflé's string
