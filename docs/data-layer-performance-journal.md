@@ -11565,3 +11565,24 @@ The tooling suite passes 411 tests and 165 subtests.
 The conditional quality prototype matches all 22 recorded calls by path, line, and code.
 The comparison uses sets. Full messages, order, and duplicates still need acceptance.
 The migration inventory remains at 98 translations, with 13 full admissions and two absent rules.
+
+### Native request answers and workspace scanner parity, 2026-11-10
+
+The next build adopts Final `7330552f8`. It takes 223.44 wall seconds and 696.99 CPU seconds.
+The request cone now reads a completed native demand in place and publishes its answer in the native relation.
+The SQL path writes answer rows in a batch.
+
+The load-guard regression passes in cold and warm CLI runs.
+Each run loads one valid Python file and returns the typed invalid UTF-8 error for the other file.
+The original DynamicModuleLoading undecodable-file test passes through each API.
+All 30 discovery cases also match through each API, including an invalid UTF-8 file between positive files.
+
+AsyncExecutor now supplies its file buffer through the caller's scope.
+TypeSafetyPatterns also carries the caller's path and name for allowlists, suffix checks, and discovery.
+Each API passes all 117 original AsyncExecutor cases and all 193 original TypeSafetyPatterns cases.
+Each API matches 28 and 31 positive detector returns, respectively.
+The [census](../gate/data-layer/fixtures/host/data-layer-port/rr-final733-suite-census.json.gz) records all 34 passing reports.
+
+Inventory checks now use the adopted engine snapshot.
+Adoption still checks the live Final tip before a new cohort starts.
+The local cache archives 29 older unit test binaries. The archive check compares each decompressed SHA-256 with its original.
