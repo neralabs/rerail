@@ -37,7 +37,7 @@ pub type Spanned = (Tok, usize, usize);
 
 /// A string literal's escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}` and JSON's `\uXXXX`. Any other backslash is
 /// kept with the character after it, so a regex reads as written (`"\d+\.py"`).
-fn unescape(body: &str) -> Result<String, String> {
+pub(crate) fn unescape(body: &str) -> Result<String, String> {
     let mut out = String::new();
     let mut chars = body.chars().peekable();
     while let Some(c) = chars.next() {

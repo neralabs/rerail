@@ -762,8 +762,8 @@ pub mod tests {
         let mut tapes: Vec<_> = batches.iter().map(|b| p.tape(b)).collect();
         let nodes: usize = ours.iter().map(|f| super::rr::tape(f).len()).sum();
         let retired = rerail_compiler::native_cpu_codegen::retired;
-        // tier 1, tier 2, the Rust parser
-        let mut best = [(std::time::Duration::MAX, u64::MAX, u64::MAX); 3];
+        // tier 1, tier 2, the Rust parser, the lean parser's lexer, the lean parser whole
+        let mut best = [(std::time::Duration::MAX, u64::MAX, u64::MAX); 5];
         let mut keep = |k: usize, t: std::time::Duration, i: u64, c: u64| best[k] = (best[k].0.min(t), best[k].1.min(i), best[k].2.min(c));
         for _ in 0..rounds {
             let (i0, c0, t0) = (retired().0, retired().1, thread_cpu());
@@ -781,12 +781,23 @@ pub mod tests {
             }
             std::hint::black_box(n);
             let (t3, (i3, c3)) = (thread_cpu(), retired());
+            for f in &ours {
+                n += super::rr::lean::token_count(f);
+            }
+            let (t4, (i4, c4)) = (thread_cpu(), retired());
+            for f in &ours {
+                n += super::rr::lean::tape(f).len();
+            }
+            std::hint::black_box(n);
+            let (t5, (i5, c5)) = (thread_cpu(), retired());
+            keep(3, t4 - t3, i4 - i3, c4 - c3);
+            keep(4, t5 - t4, i5 - i4, c5 - c4);
             keep(0, t1 - t0, i1 - i0, c1 - c0);
             keep(1, t2 - t1, i2 - i1, c2 - c1);
             keep(2, t3 - t2, i3 - i2, c3 - c2);
         }
         eprintln!("{} files the grammar parses, {:.2} MB, {nodes} nodes; the least of {rounds} rounds", ours.len(), bytes as f64 / 1e6);
-        for (name, (t, i, cy)) in ["tier 1", "tier 2", "Rust (rr::tape)"].iter().zip(best) {
+        for (name, (t, i, cy)) in ["tier 1", "tier 2", "Rust (rr::tape)", "lean: lexer", "lean: whole"].iter().zip(best) {
             eprintln!("  {name:>16}: {t:8.2?} CPU, {:7.1}M instructions, {:7.1}M cycles, IPC {:.2}; {:.0} instructions and {:.0} cycles a node", i as f64 / 1e6, cy as f64 / 1e6, i as f64 / cy as f64, i as f64 / nodes as f64, cy as f64 / nodes as f64);
         }
         // Where tier 2's instructions go: each word's Cranelift instructions times how often the
