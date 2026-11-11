@@ -1,0 +1,1 @@
+With hundreds of worktrees recorded, each tool call no longer costs Rerail more for every worktree: it checked whether each recorded checkout contained the session's checkouts, so the daemon could stay busy for minutes and hooks timed out. It now reads only the checkouts recorded at the folders above each one.

@@ -2,9 +2,9 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
-import { openRerailDatabase } from "../../../src/engine/storage/database.js";
+import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
 import {
@@ -237,7 +237,72 @@ describe("checkout code-rule catalog", () => {
       catalogs.close();
     }
   });
+
+  it("reads a checkout at one cost however many checkouts its repository has recorded", () => {
+    const rowsRead = (recorded: number): number => {
+      const base = temporaryRoot();
+      const main = join(base, "main");
+      execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+      execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "base"], { cwd: main });
+      const read = join(main, ".worktrees", "read");
+      execFileSync("git", ["worktree", "add", "--quiet", "-b", "read", read], { cwd: main });
+      const databasePath = join(base, "rerail.sqlite");
+      const key = setUpTestRepository(main, {}, databasePath);
+      // Worktrees beside the main checkout and inside it, as a repository many agents work in has.
+      const worktrees = Array.from({ length: recorded }, (_, index) => join(index % 2 === 0 ? base : join(main, ".worktrees"), `worktree-${index}`));
+      recordCheckoutRows(databasePath, key, [read, ...worktrees]);
+      const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+      try {
+        const catalog = catalogs.catalog(read);
+        const counter = countRowsRead(catalogs.database);
+        expect(catalogs.refresh(read)).toBe("ok");
+        expect(catalog.refresh()).toBe(false);
+        expect(catalogs.ownerCheckoutPaths(read)).toEqual([read, main]);
+        return counter.rows;
+      } finally {
+        catalogs.close();
+      }
+    };
+    expect(rowsRead(300)).toBe(rowsRead(10));
+  });
 });
+
+/** Records a checkout of `repositoryKey` at each path, as recording each worktree would. */
+function recordCheckoutRows(databasePath: string, repositoryKey: string, paths: readonly string[]): void {
+  const database = openRerailDatabase(databasePath);
+  try {
+    const insert = database.$client.prepare(
+      "INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, 'clone', NULL, 1, 1)",
+    );
+    for (const path of paths) insert.run(path, repositoryKey);
+  } finally {
+    database.$client.close();
+  }
+}
+
+/** Counts the rows every statement prepared on `database`'s connection from now on hands back. */
+function countRowsRead(database: RerailDatabase): { rows: number } {
+  const counter = { rows: 0 };
+  const client = database.$client;
+  const prepare = client.prepare.bind(client);
+  vi.spyOn(client, "prepare").mockImplementation(source => {
+    const statement = prepare(source);
+    const all = statement.all.bind(statement);
+    const get = statement.get.bind(statement);
+    statement.all = (...parameters) => {
+      const rows = all(...parameters);
+      counter.rows += rows.length;
+      return rows;
+    };
+    statement.get = (...parameters) => {
+      const row = get(...parameters);
+      if (row !== undefined) counter.rows += 1;
+      return row;
+    };
+    return statement;
+  });
+  return counter;
+}
 
 describe("code rule schema and engine agree on unsupported fields", () => {
   const bundledCapabilities = readFileSync(join(bundledCodeRuleDslDirectory(), "capabilities.json"), "utf8");

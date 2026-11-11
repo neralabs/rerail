@@ -5,7 +5,7 @@
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, parse } from "node:path";
+import { dirname, parse, resolve } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
@@ -329,11 +329,25 @@ function absorbAliasOwner(tx: Writer, key: RepositoryKey, alias: RepositoryKey):
   return [other.repositoryKey, ...other.aliases];
 }
 
-/** The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. */
+/** The folders that hold `path`, from its parent folder up to the filesystem root. */
+function enclosingFolders(path: string): string[] {
+  const folders: string[] = [];
+  let folder = resolve(path);
+  while (dirname(folder) !== folder) {
+    folder = dirname(folder);
+    folders.push(folder);
+  }
+  return folders;
+}
+
+/**
+ * The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. Only the
+ * rows recorded at the folders above it are read, through the path key, so the cost follows its depth and not how many
+ * checkouts are recorded.
+ */
 export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): CheckoutRecord[] {
-  return db.select().from(checkouts)
-    .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath))).all()
-    .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath))
+  return db.select().from(checkouts).where(inArray(checkouts.checkoutPath, enclosingFolders(checkout.checkoutPath))).all()
+    .filter(row => row.repositoryKey === checkout.repositoryKey)
     .sort((left, right) => right.checkoutPath.length - left.checkoutPath.length);
 }
 
