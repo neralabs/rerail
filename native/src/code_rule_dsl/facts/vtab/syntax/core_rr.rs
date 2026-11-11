@@ -15,6 +15,50 @@
 
 use super::{Dialect, Projected, Relation};
 use crate::code_rule_dsl::facts::core::Facts;
+
+/// What a family reads of its own documents' core.rr facts, registered at load by the crate that knows it: the
+/// literals it decodes itself, its syntax verdict, and its strings' constant parts. Defaults: the common reading.
+pub(crate) trait DialectFacts: Send + Sync {
+    /// The literal facts of a node of `kind` with source `text`, where the family reads them itself (`.rr`'s);
+    /// `None`: the common reading.
+    fn literal(&self, kind: &str, text: &str) -> Option<Literal> {
+        let _ = (kind, text);
+        None
+    }
+    /// A string literal's decoded body (`prefix` its letters, lowercased), where the family decodes it itself.
+    fn string_body(&self, prefix: &str, text: &str) -> Option<String> {
+        let _ = (prefix, text);
+        None
+    }
+    /// A document's syntax verdict where the family gives its own (`verdict`); `None`: the tree's first error.
+    fn verdict(&self, f: &Facts) -> Option<Result<Option<(u32, String)>, String>> {
+        let _ = f;
+        None
+    }
+    /// The constant parts of the string literal at `local` (`str_part`; `words`: for `str_part_word`), as
+    /// (value, node, spec, offset).
+    fn str_parts(&self, p: &Projected, dialect: &Dialect, local: u32, words: bool) -> Vec<(String, i64, u8, usize)> {
+        let _ = (p, dialect, local, words);
+        Vec::new()
+    }
+    /// Whether `c` is a word character of `str_part_word`'s words.
+    fn is_word(&self, c: u32) -> bool {
+        char::from_u32(c).is_some_and(char::is_alphanumeric)
+    }
+}
+
+static DIALECT_FACTS: [std::sync::OnceLock<&'static dyn DialectFacts>; Family::COUNT] =
+    [const { std::sync::OnceLock::new() }; Family::COUNT];
+
+/// Registers `family`'s reading of its facts; the first registration holds.
+pub(crate) fn register_dialect_facts(family: Family, facts: &'static dyn DialectFacts) {
+    let _ = DIALECT_FACTS[family as usize].set(facts);
+}
+
+/// `family`'s registered reading, if any.
+fn dialect_facts(family: Family) -> Option<&'static dyn DialectFacts> {
+    DIALECT_FACTS[family as usize].get().copied()
+}
 use std::collections::{BTreeSet, HashSet};
 
 /// A document's text may be long: `text` holds a node's when it is at most this many bytes, or the node is
@@ -24,7 +68,7 @@ pub(super) const TEXT_INLINE: usize = 256;
 
 /// A language's literal and line rules.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Family {
+pub(crate) enum Family {
     Python,
     Ecma,
     Php,
@@ -35,6 +79,9 @@ pub(super) enum Family {
 }
 
 impl Family {
+    /// How many families there are.
+    const COUNT: usize = 6;
+
     pub(super) fn of(label: Option<&str>) -> Self {
         match label {
             Some("python") => Self::Python,
@@ -219,28 +266,20 @@ pub(super) fn name(kind: &str, text: &str) -> Option<String> {
 
 /// What a literal node gives: `strprefix`, `str`, and `value` with its `value_type`.
 #[derive(Default, Debug, PartialEq)]
-pub(super) struct Literal {
-    pub(super) prefix: Option<String>,
-    pub(super) str: Option<String>,
-    pub(super) value: Option<(String, &'static str)>,
+pub(crate) struct Literal {
+    pub(crate) prefix: Option<String>,
+    pub(crate) str: Option<String>,
+    pub(crate) value: Option<(String, &'static str)>,
 }
 
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
 /// constant text (a Python `interpolation`, a PHP `encapsed_string`'s variable).
 pub(super) fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
+    if let Some(own) = dialect_facts(family).and_then(|facts| facts.literal(kind, text)) {
+        return own;
+    }
     let mut out = Literal::default();
     match (family, kind) {
-        // A `.rr` string reads as the rule engine reads it; a backtick literal's `str` is its body.
-        (Family::Rr, "string") => {
-            if let Some(v) = crate::code_rule_dsl::logic::rr::string_value(text) {
-                out.value = Some((v.clone(), "string"));
-                out.str = Some(v);
-            }
-        }
-        (Family::Rr, "code_literal") => out.str = Some(crate::code_rule_dsl::logic::rr::code_body(text).to_owned()),
-        (Family::Rr, "number") => out.value = text.parse::<i64>().ok().map(|v| (v.to_string(), "number")),
-        (Family::Rr, "float") => out.value = text.parse::<f64>().ok().map(|v| (v.to_string(), "float")),
-        (Family::Rr, _) => {}
         (_, "string" | "string_literal" | "raw_string_literal" | "encapsed_string" | "interpreted_string_literal") => {
             let Some((prefix, body)) = string_contents(family, text) else { return out };
             let ty = if family == Family::Python { "str" } else { "string" };
@@ -290,17 +329,8 @@ pub(super) fn string_contents(family: Family, text: &str) -> Option<(String, Str
     let rest = &text[p.len()..];
     let prefix = p.to_lowercase();
     let raw = prefix.contains('r');
-    if family == Family::Python
-        && !prefix.contains('b')
-        && let Some(v) = crate::code_rule_dsl::value::python::str_value(text)
-    {
+    if let Some(v) = dialect_facts(family).and_then(|facts| facts.string_body(&prefix, text)) {
         return Some((prefix, v));
-    }
-    if family == Family::Ecma
-        && prefix.is_empty()
-        && let Some(units) = crate::code_rule_dsl::value::ecma::string(text)
-    {
-        return Some((prefix, String::from_utf16_lossy(&units)));
     }
     let rest = if family == Family::Rust && raw { rest.trim_matches('#') } else { rest };
     for q in ["\"\"\"", "'''", "\"", "'", "`"] {
@@ -490,13 +520,9 @@ pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
 /// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`). `Err`: `ast.parse` raises no
 /// `SyntaxError` but another exception, which fails the batch (`python_syntax::failure`).
 pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, String)>, String> {
-    #[cfg(feature = "python-syntax-error")]
-    if dialect.family == Family::Python {
-        return f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone();
-    }
-    // A `.rr` file's error is the one running it gives (`logic::rr::syntax_error`).
-    if dialect.family == Family::Rr {
-        return Ok(f.syntax_errors.then(|| crate::code_rule_dsl::logic::rr::syntax_error(&f.source)).flatten().map(|(line, message)| (line as u32, message)));
+    // A family's own verdict: Python's CPython's, a `.rr` file's the one running it gives.
+    if let Some(own) = dialect_facts(dialect.family).and_then(|facts| facts.verdict(f)) {
+        return own;
     }
     Ok(first_error(f, &Lines::shared(std::sync::Arc::clone(&f.source), dialect.family == Family::Python), &|id| dialect.name(f, id)))
 }
@@ -677,15 +703,17 @@ impl CoreRows {
                 && (kind == "concatenated_string" || kind == "string" && f.parent(id).is_none_or(|q| dialect.name(f, q) != "concatenated_string"))
             {
                 // A word-only reader also gets coordinates from this pass. It never interns full values.
-                let word_parts = if wants_words { super::python_parts::from_tape(p, dialect, local, true) } else { Vec::new() };
+                let own = dialect_facts(dialect.family);
+                let parts = |words: bool| own.map_or_else(Vec::new, |own| own.str_parts(p, dialect, local, words));
+                let word_parts = if wants_words { parts(true) } else { Vec::new() };
                 if wants_words {
                     for (i, (v, at, spec, _)) in word_parts.iter().enumerate() {
-                        for word in v.split(|c: char| !crate::code_rule_dsl::value::python::words::is_word(u32::from(c))).filter(|s| !s.is_empty()) {
+                        for word in v.split(|c: char| !own.is_some_and(|own| own.is_word(u32::from(c)))).filter(|s| !s.is_empty()) {
                             self.str_part_word.push([n, i as i64, string(word) as i64, *at, i64::from(*spec)]);
                         }
                     }
                 }
-                let position_parts = if wants_parts || wants_part_starts && !wants_words { super::python_parts::from_tape(p, dialect, local, false) }
+                let position_parts = if wants_parts || wants_part_starts && !wants_words { parts(false) }
                     else if wants_part_starts { word_parts } else { Vec::new() };
                 for (i, (v, at, spec, offset)) in position_parts.into_iter().enumerate() {
                     if wants_parts {

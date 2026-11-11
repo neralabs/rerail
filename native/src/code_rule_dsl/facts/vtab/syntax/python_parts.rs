@@ -34,7 +34,7 @@ use super::{Dialect, Projected};
 
 type Piece = (String, i64, u8, usize);
 
-pub(super) fn from_tape(p: &Projected, dialect: &Dialect, local: u32, words: bool) -> Vec<Piece> {
+pub(crate) fn from_tape(p: &Projected, dialect: &Dialect, local: u32, words: bool) -> Vec<Piece> {
     let mut reader = Constants { p, dialect, words, pieces: Vec::new() };
     let id = p.core[local as usize];
     let mut current = None;

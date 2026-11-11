@@ -42,7 +42,7 @@ mod within;
 pub(crate) const WITHIN: &str = "within";
 /// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
 pub(crate) const SPAN_WITHIN: &str = "span_within";
-mod core_rr;
+pub(crate) mod core_rr;
 mod stored_spike;
 pub(crate) mod normalized;
 mod python_syntax;
@@ -3166,3 +3166,6 @@ pub(crate) mod fstring;
 pub(super) mod tree;
 pub(crate) mod ast_wave;
 pub(crate) mod py_families;
+pub(crate) mod python_core;
+pub(crate) mod ecma_core;
+pub(crate) mod rr_core;

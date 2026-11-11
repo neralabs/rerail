@@ -584,6 +584,14 @@ pub(crate) fn install_languages() {
     facts::vtab::install_node_tables(vec![facts::vtab::python::register]);
     // The semantic facts a program's native steps demand (Python's).
     facts::vtab::syntax::install_semantic_producer(&facts::vtab::syntax::python_demand::Semantic);
+    // What each family reads of its own core.rr facts.
+    {
+        use crate::code_rule_dsl::facts::vtab::syntax::core_rr::{self, Family};
+        use crate::code_rule_dsl::facts::vtab::syntax::{ecma_core, python_core, rr_core};
+        core_rr::register_dialect_facts(Family::Python, &python_core::PythonFacts);
+        core_rr::register_dialect_facts(Family::Ecma, &ecma_core::EcmaFacts);
+        core_rr::register_dialect_facts(Family::Rr, &rr_core::RrFacts);
+    }
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
     facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
     // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).

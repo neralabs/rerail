@@ -245,3 +245,6 @@ facts::vtab::syntax::annotation	rerail-lang-python
 facts::vtab::syntax::ast_wave	rerail-engine
 facts::vtab::syntax::py_families	rerail-lang-python
 facts::vtab::syntax::candidates	rerail-lang-python
+facts::vtab::syntax::python_core	rerail-lang-python
+facts::vtab::syntax::ecma_core	rerail-lang-ecma
+facts::vtab::syntax::rr_core	rerail-logic
