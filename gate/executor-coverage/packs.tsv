@@ -1,11 +1,9 @@
 # Executor gaps by the shipped programs that meet them (plan/coverage.rs, from matrix.tsv; RERAIL_BLESS_COVERAGE=1 writes this).
 # programs	probe	gap	programs by pack
 1151	computed symbol head	not on the device: no computed term	python 538, lib 123, javascript 121, typescript 65, data-layer 52, react 40, node 37, rust 33, data-layer (engine) 23, vue 23, next 21, sql 21, engine 16, php 15, blade 10, complexity 7, rule-syntax 4, rr 1, typing 1
-582	cmp =: computed symbol	not on the device: no computed term	python 188, lib 104, javascript 71, data-layer 45, typescript 44, data-layer (engine) 23, react 20, vue 18, engine 15, node 13, sql 10, php 8, rust 8, next 7, rule-syntax 4, blade 3, typing 1
-346	cmp !=: computed symbol	not on the device: no computed term	python 79, lib 76, javascript 37, typescript 35, data-layer 33, data-layer (engine) 18, vue 16, engine 15, node 9, react 7, next 6, sql 5, php 3, rust 3, blade 2, rule-syntax 1, typing 1
 307	cmp <: computed symbol	not on the device: no computed term	python 82, lib 76, javascript 36, typescript 31, data-layer 26, data-layer (engine) 18, vue 9, node 6, react 6, engine 5, next 4, php 4, rust 4
 295	cmp >: computed symbol	not on the device: no computed term	python 76, lib 66, javascript 41, data-layer 28, typescript 27, data-layer (engine) 16, vue 10, node 7, engine 6, react 6, next 4, php 3, rust 3, sql 1, typing 1
-235	text test match: a bound pattern	not on the device: refused: the function str_concat has no device form	lib 63, python 50, data-layer 30, javascript 30, typescript 18, next 8, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
+235	text test match: a bound pattern	not on the device: refused: a cat's text read past an eq or ne has no device form (the device makes no symbol)	lib 63, python 50, data-layer 30, javascript 30, typescript 18, next 8, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
 229	cmp <=: computed symbol	not on the device: no computed term	lib 56, python 46, javascript 32, typescript 28, data-layer 22, data-layer (engine) 14, vue 9, node 6, react 6, engine 4, next 3, php 2, rust 1
 216	cmp >=: computed symbol	not on the device: no computed term	lib 51, python 46, javascript 32, typescript 26, data-layer 22, data-layer (engine) 12, vue 9, node 6, react 5, next 3, php 2, engine 1, rust 1
 194	builtin cat/2	not on the device: no computed term	lib 45, python 36, javascript 29, typescript 26, data-layer 22, data-layer (engine) 9, vue 9, node 6, react 5, next 3, php 2, engine 1, rust 1

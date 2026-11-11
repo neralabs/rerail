@@ -5,13 +5,13 @@ cmp =: number and constant	native	device	p(x) :- n(x), x = 2.
 cmp =: symbols	native	device	p(a, b) :- s(a), t(b), a = b.
 cmp =: symbol and constant	native	device	p(a) :- s(a), a = "alpha".
 cmp =: computed number	native	device	p(x) :- n(x), x + 1 = 3.
-cmp =: computed symbol	native	no computed term	p(a) :- s(a), cat(a, "!") = "alpha!".
+cmp =: computed symbol	native	device	p(a) :- s(a), cat(a, "!") = "alpha!".
 cmp !=: numbers	native	device	p(x, y) :- n(x), n(y), x != y.
 cmp !=: number and constant	native	device	p(x) :- n(x), x != 2.
 cmp !=: symbols	native	device	p(a, b) :- s(a), t(b), a != b.
 cmp !=: symbol and constant	native	device	p(a) :- s(a), a != "alpha".
 cmp !=: computed number	native	device	p(x) :- n(x), x + 1 != 3.
-cmp !=: computed symbol	native	no computed term	p(a) :- s(a), cat(a, "!") != "alpha!".
+cmp !=: computed symbol	native	device	p(a) :- s(a), cat(a, "!") != "alpha!".
 cmp <: numbers	native	device	p(x, y) :- n(x), n(y), x < y.
 cmp <: number and constant	native	device	p(x) :- n(x), x < 2.
 cmp <: symbols	native	device	p(a, b) :- s(a), t(b), a < b.
@@ -178,7 +178,7 @@ text test iword: a bound pattern	native	refused: the text test @iword of a patte
 text test match: a constant pattern	native	device	p(a) :- s(a), match("a", a).
 text test match: negated	native	device	p(a) :- s(a), !match("a", a).
 text test match: a set of patterns	native	device	p(a) :- s(a), (match("a", a) ; match("B", a)).
-text test match: a bound pattern	native	refused: the function str_concat has no device form	p(a, b) :- s(a), t(b), match(b, a).
+text test match: a bound pattern	native	refused: a cat's text read past an eq or ne has no device form (the device makes no symbol)	p(a, b) :- s(a), t(b), match(b, a).
 aggregate count	native	device	p(a, c) :- s(a), c = count : { p(a, _) }.
 aggregate sum	native	device	p(a, c) :- s(a), c = sum v : { p(a, v) }.
 aggregate min	native	device	p(a, c) :- t(a), c = min v : { p(a, v) }.

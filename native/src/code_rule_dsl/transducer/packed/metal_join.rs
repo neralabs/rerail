@@ -70,6 +70,13 @@ pub(in crate::code_rule_dsl) const TEXT: u32 = 5;
 /// `str_cmp` of two symbols, each a slot or a constant (keys 0 and 1), their texts the right relation's (a
 /// `DevText`): the order into `bind_slot[0]`.
 pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
+/// Whether symbol x's name is made of a's and b's (keys 0, 1, 2: a, b, x), as `agg[0]` wants (1: equal), by the
+/// form `agg[1]`.
+pub(in crate::code_rule_dsl) const CATEQ: u32 = 7;
+/// `cat`'s form: b's name alone when a's is empty, else a's, ".", b's.
+pub(in crate::code_rule_dsl) const CAT_DOT: u32 = 0;
+/// `str_concat`'s form: a's name then b's.
+pub(in crate::code_rule_dsl) const CAT_PLAIN: u32 = 1;
 
 /// A program column's or a bind's source: a candidate's column, or the binding's slot.
 pub(in crate::code_rule_dsl) const RIGHT: u32 = 0;
@@ -386,6 +393,29 @@ static inline long strcmp_value(constant Stage& s, device const long* L, uint t,
     return text_cmp(text_chars(R), ao, al, bo, bl);
 }
 
+// Whether `len` bytes at p+a are those at p+b: a word of eight at a time.
+static inline bool text_same(device const uchar* p, uint a, uint b, uint len) {
+    for (uint at = 0; at < len; at += 8) if (text_word(p + a, at, len) != text_word(p + b, at, len)) return false;
+    return true;
+}
+
+// Mode 7: whether x's name is made of a's and b's, as agg[0] wants: by agg[1] 0 (`cat`), b's alone when a's is empty,
+// else a's, ".", b's; by 1 (`str_concat`), a's then b's.
+static inline bool cateq_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
+    long v[3];
+    for (uint k = 0; k < 3; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
+    uint ao, al, bo, bl, xo, xl;
+    text_find(R, v[0], ao, al);
+    text_find(R, v[1], bo, bl);
+    text_find(R, v[2], xo, xl);
+    device const uchar* p = text_chars(R);
+    bool eq;
+    if (s.agg[1] == 1) eq = xl == al + bl && text_same(p, xo, ao, al) && text_same(p, xo + al, bo, bl);
+    else if (al == 0) eq = xl == bl && text_same(p, xo, bo, bl);
+    else eq = xl == al + 1 + bl && p[xo + al] == uchar('.') && text_same(p, xo, ao, al) && text_same(p, xo + al + 1, bo, bl);
+    return eq == (s.agg[0] != 0);
+}
+
 // Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
 static inline bool text_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
     long v = L[ulong(s.agg[0]) * s.cap_in + t];
@@ -404,6 +434,7 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     uint lo, hi;
     if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
     if (s.mode == 6) { counts[t] = 1; return; }
+    if (s.mode == 7) { counts[t] = uint(cateq_pass(s, L, t, R)); return; }
     candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
     if (s.mode == 4) {
         long v = 0;
@@ -459,7 +490,7 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     if (at >= s.cap_out) return;
     long kv[8];
     uint lo, hi;
-    if (s.mode == 5) {
+    if (s.mode == 5 || s.mode == 7) {
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }

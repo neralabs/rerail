@@ -247,6 +247,11 @@ fn row_term(t: &Term) -> bool {
     }
 }
 
+/// `cat(a, b)` (lowered, `concat`) of variables and constants: a text the device compares where it is read.
+fn is_cat_of_rows(t: &Term) -> bool {
+    matches!(t, Term::Call(f, args) if (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !matches!(a, Term::Call(..))))
+}
+
 /// The integer functions the device computes (`.rr`'s `+ - * / %`, Soufflé's `max` and `min`).
 const DEVICE_ARITHMETIC: [&str; 7] = ["add", "sub", "mul", "div", "mod", "max", "min"];
 
@@ -287,6 +292,16 @@ impl Shape {
                 // A text test as a comparison (`@contains(s, p) = 1`, `rx`'s search): a text test, not a value.
                 Literal::Cmp { l: Term::Call(f, _), .. } | Literal::Cmp { r: Term::Call(f, _), .. } if crate::code_rule_dsl::logic::strings::TESTS.contains(&f.as_str()) => {
                     self.note(Form::TextTest, || format!("text test @{f}"));
+                }
+                // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
+                // The other side a constant or a variable an atom binds: a comparison, not the cat's text bound
+                // into a variable (a symbol the device does not make).
+                Literal::Cmp { l, op: "=" | "!=", r } if [(l, r), (r, l)].iter().any(|(c, o)| is_cat_of_rows(c) && match o {
+                    Term::Var(v) => order.iter().any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(w) if w == v)))),
+                    Term::Call(..) => false,
+                    _ => true,
+                }) => {
+                    self.note(Form::Comparison, String::new);
                 }
                 Literal::Cmp { l, r, .. } => match [l, r].iter().find_map(|t| not_row(t)) {
                     Some(op) => self.note(Form::Computed, || format!("{op} in a comparison")),
