@@ -18,6 +18,7 @@ mod test_watchdog;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
+#[cfg(test)]
 pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
 pub mod git_ignore;
@@ -276,13 +277,7 @@ static SQLITE_ALLOCATOR: extern "C" fn() = {
     install
 };
 
-/// Return allocator pages after eviction closes idle SQLite connections.
-pub(crate) fn release_allocator_memory() {
-    // Background threads, where available, decay pages between applies too.
-    #[cfg(not(any(windows, target_family = "wasm")))]
-    let _ = tikv_jemalloc_ctl::background_thread::write(true);
-    purge_allocator_pages();
-}
+pub(crate) use code_rule_dsl::prof::release_allocator_memory;
 
 #[napi]
 pub struct ConversationEngine {

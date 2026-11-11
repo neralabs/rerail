@@ -35,7 +35,7 @@ use crate::code_rule_dsl::placement::parse_placement;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
 use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
-use crate::release_allocator_memory;
+use crate::code_rule_dsl::prof::release_allocator_memory;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
 use napi_derive::napi;
@@ -927,7 +927,7 @@ impl Task for WorkspaceApplyTask {
     /// own purge.
     fn finally(self, _env: Env) -> Result<()> {
         drop(self);
-        crate::purge_allocator_pages();
+        crate::code_rule_dsl::prof::purge_allocator_pages();
         Ok(())
     }
 }
@@ -1318,7 +1318,7 @@ struct PurgeAfterApply;
 
 impl Drop for PurgeAfterApply {
     fn drop(&mut self) {
-        crate::purge_allocator_pages();
+        crate::code_rule_dsl::prof::purge_allocator_pages();
     }
 }
 

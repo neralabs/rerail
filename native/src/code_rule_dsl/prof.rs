@@ -225,3 +225,11 @@ pub(crate) fn lower_hex(bytes: &[u8]) -> String {
             hex
         })
 }
+
+/// Return allocator pages after eviction closes idle SQLite connections.
+pub(crate) fn release_allocator_memory() {
+    // Background threads, where available, decay pages between applies too.
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    let _ = tikv_jemalloc_ctl::background_thread::write(true);
+    purge_allocator_pages();
+}
