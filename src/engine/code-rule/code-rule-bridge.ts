@@ -607,8 +607,16 @@ async function folderStamp(root: string, path: string): Promise<number | undefin
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+/**
+ * Whether `path` lies below one of `roots` (`""` holds every path). Each folder above `path` is looked up in `roots`, so
+ * a walk that asks this of every file costs the depth of the file, not the number of the repository's worktrees.
+ */
 function underBaselineRoot(roots: ReadonlySet<string>, path: string): boolean {
-  for (const root of roots) if (root === "" || path.startsWith(`${root}/`)) return true;
+  if (roots.size === 0) return false;
+  if (roots.has("")) return true;
+  for (let slash = path.indexOf("/"); slash >= 0; slash = path.indexOf("/", slash + 1)) {
+    if (roots.has(path.slice(0, slash))) return true;
+  }
   return false;
 }
 /** `absolute` relative to the walk's root (the session folder), `/`-separated, as the auditor names paths. */
