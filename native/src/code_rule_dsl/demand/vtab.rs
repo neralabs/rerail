@@ -2595,7 +2595,9 @@ struct RootPack {
 }
 
 /// An owned connection's demand module and its match registry (`waves::owner::database::ConnectionSetup`).
-impl crate::code_rule_dsl::facts::connection::ConnectionSetup for Arc<MatchRegistry> {
+struct ConnectionRegistry(Arc<MatchRegistry>);
+
+impl crate::code_rule_dsl::facts::connection::ConnectionSetup for ConnectionRegistry {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -2607,7 +2609,7 @@ pub(crate) fn set_up_connection(
 ) -> crate::content_store::StoreResult<Box<dyn crate::code_rule_dsl::facts::connection::ConnectionSetup>> {
     let registry = Arc::new(MatchRegistry::default());
     register_module(connection, Arc::clone(&registry))?;
-    Ok(Box::new(registry))
+    Ok(Box::new(ConnectionRegistry(registry)))
 }
 
 /// The match registry of an owned connection set up by `set_up_connection`.
@@ -2615,6 +2617,7 @@ pub(crate) fn registry_of(
     attached: Option<&dyn crate::code_rule_dsl::facts::connection::ConnectionSetup>,
 ) -> crate::content_store::StoreResult<&Arc<MatchRegistry>> {
     attached
-        .and_then(|setup| setup.as_any().downcast_ref::<Arc<MatchRegistry>>())
+        .and_then(|setup| setup.as_any().downcast_ref::<ConnectionRegistry>())
+        .map(|setup| &setup.0)
         .ok_or_else(|| crate::content_store::StoreError::Invalid("the connection has no demand module".to_owned()))
 }

@@ -48,7 +48,7 @@ pub(in crate::code_rule_dsl) enum Plan {
 /// A plan's identity: its canonical form's digest. Equal keys run as one job, and results are kept
 /// by key (`vocabulary`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(in crate::code_rule_dsl) struct Key(pub(in crate::code_rule_dsl) String);
+pub struct Key(pub String);
 
 impl Plan {
     /// The plan as text: what the key digests. Literals are hex, so the text is unambiguous.
