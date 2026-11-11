@@ -283,6 +283,34 @@ pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]
     lower_with(policies, &Program::default())
 }
 
+/// An `ast` atom's matcher lowered for the transducer (decision 0106), as `lower_with` lowers a helper clause: the
+/// forbid clause of a policy of its own (`base`'s `define` clauses kept so utils resolve), its Python grammar's match
+/// tree, and the gates on a document's path and text. `Err` says why it does not lower.
+/// What reads an `ast` atom's captures (decision 0107): W's matcher of the atom's rule, matched again at each root the
+/// transducer found, and the visits its policy allows a file.
+pub(in crate::code_rule_dsl) struct Captor {
+    pub(in crate::code_rule_dsl) grammar: crate::code_rule_dsl::matcher::GrammarMatcher,
+    pub(in crate::code_rule_dsl) limits: crate::code_rule_dsl::model::Limits,
+}
+
+pub(in crate::code_rule_dsl) fn lower_matcher(matcher: &str, base: Option<&serde_json::Value>) -> Result<(LoweredMatcher, Vec<crate::code_rule_dsl::matcher::DocumentGate>, Captor), String> {
+    let value: serde_json::Value = serde_json::from_str(matcher).map_err(|e| format!("the matcher is not JSON: {e}"))?;
+    let defines: Vec<serde_json::Value> = base.and_then(|b| b.get("clauses")).and_then(|c| c.as_array()).into_iter().flatten().filter(|c| c.get("define").is_some()).cloned().collect();
+    let mut document = base.cloned().unwrap_or_else(|| serde_json::json!({"format": "rerail.policy/v1", "revision": 1, "mode": "block"}));
+    document["id"] = serde_json::Value::String(format!("rr{HELPERS}"));
+    let mut clauses = defines;
+    clauses.push(serde_json::json!({"id": "h0", "forbid": {"ast": value}, "violation": {"code": "helper", "message": "helper", "anchor": "witness.span"}}));
+    document["clauses"] = serde_json::Value::Array(clauses);
+    let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), crate::code_rule_dsl::tools::CAPABILITIES.to_owned()).map_err(|e| e.reason.to_string())?;
+    let clause = compiled.inner.clauses.iter().find(|c| c.id == "h0").ok_or("the helper clause is missing")?;
+    let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { return Err("not an ast query".to_owned()) };
+    let grammar = matchers.iter().find(|m| m.language == GrammarDialect::Python).ok_or("no Python matcher")?;
+    let (tree, paths) = gated_match_tree(grammar).map_err(|e| format!("{e:?}"))?;
+    let lowered = LoweredMatcher::lower(&tree).map_err(|e| format!("{e:?}"))?;
+    let captor = Captor { grammar: grammar.clone(), limits: compiled.inner.capabilities.limits.clone() };
+    Ok((lowered, paths, captor))
+}
+
 /// The policy of an authored program's helper `ast` atoms has its policy's id and this suffix.
 const HELPERS: &str = "~helpers";
 

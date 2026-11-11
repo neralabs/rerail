@@ -276,7 +276,9 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let mut dirty: BTreeSet<String> = changed.iter().cloned().collect();
     let mut clean = BTreeSet::new();
     // Gates decide on the whole program. Reuse it only when every input and derived relation survived unchanged.
-    let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.holds(r, prog)));
+    // A view of one input is never kept (decision 0090): its rule stays, and it is planned as a view, at no cost.
+    let views = super::maintain::input_views(prog);
+    let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.holds(r, prog) || views.contains_key(r)));
     let whole = kept.is_none() || (!prog.gates.is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
     for scc in &sccs {
@@ -284,6 +286,8 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
         if stale {
             ran += 1;
             dirty.extend(scc.iter().cloned());
+        } else if scc.iter().all(|r| views.contains_key(r)) {
+            // A view of unchanged reads: not run, and not clean (no rows of it are kept to bind).
         } else if !scc.iter().all(|r| kept.is_some_and(|k| k.holds(r, prog))) {
             // Not kept (past the budget, or recomputed in its readers, decision 0099) but of unchanged reads: run
             // again, its rows as before, so its readers stay clean.
@@ -421,13 +425,52 @@ pub(in crate::code_rule_dsl) fn kept_source(
     let d = digest(source.as_ref());
     digests.insert(rel.to_owned(), d);
     let columns = source.columns();
-    parts
-        .values()
-        .find_map(|p| p.input_srcs.get(rel).filter(|s| p.inputs.get(rel) == Some(&d) && s.columns() == columns).cloned())
-        .unwrap_or(source)
+    if let Some(same) = parts.values().find_map(|p| p.input_srcs.get(rel).filter(|s| p.inputs.get(rel) == Some(&d) && s.columns() == columns).cloned()) {
+        return same;
+    }
+    // Changed rows: last run's sorted columns, patched by the documents that changed, not sorted again (decision
+    // 0101 §5). `RERAIL_SORT_BASE_AGAIN` sorts them again, as before.
+    if std::env::var_os("RERAIL_SORT_BASE_AGAIN").is_none()
+        && let Some(old) = parts.values().find_map(|p| p.input_srcs.get(rel).filter(|s| s.columns() == columns))
+    {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("carry {rel}'s sorted columns"));
+        let (laid, _) = crate::code_rule_dsl::logic::native::component::carry_sorted(old.as_ref(), source.as_ref());
+        if let Some(laid) = laid {
+            return laid;
+        }
+    }
+    source
 }
 
 impl Retained {
+    /// What a run of program `key` kept, read back from the store in a new process (t32 4.1, `kept_strata::load`):
+    /// each input's digest and source, and each relation's rows as the engine holds them. Nothing measured.
+    /// `digested`: inputs known by their digest alone (no rows kept: unchanged, or derived again if they changed).
+    pub(in crate::code_rule_dsl) fn of_rows(
+        key: [u8; 32],
+        inputs: Vec<(String, u64, Arc<dyn Source>)>,
+        digested: Vec<(String, u64)>,
+        rels: Vec<(String, usize, Arc<InRel>)>,
+    ) -> Retained {
+        let mut out = Retained { key, ..Default::default() };
+        for (rel, digest, source) in inputs {
+            out.inputs.insert(rel.clone(), digest);
+            out.input_srcs.insert(rel, source);
+        }
+        out.inputs.extend(digested);
+        for (rel, width, held) in rels {
+            out.rels.insert(rel, Kept { rel: held, width, output: None });
+        }
+        out
+    }
+
+    /// Each input's digest and source, and each relation kept (`of_rows`'s parts): what the store keeps.
+    pub(in crate::code_rule_dsl) fn parts(&self) -> (Vec<(&str, u64, &Arc<dyn Source>)>, Vec<(&str, usize, &Arc<InRel>)>) {
+        let inputs = self.input_srcs.iter().filter_map(|(rel, s)| Some((rel.as_str(), *self.inputs.get(rel)?, s))).collect();
+        let rels = self.rels.iter().map(|(rel, k)| (rel.as_str(), k.width, &k.rel)).collect();
+        (inputs, rels)
+    }
+
     /// The inputs of program `key` whose rows are as the last run had them (`inputs`, each input's digest): the
     /// last run's sources of them, read again in place of this run's copies, so their column indexes and
     /// statistics are kept with them (0094 §4), not built again.
@@ -600,7 +643,11 @@ impl Retained {
             let mixed = InRel::index_spike_mixed();
             let g = InRel::index_spike_grown();
             if g.2 > 0 {
-                out.push(format!("SPIKE grown, all kept: {} offers, {} held; today {:.1} ms {:.1} B/row; mixed {:.1} ms (set {:.1}, placed {:.1}, orders {:.1}) {:.1} B/row", g.2, g.3, g.0, g.4 as f64 / g.3.max(1) as f64, g.1, g.6, g.7, g.8, g.5 as f64 / g.3.max(1) as f64));
+                out.push(format!("SPIKE grown, all kept: {} offers, {} held; today {:.1} ms {:.1} B/row; mixed {:.1} ms (set {:.1}, placed {:.1}, orders {:.1}) {:.1} B/row; {} rows read again by doublings", g.2, g.3, g.0, g.4 as f64 / g.3.max(1) as f64, g.1, g.6, g.7, g.8, g.5 as f64 / g.3.max(1) as f64, g.14));
+                for (t, f) in [2, 4, 8].iter().zip(InRel::index_spike_fanout()) {
+                    out.push(format!("SPIKE orders grown at fanout {t}: {:.1} ms, {} ids copied by merges, {} runs over {} relations; a probe {:.0} ns over the runs vs {:.0} ns over one (mean of relations)", f.0, f.1, f.2, f.5, f.3 / f.5.max(1) as f64, f.4 / f.5.max(1) as f64));
+                }
+                out.push(format!("SPIKE delta path, all kept ({} relations with a maintained run's rows, the rest their last wave): {} offers; today {:.1} ms + copy {:.1} ms; mixed {:.1} ms + copy {:.1} ms", g.15, g.9, g.10, g.11, g.12, g.13));
             }
             out.push(format!("SPIKE mixed (whole row placed, hot selective sets placed, the rest in orders): {:.1} MB ({:.1} B/row), {:.1} ms", mixed.0 as f64 / 1e6, mixed.0 as f64 / rows.max(1) as f64, mixed.1 / 1e6));
             out.push(format!("SPIKE all kept: {rows} rows; orders {:.1} MB ({:.1} B/row) vs sets and indexes {:.1} MB ({:.1} B/row); this step's probes of kept relations, at the measured costs: {:.1} ms by chains, {:.1} ms by fenced orders, {:.1} ms by placed indexes; placed on every probed set and the row {:.1} MB ({:.1} B/row), orders + placed row {:.1} MB ({:.1} B/row)", total as f64 / 1e6, total as f64 / rows.max(1) as f64, now as f64 / 1e6, now as f64 / rows.max(1) as f64, weighted.0 / 1e6, weighted.1 / 1e6, weighted.2 / 1e6, placed.0 as f64 / 1e6, placed.0 as f64 / rows.max(1) as f64, (total + placed.1) as f64 / 1e6, (total + placed.1) as f64 / rows.max(1) as f64));
@@ -666,6 +713,9 @@ impl Source for Renamed {
     fn made_on_lookup(&self) -> bool {
         self.0.made_on_lookup()
     }
+    fn expect_lookups(&self, column: usize, keys: f64) {
+        self.0.expect_lookups(column, keys);
+    }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         let names = self.0.columns();
         let stats = self.0.statistics()?;
@@ -691,6 +741,9 @@ impl Source for Renamed {
     }
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         self.0.sorted_rows(column, value)
+    }
+    fn sorts_rows(&self, column: usize) -> bool {
+        self.0.sorts_rows(column)
     }
     fn prepare_lookup(&self, columns: &[usize]) {
         self.0.prepare_lookup(columns)

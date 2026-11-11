@@ -59,9 +59,6 @@ const FACT_STORE: &[&str] = &[
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
     "x",
-    // native_demand's tests' tables.
-    "keys",
-    "facts",
     "a",
     "b",
     "c",
@@ -190,6 +187,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
     // The index spike's growth totals (`InRel::grow_spike`), taken and reset by its measurement: profiling.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
+    ("code_rule_dsl/logic/native/setfix.rs", "FANOUT"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
@@ -199,8 +197,14 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
-    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
+    // The build's Python grammar, and what follows from it and a matcher's text alone (its single-field answers, its
+    // lowered code): the process's code, as a compiled rule's, not a run's result.
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "GRAMMAR"),
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "KEPT"),
+    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "LOWERED"),
+    // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
+    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),

@@ -338,6 +338,7 @@ mod tests {
                     facts,
                     guest: None,
                     module: None,
+                    tape: None,
                 }
             })
             .collect();

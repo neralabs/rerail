@@ -209,9 +209,54 @@ pub(super) fn lookup_all(store: &ContentStore, program: &[u8; 32], docs: &[(Sour
         .collect()
 }
 
+/// A memo entry found before it is decoded: held in memory (a queued write's, or a session's), or its stored frame.
+/// A run finds its documents' entries before its first wave and decodes each in its wave (decision 0104).
+pub(super) enum Found {
+    Held(std::sync::Arc<Entry>),
+    Frame(FactsFrame),
+}
+
+impl Found {
+    /// The entry, when it is the document's (`key`).
+    pub(super) fn entry(&self, key: i64) -> StoreResult<Option<Entry>> {
+        Ok(match self {
+            Found::Held(e) => Some((**e).clone()),
+            Found::Frame(f) => Some(decode(&f.bytes()?)?),
+        }
+        .filter(|e| e.key == key))
+    }
+}
+
+/// `lookup_all`, each entry found and not decoded: one statement whatever the documents' number.
+pub(super) fn found_all(store: &ContentStore, program: &[u8; 32], docs: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Found>>> {
+    off();
+    let set = plan(program);
+    let held: Vec<Option<std::sync::Arc<Entry>>> = docs.iter().map(|(s, p)| store.pending::<Entry>(&queued(*s, p, program))).collect();
+    let keys: Vec<(SourceId, &str)> = docs.iter().zip(&held).filter(|(_, h)| h.is_none()).map(|((s, p), _)| (*s, *p)).collect();
+    let mut frames = store.facts_frames_for(SCHEMA, set.plans[0], &keys)?.into_iter();
+    Ok(held.into_iter().map(|h| match h {
+        Some(e) => Some(Found::Held(e)),
+        None => frames.next().flatten().map(Found::Frame),
+    }).collect())
+}
+
 /// What a memo entry's write is queued under (`write_back`): the row's source, path and program.
 fn queued(source: SourceId, path: &str, program: &[u8; 32]) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"facts_memo/corpus", &source.raw().to_le_bytes(), path.as_bytes(), program])
+}
+
+/// `queued`, for a content the store does not hold yet: by its digest.
+fn queued_unstored(digest: &[u8; 32], path: &str, program: &[u8; 32]) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"facts_memo/corpus/unstored", digest, path.as_bytes(), program])
+}
+
+/// What an entry is queued under, by its content.
+fn queued_content(content: Content, path: &str, program: &[u8; 32]) -> Option<crate::content_store::write_back::Key> {
+    match content {
+        Content::Stored(id) => Some(queued(id, path, program)),
+        Content::Unstored(d) => Some(queued_unstored(&d, path, program)),
+        Content::Held(_) => None,
+    }
 }
 
 /// `source` of many texts, in their order: the stored ones found (and pinned) in one statement, the others stored.
@@ -222,24 +267,43 @@ pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<S
     texts.iter().zip(hashes).zip(found).map(|((text, hash), id)| match id { Some(id) => Ok(id), None => store.put_source_hashed(text.as_bytes(), hash, &[]) }).collect()
 }
 
+/// The stored sources of many contents, by their SHA-256 digests, in their order: one read and nothing written (a
+/// lookup writes nothing, decision 0104). The sources found are pinned under the store's holder by its writer.
+pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<SourceId>>> {
+    off();
+    let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
+    let found = store.sources_by_hashes(&hashes)?;
+    let pins: Vec<SourceId> = found.iter().flatten().copied().collect();
+    if !pins.is_empty() {
+        store.write_back("the pins of the sources the run read", pins.len() * 8, Vec::new(), Box::new(move |store| store.pin_held_sources(&pins)));
+    }
+    Ok(found)
+}
+
 /// Memoises many documents' entries at once, each `(source, path, key, entry)` under `program`: one transaction of
 /// a few statements (`put_facts_results`), not one per document. Queued behind the run (decision 0102): encoded and
 /// written by the store's writer, each entry read from memory until it is written.
-pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(SourceId, String, i64, Entry)>) {
+/// A content the store does not hold yet is written under the source its tape's write stored, queued before.
+pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) {
     off();
     let set = plan(program);
     if crate::code_rule_dsl::logic::profile::on() {
         tally(entries.iter().map(|e| &e.3));
     }
-    let held: Vec<(SourceId, String, std::sync::Arc<Entry>)> = entries.into_iter().map(|(source, path, key, entry)| (source, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
+    let held: Vec<(Content, String, std::sync::Arc<Entry>)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
     let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
-    let keys = held.iter().map(|(source, path, e)| (queued(*source, path, program), Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>))).collect();
+    let keys = held.iter().filter_map(|(content, path, e)| Some((queued_content(*content, path, program)?, Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>)))).collect();
     store.write_back(
         "the memo's entries",
         bytes,
         keys,
         Box::new(move |store| {
-            let results: Vec<(SourceId, &str, FactsResult)> = held.iter().map(|(source, path, e)| (*source, path.as_str(), FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(e) })).collect();
+            let mut results: Vec<(SourceId, &str, FactsResult)> = Vec::with_capacity(held.len());
+            for (content, path, e) in &held {
+                // A source not stored (its tape's write failed) leaves the entry unwritten: the next run misses it.
+                let Some(source) = content.resolve(store)? else { continue };
+                results.push((source, path.as_str(), FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(e) }));
+            }
             store.put_facts_results(SCHEMA, &set, &results).map(drop)
         }),
     );
@@ -284,10 +348,12 @@ pub(super) enum Memo<'a> {
 /// A session's memo: each entry under its content's digest, its path and the file-local program's digest.
 pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), Entry>>;
 
-/// A file's content as the memo knows it: its stored source, or (held) its digest.
+/// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
+/// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Content {
     Stored(SourceId),
+    Unstored([u8; 32]),
     Held([u8; 32]),
 }
 
@@ -296,7 +362,21 @@ impl Content {
     pub(super) fn stored(self) -> Option<SourceId> {
         match self {
             Content::Stored(id) => Some(id),
-            Content::Held(_) => None,
+            Content::Unstored(_) | Content::Held(_) => None,
+        }
+    }
+
+    /// Whether the store holds the content or will (its source is queued): a stored memo's content.
+    fn in_store(self) -> bool {
+        matches!(self, Content::Stored(_) | Content::Unstored(_))
+    }
+
+    /// The source on the store's writer, where a content queued before is written by now.
+    pub(super) fn resolve(self, store: &ContentStore) -> StoreResult<Option<SourceId>> {
+        match self {
+            Content::Stored(id) => Ok(Some(id)),
+            Content::Unstored(d) => store.source_by_hash(HashKey::from_sha256_digest(d)),
+            Content::Held(_) => Ok(None),
         }
     }
 }
@@ -321,6 +401,15 @@ impl Memo<'_> {
         }
     }
 
+    /// The contents of many texts as the memo knows them, by their SHA-256 digests, in their order: `None` for a
+    /// text the store does not hold yet (its source is stored with its tape). Nothing is written (`found_sources`).
+    pub(super) fn found(self, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<Content>>> {
+        match self {
+            Memo::Stored(store) => Ok(found_sources(store, digests)?.into_iter().map(|id| id.map(Content::Stored)).collect()),
+            Memo::Held(_) => Ok(digests.iter().map(|d| Some(Content::Held(*d))).collect()),
+        }
+    }
+
     /// `lookup` of many documents, each `(content, path, key)`, in their order: stored ones in one statement.
     pub(super) fn lookup_all(self, program: &[u8; 32], docs: &[(Content, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
         match self {
@@ -336,9 +425,41 @@ impl Memo<'_> {
         }
     }
 
+    /// The entries of many documents, each `(content, path)`, found and not decoded (`Found`): stored ones in one
+    /// statement, held ones from memory.
+    pub(super) fn found_all(self, program: &[u8; 32], docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
+        match self {
+            Memo::Stored(store) => {
+                let mut out: Vec<Option<Found>> = (0..docs.len()).map(|_| None).collect();
+                let (at, stored): (Vec<usize>, Vec<(SourceId, &str)>) = docs.iter().enumerate().filter_map(|(i, (c, p))| c.stored().map(|id| (i, (id, *p)))).unzip();
+                for (i, e) in at.into_iter().zip(found_all(store, program, &stored)?) {
+                    out[i] = e;
+                }
+                // A content not stored yet has no stored entry: only one this process queued.
+                for (i, (c, p)) in docs.iter().enumerate() {
+                    if let Content::Unstored(d) = c {
+                        out[i] = store.pending::<Entry>(&queued_unstored(d, p, program)).map(Found::Held);
+                    }
+                }
+                Ok(out)
+            }
+            Memo::Held(held) => {
+                let held = held.lock().expect("the session memo");
+                Ok(docs
+                    .iter()
+                    .map(|(c, p)| match c {
+                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), *program)).map(|e| Found::Held(std::sync::Arc::new(e.clone()))),
+                        Content::Stored(_) | Content::Unstored(_) => None,
+                    })
+                    .collect())
+            }
+        }
+    }
+
     pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
         match (self, content) {
             (Memo::Stored(store), Content::Stored(id)) => lookup(store, id, path, key, program),
+            (Memo::Stored(store), Content::Unstored(d)) => Ok(store.pending::<Entry>(&queued_unstored(&d, path, program)).map(|e| (*e).clone()).filter(|e| e.key == key)),
             (Memo::Held(held), Content::Held(digest)) => {
                 Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), *program)).filter(|e| e.key == key).cloned())
             }
@@ -350,7 +471,7 @@ impl Memo<'_> {
     pub(super) fn remember_all(self, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
         match self {
             Memo::Stored(store) => {
-                remember_all(store, program, entries.into_iter().filter_map(|(c, p, k, e)| c.stored().map(|id| (id, p, k, e))).collect());
+                remember_all(store, program, entries);
                 Ok(())
             }
             Memo::Held(_) => {
@@ -364,8 +485,8 @@ impl Memo<'_> {
 
     pub(super) fn remember(self, content: Content, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
         match (self, content) {
-            (Memo::Stored(store), Content::Stored(id)) => {
-                remember_all(store, program, vec![(id, path.to_owned(), key, entry.clone())]);
+            (Memo::Stored(store), c @ (Content::Stored(_) | Content::Unstored(_))) => {
+                remember_all(store, program, vec![(c, path.to_owned(), key, entry.clone())]);
                 Ok(())
             }
             (Memo::Held(held), Content::Held(digest)) => {

@@ -554,7 +554,7 @@ pub(in crate::code_rule_dsl) fn documents(graph: &(impl Graph + ?Sized), scope: 
             return Err(StoreError::Invalid(format!("stale core facts for {core}")));
         }
         let key = graph.store().atom(&path_name(scope, path))?.ok_or_else(|| StoreError::Corrupt(format!("{path} has no atom")))?;
-        out.push(Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), guest: None, module: None });
+        out.push(Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), guest: None, module: None, tape: None });
     }
     Ok(out)
 }

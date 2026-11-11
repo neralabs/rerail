@@ -200,15 +200,24 @@ impl ContentStore {
     /// its path's, else its content-pure one, else `None` (a frame that does not decode is `None` too, as
     /// `facts_memo` counts it damaged). One statement whatever the keys' number.
     pub fn facts_results_for(&self, fact_schema: u32, plan: [u8; 32], keys: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Vec<u8>>>> {
-        let mut out: Vec<Option<Vec<u8>>> = vec![None; keys.len()];
+        // A frame that does not decode is no result, as a missing one.
+        Ok(self.facts_frames_for(fact_schema, plan, keys)?.into_iter().map(|f| f.and_then(|f| f.bytes().ok())).collect())
+    }
+
+    /// `facts_results_for`, each result as its stored frame, not decompressed: a run reads its documents' frames
+    /// before its first wave and decodes each in its wave (decision 0104).
+    pub fn facts_frames_for(&self, fact_schema: u32, plan: [u8; 32], keys: &[(SourceId, &str)]) -> StoreResult<Vec<Option<FactsFrame>>> {
+        let mut out: Vec<Option<FactsFrame>> = (0..keys.len()).map(|_| None).collect();
         if keys.is_empty() {
             return Ok(out);
         }
         let list = serde_json::to_string(&keys.iter().map(|(s, p)| serde_json::json!([s.0, p])).collect::<Vec<_>>()).expect("keys");
         let connection = self.connection.lock().expect("content store mutex poisoned");
+        // Drive probes from the demanded keys. SQLite otherwise starts from facts_results_by_plan
+        // and visits the entire JSON demand array for every retained row of the plan.
         let mut statement = connection.prepare_cached(
             "SELECT j.key, r.path, r.codec_id, r.raw_length, r.frame FROM json_each(?3) j \
-             JOIN facts_results r ON r.source_id=json_extract(j.value,'$[0]') AND r.fact_schema=?1 \
+             CROSS JOIN facts_results r ON r.source_id=json_extract(j.value,'$[0]') AND r.fact_schema=?1 \
              AND r.path IN (json_extract(j.value,'$[1]'), ?4) AND r.plan_digest=?2",
         )?;
         let rows = statement.query_map(params![i64::from(fact_schema), &plan[..], list, CONTENT_PURE], |row| {
@@ -223,8 +232,8 @@ impl ContentStore {
             if at_path[at] && !own {
                 continue;
             }
-            if let Ok(entry) = decode(codec, raw_length, &frame) {
-                out[at] = Some(entry);
+            if codec == CODEC_ZSTD {
+                out[at] = Some(FactsFrame { source: keys[at].0, path, codec, raw_length, frame });
                 at_path[at] = own;
             }
         }

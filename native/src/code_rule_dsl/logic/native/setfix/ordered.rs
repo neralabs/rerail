@@ -143,10 +143,14 @@ impl Ordered {
     }
 }
 
-/// A key's hash: the key columns' values mixed in turn.
+/// A key's hash: one multiply a column (the Fx step), then one avalanche so the top bits, which place it, are
+/// uniform.
 #[inline]
 pub(super) fn key_hash(vals: impl Iterator<Item = i64>) -> u64 {
-    vals.fold(0x243f_6a88_85a3_08d3u64, |h, v| mix((h.rotate_left(23) ^ v as u64) as i64))
+    let mut h = vals.fold(0u64, |h, v| (h.rotate_left(5) ^ v as u64).wrapping_mul(0x517c_c1b7_2722_0a95));
+    h ^= h >> 29;
+    h = h.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h ^ (h >> 32)
 }
 
 /// mldb's frozen `PathIndex` (the IdHash idea, `plugins/tabular/tabular_dataset.cc`): the live rows sorted by the hash
@@ -323,84 +327,131 @@ mod tests {
 }
 
 /// A placed index that grows (the incremental form of `Placed`, mldb's IdHash growth): a row goes in at the first
-/// empty slot from its home (`hash * m / 2^64`), never wrapping (the slots run on past `m` as needed), so a key's
-/// rows are still between its home and the next empty slot. At three quarters full `m` doubles and the slots are
-/// placed again in their order, which is close to hash order, so the new table is written nearly in sequence.
+/// empty slot from its home (the top `b` bits of its hash, `m = 2^b` homes), never wrapping (the slots run on past
+/// `m` as needed), so a key's rows are between its home and the next empty slot. A slot is 32 bits: the row id + 1,
+/// its distance from its home (`DISP` bits, saturated), and the hash bits just below the home bits (the
+/// fingerprint). At three quarters full `m` doubles, and each row's new home is twice its old one (its slot less its
+/// distance) plus its fingerprint's top bit, so no row is read; the fingerprint shifts up and loses a bit. Once fewer
+/// than `MIN_FP` of its bits are known, or for a saturated distance, the doubling reads the row and hashes it again.
 pub(super) struct Growing {
     pub(super) cols: Vec<usize>,
     slots: Vec<u32>,
-    m: usize,
+    b: u32,
     len: usize,
     id_bits: u32,
+    fp_bits: u32,
+    /// The known (top) bits of every slot's fingerprint.
+    fp_known: u32,
     pub(super) grew: usize,
+    /// Rows read again to place them (saturated distances, or a doubling with too few fingerprint bits known).
+    pub(super) rehashed: usize,
 }
+
+const DISP: u32 = 4;
+const MAX_DISP: usize = (1 << DISP) - 1;
+const MIN_FP: u32 = 2;
 
 impl Growing {
     pub(super) fn new(cols: Vec<usize>, id_bits: u32) -> Growing {
-        Growing { cols, slots: vec![0; 64], m: 64, len: 0, id_bits, grew: 0 }
+        let fp_bits = 32u32.saturating_sub(id_bits + DISP);
+        Growing { cols, slots: vec![0; 64], b: 6, len: 0, id_bits, fp_bits, fp_known: fp_bits, grew: 0, rehashed: 0 }
     }
 
     #[inline]
     fn home(&self, h: u64) -> usize {
-        (((h as u128) * (self.m as u128)) >> 64) as usize
+        (h >> (64 - self.b)) as usize
+    }
+
+    /// The `fp_bits` bits of `h` below its top `b`.
+    #[inline]
+    fn fp_of(&self, h: u64, b: u32) -> u32 {
+        if self.fp_bits == 0 { 0 } else { ((h << b) >> (64 - self.fp_bits)) as u32 }
+    }
+
+    #[inline]
+    fn enc(&self, id: u32, disp: usize, fp: u32) -> u32 {
+        let low = (disp.min(MAX_DISP) as u32) << self.id_bits | (id + 1);
+        if self.fp_bits == 0 { low } else { fp << (self.id_bits + DISP) | low }
+    }
+
+    #[inline]
+    fn dec(&self, s: u32) -> (u32, usize, u32) {
+        let id = (s & ((1u32 << self.id_bits) - 1)) - 1;
+        let disp = ((s >> self.id_bits) & MAX_DISP as u32) as usize;
+        let fp = if self.fp_bits == 0 { 0 } else { s >> (self.id_bits + DISP) };
+        (id, disp, fp)
+    }
+
+    #[inline]
+    fn fp_matches(&self, a: u32, b: u32) -> bool {
+        self.fp_known == 0 || (a ^ b) >> (self.fp_bits - self.fp_known) == 0
+    }
+
+    /// Places `s`-like content for row `id` at the first empty slot from `home` in `slots`.
+    #[inline]
+    fn place(slots: &mut Vec<u32>, home: usize) -> usize {
+        let mut at = home;
+        while at < slots.len() && slots[at] != 0 {
+            at += 1;
+        }
+        if at >= slots.len() {
+            slots.resize(at + 1, 0);
+        }
+        at
     }
 
     /// Room for `more` rows at load 0.75 or less.
     pub(super) fn reserve(&mut self, rows: &[i64], k: usize, more: usize) {
-        if (self.len + more) * 4 <= self.m * 3 {
-            return;
+        while (self.len + more) * 4 > (1usize << self.b) * 3 {
+            self.double(rows, k);
         }
-        let mut m = self.m;
-        while (self.len + more) * 4 > m * 3 {
-            m *= 2;
-        }
-        let old = std::mem::replace(&mut self.slots, vec![0; m + 1]);
-        self.m = m;
+    }
+
+    fn double(&mut self, rows: &[i64], k: usize) {
+        let b = self.b + 1;
+        let read_all = self.fp_known < MIN_FP;
+        let old = std::mem::replace(&mut self.slots, vec![0; (1usize << b) + 1]);
         self.grew += 1;
-        let mask = self.mask();
-        for s in old {
+        for (at, &s) in old.iter().enumerate() {
             if s == 0 {
                 continue;
             }
-            let id = (s & mask) - 1;
-            let h = key_hash(self.cols.iter().map(|&c| rows[id as usize * k + c]));
-            // Nearly sorted already: the first free slot from the home, or after the last placed.
-            let mut at = self.home(h);
-            while at < self.slots.len() && self.slots[at] != 0 {
-                at += 1;
-            }
-            if at >= self.slots.len() {
-                self.slots.resize(at + 1, 0);
-            }
-            self.slots[at] = s;
+            let (id, disp, fp) = self.dec(s);
+            let (home, fp) = if read_all || disp == MAX_DISP || self.fp_bits == 0 {
+                self.rehashed += 1;
+                let h = key_hash(self.cols.iter().map(|&c| rows[id as usize * k + c]));
+                ((h >> (64 - b)) as usize, self.fp_of(h, b))
+            } else {
+                // The old home and the next hash bit (the fingerprint's top bit).
+                let old_home = at - disp;
+                (old_home * 2 + (fp >> (self.fp_bits - 1)) as usize, (fp << 1) & ((1u32 << self.fp_bits) - 1))
+            };
+            let to = Self::place(&mut self.slots, home);
+            self.slots[to] = self.enc(id, to - home, fp);
         }
+        self.b = b;
+        self.fp_known = if read_all { self.fp_bits } else { self.fp_known.saturating_sub(1) };
     }
 
-    #[inline]
-    fn mask(&self) -> u32 {
-        if self.id_bits >= 32 { u32::MAX } else { (1u32 << self.id_bits) - 1 }
-    }
-
-    /// Places row `id` (hash `h`); with `dedup`, not when a live row equal on `cols` is there (returns false).
+    /// Places row `id` (hash `h`); with `dedup`, not when a row equal on `cols` is there (returns false).
     #[inline]
     pub(super) fn insert(&mut self, rows: &[i64], k: usize, id: u32, h: u64, dedup: bool) -> bool {
-        let (ib, mask) = (self.id_bits, self.mask());
-        let enc = Placed::enc(id, h, ib);
-        let fp = Placed::fp(h, ib);
-        let mut at = self.home(h);
+        let home = self.home(h);
+        let fp = self.fp_of(h, self.b);
+        let mut at = home;
         loop {
             if at >= self.slots.len() {
                 self.slots.resize(at + 1, 0);
             }
             let s = self.slots[at];
             if s == 0 {
-                self.slots[at] = enc;
+                self.slots[at] = self.enc(id, at - home, fp);
                 self.len += 1;
                 return true;
             }
-            if dedup && (ib >= 32 || s >> ib == fp) {
-                let x = (s & mask) - 1;
-                if self.cols.iter().all(|&c| rows[x as usize * k + c] == rows[id as usize * k + c]) {
+            if dedup {
+                let (x, _, f) = self.dec(s);
+                if self.fp_matches(f, fp) && self.cols.iter().all(|&c| rows[x as usize * k + c] == rows[id as usize * k + c]) {
                     return false;
                 }
             }
@@ -408,62 +459,111 @@ impl Growing {
         }
     }
 
-    /// Whether a live row equal to row `id` on `cols` is held (the dedup test of a duplicate offer).
+    /// Whether a row equal to row `id` on `cols` is held (the dedup test of a duplicate offer).
     #[inline]
     pub(super) fn insert_probe(&self, rows: &[i64], k: usize, id: u32, h: u64) -> bool {
-        let (ib, mask, fp) = (self.id_bits, self.mask(), Placed::fp(h, self.id_bits));
+        let fp = self.fp_of(h, self.b);
         let mut at = self.home(h);
         while let Some(&s) = self.slots.get(at) {
             if s == 0 {
                 return false;
             }
-            if ib >= 32 || s >> ib == fp {
-                let x = (s & mask) - 1;
-                if self.cols.iter().all(|&c| rows[x as usize * k + c] == rows[id as usize * k + c]) {
-                    return true;
-                }
+            let (x, _, f) = self.dec(s);
+            if self.fp_matches(f, fp) && self.cols.iter().all(|&c| rows[x as usize * k + c] == rows[id as usize * k + c]) {
+                return true;
             }
             at += 1;
         }
         false
     }
 
+    /// Calls `f` on each row id whose key columns hold `key` (in `cols` order).
+    pub(super) fn each(&self, rows: &[i64], k: usize, key: &[i64], mut f: impl FnMut(u32)) {
+        let h = key_hash(key.iter().copied());
+        let fp = self.fp_of(h, self.b);
+        let mut at = self.home(h);
+        while let Some(&s) = self.slots.get(at) {
+            if s == 0 {
+                break;
+            }
+            let (x, _, sf) = self.dec(s);
+            if self.fp_matches(sf, fp) && self.cols.iter().zip(key).all(|(&c, v)| rows[x as usize * k + c] == *v) {
+                f(x);
+            }
+            at += 1;
+        }
+    }
+
     pub(super) fn bytes(&self) -> usize {
         self.slots.capacity() * 4
     }
+
+    pub(super) fn clone_slots(&self) -> Vec<u32> {
+        self.slots.clone()
+    }
 }
 
-/// Sorted orders that grow by runs (the logarithmic method): each wave's new ids sorted by the order are a run, the
-/// newest of which is the wave's delta; before a wave adds its run, the newest runs are merged while the older is no
-/// more than twice the newer, so there are O(log n) runs and each id is merged O(log n) times.
+/// Sorted orders that grow by runs (size-tiered): each wave's new ids sorted by the order are a run, the newest of
+/// which is the wave's delta. Before a wave adds its run, the newest `fanout` runs are merged in one pass while the
+/// oldest of them is no more than `fanout` times the newest: O(log_fanout n) passes over each id, and up to
+/// `fanout` runs of each size for a probe to search.
 pub(super) struct Runs {
     pub(super) order: Vec<usize>,
     pub(super) runs: Vec<Vec<u32>>,
     pub(super) merged: usize,
+    fanout: usize,
 }
 
 impl Runs {
     pub(super) fn new(order: Vec<usize>) -> Runs {
-        Runs { order, runs: Vec::new(), merged: 0 }
+        Runs::with_fanout(order, 2)
     }
 
+    pub(super) fn with_fanout(order: Vec<usize>, fanout: usize) -> Runs {
+        Runs { order, runs: Vec::new(), merged: 0, fanout: fanout.max(2) }
+    }
+
+    #[inline]
     fn cmp(order: &[usize], rows: &[i64], k: usize, a: u32, b: u32) -> Ordering {
         let (ra, rb) = (&rows[a as usize * k..][..k], &rows[b as usize * k..][..k]);
         order.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or_else(|| a.cmp(&b))
     }
 
-    pub(super) fn add_wave(&mut self, rows: &[i64], k: usize, mut ids: Vec<u32>) {
-        while self.runs.len() >= 2 && self.runs[self.runs.len() - 2].len() <= 2 * self.runs[self.runs.len() - 1].len() {
-            let b = self.runs.pop().unwrap();
-            let a = self.runs.pop().unwrap();
-            self.merged += a.len() + b.len();
-            let mut out = Vec::with_capacity(a.len() + b.len());
+    /// Merges `parts` (each sorted) in one pass: each output id is the least of the parts' heads.
+    fn merge(order: &[usize], rows: &[i64], k: usize, parts: Vec<Vec<u32>>) -> Vec<u32> {
+        let total = parts.iter().map(Vec::len).sum();
+        let mut out = Vec::with_capacity(total);
+        let mut at = vec![0usize; parts.len()];
+        if parts.len() == 2 {
+            let (a, b) = (&parts[0], &parts[1]);
             let (mut i, mut j) = (0, 0);
             while i < a.len() && j < b.len() {
-                if Self::cmp(&self.order, rows, k, a[i], b[j]).is_le() { out.push(a[i]); i += 1 } else { out.push(b[j]); j += 1 }
+                if Self::cmp(order, rows, k, a[i], b[j]).is_le() { out.push(a[i]); i += 1 } else { out.push(b[j]); j += 1 }
             }
             out.extend_from_slice(&a[i..]);
             out.extend_from_slice(&b[j..]);
+            return out;
+        }
+        loop {
+            let mut best: Option<usize> = None;
+            for (p, part) in parts.iter().enumerate() {
+                if at[p] < part.len() && best.is_none_or(|q| Self::cmp(order, rows, k, part[at[p]], parts[q][at[q]]).is_lt()) {
+                    best = Some(p);
+                }
+            }
+            let Some(p) = best else { break };
+            out.push(parts[p][at[p]]);
+            at[p] += 1;
+        }
+        out
+    }
+
+    pub(super) fn add_wave(&mut self, rows: &[i64], k: usize, mut ids: Vec<u32>) {
+        let t = self.fanout;
+        while self.runs.len() >= t && self.runs[self.runs.len() - t].len() <= t * self.runs[self.runs.len() - 1].len() {
+            let parts: Vec<Vec<u32>> = self.runs.split_off(self.runs.len() - t);
+            self.merged += parts.iter().map(Vec::len).sum::<usize>();
+            let out = Self::merge(&self.order, rows, k, parts);
             self.runs.push(out);
         }
         if ids.is_empty() {
@@ -472,6 +572,12 @@ impl Runs {
         let order = &self.order;
         ids.sort_unstable_by(|&a, &b| Self::cmp(order, rows, k, a, b));
         self.runs.push(ids);
+    }
+
+    /// Every run merged into one (the frozen order, to compare probes with).
+    pub(super) fn merged_all(&self, rows: &[i64], k: usize) -> Runs {
+        let one = Self::merge(&self.order, rows, k, self.runs.clone());
+        Runs { order: self.order.clone(), runs: vec![one], merged: 0, fanout: self.fanout }
     }
 
     /// The number of ids holding `key` on the order's first `key.len()` columns, over every run.
@@ -501,29 +607,46 @@ mod grow_tests {
         // Rows 0..2000, then 500 that repeat earlier rows (the duplicates a wave offers).
         let mut rows: Vec<i64> = (0..2000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
         rows.extend((0..500i64).flat_map(|i| [(i * 3) % 10, (i * 3) % 7, i * 3]));
-        let mut set = Growing::new(vec![0, 1, 2], 12);
-        let mut by01 = Growing::new(vec![0, 1], 12);
-        let mut runs = Runs::new(vec![0, 1, 2]);
-        let mut held = 0;
-        for wave in (0..2500u32).collect::<Vec<_>>().chunks(97) {
-            set.reserve(&rows, k, wave.len());
-            let mut fresh = Vec::new();
-            for &id in wave {
-                let r = &rows[id as usize * k..][..k];
-                if set.insert(&rows, k, id, key_hash(r.iter().copied()), true) {
-                    fresh.push(id);
+        // 12 id bits leave 16 fingerprint bits; 26 leave 2, so the doublings read rows again.
+        for id_bits in [12, 26] {
+            let mut set = Growing::new(vec![0, 1, 2], id_bits);
+            let mut by01 = Growing::new(vec![0, 1], id_bits);
+            let mut runs = Runs::new(vec![0, 1, 2]);
+            let mut wide = Runs::with_fanout(vec![0, 1, 2], 4);
+            let mut held = 0;
+            for wave in (0..2500u32).collect::<Vec<_>>().chunks(97) {
+                set.reserve(&rows, k, wave.len());
+                let mut fresh = Vec::new();
+                for &id in wave {
+                    let r = &rows[id as usize * k..][..k];
+                    if set.insert(&rows, k, id, key_hash(r.iter().copied()), true) {
+                        fresh.push(id);
+                    }
                 }
+                by01.reserve(&rows, k, fresh.len());
+                for &id in &fresh {
+                    by01.insert(&rows, k, id, key_hash([rows[id as usize * k], rows[id as usize * k + 1]].into_iter()), false);
+                }
+                held += fresh.len();
+                wide.add_wave(&rows, k, fresh.clone());
+                runs.add_wave(&rows, k, fresh);
             }
-            by01.reserve(&rows, k, fresh.len());
-            for &id in &fresh {
-                by01.insert(&rows, k, id, key_hash([rows[id as usize * k], rows[id as usize * k + 1]].into_iter()), false);
+            assert_eq!(held, 2000, "id bits {id_bits}");
+            assert!(set.grew > 0 && runs.runs.len() < 12, "{} grew, {} runs", set.grew, runs.runs.len());
+            // With 16 fingerprint bits only the rows whose distance saturated are read again; with 2, a doubling
+            // reads them all every other time.
+            assert!(if id_bits == 26 { set.rehashed > 1000 } else { set.rehashed < 100 }, "{} rehashed, id bits {id_bits}", set.rehashed);
+            assert_eq!(runs.count(&rows, k, &[3]), 200);
+            assert_eq!(runs.count(&rows, k, &[3, 4]), 28);
+            assert_eq!(wide.count(&rows, k, &[3, 4]), 28);
+            assert_eq!(wide.merged_all(&rows, k).count(&rows, k, &[3]), 200);
+            assert!(wide.merged < runs.merged, "{} merged by 4s, {} by 2s", wide.merged, runs.merged);
+            let mut got = 0;
+            by01.each(&rows, k, &[3, 4], |id| { assert_eq!(&rows[id as usize * k..][..2], &[3, 4]); got += 1 });
+            assert_eq!(got, 28, "id bits {id_bits}");
+            for id in 0..2000u32 {
+                assert!(set.insert_probe(&rows, k, id, key_hash(rows[id as usize * k..][..k].iter().copied())), "row {id} id bits {id_bits}");
             }
-            held += fresh.len();
-            runs.add_wave(&rows, k, fresh);
         }
-        assert_eq!(held, 2000);
-        assert!(set.grew > 0 && runs.runs.len() < 12, "{} grew, {} runs", set.grew, runs.runs.len());
-        assert_eq!(runs.count(&rows, k, &[3]), 200);
-        assert_eq!(runs.count(&rows, k, &[3, 4]), 28);
     }
 }

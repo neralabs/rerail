@@ -25,7 +25,7 @@ mod facts_memo;
 mod objects;
 pub mod journal;
 pub mod observe;
-pub use objects::ResidentFrames;
+pub use objects::{ResidentFrames, TapeFrame};
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
 #[cfg(any(test, feature = "test-hooks"))]
@@ -61,7 +61,7 @@ pub mod write_back;
 pub mod hazards;
 
 pub use compression::compress;
-pub use frames::{Put as FramePut, Rel as FrameRel, Rows as FrameRows, Stored as FrameStored};
+pub use frames::{Admitted as AdmittedFrame, Put as FramePut, Rel as FrameRel, Rows as FrameRows, Stored as FrameStored};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::Sym;

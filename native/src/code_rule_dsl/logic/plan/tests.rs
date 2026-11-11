@@ -841,7 +841,7 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     .unwrap();
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.clone()).collect();
-    let mut model = Model { docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+    let mut model = Model { docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
     model.stats.nodes = 450_000.0;
     // Live counts, as a wave leaves them: rows, then distinct values by column.
     for (rel, rows, ndv) in [
@@ -965,7 +965,7 @@ fn a_gate_is_joined_once_its_key_is_bound() {
     }
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.clone()).collect();
-    let mut model = Model { docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
+    let mut model = Model { docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(&p), ndv: HashMap::new(), docof: HashMap::new(), view_src: HashMap::new(), inputs, derived };
     for (rel, rows) in [("dir", 400.0), ("done_n_b", 1.0), ("n", 10.0), ("k", 10_000.0)] {
         model.stats.card.insert(rel.to_owned(), rows);
     }
