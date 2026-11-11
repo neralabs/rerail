@@ -511,19 +511,16 @@ fn engine_build_id() -> &'static str {
     if let Some(engine) = TEST_ENGINE_BUILD_ID.get() {
         return engine;
     }
-    env!("RERAIL_ENGINE_BUILD_ID")
+    crate::code_rule_dsl::build_ids::engine()
 }
-
-/// The parser and grammar versions a stored tape was parsed with (see `build.rs`).
-const GRAMMAR_BUILD_ID: &str = env!("RERAIL_GRAMMAR_BUILD_ID");
 
 /// The stored tapes' grammar version column: the grammar build identity as a positive integer.
 pub(in crate::code_rule_dsl) fn grammar_version() -> i64 {
-    i64::from_str_radix(&GRAMMAR_BUILD_ID[..15], 16).expect("grammar build identity is hex")
+    i64::from_str_radix(&crate::code_rule_dsl::build_ids::grammar()[..15], 16).expect("grammar build identity is hex")
 }
 
 pub(super) fn grammar_set() -> HashKey {
-    HashKey::sha256(GRAMMAR_BUILD_ID.as_bytes())
+    HashKey::sha256(crate::code_rule_dsl::build_ids::grammar().as_bytes())
 }
 
 /// The inputs besides source content that one file's clause results depend on: its path (and so

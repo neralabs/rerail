@@ -63,7 +63,7 @@ pub(super) fn key(prog: &Program) -> [u8; 32] {
     }
     let mut hash = Hashing(Sha256::new());
     hash.0.update(b"rerail.plan-choices/v1\0");
-    hash.0.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    hash.0.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     for switch in ["RERAIL_INLINE", "RERAIL_INLINE_ONLY", "RERAIL_OBSERVED_STEPS"] {
         hash.0.update(b"\0");
         hash.0.update(std::env::var(switch).unwrap_or_default().as_bytes());
@@ -165,7 +165,7 @@ fn source_text(prepared: &[u8; 32]) -> String {
 fn plan() -> FactsPlanSet {
     let mut hash = Sha256::new();
     hash.update(b"rerail.plan-choices/v1\0");
-    hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     FactsPlanSet::new(vec![hash.finalize().into()])
 }
 

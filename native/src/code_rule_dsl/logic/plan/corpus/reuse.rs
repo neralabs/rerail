@@ -41,7 +41,7 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
-    h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.update([u8::from(crate::code_rule_dsl::facts::vtab::syntax::definition_ids())]);
     // What can change the outputs from outside the text: every engine switch (a sample of the corpus, decision 0091's
     // guards, the matcher and planner switches). Listing only some reused a run made under others: a run with

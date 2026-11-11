@@ -90,7 +90,7 @@ pub(in crate::code_rule_dsl) fn doc_keys(paths: &[String]) -> Vec<i64> {
 pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local/v3\0");
-    hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
     // A memoised row's node ids are those of the scheme it was made under: preorder, or per definition.
     if crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {

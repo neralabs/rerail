@@ -43,7 +43,7 @@ const PATH: &str = "rerail/prepared";
 fn pointer_plan(key: &[u8; 32]) -> FactsPlanSet {
     let mut hash = Sha256::new();
     hash.update(b"rerail.prepared/v2\0");
-    hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
     hash.update(key);
     FactsPlanSet::new(vec![hash.finalize().into()])

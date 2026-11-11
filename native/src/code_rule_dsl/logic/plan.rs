@@ -5735,7 +5735,7 @@ pub(in crate::code_rule_dsl) fn identities(prog: &Program, sccs: &[BTreeSet<Stri
     for (scc, rules) in sccs.iter().zip(by_stratum) {
         let mut h = Sha256::new();
         h.update(b"rerail.relation/v1\0");
-        h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+        h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
         for rel in scc {
             h.update(rel.as_bytes());
             let shape = (prog.decls.get(rel), prog.facts.get(rel), prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel));

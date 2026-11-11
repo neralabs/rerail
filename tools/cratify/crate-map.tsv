@@ -15,6 +15,7 @@ logic::front::ast	rerail-rr-syntax
 
 # The registry, tapes and what every crate reads
 language	rerail-lang
+build_ids	rerail-lang
 tape	rerail-lang
 tree	rerail-lang
 lines	rerail-lang

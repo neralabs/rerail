@@ -1,5 +1,7 @@
 mod blade;
 mod budget;
+// The engine's build identities, which it sets as it loads (`crate::install_build_ids`).
+pub(crate) mod build_ids;
 mod calls;
 mod compile;
 mod crypto;
