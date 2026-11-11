@@ -42,7 +42,7 @@ fn describe_matcher(matcher: &AstMatcher, language: GrammarDialect) -> Value {
         AstMatcher::Supertype(supertype) => json!({ "supertype": kind_name(supertype.class),
             "kinds": supertype.kinds.iter().map(|&id|kind_name(id)).collect::<Vec<_>>() }),
         AstMatcher::Never => json!({ "never": true }),
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => json!({ "testUnknown": true }),
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             let operator = if matches!(matcher, AstMatcher::All(_)) {

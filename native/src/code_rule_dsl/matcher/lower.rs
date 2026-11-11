@@ -514,7 +514,7 @@ impl Lowering {
             AstMatcher::Count(count) => self.count(count, shares)?,
             AstMatcher::Semantic(semantic) => return self.fact(semantic, shares),
             AstMatcher::Never => MatchTree::Never,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             AstMatcher::TestUnknown(_) => return Err(Unsupported("three-valued")),
         })
     }

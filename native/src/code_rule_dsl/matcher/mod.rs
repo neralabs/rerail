@@ -328,7 +328,7 @@ pub(super) enum AstMatcher {
     /// A sub-rule this grammar cannot express (a JSX kind under the plain-TypeScript dialect).
     Never,
     /// Test-only leaf (`testUnknown`): unknown where the node's text matches, true elsewhere.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     TestUnknown(Regex),
 }
 
@@ -411,7 +411,7 @@ impl Matcher for AstMatcher {
             },
             Self::Count(_) | Self::NthChild(_) | Self::Call(_) => self.match_extension(node, env),
             Self::Never => None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             Self::TestUnknown(regex) => {
                 if regex.is_match(&node.text()) {
                     UNKNOWN.set(true);
@@ -564,7 +564,7 @@ impl AstMatcher {
             Self::Kind(_) | Self::Supertype(_) | Self::Regex(_) | Self::Not(_) | Self::Compare(_) | Self::Never => true,
             // A count binds its value under `as`.
             Self::Count(count) => count.binding.is_none(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             Self::TestUnknown(_) => true,
             Self::All(items) | Self::Any(items) => items.iter().all(Self::binds_nothing),
             Self::Inside(item, _)
@@ -646,7 +646,7 @@ pub(super) fn reads_values(
 ) -> bool {
     match matcher {
         AstMatcher::Semantic(semantic) => semantic.reads_values(seen),
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => true,
         AstMatcher::Compare(comparison) => {
             matches!(comparison.text, CompareText::Semantic(_))

@@ -414,7 +414,7 @@ impl AnchorPlan {
             // all (`max` only): both select every root.
             AstMatcher::Compare(_) | AstMatcher::Count(_) => Self::unrestricted(),
             AstMatcher::Semantic(semantic) => semantic::compile_in(semantic, inlining),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             AstMatcher::TestUnknown(_) => Self::unrestricted(),
             // Constraints only narrow the rule's matches: its plan is a superset, never exact.
             AstMatcher::Constrained(core) => {

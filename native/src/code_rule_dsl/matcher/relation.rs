@@ -798,7 +798,7 @@ fn node_local(matcher: &AstMatcher) -> bool {
         | AstMatcher::Compare(_)
         | AstMatcher::Count(_)
         | AstMatcher::Semantic(_) => false,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => false,
     }
 }
