@@ -56,7 +56,7 @@ use super::retain::{Cut, Retained};
 use super::{Error, Result, lower};
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Rule, Term};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// The part as a run evaluates it, the old rows it reads, and how its strata were evaluated.
@@ -237,8 +237,17 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     // Each maintained stratum, the span of `rules` its maintained form wrote, and its rules as given: its form
     // derived again (`front::Again`).
     let mut groups: Vec<(BTreeSet<String>, usize, usize, Vec<Rule>)> = Vec::new();
+    // Each relation's rules, by position, found once: a scan of every rule per stratum (and per relation, to name one)
+    // was 5% of a one-file run of the Python pack (16 k rules, 10 k strata).
+    let mut by_head: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, r) in part.program.rules.iter().enumerate() {
+        by_head.entry(r.head.rel.as_str()).or_default().push(i);
+    }
+    let count_of = |rel: &str| by_head.get(rel).map_or(0, Vec::len);
     for scc in dirty {
-        let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
+        let mut at: Vec<usize> = scc.iter().filter_map(|r| by_head.get(r.as_str())).flatten().copied().collect();
+        at.sort_unstable();
+        let given: Vec<&Rule> = at.iter().map(|&i| &part.program.rules[i]).collect();
         // A view of one input stays one: its rule as given, changed when its input changed.
         if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
             && let Some(view) = views.get(*rel)
@@ -259,7 +268,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             eprintln!("O125_LIST {}", scc.iter().next().unwrap());
         }
         if let Some(why) = why {
-            let name = scc.iter().max_by_key(|r| part.program.rules.iter().filter(|x| &x.head.rel == *r).count()).cloned().unwrap_or_default();
+            let name = scc.iter().max_by_key(|r| count_of(r)).cloned().unwrap_or_default();
             again.push((format!("{name} ({} relations)", scc.len()), why));
             derived_again += 1;
             rules.extend(given.into_iter().cloned());

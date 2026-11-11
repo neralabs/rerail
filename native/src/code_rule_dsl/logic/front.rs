@@ -1111,6 +1111,19 @@ pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, boo
 /// The program's components, dependencies first, and its dependency edges. T's `strata`, with aggregation in
 /// recursion named apart from negation, and allowed into a lattice head it is monotone in (`count`/`max` into a
 /// `max` lattice, `min` into a `min` lattice).
+/// Each stratum's rules (`sccs` from `strata`), in program order, found in one pass over the rules: a filter of every
+/// rule per stratum costs the rules times the strata (16 k by 10 k on the Python pack, seconds of a one-file run).
+pub(in crate::code_rule_dsl) fn rules_by_stratum<'a>(prog: &'a Program, sccs: &[BTreeSet<String>]) -> Vec<Vec<&'a Rule>> {
+    let at: std::collections::HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
+    let mut out: Vec<Vec<&Rule>> = vec![Vec::new(); sccs.len()];
+    for r in &prog.rules {
+        if let Some(&i) = at.get(r.head.rel.as_str()) {
+            out[i].push(r);
+        }
+    }
+    out
+}
+
 pub(in crate::code_rule_dsl) fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
     let (sccs, edges, aggs) = components(prog);
     match first_unstratified(&sccs, &edges, &aggs, true).into_iter().next() {

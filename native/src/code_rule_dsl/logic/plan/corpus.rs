@@ -689,11 +689,12 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     };
     // Each relation's own class, then inherited through the relations it reads, in stratum order.
     let mut class: HashMap<String, (&'static str, &'static str)> = HashMap::new();
-    for scc in &sccs {
+    let by_stratum = front::rules_by_stratum(cross, &sccs);
+    for (scc, rules) in sccs.iter().zip(&by_stratum) {
         let mut own_worst = "config";
         let mut inherited = "config";
         let mut looped = false;
-        for rule in cross.rules.iter().filter(|r| scc.contains(&r.head.rel)) {
+        for rule in rules.iter().copied() {
             let o = own(rule);
             looped |= o.starts_with("recursive");
             let o = if o == "recursive-local" { "same-unit" } else { o };
@@ -5071,8 +5072,9 @@ fn run_observed(
                             .collect();
                         if let Ok((sccs, _)) = crate::code_rule_dsl::logic::front::strata(&part.program) {
                             let (mut quiet, mut moving, mut none, mut given) = (0, 0, 0, 0);
-                            for scc in &sccs {
-                                let reads: BTreeSet<&str> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).flat_map(|r| r.body.iter().filter_map(|l| match l {
+                            let by_stratum = crate::code_rule_dsl::logic::front::rules_by_stratum(&part.program, &sccs);
+                            for (scc, rules) in sccs.iter().zip(&by_stratum) {
+                                let reads: BTreeSet<&str> = rules.iter().flat_map(|r| r.body.iter().filter_map(|l| match l {
                                     crate::code_rule_dsl::logic::front::Literal::Atom(a) | crate::code_rule_dsl::logic::front::Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
                                     _ => None,
                                 })).filter(|r| delta_rows.contains_key(r)).collect();

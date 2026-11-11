@@ -246,25 +246,37 @@ pub(in crate::code_rule_dsl) struct Cut {
 /// The relations a `nearest` literal reads.
 pub(in crate::code_rule_dsl) const TREE: [&str; 2] = ["node", "child"];
 
-/// The relations each stratum's rules read (atoms, aggregates' atoms and a native operator's inputs).
-fn reads(prog: &front::Program, scc: &BTreeSet<String>) -> BTreeSet<String> {
-    let mut out: BTreeSet<String> = prog
-        .rules
-        .iter()
-        .filter(|r| scc.contains(&r.head.rel))
-        .flat_map(|r| &r.body)
-        .filter_map(|l| l.atom().map(|a| a.rel.clone()))
-        .collect();
-    // A `nearest` literal climbs the tree: it reads `node` and `child`, which an edit changes.
-    if prog.rules.iter().filter(|r| scc.contains(&r.head.rel)).any(|r| r.body.iter().any(|l| matches!(l, front::Literal::Nearest { .. }))) {
-        out.extend(TREE.iter().map(|r| (*r).to_owned()));
-    }
-    for rel in scc {
-        if let Some(native) = prog.natives.get(rel) {
-            out.extend(native.reads().into_iter().map(str::to_owned));
+/// The relations each stratum's rules read (atoms, aggregates' atoms and a native operator's inputs), its rules found
+/// by their heads in one pass over the program: a scan of every rule per stratum was 15% of a one-file run of the
+/// Python pack (16 k rules, 10 k strata).
+struct Reads<'a> {
+    prog: &'a front::Program,
+    by_head: HashMap<&'a str, Vec<&'a front::Rule>>,
+}
+
+impl<'a> Reads<'a> {
+    fn of(prog: &'a front::Program) -> Self {
+        let mut by_head: HashMap<&str, Vec<&front::Rule>> = HashMap::new();
+        for r in &prog.rules {
+            by_head.entry(r.head.rel.as_str()).or_default().push(r);
         }
+        Reads { prog, by_head }
     }
-    out
+
+    fn of_scc(&self, scc: &BTreeSet<String>) -> BTreeSet<String> {
+        let rules = || scc.iter().filter_map(|rel| self.by_head.get(rel.as_str())).flatten();
+        let mut out: BTreeSet<String> = rules().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.clone())).collect();
+        // A `nearest` literal climbs the tree: it reads `node` and `child`, which an edit changes.
+        if rules().any(|r| r.body.iter().any(|l| matches!(l, front::Literal::Nearest { .. }))) {
+            out.extend(TREE.iter().map(|r| (*r).to_owned()));
+        }
+        for rel in scc {
+            if let Some(native) = self.prog.natives.get(rel) {
+                out.extend(native.reads().into_iter().map(str::to_owned));
+            }
+        }
+        out
+    }
 }
 
 /// The strata of `prog` that `kept` (of program `key`) lets a run skip, given its inputs' digests.
@@ -281,8 +293,9 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.holds(r, prog) || views.contains_key(r)));
     let whole = kept.is_none() || (!prog.gates.is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
+    let reads = Reads::of(prog);
     for scc in &sccs {
-        let stale = whole || reads(prog, scc).iter().any(|r| dirty.contains(r));
+        let stale = whole || reads.of_scc(scc).iter().any(|r| dirty.contains(r));
         if stale {
             ran += 1;
             dirty.extend(scc.iter().cloned());
@@ -898,7 +911,7 @@ impl Retained {
     /// run left, whichever programs ran in between. Their rows are read when the run needs them (`load`).
     pub(in crate::code_rule_dsl) fn from_frames(store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program) -> Result<Retained> {
         let (sccs, _) = front::strata(prog).map_err(|e| Error::Plan(e.to_string()))?;
-        let by_stratum: Vec<Vec<&front::Rule>> = sccs.iter().map(|scc| prog.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect()).collect();
+        let by_stratum: Vec<Vec<&front::Rule>> = front::rules_by_stratum(prog, &sccs);
         let idents = crate::code_rule_dsl::logic::plan::identities(prog, &sccs, &by_stratum);
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
         let mut names: HashMap<String, FrameRel> = idents.into_iter().map(|(name, ident)| (name.clone(), FrameRel { name, ident })).collect();
@@ -1037,8 +1050,9 @@ impl Retained {
             let rows: Vec<i64> = table.iter().flat_map(|(d, (s, n))| [*d, *s as i64, *n as i64]).collect();
             puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: table.len(), rows } });
         }
+        let all_reads = Reads::of(prog);
         for scc in &sccs {
-            let reads: Vec<String> = reads(prog, scc).into_iter().filter(|r| !scc.contains(r)).collect();
+            let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r)).collect();
             for rel in scc {
                 let Some(name) = was.names.get(rel) else { continue };
                 if cut.clean.contains(rel) {
