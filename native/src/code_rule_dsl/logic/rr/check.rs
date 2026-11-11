@@ -26,6 +26,8 @@ fn term_needs(t: &Term, bound: &BTreeSet<String>) -> BTreeSet<String> {
         Term::Call { args, .. } => args.iter().flat_map(|a| term_needs(a, bound)).collect(),
         Term::Bin { l, r, .. } => term_needs(l, bound).union(&term_needs(r, bound)).cloned().collect(),
         Term::Named(_, t) => term_needs(t, bound),
+        // `top` no literal binds is the lattice's top, a constant (`unbound`): `a = top` binds `a`.
+        Term::Var(v) if v == "top" && !bound.contains(v) => BTreeSet::new(),
         t => vars_of(t),
     }
 }
@@ -66,7 +68,22 @@ fn groups(re: &str) -> BTreeSet<String> {
 fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>, BTreeSet<String>, bool) {
     let none = BTreeSet::new;
     match l {
-        Lit::Group { neg: true, .. } | Lit::Pattern { neg: true, .. } => {
+        // A negated conjunction's own positive literals bind its local variables (`!(callee(m, c), fname(f, c))`
+        // needs only `c`), as a group's branches do; it binds nothing outside.
+        Lit::Group { alts, neg: true } => {
+            let mut needs = BTreeSet::new();
+            for branch in alts {
+                let mut inner = bound.clone();
+                for lit in branch {
+                    let (b, n, _) = literal(lit, &inner, true);
+                    inner.extend(b);
+                    needs.extend(n.difference(&inner).cloned().collect::<Vec<_>>());
+                }
+            }
+            let ready = force || needs.is_subset(bound);
+            (none(), needs, ready)
+        }
+        Lit::Pattern { neg: true, .. } => {
             let vs = lit_vars(l);
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
@@ -105,12 +122,13 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
                 Some(Term::Str(re)) => groups(re),
                 _ => none(),
             };
-            // Positional match_all produces ordinal/start/end; only its subject
-            // must already be bound, as for the named regex captures.
-            if rel == "match_all" && args.len() == 5 {
+            // `match_all(re, s, i, a, b)` binds each match's ordinal and offsets too: only the subject is read.
+            let subject: BTreeSet<String> = if rel == "match_all" {
                 g.extend(args.iter().skip(2).flat_map(vars_of));
-            }
-            let subject: BTreeSet<String> = args.get(1).into_iter().flat_map(vars_of).collect();
+                args.iter().skip(1).take(1).flat_map(vars_of).collect()
+            } else {
+                args.iter().skip(1).flat_map(vars_of).collect()
+            };
             let ready = force || subject.is_subset(bound);
             (g, subject, ready)
         }
@@ -217,6 +235,8 @@ pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTre
     }
     need.extend(heads.iter().flat_map(|h| h.args.iter().flat_map(|a| term_needs(a, &bound))));
     need.extend(edits.iter().flat_map(vars_of));
+    // `top` no literal binds is the lattice's top, not a variable (`lower`'s `top_is_var`).
+    need.remove("top");
     need.difference(&bound).cloned().collect()
 }
 

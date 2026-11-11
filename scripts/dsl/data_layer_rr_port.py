@@ -95,7 +95,7 @@ def args_of(inner):
     if cur.strip(): out.append(cur.strip())
     return out
 
-SQL = {("substr", 3): "sql_substr", ("substr", 2): "sql_substr2", ("instr", 2): "sql_instr", ("length", 1): "sql_length",
+SQL = {("substr", 3): "sql_substr", ("substr", 2): "sql_substr2", ("substr_bytes", 3): "sql_substr_bytes", ("instr", 2): "sql_instr", ("length", 1): "sql_length",
        ("trim", 1): "sql_trim", ("trim", 2): "sql_trim2", ("ltrim", 1): "sql_ltrim", ("ltrim", 2): "sql_ltrim2",
        ("upper", 1): "sql_upper", ("lower", 1): "sql_lower", ("replace", 3): "sql_replace", ("like", 2): "sql_like",
        ("cast_int", 1): "sql_cast_int"}

@@ -603,6 +603,38 @@ pub(super) fn tag(v: i64) -> u16 {
     (mix(v) >> 48) as u16
 }
 
+/// The first index of `s` where `pred` fails, `pred` holding on a prefix: by doubling steps from the start.
+fn gallop(s: &[u16], pred: impl Fn(u16) -> bool) -> usize {
+    let mut e = 1;
+    while e <= s.len() && pred(s[e - 1]) {
+        e *= 2;
+    }
+    let lo = e / 2;
+    let hi = e.min(s.len());
+    lo + s[lo..hi].partition_point(|&x| pred(x))
+}
+
+/// The range of sorted `tags` equal to `t`, from its interpolated place.
+fn interp_range(tags: &[u16], t: u16) -> (usize, usize) {
+    let n = tags.len();
+    if n == 0 {
+        return (0, 0);
+    }
+    let g = ((t as usize * n) >> 16).min(n - 1);
+    let lo = if tags[g] < t {
+        g + 1 + gallop(&tags[g + 1..], |x| x < t)
+    } else {
+        // Leftwards from g: the first index whose tag is below t, by doubling steps.
+        let mut e = 1;
+        while e <= g && tags[g - e] >= t {
+            e *= 2;
+        }
+        let start = g.saturating_sub(e);
+        start + tags[start..=g].partition_point(|&x| x < t)
+    };
+    (lo, lo + gallop(&tags[lo..], |x| x == t))
+}
+
 /// `Runs` whose ids each carry their row's tag (the leading column's, `tag`), in a parallel array: 2 bytes an id. An
 /// order sorts by the tag first, then by the values, so the rows of a leading value are still together. A merge
 /// compares tags and reads two rows only when the tags are equal; a probe searches its tag in the tags (in cache),
@@ -613,12 +645,14 @@ pub(super) struct TaggedRuns {
     pub(super) merged: usize,
     /// Rows read by merges' comparisons (the tags tied).
     pub(super) row_compares: usize,
+    /// Of those, the ties of two different leading values: a collision of the tags (more tag bits would avoid it).
+    pub(super) collisions: usize,
     fanout: usize,
 }
 
 impl TaggedRuns {
     pub(super) fn with_fanout(order: Vec<usize>, fanout: usize) -> TaggedRuns {
-        TaggedRuns { order, runs: Vec::new(), merged: 0, row_compares: 0, fanout: fanout.max(2) }
+        TaggedRuns { order, runs: Vec::new(), merged: 0, row_compares: 0, collisions: 0, fanout: fanout.max(2) }
     }
 
     #[inline]
@@ -636,6 +670,8 @@ impl TaggedRuns {
                 Ordering::Greater => false,
                 Ordering::Equal => {
                     self.row_compares += 1;
+                    let lead = self.order[0];
+                    self.collisions += usize::from(rows[a.0[i] as usize * k + lead] != rows[b.0[j] as usize * k + lead]);
                     Self::rows_cmp(&self.order, rows, k, a.0[i], b.0[j]).is_le()
                 }
             };
@@ -672,7 +708,7 @@ impl TaggedRuns {
 
     /// Every run merged into one.
     pub(super) fn merged_all(&self, rows: &[i64], k: usize) -> TaggedRuns {
-        let mut one = TaggedRuns { order: self.order.clone(), runs: Vec::new(), merged: 0, row_compares: 0, fanout: self.fanout };
+        let mut one = TaggedRuns { order: self.order.clone(), runs: Vec::new(), merged: 0, row_compares: 0, collisions: 0, fanout: self.fanout };
         let mut acc: Option<(Vec<u32>, Vec<u16>)> = None;
         for r in &self.runs {
             acc = Some(match acc.take() { None => r.clone(), Some(a) => one.merge2(rows, k, a, r.clone()) });
@@ -691,6 +727,22 @@ impl TaggedRuns {
         self.runs.iter().map(|(ids, tags)| {
             let lo = tags.partition_point(|&x| x < t);
             let hi = lo + tags[lo..].partition_point(|&x| x == t);
+            let run = &ids[lo..hi];
+            let s = run.partition_point(|&id| cmp(id) == Ordering::Less);
+            run[s..].partition_point(|&id| cmp(id) == Ordering::Equal)
+        }).sum()
+    }
+
+    /// `count`, each run's tag range found from where the tag would sit were the tags even (mldb's PathIndex: the
+    /// position is the hash times the length), widened by doubling steps: a short scan, not a search of the run.
+    pub(super) fn count_interp(&self, rows: &[i64], k: usize, key: &[i64]) -> usize {
+        let t = tag(key[0]);
+        let cmp = |id: u32| -> Ordering {
+            let r = &rows[id as usize * k..][..k];
+            self.order.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+        };
+        self.runs.iter().map(|(ids, tags)| {
+            let (lo, hi) = interp_range(tags, t);
             let run = &ids[lo..hi];
             let s = run.partition_point(|&id| cmp(id) == Ordering::Less);
             run[s..].partition_point(|&id| cmp(id) == Ordering::Equal)
@@ -752,6 +804,9 @@ mod grow_tests {
             assert!(wide.merged < runs.merged, "{} merged by 4s, {} by 2s", wide.merged, runs.merged);
             assert_eq!(tagged.count(&rows, k, &[3, 4]), 28);
             assert_eq!(tagged.count(&rows, k, &[3]), 200);
+            assert_eq!(tagged.count_interp(&rows, k, &[3]), 200);
+            assert_eq!(tagged.count_interp(&rows, k, &[3, 4]), 28);
+            assert_eq!(tagged.count_interp(&rows, k, &[11]), 0);
             assert_eq!(tagged.merged_all(&rows, k).count(&rows, k, &[5, 5]), 29);
             assert_eq!(lazy.runs.len(), 21, "one run a wave of new rows, none merged");
             assert_eq!(lazy.count(&rows, k, &[3, 4]), 28);

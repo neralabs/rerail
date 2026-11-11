@@ -41,14 +41,16 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
                 .add_parameter("weightFormat", "r", "WeightFormat")
                 .add_parameter("weightMultiplier", "r", "f32")
                 .add_parameter("weightData", "r", "f32[weightDataLength]")
-                .add_parameter("decodedRowsOut", "w", "f32[numRows]");
+                .add_parameter("numTargets", "r", "u32")
+                .add_parameter("targets", "r", "f32[targetsLength]")
+                .add_parameter("decodedRowsOut", "w", "f32[numRows * 2]");
             r.add_tuneable("threadsPerBlock", MAX_WORK_GROUP_SIZE).add_tuneable("blocksPerGrid", 16);
             r.set_grid_expression("[blocksPerGrid]", "[threadsPerBlock]");
             r.set_compute_function("randomforest_kernels", "decompressRowsKernel");
         }
         "testFeature" => {
             r.add_dimension("fidx", "naf").add_dimension("rowNum", "numRows");
-            r.add_parameter("decodedRows", "r", "f32[numRows]")
+            r.add_parameter("decodedRows", "r", "f32[numRows * 2]")
                 .add_parameter("numRows", "r", "u32")
                 .add_parameter("bucketData", "r", "u32[bucketDataLength]")
                 .add_parameter("bucketDataOffsets", "r", "u32[nf + 1]")
@@ -116,17 +118,54 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
             r.add_parameter("numRows", "r", "u32")
                 .add_parameter("numTrees", "r", "u32")
                 .add_parameter("maxDepth", "r", "u32")
+                .add_parameter("lanesPerRow", "r", "u32")
+                .add_parameter("columnStride", "r", "u32")
                 .add_parameter("bucketData", "r", "u32[bucketDataLength]")
-                .add_parameter("bucketDataOffsets", "r", "u32[nf + 1]")
-                .add_parameter("bucketEntryBits", "r", "u32[nf]")
                 .add_parameter("nodes", "r", "PredictNode[numNodes]")
+                .add_parameter("subsets", "r", "u32[numSubsetWords]")
                 .add_parameter("treeRoots", "r", "i32[numTrees]")
                 .add_parameter("treeWeights", "r", "f32[numTrees]")
                 .add_parameter("leafPreds", "r", "f32[numLeafPreds]")
                 .add_parameter("predictionsOut", "w", "f32[numRows * 2]");
-            r.add_tuneable("threadsPerBlock", MAX_WORK_GROUP_SIZE);
-            r.set_grid_expression("[ceilDiv(numRows,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.add_tuneable("threadsPerGroup", PREDICT_GROUP_THREADS as i64);
+            r.add_parameter("partials", "w", "f32[threadsPerGroup * 2]");
+            r.set_grid_expression("[ceilDiv(numRows,threadsPerGroup / lanesPerRow)]", "[threadsPerGroup]").allow_grid_padding();
             r.set_compute_function("randomforest_kernels", "predictForestKernel");
+        }
+        "numericBuckets" => {
+            r.add_dimension("r", "numRows");
+            r.add_parameter("numRows", "r", "u32")
+                .add_parameter("numSplits", "r", "u32")
+                .add_parameter("numericOffset", "r", "u32")
+                .add_parameter("keys", "r", "i64[numRows]")
+                .add_parameter("splitKeys", "r", "i64[numSplitKeys]")
+                .add_parameter("bucketsOut", "w", "u32[numRows]");
+            r.add_tuneable("threadsPerBlock", 256);
+            r.set_grid_expression("[ceilDiv(numRows,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", "numericBucketsKernel");
+        }
+        "markCodes" | "categoricalBuckets" => {
+            r.add_dimension("r", "numRows");
+            r.add_parameter("numRows", "r", "u32").add_parameter("numCodes", "r", "u32").add_parameter("codes", "r", "u32[numRows]");
+            if name == "markCodes" {
+                r.add_parameter("presentOut", "w", "u32[numCodes + 1]");
+            } else {
+                r.add_parameter("codeBuckets", "r", "u32[numCodes + 1]").add_parameter("bucketsOut", "w", "u32[numRows]");
+            }
+            r.add_tuneable("threadsPerBlock", 256);
+            r.set_grid_expression("[ceilDiv(numRows,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", if name == "markCodes" { "markCodesKernel" } else { "categoricalBucketsKernel" });
+        }
+        "packBuckets" => {
+            r.add_dimension("w", "numWords");
+            r.add_parameter("numRows", "r", "u32")
+                .add_parameter("entryBits", "r", "u32")
+                .add_parameter("numWords", "r", "u32")
+                .add_parameter("buckets", "r", "u32[numRows]")
+                .add_parameter("wordsOut", "w", "u32[numWords]");
+            r.add_tuneable("threadsPerBlock", 256);
+            r.set_grid_expression("[ceilDiv(numWords,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", "packBucketsKernel");
         }
         "updatePartitionNumbers" => {
             r.add_dimension("r", "numRows");
@@ -144,7 +183,7 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
                 .add_parameter("bucketNumbers", "r", "u32[nf + 1]")
                 .add_parameter("bucketEntryBits", "r", "u32[nf]")
                 .add_parameter("featureIsOrdinal", "r", "u32[nf]")
-                .add_parameter("decodedRows", "r", "f32[numRows]");
+                .add_parameter("decodedRows", "r", "f32[numRows * 2]");
             r.add_tuneable("threadsPerBlock", MAX_WORK_GROUP_SIZE).add_tuneable("blocksPerGrid", 96);
             r.allow_grid_padding();
             r.set_grid_expression("[blocksPerGrid]", "[threadsPerBlock]");
@@ -162,7 +201,7 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
                 .add_parameter("wAll", "w", "W32[numActivePartitions]")
                 .add_parameter("smallSideIndexes", "r", "u8[numActivePartitions]")
                 .add_parameter("smallSideIndexToPartition", "r", "u16[256]")
-                .add_parameter("decodedRows", "r", "f32[nr]")
+                .add_parameter("decodedRows", "r", "f32[nr * 2]")
                 .add_parameter("bucketData", "r", "u32[bucketDataLength]")
                 .add_parameter("bucketDataOffsets", "r", "u32[nf + 1]")
                 .add_parameter("bucketNumbers", "r", "u32[nf + 1]")
@@ -196,7 +235,10 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
 }
 
 /// The registered grid kernels, in the order a tree's training runs them.
-pub const GRID_KERNELS: [&str; 10] = ["decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest"];
+/// The threads of a prediction group (`predictForest`): rows times their lanes.
+pub const PREDICT_GROUP_THREADS: u32 = 128;
+
+pub const GRID_KERNELS: [&str; 14] = ["decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest", "numericBuckets", "markCodes", "categoricalBuckets", "packBuckets"];
 
 /// Grid kernel `name`, specialized against its Metal function (once).
 pub fn kernel(name: &str) -> Result<&'static GridComputeKernelSpecialization, String> {
@@ -266,10 +308,23 @@ mod tests {
     /// the rows that moved, and the children's buckets after the transfer and the fixup.
     #[test]
     fn one_level_on_metal_matches_the_host_kernels() {
+        one_level_on_metal(false);
+    }
+
+    /// The same for a regression: soft labels (each row's weights to false and true from its target) and the
+    /// variance criterion.
+    #[test]
+    fn one_regression_level_on_metal_matches_the_host_kernels() {
+        one_level_on_metal(true);
+    }
+
+    fn one_level_on_metal(regression: bool) {
         if crate::gpu::shared::get().is_none() {
             eprintln!("no Metal device: skipped");
             return;
         }
+        // Mostly feature 0's bucket (r % 8), as the labels are, with noise.
+        let target = |r: u32| ((r % 8) * 12 + (r * 37) % 13) as f32 / 100.0;
         let mut s = MemorySerializer;
         let nr = 1000u32;
         let label = |r: u32| r % 8 >= 3 || r % 13 == 0;
@@ -285,18 +340,27 @@ mod tests {
         let enc = WeightEncoder { weight_format: WeightFormat::WfIntMultiple, weight_bits: 5, weight_multiplier: multiplier, ..Default::default() };
         let mut w = RowWriter::new(&enc, nr as usize, nr as usize, &mut s, true, 1.0);
         for r in 0..nr {
-            w.add_row_values(label(r), 1.0 / 1024.0, r).unwrap();
+            if regression {
+                w.add_row_target(target(r), 1.0 / 1024.0, r).unwrap();
+            } else {
+                w.add_row_values(label(r), 1.0 / 1024.0, r).unwrap();
+            }
         }
         let rows = w.freeze(&mut s);
+        let targets: Vec<f32> = rows.targets.as_deref().cloned().unwrap_or_default();
         let nf = feature_nb.len();
 
         // decodeRows.
         let decoded = host::decode_rows(&rows);
-        let d_decoded = buf(&vec![5f32; nr as usize]);
+        let d_decoded = buf(&vec![[5f32; 2]; nr as usize]);
         let row_data = buf(rows.row_data.data());
         let weight_data = buf(&[0f32; 4]);
-        run("decodeRows", &[("rowData", B(&row_data)), ("rowDataLength", Int(rows.row_data.length() as i64)), ("weightBits", Int(5)), ("exampleNumBits", Int(0)), ("numRows", Int(nr as i64)), ("weightFormat", Int(WeightFormat::WfIntMultiple as i64)), ("weightMultiplier", Float(multiplier as f64)), ("weightData", B(&weight_data)), ("decodedRowsOut", B(&d_decoded))], &[nr]);
-        assert_eq!(read::<f32>(&d_decoded, nr as usize), decoded, "decodeRows");
+        let d_targets = buf(if targets.is_empty() { &[0f32][..] } else { &targets[..] });
+        run("decodeRows", &[("rowData", B(&row_data)), ("rowDataLength", Int(rows.row_data.length() as i64)), ("weightBits", Int(5)), ("exampleNumBits", Int(0)), ("numRows", Int(nr as i64)), ("weightFormat", Int(WeightFormat::WfIntMultiple as i64)), ("weightMultiplier", Float(multiplier as f64)), ("weightData", B(&weight_data)), ("numTargets", Int(targets.len() as i64)), ("targets", B(&d_targets)), ("decodedRowsOut", B(&d_decoded))], &[nr]);
+        assert_eq!(read::<[f32; 2]>(&d_decoded, nr as usize), decoded, "decodeRows");
+        if regression {
+            assert!(decoded.iter().any(|d| d[0] != 0.0 && d[1] != 0.0), "soft labels");
+        }
 
         let mut all_bucket_data: Vec<u32> = Vec::new();
         let (mut offsets, mut numbers, mut entry_bits) = (vec![0u32], vec![0u32], vec![]);
@@ -315,7 +379,7 @@ mod tests {
         let active: Vec<u32> = (0..nf as u32).collect();
         let ordinal = vec![1u32, 0, 1];
         let max_parts = 8usize;
-        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: max_parts as u16, num_active_buckets: total, max_num_finished_partitions: u32::MAX, ..Default::default() }];
+        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: max_parts as u16, num_active_buckets: total, max_num_finished_partitions: u32::MAX, split_criterion: if regression { SplitCriterion::Variance } else { SplitCriterion::Sqrt } as u32, ..Default::default() }];
         let mut tdi = [TreeDepthInfo::default()];
         let (d_bucket_data, d_offsets, d_numbers, d_entry_bits, d_active, d_ordinal) = (buf(&all_bucket_data), buf(&offsets), buf(&numbers), buf(&entry_bits), buf(&active), buf(&ordinal));
         let d_tti = buf(&tti);
@@ -331,7 +395,7 @@ mod tests {
 
         let mut w_all = vec![W::default(); max_parts];
         for &d in &decoded {
-            w_all[0].add_weight(d < 0.0, d.abs());
+            w_all[0].add_weights(d);
         }
         let d_w_all = buf(&w_all);
         let d_tdi = buf(&tdi);
@@ -386,7 +450,7 @@ mod tests {
         assert_eq!(read::<RowPartitionInfo>(&d_partitions, nr as usize), partitions, "updatePartitionNumbers: partitions");
         assert_eq!(read::<u32>(&d_nndi, 1), nndi, "updatePartitionNumbers: count");
         let n = nndi[0] as usize;
-        let key = |e: &UpdateWorkEntry| (e.row, e.partition, e.small_side_index, e.decoded_row.to_bits());
+        let key = |e: &UpdateWorkEntry| (e.row, e.partition, e.small_side_index, e.decoded_row.map(f32::to_bits));
         let mut dw: Vec<_> = read::<UpdateWorkEntry>(&d_work, n).iter().map(key).collect();
         let mut hw: Vec<_> = work[..n].iter().map(key).collect();
         dw.sort();

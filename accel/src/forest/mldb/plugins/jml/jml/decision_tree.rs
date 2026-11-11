@@ -58,21 +58,33 @@ impl DecisionTree {
     }
 
     /// The prediction with `value(feature)` the example's values (NaN for missing), as upstream (`Split::apply`).
+    /// A categorical subset split (`Node::split_subset`) has no value form (its categories are its buckets), and
+    /// sends every example down its missing branch: `predict_buckets` routes by buckets.
     pub fn predict_values(&self, value: &dyn Fn(&Feature) -> f32) -> Distribution {
-        self.predict_with(&|split, _| {
+        self.predict_with(&|split, node| {
             let mut w = [0f32; 3];
-            w[split.apply_value(value(split.feature())) as usize] = 1.0;
+            if node.split_subset.is_empty() {
+                w[split.apply_value(value(split.feature())) as usize] = 1.0;
+            } else {
+                w[MISSING as usize] = 1.0;
+            }
             w
         })
     }
 
     /// The prediction with `bucket(feature)` the example's buckets: true where training put the bucket on the left
-    /// of the node's split (an ordinal split's lower buckets, a categorical split's own bucket).
+    /// of the node's split (an ordinal split's lower buckets, a categorical split's subset of buckets).
     pub fn predict_buckets(&self, bucket: &dyn Fn(&Feature) -> u32) -> Distribution {
         self.predict_with(&|split, node| {
             let b = bucket(split.feature()) as i64;
             let s = node.split_bucket as i64;
-            let left = if split.op() == super::split::Op::Less { b < s } else { b == s };
+            let left = if !node.split_subset.is_empty() {
+                b < 32 * node.split_subset.len() as i64 && (node.split_subset[(b >> 5) as usize] >> (b & 31)) & 1 != 0
+            } else if split.op() == super::split::Op::Less {
+                b < s
+            } else {
+                b == s
+            };
             if left { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] }
         })
     }

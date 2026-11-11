@@ -27,25 +27,26 @@ use crate::forest::bucket::{BucketList, BucketListRef, WritableBucketList};
 use crate::forest::memory_region::MemorySerializer;
 use crate::forest::randomforest_kernels::score_split;
 use crate::forest::dataset_feature_space::DatasetFeatureSpace;
-use crate::forest::randomforest_types::{decode_row_arr, decode_row_iter, get_leaf, get_node, DecodedRow, Feature, IndexedPartitionSplit, PartitionEntry, PartitionIndex, PartitionSplit, PartitionSplitDirection, RowIterator, RowPartitionInfo, Rows, W};
+use crate::forest::randomforest_types::{decode_row_arr, decode_row_iter, get_leaf, get_node, Feature, IndexedPartitionSplit, PartitionEntry, PartitionIndex, PartitionSplit, PartitionSplitDirection, RowIterator, RowPartitionInfo, RowWeights, Rows, SplitCriterion, W, CategorySet, MAX_CATEGORICAL_BUCKETS, in_category_set};
 use crate::forest::tree::{Ptr, Tree};
 use std::collections::BTreeMap;
 
 /// `decodeRow` over what the split search reads its rows from.
 pub trait RowSource {
-    fn decode_row(&mut self, row_number: usize) -> DecodedRow;
+    /// The row's example number and weights.
+    fn decode_row(&mut self, row_number: usize) -> (u32, RowWeights);
 }
 
 impl RowSource for RowIterator<'_> {
     #[inline(always)]
-    fn decode_row(&mut self, row_number: usize) -> DecodedRow {
+    fn decode_row(&mut self, row_number: usize) -> (u32, RowWeights) {
         decode_row_iter(self, row_number)
     }
 }
 
-impl RowSource for &[f32] {
+impl RowSource for &[RowWeights] {
     #[inline(always)]
-    fn decode_row(&mut self, row_number: usize) -> DecodedRow {
+    fn decode_row(&mut self, row_number: usize) -> (u32, RowWeights) {
         decode_row_arr(self, row_number)
     }
 }
@@ -92,9 +93,9 @@ pub fn test_feature_kernel_cpu<R: RowSource, B: BucketSource + ?Sized>(mut row_i
     // as those without an example have no possible split point.
     let mut max_bucket = i32::MIN;
     for j in 0..num_rows {
-        let r = row_iterator.decode_row(j);
-        let bucket = buckets.bucket(r.example_num) as i32;
-        w[bucket as usize].add_weight(r.label, r.weight);
+        let (example_num, weights) = row_iterator.decode_row(j);
+        let bucket = buckets.bucket(example_num) as i32;
+        w[bucket as usize].add_weights(weights);
         max_bucket = max_bucket.max(bucket);
         min_bucket = min_bucket.min(bucket);
     }
@@ -106,21 +107,69 @@ pub fn test_feature_kernel<R: RowSource, B: BucketSource + ?Sized>(row_iterator:
     test_feature_kernel_cpu(row_iterator, num_rows, buckets, w)
 }
 
-/// Chooses which is the best split for a given feature: (best score, best split, best left, best right).
-pub fn choose_split_kernel(w: &[W] /* at least max_bucket + 1 entries */, max_bucket: i32, ordinal: bool, w_all: &W) -> (f64, i32, W, W) {
+/// Chooses which is the best split for a given feature: (best score, best split, best left, best right, the
+/// categorical split's subset).
+///
+/// A categorical feature's split is CART's: its buckets ranked by their mean target (`category_order`), the best
+/// prefix of that order found as an ordinal split is, and the prefix is the subset on the left (the split's value
+/// is its number of buckets). With two labels or a variance, and a concave impurity (both criteria), the best
+/// subset is such a prefix (Breiman et al. 1984, 9.4). Upstream tried each bucket alone against the rest.
+pub fn choose_split_kernel(w: &[W] /* at least max_bucket + 1 entries */, max_bucket: i32, ordinal: bool, w_all: &W, criterion: SplitCriterion) -> (f64, i32, W, W, CategorySet) {
+    if ordinal {
+        let (s, b, l, r) = choose_ordinal_split(w, max_bucket, w_all, criterion);
+        return (s, b, l, r, [0; 16]);
+    }
+    let n = (max_bucket + 1).max(0) as usize;
+    assert!(n <= MAX_CATEGORICAL_BUCKETS, "a categorical feature with {n} buckets");
+    let order = category_order(&w[..n]);
+    let ranked: Vec<W> = order.iter().map(|&b| w[b as usize]).collect();
+    let (s, k, l, r) = choose_ordinal_split(&ranked, max_bucket, w_all, criterion);
+    let mut subset = [0u32; 16];
+    for &b in &order[..k.max(0) as usize] {
+        subset[(b >> 5) as usize] |= 1 << (b & 31);
+    }
+    (s, k, l, r, subset)
+}
+
+/// A categorical feature's buckets in the order of their mean target (the true side's share of the weight), then
+/// the empty buckets; ties by bucket number. Shares compare exactly, in the accumulators' fixed point
+/// (`t_a (f_b + t_b) < t_b (f_a + t_a)` in i64), as the device's `chooseSplit` ranks them.
+pub fn category_order(w: &[W]) -> Vec<u32> {
+    let mut order: Vec<u32> = (0..w.len() as u32).collect();
+    order.sort_by(|&a, &b| category_before(&w[a as usize], a, &w[b as usize], b));
+    order
+}
+
+/// `category_order`'s comparison.
+#[inline]
+pub fn category_before(wa: &W, a: u32, wb: &W, b: u32) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (wa.count() == 0, wb.count() == 0) {
+        (true, false) => return Ordering::Greater,
+        (false, true) => return Ordering::Less,
+        (true, true) => return a.cmp(&b),
+        _ => {}
+    }
+    let (fa, ta) = (wa.v[0].rep as i64, wa.v[1].rep as i64);
+    let (fb, tb) = (wb.v[0].rep as i64, wb.v[1].rep as i64);
+    (ta * (fb + tb)).cmp(&(tb * (fa + ta))).then(a.cmp(&b))
+}
+
+/// The best split of buckets in order: (best score, the number of buckets on the left, left, right).
+fn choose_ordinal_split(w: &[W], max_bucket: i32, w_all: &W, criterion: SplitCriterion) -> (f64, i32, W, W) {
     let mut best_score = f64::INFINITY;
     let mut best_split = -1;
     let mut best_left = W::default();
     let mut best_right = W::default();
 
-    if ordinal {
+    {
         // Calculate best split point for ordered values.
         let mut w_false = *w_all;
         let mut w_true = W::default();
         // Now test split points one by one.
         for j in 0..=max_bucket.max(-1) {
             if w_false.count() > 0 && w_true.count() > 0 {
-                let s = score_split(&w_false, &w_true) as f64;
+                let s = score_split(&w_false, &w_true, criterion) as f64;
                 if s < best_score {
                     best_score = s;
                     best_split = j;
@@ -133,55 +182,38 @@ pub fn choose_split_kernel(w: &[W] /* at least max_bucket + 1 entries */, max_bu
                 w_true += w[j as usize];
             }
         }
-    } else {
-        // Calculate best split point for non-ordered values. Now test split points one by one.
-        for j in 0..=max_bucket.max(-1) {
-            let wj = w[j as usize];
-            if wj.empty() {
-                continue;
-            }
-            let w_false = *w_all - wj;
-            if w_false.count() == 0 || wj.count() == 0 {
-                continue;
-            }
-            let s = score_split(&w_false, &wj) as f64;
-            if s < best_score {
-                best_score = s;
-                best_split = j;
-                best_right = w_false;
-                best_left = wj;
-            }
-        }
     }
     (best_score, best_split, best_left, best_right)
 }
 
-/// Tests one feature over the rows: (best score, best split, best left, best right, feature is still active).
-pub fn test_feature_number(feature_num: usize, features: &[Feature], row_iterator: RowIterator<'_>, num_rows: usize, w_all: &W) -> (f64, i32, W, W, bool) {
+/// Tests one feature over the rows: (best score, best split, best left, best right, feature is still active, the
+/// categorical split's subset).
+pub fn test_feature_number(feature_num: usize, features: &[Feature], row_iterator: RowIterator<'_>, num_rows: usize, w_all: &W, criterion: SplitCriterion) -> (f64, i32, W, W, bool, CategorySet) {
     let feature = &features[feature_num];
     let buckets = &feature.buckets;
     let nb = buckets.num_buckets.max(0) as usize;
     let mut w = vec![W::default(); nb];
     if !feature.active {
-        return (f64::INFINITY, -1, W::default(), W::default(), false);
+        return (f64::INFINITY, -1, W::default(), W::default(), false, [0; 16]);
     }
     // Is the feature still active?
     let (is_active, max_bucket) = test_feature_kernel(row_iterator, num_rows, buckets, &mut w);
     if is_active {
-        let (s, b, l, r) = choose_split_kernel(&w, max_bucket, feature.ordinal, w_all);
-        return (s, b, l, r, true);
+        let (s, b, l, r, subset) = choose_split_kernel(&w, max_bucket, feature.ordinal, w_all, criterion);
+        return (s, b, l, r, true, subset);
     }
-    (f64::INFINITY, -1, W::default(), W::default(), false)
+    (f64::INFINITY, -1, W::default(), W::default(), false, [0; 16])
 }
 
-/// Decodes the rows to one float each: the weight, negated when the label is true.
-pub fn decode_rows(rows: &Rows) -> Vec<f32> {
-    let mut decoded_rows = vec![0.0; rows.row_count()];
+/// Decodes the rows to their weights to false and true (`RowWeights`; upstream had one float, the weight negated
+/// for a true label, which has no room for a regression target).
+pub fn decode_rows(rows: &Rows) -> Vec<RowWeights> {
+    let mut decoded_rows = vec![[0.0; 2]; rows.row_count()];
     let mut it = rows.get_row_iterator();
     for (i, d) in decoded_rows.iter_mut().enumerate() {
         let row = it.get_decoded_row();
         assert_eq!(i as u32, row.example_num);
-        *d = row.weight * (1 - 2 * row.label as i32) as f32;
+        *d = row.weights();
     }
     decoded_rows
 }
@@ -219,46 +251,46 @@ pub fn extract_tree(depth: i32, max_depth: i32, tree: &mut Tree, root: Partition
     if !right.is_some() {
         right = get_leaf(tree, &s.right);
     }
-    get_node(tree, s.score, s.feature as i32, s.value as i32, left, right, s.left, s.right, features, fs)
+    get_node(tree, s.score, s.feature as i32, s.value as i32, &s.subset, left, right, s.left, s.right, features, fs)
 }
 
 /// The best split over every active feature, the rows read from the row iterator: (score, feature, split, left,
 /// right, which features are still active). Features are searched in parallel near the root, and reduced in order
 /// so that the choice is deterministic (the first feature with the lowest score).
-pub fn test_all_cpu(depth: i32, features: &[Feature], rows: &Rows) -> (f64, i32, i32, W, W, Vec<u8>) {
+pub fn test_all_cpu(depth: i32, features: &[Feature], rows: &Rows, criterion: SplitCriterion) -> (f64, i32, i32, W, W, Vec<u8>, CategorySet) {
     let mut new_active: Vec<u8> = features.iter().map(|f| f.active as u8).collect();
     // We have no impurity in our bucket. Time to stop.
     if rows.w_all.v[0].to_f32() == 0.0 || rows.w_all.v[1].to_f32() == 0.0 {
-        return (1.0, -1, -1, rows.w_all, W::default(), vec![0; features.len()]);
+        return (1.0, -1, -1, rows.w_all, W::default(), vec![0; features.len()], [0; 16]);
     }
     let nf = features.len();
-    let do_feature = |i: usize| test_feature_number(i, features, rows.get_row_iterator(), rows.row_count(), &rows.w_all);
-    let results: Vec<(f64, i32, W, W, bool)> = if depth < 4 || rows.row_count() as u64 * nf as u64 > 20000 {
+    let do_feature = |i: usize| test_feature_number(i, features, rows.get_row_iterator(), rows.row_count(), &rows.w_all, criterion);
+    let results: Vec<(f64, i32, W, W, bool, CategorySet)> = if depth < 4 || rows.row_count() as u64 * nf as u64 > 20000 {
         use rayon::prelude::*;
         (0..nf).into_par_iter().map(do_feature).collect()
     } else {
         (0..nf).map(do_feature).collect()
     };
-    let (mut best_score, mut best_feature, mut best_split, mut best_left, mut best_right) = (f64::INFINITY, -1, -1, W::default(), W::default());
-    for (i, (score, split, left, right, still_active)) in results.into_iter().enumerate() {
+    let (mut best_score, mut best_feature, mut best_split, mut best_left, mut best_right, mut best_subset) = (f64::INFINITY, -1, -1, W::default(), W::default(), [0; 16]);
+    for (i, (score, split, left, right, still_active, subset)) in results.into_iter().enumerate() {
         new_active[i] = still_active as u8;
         if score < best_score {
-            (best_score, best_feature, best_split, best_left, best_right) = (score, i as i32, split, left, right);
+            (best_score, best_feature, best_split, best_left, best_right, best_subset) = (score, i as i32, split, left, right, subset);
         }
     }
-    (best_score, best_feature, best_split, best_left, best_right, new_active)
+    (best_score, best_feature, best_split, best_left, best_right, new_active, best_subset)
 }
 
 /// `testAll`: upstream's only form is the CPU one.
-pub fn test_all(depth: i32, features: &[Feature], rows: &Rows) -> (f64, i32, i32, W, W, Vec<u8>) {
-    test_all_cpu(depth, features, rows)
+pub fn test_all(depth: i32, features: &[Feature], rows: &Rows, criterion: SplitCriterion) -> (f64, i32, i32, W, W, Vec<u8>, CategorySet) {
+    test_all_cpu(depth, features, rows, criterion)
 }
 
 /// Which side of a split a bucket is on: `true` is right (ordinal: at or above the split value; categorical: not
-/// the split value).
+/// in the split's subset).
 #[inline(always)]
-pub fn side_of(bucket: u32, split_value: i32, ordinal: bool) -> bool {
-    if ordinal { bucket as i32 >= split_value } else { bucket as i32 != split_value }
+pub fn side_of(bucket: u32, split_value: i32, subset: &CategorySet, ordinal: bool) -> bool {
+    if ordinal { bucket as i32 >= split_value } else { !in_category_set(subset, bucket) }
 }
 
 /// Moves each partition's buckets and wAll to its new place, then gives each row its new partition and moves the
@@ -270,7 +302,7 @@ pub fn side_of(bucket: u32, split_value: i32, ordinal: bool) -> bool {
 /// `buckets` holds `new_num_partitions` partitions (upstream doubled the matrix every level whatever the width, so
 /// that it reached 2^20 partitions' worth before the recursion limit).
 #[allow(clippy::too_many_arguments)]
-pub fn update_buckets(features: &[Feature], partitions: &mut [RowPartitionInfo], buckets: &mut Vec<W>, num_active_buckets: u32, w_all: &mut Vec<W>, bucket_offsets: &[u32], partition_splits: &[IndexedPartitionSplit], new_partition_numbers: &[(i32, i32)], new_num_partitions: usize, decoded_rows: &[f32], active_features: &[i32]) {
+pub fn update_buckets(features: &[Feature], partitions: &mut [RowPartitionInfo], buckets: &mut Vec<W>, num_active_buckets: u32, w_all: &mut Vec<W>, bucket_offsets: &[u32], partition_splits: &[IndexedPartitionSplit], new_partition_numbers: &[(i32, i32)], new_num_partitions: usize, decoded_rows: &[RowWeights], active_features: &[i32]) {
     let num_partitions = w_all.len();
     if num_partitions == 0 {
         return;
@@ -315,20 +347,19 @@ pub fn update_buckets(features: &[Feature], partitions: &mut [RowPartitionInfo],
             continue;
         }
         assert!(left_partition != -1 && right_partition != -1);
-        let weight = decoded_rows[i].abs();
-        let label = decoded_rows[i] < 0.0;
+        let weights = decoded_rows[i];
         let f = &features[split_feature as usize];
-        let side = side_of(f.buckets.get(i as u32), s.split.value as i32, f.ordinal);
+        let side = side_of(f.buckets.get(i as u32), s.split.value as i32, &s.split.subset, f.ordinal);
         *p = (if side { right_partition } else { left_partition } as u16).into();
         // false = left to right, true = right to left.
         let direction = rl(s);
         if direction != side {
             let to = if direction { left_partition } else { right_partition } as usize;
-            w_all[to].add_weight(label, weight);
+            w_all[to].add_weights(weights);
             for &af in active_features {
                 let start = bucket_offsets[af as usize] as usize;
                 let bucket = features[af as usize].buckets.get(i as u32) as usize;
-                buckets[to * nab + start + bucket].add_weight(label, weight);
+                buckets[to * nab + start + bucket].add_weights(weights);
             }
         }
     }
@@ -359,7 +390,7 @@ pub fn update_buckets(features: &[Feature], partitions: &mut [RowPartitionInfo],
 /// partition's decoded rows, in order, and its active features' buckets re-encoded over just those rows. Rows in no
 /// partition, and partitions with no rows or no index, are left out (upstream indexed its output with the "no
 /// partition" number for rows a leaf had claimed).
-pub fn split_partitions(features: &[Feature], active_features: &[i32], decoded_rows: &[f32], partitions: &[RowPartitionInfo], w: &[W], indexes: &[PartitionIndex]) -> Vec<PartitionEntry> {
+pub fn split_partitions(features: &[Feature], active_features: &[i32], decoded_rows: &[RowWeights], partitions: &[RowPartitionInfo], w: &[W], indexes: &[PartitionIndex]) -> Vec<PartitionEntry> {
     let num_partitions = w.len();
     let mut s = MemorySerializer;
     let keep = |p: usize| p < num_partitions && w[p].count() > 0 && indexes[p] != PartitionIndex::none();
@@ -380,9 +411,9 @@ pub fn split_partitions(features: &[Feature], active_features: &[i32], decoded_r
             continue;
         }
         out[p].decoded_rows.push(decoded_rows[i]);
-        let weight = decoded_rows[i].abs();
+        let weight = decoded_rows[i][0] + decoded_rows[i][1];
         assert!(weight <= 1.0, "row {i} weight {weight}");
-        out[p].w_all.add_weight(decoded_rows[i] < 0.0, weight);
+        out[p].w_all.add_weights(decoded_rows[i]);
     }
     for &f in active_features {
         let f = f as usize;
@@ -410,7 +441,7 @@ pub fn split_partitions(features: &[Feature], active_features: &[i32], decoded_r
 /// for each of the partitions. It's the "search" part of the decision tree algorithm, but across a full set of rows
 /// split into multiple partitions.
 #[allow(clippy::too_many_arguments)]
-pub fn get_partition_splits(buckets: &[W] /* [np][nab] */, num_active_buckets: u32, active_feature_list: &[i32], bucket_offsets: &[u32] /* [nf + 1] */, features: &[Feature], w_all: &[W] /* [np] */, indexes: &[PartitionIndex], parallel: bool) -> Vec<IndexedPartitionSplit> {
+pub fn get_partition_splits(buckets: &[W] /* [np][nab] */, num_active_buckets: u32, active_feature_list: &[i32], bucket_offsets: &[u32] /* [nf + 1] */, features: &[Feature], w_all: &[W] /* [np] */, indexes: &[PartitionIndex], parallel: bool, criterion: SplitCriterion) -> Vec<IndexedPartitionSplit> {
     let num_partitions = w_all.len();
     assert_eq!(*bucket_offsets.last().unwrap(), num_active_buckets);
     assert_eq!(indexes.len(), num_partitions);
@@ -421,16 +452,16 @@ pub fn get_partition_splits(buckets: &[W] /* [np][nab] */, num_active_buckets: u
         if wa.empty() {
             continue;
         }
-        let do_feature = |af: usize| -> (i32, f64, i32, W, W) {
+        let do_feature = |af: usize| -> (i32, f64, i32, W, W, CategorySet) {
             let f = active_feature_list[af] as usize;
             if wa.v[0].to_f32() != 0.0 && wa.v[1].to_f32() != 0.0 {
                 let start = bucket_offsets[f] as usize;
                 let max_bucket = (bucket_offsets[f + 1] as usize - start) as i32 - 1;
                 let base = partition * num_active_buckets as usize + start;
-                let (s, b, l, r) = choose_split_kernel(&buckets[base..base + max_bucket as usize + 1], max_bucket, features[f].ordinal, &wa);
-                return (f as i32, s, b, l, r);
+                let (s, b, l, r, subset) = choose_split_kernel(&buckets[base..base + max_bucket as usize + 1], max_bucket, features[f].ordinal, &wa, criterion);
+                return (f as i32, s, b, l, r, subset);
             }
-            (f as i32, f64::INFINITY, -1, W::default(), W::default())
+            (f as i32, f64::INFINITY, -1, W::default(), W::default(), [0; 16])
         };
         let results: Vec<_> = if parallel {
             use rayon::prelude::*;
@@ -438,16 +469,16 @@ pub fn get_partition_splits(buckets: &[W] /* [np][nab] */, num_active_buckets: u
         } else {
             (0..active_feature_list.len()).map(do_feature).collect()
         };
-        let (mut best_feature, mut best_score, mut best_split, mut best_left, mut best_right) = (-1, f64::INFINITY, -1, W::default(), W::default());
-        for (f, score, split, left, right) in results {
+        let (mut best_feature, mut best_score, mut best_split, mut best_left, mut best_right, mut best_subset) = (-1, f64::INFINITY, -1, W::default(), W::default(), [0; 16]);
+        for (f, score, split, left, right, subset) in results {
             if score == f64::INFINITY {
                 continue;
             }
             if score < best_score {
-                (best_feature, best_score, best_split, best_left, best_right) = (f, score, split, left, right);
+                (best_feature, best_score, best_split, best_left, best_right, best_subset) = (f, score, split, left, right, subset);
             }
         }
-        partition_splits[partition] = IndexedPartitionSplit { split: PartitionSplit { score: best_score as f32, feature: best_feature as i16, value: best_split as i16, left: best_left, right: best_right }, index: indexes[partition] };
+        partition_splits[partition] = IndexedPartitionSplit { split: PartitionSplit { score: best_score as f32, feature: best_feature as i16, value: best_split as i16, left: best_left, right: best_right, subset: best_subset }, index: indexes[partition] };
     }
     partition_splits
 }
@@ -481,7 +512,7 @@ fn graft(tree: &mut Tree, trained: Vec<(PartitionIndex, Result<(Tree, Ptr), Stri
 /// `train_partitioned_recursive`. The subtrees are trained in parallel near the root, each in a tree of its own, and
 /// grafted into `tree` (upstream shared one tree between the threads).
 #[allow(clippy::too_many_arguments)]
-pub fn split_and_recurse_partitioned(depth: i32, max_depth: i32, tree: &mut Tree, buckets: Option<&[W]>, num_active_buckets: u32, bucket_offsets: &[u32], features: &[Feature], active_features: &[i32], decoded_rows: &[f32], partitions: &[RowPartitionInfo], w_all: &[W], indexes: &[PartitionIndex], fs: &DatasetFeatureSpace) -> Result<BTreeMap<PartitionIndex, Ptr>, String> {
+pub fn split_and_recurse_partitioned(depth: i32, max_depth: i32, tree: &mut Tree, buckets: Option<&[W]>, num_active_buckets: u32, bucket_offsets: &[u32], features: &[Feature], active_features: &[i32], decoded_rows: &[RowWeights], partitions: &[RowPartitionInfo], w_all: &[W], indexes: &[PartitionIndex], fs: &DatasetFeatureSpace) -> Result<BTreeMap<PartitionIndex, Ptr>, String> {
     assert_eq!(partitions.len(), decoded_rows.len());
     assert_eq!(bucket_offsets.len(), features.len() + 1);
     assert_eq!(indexes.len(), w_all.len());
@@ -513,7 +544,7 @@ pub fn split_and_recurse_partitioned(depth: i32, max_depth: i32, tree: &mut Tree
 }
 
 /// Each active feature's buckets accumulated over the rows (`testFeatureKernel` per feature).
-pub fn initial_buckets(features: &[Feature], active_features: &[i32], bucket_offsets: &[u32], num_active_buckets: u32, decoded_rows: &[f32]) -> Vec<W> {
+pub fn initial_buckets(features: &[Feature], active_features: &[i32], bucket_offsets: &[u32], num_active_buckets: u32, decoded_rows: &[RowWeights]) -> Vec<W> {
     let mut buckets = vec![W::default(); num_active_buckets as usize];
     for &f in active_features {
         let f = f as usize;
@@ -527,7 +558,7 @@ pub fn initial_buckets(features: &[Feature], active_features: &[i32], bucket_off
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PartitionExample {
     pub ex: i32,
-    pub row: f32,
+    pub row: RowWeights,
 }
 
 /// A partition put off for later in a depth-first descent: its rows are `start..start + num_examples` of the
@@ -546,7 +577,7 @@ pub struct PartitionWorkEntry {
 /// side (whose buckets are accumulated again when it is taken up). Constant memory for the bucket matrix whatever
 /// the depth, with up to 2^d splits and O(d^2) work items: much less memory than breadth-first (O(2^d)) when the
 /// width is so high that the buckets are very sparse.
-pub fn descend_small_partition(examples: &mut [PartitionExample], entry: PartitionWorkEntry, max_depth: i32, num_active_buckets: u32, features: &[Feature], active_features: &[i32], bucket_offsets: &[u32]) -> BTreeMap<PartitionIndex, PartitionSplit> {
+pub fn descend_small_partition(examples: &mut [PartitionExample], entry: PartitionWorkEntry, max_depth: i32, num_active_buckets: u32, features: &[Feature], active_features: &[i32], bucket_offsets: &[u32], criterion: SplitCriterion) -> BTreeMap<PartitionIndex, PartitionSplit> {
     let mut splits = BTreeMap::new();
     if entry.index.depth() >= max_depth {
         return splits;
@@ -560,7 +591,7 @@ pub fn descend_small_partition(examples: &mut [PartitionExample], entry: Partiti
                 let off = bucket_offsets[f as usize] as usize;
                 for e in &examples[start..start + num_examples] {
                     let bucket = features[f as usize].buckets.get(e.ex as u32) as usize;
-                    buckets[off + bucket].add_weight(e.row < 0.0, e.row.abs());
+                    buckets[off + bucket].add_weights(e.row);
                 }
             }
         }
@@ -569,10 +600,10 @@ pub fn descend_small_partition(examples: &mut [PartitionExample], entry: Partiti
             let mut split = PartitionSplit::default();
             for &f in active_features {
                 let (off, end) = (bucket_offsets[f as usize] as usize, bucket_offsets[f as usize + 1] as usize);
-                let (score, value, left, right) = choose_split_kernel(&buckets[off..end], (end - off) as i32 - 1, features[f as usize].ordinal, &w_all);
+                let (score, value, left, right, subset) = choose_split_kernel(&buckets[off..end], (end - off) as i32 - 1, features[f as usize].ordinal, &w_all, criterion);
                 let score = score as f32;
                 if score < split.score {
-                    split = PartitionSplit { score, feature: f as i16, value: value as i16, left, right };
+                    split = PartitionSplit { score, feature: f as i16, value: value as i16, left, right, subset };
                 }
             }
             if split.feature == -1 {
@@ -587,7 +618,7 @@ pub fn descend_small_partition(examples: &mut [PartitionExample], entry: Partiti
             let rows = &mut examples[start..start + num_examples];
             let mut mid = 0;
             for k in 0..rows.len() {
-                if side_of(sf.buckets.get(rows[k].ex as u32), split.value as i32, sf.ordinal) {
+                if side_of(sf.buckets.get(rows[k].ex as u32), split.value as i32, &split.subset, sf.ordinal) {
                     rows.swap(mid, k);
                     mid += 1;
                 }
@@ -612,7 +643,7 @@ pub fn descend_small_partition(examples: &mut [PartitionExample], entry: Partiti
                 let off = bucket_offsets[f as usize] as usize;
                 for e in &examples[small_start..small_start + small_len] {
                     let bucket = features[f as usize].buckets.get(e.ex as u32) as usize;
-                    buckets[off + bucket].sub_weight(e.row < 0.0, e.row.abs());
+                    buckets[off + bucket].sub_weights(e.row);
                 }
             }
             work.push(PartitionWorkEntry { index: small_index, start: small_start, num_examples: small_len, w_all: small_w, buckets: Vec::new() });
@@ -626,7 +657,7 @@ pub fn descend_small_partition(examples: &mut [PartitionExample], entry: Partiti
 /// child, its subtree extracted from the descent's splits. The rows of these partitions leave the breadth-first
 /// pass (their partition becomes "none").
 #[allow(clippy::too_many_arguments)]
-pub fn train_small_partitions(depth: i32, max_depth: i32, tree: &mut Tree, features: &[Feature], partitions: &mut [RowPartitionInfo], num_partitions_now: usize, num_active_buckets: u32, bucket_offsets: &[u32], decoded_rows: &[f32], active_features: &[i32], small_partitions: &[(i32, IndexedPartitionSplit)], fs: &DatasetFeatureSpace) -> Result<BTreeMap<PartitionIndex, Ptr>, String> {
+pub fn train_small_partitions(depth: i32, max_depth: i32, tree: &mut Tree, features: &[Feature], partitions: &mut [RowPartitionInfo], num_partitions_now: usize, num_active_buckets: u32, bucket_offsets: &[u32], decoded_rows: &[RowWeights], active_features: &[i32], small_partitions: &[(i32, IndexedPartitionSplit)], fs: &DatasetFeatureSpace) -> Result<BTreeMap<PartitionIndex, Ptr>, String> {
     let mut small_numbers = vec![-1i32; num_partitions_now];
     let mut kept_rows = 0usize;
     for (i, (p, s)) in small_partitions.iter().enumerate() {
@@ -636,7 +667,7 @@ pub fn train_small_partitions(depth: i32, max_depth: i32, tree: &mut Tree, featu
     // Twice as many partitions: one for the left and one for the right of each.
     let num_partitions = small_partitions.len() * 2;
     // (partition, example, row), sorted by partition then example.
-    let mut all: Vec<(i32, i32, f32)> = Vec::with_capacity(kept_rows);
+    let mut all: Vec<(i32, i32, RowWeights)> = Vec::with_capacity(kept_rows);
     for (i, p) in partitions.iter_mut().enumerate() {
         let partition = p.partition() as usize;
         if partition >= small_numbers.len() {
@@ -654,7 +685,7 @@ pub fn train_small_partitions(depth: i32, max_depth: i32, tree: &mut Tree, featu
             continue;
         }
         let f = &features[s.feature as usize];
-        let side = side_of(f.buckets.get(i as u32), s.value as i32, f.ordinal);
+        let side = side_of(f.buckets.get(i as u32), s.value as i32, &s.subset, f.ordinal);
         all.push((small * 2 + side as i32, i as i32, decoded_rows[i]));
     }
     assert_eq!(all.len(), kept_rows);
@@ -677,7 +708,7 @@ pub fn train_small_partitions(depth: i32, max_depth: i32, tree: &mut Tree, featu
         let (index, w) = if i % 2 == 0 { (s.index.left_child(), s.split.left) } else { (s.index.right_child(), s.split.right) };
         let (a, b) = (starts[i], starts[i + 1]);
         let entry = PartitionWorkEntry { index, start: 0, num_examples: b - a, w_all: w, buckets: Vec::new() };
-        let splits = descend_small_partition(&mut examples[a..b], entry, max_depth, num_active_buckets, features, active_features, bucket_offsets);
+        let splits = descend_small_partition(&mut examples[a..b], entry, max_depth, num_active_buckets, features, active_features, bucket_offsets, SplitCriterion::of(fs));
         let leaf = extract_tree(depth + 1, max_depth, tree, index, &splits, &BTreeMap::new(), features, fs)?;
         result.insert(index, leaf);
     }
@@ -701,7 +732,7 @@ pub fn cpu_min_partition_example_multiplier() -> f32 {
 /// wide enough to be worth it (the others go depth first, `train_small_partitions`), for up to 20 levels, then
 /// recursing per partition (`split_and_recurse_partitioned`).
 #[allow(clippy::too_many_arguments)]
-pub fn train_partitioned_recursive_cpu(mut depth: i32, max_depth: i32, tree: &mut Tree, bucket_offsets: &[u32], active_features: &[i32], buckets_in: Vec<W>, decoded_rows: &[f32], w_all_input: &W, root: PartitionIndex, fs: &DatasetFeatureSpace, features: &[Feature]) -> Result<Ptr, String> {
+pub fn train_partitioned_recursive_cpu(mut depth: i32, max_depth: i32, tree: &mut Tree, bucket_offsets: &[u32], active_features: &[i32], buckets_in: Vec<W>, decoded_rows: &[RowWeights], w_all_input: &W, root: PartitionIndex, fs: &DatasetFeatureSpace, features: &[Feature]) -> Result<Ptr, String> {
     let row_count = decoded_rows.len();
     let max_depth_before_recurse = (max_depth - depth).min(20);
     let num_active_buckets = buckets_in.len() as u32;
@@ -718,7 +749,7 @@ pub fn train_partitioned_recursive_cpu(mut depth: i32, max_depth: i32, tree: &mu
 
     let mut my_depth = 0;
     while my_depth < max_depth_before_recurse && depth < max_depth {
-        let splits = get_partition_splits(&buckets, num_active_buckets, active_features, bucket_offsets, features, &w_all, &indexes, depth < 4);
+        let splits = get_partition_splits(&buckets, num_active_buckets, active_features, bucket_offsets, features, &w_all, &indexes, depth < 4, SplitCriterion::of(fs));
         let mut new_partition_numbers = vec![(-1i32, -1i32); splits.len()];
         // The partitions kept breadth first, and those handled depth first.
         let mut wide: Vec<(u32, usize)> = Vec::new();
@@ -782,7 +813,7 @@ pub fn train_partitioned_recursive_cpu(mut depth: i32, max_depth: i32, tree: &mu
 
 /// `trainPartitionedRecursive`: upstream's only form is the CPU one.
 #[allow(clippy::too_many_arguments)]
-pub fn train_partitioned_recursive(depth: i32, max_depth: i32, tree: &mut Tree, bucket_offsets: &[u32], active_features: &[i32], buckets_in: Vec<W>, decoded_rows: &[f32], w_all_input: &W, root: PartitionIndex, fs: &DatasetFeatureSpace, features: &[Feature]) -> Result<Ptr, String> {
+pub fn train_partitioned_recursive(depth: i32, max_depth: i32, tree: &mut Tree, bucket_offsets: &[u32], active_features: &[i32], buckets_in: Vec<W>, decoded_rows: &[RowWeights], w_all_input: &W, root: PartitionIndex, fs: &DatasetFeatureSpace, features: &[Feature]) -> Result<Ptr, String> {
     train_partitioned_recursive_cpu(depth, max_depth, tree, bucket_offsets, active_features, buckets_in, decoded_rows, w_all_input, root, fs, features)
 }
 

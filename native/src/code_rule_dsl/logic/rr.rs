@@ -26,6 +26,7 @@ mod tape_tests;
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub(in crate::code_rule_dsl) use super::front::Error;
@@ -86,10 +87,38 @@ enum Read {
 pub(in crate::code_rule_dsl) fn read_text(src: &str) -> Result<Text, Error> {
     let statements = from_tape::statements(src, &tape(src))?;
     if !statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
+        refuse_ungrounded(&statements, &BTreeSet::new())?;
         return Ok(Text(Read::Plain(statements)));
     }
     let (files, own) = resolve_shared(statements)?;
+    let given: BTreeSet<String> = files.iter().flat_map(|(_, _, s)| check::fix_relations(s)).collect();
+    refuse_ungrounded(&own, &given)?;
     Ok(Text(Read::Modular { files, own }))
+}
+
+/// A program's own rules must be grounded (`check::grounded`, which the library's files pass by test): every head
+/// variable, and every variable a negation, comparison or aggregate reads from outside, bound by a positive literal
+/// of the body. An ungrounded rule otherwise fails late and far from its cause — "unplaced literals", "$x is unbound
+/// in SQL", a statement over SQLite's 65535 references — or, when no rule reads the unbound column, is silently
+/// projected away.
+fn refuse_ungrounded(statements: &[syntax::Statement], given: &BTreeSet<String>) -> Result<(), Error> {
+    // A program in T's shape (it declares `doc` itself: a lowered program printed and read again, `combine`) holds
+    // the lowering's own rules, which are not source rules: only a source text is checked.
+    if statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc")) {
+        return Ok(());
+    }
+    let bad = check::grounded(statements, given);
+    if bad.is_empty() {
+        return Ok(());
+    }
+    let lines: Vec<String> = bad.iter().take(8).map(|(line, vars)| format!("line {line}: {}", vars.join(", "))).collect();
+    Err(Error::Syntax(format!(
+        "{} ungrounded rule{} (a variable no positive body literal binds): {}{}",
+        bad.len(),
+        if bad.len() == 1 { "" } else { "s" },
+        lines.join("; "),
+        if bad.len() > 8 { "; …" } else { "" }
+    )))
 }
 
 impl Text {
@@ -443,6 +472,12 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
     }
     let (statements, files) = program(path)?;
     check_names(&statements, false)?;
+    // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
+    let own_path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let given: BTreeSet<String> = statements.iter().filter(|(p, _)| *p != own_path).flat_map(|(_, s)| check::fix_relations(s)).collect();
+    for (_, own) in statements.iter().filter(|(p, _)| *p == own_path) {
+        refuse_ungrounded(own, &given)?;
+    }
     // The relations an included file declares are the library's: canonical, one copy however many policies of a
     // combined run include it (decision 0091). Printed as `.global library …`, so a program's text keeps that.
     let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;

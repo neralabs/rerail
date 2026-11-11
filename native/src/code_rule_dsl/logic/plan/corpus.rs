@@ -764,7 +764,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     // Each text read once, for its modules and its program, when the two are of the same text (no `extra`).
     let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 && extra.is_empty() {
-        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::read_text(text).map(Some)).collect::<std::result::Result<_, _>>()?
+        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::read_text(text).map(Some).map_err(|e| in_policy(text, e))).collect::<std::result::Result<_, _>>()?
     } else {
         programs.iter().map(|_| None).collect()
     };
@@ -1394,6 +1394,13 @@ pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<Conte
 /// in memory for the process when there is none. Every path the engine reads goes through it: rule files, corpus
 /// files, what resolution rules list, read and load.
 pub(in crate::code_rule_dsl) fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -> T) -> T {
+    // The engine's tests check paths by their `stat`: the journal's wait for its cookie, made by every run, is the
+    // journal's own tests' to measure (`content_store::observe`). A test of the engine that wants it turns it on.
+    #[cfg(test)]
+    {
+        static OFF: std::sync::Once = std::sync::Once::new();
+        OFF.call_once(|| crate::content_store::observe::set_journal(false));
+    }
     let store = tape_cache_path().map(|p| crate::content_store::observe::store_beside(&p));
     crate::content_store::observe::with(store.as_deref(), f)
 }
@@ -1407,8 +1414,43 @@ pub(in crate::code_rule_dsl) fn tape_cache_path() -> Option<std::path::PathBuf> 
     match std::env::var("RERAIL_TAPE_CACHE") {
         Ok(v) if v == "off" => None,
         Ok(v) => Some(std::path::PathBuf::from(v)),
+        #[cfg(test)]
+        Err(_) => Some(test_tape_cache().clone()),
+        #[cfg(not(test))]
         Err(_) => Some(std::env::temp_dir().join("rerail-tape-cache.sqlite")),
     }
+}
+
+/// A test process's own tape cache: the machine's is written by every other run on it, so a test's writes could wait
+/// out its busy deadline behind them. Removed when the process exits; one a killed process left is removed by the
+/// next test process to start.
+#[cfg(test)]
+fn test_tape_cache() -> &'static std::path::PathBuf {
+    static PATH: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
+        const PREFIX: &str = "rerail-tape-cache-test-";
+        let dir = std::env::temp_dir();
+        // Another process's, when it is gone.
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(pid) = name.strip_prefix(PREFIX).and_then(|rest| rest.split('.').next()).and_then(|p| p.parse::<i32>().ok()) else { continue };
+            // SAFETY: signal 0 checks that the process exists and sends nothing.
+            if pid != std::process::id() as i32 && unsafe { libc::kill(pid, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        extern "C" fn remove() {
+            let own = format!("{PREFIX}{}.", std::process::id());
+            for entry in std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten() {
+                if entry.file_name().to_string_lossy().starts_with(&own) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+        // SAFETY: `remove` is a plain function that runs once, at exit.
+        unsafe { libc::atexit(remove) };
+        dir.join(format!("{PREFIX}{}.sqlite", std::process::id()))
+    });
+    &PATH
 }
 
 /// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
@@ -1689,7 +1731,13 @@ fn run_observed(
                 let files = found.of(label);
                 // Phase 1 (`sources.rr`, decision 0104) loads the source files, and its documents are this run's: a
                 // phase's own run, and the constants', list theirs.
-                let sourcing = phases::declared(&prog).is_none() && !phases::in_phase() && options.get(constants::OWN).is_none() && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off");
+                // Phase 0 loads rule files, not source files: its runs, over an empty root, have none to give.
+                let sourcing = phases::declared(&prog).is_none()
+                    && !phases::in_phase()
+                    && !phase0::active()
+                    && options.get(constants::OWN).is_none()
+                    && files.iter().any(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label))
+                    && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off");
                 let files = if sourcing {
                     let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
                     // The observer's facts: each source file of the run's grammar, by its content's digest (read only
@@ -2340,11 +2388,8 @@ fn run_observed(
             super::Stats::of_schema(&db, &lowered.program, "s")?
         }
         None => {
-            // A document's nodes are `d << 32 | index`: its interval, for the SQL strata's range reads.
-            db.execute_batch("ATTACH ':memory:' AS s; CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER);")?;
+            // A document's nodes are `d << 32 | index`: the SQL strata's range reads compute its interval (no table).
             super::docs_by_shift(&db);
-            let ranges = docs.iter().map(|(d, _)| vec![SqlValue::Integer(*d), SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect();
-            super::insert_many(&db, "INSERT INTO s.stat_docrange", ranges)?;
             super::Stats::empty(&lowered.program)
         }
     };
@@ -2370,16 +2415,17 @@ fn run_observed(
     // `x` is the run's scratch (deleted at the start of the next): no journal and no syncs, since a run that stops
     // leaves nothing to recover. The browser build keeps it in memory, where its in-memory filesystem is anyway, so
     // its pages skip the filesystem's calls; so are the temp tables the strata make.
+    // Attached, with the pragmas below, when SQL first runs on the connection (`vtab::setup_now`): a run whose
+    // strata are all native runs none of it.
     #[cfg(target_family = "wasm")]
-    db.execute_batch("ATTACH ':memory:' AS x")?;
+    let attach_x = "ATTACH ':memory:' AS x;".to_owned();
     #[cfg(not(target_family = "wasm"))]
-    db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
+    let attach_x = format!("ATTACH {} AS x;", format!("'{}'", cross_path.to_string_lossy().replace('\'', "''")));
     // `x` is this run's: tables an earlier run over the same store read (`table_source`, cached by the store's path
     // and the table's name) are another run's rows. Without this a second run read the first's cross-file tables:
     // a cone's loaded documents, there at the first run's end, counted as the workspace's.
     crate::code_rule_dsl::logic::native::forget_inputs(&db);
-    let _: String = db.query_row("PRAGMA x.journal_mode = OFF", [], |r| r.get(0))?;
-    db.execute_batch("PRAGMA x.synchronous = OFF; PRAGMA temp_store = MEMORY;")?;
+    crate::code_rule_dsl::facts::vtab::defer_setup(&db, &format!("{attach_x} PRAGMA x.journal_mode = OFF; PRAGMA x.synchronous = OFF; PRAGMA temp_store = MEMORY;"));
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
     // read back, 0.75 s on Python.)
@@ -3391,7 +3437,6 @@ fn run_observed(
                 let values: usize = hits.iter().map(|(_, e, _)| e.rows.values().map(|(_, v)| v.len()).sum::<usize>()).sum();
                 format!("{} entries replayed, {:.1} MB of values", hits.len(), values as f64 * 8.0 / 1e6)
             });
-            db.execute_batch("BEGIN")?;
             // The planner's tree counts for the files read from the memo (decision 0063): a chunk mix's measured
             // counts, scaled by the hits' nodes, as an evaluated chunk's are. Without them a run read whole from the
             // memo plans its cross-file part with no kinds (every `kind(n, "identifier")` looks empty), and a
@@ -3496,7 +3541,6 @@ fn run_observed(
                     totals.add_rows(&rel, inserted, rows.as_ref(), &types);
                 }
             }
-            db.execute_batch("COMMIT")?;
         }
         if sources.is_empty() {
             phase("local", statements.count());
@@ -3559,11 +3603,6 @@ fn run_observed(
                     let new = made.make(guests::requests(&got.outputs), &docs, tapes.as_ref()).map_err(Error::Plan)?;
                     if new.is_empty() {
                         break;
-                    }
-                    // A guest's interval is its key's (`docs_by_shift`): nothing is written for it in the waves.
-                    if own && !super::by_shift_of(&db) {
-                        let ranges = new.iter().map(|d| i64::from(d.key)).map(|k| vec![SqlValue::Integer(k), SqlValue::Integer(k << 32), SqlValue::Integer((k << 32) | 0xffff_ffff)]).collect();
-                        super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
                     }
                     docs.extend(new);
                     let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
@@ -4049,7 +4088,6 @@ fn run_observed(
             let db2 = Connection::open(&db_path)?;
             db2.execute_batch("PRAGMA synchronous=OFF")?;
             db2.execute("ATTACH ?1 AS x", [x_path.to_string_lossy()])?;
-            db2.execute_batch("ATTACH ':memory:' AS s; CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER);")?;
             super::docs_by_shift(&db2);
             crate::code_rule_dsl::logic::native::register(&db2)?;
             crate::code_rule_dsl::logic::native::register_symbols(&db2)?;
@@ -4208,11 +4246,6 @@ fn run_observed(
                 out.push((world::LOADED_DOC.to_owned(),identity_rows(&corpus.documents)));
             }
             out.push((world::LOADED.to_owned(), loaded_rows));
-            // A loaded document's interval is its key's (`docs_by_shift`): nothing is written for it in the waves.
-            if !super::by_shift_of(&db) {
-                let ranges = keys.iter().map(|d| vec![SqlValue::Integer(*d), SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect();
-                super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
-            }
             loaded_docs.extend(keys.iter().copied().zip(fresh.iter().map(|d| d.path.clone())));
             docs_tx.send(keys.iter().copied().zip(fresh).map(|(k, d)| (k, d.path, Some(Arc::from(d.module.as_str())))).collect()).map_err(|_| Error::Plan("the chunk builder ended".to_owned()))?;
             if !drain(process)? {
@@ -4296,10 +4329,10 @@ fn run_observed(
             Vec::new(),
             Box::new(move |store| {
                 let mut ids = Vec::with_capacity(read.len());
-                // Run again after a busy store (the writer's retries): it reads what it holds, moves none of it.
+                // A busy-store retry must leave the captured inputs available.
                 for (path, stat, content) in &read {
-                    if let Some(id) = content.clone().resolve(store)? {
-                        ids.push((path.clone(), stat.clone(), id));
+                    if let Some(id) = content.resolve(store)? {
+                        ids.push((path.clone(), *stat, id));
                     }
                 }
                 store.record_corpus_stats(&root, &ids, started_ns)
@@ -4828,18 +4861,23 @@ fn run_observed(
                         let (loaded, p) = kept_strata::load(store, root, ckey, &cross.program, &cross_inputs, &digests)?;
                         (cell, kept_frames) = (loaded, Some(p));
                     }
+                    // The phase's space (phase 1's `sources` its own): one per program would start every edited
+                    // program from no frame, and two programs could not share a relation.
                     let frames_space = kept_strata::space(root);
                     if cell.is_none() && from_frames.is_some() {
                         let _s = span("the kept part, from the frames");
-                        cell = Some(retain::Retained::from_frames(store, frames_space, ckey, &cross.program)?);
+                        cell = Some(retain::Retained::from_frames(store, frames_space, ckey, &cross.program, &digests)?);
                     }
-                    let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    let mut cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     if kept_frames.is_some() {
                         cross_kept = Some(cut.strata);
                     }
                     if let Some(kept) = cell.as_mut().filter(|_| from_frames.is_some()) {
-                        let (rels, rows) = kept.load(store, &cut, &cross.program)?;
-                        crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames (t33 K4)", || format!("{rels} relations' rows read ({rows} rows) for the strata that run"));
+                        if let Some((rels, rows)) = kept.load(store, &cut, &cross.program)? {
+                            crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames (t33 K4)", || format!("{rels} relations' rows read ({rows} rows) for the strata that run"));
+                        } else {
+                            cut = retain::cut(None, ckey, &cross.program, &digests)?;
+                        }
                     }
                     let was_frames = cell.as_ref().filter(|_| from_frames.is_some()).and_then(|k| k.frames().cloned());
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
@@ -6310,15 +6348,15 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
     use std::path::PathBuf;
     let real = observe(|o| o.canonical(root))?;
     let key = format!("git-files:{}", real.display());
-    // What the record read: the journal's cursor before the status, a line of the roots it was asked over, then a
-    // path a line.
+    // What the record read: the journal's cursors before the status and the roots they are of (a line each, by tab),
+    // then a path a line.
     let kept = observe(|o| {
         let (read, files) = o.run_record(&key)?;
         let mut lines = read.lines();
-        let cursor: u64 = lines.next()?.parse().ok()?;
+        let cursors: Vec<String> = lines.next()?.split('\t').map(str::to_owned).collect();
         let watched: Vec<PathBuf> = lines.next()?.split('\t').map(PathBuf::from).collect();
         let read: Vec<PathBuf> = lines.map(PathBuf::from).collect();
-        let named = o.changed_since(&watched, cursor)?;
+        let named = o.changed_since(&watched, &cursors)?;
         // The repository's own directories, of which only what `read` names counts (not its objects).
         let git_dirs: Vec<PathBuf> = watched.iter().skip(2).cloned().collect();
         Some((read, git_dirs, named, String::from_utf8(files).ok()?))
@@ -6355,7 +6393,7 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
     }
     // Watched before the status is read: a change while it reads is named to the next run.
     let places = crate::git_workspace::locations(&real);
-    let cursor = places.as_ref().and_then(|(work, own, common)| observe(|o| o.mark(&[real.clone(), work.clone(), own.clone(), common.clone()])));
+    let cursors = places.as_ref().and_then(|(work, own, common)| observe(|o| o.mark(&[real.clone(), work.clone(), own.clone(), common.clone()])));
     let found = observe(|o| o.git(root)).and_then(|g| {
         let prefix = real.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
         let under: Vec<String> = g
@@ -6365,12 +6403,12 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
             .collect();
         (!under.is_empty()).then(|| (under, g.overlays.len()))
     });
-    if let (Some((work, own, common)), Some(cursor), Some((under, overlays))) = (&places, cursor, &found) {
+    if let (Some((work, own, common)), Some(cursors), Some((under, overlays))) = (&places, cursors, &found) {
         let mut read: Vec<PathBuf> = vec![real.clone(), work.join(".git"), own.join("HEAD"), own.join("index")];
         read.extend(real.ancestors().filter(|d| d.starts_with(work) && *d != real.as_path()).map(|d| d.join(".gitignore")));
         read.extend(["HEAD", "refs", "packed-refs", "config", "info"].iter().map(|f| common.join(f)));
         let watched = [&real, work, own, common].iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\t");
-        let read = [cursor.to_string(), watched].into_iter().chain(read.iter().map(|p| p.to_string_lossy().into_owned())).collect::<Vec<_>>().join("\n");
+        let read = [cursors.join("\t"), watched].into_iter().chain(read.iter().map(|p| p.to_string_lossy().into_owned())).collect::<Vec<_>>().join("\n");
         let text = std::iter::once(overlays.to_string()).chain(under.iter().cloned()).collect::<Vec<_>>().join("\n");
         observe(|o| o.put_run_record(&key, &read, text.as_bytes()));
     }
@@ -6914,19 +6952,21 @@ uses(n, f) :- imp(n, q), def(f, q).
         std::fs::write(dir.join("a.py"), format!("{marker}{body}")).unwrap();
         std::fs::write(dir.join("b.py"), format!("{marker}{body}def h():\n    x = 3\n    print(x)\n")).unwrap();
         let rule = dir.join("outer.rr");
-        // `outer`: a statement of a function's body that reads a name the function assigns. Its file-local join,
-        // `encl(f, p), bound(p, x)`, meets at the function `p`, which it projects away.
+        // `outer`: a statement of a function's body, and a name the function assigns that some file reads. Its
+        // file-local join, `encl(f, p), bound(p, x)`, meets at the function `p`, which it projects away. Its
+        // cross-file filter, `named(x)`, binds only `x`: one that bound `f` and `x` both (`uses(f, x)`) would keep the
+        // join in the cross part, unpushed (t31 A1), and nothing would be handed on to factorize.
         std::fs::write(&rule, r#"
 .decl defined(s: symbol)
 defined(s) :- kind(n, "identifier"), text(n, s).
-.decl uses(f: node, x: symbol)
-uses(f, x) :- kind(f, "expression_statement"), within(i, f), kind(i, "identifier"), text(i, x), defined(x).
+.decl named(x: symbol)
+named(x) :- kind(i, "identifier"), text(i, x), defined(x).
 .decl encl(f: node, p: node)
 encl(f, p) :- kind(p, "function_definition"), child(p, b, _), kind(b, "block"), child(b, f, _).
 .decl bound(p: node, x: symbol)
 bound(p, x) :- kind(p, "function_definition"), child(p, b, _), kind(b, "block"), child(b, e, _), child(e, a, _), kind(a, "assignment"), field(a, "left", l), text(l, x).
 .decl outer(f: node, x: symbol)
-outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
+outer(f, x) :- named(x), encl(f, p), bound(p, x).
 .output outer
 "#).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
@@ -6997,6 +7037,8 @@ outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
     #[test]
     fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
         use crate::code_rule_dsl::typing::file_local::Binding;
+        // It ran past its timeout once in 34 runs under load, with no output: a run past 60 s leaves its stacks.
+        let _watchdog = watchdog("k4", std::time::Duration::from_secs(60));
         let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let base = std::env::temp_dir().join(format!("rerail-k4-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
@@ -7077,6 +7119,35 @@ outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
         assert!(findings().len() >= 3, "the cycle's imports: {:?}", findings());
         assert!(recursive > 0, "the import cycle's stratum is maintained");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A guard that, when the test it guards runs past `after`, samples this process's stacks (macOS `sample`) into
+    /// a file beside the temp dir and says where: a hang leaves what each thread was doing. Dropped, it does nothing.
+    pub(super) fn watchdog(name: &str, after: std::time::Duration) -> Watchdog {
+        let done = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let seen = std::sync::Arc::clone(&done);
+        let name = name.to_owned();
+        std::thread::spawn(move || {
+            let (lock, cv) = &*seen;
+            let (finished, _) = cv.wait_timeout_while(lock.lock().unwrap(), after, |d| !*d).unwrap();
+            if *finished {
+                return;
+            }
+            let out = std::env::temp_dir().join(format!("rerail-watchdog-{name}-{}.txt", std::process::id()));
+            let sampled = std::process::Command::new("sample").arg(std::process::id().to_string()).arg("3").arg("-file").arg(&out).output();
+            eprintln!("watchdog {name}: still running after {after:?}; stacks in {} ({:?})", out.display(), sampled.map(|o| o.status));
+        });
+        Watchdog(done)
+    }
+
+    pub(super) struct Watchdog(std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+
+    impl Drop for Watchdog {
+        fn drop(&mut self) {
+            let (lock, cv) = &*self.0;
+            *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            cv.notify_all();
+        }
     }
 
     /// Decision 0077 §4: with no session, the cross part's strata are kept in the tape cache. A run over unchanged
@@ -7350,4 +7421,14 @@ uses(n, f) :- imp(n, q), def(f, q).
 pub(in crate::code_rule_dsl) enum LazyKept {
     Patched(retain::Patched),
     Measured(Vec<(String, i64, i64, i64, i64)>, Vec<(String, i64, i64)>, BTreeSet<(usize, i64)>),
+}
+
+/// A reader's refusal of one of a run's programs, named by the program's `.policy` (a run reads texts, not files).
+fn in_policy(text: &str, e: crate::code_rule_dsl::logic::front::Error) -> crate::code_rule_dsl::logic::front::Error {
+    use crate::code_rule_dsl::logic::front::Error;
+    let name = text.lines().find_map(|l| l.trim().strip_prefix(".policy ").and_then(|r| r.split('"').nth(1)).map(str::to_owned));
+    match (e, name) {
+        (Error::Syntax(m), Some(n)) => Error::Syntax(format!("policy {n}: {m}")),
+        (e, _) => e,
+    }
 }

@@ -981,15 +981,12 @@ fn a_set_of_tests_on_a_span_tests_its_text() {
     assert!(!rule.contains("contains($sp") && !rule.contains("@contains($sp"), "{rule}");
 }
 
-/// What is not lowered yet says so by name.
+/// A negated match with named groups binds nothing, so it lowers with its groups non-capturing (it was the last
+/// construct refused as not lowered yet).
 #[test]
-fn unlowered_constructs_are_named() {
-    for (src, what) in [
-        (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
-    ] {
-        let e = parse(src).unwrap_err().to_string();
-        assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
-    }
+fn negated_named_groups_lower() {
+    let src = ".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).";
+    parse(src).expect("a negated match with named groups lowers");
 }
 
 /// `.violation` rows become the engine's findings; fixes are left out; arithmetic and Soufflé's string
@@ -2237,7 +2234,9 @@ Subtree(n) :- kind(n, "module"), text(n, _).
         .map(|row| (row["line"].as_i64().unwrap(), row["parameters"]["body"].as_str().unwrap())).collect();
     lines.sort();
     assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass")]);
-    assert!(!rows.iter().any(|row| row["code"] == "TREE"), "a requested source span must not enable all large AST texts");
+    // Decision 0108: a kind the rule reads by `kind` has its text at any length (the module's here, named by
+    // `Subtree`); the source span and the lines are exact either way.
+    assert_eq!(rows.iter().filter(|row| row["code"] == "TREE").count(), 1, "the module, a kind the rule reads, has its whole text");
 }
 
 /// Decision 0055's guests: a run of `rule` over `files`, each output's sorted rows.
