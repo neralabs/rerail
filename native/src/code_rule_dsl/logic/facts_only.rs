@@ -160,6 +160,8 @@ const NOT_YET_TABLES_PIN: usize = 62;
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
+    // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
+    ("code_rule_dsl/logic/front/name.rs", "TABLE"),
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
     ("code_rule_dsl/logic/costs.rs", "WRITER"),
     ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),
