@@ -40,7 +40,7 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
         let bytes = tape.resident_parts().unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
         store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
-        digests.push(<[u8; 32]>::from(Sha256::digest(&bytes)));
+        digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         tapes.push((tape, bytes, source));
     }
     let documents = admit(&store, &digests, &grammar).unwrap();

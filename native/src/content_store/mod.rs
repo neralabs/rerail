@@ -210,6 +210,24 @@ impl HashKey {
         Self::from_sha256_digest(digest)
     }
 
+    /// The identity of a tape of the source `source`: its bytes and its source's hash. A
+    /// named-only tape holds no source text, so two sources of one shape and one set of token
+    /// lengths store the same bytes; each is its own tape, as it carries its own source.
+    pub fn tape_identity(source: Self, tape: &[u8]) -> Self {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
+            HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.tape-of/v1\0");
+        hash.update(source.algorithm.to_le_bytes());
+        for lane in source.lanes {
+            hash.update(lane.to_le_bytes());
+        }
+        hash.update(tape);
+        Self::from_sha256_digest(hash.finalize().into())
+    }
+
     pub fn from_sha256_digest(digest: [u8; 32]) -> Self {
         Self::from_padded(HASH_SHA256, digest)
     }
