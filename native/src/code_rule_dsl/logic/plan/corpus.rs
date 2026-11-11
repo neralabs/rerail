@@ -37,6 +37,8 @@ mod cache_tests;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod kept_strata;
+mod maintained;
+mod cone_rounds;
 mod prepared;
 mod maintain;
 mod supports;
@@ -231,6 +233,8 @@ pub(crate) struct Report {
     pub(crate) cross_kept: Option<(usize, usize)>,
     /// The cone of requests' strata evaluated, of all, when they are kept (t33 K3); `None` otherwise.
     pub(crate) cone_kept: Option<(usize, usize)>,
+    /// The rounds the cone ran from the last run's final round (decision 0108); 0 when it ran the gated fixpoint.
+    pub(crate) cone_rounds: usize,
     /// Of those, strata maintained from deltas, of them recursive, and strata derived again (decision 0077 §3).
     pub(crate) cross_maintained: (usize, usize, usize),
     /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
@@ -2486,6 +2490,7 @@ fn run_observed(
     let no_loads = options.get("phase_no_loads").and_then(serde_json::Value::as_bool) == Some(true);
     let mut loading_rows: Vec<(String, Vec<Vec<i64>>)> = Vec::new();
     let mut cone_kept: Option<(usize, usize)> = None;
+    let mut cone_rounds = 0;
     #[cfg(target_family = "wasm")]
     if docs_out.is_some() {
         return Err(Error::Plan("requests answered inside the fixpoint need threads (decision 0065 §2a)".to_owned()));
@@ -3905,9 +3910,17 @@ fn run_observed(
         let cone_store: Option<std::path::PathBuf> = durable.is_some().then(|| store.database_path().to_path_buf());
         let cone_space = kept_strata::part_space(root, "cone");
         let decls = load.decls.clone();
+        // The cone as rounds of its stratified program, maintained by delta (decision 0108): with a store to keep
+        // them in. `RERAIL_CONE_ROUNDS=off` runs the gated fixpoint alone.
+        let rounds_wanted = cone_store.is_some() && std::env::var("RERAIL_CONE_ROUNDS").map_or(true, |v| v != "off");
+        let round = rounds_wanted.then(|| cone_rounds::RoundProgram::of(load, &per_file)).flatten();
+        let lowered_round = round.as_ref().map(|r| part(r.program.clone()));
+        let per_file_at: Vec<usize> = per_file.iter().map(|rel| split.locations.get(rel).and_then(|l| l.first().copied()).unwrap_or(0)).collect();
+        let corpus_docs: std::collections::HashSet<i64> = docs.iter().map(|(k, _)| *k).collect();
+        let cone_root = root.to_path_buf();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
         let modes = modes.to_owned();
-        let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vec<i64>>)>, Option<(usize, usize)>)> {
+        let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vec<i64>>)>, Option<(usize, usize)>, usize)> {
             let db2 = Connection::open(&db_path)?;
             db2.execute_batch("PRAGMA synchronous=OFF")?;
             db2.execute("ATTACH ?1 AS x", [x_path.to_string_lossy()])?;
@@ -3923,6 +3936,8 @@ fn run_observed(
                 Ok(())
             };
             let mut cone_inputs: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
+            // The corpus's rows of each per-file relation, for the rounds.
+            let corpus_rows: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, usize)> = per_file_in.iter().zip(&per_file_at).map(|((r, s), at)| (r.clone(), Arc::clone(s), *at)).collect();
             for (rel, source) in per_file_in {
                 cone_inputs.push((rel.clone(), Arc::clone(&source)));
                 bind(&rel, source)?;
@@ -3943,7 +3958,57 @@ fn run_observed(
                 })?
                 .map_err(Error::Plan)
             };
-            let got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats, kept_in.clone(), &modes, &mut answer, cone_kept.as_mut().map(|k| k as &mut dyn super::KeptStrata))?;
+            // The rounds from the last run's final round, kept in the store.
+            let rounds_key = round.as_ref().map(|r| retain::key(&[0; 32], &r.program));
+            let mut rounds_part = None;
+            let mut from_rounds = None;
+            if let (Some(r), Some(store), Some(key)) = (&round, &cone_handle, rounds_key) {
+                let (k, p) = kept_strata::load(store, &cone_root, key, &r.program, &r.input_shapes(), &HashMap::new())?;
+                rounds_part = Some(p);
+                from_rounds = k.filter(|k| r.holds(k));
+            }
+            let mut keep_rounds: BTreeSet<String> = kept_in.clone();
+            if let Some(r) = &round {
+                keep_rounds.extend(r.read());
+            }
+            let rounds_stats = load_stats.clone();
+            let on = lowered_round.as_ref().zip(rounds_key).map(|(lowered, key)| cone_rounds::On { db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes });
+            let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs };
+            let mut gave_up = None;
+            if let (Some(r), Some(on), Some(k)) = (&round, &on, from_rounds) {
+                match r.run(on, &rounds_in, cone_rounds::Start::Kept(k), cone_rounds::Answers::default(), &mut answer) {
+                    Ok(done) => {
+                        let mut out = Vec::new();
+                        for rel in kept_in.iter().filter(|r| !lowered_round.as_ref().is_some_and(|l| l.program.inputs.contains(*r))) {
+                            out.push((rel.clone(), maintained::rows_of(&done.next, rel).ok_or_else(|| Error::Plan(format!("{rel}: not kept by the cone's rounds")))?));
+                        }
+                        crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || {
+                            format!("{} rounds from the last run's; {} of {} strata run ({} maintained, {} derived again); answered: {:?}", done.rounds, done.strata.0, done.strata.1, done.maintained, done.derived_again, done.answered)
+                        });
+                        if let (Some(store), Some(p)) = (&cone_handle, rounds_part) {
+                            kept_strata::keep(store, p, &done.next);
+                        }
+                        return Ok((out, Some(done.strata), done.rounds));
+                    }
+                    Err(cone_rounds::Gave::Err(e)) => return Err(e),
+                    Err(cone_rounds::Gave::Up(why)) => gave_up = Some(why),
+                }
+            }
+            if let Some(why) = &gave_up {
+                crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("given up ({why}): the gated fixpoint runs"));
+            }
+            // The gated fixpoint, its answers recorded for a closing round.
+            let mut recorded = cone_rounds::Answers::default();
+            let mut recording = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+                let given = answer(rel, rows)?;
+                recorded.record(rel, rows, &given);
+                Ok(given)
+            };
+            let mut fixpoint_keeps = kept_in.clone();
+            if let Some(r) = &round {
+                fixpoint_keeps.extend(r.asks().cloned());
+            }
+            let got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats, fixpoint_keeps, &modes, &mut recording, cone_kept.as_mut().map(|k| k as &mut dyn super::KeptStrata))?;
             let cone_strata = cone_kept.as_ref().and_then(|k| k.strata);
             if let Some(k) = cone_kept {
                 k.finish();
@@ -3952,7 +4017,27 @@ fn run_observed(
             for rel in &kept_in {
                 out.push((rel.clone(), held_rows(&db2, &got, rel, decls[rel].len())?));
             }
-            Ok((out, cone_strata))
+            // The closing round over the fixpoint's answers, kept for the next run's rounds; only when the fixpoint
+            // ran its strata (a cone kept whole, K3, asked nothing of this run).
+            if let (Some(r), Some(on), Some(store), Some(p)) = (&round, &on, &cone_handle, rounds_part)
+                && cone_strata.is_none_or(|(ran, _)| ran > 0)
+            {
+                let mut asks = BTreeMap::new();
+                for ask in r.asks() {
+                    asks.insert(ask.clone(), held_rows(&db2, &got, ask, decls[ask].len())?);
+                }
+                drop(recording);
+                let mut refuse = |rel: &str, _: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { Err(Error::Plan(format!("the closing round asked {rel}"))) };
+                match r.run(on, &rounds_in, cone_rounds::Start::Closing(asks), recorded, &mut refuse) {
+                    Ok(done) => {
+                        crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("closing round over the fixpoint's answers kept ({} of {} strata)", done.strata.0, done.strata.1));
+                        kept_strata::keep(store, p, &done.next);
+                    }
+                    Err(cone_rounds::Gave::Up(why)) => crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("the closing round is not kept: {why}")),
+                    Err(cone_rounds::Gave::Err(e)) => crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("the closing round failed: {e}")),
+                }
+            }
+            Ok((out, cone_strata, 0))
         });
         // The answers turn request atoms back into text, warm runs included (nothing else registers them then).
         crate::code_rule_dsl::logic::native::register_symbols(&db)?;
@@ -3962,6 +4047,7 @@ fn run_observed(
         let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Chunk) -> Result<()>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             pauses += 1;
             if let Some((produced, _)) = WORLD.iter().find(|(_, req)| *req == rel) {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
                 let mut out = Vec::new();
                 for row in rows {
                     let asked = text(row[0])?;
@@ -3984,6 +4070,7 @@ fn run_observed(
             if rel != world::LOAD {
                 return Err(Error::Plan(format!("{rel}: a request this run does not answer")));
             }
+            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
             let mut fresh = Vec::new();
             let mut again: std::collections::HashSet<i64> = std::collections::HashSet::new();
             let mut loaded_rows = Vec::new();
@@ -4062,7 +4149,7 @@ fn run_observed(
         }
         drop(reply_tx);
         drop(answer_one);
-        (loading_rows, cone_kept) = cone.join().map_err(|_| Error::Plan("the cone of requests panicked".to_owned()))??;
+        (loading_rows, cone_kept, cone_rounds) = cone.join().map_err(|_| Error::Plan("the cone of requests panicked".to_owned()))??;
         loading_rows.extend(answered);
         // Every file seen: the keeper ends here, so the digests read the run's exports (the counted ones).
         finished = Some(finish()?);
@@ -5567,7 +5654,7 @@ fn run_observed(
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the Git index consulted".into());
         consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default() })
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default() })
 }
 
 
@@ -7014,6 +7101,59 @@ unused(f) :- def(f, _), !used(f).
         assert!(ran > 0, "a loaded document's change is a changed answer: the cone runs");
         assert_eq!(deeper, ["a.pyi", "b.pyi", "builtins.pyi", "c.pyi"]);
         assert_eq!(deeper, run("fresh-2.sqlite").1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Decision 0108: the cone run as rounds from the last run's final round finds what the gated fixpoint over
+    /// nothing kept finds, edit after edit: a new import, a library's own import, an import taken away (its load is
+    /// not asked again), and a library file that goes.
+    #[test]
+    fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("cone-rounds");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+        std::fs::create_dir_all(ws.join("pkg")).unwrap();
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\na: 3.0-\nb: 3.0-\nc: 3.0-\nd: 3.0-\n").unwrap();
+        std::fs::write(lib.join("builtins.pyi"), "class object: ...\n").unwrap();
+        for m in ["a", "b", "c", "d"] {
+            std::fs::write(lib.join(format!("{m}.pyi")), format!("def {m}() -> None: ...\n")).unwrap();
+        }
+        std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+        std::fs::write(ws.join("main.py"), "import a\nimport pkg.m\n").unwrap();
+        std::fs::write(ws.join("pkg/__init__.py"), "").unwrap();
+        std::fs::write(ws.join("pkg/m.py"), "import b\n").unwrap();
+        let rule = dir.join("p.rr");
+        std::fs::write(&rule, "#include \"python/modules.rr\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let out = dir.join("out");
+        let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = std::cell::Cell::new(0);
+        let run = |store: &str| {
+            super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+            let report = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+            let mut loaded: Vec<String> = std::fs::read_to_string(out.join("n_loaded.csv")).unwrap().lines().map(|l| l.rsplit('/').next().unwrap().to_owned()).collect();
+            loaded.sort();
+            (report.cone_rounds, loaded)
+        };
+        let both = |what: &str, want: &[&str]| {
+            let (rounds, kept) = run("kept.sqlite");
+            fresh.set(fresh.get() + 1);
+            let (none, again) = run(&format!("fresh-{}.sqlite", fresh.get()));
+            assert!(rounds > 0, "{what}: the kept run runs rounds");
+            assert_eq!(none, 0, "{what}: a run with nothing kept runs the fixpoint");
+            assert_eq!(kept, again, "{what}: rounds load what the fixpoint loads");
+            assert_eq!(kept, want, "{what}");
+        };
+        assert_eq!(run("kept.sqlite"), (0, vec!["a.pyi".to_owned(), "b.pyi".to_owned(), "builtins.pyi".to_owned()]), "the first run is the fixpoint");
+        std::fs::write(ws.join("main.py"), "import a\nimport pkg.m\nimport c\n").unwrap();
+        both("a new import", &["a.pyi", "b.pyi", "builtins.pyi", "c.pyi"]);
+        std::fs::write(lib.join("c.pyi"), "import d\ndef c() -> None: ...\n").unwrap();
+        both("a library's own import", &["a.pyi", "b.pyi", "builtins.pyi", "c.pyi", "d.pyi"]);
+        std::fs::write(ws.join("pkg/m.py"), "x = 1\n").unwrap();
+        both("an import taken away", &["a.pyi", "builtins.pyi", "c.pyi", "d.pyi"]);
+        std::fs::remove_file(lib.join("d.pyi")).unwrap();
+        both("a library file gone", &["a.pyi", "builtins.pyi", "c.pyi"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
