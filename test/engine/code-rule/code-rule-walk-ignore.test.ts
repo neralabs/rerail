@@ -31,6 +31,7 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal => {
       asked.folders += 1;
       return matcher.ignoredEntries(folder, names, directories);
     },
+    reread: () => matcher.reread(),
   });
   return {
     ...actual,
@@ -174,7 +175,7 @@ describe("a walk of a session that follows .gitignore", () => {
     expect(asked).toEqual({ paths: 0, folders: 14, engineLookups: 0 });
   });
 
-  it("observes the files Git keeps: nested, negated, excluded and tracked ones", async () => {
+  it("observes the files Git keeps, as Git's rules stand at each walk: nested, negated, excluded and tracked ones", async () => {
     const { base, root, databasePath } = await checkout(
       {
         ".gitignore": "*.gen.py\nthird_party/\n!keep.gen.py\nGenerated/\n",
@@ -210,5 +211,18 @@ describe("a walk of a session that follows .gitignore", () => {
     // Git keeps a file it tracks whatever its rules say, and on a filesystem that ignores case it reads `Generated/`
     // as `generated/` (core.ignoreCase): the comparison with Git covers both.
     expect(router.audited).toContain("api/third_party/forced.py");
+
+    // Between walks, the nested and the top `.gitignore`, `.git/info/exclude` and `core.excludesFile` start to ignore
+    // files the walks observed, and Git stops tracking a file its rules match: the next walk observes none of them.
+    await writeFile(join(root, "api", ".gitignore"), "secret_*.py\ndraft.py\n");
+    await appendFile(join(root, ".gitignore"), "scratch.py\n");
+    await appendFile(join(root, ".git", "info", "exclude"), "late_local.py\n");
+    await appendFile(join(base, "excludes"), "late_excluded.py\n");
+    git(root, "rm", "--quiet", "--cached", "api/third_party/forced.py");
+    router.audited.clear();
+    await touchEveryPythonFile(bridge, root, everyPythonFile, "touch-2");
+    expect([...router.audited].sort()).toEqual(pythonGitKeeps(root));
+    expect(router.audited).toContain("api/handler.py");
+    expect([...router.gone].sort()).toEqual(["api/draft.py", "api/third_party/forced.py", "late_excluded.py", "late_local.py", "scratch.py"]);
   });
 });

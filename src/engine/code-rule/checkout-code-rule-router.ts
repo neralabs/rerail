@@ -140,7 +140,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * `ignoresPath` of each entry of `folder`, the entries its checkout owns asked of its lane in one go: its files, whose
    * checkout is their folder's, as the walk asking this never lists a link, and the folders in it that are no checkout
-   * of their own. A folder that is a checkout's top level, such as a submodule, is asked of its own lane.
+   * of their own. A folder that is a checkout's top level, such as a submodule, is asked of its own lane. A walk starts
+   * at the session folder or at a checkout's top folder, where the lane reads Git's ignore files again.
    */
   ignoredEntries(folder: string, entries: readonly WalkEntry[]): boolean[] {
     const owner = this.#owner(resolve(this.#sessionRoot, folder));
@@ -153,7 +154,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     }
     const lane = owner === undefined || asked.length === 0 ? undefined : this.#lane(owner.checkoutRoot);
     if (owner === undefined || lane === undefined) return ignored;
-    const answers = lane.enforcer.ignoredEntries(owner.path, asked.map(index => entries[index]!));
+    const answers = lane.enforcer.ignoredEntries(owner.path, asked.map(index => entries[index]!), folder === "" || owner.path === "");
     for (const [at, index] of asked.entries()) ignored[index] = answers[at] === true;
     return ignored;
   }

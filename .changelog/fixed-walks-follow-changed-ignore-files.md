@@ -1,0 +1,1 @@
+A file that the top `.gitignore`, `.git/info/exclude` or `core.excludesFile` starts to ignore while a session runs is no longer checked from the session's next look for shell writes; before, only a `.gitignore` in a subfolder took effect before the session restarted.

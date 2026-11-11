@@ -221,6 +221,12 @@ export interface NativeGitIgnoreMatcher {
    * `ignored` takes one, a file system call, per path. Throws as `ignored` does.
    */
   ignoredEntries(folder: string, names: string[], directories: boolean[]): boolean[];
+  /**
+   * Reads Git's ignore files again: `.git/info/exclude`, `core.excludesFile` and the top `.gitignore`, which the matcher
+   * otherwise keeps as it first read them (a `.gitignore` below the top is read each time a question goes into its
+   * folder again). Throws as `ignored` does.
+   */
+  reread(): void;
 }
 
 /** A pattern of Git's exclude stack that ignores a path (`NativeGitIgnoreMatcher.ignoredBy`). */

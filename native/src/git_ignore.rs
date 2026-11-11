@@ -5,7 +5,8 @@
 //! and can name the pattern that ignored a path, with its file and line (`git check-ignore -v`).
 //!
 //! The index is re-read whenever it changes on disk, so `git add` of an ignored file brings it back;
-//! a `.gitignore` is read when the walk first enters its folder. A walk asks once per folder
+//! a `.gitignore` is read when the walk first enters its folder, and the top one, with
+//! `.git/info/exclude` and `core.excludesFile`, again at each `reread`. A walk asks once per folder
 //! (`ignored_entries`), so the index is looked at once per folder, not once per file.
 
 use gix::bstr::{BStr, ByteSlice};
@@ -56,6 +57,16 @@ impl GitIgnore {
             stack,
             prefix,
         }))
+    }
+
+    /// Reads Git's ignore files again: `.git/info/exclude` and `core.excludesFile` now, and the
+    /// top `.gitignore` at the next question. The stack reads those once and keeps them, where a
+    /// `.gitignore` below the top is read each time a question goes into its folder again; a host
+    /// rereads as it starts a walk, so each walk follows the files as they are.
+    pub fn reread(&mut self) -> std::result::Result<(), String> {
+        let index = self.index()?;
+        self.stack = exclude_stack(&self.repository, &index)?;
+        Ok(())
     }
 
     /// Whether Git ignores `relative` (to the opened root, `/`-separated). The root itself and any
@@ -251,6 +262,20 @@ impl GitIgnoreMatcher {
             .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
         inner
             .ignored_by(&relative_path, is_directory)
+            .map_err(|message| Error::new(Status::GenericFailure, message))
+    }
+
+    /// Reads Git's ignore files again (`.git/info/exclude`, `core.excludesFile`, the top
+    /// `.gitignore`), which the matcher otherwise keeps as it first read them. A walk rereads as
+    /// it starts.
+    #[napi(catch_unwind)]
+    pub fn reread(&self) -> Result<()> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
+        inner
+            .reread()
             .map_err(|message| Error::new(Status::GenericFailure, message))
     }
 
@@ -473,6 +498,52 @@ mod tests {
             "the index is re-read once it changes"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rereads_the_top_gitignore_and_the_exclude_files_when_asked() {
+        let root = fixture(
+            "reread",
+            &[
+                (".gitignore", "*.log\n"),
+                ("api/.gitignore", "\n"),
+                ("top.py", ""),
+                ("local.py", ""),
+                ("global.py", ""),
+                ("api/nested.py", ""),
+            ],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        let excludes = root.with_extension("excludes");
+        std::fs::write(&excludes, "\n").unwrap();
+        git(
+            &root,
+            &["config", "core.excludesFile", &excludes.to_string_lossy()],
+        );
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        let names = ["top.py", "local.py", "global.py"].map(String::from);
+        let ask = |ignore: &mut GitIgnore| {
+            let mut answers = ignore
+                .ignored_entries("", &names, &[false, false, false])
+                .unwrap();
+            answers.push(ignore.ignored("api/nested.py", false).unwrap());
+            answers
+        };
+        assert_eq!(ask(&mut ignore), [false, false, false, false]);
+
+        std::fs::write(root.join(".gitignore"), "*.log\ntop.py\n").unwrap();
+        std::fs::write(root.join(".git/info/exclude"), "local.py\n").unwrap();
+        std::fs::write(&excludes, "global.py\n").unwrap();
+        std::fs::write(root.join("api/.gitignore"), "nested.py\n").unwrap();
+        assert_eq!(
+            ask(&mut ignore),
+            [false, false, false, true],
+            "a nested .gitignore is read as its folder is entered again; the rest is kept"
+        );
+        ignore.reread().unwrap();
+        assert_eq!(ask(&mut ignore), [true, true, true, true]);
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_file(excludes).unwrap();
     }
 
     #[test]

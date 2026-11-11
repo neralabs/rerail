@@ -722,12 +722,20 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return this.#askGitIgnore(path, matcher => matcher.ignored(path, directory)) ?? false;
   }
 
-  /** `ignoresPath` of each entry of the folder `folder` (relative to the workspace root, `""` for it), in one ask. */
-  ignoredEntries(folder: string, entries: readonly WalkEntry[]): boolean[] {
+  /**
+   * `ignoresPath` of each entry of the folder `folder` (relative to the workspace root, `""` for it), in one ask. With
+   * `reread`, Git's ignore files are read again first, as a walk asks at the folder it starts from (the workspace root,
+   * unless the session's folder lies below it): the matcher keeps the top `.gitignore` and the exclude files as it first
+   * read them, and they may have changed since the last walk.
+   */
+  ignoredEntries(folder: string, entries: readonly WalkEntry[], reread = folder === ""): boolean[] {
     if (entries.length === 0) return [];
     const names = entries.map(entry => entry.name);
     const directories = entries.map(entry => entry.directory);
-    return this.#askGitIgnore(folder, matcher => matcher.ignoredEntries(folder, names, directories)) ?? entries.map(() => false);
+    return this.#askGitIgnore(folder, matcher => {
+      if (reread) matcher.reread();
+      return matcher.ignoredEntries(folder, names, directories);
+    }) ?? entries.map(() => false);
   }
 
   /**
