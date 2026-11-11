@@ -88,6 +88,6 @@ ends(p, k) :- prev_node(_, p), node(_, p, _, _, e), within(k, p), node(_, k, _, 
 touch_before(x, s) :- prev_code(x, s), before_stop(x, _, g), !match("(?s).*\\s", g).
 .decl touch_after(x: node, s: symbol)
 touch_after(x, s) :- next_code(x, s), after_stop(x, _, g), !match("(?s)\\s.*", g).
-// wrapped(x): ESLint's isParenthesised: the code before x ends with `(` and the code after it starts with `)`.
-.decl wrapped(x: node)
-wrapped(x) :- prev_code(x, p), match("(?s).*\\(\\s*", p), next_code(x, q), match("(?s)\\s*\\).*", q).
+// in_parens(x): ESLint's isParenthesised: the code before x ends with `(` and the code after it starts with `)`.
+.decl in_parens(x: node)
+in_parens(x) :- prev_code(x, p), match("(?s).*\\(\\s*", p), next_code(x, q), match("(?s)\\s*\\).*", q).

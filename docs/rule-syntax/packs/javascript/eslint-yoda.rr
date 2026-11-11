@@ -47,7 +47,7 @@ ref_same_ask(a, b, "static") :- yoda_range_ask(_, a, b, _, _).
 .decl yoda_up(e: node, l: node, r: node)  // e is `l < r` or `l <= r`
 yoda_up(e, l, r) :- binop(e, "<", l, r) ; binop(e, "<=", l, r).
 .decl yoda_wrapped(g: node)  // astUtils.isParenthesised: `(` just before g and `)` just after it
-yoda_wrapped(g) :- wrapped(g).
+yoda_wrapped(g) :- in_parens(g).
 layout_at(g) :- option("exceptRange", "true"), (binop(g, "&&", _, _) ; binop(g, "||", _, _)).
 // yoda_in_order(lo, hi): one bound is a literal and the other is not, or both are and `lo <= hi` holds in
 // JavaScript: two strings by code point (join sorts them; JavaScript compares UTF-16 units, the same below
@@ -102,7 +102,7 @@ yoda_lead(n, "") :- yoda(n, _, _), !yoda_lead_sp(n).
 yoda_lead_sp(n) :- yoda_before(n, x, y), cannot_touch(x, y).
 .decl yoda_before(n: node, x: symbol, y: symbol)  // the token touching n's start, and the right operand's first
 yoda_before(n, x, y) :- yoda(n, _, _), touching(n, x), field(n, "right", b), text(b, y).
-layout_at(n) :- yoda(n, _, _).
+layout_at(n) :- binop(n, o, _, _), compare_op(o).   // every comparison, not yoda's: no cycle through `!`
 .decl yoda_trail(n: node, s: symbol)
 yoda_trail(n, " ") :- yoda_trail_sp(n).
 yoda_trail(n, "") :- yoda(n, _, _), !yoda_trail_sp(n).

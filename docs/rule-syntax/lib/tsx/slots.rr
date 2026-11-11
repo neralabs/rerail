@@ -27,8 +27,10 @@ slot(a, e, i) :- child(a, e, _), !kind(e, "comment"), kind(a, k), array_kind(k),
 slot_count(a, k) :- kind(a, ak), array_kind(ak), x = sum n : { slot_gap(a, _, n) }, y = count : { slot_comma(a, _) },
     slot_last(a, w), k = x + y + w.
 .decl slot_last(a: node, w: number)
-slot_last(a, 1) :- slot_end(a, s), x = sum n : { slot_gap(a, at, n), at > s }, x = 0, !slot_comma_after(a, s).
-slot_last(a, 0) :- kind(a, k), array_kind(k), !slot_last(a, 1).
+slot_last(a, 1) :- slot_open_end(a).
+slot_last(a, 0) :- kind(a, k), array_kind(k), !slot_open_end(a).
+.decl slot_open_end(a: node)  // no comma after a's last element
+slot_open_end(a) :- slot_end(a, s), x = sum n : { slot_gap(a, at, n), at > s }, x = 0, !slot_comma_after(a, s).
 // slot_end(a, s): a's last element starts at s.
 .decl slot_end(a: node, s: number)
 slot_end(a, s) :- kind(a, k), array_kind(k), child(a, e, _), !kind(e, "comment"), node(_, e, _, s, _),

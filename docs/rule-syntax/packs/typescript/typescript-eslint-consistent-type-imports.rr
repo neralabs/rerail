@@ -72,6 +72,6 @@ value_use(s) :- import_binding(s, x, _, _), docof(s, d), kind(e, "export_specifi
 value_use(s) :- import_binding(s, "React", _, _), docof(s, d), docof(j, d),
     (kind(j, "jsx_element") ; kind(j, "jsx_self_closing_element")).
 .decl export_local(e: node)  // `export { A }`, not `export { A } from "m"` (which names the other module's A)
-export_local(e) :- inside(e, x, "export_statement"), !field(x, "source", _), !type_only(x), !type_only(e).
-.decl type_only(x: node)  // `export type { A }`, `export { type A }`
-type_only(x) :- (kind(x, "export_statement") ; kind(x, "export_specifier")), op(x, "type").
+export_local(e) :- inside(e, x, "export_statement"), !field(x, "source", _), !type_marked(x), !type_marked(e).
+.decl type_marked(x: node)  // `export type { A }`, `export { type A }`
+type_marked(x) :- (kind(x, "export_statement") ; kind(x, "export_specifier")), op(x, "type").

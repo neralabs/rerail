@@ -31,7 +31,7 @@ in_for_head(s) :- kind(f, "for_statement"), (field(f, "initializer", e) ; field(
 .decl intended(s: node)
 intended(s) :- !option("allowInParentheses", "false"), syntax_parens(s, k), k >= 2.
 intended(s) :- !option("allowInParentheses", "false"), kind(s, "sequence_expression"), !syntax_parens(s, _),
-    wrapped(s).
+    in_parens(s).
 layout_at(s) :- kind(s, "sequence_expression").
 // syntax_parens(s, k): s is the test of if/while/do, a switch's or with's head, or an arrow's body, inside k
 // pairs of parentheses (the statement's own pair counts).
