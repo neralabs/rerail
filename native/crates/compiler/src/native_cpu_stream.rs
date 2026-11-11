@@ -181,6 +181,9 @@ pub struct CompiledStream {
     context: bool,
     pub clif: String,
     pub disassembly: String,
+    /// The machine code as emitted, each function's after the last: after the branches are
+    /// folded, which `disassembly` (Cranelift's code before emission) is not.
+    pub code_bytes: Vec<u8>,
     /// The CLIF blocks of the loops' heads, with their steps (`native_cpu_shape`): the token
     /// loop's function's.
     pub heads: Vec<(String, Step)>,
@@ -1193,7 +1196,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         // A place past the words refuses, as the interpreter's `STOP`.
         let off_end = f.create_block();
         // A word's block: its own, in its cluster; else the block that calls its cluster (made
-        // after the clusters are lowered, where the jump is kept).
+        // after the clusters are lowered, where the jump is kept). A block that only jumps costs
+        // nothing: emission folds it (`CompiledStream::code_bytes`). Resolving the jumps here
+        // instead made the code larger and slower (594 KB from 590 KB, 500M instructions from
+        // 484M over the `.rr` corpus).
         let goto = |pc: usize| -> Block {
             match wb.get(pc) {
                 None => off_end,
@@ -2536,8 +2542,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         eprintln!("tier 2: compiled {:.2?}", phase.elapsed());
     }
     let mut disassembly = String::new();
+    let mut code_bytes = Vec::new();
     for c in &defined {
         disassembly.push_str(&c.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
+        code_bytes.extend_from_slice(c.compiled_code().map_or(&[][..], |code| code.code_buffer()));
     }
     let calls = clif.lines().filter(|l| l.trim().starts_with("call ") || l.contains(" = call ")).count();
     module.finalize_definitions().map_err(|e| {
@@ -2553,7 +2561,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, heads, own_calls, clusters: cut.count as usize, crossings, word_insts })
+    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts })
 }
 
 /// The loops across clusters, checked as a function's are: from each place a cluster is

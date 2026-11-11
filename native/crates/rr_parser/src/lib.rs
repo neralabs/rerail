@@ -959,6 +959,7 @@ pub mod tests {
         if let Ok(dir) = std::env::var("RR_DUMP") {
             std::fs::write(format!("{dir}/tier2.clif"), &p.tier2.clif).expect("writes");
             std::fs::write(format!("{dir}/tier2.s"), &p.tier2.disassembly).expect("writes");
+            std::fs::write(format!("{dir}/tier2.bin"), &p.tier2.code_bytes).expect("writes");
             std::fs::write(format!("{dir}/tier2.words"), &c.words).expect("writes");
             std::fs::write(format!("{dir}/tier2.machine"), &c.machine).expect("writes");
         }
