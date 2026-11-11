@@ -561,6 +561,18 @@ impl Rel {
     /// (candidates, count). The order answering the most of them leads (each is checked by the caller); with none,
     /// every row of the delta or of all. Rows pushed since the last wave (in no order yet; none on the engine's own
     /// path, which probes after `set_delta`) are candidates of all, as they are of no delta.
+    /// `probe`, each run of the order searched from where this sequence of probes last was in it (`hints`).
+    fn probe_at(&self, keys: &[usize], key: &[i64], delta: bool, hints: &mut [u32; runs::HINTS]) -> (Cands<'_>, usize) {
+        let Some((ix, m)) = best_order(&self.idx, keys) else { return self.probe(keys, key, delta) };
+        let mut buf = [0i64; MAX_KEY];
+        let at = |c: usize| key[keys.iter().position(|&x| x == c).expect("a key column")];
+        let found = ix.find_at(&self.data, self.k, permuted(&ix.cols[..m], at, &mut buf), delta.then_some(self.wave), hints);
+        let n = found.len();
+        if !delta && self.indexed < self.n {
+            return (Cands::Pending(found, self.indexed as u32, self.n as u32), n + self.n - self.indexed);
+        }
+        (Cands::Runs(found), n)
+    }
     fn probe(&self, keys: &[usize], key: &[i64], delta: bool) -> (Cands<'_>, usize) {
         let Some((ix, m)) = best_order(&self.idx, keys) else {
             let (lo, hi) = if delta { (self.lo, self.hi) } else { (0, self.n) };
@@ -640,7 +652,12 @@ impl Fresh {
             runs::cmp_vals(cols, tagged, &data[a as usize * k..][..k], &data[b as usize * k..][..k])
         };
         let mut order: Vec<u32> = (settled as u32..n as u32).collect();
-        order.sort_unstable_by(|&a, &b| cmp(a, b));
+        if tagged {
+            // By tag as integers, then rows only within a tag (`runs::sort_by_tag`).
+            runs::sort_by_tag(&mut order, |q| runs::tag(data[q as usize * k + cols[0]]), &cmp);
+        } else {
+            order.sort_unstable_by(|&a, &b| cmp(a, b));
+        }
         order.dedup_by(|a, b| cmp(*a, *b).is_eq());
         // The new rows' check: rows pushed since the last wave (in no order yet), then the first order.
         let mut held = vec![false; order.len()];
@@ -4196,6 +4213,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     paired: Option<&level::Paired>, each: Option<(usize, &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>)>) -> Result<u64> {
     struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
                      key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)>, scratch: Vec<rowcode::Scratch>,
+                     /// Each step's place in the runs of the order it probes (`Index::find_at`): the step's keys come
+                     /// in a sorted batch where they can (`scan_order`), so each probe starts where the last ended.
+                     hints: Vec<[u32; runs::HINTS]>,
                      collect: Option<&'c mut Vec<i64>>,
                      /// The row the first step is at (a count table's counts per row are by it).
                      at0: u32 }
@@ -4212,6 +4232,54 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         fn dead(self, id: u32) -> bool {
             match self { Rows::In(r) => is_dead(&r.dead, id), Rows::Comp(r) => r.dead(id), Rows::Source(_) => false }
         }
+    }
+    /// The rows of step `i`'s scan (`cands`, a range of at least `SCAN_SORTED` rows) in the order of the key step
+    /// `i + 1` probes with, when the scan binds all of that key: the next step's probes then come as one sorted batch,
+    /// each starting where the last ended in each run (`Index::find_at`), and read each run once, in order.
+    fn scan_order(j: &JoinRule, store: &Store, i: usize, rows: Rows<'_>, cands: &Cands<'_>, binds: &[(usize, usize)]) -> Option<Vec<u32>> {
+        const SCAN_SORTED: u32 = 256;
+        let &Cands::Range(lo, hi) = cands else { return None };
+        if hi - lo < SCAN_SORTED || j.fused.get(i).is_some_and(Option::is_some) {
+            return None;
+        }
+        let Some(Step::Atom { src, keys, .. }) = j.steps.get(i + 1) else { return None };
+        if keys.is_empty() {
+            return None;
+        }
+        let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
+        let (index, m, k) = match src {
+            Src::Delta(r) | Src::Full(r) => { let rel = &store.rels[*r]; let (ix, m) = best_order(&rel.idx, &cols)?; (ix, m, rel.k) }
+            Src::FullMulti(r, mc) => { let rel = &store.rels[*r]; let (ix, m) = best_order(&rel.idx, mc)?; (ix, m, rel.k) }
+            Src::In(rel, ix) => { let index = &rel.chains[ix.chain?]; let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count(); (index, m, rel.k) }
+        };
+        if m == 0 {
+            return None;
+        }
+        // Each of the order's key columns, from this step's row: a column it binds, or a constant.
+        enum From { Col(usize), Const(i64) }
+        let mut from = Vec::with_capacity(m);
+        for c in &index.cols[..m] {
+            let &(_, key) = keys.iter().find(|(kc, _)| kc == c)?;
+            from.push(match key {
+                Key::Const(v) => From::Const(v),
+                Key::Slot(s) => From::Col(binds.iter().find(|&&(_, b)| b == s)?.0),
+            });
+        }
+        let n = (hi - lo) as usize;
+        let mut vals = Vec::with_capacity(n * m);
+        for id in lo..hi {
+            let row = rows.row(id);
+            vals.extend(from.iter().map(|f| match *f { From::Col(c) => row.at(c), From::Const(v) => v }));
+        }
+        let tagged = index.is_tagged(k);
+        let mut order: Vec<u32> = (0..n as u32).collect();
+        let cmp = |a: u32, b: u32| vals[a as usize * m..][..m].cmp(&vals[b as usize * m..][..m]);
+        if tagged {
+            runs::sort_by_tag(&mut order, |q| runs::tag(vals[q as usize * m]), cmp);
+        } else {
+            order.sort_by(|&a, &b| cmp(a, b));
+        }
+        Some(order.into_iter().map(|q| lo + q).collect())
     }
     fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
         if cx.error.is_some() { return; }
@@ -4242,7 +4310,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         /// The candidates: an input's index on exactly the key columns, a component relation's composite index, or
         /// its shortest posting chain among its key columns (every key is then checked), or every tuple when none is
         /// bound.
-        fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)]) -> (Rows<'a>, Cands<'a>) {
+        fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS]) -> (Rows<'a>, Cands<'a>) {
             match src {
                 Src::In(rel, ix) => {
                     if !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
@@ -4254,7 +4322,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count();
                         let mut buf = [0i64; MAX_KEY];
                         let at = |c: usize| key[ix.cols.iter().position(|&x| x == c).expect("a key column")];
-                        (Rows::In(rel), Cands::Runs(index.find(&rel.rows, rel.k, permuted(&index.cols[..m], at, &mut buf), None)))
+                        (Rows::In(rel), Cands::Runs(index.find_at(&rel.rows, rel.k, permuted(&index.cols[..m], at, &mut buf), None, hints)))
                     }
                     else if ix.sorted && let Some(v) = &rel.view { (Rows::Source(v), Cands::Slice(v.src.sorted_rows(v.cols[ix.cols[ix.lead]], key[ix.lead]).unwrap_or(&[]))) }
                     else if ix.source && let Some(v) = &rel.view { (Rows::Source(v), Cands::Owned(v.find(ix.cols[ix.lead], key[ix.lead]))) }
@@ -4263,7 +4331,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 Src::FullMulti(r, cols) => {
                     let rel = &store.rels[*r];
                     probed::note(&rel.table, cols.iter().copied());
-                    (Rows::Comp(rel), rel.probe(cols, key, false).0)
+                    (Rows::Comp(rel), rel.probe_at(cols, key, false, hints).0)
                 }
                 Src::Delta(r) | Src::Full(r) => {
                     let rel = &store.rels[*r];
@@ -4274,7 +4342,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         if probed::on() { probed::note(&if delta { format!("{}+delta", rel.table) } else { rel.table.clone() }, keys.iter().map(|&(c, _)| c)); }
                         let mut cols = [0usize; MAX_KEY];
                         for (j, &(c, _)) in keys.iter().enumerate() { cols[j] = c; }
-                        (Rows::Comp(rel), rel.probe(&cols[..keys.len()], key, delta).0)
+                        (Rows::Comp(rel), rel.probe_at(&cols[..keys.len()], key, delta, hints).0)
                     }
                 }
         }
@@ -4283,7 +4351,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Step::Atom { src, neg, keys, binds, tests } => {
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
-                let (rows, cands) = candidates(src, store, &cx.key, keys);
+                let (rows, mut cands) = candidates(src, store, &cx.key, keys, &mut cx.hints[i]);
+                // A scan's rows in the next step's key order: its probes are then one sorted batch (decision 0112).
+                if keys.is_empty() && let Some(order) = scan_order(j, store, i, rows, &cands, binds) {
+                    cands = Cands::Owned(order);
+                }
                 if let Some(f) = j.fused[i].as_deref() {
                     // Fused with the filters after it: the candidates a chunk at a time, the filters one row program
                     // over each chunk, and only its rows go on (`rowcode`).
@@ -4359,7 +4431,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let build = |value: Option<usize>| {
                     let _cpu=crate::code_rule_dsl::logic::profile::span(||"native scalar summary fold".into());
                     let mut inspected=0;
-                    let (rows, cands) = candidates(src, store, &cx.key, keys);
+                    let (rows, cands) = candidates(src, store, &cx.key, keys, &mut [0; runs::HINTS]);
                     let mut summary = scalars::Summary::default();
                     cands.any(|id| {
                         inspected+=1;
@@ -4404,7 +4476,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 enum Sortable { Number(i64), Text(String) }
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
-                let (rows, cands) = candidates(src, store, &cx.key, keys);
+                let (rows, cands) = candidates(src, store, &cx.key, keys, &mut cx.hints[i]);
                 let mut got: Vec<(Vec<Sortable>, String)> = Vec::new();
                 let syms = &cx.syms;
                 let sortable = |v: i64, sym: bool| if sym { Sortable::Text(syms.name(v).to_string()) } else { Sortable::Number(v) };
@@ -4495,7 +4567,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         }
     }
     let scratch = j.steps.iter().map(|_| rowcode::Scratch::default()).collect();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0 };
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0, hints: vec![[0; runs::HINTS]; j.steps.len()] };
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
     match (each, paired, j.steps.first(), j.steps.get(1)) {
