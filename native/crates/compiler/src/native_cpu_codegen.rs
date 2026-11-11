@@ -2,6 +2,36 @@ use cranelift_codegen::Context;
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Module, ModuleError};
 
+/// The process's instructions retired and cycles so far (macOS: `proc_pid_rusage`, no root
+/// needed), for benchmarks: their difference over a run on one thread is that run's counts.
+/// Zero elsewhere.
+pub fn retired() -> (u64, u64) {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: the call writes the structure, which is plain integers.
+        let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+        let ok = unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+        if ok == 0 {
+            return (info.ri_instructions, info.ri_cycles);
+        }
+    }
+    (0, 0)
+}
+
+/// Cranelift's optimizer (`opt_level = speed`) for tier 1 and the rows' code, to measure it.
+/// Off by default: decision 0069 keeps tier 1's constants in its loop, and the mid-end's code
+/// motion hoists them. Tier 2 has its own switch (`native_cpu_clusters::Cut::speed`).
+pub static OPTIMIZE_TIER1: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The same for tier 2's default `compile` (one function).
+pub static OPTIMIZE_TIER2: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The JIT builder for tier 1 and the rows: the JIT's defaults, with `OPTIMIZE_TIER1`.
+pub fn tier1_builder() -> Result<cranelift_jit::JITBuilder, Box<ModuleError>> {
+    let flags: &[(&str, &str)] = if OPTIMIZE_TIER1.load(std::sync::atomic::Ordering::Relaxed) { &[("opt_level", "speed")] } else { &[] };
+    cranelift_jit::JITBuilder::with_flags(flags, cranelift_module::default_libcall_names()).map_err(Box::new)
+}
+
 pub fn define_function(
     module: &mut JITModule,
     id: FuncId,
@@ -23,12 +53,16 @@ pub fn define_function(
 /// function alone (tier 2's clusters, decision in doc 28), so they compile at once, a thread a
 /// share of them, up to the machine's threads. Returns the contexts, each holding its compiled
 /// code. Each thread's pass times are added to `parallel_pass_times`.
-pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>) -> Result<Vec<Context>, Box<ModuleError>> {
+///
+/// `near`: the module's code is in one arena (`ArenaMemoryProvider`, within a direct branch's
+/// reach), so a call of its own functions is a direct branch (`colocated`); else every call is
+/// long-range, as `define_function`'s.
+pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, near: bool) -> Result<Vec<Context>, Box<ModuleError>> {
     use cranelift_module::{Module, ModuleReloc};
     let mut items = items;
     for (_, context) in &mut items {
         for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
-            function.colocated = false;
+            function.colocated = near && matches!(function.name, cranelift_codegen::ir::ExternalName::User(_));
         }
     }
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(items.len()).max(1);

@@ -37,7 +37,13 @@ pub struct Cut {
     pub speed: bool,
     /// How a switch picks its arm, and the profile it is weighted by (`traffic`).
     pub pick: Pick,
+    /// The profile switches and entries are weighted by (`traffic`). With it, a function with
+    /// several entries picks one by compares, the hottest first, not one indirect branch.
     pub pick_traffic: HashMap<(u32, u32), u64>,
+    /// The functions in one arena, so a crossing is a direct branch.
+    pub near: bool,
+    /// Return addresses not signed.
+    pub unsigned: bool,
 }
 
 /// How a switch on a byte picks its arm.
@@ -54,7 +60,7 @@ pub enum Pick {
 impl Cut {
     /// Every word in one function: tier 2 as it was before clusters.
     pub fn one(words: usize) -> Self {
-        Self { of: vec![0; words], count: 1, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new() }
+        Self { of: vec![0; words], count: 1, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false }
     }
 }
 
@@ -184,7 +190,7 @@ pub fn by_traffic(native: &Structure, traffic: &HashMap<(u32, u32), u64>, cap: u
             bin_of.get(&r).copied().unwrap_or(0)
         })
         .collect();
-    Cut { of, count: (bins.len() as u32).max(1), held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new() }
+    Cut { of, count: (bins.len() as u32).max(1), held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false }
 }
 
 /// The share of `traffic`'s steps that leave their cluster, of all its steps between two words.
@@ -243,5 +249,5 @@ pub fn by_states(native: &Structure) -> Cut {
     }
     let count = count.max(1);
     let of: Vec<u32> = (0..n).map(|pc| of[at[pc]].unwrap_or(0)).collect();
-    Cut { of, count, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new() }
+    Cut { of, count, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false }
 }

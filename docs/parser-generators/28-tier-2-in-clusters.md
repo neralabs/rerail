@@ -330,11 +330,94 @@ to 43.7 ms with the load):
   the crossings.
 - **Within one function, the allocator spills the held state** wherever values meet, so
   holding it gains nothing either.
-- **What is left to try:**
-  - a convention for tail-call chains with no callee-saved registers (in Cranelift's aarch64
-    ABI);
-  - an entry function per place a state is entered at;
-  - the optimizer on tier 1, which also runs at `opt_level = none`.
+- **What was left to try** is measured in the next section: the crossing's cost was the
+  entry's jump table, not the convention.
+
+## Crossings made cheap, and the optimizer
+
+### How others make tail calls cheap
+
+- **In LLVM**, interpreters built of tail calls (CPython's tail-calling interpreter, upb)
+  use `musttail` with the `preserve_none` convention. A function then saves no register for
+  its caller, so a chain of tail calls saves nothing. CPython reports 9 to 15% from it.
+- **Cranelift has no such convention.** Its `tail` convention had no callee-saved registers
+  at first. They were added in 2024 (issue 6759, PR 8246), because Wasm code spilled more
+  without them. But a function saves only the callee-saved registers it uses. The allocator
+  takes x19 to x28 only when more than 16 values are live. So a function with little pressure
+  saves nothing, in the stock convention: 95 of the 231 state functions save none, 72 save
+  one.
+
+### What a crossing really cost
+
+A crossing was three things, each now a `Cut` option:
+
+- **an indirect call** (`return_call_ind`): every call is long-range, because the JIT may map
+  functions farther apart than a branch reaches (`near`: one arena, direct branches);
+- **a signed return address** (`unsigned`: off);
+- **an indirect branch at the entry**, a jump table on the entry's index (with a profile,
+  `pick_traffic`: compares, the hottest entry first; a single entry is a jump).
+
+On the function a state, alone (CPU time, best of 7):
+
+| | tier 2 |
+|---|---|
+| none of the three | 72.2 ms |
+| direct branches | 72.5 ms |
+| no signing | 72.0 ms |
+| entries picked by the profile | **41.2 ms** |
+| all three | 41.4 ms |
+
+The entry's jump table was the cost: an indirect branch whose target changes with each
+crossing, so it mispredicts. The other two cost nothing measurable.
+
+### The cut's size, crossings cheap
+
+Instructions retired and cycles (`proc_pid_rusage`, the least of 7 rounds in turns) and CPU
+time; all with `ctx` at each word, `SPAN` in line and the optimizer, except the first three:
+
+| `.rr` tier 2 | instructions | cycles | CPU |
+|---|---|---|---|
+| one function | 596M | 156.1M | 36.4 ms |
+| one function, optimized | 580M | **140.8M** | 32.8 ms |
+| cap 2,500 (the product's) | 632M | 142.5M | 33.2 ms |
+| cap 800, entries picked | 611M | 144.7M | 33.7 ms |
+| cap 400, entries picked | 635M | 146.9M | 34.2 ms |
+| cap 100 (80 functions), entries picked | 641M | 148.0M | 34.4 ms |
+| a function a state (227), jump table entries | 675M | 278.2M | 64.9 ms |
+| a function a state, entries picked | 666M | 150.6M | 35.1 ms |
+
+- **With entries picked by the profile, every cut is within 7% of the one function's cycles**,
+  from 4 functions to 227.
+- **None is faster than the one function optimized.** More functions retire more
+  instructions: each loads the fields it needs where it is entered.
+- **Holding the state in registers still gains nothing.** With crossings cheap, the token's
+  fields held (or passed as arguments) spill as before, and run no faster.
+- **A token costs about 375 instructions and 91 cycles** (IPC 4.1). Its time is the
+  instructions retired, not spills or crossings.
+
+### The optimizer on tier 1, and on JSON
+
+Tier 1 runs without the optimizer by decision 0069, which keeps its constants in its loop.
+Measured again, in turns in one process:
+
+| | instructions | cycles | CPU |
+|---|---|---|---|
+| JSON tier 1, off | 184.1M | 27.4M | 6.37 ms |
+| JSON tier 1, on | 207.4M | 29.2M | 6.78 ms |
+| JSONC tier 1, off | 242.1M | 34.6M | 8.05 ms |
+| JSONC tier 1, on | 278.8M | 36.3M | 8.45 ms |
+| `.rr` tier 1, off | 534.5M | 106.5M | 24.8 ms |
+| `.rr` tier 1, on | 657.1M | 122.5M | 28.5 ms |
+| JSON tier 2, off | 422.1M | 126.7M | 29.5 ms |
+| JSON tier 2, on | 424.8M | 128.8M | 30.0 ms |
+| JSONC tier 2, off | 432.1M | 101.7M | 23.7 ms |
+| JSONC tier 2, on | 420.2M | 99.2M | 23.1 ms |
+
+- **On tier 1, the optimizer costs 13 to 23% more instructions** and 5 to 15% more cycles: it
+  hoists the splats and tables out of the loop, as decision 0069 says, and they spill. The
+  decision holds.
+- **On tier 2 it gains 10% of `.rr`'s cycles** (156.1M to 140.8M), and about nothing on JSON
+  (−2% to +2%).
 
 ## Not measured yet
 

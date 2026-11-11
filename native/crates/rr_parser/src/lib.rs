@@ -741,6 +741,43 @@ pub mod tests {
     /// register allocation), the code (instructions, stack loads and stores), the share of steps
     /// that cross, and tier 2's time over the whole corpus with tier 1's buffers made before.
     /// Every file's table equals the one function's. Run by hand, at nice 19.
+    /// Cranelift's optimizer on `.rr`'s tier 1 (doc 28): tier 1 compiled with it and without, in
+    /// one process, timed in turns over the corpus, each its best round.
+    #[test]
+    #[ignore = "a benchmark: run by hand"]
+    fn rr_tier1_optimizer() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let c = crate::compiled().expect("compiles");
+        let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
+        let tier1: Vec<(&str, rerail_compiler::native_cpu_block::CompiledBlock)> = [("off", false), ("on", true)]
+            .into_iter()
+            .map(|(label, on)| {
+                rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(on, Relaxed);
+                (label, rerail_compiler::native_cpu_block::compile(&c.native).expect("tier 1"))
+            })
+            .collect();
+        rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(false, Relaxed);
+        let files = corpus();
+        let mut batches: Vec<Vec<_>> = tier1.iter().map(|(_, t)| files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(t, &[f.as_bytes()])).collect()).collect();
+        let mut best = vec![(std::time::Duration::MAX, u64::MAX, u64::MAX); tier1.len()];
+        for _ in 0..rounds {
+            for (k, (_, t)) in tier1.iter().enumerate() {
+                let (i0, c0) = rerail_compiler::native_cpu_codegen::retired();
+                let s = thread_cpu();
+                for b in &mut batches[k] {
+                    b.call(t);
+                }
+                let s = thread_cpu() - s;
+                let (i1, c1) = rerail_compiler::native_cpu_codegen::retired();
+                best[k] = (best[k].0.min(s), best[k].1.min(i1 - i0), best[k].2.min(c1 - c0));
+            }
+        }
+        let bytes: usize = files.iter().map(String::len).sum();
+        for ((label, _), (t, ins, cyc)) in tier1.iter().zip(&best) {
+            eprintln!("tier 1, optimizer {label}: {t:.2?} CPU, {:.1}M instructions, {:.1}M cycles, IPC {:.2} over {} files ({:.2} GB/s), the best of {rounds}", *ins as f64 / 1e6, *cyc as f64 / 1e6, *ins as f64 / *cyc as f64, files.len(), bytes as f64 / t.as_nanos() as f64);
+        }
+    }
+
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn rr_tier2_clusters() {
@@ -812,7 +849,24 @@ pub mod tests {
                 let fast = std::env::var_os("RR_SPEED").is_some().then(|| (format!("{name}+opt"), Cut { speed: true, ..cut.clone() }));
                 std::iter::once((name, cut)).chain(fast)
             })
-            // `Cut::arms`: the switches weighted by the profile, or by a table.
+            // `Cut::near` and `unsigned`: a crossing a direct branch, return addresses not signed,
+            // entries picked by the profile.
+            .flat_map(|(name, cut)| {
+                // `RR_NEAR`: all three, or `direct`, `unsigned`, `pick` alone (comma-separated).
+                let parts = std::env::var("RR_NEAR").ok();
+                let near: Vec<(String, Cut)> = parts
+                    .iter()
+                    .flat_map(|p| p.split(','))
+                    .map(|p| match p {
+                        "direct" => (format!("{name}+direct"), Cut { near: true, ..cut.clone() }),
+                        "unsigned" => (format!("{name}+unsigned"), Cut { unsigned: true, ..cut.clone() }),
+                        "pick" => (format!("{name}+pick"), Cut { pick_traffic: traffic.clone(), ..cut.clone() }),
+                        _ => (format!("{name}+near"), Cut { near: true, unsigned: true, pick_traffic: traffic.clone(), ..cut.clone() }),
+                    })
+                    .collect();
+                std::iter::once((name, cut)).chain(near)
+            })
+            // `Cut::pick`: the switches weighted by the profile, or by a table.
             .flat_map(|(name, cut)| {
                 let weighted = (name.clone(), Cut { pick: rerail_compiler::native_cpu_clusters::Pick::Weighted, pick_traffic: traffic.clone(), ..cut.clone() });
                 let table = (name.clone(), Cut { pick: rerail_compiler::native_cpu_clusters::Pick::Table, ..cut.clone() });
@@ -878,19 +932,23 @@ pub mod tests {
         // Tier 2's time over the corpus, the forms in turn (the machine's load moves): each
         // form's best of the rounds.
         let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
-        let mut best = vec![std::time::Duration::MAX; made.len()];
+        // CPU time, and the instructions retired and cycles (each its least over the rounds).
+        let mut best = vec![(std::time::Duration::MAX, u64::MAX, u64::MAX); made.len()];
+        let mut tapes: Vec<Vec<_>> = made.iter().map(|(_, p)| batches.iter().map(|b| p.tape(b)).collect()).collect();
         for _ in 0..rounds {
             for (i, (_, p)) in made.iter().enumerate() {
+                let (i0, c0) = rerail_compiler::native_cpu_codegen::retired();
                 let t = thread_cpu();
-                for b in &batches {
-                    let mut tape = p.tape(b);
-                    let _ = p.words(b, &mut tape);
+                for (b, tape) in batches.iter().zip(&mut tapes[i]) {
+                    let _ = p.words(b, tape);
                 }
-                best[i] = best[i].min(thread_cpu() - t);
+                let t = thread_cpu() - t;
+                let (i1, c1) = rerail_compiler::native_cpu_codegen::retired();
+                best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
             }
         }
-        for ((name, _), t) in made.iter().zip(&best) {
-            eprintln!("{name:>16}: tier 2 {t:.1?} CPU over the corpus (the best of {rounds})");
+        for ((name, _), (t, ins, cyc)) in made.iter().zip(&best) {
+            eprintln!("{name:>16}: tier 2 {t:.1?} CPU, {:.1}M instructions, {:.1}M cycles, IPC {:.2} over the corpus (the best of {rounds})", *ins as f64 / 1e6, *cyc as f64 / 1e6, *ins as f64 / *cyc as f64);
         }
         eprintln!("load: {}", String::from_utf8_lossy(&std::process::Command::new("uptime").output().map(|o| o.stdout).unwrap_or_default()).trim());
     }

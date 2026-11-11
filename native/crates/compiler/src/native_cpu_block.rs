@@ -29,8 +29,8 @@ use crate::block_native::{BlockInst, BlockNative, Pass};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, BlockArg, ConstantData, Endianness, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{Linkage, Module, default_libcall_names};
+use cranelift_jit::JITModule;
+use cranelift_module::{Linkage, Module};
 
 /// The batch's bytes, its rows (`Row`), their count, the mask words, the positions, the counts,
 /// and the slots the passes store for each other (`native_ir::Passes`).
@@ -1367,7 +1367,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     // Not optimised: the mid-end's code motion would hoist every vector constant out of the loop,
     // more than the registers hold, and spill them (decision 0069). The body is already
     // straight-line and deduplicated.
-    let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    let builder = crate::native_cpu_codegen::tier1_builder().map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
     let pointer = module.target_config().pointer_type();
     let mut signature = module.make_signature();

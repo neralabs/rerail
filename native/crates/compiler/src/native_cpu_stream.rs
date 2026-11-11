@@ -1031,7 +1031,8 @@ pub fn shared_runs(native: &Structure, pushes: &[u16]) -> SharedRuns {
 }
 
 pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
-    compile_cut(native, &crate::native_cpu_clusters::Cut::one(native.structural.len()))
+    let speed = crate::native_cpu_codegen::OPTIMIZE_TIER2.load(std::sync::atomic::Ordering::Relaxed);
+    compile_cut(native, &crate::native_cpu_clusters::Cut { speed, ..crate::native_cpu_clusters::Cut::one(native.structural.len()) })
 }
 
 /// A cluster's function, lowered: its loop heads, the places it is entered at (each with its
@@ -1075,7 +1076,27 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     if cut.speed {
         flags.push(("opt_level", "speed"));
     }
-    let builder = JITBuilder::with_flags(&flags, default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    let mut builder = if cut.unsigned {
+        // `Cut::unsigned`: return addresses not signed (Cranelift signs them on every macOS
+        // target; an arm64 process, not arm64e, does not need it). The JIT's own flags, as
+        // `JITBuilder::with_flags` sets them.
+        use cranelift_codegen::settings::Configurable;
+        let mut shared = cranelift_codegen::settings::builder();
+        for (k, v) in flags.iter().copied().chain([("use_colocated_libcalls", "false"), ("is_pic", "false")]) {
+            shared.set(k, v).map_err(|_| Error::BackendFailure)?;
+        }
+        let isa = cranelift_codegen::isa::lookup_by_name("aarch64-apple-darwin")
+            .map_err(|_| Error::BackendFailure)?
+            .finish(cranelift_codegen::settings::Flags::new(shared))
+            .map_err(|_| Error::BackendFailure)?;
+        JITBuilder::with_isa(isa, default_libcall_names())
+    } else {
+        JITBuilder::with_flags(&flags, default_libcall_names()).map_err(|_| Error::BackendFailure)?
+    };
+    if cut.near {
+        // `Cut::near`: the module's code in one arena, well within a direct branch's 128 MB.
+        builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).map_err(|_| Error::BackendFailure)?));
+    }
     let mut module = JITModule::new(builder);
     let pointer = module.target_config().pointer_type();
     let mut signature = module.make_signature();
@@ -2334,11 +2355,28 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 targets.push((g, if g < n_words { wb[g].expect("an own place") } else { entries[g - n_words] }));
             }
             let at = f.block_params(entry)[1];
-            let i = f.ins().ireduce(types::I32, at);
-            let default = f.func.dfg.block_call(off_end, &[]);
-            let calls: Vec<_> = targets.iter().map(|&(_, b)| f.func.dfg.block_call(b, &[])).collect();
-            let jt = f.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
-            f.ins().br_table(i, jt);
+            if targets.len() == 1 {
+                // One entry: no choice to make.
+                f.ins().jump(targets[0].1, &[]);
+            } else if !cut.pick_traffic.is_empty() {
+                // Each entry weighted by the profile's steps into it from other clusters, the
+                // hottest tested first (`dispatch_weighted`), not one indirect branch.
+                let into: Vec<u64> = targets
+                    .iter()
+                    .map(|&(g, _)| {
+                        let pc = if g < n_words { g } else { shared_all.bodies[g - n_words].start };
+                        cut.pick_traffic.iter().filter(|&(&(a, b), _)| b as usize == pc && (a as usize) < n_words && cut.of[a as usize] != c).map(|(_, &w)| w).sum()
+                    })
+                    .collect();
+                let runs: Vec<(u32, u32, Block, u64)> = targets.iter().enumerate().map(|(i, &(_, b))| (i as u32, i as u32 + 1, b, into[i])).collect();
+                dispatch_weighted(&mut f, at, &runs);
+            } else {
+                let i = f.ins().ireduce(types::I32, at);
+                let default = f.func.dfg.block_call(off_end, &[]);
+                let calls: Vec<_> = targets.iter().map(|&(_, b)| f.func.dfg.block_call(b, &[])).collect();
+                let jt = f.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
+                f.ins().br_table(i, jt);
+            }
         }
         if fin_used {
             f.switch_to_block(fin);
@@ -2450,7 +2488,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     for (_, c) in &items {
         clif.push_str(&c.func.display().to_string());
     }
-    let defined = crate::native_cpu_codegen::define_functions(&mut module, items).map_err(|e| {
+    let defined = crate::native_cpu_codegen::define_functions(&mut module, items, cut.near).map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2: {e:?}");
         }

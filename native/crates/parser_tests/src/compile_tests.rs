@@ -1224,10 +1224,10 @@ fn json_in_clusters_equals_one_function() {
     let n = native.structural.len();
     let cuts = [
         ("by traffic, at most 40 words", native_cpu_clusters::by_traffic(&native, &traffic, 40)),
-        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default() }),
+        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false }),
         // The state in registers: every field, in clusters and in the one function.
         ("by traffic, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
-        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..23).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default() }),
+        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..23).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false }),
         ("one function, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::Cut::one(n) }),
         ("one function, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::Cut::one(n) }),
         ("by traffic, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
@@ -1236,6 +1236,7 @@ fn json_in_clusters_equals_one_function() {
         ("one function, arms by a table", native_cpu_clusters::Cut { pick: native_cpu_clusters::Pick::Table, ..native_cpu_clusters::Cut::one(n) }),
         ("one function, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::Cut::one(n) }),
         ("by traffic, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
+        ("a state a function, direct and unsigned, entries by the profile", native_cpu_clusters::Cut { near: true, unsigned: true, pick_traffic: traffic.clone(), speed: true, ..native_cpu_clusters::by_states(&native) }),
         ("a state a function, four fields passed", native_cpu_clusters::Cut { inline_span: true, reload: true, held: vec![10, 13, 14, 21, 22], pass: vec![10, 13, 14, 21], ..native_cpu_clusters::by_states(&native) }),
     ];
     for (name, cut) in cuts {
