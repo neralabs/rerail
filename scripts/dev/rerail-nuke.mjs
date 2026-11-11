@@ -71,7 +71,7 @@ export function configBackupName(path, home) {
  * On Windows (`platform`) one path has several spellings in the configs Rerail writes: backslashes in an exec-form or
  * PowerShell hook, each backslash written twice in the status line's POSIX-quoted word for Git Bash, and `/` from
  * other tools, in any case. There the text and the home are compared with every run of slashes and backslashes as
- * one `/`, in lower case.
+ * one `/`, in lower case. A quote in the home's path is written as each command line quotes it (`quotedSpellings`).
  */
 export function rerailHomeMatcher(rerailHome, home, platform = process.platform) {
   const { paths, spelled } = pathRules(platform);
@@ -79,7 +79,7 @@ export function rerailHomeMatcher(rerailHome, home, platform = process.platform)
   const needles = [...roots].flatMap(root => {
     const inside = underHome(paths, home, root);
     const fromHome = inside === undefined ? [] : ["~", "$HOME", "${HOME}"].map(prefix => `${prefix}/${inside}/`);
-    return [`${root}${paths.sep}`, ...fromHome].map(spelled);
+    return [...quotedSpellings(root).map(spelling => `${spelling}${paths.sep}`), ...fromHome].map(spelled);
   });
   const spelledRoots = new Set([...roots].map(spelled));
   return text => {
@@ -87,6 +87,16 @@ export function rerailHomeMatcher(rerailHome, home, platform = process.platform)
     const value = spelled(text);
     return spelledRoots.has(value) || needles.some(needle => value.includes(needle));
   };
+}
+
+/**
+ * `root` as it is, and as the command lines Rerail writes on Windows quote it: in a PowerShell literal each `'`, `‘`,
+ * `’`, `‚` and `‛` written twice (Codex's and Cursor's), and in Git Bash's single quotes each `'` written `'\''` (Claude
+ * Code's). The same rules as `powershellLiteral` and `shellWord("posix", …)` in src/engine/command-line.ts, which
+ * test/scripts/rerail-nuke.test.mjs holds this to.
+ */
+function quotedSpellings(root) {
+  return [root, root.replaceAll(/['\u2018-\u201B]/gu, "$&$&"), root.replaceAll("'", String.raw`'\''`)];
 }
 
 /** `platform`'s path functions, and `spelled`, which gives every spelling of one path the same text. */

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "vitest";
 
@@ -20,6 +20,7 @@ import {
   stripPiSettings,
 } from "../../scripts/dev/rerail-nuke.mjs";
 import { launcherPath, loadSqlite, timestamp } from "../../scripts/dev/rerail-restore.mjs";
+import { commandLine } from "../../src/engine/index.ts";
 import { linkFolder } from "../support/platform/links.ts";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
@@ -203,6 +204,20 @@ test("on Windows the matcher reads the home in either slash, any case, and the d
   assert.ok(matches(String.raw`C:\Users\me\.rerail`));
   assert.ok(!matches(String.raw`node C:\Users\me\.rerail-other\cli.js`));
   assert.ok(!matches(String.raw`node C:\Users\me\project\.rerail\cli.js`));
+});
+
+test("on Windows the matcher reads a home whose path holds a quote in each quoted form registration writes", () => {
+  // Registration's own writer: Codex's and Cursor's PowerShell lines write each quote twice, Claude Code's Git Bash
+  // lines write `'` as `'\''`.
+  for (const user of ["o'neil", "o\u2019neil"]) {
+    const home = win32.join("C:", "Users", user);
+    const rerailHome = win32.join(home, ".rerail");
+    const matches = rerailHomeMatcher(rerailHome, home, "win32");
+    const words = [String.raw`C:\Program Files\nodejs\node.exe`, win32.join(rerailHome, "current", "dist", "cli", "cli.js")];
+    assert.ok(matches(`${commandLine("powershell", words)} start --relay --powershell`), user);
+    assert.ok(matches(`${commandLine("posix", words)} start --relay`), user);
+    assert.ok(!matches(commandLine("powershell", [win32.join(home, ".rerail-other", "cli.js")])), user);
+  }
 });
 
 test("hook stripping handles grouped and flat entries and drops only events it emptied", () => {
