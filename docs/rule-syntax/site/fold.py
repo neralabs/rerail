@@ -187,13 +187,27 @@ def fold(rs, decls, notes, allowed=None):
         f["name"] = base
         used.add(base)
     fam_of = {m: f for f in fams.values() for m in f["members"]}
+    # A family whose copies differ in no string (and call only such families) needs no key: one relation
+    # without the key column, read without the key argument.
+    for f in fams.values():
+        f["keyless"] = all(p[0] in ("const", "call_same") for p in f["plan"])
+    while True:
+        lose = [f for f in fams.values() if f["keyless"] and
+                any(p[0] == "call_same" and not p[1].get("keyless") for p in f["plan"])]
+        if not lose:
+            break
+        for f in lose:
+            f["keyless"] = False
+
+    def call_of(fam, args, key):
+        return f'{fam["name"]}({args})' if fam.get("keyless") else f'{fam["name"]}({args}, {key})'
 
     # Rewrite every call of a member, outside the families' own bodies, to the family with its key.
     def rewrite_calls(lit):
         parts = _split_protected(lit)
         for i in range(0, len(parts), 2):
             parts[i] = re.sub(r"(?<![\w.@$])([a-z_]\w*)\(([^()]*)\)",
-                              lambda m: (f'{fam_of[m.group(1)]["name"]}({m.group(2)}, "{fam_of[m.group(1)]["keys"][m.group(1)]}")'
+                              lambda m: (call_of(fam_of[m.group(1)], m.group(2), f'"{fam_of[m.group(1)]["keys"][m.group(1)]}"')
                                          if m.group(1) in fam_of else m.group(0)), parts[i])
         return "".join(parts)
 
@@ -238,20 +252,24 @@ def fold(rs, decls, notes, allowed=None):
         while table in used:
             table += "_of"
         used.add(table)
-        rows = [tuple([f'"{f["keys"][m]}"'] + [c[i] for c in cols]) for i, m in enumerate(ms)]
-        rs.facts[table] = [tuple(_unq(x) for x in row) for row in rows]
-        decls[table] = f".decl {table}(key: symbol{''.join(f', {colvar[c]}: symbol' for c in cols)})"
         jnames = [_json_name(notes.get(m, []), m) for m in ms]
         shown = ", ".join(f"`{j}`" for j in jnames[:3]) + (f" and {len(ms) - 3} more" if len(ms) > 3 else "")
-        notes[table] = [f"// {table}: one row per relation folded into {name}: its key, then the strings that differed."]
-        decls[name] = f".decl {name}(n: node, key: symbol)"
-        notes[name] = [f"// {name}(n, key): {len(ms)} copies of one rule set ({shown}), folded into one: row `key` of",
-                       f"// {table} gives the strings each copy had."]
+        if f["keyless"]:
+            decls[name] = f".decl {name}(n: node)"
+            notes[name] = [f"// {name}(n): {len(ms)} identical copies of one rule set ({shown}), folded into one."]
+        else:
+            rows = [tuple([f'"{f["keys"][m]}"'] + [c[i] for c in cols]) for i, m in enumerate(ms)]
+            rs.facts[table] = [tuple(_unq(x) for x in row) for row in rows]
+            decls[table] = f".decl {table}(key: symbol{''.join(f', {colvar[c]}: symbol' for c in cols)})"
+            notes[table] = [f"// {table}: one row per relation folded into {name}: its key, then the strings that differed."]
+            decls[name] = f".decl {name}(n: node, key: symbol)"
+            notes[name] = [f"// {name}(n, key): {len(ms)} copies of one rule set ({shown}), folded into one: row `key` of",
+                           f"// {table} gives the strings each copy had."]
         # The family's rules: the first member's templates with each slot put back.
         si = 0
         new_rules = []
         for _, tmpl, slots0, r in first:
-            lits = [f"{table}({', '.join([key] + [colvar[c] for c in cols])})"]
+            lits = [] if f["keyless"] else [f"{table}({', '.join([key] + [colvar[c] for c in cols])})"]
             for t in tmpl:
                 out = []
                 pieces = re.split(f"({re.escape(_PH_S)}|{re.escape(_PH_R)}\\(([^()]*)\\))", t)
@@ -269,7 +287,7 @@ def fold(rs, decls, notes, allowed=None):
                             if sub is None:
                                 out.append(rewrite_calls(f"{callee}({arg})"))
                             else:
-                                out.append(f'{sub[1]["name"]}({arg}, {sub[2]})')
+                                out.append(call_of(sub[1], arg, sub[2]))
                         si += 1
                     k += 3
                 lits.append("".join(out))
@@ -280,10 +298,11 @@ def fold(rs, decls, notes, allowed=None):
     # Install: the first member's rule objects carry the family's rules; the other members' rules go.
     for f in fams.values():
         for r, lits in f["new"]:
+            head = f'{f["name"]}(n)' if f["keyless"] else f'{f["name"]}(n, {f["key"]})'
             if isinstance(r, dict):
-                r["head"] = f'{f["name"]}(n, {f["key"]})'
+                r["head"] = head
             else:
-                r[0] = f'{f["name"]}(n, {f["key"]})'
+                r[0] = head
             rs.set_lits(r, lits)
     keep = {id(r) for f in fams.values() for r, _ in f["new"]}
     rs.helper_rules[:] = [h for h in rs.helper_rules if id(h) in keep or rs.head(h).split("(")[0] not in gone]
