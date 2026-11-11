@@ -127,25 +127,45 @@ internal_module stores its `namespace`), and typescript-eslint's declaration-fil
 
 ## Open
 
-- **The JSON gap test.** `matcher/gap.rs` and `compile/ast_rule.rs::gap_test` still answer a JSON
-  rule's token test from the grammar's implied word between a parent's named children. It reads
-  no source and stores nothing, but it does answer for a token the tape left out. Whether that is
-  reconstruction is undecided.
-- **`match_all` over a node.** The three-argument `match_all("re", n, m)` gives no rows when n is a
-  node; it is made only over `source` and `src_line` spans, though `core.rr` documents it for any
-  span. The rewrites use anchored `match` captures and line spans instead.
-- **Counting `match_all` rows.** `count : { match_all("re", s, _, _, _) }` gives at most 1 (rows that
-  differ only in wildcards collapse), and a capture referenced inside `count` is not the outer
-  binding. Counts use length differences: `strlen(s) - strlen(@replace_all(s, ",", ""))`.
-- **Undeclared relations.** check-rr does not report a relation read but never declared; a run
-  does (`global_block` read from a pack that does not include `ts-b.rr`).
 - **Rules that fail to load for other reasons**, hidden before behind the token refusals:
   unbounded value cycles (`norm`/`sci` in 20 files, `unescape` in 10), `$k is a Name and a Kind`
   (4), message text read as a placeholder (`eslint-curly`, `no-template-curly-in-string`,
   `no-object-constructor`), and `ordered`, `match_all` over a computed node in perf403.
-- **JavaScript-only packs.** Packs typed `.language typescript` with a `.js` scope get no files
-  under run-rr, which reads `.js` as JavaScript.
 - `pattern_literals_match_and_bind_their_metavariables` fails; it is a separate item.
+- The JSON gap test (`matcher/gap.rs`) stays as it is (decided).
+
+Fixed in the engine since:
+
+- **`match_all` over a node.** `match_all("re", n, m)` over a node a sibling binds to a kind (`kind(n, "arguments")`)
+  lowers to the batch's `rx_span` over that kind's nodes, so it gives each match as a span. Before, it read the
+  `matchall_` relations, which are made over `source`, `src_line` and comment spans only, and gave no rows.
+  A derived relation's column still reads `matchall_` (it may hold source spans, as the data layer's do).
+- **Counting rows under `_`.** An aggregate's helper relation kept only the body's named variables, so rows that
+  differed in a `_` were one: `count : { match_all(",", n, _) }` gave 1, `sum strlen(v) : { kv(_, v) }` summed
+  distinct values. For `count`, `sum` and `product` each `_` is now a column, as Soufflé counts tuples and as the
+  engine's one-atom aggregate already did.
+- **Undeclared relations.** check-rr and a run refuse them; `rule_syntax_files_pass_check_rr` did not. It does now
+  (`check::undeclared`), which found `lib/python/imports.rr` and `misc-seen.rr` reading `names.rr` without
+  including it, and `nested-routers.b1.rr` reading `ref_site` without `tsx/names.rr`.
+- **Languages of several dialects.** `.language typescript` covers `.ts`, `.tsx` and `.js` files. run-rr runs the
+  policy once per dialect with files in scope (a program is lowered for one grammar), the first into `out`, the
+  others into `out/<dialect>`, and reports the findings together. Before, it read the `.ts` files alone.
+
+Found while checking those fixes:
+
+- `simplify::merge_keyed` renamed a merged variable in the head's bare terms only, so `rn(n, @lower(t))` lost `t`
+  when its `text(n, t)` merged with an inlined one (`$t is unbound in SQL`). It renames inside head terms now.
+- `@to_precision` had no SQL or native function; it is in `strings::functions`, as JavaScript's toPrecision.
+- `token_text` of a leaf (`1`, `x`) was empty, so no-self-compare took any two leaves for equal.
+- Value cycles the engine refuses, rewritten as one step: `stored` reads the literal's digits by string
+  operations (not `sci`), `unescape` and `natural_key` decode pieces split by `match_all` and joined by ordinal.
+  Rust's `hex_place` reads a table of powers of 16, and Python's `b005_char` numbers characters by `match_all`.
+- Pattern literals (``n ~ `…` ``) matched nothing: patterns are tapes with no implied token (`tape::pattern_doc`),
+  and `ast_match` ran them over tree-sitter's full tree. They run over the document's tape now (`ast_match` is in
+  `TAPED`).
+- Rules that read a kind or a span as text, refused at plan time: Rust's `lit_body` and `raw_str` matched groups on
+  the node (spans) and compared them with `""`; `prefix("jsx_", k)` and `lit_val(n, k, k) :- kind(n, k)` read a
+  kind as text. They match the node's text, list the JSX kinds, and name each keyword's kind.
 
 ## Python checks: the slice runs half the pack
 

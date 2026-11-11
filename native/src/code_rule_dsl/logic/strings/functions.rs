@@ -42,6 +42,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("git_tracked", &[Text], Number),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
+    // JavaScript's `Number.prototype.toPrecision` of a decimal numeral's value (`value::ecma::to_precision`):
+    // "Infinity" past the doubles, none for a non-number or digits outside 1-100 (JavaScript's RangeError).
+    ("to_precision", &[Text, Number], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
     ("lower", &[Text], Text),
     // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
@@ -174,6 +177,15 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
 
 /// Function `name` of its text and number arguments, in its signature's order within each kind (`signature`):
 /// the value SQL's function of that name gives, NULL for none. The native engine's `func` step calls it too.
+/// ECMAScript's `Number.prototype.toPrecision` of a finite number (`@to_precision`), registered at load by the crate
+/// that knows the language (`value::ecma`): this crate is below it.
+static TO_PRECISION: std::sync::OnceLock<fn(f64, u32) -> String> = std::sync::OnceLock::new();
+
+/// Registers `@to_precision`'s formatting (once, at load).
+pub fn install_to_precision(to: fn(f64, u32) -> String) {
+    let _ = TO_PRECISION.set(to);
+}
+
 pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
     let t = |i: usize| text[i];
     let out = match name {
@@ -248,6 +260,15 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         }
         "json_str" => Some(json_str(t(0))),
         "str_concat" => Some(format!("{}{}", t(0), t(1))),
+        // A numeral past the doubles (`2e999`) is Infinity, which toPrecision prints as such.
+        // No value where no language registered its formatting (`install_to_precision`).
+        "to_precision" => t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan() && (1..=100).contains(&numbers[0])).and_then(|f| {
+            if f.is_infinite() {
+                Some(if f > 0.0 { "Infinity".to_owned() } else { "-Infinity".to_owned() })
+            } else {
+                TO_PRECISION.get().map(|to| to(f, numbers[0] as u32))
+            }
+        }),
         "nfkc" => {
             use unicode_normalization::UnicodeNormalization;
             Some(t(0).nfkc().collect())

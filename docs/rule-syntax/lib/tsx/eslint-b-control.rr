@@ -84,7 +84,10 @@ ref_eq_object(a, b, m) :- ref_eq_pair(a, b, m), field(a, "object", o), field(b, 
 lit_val(n, "string", v) :- kind(n, "string"), value(n, v).
 lit_val(n, "string", v) :- kind(n, "template_string"), value(n, v), count : { child(n, c, _), kind(c, "template_substitution") } = 0.
 lit_val(n, "number", v) :- kind(n, "number"), value(n, v).
-lit_val(n, k, k) :- (kind(n, "true") ; kind(n, "false") ; kind(n, "null")), kind(n, k).
+// A kind is no text, so each keyword literal names its own (kind(n, k) would put a kind in a text column).
+lit_val(n, "true", "true") :- kind(n, "true").
+lit_val(n, "false", "false") :- kind(n, "false").
+lit_val(n, "null", "null") :- kind(n, "null").
 lit_val(n, "regex", v) :- kind(n, "regex"), text(n, v).
 
 // ---- optional chains ---------------------------------------------------------------------------------------------

@@ -107,6 +107,10 @@ pub(super) fn unanchored(p: &Term) -> Option<&Term> {
 }
 
 /// The built-ins that take a relation, and its position.
+/// Relations the lowering makes itself rather than a `.decl` (`check::undeclared`): regex matches, tree axes and
+/// walks, the dotted-name split.
+pub(super) const BUILT_INS: &[&str] = &["match_all", "match_group", "nearest", "inside", "has", "within", "within_stop", "precedes_stop", "split_dot", "ast", "unset"];
+
 pub(super) const RELATION_ARG: [(&str, &[usize]); 13] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
@@ -1088,6 +1092,15 @@ impl Lowerer {
             {
                 self.text_matches(rel, args)?
             }
+            // `match_all("re", n, m)` over a node a sibling binds to a kind (`kind(n, "arguments")`): `rx_span`'s
+            // matches in the node, m each match, its groups bound with it. A `source`, `src_line` or comment span, or a
+            // column of a derived relation (which may hold such spans), is the batch's `matchall_` relations'.
+            Lit::Atom { rel, args, neg: false }
+                if rel == "match_all"
+                    && matches!(args.as_slice(), [STerm::Str(_), STerm::Var(n), _] if self.span_container(n).is_none() && self.kind_bound(n)) =>
+            {
+                self.node_matches(args)?
+            }
             // A text test on a node or span tests its text (`core.rr`).
             Lit::Atom { rel, args, neg }
                 if test_of(rel).is_some() && matches!(args.as_slice(), [_, STerm::Var(v)] if self.span_container(v).is_some() || self.node_typed(v)) =>
@@ -1657,6 +1670,19 @@ impl Lowerer {
         Ok(vec![vec![Literal::Atom(Atom { rel: name.into(), args, neg: false, gated: false })]])
     }
 
+    /// `match_all("re", n, m)` over node n: each match j of re in n's source is `rx_span(re, n, j, "", m)`, and each
+    /// named group g of that match `rx_span(re, n, j, g, g)`, as `match_all` over a span binds them.
+    fn node_matches(&mut self, args: &[STerm]) -> Result<Vec<Vec<Literal>>, Error> {
+        let [STerm::Str(re), STerm::Var(n), m] = args else { unreachable!("a node match_all") };
+        self.rx_span_input();
+        let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".into(), args, neg: false, gated: false });
+        let (p, c, j) = (Term::Str(re.clone()), Term::Var(n.clone()), Term::Var(self.fresh("j")));
+        let m = self.term(m)?;
+        let mut out = vec![atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(String::new()), m])];
+        out.extend(groups(re).into_iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone()), Term::Var(g)])));
+        Ok(vec![out])
+    }
+
     /// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is
     /// one the language registry has (decision 0082): a supported dialect's label or a fragment. A name it does not
     /// have would make no guest and say nothing.
@@ -1860,6 +1886,14 @@ impl Lowerer {
             let cols = [("p", "sym"), ("c", "node"), ("j", "int"), ("g", "sym"), ("m", "node")];
             self.prog.decls.insert("rx_span".to_owned(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
         }
+    }
+
+    /// Whether a sibling binds `v` to a node of a named kind other than a comment: `kind(v, "K")`.
+    fn kind_bound(&self, v: &str) -> bool {
+        self.siblings.iter().any(|l| {
+            matches!(l, Lit::Atom { rel, args, neg: false } if rel == "kind"
+                && matches!(args.as_slice(), [STerm::Var(x), STerm::Str(k)] if x == v && k != "comment"))
+        })
     }
 
     /// Whether a sibling binds `v` to a `source` or `src_line` span or a comment, the spans `rx_span` runs over.
@@ -2512,6 +2546,26 @@ impl Lowerer {
         // Otherwise a helper relation of the body. `count` and `sum` range over the body's rows, a multiset of the
         // aggregated value, so they keep every variable; `min`, `max` and `join` (of distinct rows) keep those they
         // read (the aggregated one and a join's keys) and those the rule shares.
+        //
+        // A `_` in one of the body's atoms ranges over the rows as a variable does (Soufflé counts the tuples): for
+        // `count`, `sum` and `product` it is named, so `count : { match_all(",", n, _) }` counts each match rather than
+        // the one row the helper had without it.
+        let named: Vec<Lit>;
+        let body = if matches!(op, AggOp::Count | AggOp::Sum | AggOp::Product) {
+            named = body
+                .iter()
+                .map(|l| match l {
+                    Lit::Atom { rel, args, neg: false } if !matches!(rel.as_str(), "nearest" | "inside" | "has" | "split_dot" | "ast" | "within" | "within_stop" | "precedes_stop" | "unset") => {
+                        let args = args.iter().map(|t| if matches!(t, STerm::Wild) { STerm::Var(self.fresh("any")) } else { t.clone() }).collect();
+                        Lit::Atom { rel: rel.clone(), args, neg: false }
+                    }
+                    l => l.clone(),
+                })
+                .collect();
+            named.as_slice()
+        } else {
+            body
+        };
         let mut inner = body_vars(body);
         // A nested aggregate's variables that the rule shares are the helper's too: in `count : { ident(x), count : {
         // ref(n, f, x) } = 0 }`, the inner count is per (f, x), so the helper is a relation of f and x, and f is bound

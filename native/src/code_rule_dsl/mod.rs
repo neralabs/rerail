@@ -2693,6 +2693,8 @@ pub(crate) fn install_languages() {
     eval::install_snapshot_context(eval::ecma::derive);
     // The numbers `toPrecision` reads (ECMAScript's).
     matcher::install_number_text(&value::ecma::Numbers);
+    // `@to_precision`'s formatting (ECMAScript's), for the string functions below the languages.
+    logic::strings::functions::install_to_precision(value::ecma::to_precision);
     // The canonical AST stage's producer (Python's CPython `ast`).
     residency::install_ast_producer(&residency::admission::relational::python_ast::PythonAst);
     // What ECMAScript's import targets resolve among (`resolution`).

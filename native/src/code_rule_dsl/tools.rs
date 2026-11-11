@@ -234,34 +234,64 @@ pub fn run_rr(
         return Err(format!("{}: no .violation declarations", path.display()));
     }
     let source = rr::print(&program).map_err(|e| e.to_string())?;
-    let report = corpus::run_with_options(
-        &[source.as_str()],
-        root,
-        None,
-        out,
-        "program",
-        Binding::Cpu,
-        1 << 18,
-        &Default::default(),
-        &with_reuse(options),
-    )
-    .map_err(|e| e.to_string())?;
-    let rows = match std::fs::read_to_string(out.join("rr_diagnostic.csv")) {
-        Ok(text) => text
-            .lines()
-            .map(|line| serde_json::from_str::<serde_json::Value>(line).map_err(|e| e.to_string()))
-            .collect::<Result<Vec<_>, _>>()?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e.to_string()),
+    // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
+    // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
+    // of one dialect, or none with files, runs as written.
+    let dialects = corpus::run_dialects(root, &source, &with_reuse(options)).map_err(|e| e.to_string())?;
+    // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
+    let runs: Vec<(String, std::path::PathBuf)> = if dialects.is_empty() {
+        vec![(source, out.to_path_buf())]
+    } else {
+        dialects
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
+                let mut each = program.clone();
+                for (key, value) in &mut each.settings {
+                    if key == "language" {
+                        *value = (*label).to_owned();
+                    }
+                }
+                let dir = if i == 0 { out.to_path_buf() } else { out.join(label) };
+                rr::print(&each).map(|text| (text, dir)).map_err(|e| e.to_string())
+            })
+            .collect::<Result<_, _>>()?
     };
+    let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
+    for (text, dir) in &runs {
+        let report = corpus::run_with_options(
+            &[text.as_str()],
+            root,
+            None,
+            dir,
+            "program",
+            Binding::Cpu,
+            1 << 18,
+            &Default::default(),
+            &with_reuse(options),
+        )
+        .map_err(|e| e.to_string())?;
+        match std::fs::read_to_string(dir.join("rr_diagnostic.csv")) {
+            Ok(text) => {
+                for line in text.lines() {
+                    rows.push(serde_json::from_str::<serde_json::Value>(line).map_err(|e| e.to_string())?);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.to_string()),
+        }
+        files_read += report.files;
+        nodes += report.nodes;
+        phases.extend(report.phases);
+    }
     Ok(
-        serde_json::json!({"diagnostics": rows, "files": report.files, "nodes": report.nodes,
+        serde_json::json!({"diagnostics": rows, "files": files_read, "nodes": nodes,
                          "metadata": metadata,
                          "programInputs": files.iter().map(|file| serde_json::json!({
                              "path": file.path,
                              "sha256": file.sha256.map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect::<String>())
                          })).collect::<Vec<_>>(),
-                         "phases": report.phases.iter().map(|(phase,user,system,rss,statements)| serde_json::json!({
+                         "phases": phases.iter().map(|(phase,user,system,rss,statements)| serde_json::json!({
                              "phase": phase, "userCpuSeconds": user, "systemCpuSeconds": system,
                              "peakRssMB": rss, "submittedStatements": statements
                          })).collect::<Vec<_>>()}),

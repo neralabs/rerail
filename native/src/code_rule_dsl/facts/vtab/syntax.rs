@@ -708,11 +708,12 @@ pub struct Document {
     pub module: Option<Arc<str>>,
 }
 
-/// W's values (`Extra`), which a batch reads off its documents' tapes.
-const VALUES_TAPED: [&str; 4] = ["value", "static_value", "value_type_of", "value_type"];
+/// W's values (`Extra`) and the AST patterns' matches (`ast_match`, matched over the tape), which a batch reads off
+/// its documents' tapes.
+const VALUES_TAPED: [&str; 5] = ["value", "static_value", "value_type_of", "value_type", "ast_match"];
 
 /// Whether `rel` is read off a document's tape, for which a batch's documents keep their tapes (`Document::tape`):
-/// W's values (`Extra`), and a registered producer's (`Producer::taped`: Python's f-string trees and string
+/// W's values (`Extra`), the AST patterns' matches, and a registered producer's (`Producer::taped`: Python's f-string trees and string
 /// annotations).
 pub fn taped(rel: &str) -> bool {
     VALUES_TAPED.contains(&rel) || producers().iter().any(|producer| producer.taped().contains(&rel))

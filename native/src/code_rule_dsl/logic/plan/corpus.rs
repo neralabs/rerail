@@ -6876,6 +6876,26 @@ fn json_scopes(policies: &[serde_json::Value]) -> Option<Vec<(Vec<String>, Vec<S
     policies.iter().map(|p| p.get("scope").map(|s| (globs(s.get("include")), globs(s.get("exclude"))))).collect()
 }
 
+/// The dialects a run of `program` reads, when its `.language` names a language of several (TypeScript's: `.ts`,
+/// `.tsx` and `.js` files): those with files under `root` in the program's scope, the named one first. A program is
+/// lowered for one dialect (its kind names are that grammar's ids), so each is a run of its own. Empty when the
+/// language has one dialect: the run reads it as before.
+pub fn run_dialects(root: &Path, program: &str, options: &serde_json::Value) -> Result<Vec<&'static str>> {
+    use crate::code_rule_dsl::language::{CodeRuleLanguage, label};
+    let prog = combine(&[program], "")?;
+    let Some(name) = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned()) else {
+        return Ok(Vec::new());
+    };
+    let Some(language) = CodeRuleLanguage::ALL.into_iter().find(|l| l.name() == name) else { return Ok(Vec::new()) };
+    if language.dialects().len() < 2 {
+        return Ok(Vec::new());
+    }
+    let found = scoped(corpus_files(root)?, &prog, options);
+    let mut labels: Vec<&'static str> = language.dialects().iter().filter_map(|d| label(*d)).filter(|l| found.count(l) > 0).collect();
+    labels.sort_by_key(|l| *l != name);
+    Ok(labels)
+}
+
 /// The files the program's policies select (`front::Program::doc_scopes`, their `.scope`): a document outside
 /// every policy's scope is not parsed, and gives no facts.
 /// A scope entry taken from a policy option (`.scope dirs option("…")`) reads the option's values, from the run's

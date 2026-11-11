@@ -2621,7 +2621,11 @@ impl Model {
         delta_at: Option<usize>,
         tables: Option<&HashMap<String, (String, String)>>,
     ) -> Result<Query> {
-        let query = self.sql_query(prog, head, order, delta_at, tables)?;
+        // A rule whose SQL cannot be built says which rule and body it is, not only the variable.
+        let query = self.sql_query(prog, head, order, delta_at, tables).map_err(|e| match e {
+            Error::Plan(m) => Error::Plan(format!("the SQL for {head} :- {}: {m}", order.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", "))),
+            e => e,
+        })?;
         query.check(&|relation| self.declared(prog, relation)).map_err(|e| Error::Plan(format!("the SQL for {head}: {e}")))?;
         Ok(query)
     }

@@ -93,7 +93,15 @@ norm(t, 1, g, strlen(g) - strlen(u)) :- split_e(s, t, _), sci_in(s, 1), u = @rep
     match("\\.(?<B>[0-9]*)", u), g = @replace_all(B, "^0+", "").
 // stored(n, p): the literal's value printed with as many significant digits as the literal has.
 .decl stored(n: node, p: symbol)
-stored(n, @to_precision(r, strlen(c))) :- decimal(n), raw_number(n, r), sci(r, _, c, _), strlen(c) <= 100.
+stored(n, @to_precision(r, strlen(c))) :- decimal(n), raw_number(n, r), raw_digits(r, c), strlen(c) <= 100.
+// raw_digits(r, c): sci's c for a literal's own text, by string operations: the mantissa without its point and
+// leading zeros, an integer's without its trailing zeros too. Not read off sci, which reads stored's output:
+// a relation cycle that makes values ("1.50" → toPrecision → sci_in) the engine refuses as unbounded.
+.decl raw_digits(r: symbol, c: symbol)
+raw_digits(r, @replace_all(@replace_all(@replace_all(r, "e.*$", ""), "^0+", ""), "0+$", "")) :- decimal(n), raw_number(n, r),
+    !contains(".", r).
+raw_digits(r, @replace_all(@replace_all(@replace_all(r, "e.*$", ""), "\\.", ""), "^0+", "")) :- decimal(n), raw_number(n, r),
+    contains(".", r).
 // significant_bits(n, k): in base 2^b each digit is b bits; the first digit may use fewer, and the last
 // non-zero digit may end in zero bits. 0x1F is 5 bits; 0x20000000000001 is 54.
 .decl significant_bits(n: node, k: number)

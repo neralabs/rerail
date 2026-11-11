@@ -250,6 +250,8 @@ fn rule_syntax_files_pass_check_rr() {
         problems.extend(check::declarations(&named).into_iter().map(|p| format!("{}: {p}", short(&f))));
         let all: Vec<&syntax::Statement> = program.iter().flat_map(|(_, s)| s).collect();
         problems.extend(check::strata(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
+        // A relation read and declared nowhere in the file's program, as check-rr and a run refuse it.
+        problems.extend(check::undeclared(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
     }
     assert!(problems.is_empty(), "{} problems:\n{}", problems.len(), problems.join("\n"));
 }
@@ -343,14 +345,14 @@ best(n, @dot("a", x)) :- name(n, x).
     let owner: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "owner").collect();
     assert_eq!(owner[0].body, [Literal::Nearest { n: "n".to_owned(), a: "a".to_owned(), kindset: "scope".to_owned() }]);
     assert!(matches!(&owner[1].body[0], Literal::Atom(a) if a.rel == "rr_inside_rr_kind_module"));
-    // A count over two literals reads a helper of every variable, grouped by the ones shared (`_` for the body's
-    // own); a min over two, the ones shared and its own.
+    // A count over two literals reads a helper of every variable, its `_`s named (each row counts), grouped by the
+    // ones shared (`_` for the body's own); a min over two, the ones shared and its own.
     let helper = |head: &str| -> Vec<String> {
         let r = p.rules.iter().find(|r| r.head.rel == head).unwrap();
         r.body.iter().filter_map(|l| if let Literal::Agg { atom, .. } = l { Some(format!("{atom}")) } else { None }).collect()
     };
-    assert_eq!(helper("kinds"), vec!["rr_agg1(_, $n)".to_owned()]);
-    assert_eq!(p.decls["rr_agg1"].len(), 2);
+    assert_eq!(helper("kinds"), vec!["rr_agg5(_, $n, _, _, _, _)".to_owned()]);
+    assert_eq!(p.decls["rr_agg5"].len(), 6);
     let first = helper("first");
     assert_eq!(first.len(), 2);
     assert!(first[0].contains("$j") && first[0].contains("$n") && !first[0].contains("$x"), "{first:?}");
@@ -550,7 +552,8 @@ prod(p, e) :- kv(4, _), p = product k : { kv(k, _) }, e = product k : { kv(k, _)
     assert_eq!(read("fl"), "1.5\t3\n1e3\t2000\n");
     assert_eq!(read("neg"), "-2.25\n");
     assert!(read("assigns").ends_with("\t3\n"), "{}", read("assigns"));
-    assert_eq!(read("agg"), "a,b,c,a\t10\t6\t\n");
+    // `sum strlen(v) * 2 : { kv(_, v) }` sums over kv's four rows, a twice (Soufflé's tuples): 8.
+    assert_eq!(read("agg"), "a,b,c,a\t10\t8\t\n");
     assert_eq!(read("prod"), "24\t1\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -884,7 +887,7 @@ fn sum_and_join_lower() {
     let over = over.unwrap();
     assert!(op == front::AggOp::Sum && over.starts_with("rr_val"), "{over}");
     let cols = &p.decls[atom.rel.as_str()];
-    assert_eq!(cols.len(), 3, "c, t and the value: {cols:?}");
+    assert_eq!(cols.len(), 4, "c, t, the named `_` and the value: {cols:?}");
     assert!(cols.contains(&(over.clone(), "int".to_owned())), "{cols:?}");
     let (_, _, atom) = agg("r");
     assert_ne!(atom.rel, "arg", "arg(c, t, t) tests t = t: a helper relation");
@@ -1370,6 +1373,38 @@ Row(@place("policy.json", 1), "title", t, 0) :- title(t).
     assert_eq!(actual, ["count:a:2", "count:b:3", "g:one:4", "g:two:5", "title:kept:0"]);
 }
 
+/// `.language typescript` names a language of three dialects (`.ts`, `.tsx`, `.js`): run-rr runs the policy over
+/// each one's files in scope and reports them together. It read the `.ts` files alone before.
+#[test]
+fn a_language_of_several_dialects_runs_over_each() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrdialects");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.ts"), "let a = 1;\n").unwrap();
+    std::fs::write(dir.join("b.js"), "\nlet b = 2;\n").unwrap();
+    std::fs::write(dir.join("c.tsx"), "\n\nlet c = <p/>;\n").unwrap();
+    std::fs::write(dir.join("d.py"), "d = 1\n").unwrap();
+    let rule = dir.join("rule.rr");
+    std::fs::write(&rule, r#"
+.policy "contract:dialects" revision 1
+.language typescript
+.scope include "**/*"
+.violation Let(at: node, name: symbol) "{name}"
+Let(d, x) :- kind(d, "variable_declarator"), field(d, "name", n), text(n, x).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| r["message"].as_str().unwrap()).collect();
+    actual.sort();
+    assert_eq!(actual, ["a", "b", "c"]);
+    assert_eq!(report["files"], 3);
+    // Scoped to `.js` alone, the one dialect with files is JavaScript, not the TypeScript the policy names.
+    let js = dir.join("js.rr");
+    std::fs::write(&js, std::fs::read_to_string(&rule).unwrap().replace(".scope include \"**/*\"", ".scope include \"**/*.js\"")).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&js, &dir, &dir.join("out-js"), &serde_json::Value::Null).unwrap();
+    let actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| r["message"].as_str().unwrap()).collect();
+    assert_eq!(actual, ["b"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A malformed row must not leak an earlier prefix of a policy input into rule execution.
 #[test]
 fn repository_inputs_report_missing_and_malformed_without_partial_rows() {
@@ -1676,6 +1711,40 @@ per(x, n) :- piece_word(_, w), text(w, x), n = count : { match_all("(?<d>[0-9])"
     };
     assert_eq!(read("digits"), "1\t1\t7\n22\t1\t11\n1\t2\t7\n22\t2\t11\n3\t2\t20".split('\n').collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>().join("\n"));
     assert_eq!(read("per"), "ab1\t1\ncd22\t2\nef3\t1");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `match_all("re", n, m)` over a node gives each match m as a span (`rx_span` over the node), and a `count` whose
+/// body has a `_` counts every row it ranges over: each match of a node, each occurrence in a symbol (Soufflé's count
+/// of tuples). Both gave one row or none before.
+#[test]
+fn match_all_over_a_node_gives_each_match_and_count_ranges_over_wildcards() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("matchcount");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "f(a, b, c)
+g(d)
+").unwrap();
+    let rule = dir.join("m.rr");
+    std::fs::write(&rule, r#"
+.decl comma(l: number, c: number)
+comma(l, c) :- kind(n, "argument_list"), match_all(",", n, m), line(m, l), col(m, c).
+.decl in_node(t: symbol, k: number)
+in_node(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", n, _) }.
+.decl in_text(t: symbol, k: number)
+in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", t, _, _, _) }.
+.output comma, in_node, in_text
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| {
+        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        rows.sort();
+        rows.join("\n")
+    };
+    assert_eq!(read("comma"), "1\t3\n1\t6");
+    assert_eq!(read("in_node"), "(a, b, c)\t2\n(d)\t0");
+    assert_eq!(read("in_text"), "(a, b, c)\t2\n(d)\t0");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

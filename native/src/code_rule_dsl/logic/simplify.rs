@@ -1293,10 +1293,10 @@ fn merge_keyed(rule: &mut Rule) -> usize {
                 rule.body.remove(j);
                 for (from, to) in renames {
                     rule.body = rule.body.iter().map(|l| rename_var(l, &from, &to)).collect();
-                    for t in &mut rule.head.args {
-                        if matches!(t, Term::Var(v) if *v == from) {
-                            *t = Term::Var(to.clone());
-                        }
+                    // Inside the head's computed terms too: `rn(n, @lower(t)) :- …, text(n, t)` merged into a
+                    // `text(n, u)` reads u there, or t is left unbound.
+                    if let Literal::Atom(head) = rename_var(&Literal::Atom(rule.head.clone()), &from, &to) {
+                        rule.head = head;
                     }
                 }
                 merged += 1;
@@ -2188,6 +2188,21 @@ pub mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].contains("!m1($n), doc($d, $p, _)") && !out[0].contains("m2") && out[0].matches("doc(").count() == 1, "{}", out[0]);
         assert!(!prog.decls.contains_key("b2") && !prog.decls.contains_key("m2"));
+    }
+
+    /// Two atoms of one keyed row merge by renaming the later's variable, in the head's computed terms too: the
+    /// head `@lower($t)` reads the kept atom's variable, not a `$t` no atom binds any more.
+    #[test]
+    fn a_merged_variable_is_renamed_inside_the_head() {
+        let mut rule = Rule {
+            head: Atom { rel: "rn".to_owned(), args: vec![Term::Var("n".to_owned()), Term::Call("lower".to_owned(), vec![Term::Var("t".to_owned())])], neg: false, gated: false },
+            body: vec![
+                Literal::Atom(Atom { rel: "text".to_owned(), args: vec![Term::Var("n".to_owned()), Term::Var("u".to_owned())], neg: false, gated: false }),
+                Literal::Atom(Atom { rel: "text".to_owned(), args: vec![Term::Var("n".to_owned()), Term::Var("t".to_owned())], neg: false, gated: false }),
+            ],
+        };
+        assert_eq!(merge_keyed(&mut rule), 1);
+        assert_eq!(rule.head.args[1], Term::Call("lower".to_owned(), vec![Term::Var("u".to_owned())]));
     }
 
     /// Two programs' copies of a recursive library relation (each reads its own copy) are one relation in the shared

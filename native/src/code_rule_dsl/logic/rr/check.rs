@@ -399,6 +399,62 @@ fn tarjan(nodes: &BTreeSet<String>, graph: &BTreeMap<String, BTreeSet<String>>) 
     out
 }
 
+/// Relations a program's rules read that none of its files declares, nor the lowering makes (its built-ins): the
+/// syntax-level form of `front::declared`, which a run and check-rr apply to the lowered program.
+pub(super) fn undeclared(statements: &[&Statement]) -> Vec<String> {
+    fn reads(lits: &[Lit], out: &mut Vec<String>) {
+        fn term(t: &Term, out: &mut Vec<String>) {
+            match t {
+                Term::Agg { body, .. } => reads(body, out),
+                Term::Bin { l, r, .. } => {
+                    term(l, out);
+                    term(r, out);
+                }
+                Term::Call { args, .. } => args.iter().for_each(|a| term(a, out)),
+                _ => {}
+            }
+        }
+        for l in lits {
+            match l {
+                Lit::Group { alts, .. } => alts.iter().for_each(|a| reads(a, out)),
+                Lit::Atom { rel, args, .. } => {
+                    out.push(rel.clone());
+                    args.iter().for_each(|a| term(a, out));
+                }
+                Lit::Cmp { l, r, .. } => {
+                    term(l, out);
+                    term(r, out);
+                }
+                Lit::Pattern { .. } => {}
+            }
+        }
+    }
+    let mut declared = BTreeSet::new();
+    for (item, _) in statements {
+        match item {
+            Item::Decl { name, .. } | Item::Edit { name } => {
+                declared.insert(name.clone());
+            }
+            Item::Violation { name, .. } => {
+                declared.insert(name.clone());
+            }
+            _ => {}
+        }
+    }
+    let built_in = |rel: &str| TESTS.iter().any(|(t, _)| *t == rel) || RELATION_ARG.iter().any(|(r, _)| *r == rel) || super::lower::BUILT_INS.contains(&rel);
+    let mut out = BTreeSet::new();
+    for (item, line) in statements {
+        if let Item::Clause { heads, body, .. } = item {
+            let mut read = Vec::new();
+            reads(body, &mut read);
+            for rel in read.into_iter().filter(|r| !declared.contains(r) && !built_in(r)) {
+                out.insert(format!("line {line}: relation {rel} is read by the rule for {} and not declared", heads[0].rel));
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
 /// Stratification problems of one program (every statement of its files): "h depends on d" per problem.
 pub fn strata(statements: &[&Statement]) -> Vec<String> {
     let mut ordered = BTreeMap::new();
