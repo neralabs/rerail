@@ -2008,9 +2008,16 @@ fn matched(
         } else {
             // Captures, or a relaxed matcher's roots to confirm (decision 0107): W's matcher at each root.
             let _captures = profile::span(|| "ast captures and confirmations (W's matcher at each root)".into());
+            let roots: usize = found.iter().map(BTreeSet::len).sum();
             let (found_rows, limited) = captured_rows(m, &held, &found, &at, tapes, atoms)?;
             if limited > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {limited} roots", m.rel));
+            }
+            // A relaxed matcher's cost (decision 0107 §3): the roots W confirmed on the host, and the rows it kept.
+            if m.captor.verify {
+                crate::code_rule_dsl::prof::count("ast.relaxed_roots", roots);
+                crate::code_rule_dsl::prof::count("ast.relaxed_kept", found_rows.len());
+                profile::decision("relaxed matchers: roots W confirmed, rows kept", || format!("{}: {roots} roots, {} kept", m.rel, found_rows.len()));
             }
             for row in found_rows {
                 r.push(&row);
