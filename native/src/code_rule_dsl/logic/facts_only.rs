@@ -188,6 +188,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "LOADS"),
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
+    // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
@@ -195,6 +198,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
+    // Tree counts stored or queued to the store, held in memory ahead of its writer (decision 0102): the stored
+    // facts read ahead, not a result kept apart from them.
+    ("code_rule_dsl/logic/plan/corpus.rs", "OWN_KEPT"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
@@ -246,6 +252,8 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/hazards.rs", "HAZARDS"),
     // The run each frame space last counted in this process, so a run's programs count it once.
     ("content_store/frames.rs", "COUNTED"),
+    // Store files this process checked the schema of (device and inode): state of the open files.
+    ("content_store/mod.rs", "CHECKED"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
