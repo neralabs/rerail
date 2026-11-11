@@ -22,5 +22,5 @@ strip_arg(c, v) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
     (m = "strip" ; m = "lstrip" ; m = "rstrip"), call_nargs(c, 1), call_nkwargs(c, 0), bb_pos(c, 0, a), plain_str(a, v).
 // b005_char(v, i, x): x is the i-th character of v (code points, not bytes), for strip arguments only.
 .decl b005_char(v: symbol, i: number, x: symbol)
-b005_char(v, 0, x) :- strip_arg(_, v), x = @slice(v, 0, 1), x != "".
-b005_char(v, j, x) :- b005_char(v, i, _), j = i + 1, x = @slice(v, j, j + 1), x != "".
+// Each character once, numbered by match_all's ordinal: one step, no recursion that makes values.
+b005_char(v, i, x) :- strip_arg(_, v), match_all("(?<x>(?s:.))", v, i, _, _).

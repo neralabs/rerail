@@ -51,7 +51,8 @@ lit_body(n, 10, B, S) :- num_node(n), !match("0[xob].*", n),
 // digits(n, radix, d, s): NumericLiteral::new drops one `_` before a suffix: 1_000_i32 has digits 1_000.
 .decl digits(n: node, radix: number, d: symbol, s: symbol)
 digits(n, r, d, s) :- lit_body(n, r, b, s), s != "", suffix("_", b), d = substr(b, 0, strlen(b) - 1).
-digits(n, r, b, s) :- lit_body(n, r, b, s), (s = "" ; !suffix("_", b)).
+digits(n, r, b, "") :- lit_body(n, r, b, "").
+digits(n, r, b, s) :- lit_body(n, r, b, s), !suffix("_", b).
 
 .decl num_float(n: node)
 num_float(n) :- kind(n, "float_literal").
@@ -153,7 +154,10 @@ lit_one(e) :- num_lit(e, _, i, _), !num_float(e), match("[0_]*1_*", i).
 hex_digit(v, i, c) :- hex_place(v, i, p), hex_char((v / p) % 16, c).
 .decl hex_place(v: number, i: number, p: number)   // p = 16^i, for every digit of v
 hex_place(v, 0, 1) :- hex_wanted(v).
-hex_place(v, i + 1, p * 16) :- hex_place(v, i, p), v / p >= 16.
+hex_place(v, i, p) :- hex_wanted(v), hex_pow(i, p), i > 0, v / p >= 1.
+// hex_pow(i, p): p = 16^i, up to the 16 hex digits of a 64-bit number: a table, not a recursion that makes values.
+.decl hex_pow(i: number, p: number)
+hex_pow(0, 1). hex_pow(1, 16). hex_pow(2, 256). hex_pow(3, 4096). hex_pow(4, 65536). hex_pow(5, 1048576). hex_pow(6, 16777216). hex_pow(7, 268435456). hex_pow(8, 4294967296). hex_pow(9, 68719476736). hex_pow(10, 1099511627776). hex_pow(11, 17592186044416). hex_pow(12, 281474976710656). hex_pow(13, 4503599627370496). hex_pow(14, 72057594037927936). hex_pow(15, 1152921504606846976).
 .decl hex_upper(v: number, h: symbol)
 hex_upper(v, h) :- hex_wanted(v), h = join c by k sep "" : { hex_digit(v, i, c), k = 0 - i }.
 .decl hex_char(d: number, c: symbol)
