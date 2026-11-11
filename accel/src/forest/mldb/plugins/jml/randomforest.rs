@@ -1,5 +1,4 @@
-//! randomforest.h and randomforest.cc, in Rust (in progress: what is here has been cut from the .cc, the rest is
-//! still there).
+//! randomforest.h and randomforest.cc, in Rust.
 //!
 //! Mathieu Marquis Bolduc, 11 March 2016; Jeremy Barnes. Copyright (c) 2016 mldb.ai inc. This file is part of
 //! MLDB. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
@@ -12,12 +11,16 @@
 //! bucket data moved there once) and `FeatureSamplingTrainerPartition` (the device memory pools; per tree, `init`
 //! fills the training info and the root's buckets, `scheduleTraining` enqueues every depth's kernels with no wait
 //! between them and copies the results out, and `finish` awaits them and builds the tree from the splits),
-//! `trainPartitionedEndToEnd`, `PartitionData::trainPartitioned` and `trainMultipleSamplings`. Still in the .cc:
-//! `reweightAndCompact`, the bag's rows and buckets.
+//! `trainPartitionedEndToEnd`, `PartitionData::trainPartitioned` and `trainMultipleSamplings`, and
+//! `reweightAndCompact` (a bag's rows and buckets).
 //!
 //! The device is Metal (the shared device); upstream's choice among OpenCL, Metal, the CPU and the comparing `MULTI`
 //! runtime is not kept, nor the `DEBUG_RF_KERNELS` checks of each kernel against the host (the grid kernels' test
-//! makes them), nor the timings. Training below the root (`depth != 0`) goes to the CPU's partitioned trainer, as
+//! makes them), nor the timings. The device trains every level while the tree's width (its active partitions)
+//! fits its partitions and the levels' splits fit its pool; before a level that would not, it stops
+//! (`TREE_DEPTH_STATUS_STOPPED`), and the tree continues on the host's partitioned trainer from the partitions the
+//! device left, each tree from its own copy of them. Upstream's continuation was behind an early return (the tree
+//! came back unfinished), and the device ran every level, dropping the partitions past its width, unread. Training below the root (`depth != 0`) goes to the CPU's partitioned trainer, as
 //! upstream. The recursive trainer's sides are trained one after the other, as upstream (`singleThreadOnly`); the
 //! trees of `trainMultipleSamplings` in parallel.
 
@@ -26,9 +29,9 @@ use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transf
 use crate::forest::dataset_feature_space::DatasetFeatureSpace;
 use crate::forest::memory_region::FrozenMemoryRegionT;
 use crate::forest::randomforest_kernels_grid::kernel;
-use crate::forest::bucket::WritableBucketList;
-use crate::forest::memory_region::MemorySerializer;
-use crate::forest::randomforest_recursive::{extract_tree, side_of, test_all};
+use crate::forest::bucket::{BucketList, WritableBucketList};
+use crate::forest::memory_region::{MappedSerializer, MemorySerializer};
+use crate::forest::randomforest_recursive::{extract_tree, side_of, split_and_recurse_partitioned, test_all};
 use crate::forest::randomforest_types::*;
 use crate::forest::tree::{Ptr, Tree};
 use metal::Buffer;
@@ -134,8 +137,14 @@ pub struct FeatureSamplingTrainerKernel<'a> {
     pub features: &'a [Feature],
     pub num_rows: u32,
     pub nf: u32,
+    /// The depth of the trees (`maxDepth` as asked).
+    pub tree_max_depth: u32,
+    /// Upstream's `maxDepth`: one more than the trees' depth (the levels of a schedule that finishes the tree,
+    /// the last only searching splits).
     pub max_depth: u32,
-    pub num_iterations: u32,
+    /// The levels the device splits at most (`device_levels <= tree_max_depth`); a deeper tree, or one the device
+    /// stops on (its width), continues on the host.
+    pub device_levels: u32,
     pub expanded_row_data: Buffer,
     /// Offset in the buckets memory blob per feature [nf + 1].
     pub bucket_memory_offsets: Vec<u32>,
@@ -152,15 +161,35 @@ pub struct FeatureSamplingTrainerKernel<'a> {
 }
 
 impl<'a> FeatureSamplingTrainerKernel<'a> {
-    pub const MAX_ITERATIONS: u32 = 16;
+    /// The most levels the device splits (a partition's index, 2^depth plus its path, is 32 bits). The device's
+    /// bound is the tree's width, not its depth: `assignPartitionNumbers` reuses the numbers of partitions that stop,
+    /// so it needs as many partitions as are active at a level (`MAX_DEVICE_WIDTH`, and the bucket budget), and
+    /// records the partitions that stop at a level in its threadgroup list of `INACTIVE_PARTITIONS_LENGTH` (16300),
+    /// which a width under that never overflows. Before a level past either bound the device stops, and the host
+    /// continues. Deep trees are narrow: 200,000 rows of noisy data to depth 20 are at most 7630 wide (depth 17).
+    pub const MAX_DEVICE_LEVELS: u32 = 30;
+    /// The most partitions active at a level on the device (under `INACTIVE_PARTITIONS_LENGTH`).
+    pub const MAX_DEVICE_WIDTH: u32 = 16256;
 
-    pub fn init(_debug_name: &str, max_depth: i32, rows: &Rows, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace) -> Result<Self, String> {
+    pub fn init(debug_name: &str, max_depth: i32, rows: &Rows, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace) -> Result<Self, String> {
+        Self::init_with_device_levels(debug_name, max_depth, rows, features, bucket_memory, fs, Self::MAX_DEVICE_LEVELS)
+    }
+
+    /// `init`, the device splitting at most `max_device_levels` levels (at most `MAX_DEVICE_LEVELS`).
+    pub fn init_with_device_levels(_debug_name: &str, max_depth: i32, rows: &Rows, features: &'a [Feature], bucket_memory: FrozenMemoryRegionT<u32>, fs: &'a DatasetFeatureSpace, max_device_levels: u32) -> Result<Self, String> {
         let shared = shared()?;
         let device = &shared.device;
         let num_rows = rows.row_count() as u32;
         let nf = features.len() as u32;
-        let num_iterations = Self::MAX_ITERATIONS.min(max_depth as u32);
-        let max_partition_count = 65535u32.min(1 << num_iterations);
+        if max_depth < 1 {
+            return Err(format!("max depth {max_depth}"));
+        }
+        // The kernels read each row's buckets at its row number.
+        if rows.example_num_bits != 0 && (0..rows.row_count()).any(|i| rows.get_example_num(i) != i as u32) {
+            return Err("the rows' example numbers are not their row numbers".into());
+        }
+        let device_levels = (max_depth as u32).min(max_device_levels.clamp(1, Self::MAX_DEVICE_LEVELS));
+        let max_partition_count = (1u32 << device_levels).min(Self::MAX_DEVICE_WIDTH);
 
         let (mut bucket_entry_bits, mut feature_is_ordinal, mut bucket_memory_offsets) = (Vec::new(), Vec::new(), Vec::new());
         let mut last_bucket_data_offset = 0u32;
@@ -169,6 +198,11 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
             let buckets = &f.buckets;
             bucket_entry_bits.push(buckets.entry_bits as u32);
             feature_is_ordinal.push(f.ordinal as u32);
+            if !f.active {
+                // Never read: its buckets need not be in the bucket memory (a bag carries none).
+                bucket_memory_offsets.push(0);
+                continue;
+            }
             let p = buckets.storage.data().as_ptr() as usize;
             if p < base || p > base + bucket_memory.length() * 4 {
                 return Err("a feature's buckets are not in the bucket memory".into());
@@ -209,8 +243,9 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
             features,
             num_rows,
             nf,
+            tree_max_depth: max_depth as u32,
             max_depth: max_depth as u32 + 1,
-            num_iterations,
+            device_levels,
             expanded_row_data,
             bucket_memory_offsets,
             bucket_entry_bits,
@@ -226,19 +261,24 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
 
     /// Trains one tree per set of active features, all scheduled before any is awaited.
     pub fn train_partitioned(&self, feature_vector_sampling: i32, debug_name_in: &str, all_active_features_in: &[Vec<i32>]) -> Result<Vec<Tree>, String> {
+        Ok(self.train_partitioned_with_depths(feature_vector_sampling, debug_name_in, all_active_features_in)?.into_iter().map(|t| t.0).collect())
+    }
+
+    /// `train_partitioned`, with the depth the device reached in each tree.
+    pub fn train_partitioned_with_depths(&self, feature_vector_sampling: i32, debug_name_in: &str, all_active_features_in: &[Vec<i32>]) -> Result<Vec<(Tree, u32)>, String> {
         let debug_name = format!("{debug_name_in}-{feature_vector_sampling}");
         let mut partition = FeatureSamplingTrainerPartition::allocate(self, all_active_features_in, &debug_name)?;
         let mut outputs = Vec::new();
         for (i, af) in all_active_features_in.iter().enumerate() {
             let bag_debug_name = format!("{debug_name}-{i}");
             let data = partition.init(i as i32, feature_vector_sampling, &bag_debug_name, af).map_err(|e| format!("Error training {debug_name} partition {i}: {e}"))?;
-            let (event, splits, depth_info) = partition.schedule_training(&bag_debug_name, &data).map_err(|e| format!("Error training {debug_name} partition {i}: {e}"))?;
-            outputs.push((event, splits, depth_info, data));
+            let scheduled = partition.schedule_training(&bag_debug_name, &data).map_err(|e| format!("Error training {debug_name} partition {i}: {e}"))?;
+            outputs.push((scheduled, data));
         }
         let mut result = Vec::new();
-        for (i, (event, splits, info, data)) in outputs.into_iter().enumerate() {
-            event.await_()?;
-            result.push(partition.finish(i as i32, &format!("{debug_name}-{i}"), &data, &splits, &info)?);
+        for (i, (scheduled, data)) in outputs.into_iter().enumerate() {
+            scheduled.event.await_()?;
+            result.push(partition.finish_with_depth(i as i32, &format!("{debug_name}-{i}"), &data, &scheduled).map_err(|e| format!("Error training {debug_name} partition {i}: {e}"))?);
         }
         Ok(result)
     }
@@ -268,6 +308,12 @@ pub struct PartitionControlData {
 /// last's).
 pub struct FeatureSamplingTrainerPartition<'o, 'a> {
     pub owner: &'o FeatureSamplingTrainerKernel<'a>,
+    /// The most partitions active at a level (`device_width`).
+    pub width: u32,
+    /// The length of the pool of every level's splits (`device_splits_pool`).
+    pub splits_pool: usize,
+    /// Whether the device can stop before its levels (on width or on the splits pool).
+    pub can_stop: bool,
     pub depth_queue: MetalComputeQueue,
     pub device_tree_training_info: Buffer,
     pub device_bucket_numbers: Buffer,
@@ -288,14 +334,43 @@ pub struct FeatureSamplingTrainerPartition<'o, 'a> {
     pub device_feature_partition_splits_pool: Buffer,
 }
 
-/// Entries in the pool of every partition split of a tree (`deviceAllPartitionSplitsPool`).
-pub const ALL_PARTITION_SPLITS_POOL: usize = 256000;
+/// The bytes of a tree's partitions' buckets on the device (per bag in training); the width is cut to fit.
+pub const DEVICE_BUCKET_POOL_BYTES: usize = 64 << 20;
+/// The most partition splits a tree keeps on the device (2.4 MB each, per tree in flight); the device stops before
+/// a level whose splits would not fit.
+pub const DEVICE_SPLITS_POOL_MAX: usize = 1 << 16;
+
+/// The device's width (active partitions at a level) for trees of `max_num_active_buckets` buckets: the
+/// trainer's width, cut so that the buckets of every partition fit `DEVICE_BUCKET_POOL_BYTES` (at least 2).
+pub fn device_width(max_partition_count: u32, max_num_active_buckets: usize) -> u32 {
+    let fit = DEVICE_BUCKET_POOL_BYTES / (max_num_active_buckets.max(1) * std::mem::size_of::<W>());
+    max_partition_count.min(fit.min(u32::MAX as usize) as u32).max(2)
+}
+
+/// The device's pool of every level's partition splits (`deviceAllPartitionSplitsPool`) for `levels` levels of at
+/// most `width` partitions: the finished partitions of every level and the last level's search, written after them,
+/// up to `DEVICE_SPLITS_POOL_MAX`; and whether that is all of them. Upstream had 256000 entries whatever the depth,
+/// and overran them from depth 18.
+pub fn device_splits_pool(levels: u32, width: u32) -> (usize, bool) {
+    let all: usize = (0..=levels + 1).map(|d| (1usize << d.min(40)).min(width as usize)).sum();
+    (all.min(DEVICE_SPLITS_POOL_MAX), all <= DEVICE_SPLITS_POOL_MAX)
+}
+
+/// One tree's scheduled training: its event, and the memory its results land in, in queue order (so the next
+/// tree's use of the pools does not touch them). When the device leaves levels for the host, the rows' partitions,
+/// and the active partitions' weights and places in the tree, as the last device level left them.
+pub struct ScheduledTree {
+    pub event: MetalComputeEvent,
+    pub partition_splits: Buffer,
+    pub tree_depth_info: Buffer,
+    pub continuation: Option<(Buffer, Buffer, Buffer)>,
+}
 
 impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
     pub fn allocate(owner: &'o FeatureSamplingTrainerKernel<'a>, active_features_in: &[Vec<i32>], _debug_name: &str) -> Result<Self, String> {
         let shared = shared()?;
         let d = &shared.device;
-        let (nf, mpc, nr) = (owner.nf as usize, owner.max_partition_count as usize, owner.num_rows as usize);
+        let (nf, nr) = (owner.nf as usize, owner.num_rows as usize);
         let mut max_num_active_buckets = 0usize;
         let mut max_num_active_features = 0usize;
         for af in active_features_in {
@@ -303,8 +378,15 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             let n: usize = af.iter().map(|&f| owner.features[f as usize].buckets.num_buckets as usize).sum();
             max_num_active_buckets = max_num_active_buckets.max(n);
         }
+        let width = device_width(owner.max_partition_count, max_num_active_buckets);
+        let mpc = width as usize;
+        let (splits_pool, all_splits_fit) = device_splits_pool(owner.device_levels, width);
+        let can_stop = !all_splits_fit || (width as u64) < (1u64 << owner.device_levels);
         Ok(FeatureSamplingTrainerPartition {
             owner,
+            width,
+            splits_pool,
+            can_stop,
             depth_queue: MetalComputeQueue::new(&shared.queue),
             device_tree_training_info: alloc_uninitialized_array_sync::<TreeTrainingInfo>(d, 1),
             device_bucket_numbers: alloc_uninitialized_array_sync::<u32>(d, nf + 1),
@@ -321,7 +403,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             num_non_zero_direction_indices: alloc_uninitialized_array_sync::<u32>(d, 1),
             small_side_indexes: alloc_uninitialized_array_sync::<u8>(d, mpc),
             small_side_index_to_partition_numbers: alloc_uninitialized_array_sync::<u16>(d, 256),
-            device_all_partition_splits_pool: alloc_uninitialized_array_sync::<IndexedPartitionSplit>(d, ALL_PARTITION_SPLITS_POOL),
+            device_all_partition_splits_pool: alloc_uninitialized_array_sync::<IndexedPartitionSplit>(d, splits_pool),
             device_feature_partition_splits_pool: alloc_uninitialized_array_sync::<PartitionSplit>(d, mpc * nf),
         })
     }
@@ -331,8 +413,14 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
     pub fn init(&mut self, feature_sampling: i32, feature_vector_sampling: i32, _debug_name: &str, active_features_in: &[i32]) -> Result<PartitionControlData, String> {
         let o = self.owner;
         let nf = o.nf as usize;
-        let mut data = PartitionControlData { active_features_in: active_features_in.to_vec(), bucket_numbers: vec![0], feature_is_active: vec![0; nf], active_feature_list: active_features_in.iter().map(|&f| f as u32).collect(), ..Default::default() };
-        let active_feature_set: BTreeSet<i32> = active_features_in.iter().copied().collect();
+        // In feature order: the kernels take the first of equal scores in this list's order, and the tree of a set of
+        // features should not depend on the order it is listed in (upstream took the bag's shuffle order, so ties
+        // went another way than in the recursive trainer).
+        let mut active_features_in = active_features_in.to_vec();
+        active_features_in.sort_unstable();
+        active_features_in.dedup();
+        let mut data = PartitionControlData { active_feature_list: active_features_in.iter().map(|&f| f as u32).collect(), active_features_in, bucket_numbers: vec![0], feature_is_active: vec![0; nf], ..Default::default() };
+        let active_feature_set: BTreeSet<i32> = data.active_features_in.iter().copied().collect();
         let num_active_features = data.active_feature_list.len() as u32;
         let mut num_active_buckets = 0u32;
         for i in 0..nf {
@@ -352,7 +440,8 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             num_active_features: num_active_features as u16,
             num_active_buckets,
             num_features: nf as u16,
-            max_num_active_partitions: o.max_partition_count as u16,
+            max_num_active_partitions: self.width as u16,
+            max_num_finished_partitions: self.splits_pool as u32,
             num_rows: o.num_rows,
             feature_sampling: feature_sampling as u16,
             feature_vector_sampling: feature_vector_sampling as u16,
@@ -380,16 +469,19 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
         Ok(data)
     }
 
-    /// Enqueues every depth of the tree's training (no waiting between them), then the copies of the results out of
-    /// the pools; commits, and gives the event and the results' memory.
-    pub fn schedule_training(&mut self, _debug_name: &str, data: &PartitionControlData) -> Result<(MetalComputeEvent, Buffer, Buffer), String> {
+    /// Enqueues every device level of the tree's training (no waiting between them), then the copies of the results
+    /// out of the pools; commits, and gives the event and the results' memory. The device splits `device_levels`
+    /// levels, then searches the next level's splits (unused: upstream's schedule; they are written past the
+    /// finished partitions and not read).
+    pub fn schedule_training(&mut self, _debug_name: &str, data: &PartitionControlData) -> Result<ScheduledTree, String> {
         let o = self.owner;
         let shared = shared()?;
         let (naf, nab, nr) = (data.num_active_features, data.num_active_buckets, o.num_rows);
-        let result_partition_splits = alloc_uninitialized_array_sync::<IndexedPartitionSplit>(&shared.device, ALL_PARTITION_SPLITS_POOL);
+        let result_partition_splits = alloc_uninitialized_array_sync::<IndexedPartitionSplit>(&shared.device, self.splits_pool);
         let result_tree_depth_info = alloc_uninitialized_array_sync::<TreeDepthInfo>(&shared.device, 1);
         let q = &self.depth_queue;
-        for depth in 0..o.max_depth {
+        let levels = o.device_levels + 1;
+        for depth in 0..levels {
             run(q, "getPartitionSplits", &[
                 ("treeTrainingInfo", B(&self.device_tree_training_info)),
                 ("bucketNumbers", B(&self.device_bucket_numbers)),
@@ -408,7 +500,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
                 ("allPartitionSplitsOut", B(&self.device_all_partition_splits_pool)),
                 ("partitionIndexes", B(&self.device_partition_index_pool)),
             ], &[])?;
-            if depth == o.max_depth - 1 {
+            if depth == levels - 1 {
                 continue; // no need to update things, we have finished
             }
             // Now we assign new partition numbers to the active partitions after the split.
@@ -480,27 +572,68 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
         }
         q.enqueue_copy_between_device_regions(&self.device_tree_depth_info, &result_tree_depth_info, 0, 0, std::mem::size_of::<TreeDepthInfo>() as u64);
         q.enqueue_copy_between_device_regions(&self.device_all_partition_splits_pool, &result_partition_splits, 0, 0, self.device_all_partition_splits_pool.length());
-        Ok((self.depth_queue.flush(), result_partition_splits, result_tree_depth_info))
+        let continuation = (o.device_levels < o.tree_max_depth || self.can_stop).then(|| {
+            let copy = |src: &Buffer| {
+                let dst = alloc_uninitialized_array_sync::<u8>(&shared.device, src.length() as usize);
+                q.enqueue_copy_between_device_regions(src, &dst, 0, 0, src.length());
+                dst
+            };
+            (copy(&self.device_partitions), copy(&self.device_w_all_pool), copy(&self.device_partition_index_pool))
+        });
+        Ok(ScheduledTree { event: self.depth_queue.flush(), partition_splits: result_partition_splits, tree_depth_info: result_tree_depth_info, continuation })
     }
 
-    /// Builds the tree from the finished partitions' splits (the work must have completed).
-    pub fn finish(&self, _tree_number: i32, _debug_name: &str, _data: &PartitionControlData, result_partition_splits: &Buffer, result_tree_depth_info: &Buffer) -> Result<Tree, String> {
+    /// Builds the tree from the finished partitions' splits (the work must have completed), continuing on the host
+    /// the partitions the device left active when the tree is deeper than its levels (from their depth, to the
+    /// tree's: upstream's continuation, behind its early return, started a level too deep and went a level too
+    /// far, and read pools the next tree had since overwritten).
+    pub fn finish(&self, tree_number: i32, debug_name: &str, data: &PartitionControlData, scheduled: &ScheduledTree) -> Result<Tree, String> {
+        Ok(self.finish_with_depth(tree_number, debug_name, data, scheduled)?.0)
+    }
+
+    /// `finish`, with the depth the device reached (the host trained the levels from there).
+    pub fn finish_with_depth(&self, _tree_number: i32, _debug_name: &str, data: &PartitionControlData, scheduled: &ScheduledTree) -> Result<(Tree, u32), String> {
         let o = self.owner;
-        let tree_depth_info = transfer_to_host_sync::<TreeDepthInfo>(result_tree_depth_info, 1)[0];
+        let tree_depth_info = transfer_to_host_sync::<TreeDepthInfo>(&scheduled.tree_depth_info, 1)[0];
+        let stopped = tree_depth_info.status == TREE_DEPTH_STATUS_STOPPED;
+        if tree_depth_info.status != 0 && !stopped {
+            return Err(format!("the device stopped with status {}: {}", tree_depth_info.status as i32, print_tree_depth_info(&tree_depth_info)));
+        }
+        if !stopped && tree_depth_info.depth != o.device_levels || stopped && tree_depth_info.depth >= o.device_levels {
+            return Err(format!("the device reached depth {} of {} (status {})", tree_depth_info.depth, o.device_levels, tree_depth_info.status));
+        }
+        let device_depth = tree_depth_info.depth;
+        if device_depth < o.tree_max_depth && scheduled.continuation.is_none() {
+            return Err(format!("the device stopped at depth {device_depth} with nothing to continue from"));
+        }
         let num_finished_partitions = tree_depth_info.num_finished_partitions as usize;
-        let all_partition_splits = transfer_to_host_sync::<IndexedPartitionSplit>(result_partition_splits, num_finished_partitions);
-        tree_from_splits(&tree_depth_info, &all_partition_splits, o.max_depth, o.features, o.fs)
+        let all_partition_splits = transfer_to_host_sync::<IndexedPartitionSplit>(&scheduled.partition_splits, num_finished_partitions);
+        let mut tree = Tree::new();
+        let mut leaves = finished_leaves(&mut tree, &all_partition_splits);
+        if let Some((partitions, w_all, indexes)) = &scheduled.continuation {
+            let nap = tree_depth_info.num_active_partitions as usize;
+            let partitions = transfer_to_host_sync::<RowPartitionInfo>(partitions, o.num_rows as usize);
+            let w_all = transfer_to_host_sync::<W>(w_all, nap);
+            let indexes = transfer_to_host_sync::<PartitionIndex>(indexes, nap);
+            let decoded_rows = transfer_to_host_sync::<f32>(&o.expanded_row_data, o.num_rows as usize);
+            let mut features = o.features.to_vec();
+            for (i, f) in features.iter_mut().enumerate() {
+                f.active = data.feature_is_active[i] != 0;
+            }
+            let new_leaves = split_and_recurse_partitioned(device_depth as i32, o.tree_max_depth as i32, &mut tree, None, data.num_active_buckets, &data.bucket_numbers, &features, &data.active_features_in, &decoded_rows, &partitions, &w_all, &indexes, o.fs)?;
+            leaves.1.extend(new_leaves);
+        }
+        tree.root = extract_tree(0, o.tree_max_depth as i32, &mut tree, PartitionIndex::root(), &leaves.0, &leaves.1, o.features, o.fs)?;
+        Ok((tree, device_depth))
     }
 }
 
-/// `finish`'s building of the tree: each finished partition's split, and leaves for its sides until a deeper split
-/// replaces them; the tree extracted from the root.
-pub fn tree_from_splits(tree_depth_info: &TreeDepthInfo, all_partition_splits: &[IndexedPartitionSplit], max_depth: u32, features: &[Feature], fs: &DatasetFeatureSpace) -> Result<Tree, String> {
-    let depth = tree_depth_info.depth + 1;
+/// `finish`'s reading of the finished partitions: each one's split, and leaves for its sides until a deeper split
+/// replaces them.
+pub fn finished_leaves(tree: &mut Tree, all_partition_splits: &[IndexedPartitionSplit]) -> (BTreeMap<PartitionIndex, PartitionSplit>, BTreeMap<PartitionIndex, Ptr>) {
     let mut all_splits: BTreeMap<PartitionIndex, PartitionSplit> = BTreeMap::new();
     let mut leaves: BTreeMap<PartitionIndex, Ptr> = BTreeMap::new();
-    let mut tree = Tree::new();
-    for split in &all_partition_splits[..tree_depth_info.num_finished_partitions as usize] {
+    for split in all_partition_splits {
         if split.index == PartitionIndex::none() || !split.split.valid() {
             continue;
         }
@@ -510,14 +643,18 @@ pub fn tree_from_splits(tree_depth_info: &TreeDepthInfo, all_partition_splits: &
         if split.split.left.count() == 0 && split.split.right.count() == 0 {
             continue;
         }
-        leaves.insert(index.left_child(), get_leaf(&mut tree, &split.split.left));
-        leaves.insert(index.right_child(), get_leaf(&mut tree, &split.split.right));
+        leaves.insert(index.left_child(), get_leaf(tree, &split.split.left));
+        leaves.insert(index.right_child(), get_leaf(tree, &split.split.right));
     }
-    if depth < max_depth {
-        return Err(format!("the tree stopped at depth {depth} of {max_depth}: deeper trees need splitAndRecursePartitioned (not yet translated)"));
-    }
-    let result = extract_tree(0, max_depth as i32, &mut tree, PartitionIndex::root(), &all_splits, &leaves, features, fs)?;
-    tree.root = result;
+    (all_splits, leaves)
+}
+
+/// The tree from a schedule the device finished (`tree_depth_info.depth + 1 == max_depth`).
+pub fn tree_from_splits(tree_depth_info: &TreeDepthInfo, all_partition_splits: &[IndexedPartitionSplit], max_depth: u32, features: &[Feature], fs: &DatasetFeatureSpace) -> Result<Tree, String> {
+    assert_eq!(tree_depth_info.depth + 1, max_depth);
+    let mut tree = Tree::new();
+    let (all_splits, leaves) = finished_leaves(&mut tree, &all_partition_splits[..tree_depth_info.num_finished_partitions as usize]);
+    tree.root = extract_tree(0, max_depth as i32, &mut tree, PartitionIndex::root(), &all_splits, &leaves, features, fs)?;
     Ok(tree)
 }
 
@@ -551,6 +688,110 @@ impl PartitionData {
     pub fn clear(&mut self) {
         self.rows.clear();
         self.features.clear();
+    }
+
+    /// A bag: the rows reweighted by `counts` (each row's weight times its count times `scale`) and compacted to those
+    /// with weight, numbered from zero, with the active features' buckets re-encoded over them in one block of
+    /// memory (one device transfer). The weights are encoded as int multiples of the smallest when every one is
+    /// exactly that, else as a table when there are fewer than 4096 of them, else as floats: the first format in
+    /// which each weight decodes as itself.
+    ///
+    /// Departures, each a fault upstream: the int-multiple check was disabled (`!isInt && false`), so every bag
+    /// was int multiples and weights that are not were rounded to them; the table's weight bits were those of zero
+    /// weights (it was never chosen); a row with a count but no weight was left out of the rows but not of the
+    /// buckets, so the two disagreed; the bucket lists were sized by the column's distinct values but written with
+    /// the feature's bucket count. Inactive features carry no buckets (upstream kept the old ones, outside the
+    /// bag's memory). The weights must total less than 2 (W32 accumulates them with 30 fraction bits).
+    pub fn reweight_and_compact(&self, counts: &[u32], scale: f64, serializer: &mut MemorySerializer) -> Result<PartitionData, String> {
+        let n = self.rows.row_count();
+        if counts.len() != n {
+            return Err(format!("{} counts for {n} rows", counts.len()));
+        }
+        let weight_of = |i: usize| (self.rows.get_weight(i) as f64 * counts[i] as f64 * scale) as f32;
+        let mut uniques = Vec::new();
+        let mut total = 0f64;
+        let mut keep = Vec::new();
+        for i in 0..n {
+            let w = weight_of(i);
+            if !(w >= 0.0) || !w.is_finite() {
+                return Err(format!("row {i}: weight {w}"));
+            }
+            if w != 0.0 {
+                keep.push(i);
+                uniques.push(w);
+                total += w as f64;
+            }
+        }
+        if keep.is_empty() {
+            return Err("no rows with weight".into());
+        }
+        if total >= 2.0 {
+            return Err(format!("the weights total {total}: they must total less than 2"));
+        }
+        uniques.sort_by(f32::total_cmp);
+        uniques.dedup();
+        let min_weight = uniques[0];
+        let int_multiple = || -> Option<WeightEncoder> {
+            let max_factor = (uniques[uniques.len() - 1] / min_weight).round();
+            if max_factor >= (1u64 << 32) as f32 {
+                return None;
+            }
+            let enc = WeightEncoder { weight_format: WeightFormat::WfIntMultiple, weight_multiplier: min_weight, weight_bits: 32 - (max_factor as u32).leading_zeros() as i32, ..Default::default() };
+            uniques.iter().all(|&w| enc.encode_weight(w).is_ok()).then_some(enc)
+        };
+        let weight_encoder = int_multiple().unwrap_or_else(|| {
+            if uniques.len() < 4096 {
+                // At most 16kb of table, in the cache.
+                let mut t = serializer.allocate_writable_t::<f32>(uniques.len(), 4);
+                t.data_mut().copy_from_slice(&uniques);
+                let bits = 32 - (uniques.len() as u32 - 1).leading_zeros() as i32;
+                WeightEncoder { weight_format: WeightFormat::WfTable, weight_format_table: serializer.freeze_t(&mut t), weight_bits: bits, weight_multiplier: 0.0 }
+            } else {
+                WeightEncoder { weight_format: WeightFormat::WfFloat, weight_bits: 32, ..Default::default() }
+            }
+        });
+        let num_non_zero = keep.len();
+        let mut src_rows = Rows { weight_encoder, ..Default::default() };
+        let mut writer = src_rows.get_row_writer(num_non_zero, num_non_zero, serializer, false, 1.0);
+        for (k, &i) in keep.iter().enumerate() {
+            writer.add_row_values(self.rows.get_row(i).label(), weight_of(i), k as u32)?;
+        }
+        src_rows = writer.freeze(serializer);
+
+        // The active features' buckets over the kept rows, each encoded on its own (in parallel), then in one block.
+        use rayon::prelude::*;
+        let lists: Vec<Option<(Vec<u32>, i32, i32)>> = self.features.par_iter().map(|f| {
+            if !f.active {
+                return None;
+            }
+            let mut s = MemorySerializer;
+            let mut bl = WritableBucketList::new(num_non_zero, f.buckets.num_buckets as u32, &mut s);
+            for &i in &keep {
+                bl.write(f.buckets.get(self.rows.get_example_num(i)));
+            }
+            let frozen = bl.freeze(&mut s);
+            Some((frozen.storage.data().to_vec(), frozen.entry_bits, frozen.num_buckets))
+        }).collect();
+        let words: usize = lists.iter().flatten().map(|l| l.0.len()).sum();
+        let mut block = serializer.allocate_writable_t::<u32>(words.max(1), 4096 /* page aligned */);
+        let mut spans = Vec::new();
+        let mut at = 0;
+        for l in &lists {
+            spans.push(l.as_ref().map(|l| {
+                block.data_mut()[at..at + l.0.len()].copy_from_slice(&l.0);
+                at += l.0.len();
+                (at - l.0.len(), l.0.len(), l.1, l.2)
+            }));
+        }
+        let bucket_memory = serializer.freeze_t(&mut block);
+        let features = self.features.iter().zip(spans).map(|(f, span)| {
+            let buckets = match span {
+                Some((start, len, entry_bits, num_buckets)) => BucketList { storage: FrozenMemoryRegionT::new(bucket_memory.raw().range(start * 4, (start + len) * 4)), entry_bits, num_buckets, num_entries: num_non_zero },
+                None => BucketList::default(),
+            };
+            Feature { active: f.active, ordinal: f.ordinal, info: f.info, buckets }
+        }).collect();
+        Ok(PartitionData { fs: self.fs.clone(), rows: src_rows, bucket_memory, features })
     }
 
     /// Splits the rows between two datasets by the split, keeping the example numbers (so the buckets are shared).
@@ -694,11 +935,10 @@ impl PartitionData {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::forest::bucket::{BucketList, WritableBucketList};
     use crate::forest::dataset_feature_space::{ColumnInfo, FeatureType};
-    use crate::forest::memory_region::{FrozenMemoryRegion, MappedSerializer, MemorySerializer};
+    use crate::forest::memory_region::FrozenMemoryRegion;
     use crate::forest::randomforest_kernels as host;
 
     /// Rows with int-multiple weights (as the device decodes them) and the features given (bucket count, ordinal,
@@ -796,7 +1036,7 @@ mod tests {
             numbers.push(numbers.last().unwrap() + f.buckets.num_buckets as u32);
         }
         let nab = *numbers.last().unwrap();
-        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: max_depth as u16, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: mpc as u16, num_active_buckets: nab, ..Default::default() }];
+        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: max_depth as u16, num_active_features: nf as u16, num_features: nf as u16, max_num_active_partitions: mpc as u16, num_active_buckets: nab, max_num_finished_partitions: u32::MAX, ..Default::default() }];
         let mut tdi = [TreeDepthInfo { num_active_partitions: 1, ..Default::default() }];
         let mut buckets = vec![W::default(); mpc * nab as usize];
         let mut w_all = vec![W::default(); mpc];
@@ -936,5 +1176,107 @@ mod tests {
             }
         }
         assert!(widths.iter().any(|&w| w > 254), "a level wider than 254 partitions: {widths:?}");
+    }
+
+    fn train_device_levels(d: &PartitionData, max_depth: i32, levels: u32, samplings: &[Vec<i32>]) -> Vec<Tree> {
+        let trainer = FeatureSamplingTrainerKernel::init_with_device_levels("levels", max_depth, &d.rows, &d.features, d.bucket_memory.clone(), &d.fs, levels).unwrap();
+        assert_eq!(trainer.device_levels, levels.min(max_depth as u32));
+        trainer.train_partitioned(0, "levels", samplings).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// Spike measurement for deep trees on the device: per tree depth, the nodes (the device's active partitions
+    /// at that level), and the time of the device's 14 levels against the tree to depth 20 (the rest on the host).
+    #[test]
+    #[ignore = "spike measurement (deep trees on the device); run by name with --nocapture"]
+    fn spike_deep_tree_widths_and_times() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        fn widths(t: &Tree, p: Ptr, d: usize, w: &mut Vec<usize>) {
+            if let Some(n) = t.node(p) {
+                if w.len() <= d {
+                    w.resize(d + 1, 0);
+                }
+                w[d] += 1;
+                let (a, b) = (n.child_true, n.child_false);
+                widths(t, a, d + 1, w);
+                widths(t, b, d + 1, w);
+            }
+        }
+        let n: u32 = std::env::var("SPIKE_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(20000);
+        let d = deep_dataset(n);
+        let all: Vec<Vec<i32>> = vec![(0..d.features.len() as i32).collect()];
+        let _warm = train_device_levels(&d, 4, 4, &all);
+        let t0 = std::time::Instant::now();
+        let t14 = train_device_levels(&d, 14, 14, &all).remove(0);
+        let device14 = t0.elapsed();
+        let t0 = std::time::Instant::now();
+        let t20 = train_device_levels(&d, 20, 14, &all).remove(0);
+        let device14_host6 = t0.elapsed();
+        let t0 = std::time::Instant::now();
+        let trainer = FeatureSamplingTrainerKernel::init("spike", 20, &d.rows, &d.features, d.bucket_memory.clone(), &d.fs).unwrap();
+        let (t20d, reached) = trainer.train_partitioned_with_depths(0, "spike", &all).unwrap().remove(0);
+        let device20 = t0.elapsed();
+        same(&t20, &t20d, &d.fs, "depth 20: 14 device levels and all on the device");
+        eprintln!("rows {n}: depth 20 all on the device {device20:?} (reached {reached})");
+        let mut w = Vec::new();
+        widths(&t20, t20.root, 0, &mut w);
+        let mut w14 = Vec::new();
+        widths(&t14, t14.root, 0, &mut w14);
+        eprintln!("rows {n}: depth 14 on the device {device14:?}; depth 20 (14 device + host) {device14_host6:?}");
+        eprintln!("nodes per depth (depth 20): {w:?}");
+        eprintln!("max width {}; widest level {}", w.iter().max().unwrap(), w.iter().enumerate().max_by_key(|x| x.1).unwrap().0);
+    }
+
+    /// A tree deeper than the device's levels continues on the host from the partitions the device left (the
+    /// upstream fault: an early return gave the tree unfinished, and the code behind it was wrong). Whatever level
+    /// the device stops at, the tree is the one the device gives alone; trees scheduled together continue each from
+    /// its own partitions (they share the device's pools); and a tree deeper than the device's 14 levels is the one
+    /// the CPU's partitioned trainer gives.
+    #[test]
+    fn deeper_trees_continue_on_the_host_where_the_device_stops() {
+        if crate::gpu::shared::get().is_none() {
+            eprintln!("no Metal device: skipped");
+            return;
+        }
+        let all: Vec<i32> = (0..4).collect();
+        let d = dataset(2000);
+        let full = train_device_levels(&d, 6, 14, std::slice::from_ref(&all)).remove(0);
+        for levels in [1, 2, 4, 5] {
+            same(&full, &train_device_levels(&d, 6, levels, std::slice::from_ref(&all))[0], &d.fs, &format!("max depth 6, {levels} device levels"));
+        }
+
+        let d = deep_dataset(20000);
+        let samplings: Vec<Vec<i32>> = vec![(0..14).collect(), vec![0, 3, 12, 5, 7], vec![1, 2, 3, 4, 13]];
+        let alone: Vec<Tree> = samplings.iter().map(|s| train_device_levels(&d, 10, 14, std::slice::from_ref(s)).remove(0)).collect();
+        for levels in [3, 7] {
+            let together = train_device_levels(&d, 10, levels, &samplings);
+            for (i, t) in together.iter().enumerate() {
+                same(&alone[i], t, &d.fs, &format!("sampling {i}, {levels} device levels"));
+            }
+        }
+
+        // Past the 14 levels that are never wider than the device's partitions: the device trains all 17 (this
+        // tree is at most 735 wide), and the tree is the CPU's.
+        let device = train_with(&d, 17, "device");
+        let mut trainer = FeatureSamplingTrainerKernel::init("deep", 17, &d.rows, &d.features, d.bucket_memory.clone(), &d.fs).unwrap();
+        assert_eq!(trainer.device_levels, 17);
+        let cpu = train_with(&d, 17, "cpu");
+        same(&device, &cpu, &d.fs, "max depth 17");
+        assert!(depth_of(&device, device.root) > 14, "deeper than 14 levels: {}", depth_of(&device, device.root));
+        let all14: Vec<Vec<i32>> = vec![(0..14).collect()];
+        let (t, reached) = trainer.train_partitioned_with_depths(0, "deep", &all14).unwrap().remove(0);
+        assert_eq!(reached, 17, "the device trains every level");
+        same(&t, &cpu, &d.fs, "max depth 17, on the device");
+
+        // A narrower device stops before the first level wider than its partitions, and the host continues from
+        // there: the same tree.
+        for width in [16, 100, 500] {
+            trainer.max_partition_count = width;
+            let (t, reached) = trainer.train_partitioned_with_depths(0, "narrow", &all14).unwrap().remove(0);
+            assert!(reached < 17, "width {width}: the device stopped at {reached}");
+            assert!(reached as usize >= (width as f64).log2() as usize, "width {width}: the device stopped at {reached}");
+            same(&t, &cpu, &d.fs, &format!("max depth 17, width {width}"));
+        }
     }
 }

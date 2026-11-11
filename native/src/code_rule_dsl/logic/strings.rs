@@ -467,7 +467,51 @@ fn implied_set_tests(prog: &mut Program) {
     }
 }
 
+/// A text test on a node (`@rx(w, re) = 1` with `w` a node) tests the node's text: `text(w, t), @rx(t, re) = 1`, `t`
+/// fresh. Unrewritten, the test read the node's id as a string and held for no node. A node is a variable a positive
+/// atom binds in a `node` or `loc` column.
+pub(in crate::code_rule_dsl) fn node_subject_tests(prog: &mut Program) {
+    let decls = &prog.decls;
+    let mut fresh = 0usize;
+    for rule in &mut prog.rules {
+        let nodes: HashSet<String> = rule
+            .body
+            .iter()
+            .filter_map(|l| match l {
+                Literal::Atom(a) if !a.neg => Some(a),
+                _ => None,
+            })
+            .flat_map(|a| {
+                let types = decls.get(&a.rel);
+                a.args.iter().enumerate().filter_map(move |(c, t)| match (t, types.and_then(|ts| ts.get(c))) {
+                    (Term::Var(v), Some((_, ty))) if ty == "node" || ty == "loc" => Some(v.clone()),
+                    _ => None,
+                })
+            })
+            .collect();
+        let mut added = Vec::new();
+        for literal in &mut rule.body {
+            let Literal::Cmp { l: Term::Call(op, args), op: "=", r: Term::Int(0 | 1) } = literal else { continue };
+            if !is_test(op) {
+                continue;
+            }
+            let Some(Term::Var(s)) = args.first_mut() else { continue };
+            if !nodes.contains(s.as_str()) {
+                continue;
+            }
+            fresh += 1;
+            let t = format!("rr_node_text{fresh}");
+            added.push(Literal::Atom(Atom { rel: "text".into(), args: vec![Term::Var(s.clone()), Term::Var(t.clone())], neg: false, gated: false }));
+            *s = t;
+        }
+        rule.body.extend(added);
+    }
+}
+
 pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
+    if prog.decls.contains_key("text") {
+        node_subject_tests(prog);
+    }
     implied_set_tests(prog);
     let vocabulary_columns = vocabulary_columns(prog);
     let mut ids: BTreeMap<(String, Vec<String>), String> = BTreeMap::new();

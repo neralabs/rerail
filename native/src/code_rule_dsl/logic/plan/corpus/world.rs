@@ -99,6 +99,9 @@ pub(super) struct World {
     load_targets: BTreeMap<String, String>,
     refused: BTreeSet<String>,
     budget: usize,
+    /// The documents loaded from beyond the corpus root (the libraries'), which the budget bounds. A source file of
+    /// the run's own tree is always loaded (phase 1, `sources.rr`).
+    beyond: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
     pub(super) dropped: usize,
 }
@@ -141,8 +144,9 @@ impl World {
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
+    /// Resolved by phase 0's observer: where the journal says nothing changed, with no `realpath` (decision 0105).
     fn allowed(&self, asked: &str) -> Option<PathBuf> {
-        let path = std::fs::canonicalize(self.root.join(asked)).ok()?;
+        let path = super::observe(|o| o.canonical(&self.root.join(asked)))?;
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
     }
 
@@ -237,7 +241,7 @@ impl World {
     pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = (i64,&'a String)>, identities: bool) -> CorpusPaths {
         let mut out = CorpusPaths {known:BTreeSet::new(),documents:BTreeMap::new()};
         for (d,p) in paths {
-            if let Ok(c) = std::fs::canonicalize(self.root.join(p)) {
+            if let Some(c) = super::observe(|o| o.canonical(&self.root.join(p))) {
                 let canonical=c.to_string_lossy().into_owned();
                 if identities { out.documents.entry(canonical.clone()).or_default().push(d); }
                 out.known.insert(canonical);
@@ -256,16 +260,21 @@ impl World {
             self.refused.insert(asked.to_owned());
             return None;
         };
-        // Physical work is shared; the answer for a different module or path is still required.
+        // Share physical preparation while answering each logical module/path request.
+        // Final shape bounds only fresh library loads beyond the run's own tree.
         let fresh = !corpus.contains(asked) && !corpus.contains(&path) && !self.loads.contains_key(&path);
-        if grammar != run_grammar || fresh && self.loads.len() >= self.budget {
+        let own = self.roots.first().is_some_and(|r| Path::new(&path).starts_with(r));
+        if grammar != run_grammar || (fresh && !own && self.beyond >= self.budget) {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
         }
         let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
         self.load_targets.insert(asked.to_owned(), path.clone());
-        if fresh { self.loads.insert(path, loaded.clone()); }
+        if fresh {
+            self.beyond += usize::from(!own);
+            self.loads.insert(path, loaded.clone());
+        }
         Some(LoadAnswer { document: loaded, fresh })
     }
 
@@ -455,6 +464,35 @@ mod tests {
         assert_eq!(corpus.documents[&first.document.path],vec![7]);
         assert!(existing.loads.is_empty());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn own_files_and_repeated_aliases_do_not_spend_the_library_budget() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-load-budget");
+        let library = root.with_extension("world-load-library");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&library).unwrap();
+        for directory in [&root, &library] {
+            for name in ["a.py", "b.py"] {
+                std::fs::write(directory.join(name), "value = 1\n").unwrap();
+            }
+        }
+        let program = front::parse(&format!("env(\"load.budget\", \"1\").\nenv(\"library\", {:?}).", library.to_string_lossy())).unwrap();
+        let mut world = World::new(&root, &program);
+        let corpus = BTreeSet::new();
+        for name in ["a.py", "b.py"] {
+            assert!(world.load(name, name, "python", "python", &corpus).unwrap().fresh);
+        }
+        assert_eq!(world.beyond, 0);
+        let first = library.join("a.py").to_string_lossy().into_owned();
+        assert!(world.load(&first, "first", "python", "python", &corpus).unwrap().fresh);
+        assert!(!world.load(&first, "alias", "python", "python", &corpus).unwrap().fresh);
+        assert_eq!(world.beyond, 1);
+        let second = library.join("b.py").to_string_lossy().into_owned();
+        assert!(world.load(&second, "past-budget", "python", "python", &corpus).is_none());
+        assert_eq!(world.loads.len(), 3);
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(library).unwrap();
     }
 
     #[cfg(unix)]

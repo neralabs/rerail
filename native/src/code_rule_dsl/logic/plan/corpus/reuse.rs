@@ -22,7 +22,9 @@ use std::path::Path;
 /// Whether the cutoff applies to a run with these options and typing inputs.
 pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Path>) -> bool {
     let asked = options.get("reuse").and_then(serde_json::Value::as_bool).unwrap_or(false);
-    asked && t_facts.is_none() && typing.declarations.is_empty() && typing.site.is_none() && typing.summarize.is_none() && super::tape_cache_path().is_some()
+    // A run asked for what only running writes (a profile, a debugging dump) runs: kept outputs carry neither.
+    let side_output = crate::code_rule_dsl::logic::profile::on() || std::env::vars_os().any(|(k, _)| k.to_str().is_some_and(|k| k.starts_with("RERAIL_DUMP_")));
+    asked && !side_output && t_facts.is_none() && typing.declarations.is_empty() && typing.site.is_none() && typing.summarize.is_none() && super::tape_cache_path().is_some()
 }
 
 /// The run's key: everything it is a function of besides what it consults.
@@ -41,9 +43,18 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     h.update(format!("\0{typing:?}\0").as_bytes());
     h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
     h.update([u8::from(crate::code_rule_dsl::facts::vtab::syntax::definition_ids())]);
-    // What changes the outputs from outside the text: a sample of the corpus, decision 0091's guards.
-    for var in ["RERAIL_SAMPLE_EVERY", "RERAIL_SCOPE_GUARDS", "RERAIL_LIBRARIES", "RERAIL_REQUESTS"] {
-        h.update(std::env::var(var).unwrap_or_default().as_bytes());
+    // What can change the outputs from outside the text: every engine switch (a sample of the corpus, decision 0091's
+    // guards, the matcher and planner switches). Listing only some reused a run made under others: a run with
+    // `RERAIL_AST_PARTS=off` answered with the outputs of one with it on. The cache's own path names the store.
+    let mut switches: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
+        .filter(|(k, _)| k.starts_with("RERAIL_") && k != "RERAIL_TAPE_CACHE")
+        .collect();
+    switches.sort();
+    for (k, v) in switches {
+        h.update(k.as_bytes());
+        h.update([0]);
+        h.update(v.as_bytes());
         h.update([0]);
     }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
@@ -59,6 +70,11 @@ fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) ->
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
 fn rule_files(programs: &[String]) -> Result<Vec<(String, String, String)>> {
     let mut out = Vec::new();
+    // Phase 1's program (`sources.rr`), which every run's documents come from: its includes are core's, as the
+    // programs' are.
+    let sources = super::phases::sources_path();
+    let digest = observe(|o| o.digest(&sources)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
+    out.push(("rule".to_owned(), sources.to_string_lossy().into_owned(), digest));
     for p in programs {
         for path in crate::code_rule_dsl::logic::rr::included_files(p)? {
             let digest = observe(|o| o.digest(&path)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
@@ -148,8 +164,9 @@ pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
 /// Keeps the record of a run that ended: what it consulted (and the library files its text includes), and its
 /// outputs.
 pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
-    // A phase's program and exports are its own record's (`phases`), not this one's: such a run is not kept.
-    if report.consulted.is_empty() || !report.phase_runs.is_empty() {
+    // A phase's program and exports are its own record's (`phases`), not this one's: such a run is not kept. Phase 1's
+    // inputs are the run's documents, which the record names, and its program is among its rule files.
+    if report.consulted.is_empty() || report.phase_runs.iter().any(|r| r.name != "sources") {
         return Ok(());
     }
     let texts = with_settings(programs, root, options)?;

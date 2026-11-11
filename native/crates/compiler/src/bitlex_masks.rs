@@ -479,7 +479,7 @@ impl Lowering {
                 }
                 Stmt::Tree { body, .. } => self.stmts(body)?,
                 // The grammar's rules: the state machine is built once the token rows are known.
-                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Provisional(_) => self.tree.push(stmt.clone()),
+                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Provisional(_) | Stmt::Remember(_) | Stmt::Flags(_) => self.tree.push(stmt.clone()),
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
@@ -1526,6 +1526,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // it is; and the provisional fields.
     let mut reading_names: Vec<String> = Vec::new();
     let mut readings = crate::stream_ir::Readings::default();
+    let remember: Vec<&String> = low.tree.iter().filter_map(|s| if let Stmt::Remember(n) = s { Some(n.iter()) } else { None }).flatten().collect();
     for s in &low.tree {
         match s {
             Stmt::Reading { name, reading } => {
@@ -1538,6 +1539,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     let to = match what {
                         ::bitlex::syntax::ReadKind::Keep => crate::stream_ir::KEEP,
                         ::bitlex::syntax::ReadKind::Gone => crate::stream_ir::GONE,
+                        ::bitlex::syntax::ReadKind::As(m) if remember.contains(&m) => crate::stream_ir::REMEMBERED,
                         ::bitlex::syntax::ReadKind::As(m) => id(m.as_str())?,
                     };
                     let k = id(k)?;

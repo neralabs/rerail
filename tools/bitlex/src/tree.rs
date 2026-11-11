@@ -89,9 +89,78 @@ struct Parser<'a> {
     /// Why the file is refused, whatever else could match: as the machine, which has gone this
     /// way, refuses it (a mark a level refuses; a fold of no two leaves).
     fatal: Option<String>,
+    /// The token a `remember` choice took last at this level: `as` that choice names its kind.
+    /// A nested level starts with its caller's, which it gives back when it ends.
+    word: Option<String>,
+    /// The flags this level runs with (`with F A`): its caller's, but where a `with` or a
+    /// `without` set them.
+    flags: Vec<String>,
 }
 
 impl<'a> Parser<'a> {
+    /// A rule, a choice or a token, by name (`Gram::Sym`).
+    fn sym(&mut self, name: &String, at: usize, follow: u64) -> Option<usize> {
+        let decl = self.decl;
+        // A nested level is a machine's level of its own: it ends where none of its arms
+        // takes the token, whatever its caller takes next. In it, only the marks and soft
+        // keywords it takes count (`follow` is none); where it ends, the marks after its
+        // last token are its caller's (`rewound`).
+        let nested = decl.rules.iter().any(|r| &r.0 == name && r.1) || decl.nested.contains(name);
+        let outer = follow;
+        let follow = if nested { 0 } else { follow };
+
+        let rewound = |p: &Self, next: usize| -> Option<usize> {
+            if !nested {
+                return Some(next);
+            }
+            let back = (at..next).rev().find(|&i| !p.tokens[i].mark).map_or(next, |i| i + 1);
+            p.past_marks(back, outer)
+        };
+        if let Some((kind, _, body)) = decl.rules.iter().find(|r| &r.0 == name) {
+            let me = self.out.len();
+            self.out.push(Node { kind: kind.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0 });
+            self.open.push(me);
+            let next = self.matches(body, at, follow);
+            self.open.pop();
+            let next = next?;
+            // Its span is its tokens', marks left out: a rule of marks alone has none.
+            let first = (at..next).find(|&i| !self.tokens[i].mark)?;
+            let last = (at..next).rev().find(|&i| !self.tokens[i].mark)?;
+            if self.refused(name, first, last) {
+                return None;
+            }
+            let next = rewound(self, next)?;
+            let n = self.out.len();
+            let node = &mut self.out[me];
+            node.start = self.tokens[first].start;
+            node.end = self.tokens[last].end;
+            node.size = n - me;
+            Some(next)
+        } else if let Some((_, supertype, body)) = decl.choices.iter().find(|c| &c.0 == name) {
+            let me = self.out.len();
+            let next = self.matches(body, at, follow)?;
+            let first = (at..next).find(|&i| !self.tokens[i].mark);
+            let last = (at..next).rev().find(|&i| !self.tokens[i].mark);
+            if let (Some(first), Some(last)) = (first, last) {
+                if self.refused(name, first, last) {
+                    return None;
+                }
+            }
+            let next = rewound(self, next)?;
+            if let (Some(s), true) = (supertype, me < self.out.len()) {
+                self.out[me].supertypes.insert(0, s.clone());
+            }
+            Some(next)
+        } else {
+            self.token(name, at, follow)
+        }
+    }
+
+    /// A kind written in the grammar: a `remember` choice's name is its level's word's kind.
+    fn kind_of(&self, k: &str) -> Option<String> {
+        if self.decl.remember.iter().any(|c| c == k) { self.word.clone() } else { Some(k.to_owned()) }
+    }
+
     /// The node made last at the innermost open node's level: its last child; none where a
     /// reread's node went and nothing was made after (`dissolved`).
     fn last_made(&self) -> Option<usize> {
@@ -128,7 +197,7 @@ impl<'a> Parser<'a> {
                 (b | x, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.first(a).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.first(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first(body),
             Gram::Balanced { open, .. } => (self.look_bit(open), false),
             Gram::Any(_) => (0, false),
@@ -157,7 +226,7 @@ impl<'a> Parser<'a> {
                 (s, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.starts(a).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.starts(a),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.starts(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts(body),
             Gram::Balanced { open, .. } => (Starts::of(open), false),
             Gram::Any(except) => (Starts { kinds: Default::default(), any: Some(except.iter().cloned().collect()) }, false),
@@ -187,60 +256,37 @@ impl<'a> Parser<'a> {
     fn matches(&mut self, g: &Gram, at: usize, follow: u64) -> Option<usize> {
         match g {
             Gram::Lit(k) => self.token(k, at, follow),
-            Gram::Sym(name) => {
-                let decl = self.decl;
-                // A nested level is a machine's level of its own: it ends where none of its arms
-                // takes the token, whatever its caller takes next. In it, only the marks and soft
-                // keywords it takes count (`follow` is none); where it ends, the marks after its
-                // last token are its caller's (`rewound`).
-                let nested = decl.rules.iter().any(|r| &r.0 == name && r.1) || decl.nested.contains(name);
-                let outer = follow;
-                let follow = if nested { 0 } else { follow };
-                let rewound = |p: &Self, next: usize| -> Option<usize> {
-                    if !nested {
-                        return Some(next);
-                    }
-                    let back = (at..next).rev().find(|&i| !p.tokens[i].mark).map_or(next, |i| i + 1);
-                    p.past_marks(back, outer)
-                };
-                if let Some((kind, _, body)) = decl.rules.iter().find(|r| &r.0 == name) {
-                    let me = self.out.len();
-                    self.out.push(Node { kind: kind.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0 });
-                    self.open.push(me);
-                    let next = self.matches(body, at, follow);
-                    self.open.pop();
-                    let next = next?;
-                    // Its span is its tokens', marks left out: a rule of marks alone has none.
-                    let first = (at..next).find(|&i| !self.tokens[i].mark)?;
-                    let last = (at..next).rev().find(|&i| !self.tokens[i].mark)?;
-                    if self.refused(name, first, last) {
-                        return None;
-                    }
-                    let next = rewound(self, next)?;
-                    let n = self.out.len();
-                    let node = &mut self.out[me];
-                    node.start = self.tokens[first].start;
-                    node.end = self.tokens[last].end;
-                    node.size = n - me;
-                    Some(next)
-                } else if let Some((_, supertype, body)) = decl.choices.iter().find(|c| &c.0 == name) {
-                    let me = self.out.len();
-                    let next = self.matches(body, at, follow)?;
-                    let first = (at..next).find(|&i| !self.tokens[i].mark);
-                    let last = (at..next).rev().find(|&i| !self.tokens[i].mark);
-                    if let (Some(first), Some(last)) = (first, last) {
-                        if self.refused(name, first, last) {
-                            return None;
-                        }
-                    }
-                    let next = rewound(self, next)?;
-                    if let (Some(s), true) = (supertype, me < self.out.len()) {
-                        self.out[me].supertypes.insert(0, s.clone());
-                    }
-                    Some(next)
-                } else {
-                    self.token(name, at, follow)
+            // The levels `body` runs, with the flag set or clear; the caller's flags after.
+            Gram::Flag { flag, set, body } => {
+                let was = self.flags.clone();
+                self.flags.retain(|f| f != flag);
+                if *set {
+                    self.flags.push(flag.clone());
                 }
+                let next = self.matches(body, at, follow);
+                self.flags = was;
+                next
+            }
+            // Where the flag is set, as if `body` were not there.
+            Gram::Unless { flag, body } => {
+                if self.flags.contains(flag) {
+                    return None;
+                }
+                self.matches(body, at, follow)
+            }
+            Gram::Sym(name) => {
+                // A nested level gives its caller's word back when it ends; a `remember` choice
+                // makes the token it took its level's word.
+                let nested = self.decl.rules.iter().any(|r| &r.0 == name && r.1) || self.decl.nested.contains(name);
+                let word = self.word.clone();
+                let me = self.out.len();
+                let next = self.sym(name, at, follow);
+                if nested {
+                    self.word = word;
+                } else if next.is_some() && self.decl.remember.contains(name) && me < self.out.len() {
+                    self.word = Some(self.out[me].kind.clone());
+                }
+                next
             }
             Gram::Seq(items) => {
                 // Each item's follow: what may start the items after it, and `follow` past them.
@@ -335,7 +381,7 @@ impl<'a> Parser<'a> {
             Gram::Retag(kind, a) => {
                 let next = self.matches(a, at, follow)?;
                 let me = *self.open.last()?;
-                self.out[me].kind = kind.clone();
+                self.out[me].kind = self.kind_of(kind)?;
                 Some(next)
             }
             Gram::As(kind, a) => {
@@ -344,7 +390,7 @@ impl<'a> Parser<'a> {
                 if self.out.len() != me + 1 {
                     return None;
                 }
-                self.out[me].kind = kind.clone();
+                self.out[me].kind = self.kind_of(kind)?;
                 Some(next)
             }
             Gram::Any(except) => {
@@ -418,7 +464,7 @@ impl<'a> Parser<'a> {
                     Some(w) => matches!(w, crate::syntax::ReadKind::Gone),
                     None => r.kinds.iter().any(|k| k.0 == self.out[c].kind && matches!(k.1, crate::syntax::ReadKind::Gone)),
                 };
-                if let Err(why) = reread(&mut self.out, c, r) {
+                if let Err(why) = reread(&mut self.out, c, r, &self.decl.remember, self.word.as_deref()) {
                     self.out.truncate(c);
                     self.out.extend(saved);
                     // Where its body starts, the machine has taken this way, and refuses.
@@ -463,7 +509,7 @@ impl<'a> Parser<'a> {
                     self.out[c].field = Some(f.clone());
                 }
                 if let Some(m) = moved {
-                    self.out[c].kind = m.clone();
+                    self.out[c].kind = self.kind_of(m)?;
                 }
                 let len = self.out.len();
                 match self.matches(body, at, follow) {
@@ -487,7 +533,7 @@ impl<'a> Parser<'a> {
                 self.out.insert(c, node);
                 self.out[c + 1].field = field.clone();
                 if let Some(m) = moved {
-                    self.out[c + 1].kind = m.clone();
+                    self.out[c + 1].kind = self.kind_of(m)?;
                 }
                 let len = self.out.len();
                 self.open.push(c);
@@ -601,7 +647,7 @@ fn first_of<'a>(p: &mut Parser<'a>) {
 /// inside take its place; `keep`, it stays with every node inside, unread. A node read but the
 /// first takes the field `r` gives its own. A kind it does not name refuses, as a first node
 /// that goes does.
-fn reread(out: &mut Vec<Node>, root: usize, r: &crate::syntax::Reading) -> Result<(), String> {
+fn reread(out: &mut Vec<Node>, root: usize, r: &crate::syntax::Reading, remember: &[String], word: Option<&str>) -> Result<(), String> {
     use crate::syntax::ReadKind;
     let end = root + out[root].size;
     let mut gone = Vec::new();
@@ -624,6 +670,8 @@ fn reread(out: &mut Vec<Node>, root: usize, r: &crate::syntax::Reading) -> Resul
                 continue;
             }
             ReadKind::Gone => gone.push(i),
+            // `K as C`, `C` a `remember` choice: the level's word's kind.
+            ReadKind::As(m) if remember.contains(&m) => out[i].kind = word.ok_or("a word's kind, and no word")?.to_owned(),
             ReadKind::As(m) => out[i].kind = m,
         }
         i += 1;
@@ -669,7 +717,7 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         return Err("more than 64 marks and soft keywords".into());
     }
     let extra_at = extras.iter().map(|e| e.1.start).collect();
-    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, dissolved: None, fatal: None };
+    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, dissolved: None, fatal: None, word: None, flags: Vec::new() };
     first_of(&mut p);
     // A whole root is opened at byte 0 and matched by its content, which may be empty. Marks
     // before the first token are kept where the root can start with them.

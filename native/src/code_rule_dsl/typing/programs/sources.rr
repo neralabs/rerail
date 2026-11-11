@@ -1,0 +1,40 @@
+// P1, `sources` (decision 0104): the run's source files, each loaded as a document. A later phase takes its documents
+// from what this one hands on, and lists and parses no file itself.
+//
+// A document's tape is two ordinary rules, kept as any relation is:
+//
+// ```text
+// # the observer states                       the key                              the result
+// observer__source_file("a.py", "python",     doc_key("a.py", "9f2c…", "python",   doc_tape("a.py", t)
+//                       "9f2c…").                     "tape-1").                   (t: the loaded document's tape)
+// ```
+//
+// The key is what decides whether a tape is still right: the file's content, its grammar and the tape's version.
+// Each key asks for its file as a document (`load`, answered inside the fixed point). The loader parses it, or finds
+// the tape of that content stored. An unchanged key is no delta, so its file is not asked again: the requests and
+// their answers are kept as any stratum's reads are.
+
+#include "core.rr"
+
+.phase sources
+.export document
+
+// The observer's facts (decision 0104, rule 1): each source file of the run's tree, its grammar (by its name) and its
+// content's SHA-256, hex. Handed to this phase as an earlier phase's exports are: inputs of the run, one set for it.
+.decl observer__source_file(p: symbol, g: symbol, c: symbol)
+
+// The key.
+.decl doc_key(p: symbol, c: symbol, g: symbol, v: symbol)
+doc_key(p, c, g, "tape-1") :- observer__source_file(p, g, c).
+
+// Each key's file, asked for as a document named by its path: `loaded` gives it by its canonical path.
+load(p, p, g) :- doc_key(p, _, g, _).
+
+// The result: the loaded document's tape.
+.decl doc_tape(p: symbol, t: tape)
+doc_tape(p, t) :- doc_key(p, _, g, _), loaded(f, p, g), doc(d, f, p), tape_of(d, t).
+.cache doc_tape by doc_key
+
+// What a later phase takes: each source file that is a document, with its grammar and content.
+.decl document(p: symbol, g: symbol, c: symbol)
+document(p, g, c) :- doc_key(p, c, g, _), doc_tape(p, _).

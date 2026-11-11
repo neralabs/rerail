@@ -89,3 +89,22 @@ the answer part of that value's fixpoint.
 1. Measure the eager relations 0083 §4 names as searches before writing any: `wbind`, `gpar`, `lgpar`, `lcbind`
    (t27: `wbind` was 2.7 M join work for 23 rows) first.
 2. Write as demand rules only those that are the cost, and measure again.
+
+Measured 2026-11-10 (step 1): P3 cold, with a profile, over the 84-file small corpus (6,410 calls agree with jedi), at
+load 23 to 57. Join work by the relation a rule derives, of 30.9 M in all (43.6 s of join CPU):
+
+| Relation | Join work | Share | CPU |
+|---|---|---|---|
+| `lcbind` | 315,894 | 1.02% | 0.12 s |
+| `lgpar` | 281,306 | 0.91% | 0.08 s |
+| `wbind` | 102,788 | 0.33% | 0.02 s |
+| `gpar` | 69,258 | 0.22% | 0.02 s |
+| `found` | 7,107 | 0.02% | 0.02 s |
+| `lfound` | 5,183 | 0.02% | 0.02 s |
+| `lwbind` | 4,328 | 0.01% | 0.01 s |
+| `gbind` | 1,242 | 0.00% | 0.00 s |
+
+Together 2.5% of the work and 0.3 s. `wbind` was 2.7 M for 23 rows at t27; the closures and the dropped columns
+(0098) since took that. None is the cost, so none is written as a search: step 2 has nothing to do. The cost is
+elsewhere: `py_try` (4.5 M, the stub search that requests answer), `tv` (1.9 M) and `tbv` (1.0 M, with its copy in
+the annotations, 1.7 M).

@@ -261,7 +261,7 @@ pub(crate) fn build_in_wave_with_tape(
                 vec![(key, Some(std::sync::Arc::clone(&tape) as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
                 Box::new(move |store| {
                     let (id, _) = store.put_source_and_tape(source.as_bytes(), HashKey::from_sha256_digest(digest), tag, gv, fv, &held)?;
-                    if let Some(stored) = stored {
+                    if let Some(stored) = &stored {
                         stored.lock().expect("the stored sources").push(id);
                     }
                     Ok(())

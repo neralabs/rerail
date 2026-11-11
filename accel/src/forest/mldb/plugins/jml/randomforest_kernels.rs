@@ -162,6 +162,19 @@ pub fn assign_partition_numbers_kernel(tree_training_info: &[TreeTrainingInfo], 
         small_side_indexes_out[p as usize] = 0;
     }
 
+    // Stop before writing this level when the next is wider than the partitions or its splits do not fit the pool
+    // (as the Metal kernel).
+    if depth != 0 && tree_depth_info[0].status != 0 {
+        return;
+    }
+    let num_continuing = num_active_partitions - inactive_partitions.len() as u32;
+    let next_num_active = num_active_partitions + num_continuing.saturating_sub(inactive_partitions.len() as u32);
+    let next_num_finished = if depth == 0 { 0 } else { tree_depth_info[0].num_finished_partitions } + num_active_partitions;
+    if next_num_active > max_num_active_partitions || next_num_finished as u64 + next_num_active as u64 > tree_training_info[0].max_num_finished_partitions as u64 {
+        tree_depth_info[0].status = crate::forest::randomforest_types::TREE_DEPTH_STATUS_STOPPED;
+        return;
+    }
+
     let (mut n, mut n2) = (0usize, num_active_partitions);
     let mut ssi: u16 = 0;
 
@@ -647,7 +660,7 @@ mod tests {
         let active = [0u32, 1];
         let ordinal = [1u32, 0];
         let max_parts = 4usize;
-        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: 2, num_features: 2, max_num_active_partitions: max_parts as u16, num_active_buckets: total_buckets, ..Default::default() }];
+        let tti = [TreeTrainingInfo { num_rows: nr, max_depth: 4, num_active_features: 2, num_features: 2, max_num_active_partitions: max_parts as u16, num_active_buckets: total_buckets, max_num_finished_partitions: u32::MAX, ..Default::default() }];
         let mut tdi = [TreeDepthInfo::default()];
 
         // Depth 0: the root's buckets and wAll.

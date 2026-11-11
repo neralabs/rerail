@@ -538,6 +538,8 @@ pub(super) struct CoreRows {
     pub(super) skip: Skip,
     /// The node kinds whose `text` is made at any length (`Projection::long_text`).
     pub(super) long_text: BTreeSet<String>,
+    /// Every node's `text` at any length (`Projection::long_text_any`).
+    pub(super) long_text_any: bool,
     op: Vec<[i64; 2]>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
@@ -764,7 +766,7 @@ impl CoreRows {
                 }
             }
         }
-        if wants_text && (token_like || text.len() <= TEXT_INLINE || self.long_text.contains(kind)) {
+        if wants_text && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
             self.text.push([n, string(text) as i64]);
         }
     }
