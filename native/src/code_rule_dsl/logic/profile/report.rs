@@ -556,7 +556,7 @@ result(n) :- selected(n).
 "#,
         )
         .unwrap();
-        super::super::analysis_report::projection(&p, &BTreeSet::from(["text".into()]));
+        super::super::analysis_report::projection(&p, &std::collections::BTreeSet::from(["text".into()]));
         let decisions = super::super::decisions();
         super::super::set(false);
         assert!(
