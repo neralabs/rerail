@@ -1823,3 +1823,76 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
     assert!(documents > 0 && checked_detects);
     println!("{documents} documents, {nodes} nodes, {memberships} memberships: all equal the cursor's");
 }
+
+/// A JSON file's tape from the Bitlex parser, and from tree-sitter-json: `None` where the Bitlex
+/// parser refuses the file (`Some` of each tape's bytes otherwise).
+fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    let columns = crate::code_rule_dsl::transducer::packed::json_parser::columns(source)?;
+    let ours = TapeImage::encode_columns(&grammar, source, &columns, &|| false).unwrap().to_bytes().unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let tree = parser.parse(source, None).unwrap();
+    let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary.to_bytes().unwrap();
+    Some((ours, theirs))
+}
+
+/// The Bitlex parser's JSON tapes are tree-sitter-json's, byte for byte: kinds, fields, spans,
+/// extras (comments) and the `_value` supertype; and an invalid file is refused, so it goes to
+/// tree-sitter-json.
+#[test]
+fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
+    assert_eq!(crate::code_rule_dsl::transducer::packed::json_parser::compile_error(), None);
+    for source in [
+        "{}",
+        "[]",
+        "null\n",
+        "{\"a\": 1, \"b\": [true, false, null], \"c\": {\"d\": \"e\\n\\u00e9\"}}\n",
+        "[1, -2.5e10, 0, 3.0E-2]",
+        "// a comment\n{\n  \"a\": 1, /* inline */ \"b\": 2\n}\n// trailing\n",
+        "\u{feff}{\"bom\": true}",
+        "{\"nested\": [[[{\"x\": [1, {\"y\": []}]}]]]}",
+        "  \n\t{ \"spaced\" :\t[ 1 ,2 ] }  \n",
+    ] {
+        let (ours, theirs) = json_tapes(source).unwrap_or_else(|| panic!("refused {source:?}"));
+        assert!(ours == theirs, "the tapes of {source:?} differ");
+    }
+    // JSON allows an exponent's sign; tree-sitter-json refuses `+`, so these tapes are the Bitlex parser's alone.
+    for source in ["1e+2", "[1.5E+3]"] {
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::columns(source).is_some(), "refused {source:?}");
+    }
+    for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", ""] {
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::columns(invalid).is_none(), "accepted {invalid:?}");
+    }
+}
+
+/// [`json_tapes_from_the_bitlex_parser_are_tree_sitters`] over files: `RERAIL_JSON_FILES`, a file
+/// listing one path a line. Each file the Bitlex parser accepts has tree-sitter-json's tape; the
+/// refused files are counted.
+#[test]
+#[ignore = "needs files: run by name with RERAIL_JSON_FILES"]
+fn json_tapes_over_files() {
+    let list = std::fs::read_to_string(std::env::var("RERAIL_JSON_FILES").expect("set RERAIL_JSON_FILES")).unwrap();
+    let (mut equal, mut refused, mut corrected, mut differ) = (0, Vec::new(), Vec::new(), Vec::new());
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    for path in list.lines().filter(|l| !l.is_empty()) {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        match json_tapes(&source) {
+            None => refused.push(path.to_owned()),
+            Some((ours, theirs)) if ours == theirs => equal += 1,
+            // tree-sitter-json finds an error in a file the Bitlex parser accepts (it refuses an exponent's `+`,
+            // which JSON allows: `1e+2`): the Bitlex tree is the right one.
+            Some(_) if parser.parse(&source, None).is_some_and(|t| t.root_node().has_error()) => corrected.push(path.to_owned()),
+            Some(_) => differ.push(path.to_owned()),
+        }
+    }
+    eprintln!("{equal} equal, {} refused, {} where tree-sitter finds an error, {} differ", refused.len(), corrected.len(), differ.len());
+    for p in refused.iter().take(20) {
+        eprintln!("refused: {p}");
+    }
+    for p in corrected.iter().take(20) {
+        eprintln!("tree-sitter's error: {p}");
+    }
+    assert!(differ.is_empty(), "tapes differ:\n{}", differ.join("\n"));
+}

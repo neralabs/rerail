@@ -290,6 +290,13 @@ CREATE TABLE IF NOT EXISTS facts_results (
     frame BLOB NOT NULL,
     PRIMARY KEY (source_id, fact_schema, path, plan_digest)
 ) STRICT, WITHOUT ROWID;
+-- Neural Engine models compiled on this machine (decision 0098 §3): a compiled model's archive under the digest of
+-- its template and its fixed relation. A JIT-compiled model is a fact of the store, read back by later runs; an AOT
+-- one is part of the executable. Additive and referencing nothing, so the floor stays.
+CREATE TABLE IF NOT EXISTS accel_models (
+    model_key BLOB NOT NULL PRIMARY KEY CHECK(length(model_key) = 32),
+    archive BLOB NOT NULL
+) STRICT, WITHOUT ROWID;
 -- Bit i of `words` (little-endian u64s): the set's clause i ran with nothing to report; its
 -- counts are in the `counts` frame. A clear bit is unknown, never absent.
 CREATE TABLE IF NOT EXISTS facts_completions (

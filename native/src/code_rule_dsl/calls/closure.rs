@@ -246,7 +246,7 @@ fn parallel<I: Sync, R: Send>(items: &[I], work: impl Fn(&I) -> R + Sync + Send)
     if items.len() < 256 {
         items.iter().map(work).collect()
     } else {
-        crate::WORK_POOL.install(|| items.par_iter().map(work).collect())
+        items.par_iter().map(work).collect()
     }
 }
 
@@ -1035,10 +1035,7 @@ impl Graph {
                 relay_callers(file, first, changes);
             }
         } else {
-            crate::WORK_POOL.install(|| {
-                jobs.par_iter_mut()
-                    .for_each(|(_, file, changes)| relay_callers(file, first, changes))
-            });
+            jobs.par_iter_mut().for_each(|(_, file, changes)| relay_callers(file, first, changes));
         }
         for (slot, file, _) in jobs {
             self.slots[slot as usize] = Some(file);

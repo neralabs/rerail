@@ -155,6 +155,11 @@ fn named_errors() {
     assert!(matches!(parse(unbound), Err(Error::UnboundedValueCycle { .. })));
     let same = ".decl g(k: symbol, r: symbol)\ng(\"N\", \"a\").\ng(\"N\", @cat(n, \"a\")) :- g(\"N\", n).\n";
     assert!(matches!(parse(same), Err(Error::UnboundedValueCycle { .. })));
+    // A value bounded above and below by integers takes finitely many values, as a table of them would bind it
+    // (python/lengths' `t >= 0, t <= 100000`); bounded one way only, it does not.
+    let product = |bounds: &str| format!(".decl e(a: node, b: node)\n.input e\n.decl len(n: node, k: number)\nlen(n, 1) :- e(n, _).\nlen(n, t) :- e(n, m), len(m, k), len(n, w), t = @mul(k, w){bounds}.\n");
+    assert!(parse(&product(", t >= 0, t <= 100000")).is_ok(), "{:?}", parse(&product(", t >= 0, t <= 100000")).err());
+    assert!(matches!(parse(&product(", t <= 100000")), Err(Error::UnboundedValueCycle { .. })));
     // A derived relation's guarantee carries the bound (`attr_of` in T's calls.rdl).
     let derived = format!("{decls}.decl at(n: node, o: node)\nat(n, o) :- field(n, \"object\", o).\nq(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- at(n, o), q(o, p), nm(n, s).\n");
     assert!(parse(&derived).is_ok());

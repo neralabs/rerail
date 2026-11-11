@@ -488,7 +488,9 @@ pub(super) fn gap(re: &str, g: &str) -> Option<usize> {
 /// What bounds a rule's made values (rule 1 of the module's).
 struct Bounds<'a> {
     rule: &'a Rule,
-    /// The variables bound outside the component: finitely many values each, fixed while it runs.
+    /// The variables bound outside the component, and those the rule bounds above and below by integers (`$t >= 0,
+    /// $t <= 100000`: a whole number between two, as a table of them would bind it): finitely many values each,
+    /// fixed while it runs.
     outside: BTreeSet<String>,
 }
 
@@ -503,6 +505,21 @@ impl<'a> Bounds<'a> {
                 }
                 Literal::Nearest { .. } | Literal::Ast { .. } => outside.extend(l.vars()),
                 _ => {}
+            }
+        }
+        let bound = |v: &String, below: bool| {
+            rule.body.iter().any(|l| match l {
+                Literal::Cmp { l: Term::Var(x), op, r: Term::Int(_) } if x == v => if below { matches!(*op, ">" | ">=") } else { matches!(*op, "<" | "<=") },
+                Literal::Cmp { l: Term::Int(_), op, r: Term::Var(x) } if x == v => if below { matches!(*op, "<" | "<=") } else { matches!(*op, ">" | ">=") },
+                _ => false,
+            })
+        };
+        for l in &rule.body {
+            if let Literal::Cmp { l: Term::Var(v), r: Term::Int(_), .. } | Literal::Cmp { l: Term::Int(_), r: Term::Var(v), .. } = l
+                && bound(v, true)
+                && bound(v, false)
+            {
+                outside.insert(v.clone());
             }
         }
         Bounds { rule, outside }

@@ -25,7 +25,7 @@ pub(crate) mod unparse;
 pub(crate) mod value;
 
 #[cfg(test)]
-mod parity;
+pub(crate) mod parity;
 #[cfg(test)]
 mod tests;
 

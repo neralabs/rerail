@@ -12,19 +12,18 @@ use super::{
     OverlayFilePublication, PublicationResult, STRING_CLAUSE_KEY, STRING_PATH, SourceId,
     StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId,
 };
-use crate::WORK_POOL;
 use rayon::prelude::*;
 use rusqlite::limits::Limit;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 type PublicationTestHook = RefCell<Option<Box<dyn FnOnce()>>>;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Run on the publishing thread, so a hook never fires in another test's publication.
     pub(super) static AFTER_PUBLICATION_READ_HOOK: PublicationTestHook =
@@ -33,7 +32,7 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn run_publication_test_hook(hook: &'static std::thread::LocalKey<PublicationTestHook>) {
     if let Some(hook) = hook.take() {
         hook();
@@ -112,7 +111,7 @@ impl ContentStore {
                 "overlay publication batch must contain 1 to {MAX_PUBLICATION_BATCH} files"
             )));
         }
-        let identities = WORK_POOL.install(|| {
+        let identities = (|| {
             publications
                 .par_iter()
                 .map(|publication| {
@@ -130,7 +129,7 @@ impl ContentStore {
                     ))
                 })
                 .collect::<StoreResult<Vec<_>>>()
-        })?;
+        })()?;
         let candidate_identities = publication_candidate_identities(publications);
         // Path identities are hashed once, before any transaction takes the write lock.
         let path_hashes = publications
@@ -158,7 +157,7 @@ impl ContentStore {
         let initial_objects = existing.clone();
         // Source and tape are always independent Zstandard frames.
         // Hashing, lookup, compression, and validation finish before the transaction starts.
-        let mut prepared: Vec<PreparedOverlayPublication<'_>> = WORK_POOL.install(|| {
+        let mut prepared: Vec<PreparedOverlayPublication<'_>> = (|| {
             identities
                 .into_par_iter()
                 .zip(existing.into_par_iter())
@@ -195,7 +194,7 @@ impl ContentStore {
                     },
                 )
                 .collect::<StoreResult<Vec<_>>>()
-        })?;
+        })()?;
         let reused_sources = prepared.iter().filter(|item| item.2.is_some()).count();
         let reused_tapes = prepared.iter().filter(|item| item.5.is_some()).count();
         let compressed_sources = prepared.len() - reused_sources;
@@ -241,7 +240,7 @@ impl ContentStore {
         let (stored_objects, path_ids, known_interned) = if initial_complete {
             (initial_objects, initial_path_ids, initial_interned)
         } else {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             run_publication_test_hook(&AFTER_PUBLICATION_READ_HOOK);
             let mut current_objects = initial_objects;
             let mut current_path_ids = initial_path_ids;
@@ -277,7 +276,7 @@ impl ContentStore {
                         .expect("content store connection unavailable");
                     let transaction =
                         connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-hooks"))]
                     let _write_lock = super::WriteLockSection::enter();
                     let started = Instant::now();
                     let statement_count = execute_object_pass(&transaction, &object_pass)?;
@@ -387,7 +386,7 @@ impl ContentStore {
             &known_interned,
             variable_limit,
         )?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         run_publication_test_hook(&BEFORE_RELATIONSHIP_WRITE_HOOK);
         let (elapsed, statement_count, current) = retry_busy(busy, || {
             if cancelled() {
@@ -401,7 +400,7 @@ impl ContentStore {
                 .expect("content store connection unavailable");
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             let _write_lock = super::WriteLockSection::enter();
             let transaction_started = Instant::now();
             if !relationship_references_current(

@@ -86,6 +86,10 @@ pub(super) fn add(prog: &mut front::Program) -> Result<()> {
     for (rel, cols) in components.decls.into_iter().filter(|(rel, _)| missing.contains(rel)) {
         prog.decls.insert(rel, cols);
     }
+    // And what it keeps (`.decl rr_cx_edge(…) no_inline`, decision 0099).
+    for (rel, words) in components.qualifiers.into_iter().filter(|(rel, _)| missing.contains(rel)) {
+        prog.qualifiers.entry(rel).or_default().extend(words);
+    }
     for (rel, rows) in components.facts.into_iter().filter(|(rel, _)| missing.contains(rel)) {
         prog.facts.entry(rel).or_insert(rows);
     }
@@ -300,6 +304,9 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     cross.decls.insert(DOCS.to_owned(), vec![("d".to_owned(), "int".to_owned())]);
     cross.inputs.push(DOCS.to_owned());
     for rel in memo.keys() {
+        // Stored, never inlined into its readers (decision 0099): its derived rows are read from its table to be
+        // recorded (`record`), and replayed into it.
+        cross.qualifiers.entry(rel.clone()).or_default().insert("no_inline".to_owned());
         let cols = cross.decls[rel].clone();
         let input = format!("{rel}{SUFFIX}");
         let vars: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("rr_x{i}"))).collect();

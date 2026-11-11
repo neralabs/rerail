@@ -16,7 +16,7 @@
 //! Every reader of a store frame goes through [`decompress`], [`decompress_into`],
 //! [`decompress_head`] or [`decompress_chunks`].
 
-use rustc_hash::FxHashMap;
+use std::collections::HashMap;
 use std::cell::RefCell;
 use std::io;
 use zstd::stream::raw::{Decoder, Encoder, InBuffer, Operation, OutBuffer};
@@ -46,7 +46,7 @@ macro_rules! dictionary {
             id: $id,
             tags: $tags,
             content: Content::$content,
-            bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/dictionaries/", $file)),
+            bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../dictionaries/", $file)),
         }
     };
 }
@@ -85,15 +85,15 @@ thread_local! {
     /// This thread's plain context, with the level it was set to.
     static ENCODER: RefCell<Option<(i32, Encoder<'static>)>> = const { RefCell::new(None) };
     /// This thread's contexts with a dictionary loaded, by dictionary id: (level, context).
-    static DICT_ENCODERS: RefCell<FxHashMap<u32, (i32, Encoder<'static>)>> = RefCell::new(FxHashMap::default());
+    static DICT_ENCODERS: RefCell<HashMap<u32, (i32, Encoder<'static>)>> = RefCell::new(HashMap::new());
     /// This thread's decompression contexts, by dictionary id (0: none).
-    static DECODERS: RefCell<FxHashMap<u32, Decoder<'static>>> = RefCell::new(FxHashMap::default());
+    static DECODERS: RefCell<HashMap<u32, Decoder<'static>>> = RefCell::new(HashMap::new());
 }
 
 /// `bytes` as one plain zstd frame at `level`, byte for byte what `encode_all` writes: streamed,
 /// so the frame header carries no content size. For store-internal blobs (results, pages, memo
 /// entries); sources and tapes use [`compress_source`] and [`compress_tape`].
-pub(crate) fn compress(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
+pub fn compress(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
     ENCODER.with_borrow_mut(|slot| {
         let encoder = match slot {
             Some((known, encoder)) if *known == level => {
@@ -122,14 +122,24 @@ pub(crate) fn compress_tape(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
     compress_as(bytes, level, tape_tag(bytes).and_then(|tag| dictionary_for(tag, Content::Tape)))
 }
 
-/// The tape tag of a stored tape image (`code_rule_dsl::tape`'s header), if `bytes` is one.
+/// How a writer finds a frame's language: the tape tag of a stored tape image, and of the language a file at a
+/// path is parsed as. The engine knows both (`code_rule_dsl::tape`'s header, its languages) and sets them as it
+/// loads. Before that, or without them, a writer uses no dictionary; every reader decodes either frame.
+static LANGUAGE_TAGS: std::sync::OnceLock<(fn(&[u8]) -> Option<u8>, fn(&str) -> Option<u8>)> = std::sync::OnceLock::new();
+
+/// Sets how a writer finds a frame's language (`LANGUAGE_TAGS`); the first setting stays.
+pub fn set_language_tags(tape: fn(&[u8]) -> Option<u8>, path: fn(&str) -> Option<u8>) {
+    let _ = LANGUAGE_TAGS.set((tape, path));
+}
+
+/// The tape tag of a stored tape image, if `bytes` is one.
 pub(crate) fn tape_tag(bytes: &[u8]) -> Option<u8> {
-    crate::code_rule_dsl::stored_tape_tag(bytes)
+    LANGUAGE_TAGS.get().and_then(|(tape, _)| tape(bytes))
 }
 
 /// The tape tag of the language a file at `path` is parsed as.
 pub(crate) fn path_tag(path: &str) -> Option<u8> {
-    crate::code_rule_dsl::path_tape_tag(path)
+    LANGUAGE_TAGS.get().and_then(|(_, of_path)| of_path(path))
 }
 
 /// The tape tag of a file at `path` whose tape (if it has one) is `tape`: the tape's own, else
@@ -165,7 +175,7 @@ fn compress_as(bytes: &[u8], level: i32, dictionary: Option<&'static Dictionary>
 
 /// A store frame's bytes, plain or with the dictionary its header names. `capacity` is the
 /// expected length, when the caller knows it (a hint; the frame decides).
-pub(crate) fn decompress(frame: &[u8], capacity: usize) -> io::Result<Vec<u8>> {
+pub fn decompress(frame: &[u8], capacity: usize) -> io::Result<Vec<u8>> {
     with_decoder(frame, |decoder| {
         let mut out = Vec::with_capacity(capacity.max(64));
         let mut input = InBuffer::around(frame);
@@ -185,7 +195,7 @@ pub(crate) fn decompress(frame: &[u8], capacity: usize) -> io::Result<Vec<u8>> {
 }
 
 /// A store frame decompressed into `out`, which must be exactly its length.
-pub(crate) fn decompress_into(frame: &[u8], out: &mut [u8]) -> io::Result<()> {
+pub fn decompress_into(frame: &[u8], out: &mut [u8]) -> io::Result<()> {
     with_decoder(frame, |decoder| {
         let mut input = InBuffer::around(frame);
         let mut output = OutBuffer::around(out);
@@ -208,7 +218,7 @@ pub(crate) fn decompress_into(frame: &[u8], out: &mut [u8]) -> io::Result<()> {
 }
 
 /// The first `n` bytes of a store frame's content, decompressing no more of it than they need.
-pub(crate) fn decompress_head(frame: &[u8], n: usize) -> io::Result<Vec<u8>> {
+pub fn decompress_head(frame: &[u8], n: usize) -> io::Result<Vec<u8>> {
     with_decoder(frame, |decoder| {
         let mut out = vec![0; n];
         let mut input = InBuffer::around(frame);
@@ -225,7 +235,7 @@ pub(crate) fn decompress_head(frame: &[u8], n: usize) -> io::Result<Vec<u8>> {
 }
 
 /// A store frame's content in chunks of at most 64 KB, in order, without holding all of it.
-pub(crate) fn decompress_chunks(frame: &[u8], mut each: impl FnMut(&[u8])) -> io::Result<()> {
+pub fn decompress_chunks(frame: &[u8], mut each: impl FnMut(&[u8])) -> io::Result<()> {
     with_decoder(frame, |decoder| {
         let mut chunk = vec![0; 1 << 16];
         let mut input = InBuffer::around(frame);

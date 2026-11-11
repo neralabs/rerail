@@ -10,6 +10,7 @@
 //! on purpose: a run of four backticks or more, braces nested past 127.
 
 use super::bitlex_compile;
+use super::native_cpu_stream::{Columns, NO_PARENT};
 use super::{native_cpu_stream, native_ir, rir};
 use crate::code_rule_dsl::logic::rr;
 use std::cell::RefCell;
@@ -22,12 +23,21 @@ const GRAMMAR: &str = include_str!("bitlex_ladder/rr/20-json-depth.bitlex");
 /// tape.
 const OWN_IDS: u16 = 0x4000;
 
-/// The compiled parser, and which kinds are extras (comments).
+/// The compiled parser.
 pub(super) struct Compiled {
     pub(super) parser: native_cpu_stream::Parser,
-    extra: Vec<u16>,
     /// Tier 1's cost by grammar statement, for the profile.
     pub(super) costs: Vec<bitlex_compile::Cost>,
+    /// Each tier 1 operation's statement (`bitlex_compile::Compiled::origin`), for the profile.
+    pub(super) origin: Vec<String>,
+    /// Tier 1's named values (`bitlex_compile::Compiled::values`), for the analyses (`token_local`).
+    pub(super) values: Vec<bitlex_compile::Named>,
+    /// Tier 1's block program, as assembled.
+    pub(super) block: super::block::BlockProgram,
+    /// Each output's label (`bitlex_compile::Compiled::labels`).
+    pub(super) labels: Vec<(String, u16)>,
+    /// Tier 1's program as lowered, for its other executors (Metal).
+    pub(super) native: super::native_ir::BlockNative,
     /// Tier 1's block program as text, for the profile's operation mix.
     pub(super) rows: String,
     /// Tier 2's words and its state machine as text, for the profile.
@@ -67,51 +77,88 @@ fn compile() -> Result<Compiled, String> {
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program).map_err(|e| format!("lowers: {e:?}"))?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
-    let extra = stmts
-        .iter()
-        .flat_map(|s| match s {
-            ::bitlex::syntax::Stmt::Tree { body, .. } => body.clone(),
-            _ => Vec::new(),
-        })
-        .filter_map(|s| match s {
-            ::bitlex::syntax::Stmt::Extra(kinds) => Some(kinds),
-            _ => None,
-        })
-        .flatten()
-        .map(|k| id(rr::tape::KIND_NAMES, &k))
-        .collect();
-    Ok(Compiled { parser, extra, costs: compiled.costs.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs()[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
 }
 
-/// `src`'s tape, as `logic::rr::tape` gives it: from the compiled grammar, or from the engine's
-/// parser for a file the grammar refuses.
-pub(in crate::code_rule_dsl) fn tape(src: &str) -> Vec<rr::tape::Node> {
-    compiled_tape(src).unwrap_or_else(|| rr::tape(src))
+/// `src`'s node table, as tier 2 writes it: from the compiled grammar, or, for a file the grammar
+/// refuses, from the engine's parser (`logic::rr::tape`) in the same columns.
+pub(in crate::code_rule_dsl) fn tape(src: &str) -> Columns {
+    compiled_tape(src).unwrap_or_else(|| engine_columns(&rr::tape(src)))
 }
 
-/// The compiled grammar's tape, or `None` where it refuses the file (or did not compile).
-pub(in crate::code_rule_dsl) fn compiled_tape(src: &str) -> Option<Vec<rr::tape::Node>> {
-    let c = compiled().ok()?;
-    let nodes = c.parser.parse(src.as_bytes()).ok()?;
-    Some(nodes_to_tape(c, &nodes))
+/// The compiled grammar's node table, or `None` where it refuses the file (or did not compile).
+/// Every column is the compiled code's: kinds, fields, spans and sizes from tier 2's words,
+/// parents and extra flags from its final pass.
+pub(in crate::code_rule_dsl) fn compiled_tape(src: &str) -> Option<Columns> {
+    compiled().ok()?.parser.columns(src.as_bytes()).ok()
 }
 
-/// The compiled parser's nodes as the engine's tape nodes: each node's parent, from preorder and
-/// sizes, and its extra flag.
-pub(super) fn nodes_to_tape(c: &Compiled, nodes: &[super::stream::Node]) -> Vec<rr::tape::Node> {
-    {
-        // Preorder with sizes: each node's parent is the nearest open node before it.
-        let mut out = Vec::with_capacity(nodes.len());
-        let mut open: Vec<(u32, usize)> = Vec::new();
-        for (i, n) in nodes.iter().enumerate() {
-            while open.last().is_some_and(|&(_, end)| end <= i) {
-                open.pop();
-            }
-            out.push(rr::tape::Node { kind: n.kind, field: n.field, start: n.start, end: n.end, parent: open.last().map(|o| o.0), extra: c.extra.contains(&n.kind) });
-            open.push((i as u32, i + n.size as usize));
+/// The node tables of `files`, in order, as `tape` gives each: tier 1 over the whole batch on
+/// the device (Metal's forward carry), then tier 2 over each file reading tier 1's buffers where
+/// the device left them; without a device, `tape` file by file.
+pub(in crate::code_rule_dsl) fn tapes(files: &[&str]) -> Vec<Columns> {
+    let mut out = Vec::with_capacity(files.len());
+    #[cfg(target_os = "macos")]
+    if let Ok(c) = compiled() {
+        if metal_tapes(c, files, &mut out) {
+            return out;
         }
-        out
+        out.clear();
     }
+    for file in files {
+        out.push(tape(file));
+    }
+    out
+}
+
+/// Tier 1's segments on the device: 29 blocks and a warm-up block each side, a SIMD group.
+#[cfg(target_os = "macos")]
+const SEGMENTS: super::metal_program_backend::block_program::serial::Segments = super::metal_program_backend::block_program::serial::Segments { blocks: 29, warm: 1 };
+
+/// `tapes` on Metal: halves while the device refuses the batch for capacity; `false` when it
+/// cannot run it at all.
+#[cfg(target_os = "macos")]
+fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Columns>) -> bool {
+    use super::metal_program_backend::block_program::serial::run_resident;
+    let mut batch = Vec::with_capacity(files.len());
+    for file in files {
+        batch.push(super::block::BatchFile { bytes: file.as_bytes(), program: 0 });
+    }
+    match run_resident(&[&c.native], &batch, SEGMENTS) {
+        Ok((_, run)) => {
+            let mut i = 0;
+            for file in files {
+                out.push(c.parser.columns_on(&run, i).unwrap_or_else(|_| engine_columns(&rr::tape(file))));
+                i += 1;
+            }
+            true
+        }
+        Err(super::Error::BackendCapacity) if files.len() > 1 => {
+            let (a, b) = files.split_at(files.len() / 2);
+            metal_tapes(c, a, out) && metal_tapes(c, b, out)
+        }
+        Err(_) => false,
+    }
+}
+
+/// The fallback: the engine's parser's nodes, in the compiled parser's columns.
+pub(in crate::code_rule_dsl) fn engine_columns(nodes: &[rr::tape::Node]) -> Columns {
+    let mut c = Columns { size: vec![1; nodes.len()], ..Columns::default() };
+    for n in nodes {
+        c.kind.push(u32::from(n.kind));
+        c.field.push(u32::from(n.field));
+        c.start.push(n.start);
+        c.end.push(n.end);
+        c.parent.push(n.parent.unwrap_or(NO_PARENT));
+        c.extra.push(u8::from(n.extra));
+    }
+    // In preorder a node comes after its parent: sizes from the last node back.
+    for (i, n) in nodes.iter().enumerate().rev() {
+        if let Some(p) = n.parent {
+            c.size[p as usize] += c.size[i];
+        }
+    }
+    c
 }
 
 /// Why the grammar did not compile, if it did not: a test's check.
@@ -121,7 +168,7 @@ pub(super) fn compile_error() -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     /// The compiled grammar's tape is the engine's, node for node (extras and parents too), on
     /// documents it parses; the ones it leaves to the engine come back from there.
     #[test]
@@ -134,13 +181,158 @@ mod tests {
         ];
         for src in parsed {
             assert!(super::compiled_tape(src).is_some(), "the grammar refuses {src:?}");
-            assert_eq!(super::tape(src), super::rr::tape(src), "{src:?}");
+            assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
         }
         let deep = format!(".policy {{\"a\": {}{}}}", "[".repeat(127), "]".repeat(127));
         for src in ["r(x) :- x ~ ````a````.", deep.as_str(), "r(x) :- ."] {
             assert!(super::compiled_tape(src).is_none(), "the grammar takes {src:?}");
-            assert_eq!(super::tape(src), super::rr::tape(src), "{src:?}");
+            assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
         }
+    }
+
+    /// The parse path is the compiled code's: the host functions around the two compiled calls
+    /// (layout, buffers, the columns taken) hold no loop over bytes, tokens or nodes, and call
+    /// no Rust that walks them. Each function on the path is read from its source and refused if
+    /// its body has a loop or an iterator walk; the only loops allowed are over a batch's files
+    /// and over tier 1's compiled passes. The engine's parser, for a file the grammar refuses, is
+    /// the one way out of the path. The compiled code's own loops are checked where it is
+    /// made (`native_cpu_shape`: each loop steps a block, a token or a record, never a byte).
+    #[test]
+    fn the_parse_path_is_compiled_code() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer/packed");
+        let read = |f: &str| std::fs::read_to_string(dir.join(f)).expect("the source");
+        // The body of the function whose signature starts with `head`.
+        let body = |src: &str, head: &str| -> String {
+            let at = src.find(head).unwrap_or_else(|| panic!("no `{head}`"));
+            let open = at + src[at..].find('{').expect("a body");
+            let mut depth = 0usize;
+            for (k, ch) in src[open..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return src[open..open + k + 1].to_owned();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            panic!("`{head}`: no end")
+        };
+        let path = [
+            ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn tape(src: &str)"),
+            ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn compiled_tape("),
+            ("native_cpu_stream.rs", "pub(super) fn columns(&self, bytes: &[u8])"),
+            ("native_cpu_stream.rs", "pub(super) fn columns(mut self)"),
+            ("native_cpu_stream.rs", "pub(super) fn tape(&self, batch"),
+            ("native_cpu_stream.rs", "pub(super) fn tape(&self, n: usize)"),
+            ("native_cpu_stream.rs", "pub(super) fn words(&self, batch"),
+            ("native_cpu_stream.rs", "fn stream<'b>(&self"),
+            ("native_cpu_stream.rs", "pub(super) unsafe fn call(&self, bytes"),
+            ("native_cpu_stream.rs", "pub(super) fn columns_on(&self"),
+            ("native_cpu_stream.rs", "unsafe fn call_once(&self"),
+            ("native_cpu_stream.rs", "fn full_tape(&self"),
+            ("native_cpu_stream.rs", "fn sized(&self"),
+            ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn tapes("),
+            ("rr_parser.rs", "fn metal_tapes("),
+            ("../../../../crates/tier1/src/native_cpu_block.rs", "pub fn new(program: &CompiledBlock, files"),
+            ("../../../../crates/tier1/src/native_cpu_block.rs", "pub fn call(&mut self, program: &CompiledBlock)"),
+        ];
+        let walks = [".iter(", ".iter_mut(", ".into_iter(", ".chunks", ".windows(", ".flatten(", ".map(", ".fold(", ".for_each(", ".bytes()", ".chars()", ".collect", ".position(", ".find(", ".any(", ".all(", ".filter(", ".sum(", ".count()", "while ", "loop {", "nodes()"];
+        let loops_allowed = ["for file in files", "for entry in &program.entries"];
+        for (file, head) in path {
+            // The code alone: comments dropped.
+            let b: String = body(&read(file), head).lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+            for w in walks {
+                assert!(!b.contains(w), "{file} `{head}`: `{w}` on the parse path");
+            }
+            for (k, _) in b.match_indices("for ") {
+                assert!(loops_allowed.iter().any(|a| b[k..].starts_with(a)), "{file} `{head}`: a loop on the parse path: {}", &b[k..(k + 40).min(b.len())]);
+            }
+        }
+    }
+
+    /// Tier 1 of the grammar on Metal (the forward carry: its fixed points, its passes for the
+    /// `back_fill`s, its position planes) equals Cranelift's over the corpus as one batch: every
+    /// output word, every position, every total. Prints the GPU time.
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[ignore = "the corpus on Metal: run by hand"]
+    fn tier1_on_metal_equals_cranelift() {
+        use super::super::block;
+        use super::super::metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        let c = super::compiled().expect("compiles");
+        let files = corpus();
+        let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
+        let want = c.parser.tier1.run_files(&refs);
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        let native = &c.native;
+        let got = run_serial_split(&[native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+        let mut differ = 0;
+        for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
+            if g.outputs != w.outputs || g.positions != w.positions || g.totals != w.totals {
+                differ += 1;
+                if differ < 4 {
+                    let o = (0..w.outputs.len()).find(|&o| g.outputs.get(o) != w.outputs.get(o));
+                    eprintln!("file {k} ({} bytes) differs: output {o:?}, positions equal {}, totals {:?} / {:?}", refs[k].len(), g.positions == w.positions, g.totals, w.totals);
+                }
+            }
+        }
+        let bytes: usize = refs.iter().map(|b| b.len()).sum();
+        eprintln!("{} files, {bytes} bytes: {differ} differ; GPU {:.2} ms ({:.2} GB/s), {} launches, {} segments, {} reruns", files.len(), got.run.seconds * 1e3, bytes as f64 / got.run.seconds / 1e9, got.run.launches, got.segments, got.reruns);
+        assert_eq!(differ, 0);
+    }
+
+    /// `tapes` (tier 1 on Metal, tier 2 over its buffers in place) gives `tape`'s tables: on
+    /// small documents, the ones the grammar refuses among them.
+    #[test]
+    fn tapes_are_tape() {
+        let deep = format!(".policy {{\"a\": {}{}}}", "[".repeat(127), "]".repeat(127));
+        let long = "r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n".repeat(200);
+        let files = ["r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n", "r(x) :- ````a````.", ".policy {\"a\": [1, {\"b\": null}]}\n/* d */ r(x) :- x ~ `a`, y = \"s\".", deep.as_str(), "", long.as_str()];
+        let got = super::tapes(&files);
+        #[cfg(target_os = "macos")]
+        {
+            let mut on = Vec::new();
+            assert!(super::metal_tapes(super::compiled().expect("compiles"), &files, &mut on), "Metal runs the batch");
+            assert_eq!(on, got);
+        }
+        for (src, g) in files.iter().zip(&got) {
+            assert_eq!(*g, super::tape(src), "{src:?}");
+        }
+    }
+
+    /// `tapes` over the corpus as one batch equals `tape` file by file. Prints the time.
+    #[test]
+    #[ignore = "the corpus on Metal: run by hand"]
+    fn corpus_tapes_are_tape() {
+        let files = corpus();
+        let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+        let _ = super::compiled();
+        let t = cpu();
+        let got = super::tapes(&refs);
+        eprintln!("tapes: {} files in {:?} CPU", refs.len(), cpu() - t);
+        let differ = refs.iter().zip(&got).filter(|(src, g)| super::tape(src) != **g).count();
+        assert_eq!(differ, 0);
+    }
+
+    /// Tier 2's words by operation, and its state machine's size: what makes the function big.
+    #[test]
+    #[ignore = "a profile: run by hand"]
+    fn rr_words_mix() {
+        let c = super::compiled().expect("compiles");
+        let mut mix: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for l in c.words.lines() {
+            let op = l.split_whitespace().find(|w| w.chars().all(|ch| ch.is_ascii_uppercase() || ch == '_') && w.len() > 1).unwrap_or("?");
+            *mix.entry(op.to_owned()).or_default() += 1;
+        }
+        let mut v: Vec<_> = mix.into_iter().collect();
+        v.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        eprintln!("words: {} lines; machine: {} lines", c.words.lines().count(), c.machine.lines().count());
+        eprintln!("{v:?}");
+        let at = c.words.lines().position(|l| l.contains("TOKEN")).unwrap_or(0) + 30000;
+        eprintln!("lines:\n{}", c.words.lines().skip(at).take(250).collect::<Vec<_>>().join("\n"));
     }
 
     /// The process's CPU time so far, user and sys: the one thread runs alone.
@@ -208,7 +400,7 @@ mod tests {
     }
 
     /// The repository's `.rr` files.
-    fn corpus() -> Vec<String> {
+    pub(in crate::code_rule_dsl::transducer::packed) fn corpus() -> Vec<String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("the repository").to_path_buf();
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
@@ -231,7 +423,10 @@ mod tests {
     /// per stage of `Parser::parse` and of the tape's conversion (each stage summed over the
     /// files, a pass's mean of `REPEAT`); tier 1 over the files as one batch (its speed without
     /// the per-file cost); then hazards in the machine code: its size, its stack spills and
-    /// reloads, its branches and fixed points' loops. `RERAIL_RR_PROF_DIR`: each function's
+    /// reloads, its branches and fixed points' loops; and why tier 1 spills: each pass's
+    /// register pressure in its hot loop before allocation, and the values most live while it
+    /// is over the registers, each named by its row and Bitlex statement
+    /// (`native_cpu_pressure`). `RERAIL_RR_PROF_DIR`: each function's
     /// Cranelift IR and machine code written there, for a closer look. Run alone, at nice 19.
     #[test]
     #[ignore = "a profile: run by hand"]
@@ -243,8 +438,8 @@ mod tests {
         let files = corpus();
         let bytes: usize = files.iter().map(String::len).sum();
         let mb = bytes as f64 / 1e6;
-        let mut stage = [std::time::Duration::ZERO; 6];
-        let names = ["layout (Batch::new)", "tier 1 (masks, extracts)", "tape allocated", "tier 2 (words)", "nodes (Vec<Node>)", "to the engine's tape"];
+        let mut stage = [std::time::Duration::ZERO; 5];
+        let names = ["layout (Batch::new)", "tier 1 (masks, extracts)", "tape allocated", "tier 2 (words)", "columns taken"];
         let (mut nodes_n, mut refused) = (0usize, 0usize);
         for _ in 0..REPEAT {
             for src in &files {
@@ -267,10 +462,8 @@ mod tests {
                     refused += 1;
                     continue;
                 }
-                let nodes = tape.nodes();
+                let out = tape.columns();
                 lap(4, &mut t);
-                let out = super::nodes_to_tape(c, &nodes);
-                lap(5, &mut t);
                 nodes_n += out.len();
             }
         }
@@ -294,7 +487,8 @@ mod tests {
                 used += tape.counts[0] as usize;
             }
         }
-        eprintln!("tape rows: {room} allocated, {used} written ({:.0}x), {} MB zeroed a pass", room as f64 / used.max(1) as f64, room * 4 * 7 / 1_000_000);
+        let retries = super::super::native_cpu_stream::ROOM_RETRIES.load(std::sync::atomic::Ordering::Relaxed);
+        eprintln!("tape rows: {room} allocated, {used} written ({:.1}x), {} MB zeroed a pass; {retries} runs again on the bound's tape (all passes)", room as f64 / used.max(1) as f64, room * 4 * 7 / 1_000_000);
         // Tier 1 alone, every file in one batch.
         let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
         let t = thread_cpu();
@@ -346,6 +540,85 @@ mod tests {
             eprintln!("  pass {k}: {:<8} {:>5} CLIF lines {n:>5} instructions {sp:>5} spills {br:>4} branches; gated {}, loops {}, ASCII branch {}", if pass.back { "backward" } else { "forward" }, pass.clif.lines().count(), pass.gate_branches, pass.round_branches, pass.ascii_branch);
         }
         eprintln!("tier 2 code: {n2} instructions, {sp2} stack loads/stores, {br2} conditional branches");
+        // Why tier 1 spills: what is live where, before register allocation
+        // (`native_cpu_pressure`). Each value is named by the operation that made it (its row
+        // in `tier1.rows`) and the Bitlex statement that made the operation.
+        let mut row_text: std::collections::HashMap<u32, String> = Default::default();
+        for line in c.rows.lines() {
+            if let Some((lhs, rhs)) = line.split_once(" = ")
+                && let Some(k) = lhs.split_whitespace().last().and_then(|v| v.strip_prefix('%')).and_then(|v| v.parse().ok())
+            {
+                row_text.insert(k, rhs.chars().take(28).collect());
+            }
+        }
+        let name = |o: Option<u32>, made: &str| match o {
+            None => format!("{made:<14} (unmarked: the loop's, not a value's)"),
+            Some(o) => {
+                let stmt = c.origin.get(o as usize).filter(|s| !s.is_empty()).map_or("(lowering)", String::as_str);
+                format!("{made:<14} %{o:<5} {:<28} {stmt}", row_text.get(&o).map_or("?", String::as_str))
+            }
+        };
+        use super::super::native_cpu_pressure::{INT_REGS, VEC_REGS};
+        eprintln!("tier 1 register pressure (before allocation; ~{INT_REGS} integer, ~{VEC_REGS} vector registers):");
+        let mut by_stmt: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+        for (k, pass) in p.tier1.passes.iter().enumerate().filter(|(_, pass)| !pass.back) {
+            let q = &pass.pressure;
+            let hp = q.hot_int.len().max(1) as f64;
+            eprintln!(
+                "  pass {k}: hot loop {} points, peak {} integer, {} vector; over the registers at {:.0}% of its points on integer, {:.0}% on vector (whole function {} points, peak {}/{})",
+                q.hot_int.len(),
+                q.hot_int.iter().max().unwrap_or(&0),
+                q.hot_vec.iter().max().unwrap_or(&0),
+                100.0 * q.hot_int_over as f64 / hp,
+                100.0 * q.hot_vec_over as f64 / hp,
+                q.points,
+                q.int_peak,
+                q.vec_peak
+            );
+            // Which statements' values are live at the peak.
+            let mut at: std::collections::BTreeMap<String, usize> = Default::default();
+            for (o, made) in &q.at_peak {
+                let o = *o;
+                let stmt = o.and_then(|o| c.origin.get(o as usize)).filter(|s| !s.is_empty()).cloned().unwrap_or_else(|| if o.is_some() { "(lowering)".into() } else { format!("(unmarked {})", made.split(" of ").next().unwrap_or("")) });
+                *at.entry(stmt).or_default() += 1;
+            }
+            let mut at: Vec<_> = at.into_iter().collect();
+            at.sort_by_key(|a| std::cmp::Reverse(a.1));
+            eprintln!("    live at the hot loop's peak, by statement: {}", at.iter().take(8).map(|(s, n)| format!("{n} {s}")).collect::<Vec<_>>().join("; "));
+            // The hot body's pressure, first to last, in 16 stretches (each its most live).
+            let curve = |v: &[usize]| -> String {
+                let n = v.len().max(1);
+                (0..16).map(|k| v[k * n / 16..((k + 1) * n / 16).max(k * n / 16 + 1).min(v.len())].iter().copied().max().unwrap_or(0).to_string()).collect::<Vec<_>>().join(" ")
+            };
+            if !q.hot_int.is_empty() {
+                eprintln!("    {} integer values live through the hot loop; integer live, first to last: {}", q.hot_through, curve(&q.hot_int));
+                if q.hot_vec.iter().any(|&v| v > 0) {
+                    eprintln!("      vector live, first to last: {}", curve(&q.hot_vec));
+                }
+            }
+            let loops: Vec<&super::super::native_cpu_pressure::Blame> = q.blame.iter().filter(|b| b.origin.is_none()).collect();
+            let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
+            for b in &loops {
+                *kinds.entry(if b.made.starts_with("param") { "parameters" } else { b.made.as_str() }).or_default() += 1;
+            }
+            eprintln!("    the loop's own values over the registers: {} ({})", loops.len(), kinds.iter().map(|(k, n)| format!("{n} {k}")).collect::<Vec<_>>().join(", "));
+            eprintln!("    most blamed of the body's values (points live while over the registers / points live):");
+            for b in q.blame.iter().filter(|b| b.origin.is_some()).take(15) {
+                eprintln!("    {:>6} / {:<6} {} {}", b.over, b.live, if b.vector { "v" } else { "x" }, name(b.origin, &b.made));
+            }
+            for b in &q.blame {
+                let stmt = b.origin.and_then(|o| c.origin.get(o as usize)).filter(|s| !s.is_empty()).cloned().unwrap_or_else(|| if b.origin.is_some() { "(lowering)".into() } else { format!("(unmarked {})", b.made.split(" of ").next().unwrap_or("")) });
+                let e = by_stmt.entry(stmt).or_default();
+                e.0 += b.over;
+                e.1 += 1;
+            }
+        }
+        let mut by_stmt: Vec<_> = by_stmt.into_iter().collect();
+        by_stmt.sort_by_key(|s| std::cmp::Reverse(s.1.0));
+        eprintln!("  blame by statement, the hot loops of all passes (points live while over the registers, values):");
+        for (s, (over, n)) in by_stmt.iter().take(15) {
+            eprintln!("    {over:>7} {n:>5}  {s}");
+        }
         if let Ok(dir) = std::env::var("RERAIL_RR_PROF_DIR") {
             let dir = std::path::PathBuf::from(dir);
             std::fs::create_dir_all(&dir).expect("the directory");

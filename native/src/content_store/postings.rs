@@ -14,7 +14,7 @@ use std::{
 };
 
 #[allow(dead_code)]
-pub(crate) fn append_delta(bytes: &mut Vec<u8>, mut delta: u32) {
+pub fn append_delta(bytes: &mut Vec<u8>, mut delta: u32) {
     while delta >= 128 {
         bytes.push(delta as u8 | 128);
         delta >>= 7;
@@ -128,7 +128,7 @@ unsafe impl VTabCursor for Cursor {
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         match col {
-            0 => ctx.set_result(&self.pre),
+            0 => ctx.set_result(self.pre),
             _ => ctx.set_result(&self.bytes),
         }
     }
@@ -140,7 +140,7 @@ unsafe impl VTabCursor for Cursor {
 /// A tape's direct edges as a segment: (parent kind, child kind, field, count) quads of varints,
 /// as `nera_edges` decodes them. The delete trigger on `prefilter_sets` subtracts them from
 /// `edge_freq`, so a collected tape counts down exactly (PIAT spec §2.5's `edge_counts`).
-pub(crate) fn pack_edges(edges: &[(u32, u32, u16, u32)]) -> Vec<u8> {
+pub fn pack_edges(edges: &[(u32, u32, u16, u32)]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for &(parent, child, field, n) in edges {
         for value in [parent, child, u32::from(field), n] {
@@ -252,7 +252,7 @@ unsafe impl VTabCursor for EdgeCursor {
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         match col {
-            0..=3 => ctx.set_result(&self.edge[col as usize]),
+            0..=3 => ctx.set_result(self.edge[col as usize]),
             _ => ctx.set_result(&self.bytes),
         }
     }
@@ -270,7 +270,7 @@ unsafe impl VTabCursor for EdgeCursor {
 ///
 /// Chunks are in ascending slice order. `space::NodeSet` writes and reads it without decoding
 /// member by member; `nera_segment` gives SQL its positions as rows.
-pub(crate) fn segment_positions(mut bytes: &[u8]) -> std::result::Result<Vec<u32>, &'static str> {
+pub fn segment_positions(mut bytes: &[u8]) -> std::result::Result<Vec<u32>, &'static str> {
     let invalid = "invalid segment";
     let mut out = Vec::new();
     let mut last_slice: Option<u16> = None;
@@ -377,8 +377,8 @@ unsafe impl VTabCursor for SegmentCursor {
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         match col {
-            0 => ctx.set_result(&self.positions[self.at]),
-            _ => ctx.set_result(&rusqlite::types::Null),
+            0 => ctx.set_result(self.positions[self.at]),
+            _ => ctx.set_result(rusqlite::types::Null),
         }
     }
     fn rowid(&self) -> Result<i64> {

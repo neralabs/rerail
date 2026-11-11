@@ -8,7 +8,6 @@ use super::evaluate::encode_tape;
 use super::ingest::candidate_dispatch;
 use super::persisted::file_context;
 use super::{ClauseId, FileState};
-use crate::WORK_POOL;
 use crate::code_rule_dsl::budget::matcher_budget_exhausted;
 use crate::code_rule_dsl::calls::summary::Summary;
 use crate::code_rule_dsl::calls::{self, CallsView, FileSeeds, TermId};
@@ -450,7 +449,7 @@ impl CallsState {
         let changed: Vec<Restamp> = if candidates.len() < 256 {
             candidates.into_iter().filter_map(stamp).collect()
         } else {
-            WORK_POOL.install(|| candidates.into_par_iter().filter_map(stamp).collect())
+            (|| candidates.into_par_iter().filter_map(stamp).collect())()
         };
         Some((view, changed))
     }

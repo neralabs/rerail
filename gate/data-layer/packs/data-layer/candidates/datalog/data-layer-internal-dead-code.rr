@@ -26,6 +26,7 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl line(n: node, l: number)
 .decl name(n: node, s: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_order(n: node, k: number)
 .decl node_text(n: node, s: symbol)
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
@@ -171,7 +172,7 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl unreachable_word_ok(w: node)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, value, name, source, tape_line, col, node_text, reference_edge
+.input doc, syntax_error, node, field, child, text, line, value, name, source, tape_line, col, node_text, reference_edge, node_order
 .output violation
 option_on("sourceGate").
 unreachable_base_k("identifier").
@@ -376,7 +377,7 @@ unreachable_base_edge(id, b, s) :- unreachable_bname(id, _, bn, s), !unreachable
 unreachable_reach(id, id) :- unreachable_decl(id, _, _, _, "class", _, _).
 unreachable_reach(o, b) :- unreachable_reach(o, x), unreachable_base_edge(x, b, _).
 rr_ctx2(o, x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
-rr_agg1(c, o, x, y) :- rr_ctx2(o, x), unreachable_reach(o, c), unreachable_decl_node(y, c), y <= x.
+rr_agg1(c, o, x, y) :- rr_ctx2(o, x), unreachable_reach(o, c), unreachable_decl_node(y, c), node_order(y, rr_ord0), node_order(x, rr_ord1), rr_ord0 <= rr_ord1.
 unreachable_hops(o, k) :- unreachable_reach(o, b), unreachable_decl_node(x, b), k = count : { rr_agg1(_, o, x, _) }.
 unreachable_hier_l(id, id, 0) :- unreachable_decl(id, _, _, _, "class", _, _).
 unreachable_hier_l(o, b, j) :- unreachable_hier_l(o, x, i), unreachable_base_edge(x, b, _), unreachable_hops(o, j), j = @add(i, 1).

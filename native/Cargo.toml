@@ -12,9 +12,11 @@ crate-type = ["cdylib", "rlib"]
 # language's tables but no grammar: its files are routed to no parser and nothing embeds it (`build.rs`,
 # `GrammarDialect::built`). The browser build (wasm/README.md) picks the languages a page needs.
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
-all-languages = ["lang-blade", "lang-javascript", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
+all-languages = ["lang-blade", "lang-javascript", "lang-json", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
 lang-blade = []
 lang-javascript = []
+# JSON, parsed by its Bitlex grammar (`transducer::packed::json_parser`); tree-sitter-json for a file it refuses.
+lang-json = ["ast-grep-language/tree-sitter-json"]
 lang-php = ["ast-grep-language/tree-sitter-php"]
 lang-python = []
 # `.rr` rule files, parsed by the rule engine's own parser (`logic::rr::syntax`, decision 0061).
@@ -49,6 +51,10 @@ metal-tests = []
 # `.rr`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
+# Relational kernels on every lane and the executor that batches their launches (decision 0098).
+rerail-accel = { path = "../accel" }
+# The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
+rerail-store = { path = "crates/store", features = ["test-hooks"] }
 ast-grep-core = "=0.51.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).
@@ -58,6 +64,8 @@ ast-grep-core = "=0.51.0"
 ast-grep-language = { version = "=0.51.0", default-features = false }
 # The transducer's CPU JIT (code_rule_dsl/transducer/packed).
 cranelift-codegen = "=0.125.4"
+# Tier 1 of the transducer's parsers, a crate of its own so that a change to it rebuilds little.
+rerail-tier1 = { path = "crates/tier1" }
 cranelift-frontend = "=0.125.4"
 cranelift-module = "=0.125.4"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
@@ -85,7 +93,7 @@ regex-syntax = "=0.8.11"
 # Held at 0.40.2, not main's 0.41.1: 0.41 registers hooks (`progress_handler`, `commit_hook`,
 # `rollback_hook`, `authorizer`) through `&mut Connection`, and the engine installs them on connections its
 # statements share.
-rusqlite = { version = "=0.40.2", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
+rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
 fallible-iterator = "0.3"
 # Native Python grammar validation, pinned to the source oracle version (3.13).
 # `core.rr`'s `syntax_error` for Python: a parser that follows CPython's grammar (Ruff's), since tree-sitter
@@ -143,12 +151,14 @@ block = "0.1.6"
 metal = "0.33.0"
 
 [dev-dependencies]
+# Tier 1's test hooks (the relocations' recording) for the engine's tests.
+rerail-tier1 = { path = "crates/tier1", features = ["test-hooks"] }
 # The test-only dialects' grammars: `builtin-parser` without tree-sitter-python,
 # tree-sitter-typescript and tree-sitter-javascript, which Rerail vendors.
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 # Tests count SQLite VM steps (`Connection::progress_handler`) to bound statement work; G's
 # positional search index (test-only) reads `rarray`.
-rusqlite = { version = "=0.40.2", features = ["bundled", "limits", "hooks", "array"] }
+rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
 # Temporary files in tests copied from P and D (P pins it as a dependency).
 tempfile = "=3.27.0"
 

@@ -178,6 +178,34 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2016 Max Brunsfeld", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# tree-sitter 0.27.1 from crates.io, vendored with Rerail's patch (native/vendor/tree-sitter-0.27.1/PATCHES.md); its
+# src/unicode/ is ICU's and its src/wasm-stdlib/libc/ musl's. ICU's headers name the terms at
+# unicode.org/copyright.html, now the Unicode License v3 (src/unicode/LICENSE is ICU's earlier notice).
+[[annotations]]
+path = "native/vendor/tree-sitter-0.27.1/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2018 Max Brunsfeld", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "native/vendor/tree-sitter-0.27.1/src/unicode/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2016 and later Unicode, Inc. and others"
+SPDX-License-Identifier = "Unicode-3.0"
+
+[[annotations]]
+path = "native/vendor/tree-sitter-0.27.1/src/wasm-stdlib/libc/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2005-2020 Rich Felker, et al."
+SPDX-License-Identifier = "MIT"
+
+# block 0.1.6 from crates.io, vendored with Rerail's patch (native/vendor/block-0.1.6/RERAIL_PATCH.md).
+[[annotations]]
+path = "native/vendor/block-0.1.6/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["Steven Sheldon", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # node-semver 7.8.5, ported to Rust (semver/mod.rs, provenance in semver/UPSTREAM.md); its subset() and new Range() answers recorded by
 # scripts/generate/semver/semver-subset-cases.mjs.
 [[annotations]]
@@ -801,6 +829,93 @@ path = ["packs/next/upstream/eslint-plugin-next/fixtures/*/rerail-*", "packs/nex
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."
 SPDX-License-Identifier = "Apache-2.0"
+
+# docs/rule-syntax/packs/<pack>/: the .rr ports of the upstream tools' rules, with the tables generated beside them
+# (and under lib/) from the packs' rule documents, annotated as their pack's rule documents above. The rest of
+# docs/rule-syntax/ (the complexity and rr rules, the libraries, the scripts, the notes) is Rerail's own and stays
+# under the catch-all. Override, as ruff-era001-commented-out-code.rr quotes `SPDX-License-Identifier:` in Ruff's
+# pragma regex, which REUSE would read as the file's tag.
+[[annotations]]
+path = [
+  "docs/rule-syntax/packs/python/bandit-*.rr",
+  "docs/rule-syntax/packs/python/ruff-*.rr",
+  "docs/rule-syntax/lib/python/security-blacklist.rr",
+]
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Hewlett-Packard Development Company, L.P.", "2022 Charles Marsh", "2005-2011 Divmod, Inc.", "2013-2014 Florent Xicluna", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = ["docs/rule-syntax/packs/vue/eslint-plugin-vue-*.rr", "docs/rule-syntax/lib/vue/elements.rr"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2017 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = "docs/rule-syntax/packs/rust/clippy-*.rr"
+precedence = "override"
+SPDX-FileCopyrightText = ["The Rust Project Contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = ["docs/rule-syntax/packs/php/phpcs-*.rr", "docs/rule-syntax/packs/php/phpstan-*.rr", "docs/rule-syntax/packs/php/psalm-*.rr"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2012 Squiz Pty Ltd (ABN 77 084 670 600)", "2023 PHPCSStandards and contributors", "2016 Ondřej Mirtes", "2025 PHPStan s.r.o.", "2016 Vimeo", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND BSD-3-Clause AND MIT"
+
+[[annotations]]
+path = "docs/rule-syntax/packs/sql/sqlfluff-*.rr"
+precedence = "override"
+SPDX-FileCopyrightText = ["2018-2026 Alan Cruickshank", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = ["docs/rule-syntax/packs/blade/blade-parser-*.rr", "docs/rule-syntax/packs/blade/bladestan-*.rr", "docs/rule-syntax/packs/blade/tlint-*.rr"]
+precedence = "override"
+SPDX-FileCopyrightText = ["Johnathon Koster", "2023-present Tomas Votruba", "Tighten Co. <hello@tighten.co>", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = "docs/rule-syntax/packs/typescript/typescript-eslint-*.rr"
+precedence = "override"
+SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = "docs/rule-syntax/packs/typescript/vitest-*.rr"
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = "docs/rule-syntax/packs/javascript/eslint-*.rr"
+precedence = "override"
+SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = "docs/rule-syntax/packs/javascript/unicorn-*.rr"
+precedence = "override"
+SPDX-FileCopyrightText = ["Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = "docs/rule-syntax/packs/react/react-*.rr"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Yannick Croissant", "Meta Platforms, Inc. and affiliates.", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = "docs/rule-syntax/packs/node/n-*.rr"
+precedence = "override"
+SPDX-FileCopyrightText = ["2015 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+[[annotations]]
+path = "docs/rule-syntax/packs/next/next-*.rr"
+precedence = "override"
+SPDX-FileCopyrightText = ["2025 Vercel, Inc.", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 # The coding agents' logos in the README's "Works with" badges: LobeHub's icons for Claude Code, Codex, Cursor and Pi,
 # oh-my-pi's own icon for OMP, each inside a badge drawn by shields.io. The names and logos are their owners' trademarks.

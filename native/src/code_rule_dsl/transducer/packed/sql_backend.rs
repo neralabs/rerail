@@ -386,19 +386,19 @@ unsafe impl VTabCursor for MatchCursor<'_> {
     fn column(&self, context: &mut Context, column: c_int) -> SqlResult<()> {
         let row = &self.rows[self.position];
         match column {
-            0 => context.set_result(&row.batch),
-            1 => context.set_result(&row.file),
-            2 => context.set_result(&row.program),
-            3 => context.set_result(&row.match_index),
-            4 => context.set_result(&row.start_ordinal),
-            5 => context.set_result(&row.output_label),
-            6 => context.set_result(&row.capture_index),
-            7 => context.set_result(&row.capture_label),
-            8 => context.set_result(&row.capture_node),
-            9 => context.set_result(&row.start_byte),
-            10 => context.set_result(&row.end_byte),
-            11 => context.set_result(&row.complete),
-            12 => context.set_result(&row.error_code.as_deref()),
+            0 => context.set_result(row.batch),
+            1 => context.set_result(row.file),
+            2 => context.set_result(row.program),
+            3 => context.set_result(row.match_index),
+            4 => context.set_result(row.start_ordinal),
+            5 => context.set_result(row.output_label),
+            6 => context.set_result(row.capture_index),
+            7 => context.set_result(row.capture_label),
+            8 => context.set_result(row.capture_node),
+            9 => context.set_result(row.start_byte),
+            10 => context.set_result(row.end_byte),
+            11 => context.set_result(row.complete),
+            12 => context.set_result(row.error_code.as_deref()),
             _ => Err(rusqlite::Error::InvalidColumnIndex(column as usize)),
         }
     }

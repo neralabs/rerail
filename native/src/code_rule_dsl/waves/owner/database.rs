@@ -192,6 +192,10 @@ impl Database {
             registry,
         })
     }
+    /// The owned connection, to set a hook of its own (an SQL session's step and time budget).
+    pub(in crate::code_rule_dsl) fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.connection
+    }
 }
 
 impl Deref for Database {

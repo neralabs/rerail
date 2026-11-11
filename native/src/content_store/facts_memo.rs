@@ -22,10 +22,11 @@
 //! misread a row: the tables are additive and the floor stays (schema.rs).
 
 use super::rows::{generation, intern_string};
+use super::bounded_insert;
 use super::{
     CODEC_ZSTD, ContentStore, HashKey, STRING_OWNER, SourceId, StoreError, StoreResult, compress,
 };
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params, types::Value};
 use sha2::{Digest as _, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -162,6 +163,68 @@ impl ContentStore {
             let frame = row?;
             if sources.contains(&frame.source.0) {
                 out.push(frame);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The memo row of `key`'s content for one plan: what `facts_memo(key).results[plan]` is, read and decoded alone
+    /// (the primary key's lookup). A file's row holds every plan ever run on it, so decoding all of them to take one
+    /// cost as much as reading its tape.
+    pub fn facts_result(&self, key: FactsMemoKey<'_>, plan: [u8; 32]) -> StoreResult<Option<FactsResult>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        let schema = i64::from(key.fact_schema);
+        let mut results = connection.prepare_cached(
+            "SELECT path,codec_id,raw_length,frame FROM facts_results \
+             WHERE source_id=?1 AND fact_schema=?2 AND path IN (?3,?4) AND plan_digest=?5 ORDER BY path",
+        )?;
+        let rows = results.query_map(params![key.source.0, schema, CONTENT_PURE, key.path, &plan[..]], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, Vec<u8>>(3)?))
+        })?;
+        // As `facts_memo`: of the two paths, the later row in key order that decodes.
+        let mut out = None;
+        for row in rows {
+            let (path, codec, raw_length, frame) = row?;
+            if let Ok(entry) = decode(codec, raw_length, &frame) {
+                out = Some(FactsResult { plan, path_dependent: path != CONTENT_PURE, entry });
+            }
+        }
+        Ok(out)
+    }
+
+    /// The result under `plan` at `fact_schema` of each `(source, path)` of `keys`, decompressed, in their order:
+    /// its path's, else its content-pure one, else `None` (a frame that does not decode is `None` too, as
+    /// `facts_memo` counts it damaged). One statement whatever the keys' number.
+    pub fn facts_results_for(&self, fact_schema: u32, plan: [u8; 32], keys: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Vec<u8>>>> {
+        let mut out: Vec<Option<Vec<u8>>> = vec![None; keys.len()];
+        if keys.is_empty() {
+            return Ok(out);
+        }
+        let list = serde_json::to_string(&keys.iter().map(|(s, p)| serde_json::json!([s.0, p])).collect::<Vec<_>>()).expect("keys");
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT j.key, r.path, r.codec_id, r.raw_length, r.frame FROM json_each(?3) j \
+             JOIN facts_results r ON r.source_id=json_extract(j.value,'$[0]') AND r.fact_schema=?1 \
+             AND r.path IN (json_extract(j.value,'$[1]'), ?4) AND r.plan_digest=?2",
+        )?;
+        let rows = statement.query_map(params![i64::from(fact_schema), &plan[..], list, CONTENT_PURE], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, Vec<u8>>(4)?))
+        })?;
+        let mut at_path = vec![false; keys.len()];
+        for row in rows {
+            let (at, path, codec, raw_length, frame) = row?;
+            let at = at as usize;
+            let own = path != CONTENT_PURE;
+            // A path's own result over the content-pure one, as `facts_memo` keys them by plan.
+            if at_path[at] && !own {
+                continue;
+            }
+            if let Ok(entry) = decode(codec, raw_length, &frame) {
+                out[at] = Some(entry);
+                at_path[at] = own;
             }
         }
         Ok(out)
@@ -323,6 +386,55 @@ impl ContentStore {
         })
     }
 
+    /// Stores many files' clause results at once (`put_facts_memo` without completions), each `(source, path,
+    /// result)` under `set` and `fact_schema`: one transaction of a few statements whatever their number, the frames
+    /// compressed before it. A source collected after the caller resolved it (O95) is skipped, as `put_facts_memo`
+    /// skips it; the number written is returned.
+    pub fn put_facts_results(&self, fact_schema: u32, set: &FactsPlanSet, results: &[(SourceId, &str, FactsResult)]) -> StoreResult<usize> {
+        if results.is_empty() {
+            return Ok(0);
+        }
+        let mut rows = Vec::with_capacity(results.len());
+        for (source, path, result) in results {
+            super::rows::validate_relative_path(path)?;
+            if !set.plans.contains(&result.plan) {
+                return Err(StoreError::Invalid("facts result outside its plan set".to_owned()));
+            }
+            let path = if result.path_dependent { *path } else { CONTENT_PURE };
+            rows.push((*source, path, result.plan, result.entry.len() as i64, compress(&result.entry, self.compression_level)?));
+        }
+        let schema = i64::from(fact_schema);
+        let mut ids: Vec<i64> = rows.iter().map(|r| r.0.0).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let ids = serde_json::to_string(&ids).expect("integers");
+        self.immediate_transaction(|transaction| {
+            let held: HashSet<i64> = transaction
+                .prepare_cached("SELECT source_id FROM source_objects WHERE source_id IN (SELECT value FROM json_each(?1))")?
+                .query_map([&ids], |row| row.get(0))?
+                .collect::<Result<_, _>>()?;
+            let kept: Vec<_> = rows.iter().filter(|r| held.contains(&r.0.0)).collect();
+            bounded_insert::insert(
+                transaction,
+                "INSERT INTO facts_results(source_id,fact_schema,path,plan_digest,codec_id,raw_length,frame)",
+                "ON CONFLICT(source_id,fact_schema,path,plan_digest) DO UPDATE \
+                 SET codec_id=excluded.codec_id,raw_length=excluded.raw_length,frame=excluded.frame",
+                kept.iter().map(|(source, path, plan, raw, frame)| {
+                    [
+                        Value::Integer(source.0),
+                        Value::Integer(schema),
+                        Value::Text((*path).to_owned()),
+                        Value::Blob(plan.to_vec()),
+                        Value::Integer(CODEC_ZSTD),
+                        Value::Integer(*raw),
+                        Value::Blob(frame.clone()),
+                    ]
+                }),
+            )?;
+            Ok(kept.len())
+        })
+    }
+
     /// Pins `sources` for `owner` until `lease_until`, in one transaction (the daemon's held
     /// contents: their memo rows survive collection while a worktree holds them).
     pub fn pin_facts_sources(
@@ -336,13 +448,12 @@ impl ContentStore {
         }
         self.immediate_transaction(|transaction| {
             let owner_id = intern_string(transaction, STRING_OWNER, owner)?;
-            let mut pin = transaction.prepare_cached(
-                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4) \
-                 ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
+            bounded_insert::insert(
+                transaction,
+                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until)",
+                "ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
+                sources.iter().map(|s| [Value::Integer(OBJECT_SOURCE), Value::Integer(s.0), Value::Integer(owner_id), Value::Integer(lease_until)]),
             )?;
-            for source in sources {
-                pin.execute(params![OBJECT_SOURCE, source.0, owner_id, lease_until])?;
-            }
             Ok(())
         })
     }
@@ -351,13 +462,12 @@ impl ContentStore {
     /// reclaims them with their memo rows once nothing else references them.
     pub fn unpin_facts_sources(&self, sources: &[SourceId], owner: &str) -> StoreResult<()> {
         self.immediate_transaction(|transaction| {
-            let mut unpin = transaction.prepare_cached(
-                "DELETE FROM object_pins WHERE object_kind_id=?1 AND object_id=?2 AND owner_string_id IN \
-                 (SELECT string_id FROM strings WHERE domain_id=?3 AND value=?4)",
-            )?;
-            for source in sources {
-                unpin.execute(params![OBJECT_SOURCE, source.0, STRING_OWNER, owner])?;
-            }
+            transaction
+                .prepare_cached(
+                    "DELETE FROM object_pins WHERE object_kind_id=?1 AND object_id IN (SELECT value FROM json_each(?2)) \
+                     AND owner_string_id IN (SELECT string_id FROM strings WHERE domain_id=?3 AND value=?4)",
+                )?
+                .execute(params![OBJECT_SOURCE, serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers"), STRING_OWNER, owner])?;
             Ok(())
         })
     }
@@ -408,12 +518,12 @@ fn write_plan_set(transaction: &Transaction<'_>, set: &FactsPlanSet) -> StoreRes
     if held {
         return Ok(());
     }
-    let mut insert = transaction.prepare_cached(
-        "INSERT INTO facts_plan_sets(set_digest,ordinal,plan_digest) VALUES (?1,?2,?3)",
+    bounded_insert::insert(
+        transaction,
+        "INSERT INTO facts_plan_sets(set_digest,ordinal,plan_digest)",
+        "",
+        set.plans.iter().enumerate().map(|(ordinal, plan)| [Value::Blob(set.digest.to_vec()), Value::Integer(ordinal as i64), Value::Blob(plan.to_vec())]),
     )?;
-    for (ordinal, plan) in set.plans.iter().enumerate() {
-        insert.execute(params![&set.digest[..], ordinal as i64, &plan[..]])?;
-    }
     Ok(())
 }
 

@@ -39,12 +39,15 @@ pub(in crate::code_rule_dsl) struct Session {
     /// Each output file a run of the session wrote: the program's cross-file key and its rows. A later run of that
     /// program whose output stratum is clean leaves the file as it is.
     pub(super) written: Mutex<std::collections::HashMap<PathBuf, ([u8; 32], usize)>>,
+    /// Each memoised program's base relations' statistics, kept by file (decision 0096 §3, `keptstats`).
+    pub(super) stats: Mutex<std::collections::HashMap<[u8; 32], super::keptstats::Keeper>>,
     /// Which session this is: its runs' kept plans and derived values are taken back only by its own runs.
     generation: u64,
 }
 
-/// A phase export bound as a relation, with its statistics.
-pub(super) type PhasedSource = (std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(String, i64, i64, i64, i64)>);
+/// A phase export bound as a relation, with its statistics, and the counts they are read from: the next version's
+/// delta patches them (decision 0096 §3).
+pub(super) type PhasedSource = (std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(String, i64, i64, i64, i64)>, std::sync::Arc<crate::code_rule_dsl::logic::plan::statkeep::RelStats>);
 
 static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -71,6 +74,7 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         cross: Default::default(),
         phased: Mutex::new(Default::default()),
         written: Mutex::new(Default::default()),
+        stats: Mutex::new(Default::default()),
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         #[cfg(test)]
         thread: std::thread::current().id(),
@@ -236,6 +240,10 @@ mod tests {
     #[test]
     fn a_session_maintains_a_recursive_cross_file_stratum() {
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        recursive_cross_file_stratum();
+    }
+
+    fn recursive_cross_file_stratum() {
         let base = std::env::temp_dir().join(format!("rerail-session-reach-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
         std::fs::create_dir_all(&src).unwrap();
@@ -296,6 +304,61 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A cross-file relation recomputed in its readers (decision 0099, `.decl … inline`) has no rows to keep: the
+    /// run keeps the others, and the next run derives it again ("no such table: py_f" at O125 before). Every run's
+    /// findings are a full run's.
+    #[test]
+    fn a_session_keeps_its_part_around_an_inlined_relation() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-inlined-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("near.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-imported-back" revision 1
+.description "An import of a module that imports this one."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl back(a: number, b: number) inline
+back(a, b) :- dep(b, a).
+.violation BACK(at: node) code "BACK" "This import's module imports this one."
+BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
+"#,
+        )
+        .unwrap();
+        for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from a import y\n"), ("c.py", "x = 1\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let findings = || {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        };
+        let full = || {
+            full(run);
+            findings()
+        };
+        start(&base.join("session")).unwrap();
+        run();
+        assert_eq!(findings(), full());
+        assert_eq!(findings().len(), 2, "both imports of the pair: {:?}", findings());
+        for (path, text) in [("c.py", "from a import z\n"), ("a.py", "from c import x\n"), ("b.py", "x = 2\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+            let report = run();
+            assert_eq!(findings(), full(), "after editing {path}, the session's findings are a full run's");
+            assert!(report.cross_strata.is_some(), "a session's run");
+        }
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// An insert into a recursive stratum stops at the rows that survived (decision 0090): an edge that adds no
     /// reachability (`a` imports `c`, which it reached through `b`) inserts the new edge and nothing of `reach`.
     /// Without the stop, the inserts walked the closure from the new edge again (9,000,000 rows on `session_costs`).
@@ -348,6 +411,33 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     #[test]
     fn a_session_maintains_a_cross_file_aggregate() {
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        cross_file_aggregate();
+    }
+
+    /// Decision 0090 §4: every maintained stratum whose inputs changed derived again instead (no θ, no floor). Its
+    /// relations and their deltas are what the strata above read, maintained or not, so the findings stay a full
+    /// run's: over recursion, counting's supports and aggregates.
+    #[test]
+    fn a_session_derives_again_the_strata_its_deltas_outgrow() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        unsafe {
+            std::env::set_var("RERAIL_AGAIN_THETA", "0");
+            std::env::set_var("RERAIL_AGAIN_MIN", "0");
+        }
+        let run = std::panic::catch_unwind(|| {
+            recursive_cross_file_stratum();
+            cross_file_aggregate();
+        });
+        unsafe {
+            std::env::remove_var("RERAIL_AGAIN_THETA");
+            std::env::remove_var("RERAIL_AGAIN_MIN");
+        }
+        if let Err(e) = run {
+            std::panic::resume_unwind(e);
+        }
+    }
+
+    fn cross_file_aggregate() {
         let base = std::env::temp_dir().join(format!("rerail-session-count-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
         std::fs::create_dir_all(&src).unwrap();

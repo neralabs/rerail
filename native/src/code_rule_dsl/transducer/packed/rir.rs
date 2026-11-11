@@ -275,47 +275,8 @@ fn pattern(out: &mut String, node: &PackedPattern, names: Option<&Names>) {
     }
 }
 
-/// Block program `at`'s rows: tables, operations, outputs, extracts, delay, and the tree section (`tree_rows`).
-pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
-    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-    for (t, table) in block.tables.iter().enumerate() {
-        let _ = writeln!(out, "  block {at} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
-    }
-    // `block N rows C P S`: a row program's columns, parameters and sets (`block::RowShape`).
-    if let Some(shape) = block.rows {
-        let _ = writeln!(out, "  block {at} rows {} {} {}", shape.columns, shape.params, shape.sets);
-    }
-    for (value, op) in block.ops.iter().enumerate() {
-        let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
-    }
-    // `block N rounds %c %n …`: one fixed point's carries, each with its next.
-    for group in &block.rounds {
-        let pairs: Vec<String> = group.iter().map(|(c, x)| format!("%{c} %{x}")).collect();
-        let _ = writeln!(out, "  block {at} rounds {}", pairs.join(" "));
-    }
-    for (k, value) in block.outputs.iter().enumerate() {
-        match block.output_delay(k) {
-            d if d == block.delay => {
-                let _ = writeln!(out, "  block {at} output %{value}");
-            }
-            d => {
-                let _ = writeln!(out, "  block {at} output %{value} delay {d}");
-            }
-        }
-    }
-    for value in &block.extracts {
-        let _ = writeln!(out, "  block {at} extract %{value}");
-    }
-    for value in &block.totals {
-        let _ = writeln!(out, "  block {at} total %{value}");
-    }
-    for value in &block.masks {
-        let _ = writeln!(out, "  block {at} mask %{value}");
-    }
-    if block.delay != 0 {
-        let _ = writeln!(out, "  block {at} delay {}", block.delay);
-    }
-}
+// A block program's rows, tier 1's (`rerail_tier1::block::block_rows`).
+pub(super) use super::block::block_rows;
 
 pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Names>) -> String {
     let mut out = String::new();
@@ -704,6 +665,10 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
         "provisional" => {
             let f: u16 = line.number("#")?;
             parts.readings.provisional.push(f);
+        }
+        "extra" => {
+            let k: u16 = line.number("#")?;
+            parts.readings.extras.push(k);
         }
         "long" => {
             index(line, parts.longs.len(), "long")?;
@@ -1120,7 +1085,7 @@ pub(super) fn switch_rows(out: &mut String, at: usize, s: &stream::ByteSwitch) {
 }
 
 /// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,
-/// `reading N field #F as #G`; then `provisional #F`.
+/// `reading N field #F as #G`; then `provisional #F`; then `extra #K`, the extras' kinds.
 pub(super) fn reading_rows(out: &mut String, readings: &stream::Readings) {
     use std::fmt::Write as _;
     for (at, r) in readings.maps.iter().enumerate() {
@@ -1143,6 +1108,9 @@ pub(super) fn reading_rows(out: &mut String, readings: &stream::Readings) {
     }
     for f in &readings.provisional {
         let _ = writeln!(out, "  provisional #{f}");
+    }
+    for k in &readings.extras {
+        let _ = writeln!(out, "  extra #{k}");
     }
 }
 

@@ -10,7 +10,6 @@ use super::evaluate::candidate_grammar;
 use super::ingest::candidate_dispatch;
 use super::storage::{StorageContext, unix_seconds};
 use super::{CLAUSE_WORK_BUDGET_EXCEEDED, ClauseId, FileState, LocalFailure};
-use crate::WORK_POOL;
 use crate::code_rule_dsl::eval::file_language;
 use crate::code_rule_dsl::json::{hex_digest, invalid, json_error};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -660,7 +659,7 @@ pub(super) fn persist_files(
     };
     // Each file's payloads (tape bytes, encoded and compressed local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
-    let prepared = WORK_POOL.install(|| {
+    let prepared = (|| {
         paths
             .par_iter()
             .map(|path| {
@@ -751,7 +750,7 @@ pub(super) fn persist_files(
                 ))
             })
             .collect::<Result<Vec<_>>>()
-    })?;
+    })()?;
     // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
     let documents = prepared
         .iter()

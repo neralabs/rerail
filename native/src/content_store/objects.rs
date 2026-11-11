@@ -15,19 +15,19 @@ use std::sync::Arc;
 
 /// A stored tape's frames as residency admits them (PIAT §20.3): the tape's and its source's zstd
 /// frames with their raw lengths, the source's SHA-256 and the tape's grammar.
-pub(crate) struct ResidentFrames {
-    pub(crate) grammar_id: i64,
-    pub(crate) tape_length: usize,
-    pub(crate) tape_frame: Vec<u8>,
-    pub(crate) source_length: usize,
-    pub(crate) source_frame: Vec<u8>,
-    pub(crate) source_sha256: [u8; 32],
+pub struct ResidentFrames {
+    pub grammar_id: i64,
+    pub tape_length: usize,
+    pub tape_frame: Vec<u8>,
+    pub source_length: usize,
+    pub source_frame: Vec<u8>,
+    pub source_sha256: [u8; 32],
 }
 
 impl ContentStore {
     /// The frames of the tapes whose SHA-256 is each of `tapes`, in one read: `None` where no tape
     /// has that digest. Frames are returned compressed, for the caller to decompress in place.
-    pub(crate) fn resident_frames(&self, tapes: &[[u8; 32]]) -> StoreResult<Vec<Option<ResidentFrames>>> {
+    pub fn resident_frames(&self, tapes: &[[u8; 32]]) -> StoreResult<Vec<Option<ResidentFrames>>> {
         let encoded = serde_json::to_string(
             &tapes
                 .iter()
@@ -320,7 +320,7 @@ impl ContentStore {
         Ok(digest)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn source_has_hash(&self, source_id: SourceId, key: HashKey) -> StoreResult<bool> {
         let connection = self
             .connection
@@ -406,7 +406,7 @@ impl ContentStore {
 
     /// Read immutable source IDs qualified by the canonical hashes from bulk metadata.
     /// Cache hits require no source query. Cold frames use bounded typed batches.
-    pub(crate) fn get_sources_by_hash_bulk(
+    pub fn get_sources_by_hash_bulk(
         &self,
         requests: &[(SourceId, HashKey)],
         max_bytes: usize,
@@ -794,12 +794,12 @@ impl ContentStore {
         Ok(result)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn get_tape(&self, tape_id: TapeId) -> StoreResult<Arc<CachedBytes>> {
         self.get_tape_with_status(tape_id).map(|(tape, _)| tape)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn get_tape_with_status(&self, tape_id: TapeId) -> StoreResult<(Arc<CachedBytes>, bool)> {
         let canonical_hash = {
             let connection = self

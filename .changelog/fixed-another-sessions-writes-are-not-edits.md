@@ -1,0 +1,1 @@
+Rerail steers a session only on files changed while one of its tool calls ran, or during its turn in Codex, whose `apply_patch` runs no hook. A file another session, your editor or a background process changed counted as an edit in every session there, so an agent that only read code was told about code it never wrote.

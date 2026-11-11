@@ -680,7 +680,7 @@ fn json_loop_keeps_values_in_registers() {
     let program = json_program();
     let native = native_ir::lower(&program).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
-    let lines = super::block_tests::machine_loop(&compiled.disassembly);
+    let lines = super::block_tests::machine_loop(&compiled.loops_disassembly());
     let (stack, mvn) = super::block_tests::loop_costs(&lines);
     eprintln!("json loop: {} instructions, {stack} stack loads or stores, {mvn} vector mvn", lines.len());
     assert_eq!(mvn, 0, "json's loop inverts vectors");
@@ -697,8 +697,14 @@ fn json_loop_keeps_values_in_registers() {
 /// full-block body with folded logic to 178, and one word token with the number check in tier 2
 /// (decision 0086) to 174; the stream's two extracts (decision 0087) to 182, three outputs
 /// in place of ten, and two counts. The target is stage 1's 150.
-const JSON_LOOP: usize = 182;
-const JSON_LOOP_STACK: usize = 0;
+///
+/// Those counts were the loop's tail only: the finder took the largest block that branched to
+/// itself, the sinks after the ASCII branch's merge. Measured over the whole body (both
+/// bodies of the ASCII branch, the flattenings once), the code before the gated regions'
+/// calls has 564 instructions and 4 stack loads or stores; with the delayed outputs not held
+/// and the regions called where it is free, 566 and 4.
+const JSON_LOOP: usize = 566;
+const JSON_LOOP_STACK: usize = 4;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
 //
@@ -748,7 +754,7 @@ fn json_tier1_is_simdjsons_stage1() {
     let bits = super::block_tests::state_bits(p);
     let native = native_ir::lower(&program).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
-    let lines = super::block_tests::machine_loop(&compiled.disassembly);
+    let lines = super::block_tests::machine_loop(&compiled.loops_disassembly());
     let (stack, _) = super::block_tests::loop_costs(&lines);
     eprintln!("json tier 1: {} violations, {bits} state bits, loop {} instructions, {stack} stack", violations.len(), lines.len());
     if std::env::var_os("RERAIL_RIR").is_some() {
@@ -1095,9 +1101,12 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns, no
-    // reorder, and its only loop heads are the stream's and the masks').
+    // reorder). Its loop heads are the stream's and the masks'. The table's final pass
+    // (parents and extras) is a function of its own, called once: its loops are not the
+    // token loop's.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
+    assert_eq!(tier2.own_calls, 1, "the final pass's call alone");
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs()[0].run_files(&[f]).remove(0);

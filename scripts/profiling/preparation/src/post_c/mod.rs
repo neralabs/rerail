@@ -1,6 +1,7 @@
 //! Isolated prototypes for the remaining post-C execution boundaries.
+use crate::code_rule_dsl::Database;
 use crate::schema::{self, Column, Columns, Registry, cache};
-use rusqlite::{Connection, Result, functions::FunctionFlags, hooks::Authorization};
+use rusqlite::{Connection, Result, functions::FunctionFlags};
 use serde::Deserialize;
 use serde_json::json;
 use std::{
@@ -36,9 +37,9 @@ fn quote(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-fn inspect(db: &Connection, query: &str, schemas: &Registry) -> Result<(Vec<String>, Vec<String>)> {
+fn inspect(db: &Database, query: &str, schemas: &Registry) -> Result<(Vec<String>, Vec<String>)> {
     let allowed = schemas.keys().cloned().collect::<BTreeSet<_>>();
-    let reads = crate::authorizer::install(db, &allowed)?;
+    let reads = db.authorize(&allowed)?;
     let output = (|| {
         let statement = db.prepare(query)?;
         if !statement.readonly() || statement.parameter_count() != 0 {
@@ -46,11 +47,10 @@ fn inspect(db: &Connection, query: &str, schemas: &Registry) -> Result<(Vec<Stri
         }
         Ok(statement
             .column_names()
-            .into_iter()
             .map(String::from)
             .collect::<Vec<_>>())
     })();
-    db.authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>)?;
+    db.allow_all()?;
     let names = output?;
     if names
         .iter()
@@ -120,7 +120,7 @@ fn compile(programs: &[Program], batch: bool) -> Result<(usize, Schemas)> {
     let mut statements = 0;
     let mut results = Vec::new();
     for program in programs {
-        let db = Connection::open_in_memory()?;
+        let db = Database::new(Connection::open_in_memory()?)?;
         db.set_limit(
             rusqlite::limits::Limit::SQLITE_LIMIT_SQL_LENGTH,
             MAX_SQL_BYTES as i32,

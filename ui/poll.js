@@ -10,6 +10,7 @@ import { get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
+import { promptText } from "./sessions-model.js";
 import { failed } from "./format.js";
 
 export { toStoredRules };
@@ -425,8 +426,12 @@ export async function loadEarlier(id) {
 
 const WEAK = /^(continue|yes|no|ok|okay|go|try again|thanks|thank you|do it|next|y|n)\.?$/i;
 const TITLE_MAX = 96;
-/** First user prompt with three or more words that is not a bare acknowledgement; its first line, trimmed to a title. */
-export function titleFromPrompts(prompts) {
+/**
+ * First user prompt with three or more words that is not a bare acknowledgement; its first line, trimmed to a title.
+ * Text the coding agent's harness wrote into a prompt (`promptText`) is never the title.
+ */
+export function titleFromPrompts(texts) {
+  const prompts = texts.map(promptText).filter(Boolean);
   const t = prompts.find(u => u.split(/\s+/).length >= 3 && !WEAK.test(u.trim())) || prompts[0];
   if (!t) return null;
   const line = t.trim().split("\n")[0].replace(/\s+/g, " ").trim();

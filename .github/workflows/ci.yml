@@ -545,11 +545,23 @@ jobs:
         if: matrix.task == 'test'
         run: cargo build --manifest-path scripts/profiling/reachability/Cargo.toml --release --locked --target-dir target/reachability-spike
 
+      # The extension is bound to the bundled SQLite's API (modern_sqlite) and refuses an older host;
+      # the runner's Python has SQLite 3.45.1. Build the amalgamation the lock resolves for the tests.
+      - name: Build the SQLite the reachability extension is bound to
+        if: matrix.task == 'test'
+        run: |
+          sys=$(cargo metadata --manifest-path scripts/profiling/reachability/Cargo.toml --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "libsqlite3-sys") | .manifest_path')
+          mkdir -p "$RUNNER_TEMP/sqlite"
+          gcc -O2 -shared -fPIC -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_LOAD_EXTENSION=1 -DSQLITE_ENABLE_MATH_FUNCTIONS \
+            -o "$RUNNER_TEMP/sqlite/libsqlite3.so.0" "$(dirname "$sys")/sqlite3/sqlite3.c" -lm -lpthread -ldl
+
       - name: Test SQL and Rust reachability adapters
         if: matrix.task == 'test'
         env:
           RERAIL_REACH_EXTENSION: ${{ github.workspace }}/target/reachability-spike/release/librerail_reachability_spike.so
           PYTHONDONTWRITEBYTECODE: "1"
+          LD_LIBRARY_PATH: ${{ runner.temp }}/sqlite
         run: |
           python3 test/scripts/test_reachability.py
           python3 test/scripts/test_native_relations.py
@@ -597,7 +609,7 @@ jobs:
 
       - name: Test SQL statement capture and deferred explanations
         if: matrix.task == 'test'
-        run: cargo test --manifest-path scripts/profiling/reachability/Cargo.toml --no-default-features --locked code_rule_dsl::tests
+        run: cargo test --manifest-path scripts/profiling/reachability/Cargo.toml --no-default-features --locked code_rule_dsl::sql::tests
 
       - name: Check and test captured SQL replay and composition kernels
         if: matrix.task == 'test'

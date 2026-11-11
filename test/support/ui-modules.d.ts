@@ -107,7 +107,7 @@ declare module "*/ui/poll.js" {
 }
 
 declare module "*/ui/derive.js" {
-  export function violationOutcome(finding: { mode?: string }): "logged" | "steered";
+  export function violationOutcome(finding: { mode?: string; logged: boolean }): "logged" | "steered";
   export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
   export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
   export function inPack(rule: object, packId: string): boolean;

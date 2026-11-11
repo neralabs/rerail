@@ -1,4 +1,4 @@
-//! Update shared scalar summaries in SQL, then publish all roots atomically.
+//! Update scalar bag summaries in SQL, then publish all roots atomically.
 use super::*;
 use crate::code_rule_dsl::sql_executor::phase::Phase;
 

@@ -105,6 +105,47 @@ impl ContentStore {
         })
     }
 
+    /// `held_source_by_hash` of each of `hashes`, in their order: one read, and the sources found pinned under the
+    /// holder in the same transaction, a few statements whatever their number.
+    pub fn held_sources_by_hash(&self, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
+        if hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let list = serde_json::to_string(&hashes.iter().map(|h| super::rows::hash_params(*h)).collect::<Vec<_>>()).expect("integers");
+        let read = |connection: &rusqlite::Connection| -> StoreResult<Vec<Option<SourceId>>> {
+            let mut out = vec![None; hashes.len()];
+            let mut statement = connection.prepare_cached(
+                "SELECT j.key, s.source_id FROM json_each(?1) j JOIN hashes h INDEXED BY hashes_by_prefix \
+                 ON h.algorithm_id=json_extract(j.value,'$[0]') AND h.lane0=json_extract(j.value,'$[1]') \
+                 AND h.lane1=json_extract(j.value,'$[2]') AND h.lane2=json_extract(j.value,'$[3]') AND h.lane3=json_extract(j.value,'$[4]') \
+                 JOIN source_objects s ON s.canonical_hash_id=h.hash_id",
+            )?;
+            for row in statement.query_map([&list], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))? {
+                let (at, id) = row?;
+                out[at as usize] = Some(SourceId(id));
+            }
+            Ok(out)
+        };
+        let Some((owner, lease_until)) = self.holder.lock().clone() else {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            return read(&connection);
+        };
+        self.immediate_transaction(|transaction| {
+            let found = read(transaction)?;
+            let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
+            super::bounded_insert::insert(
+                transaction,
+                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until)",
+                "ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
+                found.iter().flatten().map(|s| {
+                    use rusqlite::types::Value;
+                    [Value::Integer(OBJECT_SOURCE), Value::Integer(s.0), Value::Integer(owner_id), Value::Integer(lease_until)]
+                }),
+            )?;
+            Ok(found)
+        })
+    }
+
     pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
         if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
             *self.holder.lock() = None;
@@ -450,7 +491,7 @@ impl ContentStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Every SQL statement `collect` ran on this thread, in execution order.
     pub(super) static EXECUTED_COLLECT_SQL: std::cell::RefCell<Vec<&'static str>> =
@@ -459,7 +500,7 @@ thread_local! {
 
 /// Every statement `collect` runs passes through here, so tests EXPLAIN the exact SQL it executed.
 fn collect_sql(sql: &'static str) -> &'static str {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     EXECUTED_COLLECT_SQL.with(|executed| executed.borrow_mut().push(sql));
     sql
 }

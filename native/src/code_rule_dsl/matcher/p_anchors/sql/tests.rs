@@ -478,11 +478,12 @@ fn incremental_reads_cover_overflows_without_full_columns_or_stale_cursors() {
 #[test]
 fn kind_and_path_file_filtering_does_not_read_tape_columns() {
     use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
-    let store = store::Store::temporary().unwrap();
+    let mut store = store::Store::temporary().unwrap();
     let lang = GrammarDialect::TypeScript;
     let fid = store.put("src/a.ts", &document("target();", lang)).unwrap();
     store
         .db
+        .connection_mut()
         .authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
             AuthAction::Read {
                 table_name: "file",
@@ -590,12 +591,13 @@ fn pattern_range_probes_use_indexes_and_actual_literal_selectivity() {
     let plan = &std::sync::Arc::new(crate::code_rule_dsl::matcher::p_anchors::AnchorPlan::compile(&grammar_matchers(&compiled)[0].matcher));
     let source = "obj.other(value);\n".repeat(2000) + "obj.target(needle);\n";
     let root = AstGrep::doc(document(&source, GrammarDialect::TypeScript));
-    let store = store::Store::temporary().unwrap();
+    let mut store = store::Store::temporary().unwrap();
     let fid = store.put("a.ts", root.root().get_doc()).unwrap();
     let steps = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&steps);
     store
         .db
+        .connection_mut()
         .progress_handler(
             1,
             Some(move || {
@@ -646,12 +648,13 @@ fn descendant_relations_use_subtree_ranges_instead_of_ancestor_closures() {
         // W's matchers carry W's plan; P's is compiled from the matcher (O20).
         let plan = &std::sync::Arc::new(crate::code_rule_dsl::matcher::p_anchors::AnchorPlan::compile(&grammar_matchers(&compiled)[0].matcher));
         let root = AstGrep::doc(document(&source, GrammarDialect::TypeScript));
-        let store = store::Store::temporary().unwrap();
+        let mut store = store::Store::temporary().unwrap();
         let fid = store.put("a.ts", root.root().get_doc()).unwrap();
         let steps = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&steps);
         store
             .db
+            .connection_mut()
             .progress_handler(
                 1,
                 Some(move || {

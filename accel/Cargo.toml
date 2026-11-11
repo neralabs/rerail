@@ -1,0 +1,26 @@
+[package]
+name = "rerail-accel"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Relational kernels on every compute lane (CPU, SME, GPU, Neural Engine) and the executor that batches their launches (decision 0098)."
+
+[features]
+# Each lane can be built alone (`--no-default-features --features gpu`), so work on one lane never waits on another.
+default = ["sme", "gpu", "ane"]
+sme = []
+gpu = []
+ane = []
+
+[dependencies]
+rayon = "=1.12.0"
+sha2 = "0.10"
+libc = "0.2.189"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.33.0"
+objc = "0.2.7"
+block = "0.1.6"
+
+[build-dependencies]
+cc = "=1.10.0"

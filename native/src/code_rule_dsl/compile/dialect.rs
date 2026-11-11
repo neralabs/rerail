@@ -252,4 +252,22 @@ mod tests {
         let result = evaluate_file(&compiled, "rr", "rules.rr", source);
         assert_eq!(matched_texts(&result, source), ["a(x)"], "{result}");
     }
+
+    #[test]
+    fn a_policy_targets_json_files_through_the_shipped_capabilities() {
+        // `capabilities.json` names `json`, a supported language parsed by its Bitlex grammar in
+        // tree-sitter-json's kinds, so a clause over `.json` files compiles and reads them.
+        let compiled = compile_document_with(
+            clause_document(json!({
+                "id": "c",
+                "forbid": { "ast": { "language": "json", "rule": { "kind": "pair" } } },
+                "violation": violation(),
+            })),
+            &serde_json::from_str::<serde_json::Value>(CAPABILITIES).expect("capabilities"),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        let source = "{\"a\": 1}\n";
+        let result = evaluate_file(&compiled, "json", "data.json", source);
+        assert_eq!(matched_texts(&result, source), ["\"a\": 1"], "{result}");
+    }
 }

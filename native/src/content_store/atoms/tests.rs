@@ -111,9 +111,9 @@ fn shared_scratch_flushes_atoms_to_their_owning_store() {
     let owner = path("owner");
     let scratch_path = path("scratch");
     let store = ContentStore::open(&owner).unwrap();
-    let scratch = rusqlite::Connection::open(&scratch_path).unwrap();
+    let mut scratch = rusqlite::Connection::open(&scratch_path).unwrap();
     store.share_atoms_with(&scratch_path);
-    let arena = super::Atoms::install(&scratch).unwrap();
+    let arena = super::Atoms::install(&mut scratch).unwrap();
     assert!(std::sync::Arc::ptr_eq(&arena, &store.atoms));
     let ids = store.intern_atoms(&["borrowed"]).unwrap();
     arena.flush(&scratch).unwrap();
@@ -128,9 +128,9 @@ fn shared_scratch_flushes_atoms_to_their_owning_store() {
 fn shared_scratch_writes_do_not_use_the_owner_commit_guard() {
     let store = ContentStore::open(&path("owner-guard")).unwrap();
     let scratch_path = path("scratch-guard");
-    let scratch = rusqlite::Connection::open(&scratch_path).unwrap();
+    let mut scratch = rusqlite::Connection::open(&scratch_path).unwrap();
     store.share_atoms_with(&scratch_path);
-    let arena = super::Atoms::install(&scratch).unwrap();
+    let arena = super::Atoms::install(&mut scratch).unwrap();
     store.intern_atoms(&["pending"]).unwrap();
     scratch.execute_batch("CREATE TABLE work(x INTEGER); INSERT INTO work VALUES (1);").unwrap();
     assert!(arena.pending(), "scratch SQL does not commit the durable store");

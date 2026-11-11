@@ -28,20 +28,20 @@ use std::collections::{BTreeMap, BTreeSet};
 /// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
 /// edges (`kind_size`, `edge_freq`). 5: terms are atoms. 6: kind postings are container segments
 /// (`postings::segment_positions`, decision 0045).
-pub(crate) const PREFILTER_VERSION: i64 = 8;
+pub const PREFILTER_VERSION: i64 = 8;
 /// Unclean leaves per kind, store-wide, kept as terms.
-pub(crate) const RESIDUE_CAP: usize = 4096;
+pub const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
-pub(crate) const INTERIOR: u8 = 1;
+pub const INTERIOR: u8 = 1;
 /// A leaf of the kind is not a clean term.
-pub(crate) const UNCLEAN: u8 = 2;
+pub const UNCLEAN: u8 = 2;
 /// The kind's unclean leaves exceed the residue bounds.
-pub(crate) const TOO_BIG: u8 = 4;
+pub const TOO_BIG: u8 = 4;
 
 /// One tape's prefilter rows, built from the tape alone (`code_rule_dsl::prefilter::image`), so
 /// publication holds the write lock only to write.
 #[derive(Clone, Debug)]
-pub(crate) struct TapePrefilter {
+pub struct TapePrefilter {
     pub tape_id: TapeId,
     pub lang: u32,
     /// The tape's node count: candidate SQL enumerates every node of a tape from it.
@@ -62,7 +62,7 @@ pub(crate) struct TapePrefilter {
 
 impl ContentStore {
     /// Publishes each tape's prefilter rows, replacing any it has.
-    pub(crate) fn put_prefilters_bulk(&self, sets: &[TapePrefilter]) -> StoreResult<()> {
+    pub fn put_prefilters_bulk(&self, sets: &[TapePrefilter]) -> StoreResult<()> {
         if sets.len() > MAX_PUBLICATION_BATCH {
             return Err(StoreError::Invalid("prefilter publication exceeds 64 tapes".to_owned()));
         }
@@ -80,7 +80,7 @@ impl ContentStore {
 
     /// The kind images of `sets`, tape-local, held in the working set for the wave that reads
     /// them (written through by `put_prefilters_bulk`; ahead of it by a write-back queue).
-    pub(crate) fn hold_prefilters(&self, sets: &[TapePrefilter]) {
+    pub fn hold_prefilters(&self, sets: &[TapePrefilter]) {
         for set in sets {
             self.working_set().put_kinds(
                 set.tape_id.row(),
@@ -94,7 +94,7 @@ impl ContentStore {
     }
 
     /// Removes a tape's prefilter rows (they also go when the tape is collected).
-    pub(crate) fn remove_prefilter(&self, tape: TapeId) -> StoreResult<()> {
+    pub fn remove_prefilter(&self, tape: TapeId) -> StoreResult<()> {
         self.working_set().forget_kinds(tape.row());
         self.immediate_transaction(|transaction| {
             transaction.execute("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape.row()])?;
@@ -103,7 +103,7 @@ impl ContentStore {
     }
 
     /// The version of a tape's prefilter rows, if it has them.
-    pub(crate) fn prefilter_version(&self, tape: TapeId) -> StoreResult<Option<i64>> {
+    pub fn prefilter_version(&self, tape: TapeId) -> StoreResult<Option<i64>> {
         use rusqlite::OptionalExtension;
         let connection = self.connection.lock().expect("content store mutex poisoned");
         Ok(connection
@@ -113,7 +113,7 @@ impl ContentStore {
     }
 
     /// The preorders of `tape`'s nodes of kind atom `kind`, decoded in SQL (`nera_segment`).
-    pub(crate) fn kind_positions(&self, tape: TapeId, kind: u32) -> StoreResult<Vec<u32>> {
+    pub fn kind_positions(&self, tape: TapeId, kind: u32) -> StoreResult<Vec<u32>> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
             "SELECT p.pre FROM tape_kind_counts c, nera_segment(c.postings) p \
@@ -129,7 +129,7 @@ impl ContentStore {
     /// connection in one transaction. Its sets are temporary tables; only registering regex
     /// predicates writes the store (the `vocabulary_*` tables), so a statement that does takes the
     /// write lock up front and any other reads a snapshot without waiting for a writer.
-    pub(crate) fn candidate_transaction<T>(
+    pub fn candidate_transaction<T>(
         &self,
         writes: bool,
         mut operation: impl FnMut(&rusqlite::Connection) -> rusqlite::Result<T>,
@@ -157,10 +157,21 @@ impl ContentStore {
         value
     }
 
+    /// Sets the progress handler of this thread's store connection, which `candidate_transaction` runs on
+    /// (`None`: removes it). The anchor lab counts a candidate statement's VM steps with it.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn candidate_progress<F>(&self, steps: i32, handler: Option<F>) -> StoreResult<()>
+    where
+        F: FnMut() -> bool + Send + 'static,
+    {
+        self.connection.lock().expect("content store mutex poisoned").progress_handler(steps, handler)?;
+        Ok(())
+    }
+
     /// Copies the prefilter rows of `tapes`, the store-wide counts and the regex vocabulary into a
     /// new store at `path`, for the anchor lab (`code_rule_dsl::prefilter::lab`). Tapes keep their
     /// identity and grammar but not their bytes, which candidate SQL never reads.
-    pub(crate) fn capture_prefilter(&self, path: &std::path::Path, tapes: &[i64]) -> StoreResult<()> {
+    pub fn capture_prefilter(&self, path: &std::path::Path, tapes: &[i64]) -> StoreResult<()> {
         drop(ContentStore::open(path)?);
         // The capture copies the atoms' segments: the pending ones are written first.
         if self.atoms.pending() {
@@ -221,8 +232,8 @@ impl ContentStore {
     }
 
     /// Deletes a tape, as collection does, for tests of the cascade.
-    #[cfg(test)]
-    pub(crate) fn delete_tape_for_test(&self, tape: TapeId) -> StoreResult<()> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn delete_tape_for_test(&self, tape: TapeId) -> StoreResult<()> {
         self.working_set().clear();
         self.immediate_transaction(|transaction| {
             transaction.execute("DELETE FROM tape_objects WHERE tape_id=?1", [tape.row()])?;
@@ -231,8 +242,8 @@ impl ContentStore {
     }
 
     /// Rows of a read-only query over the store, for tests of the prefilter's SQL.
-    #[cfg(test)]
-    pub(crate) fn query_rows<T>(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn query_rows<T>(
         &self,
         sql: &str,
         values: impl rusqlite::Params,
@@ -412,7 +423,7 @@ fn put(transaction: &Transaction<'_>, set: &TapePrefilter, counts: &mut Counts, 
 }
 
 /// Ascending preorders as a delta-varint segment.
-pub(crate) fn pack(pres: &[u32]) -> Vec<u8> {
+pub fn pack(pres: &[u32]) -> Vec<u8> {
     let mut packed = Vec::new();
     let mut previous = 0;
     for &pre in pres {

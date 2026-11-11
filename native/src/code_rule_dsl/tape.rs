@@ -1252,6 +1252,23 @@ impl TapeImage {
         if grammar.lang == GrammarDialect::Rr {
             return Some(Self::encode_rr(grammar, source, budget).map(FileImage::single));
         }
+        // A JSON file: the Bitlex parser's tree, node for node tree-sitter-json's (`json_parser`). A file it refuses
+        // goes to tree-sitter-json below.
+        if cfg!(feature = "lang-json")
+            && grammar.lang == GrammarDialect::Json
+            && grammar.lang.embeds().is_empty()
+            && matches!(super::language::adapter::parse_input(grammar.lang, source), std::borrow::Cow::Borrowed(_))
+        {
+            let parse = crate::code_rule_dsl::logic::profile::span(|| "bitlex parse".into());
+            let columns = crate::code_rule_dsl::transducer::packed::json_parser::columns(source);
+            drop(parse);
+            if let Some(columns) = columns {
+                crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
+                let _encode = crate::code_rule_dsl::logic::profile::span(|| "tape encode".into());
+                return Some(Self::encode_columns(grammar, source, &columns, budget).map(FileImage::single));
+            }
+            crate::code_rule_dsl::logic::profile::decision("JSON parse", || "a file the Bitlex parser refused: tree-sitter-json".to_owned());
+        }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
             return Some(Err(error.to_string()));
@@ -1408,6 +1425,51 @@ impl TapeImage {
             )?);
         }
         Ok(image)
+    }
+
+    /// The tape of a node table a Bitlex parser wrote (`transducer::packed::json_parser::Columns`), in the
+    /// grammar's tree-sitter ids: kinds, fields, spans, parents, extras and supertypes, as `encode_tree` reads them
+    /// off a tree-sitter tree.
+    pub(super) fn encode_columns(
+        grammar: &Grammar,
+        source: &str,
+        columns: &crate::code_rule_dsl::transducer::packed::json_parser::Columns,
+        budget: &impl Fn() -> bool,
+    ) -> Result<Self, String> {
+        use crate::code_rule_dsl::transducer::packed::json_parser::NO_PARENT;
+        checked(budget)?;
+        if source.len() > u32::MAX as usize {
+            return Err("source exceeds tape range".into());
+        }
+        let mut nodes = Vec::with_capacity(columns.len());
+        for i in 0..columns.len() {
+            let (kind, field, extra) = (columns.kind[i], columns.field[i], columns.extra[i] != 0);
+            let error = kind == u32::from(u16::MAX);
+            if !error && (kind as usize >= KIND_LIMIT || field as usize >= FIELD_LIMIT || kind == u32::from(ERROR_CODE)) {
+                return Err(format!("kind {kind} or field {field} exceeds the tape's codes"));
+            }
+            // An extra hangs from no field, as `encode_tree` leaves it.
+            let field = if extra { 0 } else { field as u16 };
+            nodes.push(Pending {
+                kf: if error { ERROR_CODE } else { kind as u16 | (field << 10) },
+                parent: (columns.parent[i] != NO_PARENT).then_some(columns.parent[i]),
+                start: columns.start[i],
+                length: columns.end[i].checked_sub(columns.start[i]).ok_or("inverted node span")?,
+                size: 1,
+                extra,
+                error,
+                missing: false,
+                kind_alias: None,
+            });
+        }
+        let mut supertypes = Vec::with_capacity(columns.super_node.len());
+        for (&node, &class) in columns.super_node.iter().zip(&columns.super_kind) {
+            if class as usize >= KIND_LIMIT {
+                return Err("supertype symbol exceeds tape limit".into());
+            }
+            supertypes.push((node, class as u16));
+        }
+        Self::finish(nodes, supertypes, grammar, source, budget)
     }
 
     /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as

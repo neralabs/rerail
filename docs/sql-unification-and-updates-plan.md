@@ -2039,3 +2039,81 @@ The next performance task is native-backed SQL reconciliation for the remaining 
 It must combine scratch maintenance, support counts, and publication without weakening multiplicity, rollback, or the complete-session allowance.
 Nullable, opaque, product, and incompatible ordered reducers still require stronger contracts before sharing.
 Overlapping producers and lattice supports retain general reconciliation where the available proofs require it.
+
+
+### Unify the execution graph to remove submission overruns (2026-11-09)
+
+The remaining overruns come from separate execution paths, rather than one expensive statement.
+Projection syntax creates SQL views, which later require conversion, scratch cleanup, and separate delta reconciliation.
+A mixed frame also abandons phase composition when one operator needs separate evaluation.
+Single reducers use another scratch-table pipeline, although their summaries obey the same grouping contract as combined reducers.
+
+The implementation changes those boundaries:
+
+| Boundary | Resulting shape |
+| --- | --- |
+| Planner projections | Normalize checked projection queries into relation steps before execution. Keep the original queries for semantic domains and explain. |
+| Mixed wave frames | Keep compatible operators in a shared support/fold phase. Separate operators consume their own journals without disabling neighboring phases. |
+| Single reducers | Use grouped SQL publication for one or more eligible count/sum/min/max consumers. Storage compatibility does not imply lookup compatibility. |
+| Public results | Keep SQL result tables and publish actual deltas. Existing triggers, indexes, and rollback behavior remain available. |
+| Cold fallback | Collect projection statistics after the cold waves, before retained support joins. Keep specialized walkers and pooled scalar kernels. |
+| Ownership | Record only created candidate/frontier objects. Preserve ownership when full cold setup already declared those tables. |
+
+```mermaid
+flowchart LR
+  inputs[Versioned inputs] --> graph[Checked relation graph]
+  projections[Projection rules] --> graph
+  graph --> gates[Dependency and wave gates]
+  gates --> phase[Composed support queries]
+  gates --> boundary[Separate operator evaluation]
+  phase --> fold[Shared reconciliation and fold]
+  boundary --> fold
+  fold --> results[Transactional SQL result deltas]
+```
+
+The obsolete view-conversion maintenance path is removed.
+A compatibility check also rejects replacing public SQL tables with read-only modules: existing publication hooks require those tables.
+
+The broader tests expose an earlier-gate activation bug.
+Template adoption installs retained result rows before a frame evaluates changes.
+The new mixed phase must compare against the result before adoption, so those rows enter its affected keys.
+Otherwise, an earlier gate can omit a surviving lattice contribution after a retraction.
+The existing constant-seed, wave-limit, rollback, and retraction regression covers this correction.
+
+#### Complete-session results
+
+The requests use 32 Python files, with snapshot replacement, file additions/deletions, no-op edits, failure rollback, recovery, and empty inputs.
+Every submission still counts against the same complete-job allowance of 100.
+
+| Replay | Before | After | Complete parity | Allowance |
+| --- | ---: | ---: | --- | --- |
+| Projection and recursive lattice | 190 | 76 | Pass | Pass |
+| Recursive set and scalar count | 276 | 83 | Pass | Pass |
+| Recursive document set and lattice | 76 | 76 | Pass | Pass |
+| Recursive explicit facts, 1,000 regions | 95 | 95 | Pass | Pass |
+| Recursive explicit facts, 10,000 regions | 95 | 91 | Pass | Pass |
+
+The projection and mixed scalar requests also pass at 1,000 files, with the same counts of 76 and 83 submissions.
+This larger check crosses the dense-initialization threshold and retains duplicate supports and empty-input recovery.
+
+These captures use the headless development build. They establish submission counts and correctness.
+Release latency and whole-product performance need separate measurements.
+All captures include complete publication sequences, native inputs, derived relations, counters, output deltas, rollback, recovery, and final queries.
+All final captures have known statement origins, complete receipts, and no unexpected explanation failures.
+
+The SQL executor suite passes 146 tests, with one ignored test. The Node profiling and acceptance suite passes 44 tests.
+The added regression checks duplicate supports, empty groups, reinsertions, stable public indexes, and failure after an earlier program publishes.
+It compares every successful state with the independent cold executor.
+The original CPython, specialized walker, shared-bag, trigger, widening, and sparse-work checks also pass.
+
+Reproduce the formerly failing cases with:
+
+```sh
+python3 benchmark/sql-executor.py --document-session-request 32 --projection /tmp/projection.json
+python3 benchmark/sql-executor.py --document-session-request 32 --scalar-consumers /tmp/scalar.json
+node scripts/profiling/sql-session.mjs RUNNER /tmp/projection.json /tmp/projection-report
+node scripts/profiling/sql-session.mjs RUNNER /tmp/scalar.json /tmp/scalar-report
+```
+
+The remaining boundaries concern unsupported effects, SQL phase-size limits, and complete-product workload coverage.
+They no longer leave either checked document replay over its execution allowance.
