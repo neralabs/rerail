@@ -157,6 +157,7 @@ const NOT_YET_TABLES_PIN: usize = 61;
 const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
     ("code_rule_dsl/logic/costs.rs", "WRITER"),
+    ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),
     // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
     ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
     // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).

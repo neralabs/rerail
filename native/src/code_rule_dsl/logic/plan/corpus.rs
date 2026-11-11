@@ -4192,11 +4192,12 @@ fn run_observed(
             // The rounds from the last run's final round, kept in the store.
             let rounds_key = round.as_ref().map(|r| retain::key(&[0; 32], &r.program));
             let rounds_space = rounds_key.as_ref().map(&rounds_space_of).unwrap_or_default();
+            let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs, constants: &constants_at };
             // Only what the stored frames hold that is current is known here; rows are read when a round needs them.
             let mut from_rounds = None;
             if let (Some(r), Some(store), Some(key)) = (&round, &cone_handle, rounds_key) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the cone's rounds, from the frames".into());
-                let k = retain::Retained::from_frames(store, rounds_space, key, &r.program)?;
+                let k = retain::Retained::from_frames(store, rounds_space, key, &r.program, &rounds_in.constant_digests())?;
                 let missing = r.missing(&k);
                 if missing.is_empty() {
                     from_rounds = Some(k);
@@ -4210,7 +4211,6 @@ fn run_observed(
             }
             let rounds_stats = load_stats.clone();
             let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes });
-            let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs, constants: &constants_at };
             let mut gave_up = None;
             if let (Some(r), Some(on), Some(k)) = (&round, &on, from_rounds) {
                 match r.run(on, &rounds_in, cone_rounds::Start::Kept(k), cone_rounds::Answers::default(), &mut answer) {
@@ -4968,7 +4968,9 @@ fn run_observed(
                         let (loaded, p) = kept_strata::load(store, root, ckey, &cross.program, &cross_inputs, &digests)?;
                         (cell, kept_frames) = (loaded, Some(p));
                     }
-                    let frames_space = kept_strata::program_space(root, &ckey);
+                    // The root's one space: a program's inputs are its own frames (`retain::input_ident`), its derived
+                    // relations are named by identity, shared with any program that derives them alike (decision 0103).
+                    let frames_space = kept_strata::space(root);
                     if cell.is_none() && from_frames.is_some() {
                         let _s = span("the kept part, from the frames");
                         cell = Some(retain::Retained::from_frames(store, frames_space, ckey, &cross.program, &digests)?);

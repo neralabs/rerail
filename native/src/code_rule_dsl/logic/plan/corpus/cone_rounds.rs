@@ -24,7 +24,7 @@ use super::{Result, lower, maintained, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source};
 use crate::code_rule_dsl::logic::front::{self, Literal};
 use rusqlite::Connection;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 /// Rounds past this many go back to the gated fixpoint.
@@ -119,6 +119,13 @@ pub(in crate::code_rule_dsl) struct Inputs<'a> {
     pub(in crate::code_rule_dsl) corpus: &'a HashSet<i64>,
     /// The run's constants the cone reads (the observer's facts, an earlier phase's exports): bound as they are.
     pub(in crate::code_rule_dsl) constants: &'a BTreeMap<String, Arc<dyn Source>>,
+}
+
+impl Inputs<'_> {
+    /// The constants' digests: the inputs a round binds as they are, which the frames' reads record.
+    pub(in crate::code_rule_dsl) fn constant_digests(&self) -> HashMap<String, u64> {
+        self.constants.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref()))).collect()
+    }
 }
 
 /// What the answers gave: each request asked and the rows answers added, by relation.
@@ -221,7 +228,7 @@ impl RoundProgram {
         // What the store holds of the program before the rounds: what the rounds write back is compared with it.
         let was = match &kept {
             Some(k) => k.frames().cloned(),
-            None => retain::Retained::from_frames(on.store, on.space, on.key, &self.program)?.frames().cloned(),
+            None => retain::Retained::from_frames(on.store, on.space, on.key, &self.program, &inputs.constant_digests())?.frames().cloned(),
         };
         if let Some(k) = &kept {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/the last run's, from the frames".into());
