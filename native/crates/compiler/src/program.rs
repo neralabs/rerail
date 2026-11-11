@@ -61,6 +61,15 @@ pub const MERGE: u8 = 0x61;
 /// A node of kind `operand` around the node last made at this level, open: it takes that node's
 /// field and start; `NODE_FIELD m=1` and `RETAG m=1` then act on the moved node.
 pub const WRAP: u8 = 0x62;
+/// The token just taken is its level's word, of kind `operand` (`remember C`): a kind
+/// `stream_ir::REMEMBERED` names it (`RETAG m=1, 2`, a reading's way) until the next. A call
+/// (`PUSH`) keeps its caller's word, given back where it returns; the called level starts
+/// with it.
+pub const REMEMBER: u8 = 0x63;
+/// The level's flag `operand` (`with F R`, `unless F A`): `m=0` set, `m=1` clear, after a
+/// `PUSH` (the called level's; the caller's come back where it returns); `m=2` a test, which
+/// runs the next word where the flag is set and skips it where it is clear.
+pub const FLAG: u8 = 0x64;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;

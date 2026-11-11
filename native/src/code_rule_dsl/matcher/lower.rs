@@ -419,7 +419,23 @@ impl Lowering {
                     .collect::<Result<Vec<_>, _>>()?;
                 MatchTree::All(trees)
             }
-            AstMatcher::Any(matchers) => MatchTree::Any(self.trees(matchers, shares)?),
+            // Only the arm that matches binds into the environment (ast-grep's `any`), so arms never share a
+            // binding: each arm counts from what was bound before the `any`, and the `any` binds the most any arm does.
+            AstMatcher::Any(matchers) => {
+                let before = self.binds.clone();
+                let mut most = before.clone();
+                let mut trees = Vec::with_capacity(matchers.len());
+                for matcher in matchers {
+                    self.binds = before.clone();
+                    trees.push(self.tree(matcher, shares)?);
+                    for (name, &uses) in &self.binds {
+                        let kept = most.entry(name.clone()).or_default();
+                        *kept = (*kept).max(uses);
+                    }
+                }
+                self.binds = most;
+                MatchTree::Any(trees)
+            }
             AstMatcher::Not(matcher) => {
                 self.path.push(Step::Not);
                 let tree = self.tree(matcher, shares);

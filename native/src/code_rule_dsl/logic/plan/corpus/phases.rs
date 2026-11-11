@@ -212,6 +212,67 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
     Ok((facts, runs))
 }
 
+/// Whether a phase's run is under way on this thread (its documents are its own: phase 1 does not run inside it).
+pub(super) fn in_phase() -> bool {
+    RUNNING.with(|r| !r.borrow().is_empty())
+}
+
+/// The innermost phase whose run is under way on this thread, if any: its facts are its own fact space's.
+pub(super) fn current() -> Option<String> {
+    RUNNING.with(|r| r.borrow().last().cloned())
+}
+
+/// Phase 1's program, the builtin one.
+pub(super) fn sources_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs/sources.rr")
+}
+
+/// Phase 1, `sources` (decision 0104): the run's source files, each `(path, grammar, content digest)`, loaded as
+/// documents by `sources.rr`, its own run of the same engine. What it hands on is each file that became a document,
+/// `(path, grammar, content)`, in the order given: the later phase's documents.
+pub(super) fn sources(
+    files: &[(String, String, String)],
+    label: &str,
+    root: &Path,
+    scratch: &Path,
+    modes: &str,
+    binding: Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+) -> Result<(Vec<(String, String, String)>, PhaseRun)> {
+    const NAME: &str = "sources";
+    let _running = Running::enter(NAME)?;
+    let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
+    let src = source(NAME, dir.as_deref())?.expect("sources.rr, a builtin phase program");
+    let program = crate::code_rule_dsl::logic::rr::parse(&src)?;
+    let declared = declared(&program).ok_or_else(|| Error::Plan(format!("{NAME}.rr: no `.phase {NAME}`")))?;
+    // Its documents are those it loads: it is given no file of its own, and its language is the run's.
+    let text = format!("{src}
+.language {label}
+.output {}
+", declared.exports.join(", "));
+    let mut options = options.clone();
+    if let Some(o) = options.as_object_mut() {
+        o.insert("inputFiles".to_owned(), serde_json::Value::Array(Vec::new()));
+    } else {
+        options = serde_json::json!({ "inputFiles": [] });
+    }
+    // The observer's facts: stated, handed down as a phase's exports are (they are its inputs, not its program).
+    let stated: Vec<Vec<Value>> = files.iter().map(|(p, g, c)| vec![Value::Str(p.clone()), Value::Str(g.clone()), Value::Str(c.clone())]).collect();
+    let _down = HandedDown::enter(NAME, Facts::from([("observer__source_file".to_owned(), stated)]));
+    let out = scratch.join(format!("phase-{NAME}"));
+    let report = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
+        super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, &options)?
+    };
+    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
+    let made: std::collections::HashSet<&str> = rows.get("document").into_iter().flatten().filter_map(|r| r.first().map(String::as_str)).collect();
+    let documents: Vec<(String, String, String)> = files.iter().filter(|(p, _, _)| made.contains(p.as_str())).cloned().collect();
+    let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
+    Ok((documents, PhaseRun { name: NAME.to_owned(), report, exports }))
+}
+
 /// Whether a program loads documents into its fixed point (a `load` rule, decision 0065 §2a).
 fn derives_load(prog: &Program) -> bool {
     prog.rules.iter().any(|r| r.head.rel == "load")
@@ -276,6 +337,38 @@ fn hand_on(name: &str, program: &Program, reads: &[(String, String)], rows: &BTr
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::typing::file_local::Binding;
+
+    /// Phase 1 (`sources.rr`, decision 0104): a run's documents are those phase 1 loads, one per source file's key.
+    /// After an edit, only the edited file is built again, in either phase: the others are their memos' entries.
+    #[test]
+    fn a_runs_documents_come_from_phase_1_and_an_edit_builds_only_its_file() {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("sources");
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.py"), "def f():\n    return 1\n").unwrap();
+        std::fs::write(src.join("b.py"), "def g():\n    return 2\n").unwrap();
+        let out = dir.join("out");
+        let _no_session = crate::code_rule_dsl::logic::plan::corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let text = crate::code_rule_dsl::logic::rr::print(
+            &crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap(),
+        )
+        .unwrap();
+        let run = || crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
+        let defs = || std::fs::read_to_string(out.join("defs.csv")).unwrap();
+        let first = run();
+        let sources = first.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
+        assert_eq!(sources.exports, vec![("document".to_owned(), 2)], "each source file is a document of phase 1's");
+        assert_eq!(defs(), "f\ng\n");
+        std::fs::write(src.join("a.py"), "def h():\n    return 1\n").unwrap();
+        let second = run();
+        assert_eq!(defs(), "g\nh\n", "the findings follow the edit");
+        let sources = second.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
+        assert_eq!(sources.report.memo.0, 1, "phase 1 builds only the edited file");
+        assert_eq!(second.memo.0, 1, "so does the run");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A phase runs in its own space: a reader sees its exports and nothing else, and an export naming a node is
     /// refused. The phase keeps nothing of its own: across runs, its run keeps its relations as any run does, and the
@@ -384,9 +477,10 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl p2__anc(s: symbol, a: symbol)\n.decl r(s: symbol, a: symbol)\nr(s, a) :- p2__anc(s, a).\n.output r\n").unwrap()).unwrap();
         let report = run(&reader).unwrap();
         assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "B\tA\n");
-        // Both phases are listed flat, in the order they ran; p2's own run checked p1 once, not again.
+        // Both phases are listed flat, in the order they ran, then phase 1 (`sources`), which gives the run its
+        // documents; p2's own run checked p1 once, not again.
         let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
-        assert_eq!(names, ["p1", "p2"]);
+        assert_eq!(names, ["p1", "p2", "sources"]);
         assert!(report.phase_runs[1].report.phase_runs.is_empty(), "p1 is not checked again inside p2's run");
         // Nothing changed: the same rows.
         run(&reader).unwrap();
@@ -426,7 +520,7 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
         let report = crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
         assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "A\tstrict\n");
-        assert_eq!(report.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["p1"]);
+        assert_eq!(report.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["p1", "sources"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

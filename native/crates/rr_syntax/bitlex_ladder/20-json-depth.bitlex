@@ -333,16 +333,8 @@ tree rr {
                         | identifier as variable [wrap call function as identifier arguments: argument_list
                                                  | wrap named_argument name as identifier ':' value: term]
                         | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list]
-                        | 'min' as variable [min_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread min_value ':' '{' body: body '}']]
-                        | 'max' as variable [max_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread max_value ':' '{' body: body '}']]
-                        | 'sum' as variable [sum_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread sum_value ':' '{' body: body '}']]
-                        | 'mean' as variable [mean_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread mean_value ':' '{' body: body '}']]
-                        | 'join' as variable [join_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread join_value ':' '{' body: body '}']]
+                        | aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
+                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread aggregate_value ':' '{' body: body '}']]
                         | parenthesized_expression
   node lattice_functor  = retag functor_call '@' function: identifier [arguments: argument_list]
   # The setting's `.` and name, one `.policy` leaf; the node a policy document.
@@ -384,7 +376,7 @@ tree rr {
                         | relation: identifier arguments: argument_list
   node argument_list nested = '(' [argument: term (',' argument: term)*] ')'
   # A body: a conjunction; a `;` after it wraps it in a disjunction of alternatives.
-  choice body           = conjunction [wrap disjunction alternative (';' alternative: conjunction)+]
+  choice body           = without no_named conjunction [wrap disjunction alternative (';' alternative: without no_named conjunction)+]
   node conjunction nested = literal: literal (',' literal: literal)*
   node group nested     = '(' body: body ')'
   # A literal: an atom, a comparison of two terms, a pattern match or a negation. A word is a
@@ -406,19 +398,8 @@ tree rr {
                         | reread parenthesized_strict pattern_tail
   provisional bare
   # `min (…) : {…}`: the call read again inside the aggregate around it.
-  reading min_value = root gone, identifier as 'min', argument_list as parenthesized_expression, '(', ')',
-                          keep variable number float string code_literal wildcard unary_expression binary_expression parenthesized_expression call functor_call aggregate json_object,
-                          field function as operator, field relation as operator, field arguments as value, field argument as expression
-  reading max_value = root gone, identifier as 'max', argument_list as parenthesized_expression, '(', ')',
-                          keep variable number float string code_literal wildcard unary_expression binary_expression parenthesized_expression call functor_call aggregate json_object,
-                          field function as operator, field relation as operator, field arguments as value, field argument as expression
-  reading sum_value = root gone, identifier as 'sum', argument_list as parenthesized_expression, '(', ')',
-                          keep variable number float string code_literal wildcard unary_expression binary_expression parenthesized_expression call functor_call aggregate json_object,
-                          field function as operator, field relation as operator, field arguments as value, field argument as expression
-  reading mean_value = root gone, identifier as 'mean', argument_list as parenthesized_expression, '(', ')',
-                          keep variable number float string code_literal wildcard unary_expression binary_expression parenthesized_expression call functor_call aggregate json_object,
-                          field function as operator, field relation as operator, field arguments as value, field argument as expression
-  reading join_value = root gone, identifier as 'join', argument_list as parenthesized_expression, '(', ')',
+  # An aggregate's call read again inside it: its word the aggregate's kind (`remember`).
+  reading aggregate_value = root gone, identifier as aggregate_word, argument_list as parenthesized_expression, '(', ')',
                           keep variable number float string code_literal wildcard unary_expression binary_expression parenthesized_expression call functor_call aggregate json_object,
                           field function as operator, field relation as operator, field arguments as value, field argument as expression
   reading parenthesized = group as parenthesized_expression, conjunction gone, atom as call, '(', ')', identifier,
@@ -456,18 +437,10 @@ tree rr {
   choice numeric        = number [merge float fraction]
   choice unsigned nested = string | code_literal | '_' as wildcard | minus | functor_call | json
                         | identifier as variable [wrap call function as identifier arguments: argument_list
-                                                 | wrap named_argument name as identifier ':' value: term]
+                                                 | unless no_named (wrap named_argument name as identifier ':' value: term)]
                         | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list]
-                        | 'min' as variable [min_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread min_value ':' '{' body: body '}']]
-                        | 'max' as variable [max_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread max_value ':' '{' body: body '}']]
-                        | 'sum' as variable [sum_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread sum_value ':' '{' body: body '}']]
-                        | 'mean' as variable [mean_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread mean_value ':' '{' body: body '}']]
-                        | 'join' as variable [join_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread join_value ':' '{' body: body '}']]
+                        | aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
+                          | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread aggregate_value ':' '{' body: body '}']]
                         | parenthesized_expression
   # `-` and a number: one number leaf (a float, with a fraction). Else `-` and its operand,
   # a primary that is no number.
@@ -477,75 +450,34 @@ tree rr {
   # An aggregate's word at a literal's start: the aggregate, then the rest of a term and a
   # comparison or a pattern; else the word as any other.
   choice aggregate_literal = 'count' as variable (count_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)] | more [literal_tail])
-                           | 'min' as variable (min_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail) | relabel bare (wrap aggregate _ reread min_value ':' '{' body: body '}') more [literal_tail]] | more [literal_tail])
-                           | 'max' as variable (max_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail) | relabel bare (wrap aggregate _ reread max_value ':' '{' body: body '}') more [literal_tail]] | more [literal_tail])
-                           | 'sum' as variable (sum_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail) | relabel bare (wrap aggregate _ reread sum_value ':' '{' body: body '}') more [literal_tail]] | more [literal_tail])
-                           | 'mean' as variable (mean_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail) | relabel bare (wrap aggregate _ reread mean_value ':' '{' body: body '}') more [literal_tail]] | more [literal_tail])
-                           | 'join' as variable (join_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail) | relabel bare (wrap aggregate _ reread join_value ':' '{' body: body '}') more [literal_tail]] | more [literal_tail])
+                           | aggregate_word as variable (word_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail) | relabel bare (wrap aggregate _ reread aggregate_value ':' '{' body: body '}') more [literal_tail]] | more [literal_tail])
   choice aggregate_negated = 'count' as variable (count_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
-                           | 'min' as variable (min_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
-                           | 'max' as variable (max_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
-                           | 'sum' as variable (sum_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
-                           | 'mean' as variable (mean_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
-                           | 'join' as variable (join_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | aggregate_word as variable (word_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+  # The aggregates' words but `count`: each the word of its level, which a wrap or a reading
+  # gives back its own kind (`as aggregate_word`).
+  remember aggregate_word
+  choice aggregate_word = 'min' | 'max' | 'sum' | 'mean' | 'join'
   # The aggregate around its word, which takes its own kind back.
   choice count_agg      = wrap aggregate operator as 'count' ':' '{' body: body '}'
-  choice min_agg       = wrap aggregate operator as 'min' aggregated
-  choice max_agg       = wrap aggregate operator as 'max' aggregated
-  choice sum_agg       = wrap aggregate operator as 'sum' aggregated
-  choice mean_agg      = wrap aggregate operator as 'mean' aggregated
-  choice join_agg      = wrap aggregate operator as 'join' aggregated
+  choice word_agg      = wrap aggregate operator as aggregate_word aggregated
   # What a value's aggregate holds after its word.
-  choice aggregated     = value: agg_value ['by' ('(' key: term (',' key: term)* ')' | key: agg_value)] ['sep' separator: string] ':' '{' body: body '}'
-  # An aggregate's value or single key: a term with no named argument in it, starting with no
-  # `-` or `(` (after the word those make it a variable's or a call's). A word of an aggregate
-  # here starts its own aggregate, a call or a variable, as it does in any term.
-  choice agg_value = (numeric | string | code_literal | '_' as wildcard | functor_nn | json) more_nn
-                   | identifier as variable [wrap call function as identifier arguments: argument_list_nn] more_nn
+  choice aggregated     = value: with no_named agg_value ['by' ('(' key: without no_named term (',' key: without no_named term)* ')' | key: with no_named agg_value)] ['sep' separator: string] ':' '{' body: body '}'
+  # An aggregate's value or single key: a term with no named argument in it (`no_named`, down
+  # through the calls in it), starting with no `-` or `(` (after the word those make it a
+  # variable's or a call's). A word of an aggregate here starts its own aggregate, a call or a
+  # variable, as it does in any term. A body, and a key in parentheses, may hold named
+  # arguments again (`without no_named`).
+  flag no_named
+  choice agg_value nested = (numeric | string | code_literal | '_' as wildcard | functor_call | json) more
+                   | identifier as variable [wrap call function as identifier arguments: argument_list] more
                    | count_value
-                   | min_in_value
-                   | max_in_value
-                   | sum_in_value
-                   | mean_in_value
-                   | join_in_value
+                   | word_in_value
   # `count` in a value: a `:` after it is its aggregate's, as the engine reads it (a nested
   # level takes what it can before it ends).
-  choice count_value nested = 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list_nn] more_nn
-  # `min`, `max`, `sum`, `mean` or `join` in a value, read as in any other term.
-  choice min_in_value nested = 'min' as variable [min_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                             | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread min_value ':' '{' body: body '}']] more_nn
-  choice max_in_value nested = 'max' as variable [max_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                             | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread max_value ':' '{' body: body '}']] more_nn
-  choice sum_in_value nested = 'sum' as variable [sum_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                             | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread sum_value ':' '{' body: body '}']] more_nn
-  choice mean_in_value nested = 'mean' as variable [mean_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                             | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread mean_value ':' '{' body: body '}']] more_nn
-  choice join_in_value nested = 'join' as variable [join_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                             | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread join_value ':' '{' body: body '}']] more_nn
-  # Terms with no named argument.
-  choice more_nn        = (wrap binary_expression left operator: multiplicative right: primary_nn)* (wrap binary_expression left operator: additive right: product_nn)*
-  choice term_nn nested = product_nn (wrap binary_expression left operator: additive right: product_nn)*
-  choice product_nn     = primary_nn (wrap binary_expression left operator: multiplicative right: primary_nn)*
-  choice primary_nn     = numeric | unsigned_nn
-  choice unsigned_nn nested = string | code_literal | '_' as wildcard | minus_nn | functor_nn | json
-                            | identifier as variable [wrap call function as identifier arguments: argument_list_nn]
-                            | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list_nn]
-                            | 'min' as variable [min_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                          | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread min_value ':' '{' body: body '}']]
-                            | 'max' as variable [max_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                          | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread max_value ':' '{' body: body '}']]
-                            | 'sum' as variable [sum_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                          | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread sum_value ':' '{' body: body '}']]
-                            | 'mean' as variable [mean_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                          | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread mean_value ':' '{' body: body '}']]
-                            | 'join' as variable [join_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                          | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread join_value ':' '{' body: body '}']]
-                            | parenthesized_nn
-  choice minus_nn       = '-' (merge number number [merge float fraction] | wrap unary_expression operator operand: unsigned_nn)
-  # The same nodes as their named kinds, retagged at their first token.
-  node parenthesized_nn = retag parenthesized_expression '(' expression: term_nn ')'
-  node functor_nn       = retag functor_call '@' function: identifier arguments: argument_list_nn
-  node argument_list_nn nested = retag argument_list '(' [argument: term_nn (',' argument: term_nn)*] ')'
+  choice count_value nested = 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list] more
+  # An aggregate's word in a value, read as in any other term.
+  choice word_in_value nested = aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
+                             | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread aggregate_value ':' '{' body: body '}']] more
   choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '{' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
   # A setting's: every punctuation but `{`, which opens a JSON object.
   choice setting_punctuation = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'

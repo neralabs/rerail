@@ -315,15 +315,15 @@ fn metavariable(
 
 /// Where each of `names` binds in W's match of `grammar` at `node` of `root`'s tape (an `ast` atom's captures,
 /// decision 0107): per name, its nodes as tape preorder ids, a single capture's node or a multi-capture's every node.
-/// `None` where W does not match there or a name binds no node (a text-only binding); `Err` with the limit W's matcher
-/// hit within `work` visits.
+/// A name of the rule's `transform` binds its text instead (`Capture::Text`). `None` where W does not match there or a
+/// name binds nothing; `Err` with the limit W's matcher hit within `work` visits.
 pub(in crate::code_rule_dsl) fn captured(
     grammar: &GrammarMatcher,
     root: &AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
     node: u32,
     names: &[String],
     work: usize,
-) -> Result<Option<Vec<Vec<u32>>>, String> {
+) -> Result<Option<Vec<Capture>>, String> {
     begin_clause(grammar, work);
     let mut found = grammar.match_rule(node_at(root, node));
     let transformed = match (&grammar.transform, &mut found) {
@@ -342,13 +342,23 @@ pub(in crate::code_rule_dsl) fn captured(
     Ok(names
         .iter()
         .map(|name| {
+            if let Some(text) = env.get_transformed(name) {
+                return Some(Capture::Text(String::from_utf8_lossy(text).into_owned()));
+            }
             let nodes: Vec<u32> = match env.get_match(name) {
                 Some(node) => vec![node.node_id() as u32],
                 None => env.get_multiple_matches(name).iter().map(|node| node.node_id() as u32).collect(),
             };
-            (!nodes.is_empty()).then_some(nodes)
+            (!nodes.is_empty()).then_some(Capture::Nodes(nodes))
         })
         .collect())
+}
+
+/// What a name of an `ast` atom binds at a match (`captured`): nodes (a multi-capture's every node), or the text a
+/// rule's `transform` makes.
+pub(in crate::code_rule_dsl) enum Capture {
+    Nodes(Vec<u32>),
+    Text(String),
 }
 
 pub(in crate::code_rule_dsl) struct Layer {

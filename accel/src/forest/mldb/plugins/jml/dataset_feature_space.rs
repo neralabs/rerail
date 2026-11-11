@@ -1,4 +1,4 @@
-//! dataset_feature_space.h, in Rust.
+//! dataset_feature_space.h and the parts of dataset_feature_space.cc training and prediction need, in Rust.
 //!
 //! Jeremy Barnes, 13 March 2015. Copyright (c) 2015 mldb.ai inc. This file is part of MLDB. Apache-2.0 (see the
 //! LICENSE at `accel/src/forest/mldb/`).
@@ -6,9 +6,13 @@
 //! Feature space for datasets to allow training of classifiers: one feature per column, each column with its info,
 //! and (when bucketized) its bit-packed bucket numbers and bucket descriptions, which the trainer reads.
 //!
-//! Upstream builds the space from an MLDB `Dataset` (dataset_feature_space.cc, not copied); here the caller adds
-//! its columns (`add_column`). The parts that serve JML's `Feature_Space` interface over MLDB's dataset
-//! (`encodeFeature`, `encodeLabel`, serialization, the version two hash mapping) are not brought over. The
+//! Upstream builds the space from an MLDB `Dataset`; here from the columns' values (`from_columns`, over
+//! `ColumnInfo::from_values`: `getColumnInfo` bucketized, with `Dataset::getColumnBuckets` from core/dataset.cc), or
+//! the caller adds its columns (`add_column`). Prediction buckets values as training did (`ColumnInfo::bucket_of`,
+//! `bucketize`) rather than encoding them (`encodeFeatureValue`), which disagreed with training (see `bucket_of`).
+//! The parts that serve JML's `Feature_Space` interface over MLDB's dataset (`encodeFeature`, `encodeLabel`,
+//! serialization, the version two hash mapping) stay in the .cc; the unbucketized column info is not brought over
+//! (the trainer needs buckets). The
 //! feature to column hash mapping is the one dataset_feature_space.cc defines (type 1, then the hash's high and low
 //! 32 bits), not the "type 0" its header's comment describes.
 
@@ -155,5 +159,107 @@ mod tests {
         assert_eq!(fs.info(&f).unwrap(), FeatureType::Real);
         assert_eq!(fs.print_feature(&f), "units");
         assert_eq!(DatasetFeatureSpace::get_hash_raw(MISSING_FEATURE).unwrap(), 0);
+    }
+}
+
+/// The bucket a value outside the training's buckets is given at prediction (a category not seen in training, a
+/// null in a column that had none, a value of another kind): one past the column's buckets. It is on the right of
+/// every split: above every ordinal split, and equal to no categorical split.
+pub fn unseen_bucket(descriptions: &BucketDescriptions) -> u32 {
+    descriptions.num_buckets() as u32
+}
+
+impl ColumnInfo {
+    /// A column's info from its values, bucketized (`getColumnInfo` with `bucketize`, over the column's buckets as
+    /// `Dataset::getColumnBuckets` makes them, from core/dataset.cc): the distinct values described in up to
+    /// `max_num_buckets` buckets (upstream asked for 255), each row's bucket, and the column real when it has
+    /// numbers (an error when it also has strings), categorical when it has strings.
+    pub fn from_values(column_name: &str, values: &[crate::forest::bucket::CellValue], max_num_buckets: i32) -> Result<ColumnInfo, String> {
+        use crate::forest::bucket::{CellValue, WritableBucketList};
+        use crate::forest::memory_region::MemorySerializer;
+        let mut sorted: Vec<(&CellValue, u32)> = values.iter().zip(0u32..).collect();
+        sorted.sort();
+        let mut distinct_values: Vec<CellValue> = Vec::new();
+        let mut starts_at = Vec::new();
+        for (i, (v, _)) in sorted.iter().enumerate() {
+            if distinct_values.last() != Some(*v) {
+                distinct_values.push((*v).clone());
+                starts_at.push(i);
+            }
+        }
+        starts_at.push(sorted.len());
+        let mut descriptions = BucketDescriptions::default();
+        descriptions.initialize(distinct_values.clone(), max_num_buckets)?;
+        let mut bucket_numbers = vec![u32::MAX; sorted.len()];
+        for (i, v) in distinct_values.iter().enumerate() {
+            let bucket = descriptions.get_bucket(v)?;
+            for (_, row) in &sorted[starts_at[i]..starts_at[i + 1]] {
+                bucket_numbers[*row as usize] = bucket;
+            }
+        }
+        let mut s = MemorySerializer;
+        let mut buckets = WritableBucketList::new(values.len(), descriptions.num_buckets() as u32, &mut s);
+        for &b in &bucket_numbers {
+            buckets.write(b);
+        }
+        let info = if descriptions.numeric.active {
+            if !descriptions.strings.buckets.is_empty() {
+                let some: Vec<&String> = descriptions.strings.buckets.iter().take(100).collect();
+                return Err(format!("This classifier can't train on column {column_name} which has both string and numeric values (strings {some:?}). Consider casting it to a string, or splitting it into a numeric-or-null and a string-or-null column."));
+            }
+            FeatureType::Real
+        } else if !descriptions.strings.buckets.is_empty() {
+            FeatureType::Categorical
+        } else {
+            // Only nulls (upstream left the type unset here).
+            FeatureType::Inutile
+        };
+        Ok(ColumnInfo { column_name: column_name.to_string(), info, index: -1, distinct_values: descriptions.num_buckets() as i32, buckets: buckets.freeze(&mut s), bucket_descriptions: descriptions })
+    }
+
+    /// The bucket of a value at prediction: the training's bucket, or `unseen_bucket` for a value the training's
+    /// buckets do not describe. Upstream encoded values instead (`encodeFeatureValue`: numbers as themselves,
+    /// categories as their place among the column's strings, nulls as NaN) and compared them with the node's split
+    /// value; that disagrees with the buckets training split on for categories when the column also has nulls or
+    /// numbers (the strings' buckets are offset), for nulls (training put them in bucket 0, on the left; prediction
+    /// took the missing branch, an empty leaf), and for values on a split point of a column with more distinct
+    /// values than buckets (those split points are values, which the buckets put on the left and `<` on the right).
+    pub fn bucket_of(&self, value: &crate::forest::bucket::CellValue) -> u32 {
+        self.bucket_descriptions.get_bucket(value).unwrap_or_else(|_| unseen_bucket(&self.bucket_descriptions))
+    }
+
+    /// A column of values in this column's buckets (`bucket_of`), bit-packed, with room for the unseen bucket.
+    pub fn bucketize(&self, values: &[crate::forest::bucket::CellValue]) -> BucketList {
+        use crate::forest::bucket::WritableBucketList;
+        use crate::forest::memory_region::MemorySerializer;
+        let mut s = MemorySerializer;
+        let mut w = WritableBucketList::new(values.len(), unseen_bucket(&self.bucket_descriptions) + 1, &mut s);
+        for v in values {
+            w.write(self.bucket_of(v));
+        }
+        w.freeze(&mut s)
+    }
+}
+
+impl DatasetFeatureSpace {
+    /// The feature space over the columns given, each bucketized (`ColumnInfo::from_values`, 255 buckets), in
+    /// parallel; a column's index is its place in the list (upstream: the dataset's columns that were asked for).
+    pub fn from_columns(columns: &[(String, Vec<crate::forest::bucket::CellValue>)], label_info: FeatureType) -> Result<Self, String> {
+        use rayon::prelude::*;
+        let infos: Vec<ColumnInfo> = columns.par_iter().map(|(name, values)| ColumnInfo::from_values(name, values, 255)).collect::<Result<_, _>>()?;
+        let mut fs = DatasetFeatureSpace { label_info, ..Default::default() };
+        for (i, mut info) in infos.into_iter().enumerate() {
+            info.index = i as i32;
+            if fs.column_info.contains_key(&column_hash(&info.column_name)) {
+                return Err(format!("column {} given twice", info.column_name));
+            }
+            fs.add_column(info);
+        }
+        Ok(fs)
+    }
+
+    /// The column at `index`.
+    pub fn column(&self, index: usize) -> Option<&ColumnInfo> {
+        self.column_info.values().find(|c| c.index == index as i32)
     }
 }

@@ -1023,6 +1023,16 @@ impl FileScopeSlot {
         self
     }
 
+    /// Reads the file being matched at `path` (what `filePath` conditions test), and nothing more of it.
+    pub(crate) fn path(self, path: &str) -> Self {
+        FILE_SCOPES.with_borrow_mut(|slot| {
+            if let Some(slot) = slot {
+                slot.path = Some(Arc::from(path));
+            }
+        });
+        self
+    }
+
     /// The tables built or reused so far.
     pub(crate) fn tables(&self) -> Vec<Arc<ScopeTable>> {
         FILE_SCOPES.with_borrow(|slot| {
