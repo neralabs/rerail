@@ -21,6 +21,7 @@ import {
   CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
+import { WorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
@@ -709,6 +710,11 @@ export interface RerailRuntimeOptions {
   } & AuditSettings) => CodeRuleAuditor;
   /** How long a turn end or command result waits for the session's shell-write walk; the bridge's default otherwise. */
   discoveryWaitMs?: number;
+  /**
+   * The walk of the other worktrees of each repository, shared by every session watching them: the engine service passes
+   * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
+   */
+  worktreeWalks?: WorktreeWalks;
   /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
   timingLog?: (line: string) => void;
   nativeSession?: {
@@ -749,6 +755,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #autostart: boolean;
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
+  readonly #worktreeWalks: WorktreeWalks;
   readonly #discoveryWaitMs: number | undefined;
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
@@ -762,6 +769,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#beforeSessionPublish = options.beforeSessionPublish;
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#discoveryWaitMs = options.discoveryWaitMs;
+    this.#worktreeWalks = options.worktreeWalks ?? new WorktreeWalks();
     this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
@@ -1340,6 +1348,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
+        worktreeWalks: this.#worktreeWalks,
         ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
         // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
         onDiscoveryPending: boundary => this.#recordSessionFact(

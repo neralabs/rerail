@@ -12,6 +12,7 @@ import {
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
+import { WorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -151,6 +152,12 @@ interface EngineRoutingState {
   runtimeKeysByConfiguration: Map<string, string>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
+  /**
+   * The walk of each repository's other worktrees, shared by the sessions of every runtime: hooks name the session's
+   * folder, so sessions in different worktrees of one repository run in different runtimes, and each walking every
+   * worktree for itself held every file of every worktree once per session.
+   */
+  worktreeWalks: WorktreeWalks;
 }
 
 interface RuntimeRoute {
@@ -220,7 +227,7 @@ async function routeEngineEvent(
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
-      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true });
+      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks });
       state.runtimes.set(runtimeKey, runtime);
     }
     if (event.kind === "session-start") {
@@ -301,6 +308,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     runtimeKeysByConfiguration: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
+    worktreeWalks: new WorktreeWalks(),
   };
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");

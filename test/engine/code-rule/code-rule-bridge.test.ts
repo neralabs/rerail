@@ -1110,7 +1110,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual(["wt/src/a.py"]);
   });
 
-  it("leaves the other worktrees' sources, and files a tool wrote outside its folder, out of the observations it shares once it closes", async () => {
+  it("keeps no observation of its own of the other worktrees' sources while it lives, and of files a tool wrote outside its folder once it closes", async () => {
     const root = await twoBranches();
     const roots: string[] = [];
     for (const name of ["w1", "w2", "w3"]) {
@@ -1134,10 +1134,11 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
     const own = ["src/a.py", "src/gone.py"];
-    const others = roots.flatMap(worktree => ["a.py", "new.py"].map(file => relative(root, join(worktree, "src", file)).split(sep).join("/")));
     const outside = relative(root, join(sibling, "x.py")).split(sep).join("/");
-    // While the session walks them, a session opening in its folder starts from the worktrees' sources too.
-    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...others, ...own, outside].sort());
+    // The bridge shares every observation it keeps of its own. The other worktrees' sources are the shared walk's: a
+    // live session that kept one of each held every file of every worktree, and the daemon's heap grew with the live
+    // sessions times the worktrees times their files.
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...own, outside].sort());
     await bridge.close();
     // The daemon keeps a folder's observations while it serves the folder, so each folder sessions started in held every
     // file of every worktree: its heap grew with the folders times the files of all the repository's worktrees.
