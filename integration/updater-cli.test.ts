@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 import { pathToFileURL } from "node:url";
+import { removeFolder } from "../test/support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 /** Each command the test ran and how long it took, so a slow run says where the time went, not just that it ran out. */
@@ -12,8 +13,9 @@ const commandTimes: Array<[string, number]> = [];
 /** Two thirds of the 60 s a test gets for its CLI runs; the pack and install have their own budget and are not counted. */
 const SLOW_RUN_MS = 40_000;
 afterEach(async () => {
-  // A test that timed out keeps running, and its CLI children may still be writing under the directory (ENOTEMPTY).
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true, maxRetries: 5 })));
+  // A test that timed out keeps running, and its CLI children may still be writing under the directory: removeFolder
+  // then names each one still running there.
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
   const total = commandTimes.reduce((sum, [, ms]) => sum + ms, 0);
   if (total > SLOW_RUN_MS) {
     const lines = commandTimes.map(([command, ms]) => `  ${String(ms).padStart(6)} ms  ${command}`);
@@ -175,7 +177,7 @@ describe("Rerail managed launcher", () => {
   }, 120_000);
 
   afterAll(async () => {
-    if (packageRoot !== undefined) await rm(packageRoot, { recursive: true, force: true, maxRetries: 5 });
+    if (packageRoot !== undefined) await removeFolder(packageRoot);
   });
 
   test("installs the packaged launcher and accepts then rejects deterministic local updates", async () => {

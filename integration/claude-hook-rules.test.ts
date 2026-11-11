@@ -17,7 +17,7 @@
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { createServer, request, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -27,6 +27,7 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ENTRY_POINTS } from "../src/engine/index.js";
 import { DAEMON_STATE_FILE, type DaemonState } from "../src/runtime/index.js";
+import { removeFolder } from "../test/support/platform/remove-folder.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 
 const PACKAGE_ROOT = resolve(".");
@@ -210,7 +211,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise(done => server.close(done))));
   await stopDaemon();
-  await rm(root, { recursive: true, force: true, maxRetries: 10 });
+  await removeFolder(root);
 }, 60_000);
 
 describe("the Claude Code hook against a daemon of this build", () => {

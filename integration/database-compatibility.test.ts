@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import Database from "better-sqlite3";
 import { openRerailDatabase } from "../src/engine/index.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../src/runtime/index.js";
+import { removeFolder } from "../test/support/platform/remove-folder.js";
 
 /**
  * Going back to the last published release (`npx @neralabs/rerail@<version> setup`) runs it against the file this
@@ -31,7 +32,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await rm(root, { recursive: true, force: true, maxRetries: 5 });
+  await removeFolder(root);
 });
 
 describe("database compatibility with the last published release", () => {
