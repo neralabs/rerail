@@ -63,7 +63,7 @@ log_reraise_log(e) :- node(_, e, "expression_statement", _, _), child(e, c, _), 
 log_reraise_valued(r) :- node(_, r, "raise_statement", _, _), child(r, c, _), node(_, c, k, _, _), log_reraise_value(k).
 log_reraise_at(r, p, i) :- node(_, r, "raise_statement", s, e), !log_reraise_valued(r), child(p, r, _), token(p, i, _, s, e).
 log_reraise_code(p, j) :- log_reraise_at(_, p, _), token(p, j, t, _, _), !prefix("#", t).
-rr_ctx2(i, p) :- log_reraise_at(r, p, i), token(p, j, _, s, t), child(p, e, _), node(_, e, _, s, t), log_reraise_log(e).
+rr_ctx2(i, p) :- log_reraise_at(r, p, i).
 rr_agg1(i, k, p) :- rr_demand_agg_rr_agg1(i, p), rr_ctx2(i, p), log_reraise_code(p, k), k < i.
 log_reraise_follows(r, e) :- log_reraise_at(r, p, i), j = max k : { rr_agg1(i, k, p) }, token(p, j, _, s, t), child(p, e, _), node(_, e, _, s, t), log_reraise_log(e).
 log_reraise_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("logger.error", s).

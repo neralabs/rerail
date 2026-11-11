@@ -3836,7 +3836,7 @@ conditional_architecture_cut(c, 0) :- conditional_architecture_sup(c, _, _).
 conditional_architecture_cut(c, j) :- conditional_architecture_split(c, k), j = @add(k, 1).
 conditional_architecture_stop(c, k) :- conditional_architecture_split(c, k).
 conditional_architecture_stop(c, n) :- conditional_architecture_sup(c, _, n).
-rr_ctx7(c, j) :- conditional_architecture_cut(c, j), conditional_architecture_sup(c, t, _).
+rr_ctx7(c, j) :- conditional_architecture_cut(c, j).
 rr_agg6(c, j, y) :- rr_demand_agg_rr_agg6(c, j), rr_ctx7(c, j), conditional_architecture_stop(c, y), y >= j.
 conditional_architecture_item(c, x) :- conditional_architecture_cut(c, j), conditional_architecture_sup(c, t, _), q = min y : { rr_agg6(c, j, y) }, re = @concat(@concat(@concat(@concat("^(?:[^,]*,){", @to_string(j)), "}([^,]*(?:,[^,]*){"), @to_string(@sub(q, j))), "})(?:,(?s:.*))?$"), u = @rx_replace(t, re, "$1"), x = @rx_replace(u, "^[ \\t\\n\\r]+|[ \\t\\n\\r]+$", "").
 conditional_architecture_base(c, x) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_item(c, x), match("[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*", x).
