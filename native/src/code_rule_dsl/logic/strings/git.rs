@@ -34,7 +34,7 @@ static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 /// The root of a run, for the run's length: calls answer from the repository that holds it. A run inside another
 /// (phase 0's `bootstrap.rr` run, a phase) sets its own and puts the outer run's back when it ends.
-pub(in crate::code_rule_dsl) struct Scope(Option<PathBuf>);
+pub struct Scope(Option<PathBuf>);
 
 pub(in crate::code_rule_dsl) fn scope(root: &Path) -> Scope {
     let previous = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|s| s.root.clone());

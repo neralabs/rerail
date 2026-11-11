@@ -37,7 +37,7 @@ pub(in crate::code_rule_dsl) trait DfaCache {
 
 /// What compiling the searchers did, for the run's report: groups read from the cache, determinized, and run lazily.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Compiling {
+pub struct Compiling {
     pub(in crate::code_rule_dsl) read: usize,
     pub(in crate::code_rule_dsl) built: usize,
     pub(in crate::code_rule_dsl) lazy: usize,

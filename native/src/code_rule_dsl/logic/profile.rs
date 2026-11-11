@@ -85,7 +85,7 @@ fn cpu() -> f64 {
 }
 
 #[derive(Default, Clone)]
-pub(in crate::code_rule_dsl) struct SpanTotal {
+pub struct SpanTotal {
     pub(in crate::code_rule_dsl) calls: u64,
     pub(in crate::code_rule_dsl) total: f64,
     pub(in crate::code_rule_dsl) own: f64,
@@ -100,7 +100,7 @@ pub(in crate::code_rule_dsl) struct SpanTotal {
 }
 
 #[derive(Default, Clone)]
-pub(in crate::code_rule_dsl) struct SqlTotal {
+pub struct SqlTotal {
     pub(in crate::code_rule_dsl) runs: u64,
     pub(in crate::code_rule_dsl) ns: u64,
     pub(in crate::code_rule_dsl) vm: u64,
@@ -110,7 +110,7 @@ pub(in crate::code_rule_dsl) struct SqlTotal {
 }
 
 #[derive(Default)]
-struct State {
+pub struct State {
     spans: BTreeMap<String, SpanTotal>,
     /// By (span path, statement text).
     sql: BTreeMap<(String, String), SqlTotal>,
@@ -142,7 +142,7 @@ struct State {
 
 /// A stratum's placements, summed over its runs (chunks, guests, the cross-file part).
 #[derive(Default)]
-struct PlacedTotal {
+pub struct PlacedTotal {
     runs: u64,
     on_gpu: u64,
     gpu_cheaper: u64,
@@ -166,7 +166,7 @@ struct PlacedTotal {
 }
 
 #[derive(Default, Clone)]
-struct GpuTotal {
+pub struct GpuTotal {
     runs: u64,
     rules: u64,
     stages: u64,
@@ -223,7 +223,7 @@ impl GpuTotal {
 pub(in crate::code_rule_dsl) type DeviceReport = Report;
 
 #[derive(Default)]
-struct WaitTotal {
+pub struct WaitTotal {
     count: u64,
     /// Wall time blocked, and the waiter's CPU meanwhile (spinning, waking).
     wall: f64,
@@ -233,7 +233,7 @@ struct WaitTotal {
 /// What a thread is doing, for the threads that wait on it (`wait`): one shared marker, set as it moves between
 /// phases. Cheap to set: a store of a static name.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Activity(parking_lot::Mutex<&'static str>);
+pub struct Activity(parking_lot::Mutex<&'static str>);
 
 impl Activity {
     pub(in crate::code_rule_dsl) fn set(&self, doing: &'static str) {
@@ -264,7 +264,7 @@ pub(in crate::code_rule_dsl) fn wait<T>(awaited: &str, doing: &Activity, blockin
     out
 }
 
-struct Stratum {
+pub struct Stratum {
     key: String,
     engine: String,
     why: String,
@@ -274,7 +274,7 @@ struct Stratum {
 /// One planned step: the literal, how it is read, from what, and the rows the planner expects after it; for a join,
 /// the joins it passed over there, each with the rows a binding it was priced at (why this one was taken).
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct StepPlan {
+pub struct StepPlan {
     pub(in crate::code_rule_dsl) literal: String,
     pub(in crate::code_rule_dsl) access: String,
     pub(in crate::code_rule_dsl) source: String,
@@ -284,7 +284,7 @@ pub(in crate::code_rule_dsl) struct StepPlan {
 
 /// A rule's plan as the planner chose it: estimated work and rows, and its search (subsets kept, candidates priced).
 #[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct RulePlan {
+pub struct RulePlan {
     pub(in crate::code_rule_dsl) work: f64,
     pub(in crate::code_rule_dsl) rows: f64,
     pub(in crate::code_rule_dsl) subsets: u64,
@@ -293,7 +293,7 @@ pub(in crate::code_rule_dsl) struct RulePlan {
 }
 
 #[derive(Default)]
-struct PlanTotal {
+pub struct PlanTotal {
     rule: Option<usize>,
     plan: RulePlan,
     loops: u64,
@@ -305,7 +305,7 @@ struct PlanTotal {
 }
 
 #[derive(Default)]
-struct DeviceTotal {
+pub struct DeviceTotal {
     runs: u64,
     launches: u64,
     gpu: f64,
@@ -340,7 +340,7 @@ thread_local! {
 /// thread holds it (from a closure run under the lock: a decision's text that splits a program, which opens a span)
 /// would wait on itself forever. Every closure a profile function takes is run before the lock, and a call that would
 /// wait on itself panics here instead, naming the cause.
-struct Held(std::sync::MutexGuard<'static, State>);
+pub struct Held(std::sync::MutexGuard<'static, State>);
 
 impl std::ops::Deref for Held {
     type Target = State;
@@ -366,7 +366,7 @@ fn state() -> Held {
     Held(STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
 }
 
-struct Open {
+pub struct Open {
     path: String,
     start: f64,
     children: f64,
@@ -379,7 +379,7 @@ struct Open {
 }
 
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
-struct Thread {
+pub struct Thread {
     name: String,
     /// Its Mach port (macOS), for its CPU read from another thread; 0 elsewhere.
     port: u32,
@@ -423,7 +423,7 @@ pub(in crate::code_rule_dsl) fn statement(text: Option<String>) {
 }
 
 /// An open span; it closes when dropped.
-pub(crate) struct Span(bool);
+pub struct Span(bool);
 
 /// This thread's innermost open span's path (only when profiling): a worker the thread starts opens its spans under
 /// it (`span_at`), so the worker's work is charged to what started it (a phase's run, say).
@@ -562,7 +562,7 @@ thread_local! {
 
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
-pub(in crate::code_rule_dsl) struct Waves(bool);
+pub struct Waves(bool);
 
 pub(in crate::code_rule_dsl) fn waves() -> Waves {
     WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1492,7 +1492,7 @@ mod tests {
 
 /// What a stratum's device run did, for the profile.
 #[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct Report {
+pub struct Report {
     pub(in crate::code_rule_dsl) rules: u32,
     pub(in crate::code_rule_dsl) stages: u32,
     pub(in crate::code_rule_dsl) submissions: u32,

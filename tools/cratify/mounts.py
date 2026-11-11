@@ -252,7 +252,9 @@ def file_edits(nodes, v):
                 lines = []
                 # the parent's directory for its plain children (the declaration is in the parent's file)
                 pdir = child_dir(n) if not n.inline else None
-                f.child(k, '', pdir, lines, vis=(k.vis + ' ') if k.vis else '', attr_dir=os.path.dirname(k.decl_file))
+                # outside the engine a module is pub: the crates above path through it
+                vis = (k.vis + ' ') if k.vis and x == ENGINE else '' if x == ENGINE and not k.vis else 'pub '
+                f.child(k, '', pdir, lines, vis=vis, attr_dir=os.path.dirname(k.decl_file))
                 new = ''.join(lines).rstrip('\n') or f'// cratify: `{k.name}` holds nothing {x} reads'
             else:
                 new = f'// cratify: `{k.name}` is {k.owner}\'s (it mounts it)'

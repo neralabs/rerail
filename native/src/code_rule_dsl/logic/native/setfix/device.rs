@@ -110,7 +110,7 @@ fn step_name(s: &Step) -> &'static str {
 /// The program's columns, parameters, operations and outputs of a fused row program, into `d`; the source of a
 /// column (`Word::Col(c)`) is `kind` (a candidate's column, or the binding's slot `c`).
 fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), String> {
-    use crate::code_rule_dsl::transducer::packed::block::{BlockOp, CmpOp, Rhs};
+    use rerail_compiler::block::{BlockOp, CmpOp, Rhs};
     if f.columns.len() > mj::MAX_COLS || f.params.len() > mj::MAX_PARAMS || f.program.ops().len() > mj::MAX_OPS || f.program.outputs().len() > mj::MAX_OUTPUTS || f.steps > mj::MAX_OUTPUTS || f.binds.len() > mj::MAX_BINDS {
         return Err("a row program larger than a stage holds".into());
     }

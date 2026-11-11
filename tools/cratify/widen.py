@@ -31,6 +31,19 @@ def enum_spans(path):
     return [(int(s), int(e)) for f, s, e, kind, name, mod, cfg in (l.split('\t') for l in out.splitlines()) if kind == 'enum']
 
 
+def napi_classes(text, structs):
+    """The spans of `structs` that are napi classes (`#[napi]` before them): a pub field of one is exported as a
+    getter, so a field widened for Rust's sake is `#[napi(skip)]`."""
+    out = []
+    for s, e in structs:
+        head = text[max(0, s - 400):s + 200]
+        decl = head.find('struct', 400 - min(s, 400))
+        attrs = head[:decl if decl >= 0 else len(head)]
+        if re.search(r'#\[napi(?:\((?!\s*object)[^)]*\))?\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?$', attrs[attrs.rfind('\n\n') + 1:] if '\n\n' in attrs else attrs):
+            out.append((s, e))
+    return out
+
+
 def struct_spans(path):
     """Byte spans of the file's structs and unions (where a field is declared)."""
     out = subprocess.run([TOOL, 'items', path], capture_output=True, text=True, check=True).stdout
@@ -89,6 +102,7 @@ def main(tsv, *flags):
         traits = trait_spans(p)
         enums = enum_spans(p)
         structs = struct_spans(p)
+        napi = napi_classes(open(p, 'rb').read().decode(), structs)
         edits = []  # (line index, col start, col end, text)
         for l, c, kind, now, at, item in items:
             if now == 'private':
@@ -124,10 +138,11 @@ def main(tsv, *flags):
                 if v and v.group(1) == 'pub':
                     done[kind] += 1
                     continue
+                skip = '#[napi(skip)] ' if kind == 'field' and any(s <= b < e for s, e in napi) else ''
                 if v:
-                    edits.append((i, v.start(1), v.end(1), 'pub'))
+                    edits.append((i, v.start(1), v.end(1), skip + 'pub'))
                 else:
-                    edits.append((i, at_, at_, 'pub '))
+                    edits.append((i, at_, at_, skip + 'pub '))
             else:
                 pos, span = at.split(':')
                 i = int(pos) - 1
@@ -150,7 +165,9 @@ def main(tsv, *flags):
                 if i >= len(lines) or lines[i][s:e].replace(' ', '') != now:
                     refused.append(f'{f}:{l} {item}: expected `{now}` at {at}, found `{lines[i][s:e] if i < len(lines) else "(past the end)"}`')
                     continue
-                edits.append((i, s, e, 'pub'))
+                b = byte_start[i] + len(lines[i][:s].encode())
+                skip = '#[napi(skip)] ' if kind == 'field' and any(x <= b < y for x, y in napi) else ''
+                edits.append((i, s, e, skip + 'pub'))
             done[kind] += 1
         for i, s, e, t in sorted(set(edits), reverse=True):
             lines[i] = lines[i][:s] + t + lines[i][e:]

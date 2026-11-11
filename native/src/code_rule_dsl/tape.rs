@@ -465,7 +465,7 @@ fn via_of_code(host: GrammarDialect, code: i64) -> Option<Via> {
 pub(super) struct FileImage {
     pub(super) primary: TapeImage,
     /// In ordinal order (`DerivedImage::parent` counts the primary as 0, the first of these as 1).
-    pub(super) derived: Vec<DerivedImage>,
+    pub derived: Vec<DerivedImage>,
 }
 
 /// A document derived from another of the file's: its own text, grammar and tape, and how it maps

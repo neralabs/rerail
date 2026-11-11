@@ -23,7 +23,7 @@ pub(crate) struct Piece {
 
 /// A literal's decoded text and its map (`pieces`, sorted by `d`, ending with the text's end).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Normalized {
+pub struct Normalized {
     pub text: String,
     pub pieces: Vec<Piece>,
 }

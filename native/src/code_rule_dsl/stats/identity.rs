@@ -33,7 +33,7 @@ impl IdentityDomain for ScopeInstanceDomain {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct UtilityDefinitionDomain;
+pub struct UtilityDefinitionDomain;
 
 impl IdentityDomain for UtilityDefinitionDomain {
     const TAG: u8 = 11;
@@ -155,7 +155,7 @@ identity_domain!(
 identity_domain!(LogicalFillDomain, LogicalFillId, 16, "logical-fill");
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct SemanticId<D> {
+pub struct SemanticId<D> {
     digest: [u8; 32],
     domain: PhantomData<D>,
 }

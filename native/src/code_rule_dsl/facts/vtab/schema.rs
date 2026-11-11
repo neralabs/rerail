@@ -13,7 +13,7 @@ pub(crate) mod cache;
 pub(crate) mod inference;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct Column {
+pub struct Column {
     pub(crate) name: String,
     pub(crate) declared_type: String,
 }

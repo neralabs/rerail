@@ -1667,7 +1667,7 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
 /// atom's gathered rows, its parameters, and the rows the CPU passes with the CPU it took.
 pub(in crate::code_rule_dsl) struct ScanCase {
     pub(in crate::code_rule_dsl) rule: String,
-    pub(in crate::code_rule_dsl) program: crate::code_rule_dsl::transducer::packed::block::BlockProgram,
+    pub(in crate::code_rule_dsl) program: rerail_compiler::block::BlockProgram,
     pub(in crate::code_rule_dsl) inputs: Vec<rowcode::Word>,
     pub(in crate::code_rule_dsl) gathered: Vec<(usize, Vec<i64>)>,
     pub(in crate::code_rule_dsl) params: Vec<i64>,
