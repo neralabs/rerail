@@ -13,7 +13,7 @@
 use crate::code_rule_dsl::stats::ingest::{FactTable, merge_facts};
 use crate::code_rule_dsl::stats::plans::write_stat1;
 use crate::code_rule_dsl::prof;
-use crate::code_rule_dsl::CompiledCodeRuleDsl;
+use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::facts::families::{Families, Ingested};
 use crate::code_rule_dsl::facts::observe::tree_name;
 use crate::code_rule_dsl::facts::vtab::syntax::Document;

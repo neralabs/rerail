@@ -278,3 +278,4 @@ functors	rerail-engine
 stats::identity	rerail-facts
 waves::schedule::batches	rerail-transducer
 waves::relational	rerail-w
+rule_api	rerail-w
