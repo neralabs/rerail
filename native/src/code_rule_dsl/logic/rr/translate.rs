@@ -22,7 +22,7 @@
 //! In comments, `$x` (a lower-case variable) becomes `x`, outside backticks, as `site/souffle.py` does.
 //! `logic::rr::tests` checks that every translated program lowers to the program the `.rdl` parsed to.
 
-use super::syntax::quote;
+use rerail_rr_syntax::syntax::quote;
 use crate::code_rule_dsl::logic::front::Error;
 use crate::code_rule_dsl::logic::strings::is_test;
 use std::collections::BTreeSet;

@@ -472,7 +472,7 @@ pub(crate) fn from_image(source: Arc<String>, grammar: &crate::code_rule_dsl::ta
 }
 
 /// The tape tag of a text-only document's facts (`text`): no dialect has it.
-pub(crate) const TEXT: u8 = u8::MAX;
+pub const TEXT: u8 = u8::MAX;
 
 /// The facts of a file read as text only (core.rr's `.scope text`): its source and lines, no tree. Its lines are W's
 /// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).

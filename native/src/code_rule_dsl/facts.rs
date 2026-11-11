@@ -48,7 +48,7 @@ pub(crate) mod ygraph;
 /// The derivation graph as the push path reads and writes it: the store itself (every write a
 /// transaction) or the overlay over it (writes in memory, written back in the background).
 #[allow(dead_code)]
-pub(crate) trait Graph {
+pub trait Graph {
     /// The store the graph's facts live in (Git trees, sources, the facts memo).
     fn store(&self) -> &ContentStore;
     /// Binds each name; returns the names whose digest changed, in input order.

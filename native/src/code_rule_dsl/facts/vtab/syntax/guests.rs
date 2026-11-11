@@ -19,7 +19,7 @@
 use super::{Document, Guest, Made, Placement, Projected, Relation};
 
 #[derive(Default)]
-pub(super) struct GuestRows {
+pub(crate) struct GuestRows {
     guest: Vec<[i64; 4]>,
     role: Vec<[i64; 2]>,
     root: Vec<[i64; 2]>,

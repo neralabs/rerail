@@ -186,8 +186,11 @@ class Facades:
         for k in sorted(n.children, key=lambda k: k.name):
             self.child(k, indent, my_dir, lines, globbed=globbed)
 
-    def child(self, k, indent, my_dir, lines, vis='pub ', globbed=frozenset()):
+    def child(self, k, indent, my_dir, lines, vis='pub ', globbed=frozenset(), attr_dir=None):
+        """`attr_dir`: what k's own `#[path]` is relative to, when not `my_dir` (a declaration at the top of a file:
+        the file's directory, which for a non-mod.rs file is not its children's)."""
         c = self.c
+        attr_dir = attr_dir or my_dir
         sub = {x.path for x in subtree(k)}
         if not (sub & self.want):
             return
@@ -199,15 +202,16 @@ class Facades:
         if k.owner == c and not k.inline:
             # c's file, declared as its parent declared it: a plain declaration stays plain (this inline module's
             # directory is the original's); a `#[path]` one is that file again, relative to this directory.
-            attr = f'{indent}#[path = "{rel(k.file, my_dir)}"]\n' if k.path_attr else ''
+            attr = f'{indent}#[path = "{rel(k.file, attr_dir)}"]\n' if k.path_attr else ''
             lines.append(f'{cfg}{attr}{indent}{vis}mod {k.name};\n')
         elif self.need_inline(k):
             kd = child_dir(k) if not k.inline else os.path.join(my_dir, k.name)
-            lines.append(f'{cfg}{indent}#[path = "{rel(kd, my_dir)}"]\n{indent}{vis}mod {k.name} {{\n')
+            lines.append(f'{cfg}{indent}#[path = "{rel(kd, attr_dir)}"]\n{indent}{vis}mod {k.name} {{\n')
             self.body(k, indent + '    ', kd, lines)
             lines.append(f'{indent}}}\n')
         elif k.owner in ALLOW.get(c, ()):
-            lines.append(f'{cfg}{indent}{vis}use {ident(k.owner)}::{k.path[len("crate::"):]};\n')
+            # pub: the module's glob in the crates above carries it
+            lines.append(f'{cfg}{indent}pub use {ident(k.owner)}::{k.path[len("crate::"):]};\n')
 
 
 def emit_crate(c, nodes, v):
@@ -248,7 +252,7 @@ def file_edits(nodes, v):
                 lines = []
                 # the parent's directory for its plain children (the declaration is in the parent's file)
                 pdir = child_dir(n) if not n.inline else None
-                f.child(k, '', pdir, lines, vis=(k.vis + ' ') if k.vis else '')
+                f.child(k, '', pdir, lines, vis=(k.vis + ' ') if k.vis else '', attr_dir=os.path.dirname(k.decl_file))
                 new = ''.join(lines).rstrip('\n') or f'// cratify: `{k.name}` holds nothing {x} reads'
             else:
                 new = f'// cratify: `{k.name}` is {k.owner}\'s (it mounts it)'

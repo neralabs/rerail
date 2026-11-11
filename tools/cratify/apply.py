@@ -188,8 +188,9 @@ def upward_use_edits(nodes, edits):
             if k != 'use' or mod:
                 continue
             a = absolute_use(data[int(s):int(e)].decode(), p, nodes)
-            o = use_owner(a, nodes) if a else None
-            if o is not None and o not in sees(n.owner):
+            up = sorted(o for o in (use_owners(a, nodes) if a else ()) if o not in sees(n.owner))
+            o = up[0] if up else None
+            if o is not None:
                 edits.add(n.file, int(s), int(e), f'// cratify: a re-export of {o}\'s, which its facades of this module make', 'upward use')
 
 
@@ -250,6 +251,21 @@ def absolute_use(text, mod, nodes):
     return text
 
 
+def use_owners(text, nodes):
+    """The crates of a `use crate::...`'s paths, a brace group's branches each (one level)."""
+    m = re.search(r'use\s+(crate(?:::[A-Za-z_][A-Za-z_0-9]*)*)::\{([^{}]*)\}', text)
+    if not m:
+        return {use_owner(text, nodes)} - {None}
+    out = set()
+    for b in m.group(2).split(','):
+        b = b.strip()
+        if b:
+            o = use_owner(f'use {m.group(1)}::{b}', nodes)
+            if o:
+                out.add(o)
+    return out or ({use_owner(text, nodes)} - {None})
+
+
 def use_owner(text, nodes):
     """The crate a `use crate::...` path's deepest known module belongs to (None: an external path)."""
     m = re.search(r'use\s+(crate(?:::[A-Za-z_][A-Za-z_0-9]*)*)', text)
@@ -276,7 +292,9 @@ class Facades(mounts.Facades):
             o = use_owner(a, self.nodes)
             if o is not None and o not in sees(self.c):
                 continue
-            body = '\n'.join(indent + l for l in a.strip().split('\n'))
+            # private: a child's `use super::*` sees it, and a re-export another crate restricts cannot fail
+            a = re.sub(r'^((?:#\[[^\]]*\]\s*)*)pub(?:\s*\([^)]*\))?\s+use\b', r'\1use', a.strip())
+            body = '\n'.join(indent + l for l in a.split('\n'))
             lines.append(f'{indent}#[allow(unused_imports)]\n{body}\n')
 
 

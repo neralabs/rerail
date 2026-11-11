@@ -135,7 +135,7 @@ impl Lowerer {
                              s(",\"tag\":"), tag, s(",\"message\":"), json(message), s(",\"parameters\":{")];
         for (i, (name, ty)) in finding.columns.iter().enumerate().skip(1) {
             if i > 1 { terms.push(s(",")); }
-            terms.push(s(&format!("{}:", super::super::syntax::quote(name))));
+            terms.push(s(&format!("{}:", rerail_rr_syntax::syntax::quote(name))));
             terms.push(if matches!(ty.as_str(), "symbol" | "sym") { json(cols[i].clone()) } else { number(cols[i].clone()) });
         }
         terms.push(s("}}"));

@@ -26,7 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-use super::super::syntax::{Item, Parser, Term as STerm};
+use rerail_rr_syntax::syntax::{Item, Parser, Term as STerm};
 use super::{Lowerer, ty};
 use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Rule, Term, is_axis};
 

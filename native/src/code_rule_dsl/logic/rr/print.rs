@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use super::syntax::quote;
+use rerail_rr_syntax::syntax::quote;
 use super::translate::{relation, var};
 use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Native, Program, Term, Value, axis};
 use crate::code_rule_dsl::logic::strings::{SET, is_test};

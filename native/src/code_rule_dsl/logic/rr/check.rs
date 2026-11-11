@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::lower::{RELATION_ARG, TESTS};
-use super::syntax::{Head, Item, Lit, Statement, Term};
+use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
 
 fn vars_of(t: &Term) -> BTreeSet<String> {
     let mut out = Vec::new();
@@ -99,7 +99,7 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
         }
         Lit::Pattern { subject, pattern, neg: false } => {
             let mut b = vars_of(subject);
-            b.extend(super::syntax::tick_vars(pattern));
+            b.extend(rerail_rr_syntax::syntax::tick_vars(pattern));
             (b, none(), true)
         }
         Lit::Atom { rel, args, neg: true } => {
