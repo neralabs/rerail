@@ -2190,10 +2190,7 @@ fn run_observed(
             super::Stats::of_schema(&db, &lowered.program, "s")?
         }
         None => {
-            // A document's nodes are `d << 32 | index`: its interval, for the SQL strata's range reads.
-            db.execute_batch("ATTACH ':memory:' AS s; CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER);")?;
-            let ranges = docs.iter().map(|(d, _)| vec![SqlValue::Integer(*d), SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect();
-            super::insert_many(&db, "INSERT INTO s.stat_docrange", ranges)?;
+            // A document's nodes are `d << 32 | index`: the SQL strata's range reads compute its interval (no table).
             super::Stats::empty(&lowered.program)
         }
     };
@@ -2219,16 +2216,17 @@ fn run_observed(
     // `x` is the run's scratch (deleted at the start of the next): no journal and no syncs, since a run that stops
     // leaves nothing to recover. The browser build keeps it in memory, where its in-memory filesystem is anyway, so
     // its pages skip the filesystem's calls; so are the temp tables the strata make.
+    // Attached, with the pragmas below, when SQL first runs on the connection (`vtab::setup_now`): a run whose
+    // strata are all native runs none of it.
     #[cfg(target_family = "wasm")]
-    db.execute_batch("ATTACH ':memory:' AS x")?;
+    let attach_x = "ATTACH ':memory:' AS x;".to_owned();
     #[cfg(not(target_family = "wasm"))]
-    db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
+    let attach_x = format!("ATTACH {} AS x;", format!("'{}'", cross_path.to_string_lossy().replace('\'', "''")));
     // `x` is this run's: tables an earlier run over the same store read (`table_source`, cached by the store's path
     // and the table's name) are another run's rows. Without this a second run read the first's cross-file tables:
     // a cone's loaded documents, there at the first run's end, counted as the workspace's.
     crate::code_rule_dsl::logic::native::forget_inputs(&db);
-    let _: String = db.query_row("PRAGMA x.journal_mode = OFF", [], |r| r.get(0))?;
-    db.execute_batch("PRAGMA x.synchronous = OFF; PRAGMA temp_store = MEMORY;")?;
+    crate::code_rule_dsl::facts::vtab::defer_setup(&db, &format!("{attach_x} PRAGMA x.journal_mode = OFF; PRAGMA x.synchronous = OFF; PRAGMA temp_store = MEMORY;"));
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
     // read back, 0.75 s on Python.)
@@ -3265,10 +3263,6 @@ fn run_observed(
                     if new.is_empty() {
                         break;
                     }
-                    if own {
-                        let ranges = new.iter().map(|d| i64::from(d.key)).map(|k| vec![SqlValue::Integer(k), SqlValue::Integer(k << 32), SqlValue::Integer((k << 32) | 0xffff_ffff)]).collect();
-                        super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
-                    }
                     docs.extend(new);
                     let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
                     sources = syntax::with_nearest(&store, docs.clone(), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
@@ -3722,7 +3716,6 @@ fn run_observed(
             let db2 = Connection::open(&db_path)?;
             db2.execute_batch("PRAGMA synchronous=OFF")?;
             db2.execute("ATTACH ?1 AS x", [x_path.to_string_lossy()])?;
-            db2.execute_batch("ATTACH ':memory:' AS s; CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER);")?;
             crate::code_rule_dsl::logic::native::register(&db2)?;
             crate::code_rule_dsl::logic::native::register_symbols(&db2)?;
             let modules = Modules::default();
@@ -3804,8 +3797,6 @@ fn run_observed(
             all_paths.extend(fresh.iter().map(|d| d.path.clone()));
             let keys = memo::doc_keys(&all_paths);
             let keys = &keys[keys.len() - fresh.len()..];
-            let ranges = keys.iter().map(|d| vec![SqlValue::Integer(*d), SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect();
-            super::insert_many(&db, "INSERT OR IGNORE INTO s.stat_docrange", ranges)?;
             loaded_docs.extend(keys.iter().copied().zip(fresh.iter().map(|d| d.path.clone())));
             docs_tx.send(keys.iter().copied().zip(fresh).map(|(k, d)| (k, d.path, Some(Arc::from(d.module.as_str())))).collect()).map_err(|_| Error::Plan("the chunk builder ended".to_owned()))?;
             if !drain(process)? {

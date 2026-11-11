@@ -336,6 +336,7 @@ pub(crate) fn connection_scope(db: &Connection) -> usize {
         BOUND.lock().retain(|(h, _), _| *h != at);
         VIEWS.lock().retain(|(h, _), _| *h != at);
         UNRESOLVED.lock().remove(&at);
+        SETUP.lock().remove(&at);
         crate::code_rule_dsl::logic::native::forget_scope(at);
     }
     let handle = unsafe { db.handle() };
@@ -354,6 +355,25 @@ pub(crate) struct UnmadeView {
     pub base: String,
     pub cols: Vec<usize>,
     pub eqs: Vec<(usize, i64)>,
+}
+
+/// Set-up statements a connection runs only once SQL is about to run on it (`defer_setup`, `setup_now`).
+static SETUP: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, Vec<String>>>> = std::sync::LazyLock::new(Default::default);
+
+/// Defers `sql` (statements, run as one batch) until SQL first runs on `db`'s connection (`setup_now`): a run whose
+/// readers are native runs none of it.
+pub(crate) fn defer_setup(db: &Connection, sql: &str) {
+    SETUP.lock().entry(connection_scope(db)).or_default().push(sql.to_owned());
+}
+
+/// Runs `db`'s deferred set-up (`defer_setup`), once: before a statement that needs it (a table made, a table of
+/// `x` written).
+pub(crate) fn setup_now(db: &Connection) -> Result<()> {
+    let pending = SETUP.lock().remove(&connection_scope(db)).unwrap_or_default();
+    for sql in pending {
+        db.execute_batch(&sql)?;
+    }
+    Ok(())
 }
 
 /// The tables registered on each connection that no statement has resolved yet (`register`).

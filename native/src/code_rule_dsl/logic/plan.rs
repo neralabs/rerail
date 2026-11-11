@@ -2313,14 +2313,15 @@ impl Model {
                                 .then(|| (v.clone(), dv.clone()))
                         });
                         let (v, dv) = found.ok_or_else(|| Error::Plan(format!("no document for the range read of {l}")))?;
-                        let ra = a_name();
-                        let range = FromItem::cross(Relation::DocRange { schema: self.inputs.stats.clone() }, ra.clone());
-                        frm.push((range, vec![eq(col(&ra, "d"), sql_term(&dv, &env, atoms)?)]));
+                        // A document's nodes are `d << 32 | index` (`stat_docrange` held these intervals): the range
+                        // is `d`'s, computed, so no table of documents is read or made.
+                        let d = sql_term(&dv, &env, atoms)?;
+                        let lo = bin(Op::Multiply, d, integer(1 << 32));
                         let rc = l.args.iter().position(|t| matches!(t, Term::Var(x) if *x == v)).expect("the range column");
                         conds.push(Expr::Between {
                             input: Box::new(col(&al, &self.col(&l.rel, rc))),
-                            low: Box::new(col(&ra, "lo")),
-                            high: Box::new(col(&ra, "hi")),
+                            low: Box::new(lo.clone()),
+                            high: Box::new(bin(Op::Add, lo, integer(0xffff_ffff))),
                         });
                     }
                     for (c, t) in l.args.iter().enumerate() {
@@ -3548,6 +3549,7 @@ impl<'a> Run<'a, '_> {
     fn ensure<'r>(&mut self, rels: impl IntoIterator<Item = &'r String>) -> Result<()> {
         for r in rels {
             if let Some(create) = self.pending.remove(r) {
+                crate::code_rule_dsl::facts::vtab::setup_now(self.db)?;
                 self.db.execute_batch(&create)?;
             }
         }
@@ -5650,6 +5652,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // Inputs kept in the engine from an earlier run (a session's, decision 0090 step 3) are read in place, as native
     // relations, with the indexes they have.
     let adopted: BTreeSet<String> = super::native::component::adopted(db).into_iter().filter(|r| prog.inputs.contains(r)).collect();
+    // A run that is not native runs SQL from its start: the connection's deferred set-up first (`vtab::setup_now`).
+    if !(atoms && !model.inputs.native.is_empty()) {
+        crate::code_rule_dsl::facts::vtab::setup_now(db)?;
+    }
     let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: projections(prog), inputs: prog.inputs.iter().map(String::as_str).collect(), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
