@@ -53,24 +53,17 @@ pub fn on() -> bool {
 
 /// A level's batch of seed joins, running until the first seed that reads it waits.
 struct LevelBatch {
-    running: Mutex<Option<rerail_accel::exec::Running>>,
-    /// Each launch's pairs, taken once by its seed: a view of the lane's buffer when the GPU ran it, so nothing is
-    /// copied (decision 0100 §9).
-    outs: OnceLock<std::result::Result<Vec<Mutex<Option<Pairs>>>, String>>,
+    /// The batch, each launch taken by its seed as soon as it ended, not when the batch's slowest did (decision
+    /// 0114 §2): a seed reads its own pairs alone. They are a view of the lane's buffer when the GPU ran it, so
+    /// nothing is copied (decision 0100 §9).
+    each: Option<rerail_accel::exec::Each>,
 }
 
 impl LevelBatch {
     fn out(&self, i: usize) -> Result<Pairs> {
-        let outs = self.outs.get_or_init(|| {
-            let running = self.running.lock().unwrap().take();
-            match running {
-                Some(r) => r.wait().map(|(done, _)| done.into_iter().map(|d| Mutex::new(d.out.into_pairs())).collect()),
-                None => Err("a level's joins were already collected".into()),
-            }
-        });
-        match outs {
-            Ok(o) => o[i].lock().unwrap().take().ok_or_else(|| err("a level's join gave no pairs, or they were taken")),
-            Err(e) => Err(err(format!("a level's joins: {e}"))),
+        match &self.each {
+            Some(each) => each.take(i).map_err(|e| err(format!("a level's joins: {e}")))?.into_pairs().ok_or_else(|| err("a level's join gave no pairs")),
+            None => Err(err("a level's joins were not sent")),
         }
     }
 }
@@ -188,7 +181,7 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
         // The right's id in the space: the relation and its key columns.
         let right_id = fx(&format!("{} {:?}", r1.uid.0, slot_keys.iter().map(|&(c, _)| c).collect::<Vec<_>>()));
         launches.push(Launch::new(Kernel::Join { left, right, right_id: Some(right_id), by: JoinBy::Probe }));
-        pending.push((key, Pending { batch: Arc::new(LevelBatch { running: Mutex::new(None), outs: OnceLock::new() }), at: launches.len() - 1, left: ident(r0), right: ident(r1), lids }));
+        pending.push((key, Pending { batch: Arc::new(LevelBatch { each: None }), at: launches.len() - 1, left: ident(r0), right: ident(r1), lids }));
     }
     if launches.is_empty() {
         return Ok(0);
@@ -210,7 +203,7 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
     });
     drop(fills);
     opener.open();
-    let batch = Arc::new(LevelBatch { running: Mutex::new(Some(running)), outs: OnceLock::new() });
+    let batch = Arc::new(LevelBatch { each: Some(running.each()) });
     let mut all = PENDING.lock().unwrap();
     for (key, mut p) in pending {
         p.batch = Arc::clone(&batch);

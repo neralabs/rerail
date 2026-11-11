@@ -1228,6 +1228,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
     let (nrels, symbols) = { let s = comp.store.read().unwrap(); (s.rels.len(), Arc::clone(&s.syms)) };
+    // This run's own cursor over the shared atoms (decision 0114 §3): the atoms lock themselves, so a stratum need
+    // not hold the connection's symbols for its run, and strata on other threads intern at once.
+    let mut cursor = Interner::for_loading(&symbols);
     {
         let store=comp.store.read().unwrap();
         for probe in &comp.probes {
@@ -1283,7 +1286,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     } else if !seeded && let Some(cl) = comp.closure.take() {
         let mut guard = comp.store.write().unwrap();
         let store = &mut *guard;
-        let mut syms = symbols.write().unwrap();
+        let mut syms = &mut cursor;
         let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
         for (pi, p) in comp.probes.iter().enumerate() {
             let (Body::Join(j), SEED) = (&p.body, p.delta) else { continue };
@@ -1366,7 +1369,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         let mut guard = comp.store.write().unwrap();
         let mut store = &mut *guard;
-        let mut syms = symbols.write().unwrap();
+        let mut syms = &mut cursor;
         for (head, got) in raw {
             let types = store.rels[head].types.clone();
             for vals in got {
@@ -1437,7 +1440,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             comp.device = None;
             guard = comp.store.write().unwrap();
             store = &mut *guard;
-            syms = symbols.write().unwrap();
+            syms = &mut cursor;
         }
         // Join probes, natively; seed joins in the first wave only.
         let mut wholes_run: Vec<&Arc<JoinSpec>> = Vec::new();
@@ -1573,6 +1576,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     comp.gates = gates;
     comp.levels = levels;
     // A symbol a wave could not intern fails the run.
+    cursor.check()?;
     symbols.write().unwrap().check()?;
     let solve = t0.elapsed();
     let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();

@@ -206,6 +206,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
+    // A strand's refused new atom, until its component checks it (decision 0113 §4): an error in flight.
+    ("code_rule_dsl/logic/native/setfix.rs", "HELD_FAILED"),
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
@@ -297,7 +299,8 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "KEPT", "6"),
     ("code_rule_dsl/logic/derived.rs", "MEMO", "6"),
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
-    ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED", "6"),
+    // The observed keeps, a handle a strand enters (decision 0113 §4).
+    ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", "6"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "PAID", "6"),
     ("code_rule_dsl/logic/strings.rs", "MATCHERS", "7"),
     // RER-131's compiled group patterns, where `GROUPS` was.

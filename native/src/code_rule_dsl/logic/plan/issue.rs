@@ -20,7 +20,8 @@ use super::*;
 use rerail_accel::stream::{Handle, Stream};
 
 /// What a component's job gives back: its strand, how many members ran natively, and what stopped the next.
-pub(super) type Out<'a> = (Strand<'a>, usize, Option<Result<(Option<String>, Option<String>)>>);
+pub(super) type Out<'a> = (Strand<'a>, usize, Option<Result<(Option<String>, Option<String>)>>, Vec<(Instant, Instant)>);
+use std::time::Instant;
 
 enum State<'a> {
     Job(Handle<Out<'a>>),
@@ -71,6 +72,19 @@ pub(super) struct Board<'a> {
     fixed: f64,
     pub parallel: bool,
     pub counts: Counts,
+    /// Each stratum's producers (`deps`), for the trace.
+    from: Vec<Vec<usize>>,
+    /// `RERAIL_STRATA_TRACE`: the run's start, the stratum the loop is at (since when, and whether its component
+    /// ran it), and each stratum's start, end and where it ran (0 the loop's thread, 1 a job, 2 a component run at
+    /// its retire).
+    trace: Option<Trace>,
+}
+
+struct Trace {
+    t0: Instant,
+    at: Option<(usize, Instant)>,
+    by_component: bool,
+    rows: Vec<Option<(f64, f64, u8)>>,
 }
 
 fn env_f(name: &str, or: f64) -> f64 {
@@ -87,12 +101,14 @@ impl<'a> Board<'a> {
         let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
         let mut pending = vec![0u32; sccs.len()];
         let mut readers = vec![Vec::new(); sccs.len()];
+        let mut producers: Vec<Vec<usize>> = Vec::with_capacity(sccs.len());
         for (j, scc) in sccs.iter().enumerate() {
             let from: BTreeSet<usize> = scc.iter().flat_map(|r| deps.get(r).into_iter().flatten()).filter_map(|(d, _)| of.get(d.as_str()).copied()).filter(|&p| p != j).collect();
             pending[j] = from.len() as u32;
-            for p in from {
+            for &p in &from {
                 readers[p].push(j);
             }
+            producers.push(from.into_iter().collect());
         }
         let ready = (0..sccs.len()).filter(|&j| pending[j] == 0).collect();
         let merge = !matches!(std::env::var("RERAIL_STRATA_MERGE").as_deref(), Ok("off"));
@@ -110,7 +126,41 @@ impl<'a> Board<'a> {
             fixed: env_f("RERAIL_STRATA_FIXED", 136e-6),
             parallel: !matches!(std::env::var("RERAIL_STRATA_PARALLEL").as_deref(), Ok("off")),
             counts: Counts::default(),
+            from: producers,
+            trace: std::env::var_os("RERAIL_STRATA_TRACE").map(|_| Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()] }),
         }
+    }
+
+    /// The loop reaches `at` (`len`: it ended): the stratum before, if the loop's thread ran it, is traced.
+    pub(super) fn mark(&mut self, at: usize) {
+        let Some(t) = self.trace.as_mut() else { return };
+        let now = Instant::now();
+        if let Some((p, since)) = t.at.take()
+            && !std::mem::take(&mut t.by_component)
+            && t.rows[p].is_none()
+        {
+            t.rows[p] = Some(((since - t.t0).as_secs_f64(), (now - t.t0).as_secs_f64(), 0));
+        }
+        if at < t.rows.len() {
+            t.at = Some((at, now));
+        }
+    }
+
+    /// Appends the run's trace to `RERAIL_STRATA_TRACE`: per stratum its level, start, end, where it ran, its
+    /// component and its producers.
+    pub(super) fn dump(&self, level_of: &[usize], sccs: &[BTreeSet<String>]) {
+        use std::io::Write as _;
+        let Some(t) = &self.trace else { return };
+        let Some(path) = std::env::var_os("RERAIL_STRATA_TRACE") else { return };
+        let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) else { return };
+        let mut out = format!("run\t{}\n", sccs.len());
+        for (j, row) in t.rows.iter().enumerate() {
+            let (a, b, w) = row.unwrap_or((-1.0, -1.0, 9));
+            let comp = self.member_of[j].map_or(-1, |c| c as i64);
+            let from: Vec<String> = self.from[j].iter().map(usize::to_string).collect();
+            out.push_str(&format!("s\t{j}\t{}\t{a:.7}\t{b:.7}\t{w}\t{comp}\t{}\t{}\n", level_of[j], from.join(","), sccs[j].iter().next().map_or("", String::as_str)));
+        }
+        let _ = f.write_all(out.as_bytes());
     }
 
     fn retire(&mut self, p: usize) {
@@ -133,6 +183,7 @@ impl<'a> Board<'a> {
             if waiting.contains(&p) { self.held.push(p) } else { self.retire(p) }
         }
         self.to = self.to.max(at);
+        self.mark(at);
     }
 
     /// A stratum's estimate: the fixed cost and its rules' reads' rows.
@@ -251,8 +302,9 @@ impl<'a> Board<'a> {
             self.comps[c].state = State::Job(stream.submit(est, move || {
                 let _in = ambient.enter();
                 let mut strand = strand;
-                let (n, stop) = strand.run_members(&data);
-                (strand, n, stop)
+                let mut times = Vec::new();
+                let (n, stop) = strand.run_members(&data, &mut times);
+                (strand, n, stop, times)
             }));
         }
         Ok(())
@@ -274,11 +326,15 @@ impl<'a> Board<'a> {
         let Some(c) = self.member_of[at] else { return Ok(Got::Not) };
         let comp = &mut self.comps[c];
         if !matches!(comp.state, State::Done(..)) {
-            let (strand, n, stop) = match std::mem::replace(&mut comp.state, State::Done(0, None)) {
-                State::Job(h) => stream.wait(h).map_err(Error::Plan)?,
+            let (strand, n, stop, times, inline) = match std::mem::replace(&mut comp.state, State::Done(0, None)) {
+                State::Job(h) => {
+                    let (s, n, stop, times) = stream.wait(h).map_err(Error::Plan)?;
+                    (s, n, stop, times, false)
+                }
                 State::Inline(mut strand, data) => {
-                    let (n, stop) = strand.run_members(&data);
-                    (strand, n, stop)
+                    let mut times = Vec::new();
+                    let (n, stop) = strand.run_members(&data, &mut times);
+                    (strand, n, stop, times, true)
                 }
                 State::Done(..) => unreachable!(),
             };
@@ -286,11 +342,20 @@ impl<'a> Board<'a> {
             run.absorb(strand, &comp.own, &comp.digests);
             self.in_flight -= comp.members.len();
             self.counts.ran += n;
+            if let Some(t) = self.trace.as_mut() {
+                for (k, &m) in comp.members.iter().enumerate().take(n) {
+                    let (a, b) = times[k];
+                    t.rows[m] = Some(((a - t.t0).as_secs_f64(), (b - t.t0).as_secs_f64(), if inline { 2 } else { 1 }));
+                }
+            }
             comp.state = State::Done(n, stop);
         }
         let k = comp.members.iter().position(|&m| m == at).expect("a member");
         let State::Done(n, stop) = &mut comp.state else { unreachable!() };
         if k < *n {
+            if let Some(t) = self.trace.as_mut() {
+                t.by_component = true;
+            }
             return Ok(Got::Ran);
         }
         self.counts.here += 1;

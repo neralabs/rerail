@@ -4167,7 +4167,10 @@ impl<'a> Strand<'a> {
     /// Runs a component's members (decision 0113 §2) in program order on this thread, each to its fixpoint (its
     /// device waves go out as its own batches): how many ran natively, and what stopped the next, if one did (a
     /// decline and its reason, or an error).
-    fn run_members(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)]) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
+    fn run_members(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], times: &mut Vec<(std::time::Instant, std::time::Instant)>) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
+        let t0 = std::time::Instant::now();
+        times.clear();
+        times.resize(members.len(), (t0, t0));
         // Ahead of the run's order, it gives out no new atom (decision 0113 §4): a member that would stops here.
         let _held = crate::content_store::atoms::held_only();
         struct Clear;
@@ -4180,7 +4183,8 @@ impl<'a> Strand<'a> {
         // Members that wait on their device wave (decision 0113 §3): the next members run meanwhile, and their
         // launches go out as one wave, when a member reads a waiting one or the component ends.
         let mut waiting: Vec<(usize, Box<Driving<'a>>)> = Vec::new();
-        let finish = |run: &mut Run<'a, 'static>, waiting: &mut Vec<(usize, Box<Driving<'a>>)>| -> Result<()> {
+        let finish = |run: &mut Run<'a, 'static>, waiting: &mut Vec<(usize, Box<Driving<'a>>)>, times: &mut Vec<(std::time::Instant, std::time::Instant)>| -> Result<()> {
+            let ks: Vec<usize> = waiting.iter().map(|w| w.0).collect();
             while !waiting.is_empty() {
                 super::lanes::wave::flush(waiting.len()).map_err(Error::Plan)?;
                 for (k, d) in std::mem::take(waiting) {
@@ -4191,15 +4195,23 @@ impl<'a> Strand<'a> {
                     }
                 }
             }
+            let now = std::time::Instant::now();
+            for k in ks {
+                times[k].1 = now;
+            }
             Ok(())
         };
         for (k, (scc, rules)) in members.iter().enumerate() {
             let reads_waiting = waiting.iter().any(|(w, _)| rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).any(|a| members[*w].0.contains(a.rel.as_str())));
-            if reads_waiting && let Err(e) = finish(&mut self.0, &mut waiting) {
+            if reads_waiting && let Err(e) = finish(&mut self.0, &mut waiting, times) {
                 return (0, Some(Err(e)));
             }
+            times[k].0 = std::time::Instant::now();
             let stop = match self.0.native_stratum(scc, rules) {
-                Ok(Native::Ran) => continue,
+                Ok(Native::Ran) => {
+                    times[k].1 = std::time::Instant::now();
+                    continue;
+                }
                 Ok(Native::Waiting(d)) => {
                     waiting.push((k, d));
                     continue;
@@ -4207,12 +4219,12 @@ impl<'a> Strand<'a> {
                 Ok(Native::Declined) => Ok((self.0.why_not.take(), self.0.why_class.take())),
                 Err(e) => Err(e),
             };
-            return match finish(&mut self.0, &mut waiting) {
+            return match finish(&mut self.0, &mut waiting, times) {
                 Ok(()) => (k, Some(stop)),
                 Err(e) => (0, Some(Err(e))),
             };
         }
-        match finish(&mut self.0, &mut waiting) {
+        match finish(&mut self.0, &mut waiting, times) {
             Ok(()) => (members.len(), None),
             Err(e) => (0, Some(Err(e))),
         }
@@ -7468,6 +7480,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     Ok(())
     })?;
+    if let Some(b) = board.as_mut() {
+        b.mark(sccs.len());
+        b.dump(&level_of, &sccs);
+    }
     if let Some(b) = &board {
         super::profile::decision("strata issued ahead (decision 0113)", || format!("{:?}", b.counts));
         if std::env::var_os("RERAIL_STRATA_COUNTS").is_some() {

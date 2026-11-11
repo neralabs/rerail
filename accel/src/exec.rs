@@ -1166,6 +1166,91 @@ impl Running {
 }
 
 
+/// A batch whose launches are taken one by one as each ends ([`Running::each`]): one submission to the lanes, and
+/// a consumer of launch `i` waits for `i` alone, not for the batch's slowest (decision 0114 §2).
+pub struct Each {
+    claims: Arc<Claims>,
+    cpu: Option<Arc<dyn Backend>>,
+    state: std::sync::Mutex<EachState>,
+    tag: &'static str,
+}
+
+struct EachState {
+    take: Receiver<Got>,
+    outs: Vec<Option<Result<Output, String>>>,
+    ended: bool,
+}
+
+impl Running {
+    /// The batch, its launches taken one at a time ([`Each::take`]).
+    pub fn each(self) -> Each {
+        let Running { claims, take, cpu, tag, .. } = self;
+        let n = claims.kernels.len();
+        Each { claims, cpu, state: std::sync::Mutex::new(EachState { take, outs: (0..n).map(|_| None).collect(), ended: false }), tag }
+    }
+}
+
+impl EachState {
+    fn store(&mut self, (lane, ids, (r, _, _)): Got) {
+        match r {
+            Ok(r) if r.len() == ids.len() => {
+                for (&i, o) in ids.iter().zip(r) {
+                    self.outs[i] = Some(Ok(o));
+                }
+            }
+            Ok(r) => {
+                let e = format!("{} lane: {} outputs for {} launches", lane.name(), r.len(), ids.len());
+                ids.iter().for_each(|&i| self.outs[i] = Some(Err(e.clone())));
+            }
+            Err(e) => ids.iter().for_each(|&i| self.outs[i] = Some(Err(format!("{} lane: {e}", lane.name())))),
+        }
+    }
+}
+
+impl Each {
+    /// Launch `i`'s output, once it ended: run here if no lane claimed it yet; meanwhile the outputs that come in
+    /// are kept for their takers, and the pool's jobs are helped.
+    pub fn take(&self, i: usize) -> Result<Output, String> {
+        let mut wait = Waiting::new("a launch of a batch");
+        loop {
+            {
+                let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(o) = st.outs[i].take() {
+                    return o;
+                }
+                while !st.ended {
+                    match st.take.try_recv() {
+                        Ok(g) => st.store(g),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => st.ended = true,
+                    }
+                }
+                if let Some(o) = st.outs[i].take() {
+                    return o;
+                }
+                if st.ended {
+                    return Err(format!("{}: launch {i} was never run: a lane's worker ended", self.tag));
+                }
+            }
+            // Its own launch, if no lane has it: the caller runs it on the cores.
+            if let Some(cpu) = &self.cpu
+                && self.claims.free(i)
+                && self.claims.claim(i, Lane::Cpu)
+            {
+                let ticket = self.claims.board.claimed(Lane::Cpu, vec![self.claims.item(i, Lane::Cpu)], self.claims.begun);
+                let r = run_job(&**cpu, &self.claims.board, &[&self.claims.kernels[i]], ticket);
+                self.state.lock().unwrap_or_else(|p| p.into_inner()).store((Lane::Cpu, vec![i], r));
+                continue;
+            }
+            if on_pool() && wait.help() {
+                continue;
+            }
+            wait.polled();
+            std::thread::sleep(std::time::Duration::from_micros(50));
+        }
+    }
+}
+
 impl Default for Executor {
     fn default() -> Self {
         Executor::new()
