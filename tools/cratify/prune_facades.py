@@ -14,7 +14,7 @@ def main(*outputs):
     drops = collections.defaultdict(set)  # (lib.rs, line) -> names
     for out in outputs:
         text = open(out).read()
-        for m in re.finditer(r'^(native/crates/[a-z_]+/src/lib\.rs):(\d+):(\d+): error\[(E0603|E0432|E0365)\]: (.*)$', text, re.M):
+        for m in re.finditer(r'^((?:native/crates/[a-z_]+/src/lib|native/src/[^:\s]+)\.rs):(\d+):(\d+): error\[(E0603|E0432|E0365)\]: (.*)$', text, re.M):
             f, line, msg = m.group(1), int(m.group(2)), m.group(5)
             names = re.findall(r'`(?:[A-Za-z_][A-Za-z_0-9]*::)*([A-Za-z_][A-Za-z_0-9]*)`', msg.split(': ')[0])
             if m.group(4) == 'E0432':
@@ -38,7 +38,9 @@ def main(*outputs):
             k = i
             while k < len(src) - 1 and not src[k].rstrip().endswith(';'):
                 k += 1
-            stmts[(j, k)] |= names
+            # only a facade's repeated use (generated, `#[allow(unused_imports)]`): a file's own use is kept
+            if j > 0 and src[j - 1].strip() == '#[allow(unused_imports)]':
+                stmts[(j, k)] |= names
         for (j, k), names in stmts.items():
             text = ' '.join(x.strip() for x in src[j:k + 1])
             indent = re.match(r'\s*', src[j]).group(0)

@@ -14,7 +14,7 @@ use regex_automata::{
 use std::collections::{HashMap, VecDeque};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum CaptureProgram {
+pub enum CaptureProgram {
     Equal {
         left: u16,
         right: u16,
@@ -344,7 +344,7 @@ pub(super) enum LuaInstruction {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum ValueMatcher {
+pub enum ValueMatcher {
     Any,
     Byte(u8),
     Class {

@@ -15,7 +15,7 @@ pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::{Report};
 
 /// A join rule's plan on the device, as the device made it (`SolverDevice::compile_join`).
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct JoinPlan(pub(in crate::code_rule_dsl) Arc<dyn Any + Send + Sync>);
+pub struct JoinPlan(pub Arc<dyn Any + Send + Sync>);
 
 /// Why the device did not solve: there is none for this work (the caller solves on the CPU), or it failed.
 #[derive(Debug)]

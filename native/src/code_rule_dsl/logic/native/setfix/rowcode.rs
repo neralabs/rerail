@@ -35,7 +35,7 @@ pub(in crate::code_rule_dsl) enum Word {
 /// A value the same for every row of a chunk: a slot bound before the atom, or a constant, or
 /// its document.
 #[derive(Clone, Copy)]
-pub(super) struct Param {
+pub struct Param {
     pub(super) key: Key,
     pub(super) doc: bool,
 }

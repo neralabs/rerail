@@ -84,7 +84,7 @@ pub(in crate::code_rule_dsl) struct Program {
 impl Program {
     /// The longest chain of strata its steps read through: the waves a chunk of a program without
     /// recursion takes (independent strata share a wave).
-    pub(in crate::code_rule_dsl) fn strata(&self) -> u32 {
+    pub fn strata(&self) -> u32 {
         let mut depth = BTreeMap::<&str, u32>::new();
         let mut steps = self.steps.iter().collect::<Vec<_>>();
         steps.sort_by_key(|step| step.stratum);

@@ -8,7 +8,7 @@
 //! (`facts::vtab::syntax`). `statistics_boundary` returns the counts the compiled plans' validity
 //! reads (`stats::plans`), and `trim` evicts completed relations to a byte capacity.
 pub(in crate::code_rule_dsl) mod database;
-pub(in crate::code_rule_dsl::waves) mod sql;
+pub(in crate::code_rule_dsl) mod sql;
 
 pub(in crate::code_rule_dsl) use database::Database;
 use crate::code_rule_dsl::facts::vtab::Source;

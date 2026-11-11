@@ -18,7 +18,7 @@ use std::rc::Rc;
 
 /// `phpcs`: PHP_CodeSniffer's `phpcs:` annotations.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Phpcs {
+pub struct Phpcs {
     /// The sniff or message codes the violation reports as.
     pub(crate) codes: Vec<String>,
     /// `version`: the PHP_CodeSniffer major whose reading applies (4 unless 3).

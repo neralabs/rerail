@@ -324,7 +324,7 @@ fn kill(dead: &mut Vec<u64>, id: u32) -> bool {
 /// the kept row's level for a row started from a kept relation. A row's level is above the levels of the rows it was
 /// first derived from, as they were pushed in earlier waves; `lbase` is above every kept row's level in the
 /// component, so a maintained run's new rows are above the rows they read.
-struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i64>, stored: usize, lo: usize, hi: usize,
+pub struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i64>, stored: usize, lo: usize, hi: usize,
              wave: u32, idx: Vec<Index>, serves: Vec<Vec<Vec<usize>>>, indexed: usize, pending: HashTable<u32>, sketches: Vec<Sketch>,
              dead: Vec<u64>, ndead: usize, summaries: scalars::Pool,
              /// The kept relation it started as (`InRel::delta_since`).
@@ -739,7 +739,7 @@ enum Body { Sql(String), Join(JoinRule) }
 /// again).
 struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>> }
 
-pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
+pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
@@ -2045,9 +2045,9 @@ pub fn loads() -> String {
 /// the facts (or a view of them), not from a derived relation.
 /// `set`, `dead`, `ndead`: a moved relation's dedup set and dead rows (`Rel`), kept so a later run's relation can
 /// start from it (`Rel::based`).
-pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, base: bool, types: Vec<u8>, stored: usize, idx: Mutex<HashMap<u64, Arc<Csr>>>, chains: Vec<Index>,
+pub struct InRel { pub k: usize, n: usize, rows: Vec<i64>, pub view: Option<View>, base: bool, types: Vec<u8>, stored: usize, idx: Mutex<HashMap<u64, Arc<Csr>>>, chains: Vec<Index>,
                    /// Its columns' statistics and its orders' key sets, as its relation had them (`Rel`).
-                   sketches: Vec<Sketch>, serves: Vec<Vec<Vec<usize>>>, dead: Vec<u64>, ndead: usize, summaries: scalars::Pool,
+                   sketches: Vec<Sketch>, serves: Vec<Vec<Vec<usize>>>, pub dead: Vec<u64>, pub ndead: usize, summaries: scalars::Pool,
                    /// Each column's statistics (`syntax::measured`), measured when first asked: a kept relation's rows
                    /// do not change, so a session's later runs read them, not measure them again (0094 §4).
                    measured: std::sync::OnceLock<Vec<[i64; 4]>>,
@@ -2068,7 +2068,7 @@ pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, base:
                    level: Vec<u32> }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
 /// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
-pub struct View { src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
+pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
 impl View {
     /// The source's rows whose view column `c` is `v` and which pass the filters, through the source's own index.
     fn find(&self, c: usize, v: i64) -> Vec<u32> {
@@ -4012,7 +4012,7 @@ enum Step {
 /// `fused`: by step, an atom fused with the filters after it into a row program (`rowcode`).
 /// `forms`: per step, its count-table form's state (`table`).
 /// `spec`: the digest of the spec it was read from, which a level's batch keeps its pairs by (`level`).
-pub struct JoinRule { steps: Vec<Step>, out: Vec<Term>, nslots: usize, multi: Vec<(usize, Vec<usize>)>, counts: Vec<[std::cell::Cell<u64>; 2]>,
+pub struct JoinRule { pub steps: Vec<Step>, pub out: Vec<Term>, pub nslots: usize, multi: Vec<(usize, Vec<usize>)>, pub counts: Vec<[std::cell::Cell<u64>; 2]>,
                       fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm>, spec: u64 }
 
 fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {

@@ -11,7 +11,7 @@ use serde_json::Value;
 
 /// `suppress.clippy`: what silences the violation as Clippy silences its lint.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Clippy {
+pub struct Clippy {
     /// The lint names whose `allow` or `expect` silences it, as an attribute spells them
     /// (`clippy::double_parens`, a group such as `clippy::complexity` or `clippy::all`, or
     /// `warnings`). A port lists its lint and every group it belongs to.

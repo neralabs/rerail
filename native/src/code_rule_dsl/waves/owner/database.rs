@@ -22,7 +22,7 @@ pub(in crate::code_rule_dsl) struct Database {
     pub(super) active: Cell<usize>,
     pub(super) leases: Cell<usize>,
     pub(super) plan_signature: Cell<u64>,
-    pub(in crate::code_rule_dsl::waves) storage: RefCell<Storage>,
+    pub storage: RefCell<Storage>,
     pub(super) modules: Modules,
     /// The sources bound now, by table: the plan signature's input.
     pub(super) bound: RefCell<BTreeMap<String, Arc<dyn Source>>>,

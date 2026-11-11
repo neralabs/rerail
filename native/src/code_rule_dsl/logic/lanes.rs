@@ -258,7 +258,7 @@ pub(in crate::code_rule_dsl) mod prof {
     }
 
     /// A host phase of `form`, timed until dropped.
-    pub(in crate::code_rule_dsl) struct Host(Option<(&'static str, &'static str, Instant, f64)>);
+    pub struct Host(Option<(&'static str, &'static str, Instant, f64)>);
 
     pub(in crate::code_rule_dsl) fn host(form: &'static str, phase: &'static str) -> Host {
         Host(profile::on().then(|| (form, phase, Instant::now(), thread_cpu())))

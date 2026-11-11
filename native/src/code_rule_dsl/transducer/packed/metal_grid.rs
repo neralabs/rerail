@@ -18,7 +18,7 @@ const SELECTOR_EXPLICIT: u32 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalGridHeader {
+pub struct MetalGridHeader {
     pub format_version: u32,
     pub root_count: u32,
     pub selector_count: u32,
@@ -31,7 +31,7 @@ pub(super) struct MetalGridHeader {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct RootRecord {
+pub struct RootRecord {
     pub file: u32,
     pub node: u32,
     pub semantic_root_ordinal: u32,
@@ -39,7 +39,7 @@ pub(super) struct RootRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct RootSelector {
+pub struct RootSelector {
     pub kind: u32,
     pub file: u32,
     pub data_start: u32,
@@ -50,7 +50,7 @@ pub(super) struct RootSelector {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct EvaluationSpan {
+pub struct EvaluationSpan {
     pub evaluation: u32,
     pub file: u32,
     pub program: u32,
@@ -64,7 +64,7 @@ pub(super) struct EvaluationSpan {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct BlockSpan {
+pub struct BlockSpan {
     pub evaluation_span: u32,
     pub execution_block: u32,
     pub selector_offset: u32,
@@ -82,7 +82,7 @@ pub(super) struct ExecutionRange {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct ExecutionBlock {
+pub struct ExecutionBlock {
     pub block_span_start: u32,
     pub block_span_count: u32,
     pub dispatch_signature: u32,
@@ -93,7 +93,7 @@ pub(super) struct ExecutionBlock {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct GridProgramShape {
+pub struct GridProgramShape {
     pub signature: u32,
     pub class: u32,
     pub route: u32,

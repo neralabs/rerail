@@ -6,7 +6,7 @@ pub(super) const NONE: u32 = u32::MAX;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalBatchHeader {
+pub struct MetalBatchHeader {
     pub format_version: u32,
     pub task_count: u32,
     pub file_count: u32,
@@ -35,7 +35,7 @@ pub(super) struct MetalBatchHeader {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalNode {
+pub struct MetalNode {
     pub parent: u32,
     pub next_any: u32,
     pub next_named: u32,
@@ -51,7 +51,7 @@ pub(super) struct MetalNode {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalFile {
+pub struct MetalFile {
     pub node_start: u32,
     pub node_count: u32,
     pub source_start: u32,
@@ -312,7 +312,7 @@ pub(super) struct TaskStatus {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct SharedArenaRecord {
+pub struct SharedArenaRecord {
     pub start: u32,
     pub capacity: u32,
     pub cursor: u32,
@@ -376,7 +376,7 @@ pub(super) struct MetalGlobalArenas {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalTask {
+pub struct MetalTask {
     pub evaluation: u32,
     pub batch_ordinal: u32,
     pub file: u32,

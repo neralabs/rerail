@@ -193,7 +193,7 @@ impl DenseSet {
     }
 
     /// The set's nodes of file `file`, as positions in the file, ascending.
-    pub(in crate::code_rule_dsl) fn file_nodes<'a>(&'a self, space: &'a NodeSpace, file: usize) -> impl Iterator<Item = u32> + 'a {
+    pub fn file_nodes<'a>(&'a self, space: &'a NodeSpace, file: usize) -> impl Iterator<Item = u32> + 'a {
         let range = space.range(file);
         let base = range.start;
         let words = if range.is_empty() { 0..0 } else { range.start as usize / 64..(range.end as usize - 1) / 64 + 1 };

@@ -25,7 +25,7 @@ const _: () = assert!(HEADER == HEADER_BYTES && HEADER % COLUMN_ALIGN == 0);
 
 /// Where an image's columns and tables are, as byte offsets from the image's start.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct Layout {
+pub struct Layout {
     pub(in crate::code_rule_dsl) nodes: u32,
     /// The widths of `size`, `off` and `tail` (2 or 4).
     pub(in crate::code_rule_dsl) widths: [u8; 3],

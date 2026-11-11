@@ -10,7 +10,7 @@ pub(super) use rerail_compiler::native_ir::*;
 /// A program's native IR (`Structure`, the compiler crate's) and the matcher's value, capture
 /// and output programs.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct NativeModule {
+pub struct NativeModule {
     pub structure: Structure,
     pub value_programs: Vec<ValueProgram>,
     pub capture_programs: Vec<CaptureProgram>,

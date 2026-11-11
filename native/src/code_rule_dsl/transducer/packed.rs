@@ -297,7 +297,7 @@ mod value_prefix;
 use rerail_compiler::program::*;
 pub(in crate::code_rule_dsl) use rerail_compiler::program::{NAMED, Words, word};
 const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
-const MAX_STEPS_PER_PATH: usize = 1 << 20;
+pub const MAX_STEPS_PER_PATH: usize = 1 << 20;
 const MAX_WORK_PER_TASK: usize = 1 << 26;
 
 #[derive(Clone)]
@@ -777,7 +777,7 @@ enum PatternVerdict {
 }
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Program {
+pub struct Program {
     /// The word program: the words and the tables they index, tier 1's and tier 2's
     /// (`rerail_compiler::program::Words`). The fields below are the matcher's.
     ir: Words,
@@ -787,7 +787,7 @@ pub(in crate::code_rule_dsl) struct Program {
     capture_programs: Vec<value::CaptureProgram>,
     directives: Vec<Directive>,
     output_program: output::OutputProgram,
-    ast_pattern: Option<PackedPattern>,
+    pub ast_pattern: Option<PackedPattern>,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
 }

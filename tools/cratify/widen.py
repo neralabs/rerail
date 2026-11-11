@@ -69,7 +69,8 @@ def locate(lines, i, c, name, kind, byte_start=None, structs=()):
             b = byte_start[j] + len(lines[j][:col].encode())
             if not any(s <= b < e for s, e in structs):
                 return False  # a struct literal's field, a pattern's: not a declaration
-            return re.fullmatch(r'\s*(?:pub(?:\s*\([^)]*\))?\s+)?', before) is not None and lines[j][col + len(name):].lstrip().startswith(':')
+            # alone on its line, or after its struct's `{` or the field before's `,`
+            return re.search(r'(?:^|[{,])\s*(?:pub(?:\s*\([^)]*\))?\s+)?$', before) is not None and lines[j][col + len(name):].lstrip().startswith(':') and not lines[j][col + len(name):].lstrip().startswith('::')
         return KEYWORD.search(before) is not None
     if i < len(lines) and ok(i, c):
         return i, c

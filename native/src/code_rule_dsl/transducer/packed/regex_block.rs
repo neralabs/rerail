@@ -452,13 +452,13 @@ impl crate::code_rule_dsl::facts::span_prefilter::SpanEnds for SpanPrefilter {
 }
 
 /// The facts' span prefilter compiler (`facts::span_prefilter::Compile`).
-pub(in crate::code_rule_dsl) fn compile_span(re: &str, lines: bool) -> Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>> {
+pub fn compile_span(re: &str, lines: bool) -> Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>> {
     SpanPrefilter::compile(re, lines).map(|p| std::sync::Arc::new(p) as std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>)
 }
 
 /// The facts' span prefilter launcher (`facts::span_prefilter::Launch`): this module's prefilters, as `compile_span`
 /// made them.
-pub(in crate::code_rule_dsl) fn launch_spans(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vec<u64>>, RanOn), String> {
+pub fn launch_spans(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vec<u64>>, RanOn), String> {
     let filters = filters
         .iter()
         .map(|f| std::sync::Arc::clone(f).into_any().downcast::<SpanPrefilter>().map_err(|_| "span prefilter: not a block program's".to_owned()))

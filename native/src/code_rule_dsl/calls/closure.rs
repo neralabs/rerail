@@ -98,7 +98,7 @@ pub(crate) struct Seed {
 
 /// One linked file: its summary, its definitions' resolved call edges, and their callers.
 #[derive(Clone, Debug)]
-struct GraphFile {
+pub struct GraphFile {
     path: Arc<str>,
     summary: Arc<Summary>,
     /// `(definition, callee definition)`, sorted.

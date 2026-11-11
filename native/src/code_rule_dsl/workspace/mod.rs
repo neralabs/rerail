@@ -274,7 +274,7 @@ struct Candidates {
     unrestricted: Vec<usize>,
 }
 
-struct FileState {
+pub struct FileState {
     prepared: Option<Box<evaluate::PreparedAst>>,
     input: FileInput,
     source_digest: [u8; 32],

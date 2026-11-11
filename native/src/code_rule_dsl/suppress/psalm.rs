@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 
 /// `psalm`: Psalm's `@psalm-suppress` tags.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Psalm {
+pub struct Psalm {
     /// The issues the violation is, and their `Config::getParentIssueType` parents: a tag naming
     /// any of them suppresses it.
     pub(crate) names: Vec<String>,

@@ -1007,7 +1007,7 @@ impl NodeSet {
     }
 
     /// The set's nodes of file `file`, as positions in the file, ascending.
-    pub(in crate::code_rule_dsl) fn file_nodes<'a>(&'a self, space: &'a NodeSpace, file: usize) -> impl Iterator<Item = u32> + 'a {
+    pub fn file_nodes<'a>(&'a self, space: &'a NodeSpace, file: usize) -> impl Iterator<Item = u32> + 'a {
         let range = space.range(file);
         let (first, last) = (u64::from(range.start >> 16), u64::from(range.end.saturating_sub(1) >> 16));
         let from = self.directory.partition_point(|e| e.key < first);

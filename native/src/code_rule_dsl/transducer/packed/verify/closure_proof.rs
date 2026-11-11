@@ -4,7 +4,7 @@ use super::{Error, FIELD, FLAGS, FORK, GREEDY, KIND, Program, SIZE, split};
 /// Guard words borrow the validated Program. This proof cannot outlive that
 /// immutable instruction view. Full-value domain grouping remains a separate duty.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct Region<'a> {
+pub struct Region<'a> {
     pub header: usize,
     pub exit: usize,
     pub repeat: u16,

@@ -111,7 +111,7 @@ pub(crate) fn ts_lib_globals<'a>(libs: impl IntoIterator<Item = &'a str>) -> Has
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum GlobalSetting {
+pub enum GlobalSetting {
     Readonly,
     Writable,
     Off,
