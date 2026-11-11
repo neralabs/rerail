@@ -34,6 +34,18 @@ pub(crate) struct Psalm {
     pub(crate) suppress_all: bool,
 }
 
+/// Psalm's `@psalm-suppress` tags.
+pub(crate) struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "psalm";
+    const DETAIL: &'static str = "psalm: @psalm-suppress tags are Psalm's";
+    type Spec = Psalm;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Psalm> {
+        spec(value, at)
+    }
+}
+
 /// `suppress.psalm`.
 pub(super) fn spec(psalm: &Value, at: &str) -> napi::Result<Psalm> {
     reject_unknown(object(psalm, at)?, &["issues", "suppressAll"], at)?;

@@ -18,6 +18,18 @@ pub(crate) struct Noqa {
     pub(crate) parent: bool,
 }
 
+/// Ruff's `# noqa` comments.
+pub(crate) struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "noqa";
+    const DETAIL: &'static str = "noqa: noqa comments are Ruff's";
+    type Spec = Noqa;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Noqa> {
+        spec(value, at)
+    }
+}
+
 /// `suppress.noqa`.
 pub(super) fn spec(noqa: &Value, at: &str) -> napi::Result<Noqa> {
     reject_unknown(object(noqa, at)?, &["codes", "parent"], at)?;

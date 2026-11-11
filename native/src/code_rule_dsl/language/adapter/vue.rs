@@ -13,7 +13,7 @@ use super::{Adapter, Ecma, Refusal, Refused, SyntaxFeature, SyntaxRules};
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{file_eslint_directives, file_vue_directives};
+use crate::code_rule_dsl::matcher::{file_index};
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::suppress::{Suppress, VueDirectives, vue_script_directives};
@@ -71,10 +71,10 @@ impl Adapter for Vue {
         _: (usize, usize),
     ) -> bool {
         let at = anchored.start;
-        suppress.eslint.as_ref().is_some_and(|rules| {
-            let scripts = file_eslint_directives(|| vue_script_directives(node, source, lines));
+        suppress.get::<crate::code_rule_dsl::suppress::eslint::Suppressions>().is_some_and(|rules| {
+            let scripts = file_index(|| vue_script_directives(node, source, lines));
             scripts.suppresses(rules, at, lines) || {
-                let template = file_vue_directives(|| VueDirectives::read(node, source, lines));
+                let template = file_index(|| VueDirectives::read(node, source, lines));
                 template.suppresses(rules, at, lines)
             }
         })

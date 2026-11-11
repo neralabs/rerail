@@ -20,6 +20,18 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 
+/// PHPStan's `@phpstan-ignore` comments: the identifiers a local ignore must name.
+pub(crate) struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "phpstan";
+    const DETAIL: &'static str = "phpstan: @phpstan-ignore comments are PHPStan's";
+    type Spec = Vec<String>;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Vec<String>> {
+        spec(value, at)
+    }
+}
+
 /// `phpstan.identifiers`: PHPStan diagnostic identifiers a local ignore must name.
 pub(super) fn spec(phpstan: &Value, at: &str) -> napi::Result<Vec<String>> {
     reject_unknown(object(phpstan, at)?, &["identifiers"], at)?;

@@ -52,10 +52,7 @@ use super::{
 use crate::code_rule_dsl::identifier::{ecma_name, python_name};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{
-    file_biome_suppressions, file_eslint_directives, file_noqa, file_nosec, file_oxlint_directives,
-    file_phpcs, file_phpstan, file_psalm,
-};
+use crate::code_rule_dsl::matcher::{file_index};
 use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
 use crate::code_rule_dsl::suppress::{
     BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
@@ -204,12 +201,12 @@ impl Adapter for Python {
         // A project may run Ruff and Bandit together: either linter the violation names may
         // suppress it. Bandit reads `# nosec` on the reported line and on the lines of the node it
         // visited, here the witness.
-        suppress.noqa.as_ref().is_some_and(|noqa| {
-            let index = file_noqa(|| NoqaIndex::read(&root(node), source, lines));
+        suppress.get::<crate::code_rule_dsl::suppress::noqa::Suppressions>().is_some_and(|noqa| {
+            let index = file_index(|| NoqaIndex::read(&root(node), source, lines));
             let parent = noqa.parent.then(|| parent_statement(node, at)).flatten();
             index.suppresses(&noqa.codes, at, parent)
-        }) || suppress.nosec.as_ref().is_some_and(|codes| {
-            let index = file_nosec(|| NosecIndex::read(&root(node), source, lines));
+        }) || suppress.get::<crate::code_rule_dsl::suppress::nosec::Suppressions>().is_some_and(|codes| {
+            let index = file_index(|| NosecIndex::read(&root(node), source, lines));
             index.suppresses(codes, at, witness, lines)
         })
     }
@@ -260,15 +257,15 @@ impl Adapter for Ecma {
         anchored: Range<usize>,
         _: (usize, usize),
     ) -> bool {
-        suppress.eslint.as_ref().is_some_and(|rules| {
-            let directives = file_eslint_directives(|| EslintDirectives::read(node, source, lines));
+        suppress.get::<crate::code_rule_dsl::suppress::eslint::Suppressions>().is_some_and(|rules| {
+            let directives = file_index(|| EslintDirectives::read(node, source, lines));
             directives.suppresses(rules, anchored.start, lines)
-        }) || suppress.oxlint.as_ref().is_some_and(|rules| {
-            let directives = file_oxlint_directives(|| OxlintDirectives::read(&root(node), source));
+        }) || suppress.get::<crate::code_rule_dsl::suppress::oxlint::Suppressions>().is_some_and(|rules| {
+            let directives = file_index(|| OxlintDirectives::read(&root(node), source));
             directives.suppresses(rules, anchored.clone())
-        }) || suppress.biome.as_ref().is_some_and(|rules| {
+        }) || suppress.get::<crate::code_rule_dsl::suppress::biome::Suppressions>().is_some_and(|rules| {
             let suppressions =
-                file_biome_suppressions(|| BiomeSuppressions::read(&root(node), source));
+                file_index(|| BiomeSuppressions::read(&root(node), source));
             suppressions.suppresses(rules, anchored.clone())
         })
     }
@@ -353,14 +350,14 @@ impl Adapter for Php {
         _: (usize, usize),
     ) -> bool {
         let at = anchored.start;
-        suppress.phpstan.as_ref().is_some_and(|identifiers| {
-            let index = file_phpstan(|| PhpstanIndex::read(&root(node), source, lines));
+        suppress.get::<crate::code_rule_dsl::suppress::phpstan::Suppressions>().is_some_and(|identifiers| {
+            let index = file_index(|| PhpstanIndex::read(&root(node), source, lines));
             index.suppresses(&violation.code, identifiers, at, lines)
-        }) || suppress.psalm.as_ref().is_some_and(|psalm| {
-            let index = file_psalm(|| PsalmIndex::read(&root(node), source));
+        }) || suppress.get::<crate::code_rule_dsl::suppress::psalm::Suppressions>().is_some_and(|psalm| {
+            let index = file_index(|| PsalmIndex::read(&root(node), source));
             index.suppresses(&psalm.names, psalm.suppress_all, at)
-        }) || suppress.phpcs.as_ref().is_some_and(|phpcs| {
-            let index = file_phpcs(|| PhpcsIndex::read(&root(node), source, lines));
+        }) || suppress.get::<crate::code_rule_dsl::suppress::phpcs::Suppressions>().is_some_and(|phpcs| {
+            let index = file_index(|| PhpcsIndex::read(&root(node), source, lines));
             index.suppresses(&phpcs.codes, phpcs.version, at, lines)
         })
     }

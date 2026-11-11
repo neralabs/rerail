@@ -12,6 +12,18 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
+/// Bandit's `# nosec` comments: the test ids a list must name (or name none).
+pub(crate) struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "nosec";
+    const DETAIL: &'static str = "nosec: nosec comments are Bandit's";
+    type Spec = Vec<String>;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Vec<String>> {
+        spec(value, at)
+    }
+}
+
 /// `nosec.codes`: the Bandit test ids a `# nosec` list must name (or name none) to suppress the
 /// violation.
 pub(super) fn spec(nosec: &Value, at: &str) -> napi::Result<Vec<String>> {

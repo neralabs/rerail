@@ -532,6 +532,22 @@ pub(crate) fn install_languages() {
     register(Family::Vue, &Pack::<Vue>::NEW);
     register(Family::Rr, &Pack::<Rr>::NEW);
     register(Family::Json, &Pack::<Json>::NEW);
+    // The linters' suppressions, in the order `suppress` is parsed and checked in.
+    {
+        use suppress::{eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, sqlfluff, kind};
+        suppress::install(vec![
+            kind::<eslint::Suppressions>(),
+            kind::<noqa::Suppressions>(),
+            kind::<nosec::Suppressions>(),
+            kind::<oxlint::Suppressions>(),
+            kind::<biome::Suppressions>(),
+            kind::<phpstan::Suppressions>(),
+            kind::<psalm::Suppressions>(),
+            kind::<phpcs::Suppressions>(),
+            kind::<clippy::Suppressions>(),
+            kind::<sqlfluff::Suppressions>(),
+        ]);
+    }
     // Every family the build has, registered (`pack` refuses one that is not).
     Family::ALL.into_iter().for_each(|family| _ = pack(family));
 }

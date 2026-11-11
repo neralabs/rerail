@@ -20,9 +20,7 @@ use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
-use crate::code_rule_dsl::matcher::{
-    Arguments, Passed, ScopeName, SemanticText, Style, Unresolved, file_clippy,
-};
+use crate::code_rule_dsl::matcher::{Arguments, Passed, ScopeName, SemanticText, Style, Unresolved, file_index};
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
@@ -91,8 +89,8 @@ impl Adapter for Rust {
         anchored: Range<usize>,
         _: (usize, usize),
     ) -> bool {
-        suppress.clippy.as_ref().is_some_and(|clippy| {
-            let index = file_clippy(|| ClippyIndex::read(&root(node)));
+        suppress.get::<crate::code_rule_dsl::suppress::clippy::Suppressions>().is_some_and(|clippy| {
+            let index = file_index(|| ClippyIndex::read(&root(node)));
             index.suppresses(clippy, anchored.start)
         })
     }

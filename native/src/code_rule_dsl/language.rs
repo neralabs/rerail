@@ -1251,7 +1251,7 @@ mod tests {
             ("formatArgs", Semantic::FormatArgs),
         ];
         // Every kind's `suppress` key is its registry name.
-        let suppressions = Suppression::ALL.iter().map(|&kind| (kind.key(), kind));
+        let suppressions = Suppression::all().iter().map(|&kind| (kind.key(), kind));
         for (entry, language) in supported.iter().zip(CodeRuleLanguage::ALL) {
             let runs_on = entry["runsOn"].as_array().map_or_else(
                 || {

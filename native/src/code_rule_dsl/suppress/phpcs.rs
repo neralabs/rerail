@@ -25,6 +25,18 @@ pub(crate) struct Phpcs {
     pub(crate) version: PhpcsVersion,
 }
 
+/// PHP_CodeSniffer's `phpcs:` annotations.
+pub(crate) struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "phpcs";
+    const DETAIL: &'static str = "phpcs: phpcs: annotations are PHP_CodeSniffer's";
+    type Spec = Phpcs;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Phpcs> {
+        spec(value, at)
+    }
+}
+
 /// `suppress.phpcs`.
 pub(super) fn spec(phpcs: &Value, at: &str) -> napi::Result<Phpcs> {
     reject_unknown(object(phpcs, at)?, &["sniffs", "version"], at)?;

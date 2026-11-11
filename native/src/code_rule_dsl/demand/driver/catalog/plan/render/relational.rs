@@ -993,15 +993,14 @@ impl Builder {
         let suppressed = match output.violation.suppress.as_ref() {
             None => "0".to_owned(),
             Some(suppress)
-                if suppress.eslint.is_none()
-                    && suppress.nosec.is_none()
-                    && suppress.phpstan.is_none()
-                    && suppress.psalm.is_none()
-                    && suppress.phpcs.is_none() =>
+                if suppress.get::<crate::code_rule_dsl::suppress::eslint::Suppressions>().is_none()
+                    && suppress.get::<crate::code_rule_dsl::suppress::nosec::Suppressions>().is_none()
+                    && suppress.get::<crate::code_rule_dsl::suppress::phpstan::Suppressions>().is_none()
+                    && suppress.get::<crate::code_rule_dsl::suppress::psalm::Suppressions>().is_none()
+                    && suppress.get::<crate::code_rule_dsl::suppress::phpcs::Suppressions>().is_none() =>
             {
                 let noqa = suppress
-                    .noqa
-                    .as_ref()
+                    .get::<crate::code_rule_dsl::suppress::noqa::Suppressions>()
                     .ok_or("an empty suppression plan is invalid")?;
                 let line = format!(
                     "rtrim(lower(CAST(substr(CAST(file.source AS BLOB), (SELECT max(CAST(point.value AS INTEGER)) FROM json_each(file.line_starts) point WHERE CAST(point.value AS INTEGER) <= {start}) + 1, COALESCE((SELECT min(CAST(point.value AS INTEGER)) FROM json_each(file.line_starts) point WHERE CAST(point.value AS INTEGER) > {start}), length(CAST(file.source AS BLOB))) - (SELECT max(CAST(point.value AS INTEGER)) FROM json_each(file.line_starts) point WHERE CAST(point.value AS INTEGER) <= {start})) AS TEXT)), char(10) || char(13))"
@@ -3425,14 +3424,13 @@ impl Builder {
             ];
         if kinds == [TerminalKind::Pattern] && basic_pattern && bounded_output {
             if output.violation.suppress.as_ref().is_some_and(|suppress| {
-                suppress.eslint.is_none()
-                    && suppress.nosec.is_none()
-                    && suppress.phpstan.is_none()
-                    && suppress.psalm.is_none()
-                    && suppress.phpcs.is_none()
+                suppress.get::<crate::code_rule_dsl::suppress::eslint::Suppressions>().is_none()
+                    && suppress.get::<crate::code_rule_dsl::suppress::nosec::Suppressions>().is_none()
+                    && suppress.get::<crate::code_rule_dsl::suppress::phpstan::Suppressions>().is_none()
+                    && suppress.get::<crate::code_rule_dsl::suppress::psalm::Suppressions>().is_none()
+                    && suppress.get::<crate::code_rule_dsl::suppress::phpcs::Suppressions>().is_none()
                     && suppress
-                        .noqa
-                        .as_ref()
+                        .get::<crate::code_rule_dsl::suppress::noqa::Suppressions>()
                         .is_some_and(|noqa| noqa.codes == ["F401"] && !noqa.parent)
             }) && output.violation.code == "F401"
                 && capture_a

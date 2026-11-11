@@ -16,10 +16,7 @@ use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, LanguageOptions
 use crate::code_rule_dsl::scope::php_names::{self, PhpNames, Resolved};
 use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
-use crate::code_rule_dsl::suppress::{
-    BiomeSuppressions, ClippyIndex, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives,
-    PhpcsIndex, PhpstanIndex, PsalmIndex, RerailIgnores, SqlfluffIndex, VueDirectives,
-};
+use crate::code_rule_dsl::suppress::RerailIgnores;
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::{Followed, Value};
@@ -923,29 +920,9 @@ struct FileScopes {
     value_parses: HashMap<(ValueKey, Grammar), Option<Arc<SubTree>>>,
     /// The file's lines, per linter's terminators (`layout`, `suppress`), built on first use.
     lines: [Option<Rc<LineTable>>; 2],
-    /// The file's ESLint directive comments (`suppress.eslint`), read on first use.
-    eslint_directives: Option<Rc<EslintDirectives>>,
-    /// The file's eslint-plugin-vue template comment directives (`suppress.eslint` in a Vue
-    /// file), read on first use.
-    vue_directives: Option<Rc<VueDirectives>>,
-    /// The file's oxlint directive comments (`suppress.oxlint`), read on first use.
-    oxlint_directives: Option<Rc<OxlintDirectives>>,
-    /// The file's Biome suppression comments (`suppress.biome`), read on first use.
-    biome_suppressions: Option<Rc<BiomeSuppressions>>,
-    /// The file's `noqa` comments and line mapping (`suppress.noqa`), read on first use.
-    noqa: Option<Rc<NoqaIndex>>,
-    /// The file's comments, read as Bandit's `# nosec` (`suppress.nosec`), read on first use.
-    nosec: Option<Rc<NosecIndex>>,
-    /// The file's PHPStan ignore comments (`suppress.phpstan`), read on first use.
-    phpstan: Option<Rc<PhpstanIndex>>,
-    /// The file's Psalm `@psalm-suppress` tags (`suppress.psalm`), read on first use.
-    psalm: Option<Rc<PsalmIndex>>,
-    /// The file's PHP_CodeSniffer annotations (`suppress.phpcs`), read on first use.
-    phpcs: Option<Rc<PhpcsIndex>>,
-    /// The file's Rust lint-level attributes (`suppress.clippy`), read on first use.
-    clippy: Option<Rc<ClippyIndex>>,
-    /// The file's SQLFluff `-- noqa` directives (`suppress.sqlfluff`), read on first use.
-    sqlfluff: Option<Rc<SqlfluffIndex>>,
+    /// The file's suppression indexes (each linter's comments a `suppress` reads), by type, read on first use
+    /// (`file_index`).
+    indexes: HashMap<std::any::TypeId, Rc<dyn std::any::Any>>,
     /// The file's `rerail-ignore` directives, read on first use.
     rerail_ignores: Option<Rc<RerailIgnores>>,
     /// The file's PHP name references (`resolves` in php, and the flow a PHP table reads), built
@@ -992,17 +969,7 @@ impl FileScopeSlot {
             parses: HashMap::new(),
             value_parses: HashMap::new(),
             lines: [None, None],
-            eslint_directives: None,
-            vue_directives: None,
-            oxlint_directives: None,
-            biome_suppressions: None,
-            noqa: None,
-            nosec: None,
-            phpstan: None,
-            psalm: None,
-            phpcs: None,
-            clippy: None,
-            sqlfluff: None,
+            indexes: HashMap::new(),
             rerail_ignores: None,
             php_names: None,
             php_names_failed_within: 0,
@@ -1254,86 +1221,22 @@ pub(crate) fn file_lines(source: &str, terminators: Terminators) -> Rc<LineTable
     lines
 }
 
-/// The ESLint directives of the file being matched: read once per file while a file is being
-/// matched, and fresh outside one.
-pub(crate) fn file_eslint_directives(
-    read: impl FnOnce() -> EslintDirectives,
-) -> Rc<EslintDirectives> {
-    if let Some(directives) = FILE_SCOPES.with_borrow(|scopes| {
-        scopes
-            .as_ref()
-            .and_then(|scopes| scopes.eslint_directives.clone())
+/// A suppression index of the file being matched (a linter's comments, `T`): read once per file while a file is
+/// being matched, and fresh outside one. Each linter's reader is its language's: the core keys them by type.
+pub(crate) fn file_index<T: 'static>(read: impl FnOnce() -> T) -> Rc<T> {
+    let key = std::any::TypeId::of::<T>();
+    if let Some(index) = FILE_SCOPES.with_borrow(|scopes| {
+        scopes.as_ref().and_then(|scopes| scopes.indexes.get(&key).cloned())
     }) {
-        return directives;
+        return index.downcast::<T>().unwrap_or_else(|_| unreachable!("an index under another type's key"));
     }
-    let directives = Rc::new(read());
+    let index = Rc::new(read());
     FILE_SCOPES.with_borrow_mut(|scopes| {
         if let Some(scopes) = scopes {
-            scopes.eslint_directives = Some(Rc::clone(&directives));
+            scopes.indexes.insert(key, Rc::clone(&index) as Rc<dyn std::any::Any>);
         }
     });
-    directives
-}
-
-/// The eslint-plugin-vue template comment directives of the file being matched: read once per
-/// file while a file is being matched, and fresh outside one.
-pub(crate) fn file_vue_directives(read: impl FnOnce() -> VueDirectives) -> Rc<VueDirectives> {
-    if let Some(directives) = FILE_SCOPES.with_borrow(|scopes| {
-        scopes
-            .as_ref()
-            .and_then(|scopes| scopes.vue_directives.clone())
-    }) {
-        return directives;
-    }
-    let directives = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.vue_directives = Some(Rc::clone(&directives));
-        }
-    });
-    directives
-}
-
-/// The oxlint directives of the file being matched: read once per file while a file is being
-/// matched, and fresh outside one.
-pub(crate) fn file_oxlint_directives(
-    read: impl FnOnce() -> OxlintDirectives,
-) -> Rc<OxlintDirectives> {
-    if let Some(directives) = FILE_SCOPES.with_borrow(|scopes| {
-        scopes
-            .as_ref()
-            .and_then(|scopes| scopes.oxlint_directives.clone())
-    }) {
-        return directives;
-    }
-    let directives = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.oxlint_directives = Some(Rc::clone(&directives));
-        }
-    });
-    directives
-}
-
-/// The Biome suppressions of the file being matched: read once per file while a file is being
-/// matched, and fresh outside one.
-pub(crate) fn file_biome_suppressions(
-    read: impl FnOnce() -> BiomeSuppressions,
-) -> Rc<BiomeSuppressions> {
-    if let Some(suppressions) = FILE_SCOPES.with_borrow(|scopes| {
-        scopes
-            .as_ref()
-            .and_then(|scopes| scopes.biome_suppressions.clone())
-    }) {
-        return suppressions;
-    }
-    let suppressions = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.biome_suppressions = Some(Rc::clone(&suppressions));
-        }
-    });
-    suppressions
+    index
 }
 
 /// The `rerail-ignore` directives of the file being matched: read once per file while a file is
@@ -1353,125 +1256,6 @@ pub(crate) fn file_rerail_ignores(read: impl FnOnce() -> RerailIgnores) -> Rc<Re
         }
     });
     ignores
-}
-
-/// The `noqa` index of the file being matched: read once per file while a file is being matched,
-/// and fresh outside one.
-pub(crate) fn file_noqa(read: impl FnOnce() -> NoqaIndex) -> Rc<NoqaIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.noqa.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.noqa = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The `nosec` index of the file being matched: read once per file while a file is being matched,
-/// and fresh outside one.
-pub(crate) fn file_nosec(read: impl FnOnce() -> NosecIndex) -> Rc<NosecIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.nosec.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.nosec = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The PHPStan ignore index of the file being matched: read once per file while a file is being
-/// matched, and fresh outside one.
-pub(crate) fn file_phpstan(read: impl FnOnce() -> PhpstanIndex) -> Rc<PhpstanIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.phpstan.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.phpstan = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The Psalm suppression index of the file being matched: read once per file while a file is
-/// being matched, and fresh outside one.
-pub(crate) fn file_psalm(read: impl FnOnce() -> PsalmIndex) -> Rc<PsalmIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.psalm.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.psalm = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The PHP_CodeSniffer annotation index of the file being matched: read once per file while a
-/// file is being matched, and fresh outside one.
-pub(crate) fn file_phpcs(read: impl FnOnce() -> PhpcsIndex) -> Rc<PhpcsIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.phpcs.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.phpcs = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The Rust lint-level attribute index of the file being matched: read once per file while a
-/// file is being matched, and fresh outside one.
-pub(crate) fn file_clippy(read: impl FnOnce() -> ClippyIndex) -> Rc<ClippyIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.clippy.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.clippy = Some(Rc::clone(&index));
-        }
-    });
-    index
-}
-
-/// The SQLFluff `noqa` index of the file being matched: read once per file while a file is being
-/// matched, and fresh outside one.
-pub(crate) fn file_sqlfluff(read: impl FnOnce() -> SqlfluffIndex) -> Rc<SqlfluffIndex> {
-    if let Some(index) =
-        FILE_SCOPES.with_borrow(|scopes| scopes.as_ref().and_then(|scopes| scopes.sqlfluff.clone()))
-    {
-        return index;
-    }
-    let index = Rc::new(read());
-    FILE_SCOPES.with_borrow_mut(|scopes| {
-        if let Some(scopes) = scopes {
-            scopes.sqlfluff = Some(Rc::clone(&index));
-        }
-    });
-    index
 }
 
 /// A literal parsed earlier in this file: `Some(None)` when its value is not known.

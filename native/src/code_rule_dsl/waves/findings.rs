@@ -394,10 +394,10 @@ impl Layer {
             intern(&mut rules, &shape.rule.id);
             intern(&mut codes, &violation.code);
             let suppress = violation.suppress.as_ref();
-            for code in suppress.and_then(|s| s.noqa.as_ref()).iter().flat_map(|noqa| &noqa.codes) {
+            for code in suppress.and_then(|s| s.get::<crate::code_rule_dsl::suppress::noqa::Suppressions>()).iter().flat_map(|noqa| &noqa.codes) {
                 intern(&mut codes, code);
             }
-            for test in suppress.and_then(|s| s.nosec.as_ref()).into_iter().flatten() {
+            for test in suppress.and_then(|s| s.get::<crate::code_rule_dsl::suppress::nosec::Suppressions>()).into_iter().flatten() {
                 intern(&mut codes, test);
             }
             if let Some(name) = &violation.ignored_by {
@@ -529,7 +529,7 @@ impl Layer {
                 insert("around", &[c])?;
             }
             let suppress = violation.suppress.as_ref();
-            if let Some(noqa) = suppress.and_then(|s| s.noqa.as_ref()) {
+            if let Some(noqa) = suppress.and_then(|s| s.get::<crate::code_rule_dsl::suppress::noqa::Suppressions>()) {
                 for code in &noqa.codes {
                     insert("noqa", &[c, index_of(&self.codes, code).expect("interned")])?;
                 }
@@ -537,7 +537,7 @@ impl Layer {
                     insert("parented", &[c])?;
                 }
             }
-            for test in suppress.and_then(|s| s.nosec.as_ref()).into_iter().flatten() {
+            for test in suppress.and_then(|s| s.get::<crate::code_rule_dsl::suppress::nosec::Suppressions>()).into_iter().flatten() {
                 insert("nosec", &[c, index_of(&self.codes, test).expect("interned")])?;
             }
         }
@@ -591,9 +591,9 @@ impl Layer {
                 let honours = rule.scope.honours_suppressions_at(&document.path);
                 insert("applies", &[c as i64, d, i64::from(honours)])?;
                 let suppress = violation.suppress.as_ref().filter(|_| honours);
-                noqa |= suppress.is_some_and(|s| s.noqa.is_some());
-                parent |= suppress.and_then(|s| s.noqa.as_ref()).is_some_and(|noqa| noqa.parent);
-                nosec |= suppress.is_some_and(|s| s.nosec.is_some());
+                noqa |= suppress.is_some_and(|s| s.get::<crate::code_rule_dsl::suppress::noqa::Suppressions>().is_some());
+                parent |= suppress.and_then(|s| s.get::<crate::code_rule_dsl::suppress::noqa::Suppressions>()).is_some_and(|noqa| noqa.parent);
+                nosec |= suppress.is_some_and(|s| s.get::<crate::code_rule_dsl::suppress::nosec::Suppressions>().is_some());
                 around |= gated;
                 let (regexes, groups, name) = groups(violation)?;
                 let nodes = matched.get(&(c as i64, d)).into_iter().flatten();

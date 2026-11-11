@@ -18,9 +18,7 @@ use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{
-    Arguments, Passed, SQL_CALL_KINDS, ScopeName, SemanticText, Unresolved, file_sqlfluff,
-};
+use crate::code_rule_dsl::matcher::{Arguments, Passed, SQL_CALL_KINDS, ScopeName, SemanticText, Unresolved, file_index};
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
@@ -93,8 +91,8 @@ impl Adapter for Sql {
         _: (usize, usize),
     ) -> bool {
         let at = anchored.start;
-        suppress.sqlfluff.as_ref().is_some_and(|references| {
-            let index = file_sqlfluff(|| SqlfluffIndex::read(&root(node), source, lines));
+        suppress.get::<crate::code_rule_dsl::suppress::sqlfluff::Suppressions>().is_some_and(|references| {
+            let index = file_index(|| SqlfluffIndex::read(&root(node), source, lines));
             index.suppresses(references, lines.line(at) + 1)
         })
     }

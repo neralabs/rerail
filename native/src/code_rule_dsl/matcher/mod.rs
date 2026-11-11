@@ -90,10 +90,8 @@ pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
 pub(crate) use resolve::{
-    FileGates, calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives,
-    file_lines, file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs,
-    file_phpstan, file_psalm, file_rerail_ignores, file_source_type_for, file_sqlfluff,
-    file_vue_directives, table_reading,
+    FileGates, calls_tables, file_index, file_lines, file_module, file_rerail_ignores, file_source_type_for,
+    table_reading,
 };
 pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved, matched_file_path};
 #[cfg(test)]

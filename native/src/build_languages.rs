@@ -958,7 +958,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         "            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => TEST_DIALECT_FAMILY,\n        }\n    }\n\n",
     );
     out.push_str("    /// Whether the family's files carry `suppression`'s comments: its languages' entries list it.\n");
-    out.push_str("    pub(crate) const fn honours(self, suppression: Suppression) -> bool {\n");
+    out.push_str("    pub(crate) fn honours(self, suppression: Suppression) -> bool {\n");
     let mut honoured = Vec::new();
     for (family, _, _) in &families {
         let entry = supported
@@ -967,9 +967,9 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
             .expect("family entry");
         for suppression in &entry.suppressions {
             honoured.push(format!(
-                "(Self::{}, Suppression::{})",
+                "(Self::{}, {:?})",
                 pascal(family),
-                pascal(suppression)
+                suppression
             ));
         }
     }
@@ -977,7 +977,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         "let _ = (self, suppression);\n        false".to_owned()
     } else {
         format!(
-            "matches!(\n            (self, suppression),\n            {}\n        )",
+            "matches!(\n            (self, suppression.key()),\n            {}\n        )",
             honoured.join("\n                | ")
         )
     };

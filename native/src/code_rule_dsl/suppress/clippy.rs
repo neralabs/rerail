@@ -24,6 +24,19 @@ pub(crate) struct Clippy {
 /// A Rust version, `major.minor.patch`; `1.53` is `1.53.0`.
 pub(crate) type RustVersion = (u32, u32, u32);
 
+/// rustc's and Clippy's lint-level attributes (`#[allow]`, `#[expect]`): the lint and group
+/// names that silence the violation.
+pub(crate) struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "clippy";
+    const DETAIL: &'static str = "clippy: #[allow] and #[expect] attributes are Clippy's";
+    type Spec = Clippy;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Clippy> {
+        spec(value, at)
+    }
+}
+
 /// Parses `suppress.clippy`: `{ "lints": [Name]+, "msrv"?: "1.53" }`.
 pub(super) fn spec(clippy: &Value, at: &str) -> napi::Result<Clippy> {
     reject_unknown(object(clippy, at)?, &["lints", "msrv"], at)?;

@@ -166,6 +166,21 @@ values, scope and names, the Blade tree, the fact producers and the admission pr
 generic interface in the core with registered implementations, the same pattern as the packs above. The core's
 `Suppress`, for example, holds the specs by linter kind, not one field per linter.
 
+**Suppression indexes (B), as built.**
+
+- **The core declares the interface.** `suppress.rs` defines `SuppressionKind`: the `suppress` key, the detail,
+  a `Spec` type, and its parser. `Suppression` is a registered kind. `Suppress` holds the parsed specs in kind
+  order, and a pack reads its own with `suppress.get::<noqa::Suppressions>()`.
+- **Each linter module implements a kind**: `suppress/<linter>.rs` declares `pub(crate) struct Suppressions`.
+  The engine registers the ten kinds in the old table's order (`install_languages`), so parse order, check
+  order and error text are unchanged.
+- **The generated `Family::honours`** matches on the kind's key, not on an enum variant.
+- **The per-file indexes** were eleven `FileScopes` fields and eleven `file_<linter>` functions. They are now
+  one `TypeId`-keyed map and `file_index::<T>(read)`. `rerail-ignore` keeps its own, as it is the core's.
+- **Still naming a linter in W:** `waves/findings.rs` builds the relational `noqa` and `nosec` tables from
+  Ruff's and Bandit's specs, and so does the test-only relational renderer. Those become a hook the Python
+  pack registers (the rows it contributes per violation).
+
 The dynamic dispatch is new cost on paths that today compile to a constant. Hot sites (per node rather than per
 file) take the `&dyn LanguagePack` once per file. The data-layer replay is compared before and after in
 instructions retired.
