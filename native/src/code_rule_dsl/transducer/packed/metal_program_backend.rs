@@ -777,8 +777,7 @@ pub(super) fn execute_packed_with_result_limits(
     }
     let allocation_started = std::time::Instant::now();
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let queue = device.new_command_queue();
-    queue.set_label("Tempo packed transducer queue");
+    let queue = rerail_metal::queue()?;
     let workspace = MetalWorkspaceLease::acquire(
         device,
         totals,

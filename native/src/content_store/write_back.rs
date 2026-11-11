@@ -317,9 +317,7 @@ impl ContentStore {
         let (tx, rx) = mpsc::channel::<Queued>();
         let w = Arc::clone(w);
         let store = self.sibling();
-        let thread = std::thread::Builder::new()
-            .name("rerail-store-writer".into())
-            .spawn(move || {
+        let thread = rerail_accel::exec::service("rerail-store-writer", None, move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
                 let mut next: Option<Queued> = None;

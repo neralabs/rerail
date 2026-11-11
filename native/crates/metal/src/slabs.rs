@@ -467,9 +467,7 @@ pub fn executed(drop_all: fn()) {
     }
     wake.notify_all();
     DROPPER.call_once(|| {
-        std::thread::Builder::new()
-            .name("rerail-residency-drop".into())
-            .spawn(move || {
+        rerail_accel::exec::service("rerail-residency-drop", None, move || {
                 let (lock, wake) = &*STATE;
                 let Ok(mut state) = lock.lock() else { return };
                 loop {

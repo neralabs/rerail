@@ -102,7 +102,7 @@ pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> 
     if cfg!(not(target_family = "wasm")) && max() >= 2 {
         rayon::spawn(run);
     } else {
-        std::thread::spawn(run);
+        let _ = rerail_accel::exec::service(name, None, run);
     }
     Beside { name, slot }
 }

@@ -70,9 +70,7 @@ impl StorageMaintenance {
         let workspaces = StdArc::new(Mutex::new(HashMap::<WorkspaceId, (String, usize)>::new()));
         let thread_stop = StdArc::clone(&stop);
         let thread_workspaces = StdArc::clone(&workspaces);
-        let thread = std::thread::Builder::new()
-            .name("rerail-store-maintenance".to_owned())
-            .spawn(move || {
+        let thread = rerail_accel::exec::service("rerail-store-maintenance", None, move || {
                 let mut search_index_cursor = None;
                 loop {
                     std::thread::park_timeout(Duration::from_secs(30));

@@ -256,7 +256,7 @@ impl Overlay {
         });
         let writer = background.then(|| {
             let shared = Arc::clone(&shared);
-            std::thread::spawn(move || shared.write_in_background())
+            rerail_accel::exec::service("rerail-overlay-writer", None, move || shared.write_in_background()).expect("the overlay's writer thread")
         });
         Ok(Self { shared, writer })
     }

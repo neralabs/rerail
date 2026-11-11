@@ -98,7 +98,7 @@ pub fn watch() {
         };
         use std::sync::atomic::{AtomicU32, Ordering};
         static SNAPSHOTS: AtomicU32 = AtomicU32::new(0);
-        let _ = std::thread::Builder::new().name("rerail-watch".into()).spawn(move || {
+        let _ = rerail_accel::exec::service("rerail-watch", None, move || {
             loop {
                 let mut sig = 0;
                 // SAFETY: waits for one of the blocked signals in `set`.
@@ -123,7 +123,7 @@ pub fn watch() {
             }
         });
         if let Some(seconds) = std::env::var("RERAIL_DEADLINE").ok().and_then(|s| s.parse::<f64>().ok()).filter(|s| *s > 0.0) {
-            let _ = std::thread::Builder::new().name("rerail-deadline".into()).spawn(move || {
+            let _ = rerail_accel::exec::service("rerail-deadline", None, move || {
                 std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
                 match destination() {
                     Some(dir) => match dump(&dir.join("deadline"), &format!("RERAIL_DEADLINE={seconds}"), started) {

@@ -111,7 +111,7 @@ pub(in crate::code_rule_dsl) fn solve_with(nodes: usize, target: &[u32], done: &
             made += (cells * 4 + 4) as u64;
             phases[0] += host_seconds() - begun;
             let at = host_seconds();
-            let queue = device.new_command_queue();
+            let queue = rerail_metal::queue()?;
             phases[1] += host_seconds() - at;
             (state, stats, queue)
         }

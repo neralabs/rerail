@@ -191,8 +191,8 @@ kernel void anchors(device const ushort* kinds [[buffer(0)]], device const uint2
 }}"#
     );
     let pipeline = pipeline_named(&metal_source, "anchors")?;
-    let device = Device::system_default().ok_or(Error::UnsupportedBackend)?;
-    let queue = device.new_command_queue();
+    let device = rerail_metal::device()?;
+    let queue = rerail_metal::queue()?;
     let mut source = Vec::new();
     let mut kinds = Vec::new();
     let mut spans = Vec::new();

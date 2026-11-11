@@ -116,7 +116,7 @@ pub(in crate::code_rule_dsl) fn run(
         crate::code_rule_dsl::prof::peak("2a1b.filled");
         let pipeline = pipelines()?.remove(0);
         crate::code_rule_dsl::prof::peak("2a1c.pipeline");
-        let queue = device.new_command_queue();
+        let queue = rerail_metal::queue()?;
         let command = queue.new_command_buffer();
         command.set_label("Rerail set steps");
         let encoder = command.new_compute_command_encoder();

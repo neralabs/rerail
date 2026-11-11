@@ -922,7 +922,7 @@ pub(crate) fn forget_engine(at: usize) {
         a.retain(|(s, _)| *s != at);
     }
     if !gone.0.is_empty() || !gone.1.is_empty() {
-        let _ = std::thread::Builder::new().name("rerail-free".into()).spawn(move || drop(gone));
+        rerail_accel::exec::drop_beside(gone);
     }
 }
 static COMPONENTS: Mutex<Vec<((usize, String), Arc<Mutex<Component>>)>> = Mutex::new(Vec::new());
